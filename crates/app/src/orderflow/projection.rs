@@ -7,7 +7,10 @@ use std::sync::Arc;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
-use super::config::{DisplayGrouping, HeatmapConfig, IntensityMode};
+use super::config::{
+    DEFAULT_LIVE_LANE_SHARE, DisplayGrouping, HeatmapConfig, IntensityMode, MAX_LIVE_LANE_SHARE,
+    MIN_LIVE_LANE_SHARE,
+};
 use super::grouping::{EffectiveGrouping, GroupedLiquidity, GroupingWindow, sweep_grouped_runs};
 use super::history::{AggressorSide, CoverageSegment, LiquidityHistory, RestingSide};
 pub use super::interaction::LiquidityEvidence;
@@ -360,7 +363,10 @@ impl SettledProjection {
     /// candles out empty the tape.
     #[must_use]
     pub fn with_live(&self, live: LiveMarks, config: &HeatmapConfig) -> HeatmapProjection {
-        let (_, lane_budget) = pane_budgets(config.max_aggression_primitives);
+        let (_, lane_budget) = pane_budgets(
+            config.max_aggression_primitives,
+            config.live_lane.width_share,
+        );
         let mut lane_marks = live.aggressions;
         let lane_before = lane_marks.len();
         fold_to_budget(
@@ -803,7 +809,10 @@ pub fn project_settled(
         aggression_reference,
         summary_reference,
     );
-    let (chart_budget, _) = pane_budgets(config.max_aggression_primitives);
+    let (chart_budget, _) = pane_budgets(
+        config.max_aggression_primitives,
+        config.live_lane.width_share,
+    );
     let before_fold = aggressions.len();
     fold_to_budget(
         &mut aggressions,
@@ -1099,28 +1108,32 @@ fn cap_events(events: &mut Vec<LiquidityEventPrimitive>, limit: usize) {
     events.truncate(limit);
 }
 
-/// Share of the frame's bubble budget reserved for the tape.
+/// Split the frame's bubble budget between the two panes.
 ///
 /// The two panes draw different things out of the same budget: the candles
 /// draw a compressed history whose marks each carry a bar, the tape draws the
 /// newest prints one by one. Ranked against each other by quantity — which is
-/// what a single shared budget does — the tape loses every time, and zooming
-/// the candles out empties it. So the budget is split before anything is
-/// ranked, and each pane spends its own.
+/// what a single shared budget did — the tape lost every time, and zooming the
+/// candles out emptied it. So the budget is split before anything is ranked,
+/// and each pane spends its own.
 ///
-/// Four tenths rather than half: the candles own most of the canvas, and the
-/// tape's marks are individually small. It is a starting point calibrated to
-/// the default lane width, not a law — the number lives here, named, so a
-/// change to it is a change to one line.
-const LANE_PRIMITIVE_SHARE: f32 = 0.4;
-
-/// Split the frame's bubble budget between the two panes.
+/// The split is the tape's own width share ([`LiveLaneStyle::width_share`]),
+/// not a number of its own: marks need room to be read, so the pane with a
+/// third of the canvas gets a third of the marks, and a trader who drags the
+/// divider moves both together. That also keeps the rule honest under a second
+/// reading — a wider tape is a request for more tape, not just a bigger band.
 ///
-/// Both shares are at least two, which is what makes [`fold_to_budget`]
-/// terminate: two marks per pane is one per side, and a fold never crosses
-/// sides.
-fn pane_budgets(limit: usize) -> (usize, usize) {
-    let lane = ((limit as f32) * LANE_PRIMITIVE_SHARE).round() as usize;
+/// Both shares are at least two, which is what lets a pane always fit: two
+/// marks is one per side, and a fold never crosses sides. The width share is
+/// already bounded to `[MIN_LIVE_LANE_SHARE, MAX_LIVE_LANE_SHARE]`, so neither
+/// pane can be squeezed out by configuration alone.
+fn pane_budgets(limit: usize, lane_width_share: f32) -> (usize, usize) {
+    let share = if lane_width_share.is_finite() {
+        lane_width_share.clamp(MIN_LIVE_LANE_SHARE, MAX_LIVE_LANE_SHARE)
+    } else {
+        DEFAULT_LIVE_LANE_SHARE
+    };
+    let lane = ((limit as f32) * share).round().max(0.0) as usize;
     let lane = lane.clamp(2, limit.saturating_sub(2).max(2));
     (limit.saturating_sub(lane).max(2), lane)
 }
@@ -4047,6 +4060,43 @@ mod tests {
             roomy_chart, tight_chart,
             "squeezing the budget changed how much the candles say traded"
         );
+    }
+
+    /// Widening the tape buys it more marks, because marks need room.
+    ///
+    /// The split is the lane's own width share rather than a constant of its
+    /// own, so the one control the trader already has over the tape moves both
+    /// its band and its budget. Without this the number would be a magic
+    /// constant that disagrees with the canvas the moment the divider moves.
+    #[test]
+    fn the_tape_budget_follows_the_room_the_tape_was_given() {
+        let (narrow_chart, narrow_lane) = pane_budgets(100, MIN_LIVE_LANE_SHARE);
+        let (wide_chart, wide_lane) = pane_budgets(100, MAX_LIVE_LANE_SHARE);
+        assert!(
+            wide_lane > narrow_lane,
+            "a wider tape has room for more marks and did not get them"
+        );
+        assert!(
+            wide_chart < narrow_chart,
+            "and it takes that room from the candles, not from thin air"
+        );
+        for share in [
+            f32::NAN,
+            -1.0,
+            5.0,
+            MIN_LIVE_LANE_SHARE,
+            MAX_LIVE_LANE_SHARE,
+        ] {
+            let (chart, lane) = pane_budgets(100, share);
+            assert!(chart >= 2 && lane >= 2, "every pane can draw both sides");
+            assert!(
+                chart + lane <= 100,
+                "the two shares together overspent the frame's budget"
+            );
+        }
+        // A budget too small to split still leaves both panes able to draw.
+        let (chart, lane) = pane_budgets(1, DEFAULT_LIVE_LANE_SHARE);
+        assert!(chart >= 2 && lane >= 2);
     }
 
     /// The fold is paid where it costs least, and the rest of the pane is
