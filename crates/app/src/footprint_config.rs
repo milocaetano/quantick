@@ -35,6 +35,17 @@ pub(crate) const SETTINGS_FILE: &str = "footprint-settings.toml";
 const SETTINGS_VERSION: u32 = 2;
 
 /// How a bar's ladder is drawn.
+///
+/// This enum is the layer's **registry**, not a switch: one entry per style,
+/// and everything the rest of the app needs to know about a style is a method
+/// here. The panel iterates [`FootprintStyle::ALL`] rather than listing
+/// styles, the file format reads [`FootprintStyle::id`], and the env hook
+/// resolves the same token — so a style that exists is a style that is
+/// reachable by TOML, by hook and by click, without three lists agreeing by
+/// hand.
+///
+/// It grew into a registry because the draw code had four `if style ==` tests
+/// for two styles. That scales to two. It does not scale to four.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FootprintStyle {
     /// The default, after the boss's reference charts: a two-sided display
@@ -44,24 +55,181 @@ pub enum FootprintStyle {
     Split,
     /// The classic sell|buy ladder: two number columns per row.
     Ladder,
+    /// Both sides at absolute size, no digits: two mirrored bars per row on
+    /// one shared scale. The split shows total and difference; this shows the
+    /// two amounts, because 400×380 and 40×20 share a delta and are not the
+    /// same market.
+    BidAsk,
+    /// The reference chart's cluster: each bar in its own boxed ladder, three
+    /// columns per row (`bid | ask | total`), the cell tinted by how much
+    /// volume it holds, and the candle beside the box rather than behind it.
+    Cluster,
+}
+
+/// How the candle itself is treated while a style draws inside or beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CandleTreatment {
+    /// The ladder lives *inside* the candle, so the body fades to an outline
+    /// as the zoom crosses into detail and hands its interior over.
+    Fade,
+    /// The ladder lives in its own box, so the candle steps aside into a lane
+    /// of its own at the left of the slot — nothing is behind anything, and
+    /// nothing fades.
+    Sidebar,
+}
+
+/// Width of the lane a [`CandleTreatment::Sidebar`] candle keeps for itself,
+/// in pixels: body, wick and a hair of air before the box begins.
+pub const CANDLE_LANE_PX: f32 = 7.0;
+
+impl CandleTreatment {
+    /// How much of the slot's left side the candle claims before the layer's
+    /// content starts. Zero while the candle is *behind* the content.
+    #[must_use]
+    pub fn content_inset(self) -> f32 {
+        match self {
+            Self::Fade => 0.0,
+            Self::Sidebar => CANDLE_LANE_PX,
+        }
+    }
+}
+
+/// What a style paints under its own content before drawing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StylePlate {
+    /// The canvas colour at partial strength — enough that the layer owns its
+    /// interior, little enough that the map stays visible between candles.
+    Backdrop,
+    /// The full casing. Digits have no geometric fallback, so their floor has
+    /// to be a constant rather than whatever is underneath.
+    Casing,
 }
 
 impl FootprintStyle {
-    /// The token stored in files.
+    /// Every style, in the order the panel offers them: the two that read as
+    /// shapes first, then the two that read as numbers.
+    pub const ALL: [Self; 4] = [Self::Split, Self::BidAsk, Self::Ladder, Self::Cluster];
+
+    /// The token stored in files and accepted by `QUANTICK_FOOTPRINT_STYLE`.
     #[must_use]
     pub fn id(self) -> &'static str {
         match self {
             Self::Split => "split",
             Self::Ladder => "ladder",
+            Self::BidAsk => "bidask",
+            Self::Cluster => "cluster",
         }
     }
 
-    fn from_id(id: &str) -> Option<Self> {
-        match id {
-            "split" => Some(Self::Split),
-            "ladder" => Some(Self::Ladder),
+    /// The name on the panel's selector — what the columns *are*, never a
+    /// brand for them.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Split => "profile",
+            Self::Ladder => "sell|buy",
+            Self::BidAsk => "both sides",
+            Self::Cluster => "cluster",
+        }
+    }
+
+    /// The hover that teaches the style to someone meeting it for the first
+    /// time. This window is where a newcomer learns the vocabulary.
+    #[must_use]
+    pub fn hover(self) -> &'static str {
+        match self {
+            Self::Split => {
+                "volume profile on the right, the winning side's delta bar on \
+                 the left — the reference look, and the default"
+            }
+            Self::Ladder => "the classic footprint ladder: sell and buy quantities per row",
+            Self::BidAsk => {
+                "both sides at their real size, no digits: two mirrored bars \
+                 per row on one scale. Reads at zooms where numbers cannot fit"
+            }
+            Self::Cluster => {
+                "each bar in its own boxed ladder — bid, ask and the row total, \
+                 the cell shaded by how much volume it holds. Needs the deepest \
+                 zoom; falls back to \"both sides\" above it"
+            }
+        }
+    }
+
+    /// How wide a candle must be before this style's deepest level fits its
+    /// text, as a multiple of one quantity's typographic budget.
+    ///
+    /// A style declares its own floor instead of borrowing the ladder's: the
+    /// cluster writes three quantities across a row where the ladder writes
+    /// two, and a shared constant would either starve the cluster or make the
+    /// ladder wait for room it does not need.
+    #[must_use]
+    pub fn detailed_quantity_columns(self) -> f32 {
+        match self {
+            // Neither draws a full ladder of digits at Detailed: the split
+            // writes one delta over its left half, and `bidask` writes none.
+            Self::Split | Self::BidAsk => 2.0,
+            Self::Ladder => 2.0,
+            Self::Cluster => 3.0,
+        }
+    }
+
+    /// See [`CandleTreatment`].
+    #[must_use]
+    pub fn candle_treatment(self) -> CandleTreatment {
+        match self {
+            Self::Split | Self::Ladder | Self::BidAsk => CandleTreatment::Fade,
+            Self::Cluster => CandleTreatment::Sidebar,
+        }
+    }
+
+    /// See [`StylePlate`].
+    #[must_use]
+    pub fn plate(self) -> StylePlate {
+        match self {
+            // Geometry survives any background; a plate would only hide the
+            // map for nothing.
+            Self::BidAsk => StylePlate::Backdrop,
+            Self::Split => StylePlate::Backdrop,
+            Self::Ladder | Self::Cluster => StylePlate::Casing,
+        }
+    }
+
+    /// Whether this style paints per-row cells the delta-number path draws.
+    /// The two shape styles own their whole row and return early.
+    #[must_use]
+    pub fn draws_own_rows(self) -> bool {
+        matches!(self, Self::Split | Self::BidAsk | Self::Cluster)
+    }
+
+    /// The style this one falls back to when the zoom cannot pay for it, and
+    /// `None` when it is already the cheapest reading of its family.
+    ///
+    /// Degradation is never silent: the legend names both.
+    #[must_use]
+    pub fn fallback(self) -> Option<Self> {
+        match self {
+            Self::Cluster => Some(Self::BidAsk),
             _ => None,
         }
+    }
+
+    /// What the legend calls this style's deepest level — the columns named,
+    /// so the numbers are never misread as prices.
+    #[must_use]
+    pub fn detailed_legend(self) -> &'static str {
+        match self {
+            Self::Split => "delta|volume",
+            Self::Ladder => "sell|buy",
+            Self::BidAsk => "both sides",
+            Self::Cluster => "bid×ask|total",
+        }
+    }
+
+    /// Resolve a stored token. Unknown tokens are `None` — a file written by
+    /// a newer build keeps its owner's default rather than guessing.
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|style| style.id() == id)
     }
 }
 
@@ -107,6 +275,18 @@ pub struct FootprintConfig {
     pub show_numbers: bool,
     /// The per-bar delta totals along the chart's bottom edge.
     pub show_delta_totals: bool,
+    /// The cluster style's third column, the row total.
+    ///
+    /// It is what makes the style read like the reference chart, and it costs
+    /// roughly a third more candle width before the numbers fit — so it is a
+    /// switch rather than a decision taken for everyone. Off, the style keeps
+    /// bid and ask and arrives at the same zoom the ladder does.
+    pub cluster_show_total: bool,
+    /// The cluster style's raised-cell relief, at the deepest zoom only.
+    ///
+    /// Not offered at shallower levels at any price: relief on a four-pixel
+    /// cell is dirt, the same argument that keeps this layer free of fades.
+    pub cluster_bevel: bool,
 }
 
 impl Default for FootprintConfig {
@@ -123,6 +303,8 @@ impl Default for FootprintConfig {
             badge_min_ratio: Decimal::TWO,
             show_numbers: true,
             show_delta_totals: true,
+            cluster_show_total: true,
+            cluster_bevel: true,
         }
     }
 }
@@ -170,6 +352,10 @@ pub(crate) struct FootprintFile {
     pub(crate) show_numbers: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) show_delta_totals: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) cluster_show_total: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) cluster_bevel: Option<bool>,
 }
 
 /// A config as the canonical serde shape — the inverse of [`resolve`], for
@@ -188,6 +374,8 @@ pub(crate) fn to_file(config: &FootprintConfig) -> FootprintFile {
         badge_min_ratio: config.badge_min_ratio.to_f64(),
         show_numbers: Some(config.show_numbers),
         show_delta_totals: Some(config.show_delta_totals),
+        cluster_show_total: Some(config.cluster_show_total),
+        cluster_bevel: Some(config.cluster_bevel),
     }
 }
 
@@ -363,6 +551,10 @@ pub(crate) fn resolve(file: FootprintFile) -> FootprintConfig {
             .unwrap_or(defaults.badge_min_ratio),
         show_numbers: file.show_numbers.unwrap_or(defaults.show_numbers),
         show_delta_totals: file.show_delta_totals.unwrap_or(defaults.show_delta_totals),
+        cluster_show_total: file
+            .cluster_show_total
+            .unwrap_or(defaults.cluster_show_total),
+        cluster_bevel: file.cluster_bevel.unwrap_or(defaults.cluster_bevel),
     }
 }
 
@@ -443,6 +635,8 @@ mod tests {
             badge_min_ratio: Decimal::from(3),
             show_numbers: false,
             show_delta_totals: false,
+            cluster_show_total: false,
+            cluster_bevel: false,
         };
         save(&path, &edited);
         assert_eq!(load(&path), edited);

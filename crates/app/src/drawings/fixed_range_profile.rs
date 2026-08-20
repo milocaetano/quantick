@@ -33,6 +33,7 @@ use super::{
 };
 use crate::chart::to_f64;
 use crate::theme;
+use crate::theme::{CASING, CASING_EXTRA_PX};
 
 pub(super) static TOOL: FixedRangeProfile = FixedRangeProfile;
 
@@ -55,15 +56,6 @@ const VA_GAP_PX: f32 = 3.0;
 /// not by outline.
 const ROW_ALPHA_IN_VA: f32 = 0.55;
 const ROW_ALPHA_OUT_VA: f32 = 0.30;
-/// The dark half of the double stroke that keeps the profile readable over
-/// the liquidity heatmap. Deliberately darker than `theme::CANVAS`: the
-/// heatmap ramp starts at black, and a casing that ties with the ramp's
-/// floor stops separating exactly where separation is needed. 12:1 against
-/// the ramp's cyan plateau, ~24:1 against its yellow band (panel numbers).
-const CASING: egui::Color32 = egui::Color32::from_rgba_premultiplied(5, 7, 12, 235);
-/// How much wider the casing is than the ink it carries — 1px showing on
-/// each side.
-const CASING_EXTRA_PX: f32 = 2.0;
 /// Silhouette ink weights: the value area keeps its by-weight reading in an
 /// axis the heatmap does not occupy (stroke width + brightness), replacing
 /// the fill alphas that a variable background destroys.

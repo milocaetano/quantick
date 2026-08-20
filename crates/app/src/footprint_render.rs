@@ -24,6 +24,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::chart::PriceScale;
+use crate::footprint_config::StylePlate;
 use crate::theme;
 
 /// How much detail the current zoom supports. Ordered: more detail is greater.
@@ -90,7 +91,41 @@ const TYPICAL_BODY_FRAC: f32 = 0.72;
 /// [`crate::footprint_config::FootprintConfig::detail_scale`] moves all four
 /// together, for a trader who wants detail earlier still (and tighter) or
 /// later and roomier.
-const DETAILED_MIN_WIDTH: f32 = 2.0 * (QUANTITY_PX + QUANTITY_PADDING_PX / 2.0) / TYPICAL_BODY_FRAC;
+/// Clearance between a number and the bar's central axis, per side.
+///
+/// The floors below are budgets for text anchored *at* `xc`; the ladder
+/// anchors at `xc ± this`, and for two releases the difference was simply
+/// missing from the arithmetic — 3 px a side of quantity that the floor never
+/// bought, so at the floor exactly the digits reached past the body they were
+/// drawn in. Naming it is what keeps the two in step: the draw call and the
+/// floor now read the same constant, and the test models it.
+const CENTER_GUTTER_PX: f32 = 2.0;
+/// How far an imbalanced cell sinks *below* its plate.
+///
+/// Below, never above: a light pill under text of the cell's own hue raises
+/// the floor exactly beneath the digits it means to emphasise. Measured, the
+/// old 0.35 pill left its number at 3.2:1 — the layer's most important row as
+/// its least legible one. Sinking the cell and lightening the ink puts the
+/// same row at 8.6:1.
+const IMBALANCE_CELL_ALPHA: f32 = 0.16;
+/// Width of the solid edge on the dominant column's outer border, in pixels.
+/// The side is carried by *which* border it is, so the colour is redundancy.
+const IMBALANCE_EDGE_PX: f32 = 2.0;
+
+const DETAILED_MIN_WIDTH: f32 = detailed_min_width(2.0);
+
+/// The candle width at which `columns` quantities fit across a body, in
+/// pixels — the typographic budget, restated as arithmetic so a retune has to
+/// move a number that means something.
+///
+/// A style asks for its own count ([`crate::footprint_config::FootprintStyle::
+/// detailed_quantity_columns`]) rather than sharing one constant: the cluster
+/// writes three quantities where the ladder writes two, and one floor for both
+/// would either starve the cluster or make the ladder wait for room it does
+/// not need.
+const fn detailed_min_width(columns: f32) -> f32 {
+    columns * (QUANTITY_PX + CENTER_GUTTER_PX + QUANTITY_PADDING_PX / 2.0) / TYPICAL_BODY_FRAC
+}
 const COMPACT_MIN_WIDTH: f32 = (QUANTITY_PX + QUANTITY_PADDING_PX) / TYPICAL_BODY_FRAC;
 const PROFILE_MIN_WIDTH: f32 = 10.0;
 const MARKS_MIN_WIDTH: f32 = 6.0;
@@ -198,8 +233,9 @@ impl FootprintLod {
         candle_width: f32,
         base_row_px: f32,
         profile_row_px: f32,
+        detailed_min: f32,
     ) -> DetailLevel {
-        let strict = level_for(candle_width, base_row_px, profile_row_px);
+        let strict = level_for(candle_width, base_row_px, profile_row_px, detailed_min);
         let level = match self.level {
             // The dead band defends exactly ONE step of boundary jitter.
             // Further than that, the sticky state is not jitter — it is a
@@ -212,6 +248,7 @@ impl FootprintLod {
                     candle_width * LEVEL_HYSTERESIS,
                     base_row_px * LEVEL_HYSTERESIS,
                     profile_row_px,
+                    detailed_min,
                 );
                 if relaxed < current { strict } else { current }
             }
@@ -220,6 +257,7 @@ impl FootprintLod {
                     candle_width / LEVEL_HYSTERESIS,
                     base_row_px / LEVEL_HYSTERESIS,
                     profile_row_px,
+                    detailed_min,
                 );
                 if confirmed >= strict { strict } else { current }
             }
@@ -300,9 +338,14 @@ impl FootprintLod {
 /// is not a refusal — the display grouping can merge up to [`GROUP_SNAP`]'s
 /// largest multiple — so each level asks whether some multiple reaches its
 /// row floor.
-fn level_for(candle_width: f32, base_row_px: f32, profile_row_px: f32) -> DetailLevel {
+fn level_for(
+    candle_width: f32,
+    base_row_px: f32,
+    profile_row_px: f32,
+    detailed_min: f32,
+) -> DetailLevel {
     let row_reachable = |min_row: f32| display_multiple(base_row_px, min_row).is_some();
-    if candle_width >= DETAILED_MIN_WIDTH && row_reachable(DETAILED_MIN_ROW) {
+    if candle_width >= detailed_min && row_reachable(DETAILED_MIN_ROW) {
         DetailLevel::Detailed
     } else if candle_width >= COMPACT_MIN_WIDTH && row_reachable(COMPACT_MIN_ROW) {
         DetailLevel::Compact
@@ -516,7 +559,21 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     } else {
         frame.candle_width
     };
-    let level = lod.resolve(scaled_width, base_row_px, frame.config.profile_row_px);
+    let requested = frame.config.style;
+    let level = lod.resolve(
+        scaled_width,
+        base_row_px,
+        frame.config.profile_row_px,
+        detailed_min_width(requested.detailed_quantity_columns()),
+    );
+    // A style that cannot pay for itself at this zoom hands over to the one it
+    // names, rather than drawing a worse version of itself. The legend says
+    // both names — a chart that quietly became a different chart is the same
+    // defect as a layer that is on and invisible.
+    let style = match requested.fallback() {
+        Some(fallback) if level < DetailLevel::Detailed => fallback,
+        _ => requested,
+    };
     // QUANTICK_FOOTPRINT_DEBUG=1 appends the level inputs to the legend —
     // the boundary bugs so far were all states the eye could not explain
     // from the outside (wedged k, stale group), and the chart telling its
@@ -544,6 +601,7 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
         draw_legend(
             frame,
             level,
+            style,
             group,
             1,
             false,
@@ -589,11 +647,25 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
         }),
     };
     let ratio = frame.config.imbalance_ratio;
+    // The heat ramp's denominator: a high percentile of per-cell volume over
+    // the newest closed bars. Folded here rather than per bar so the ramp
+    // compares bars against each other — which is the reading alternative bars
+    // exist to give — and only for the one style that draws it.
+    let heat = (style == crate::footprint_config::FootprintStyle::Cluster)
+        .then(|| heat_reference(frame.footprints.iter().rev().take(ADAPTIVE_FLOOR_BARS)))
+        .flatten();
 
     let mut cells_left = CELL_BUDGET;
     let mut aggregated_any = false;
     let mut zones: Vec<(usize, StackedZone)> = Vec::new();
 
+    // Two passes over the visible ladders, and the split is not an
+    // optimisation: a zone's wash has to land *under* the cells, not over
+    // them. Painted last, it tinted the digits along with their background —
+    // a row that was both POC and inside a zone read at ~3.9:1. The regrouped
+    // rows are carried between the passes rather than folded twice, so the
+    // second pass costs nothing but the walk.
+    let mut regrouped: Vec<(usize, BTreeMap<i64, FootprintLevel>)> = Vec::new();
     if level >= DetailLevel::Marks {
         for (slot, fp) in visible_ladders() {
             if fp.is_aggregated() {
@@ -610,22 +682,7 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
             for zone in zones_of(&rows, ratio, min_qty, frame.config.stacked_count) {
                 zones.push((slot, zone));
             }
-            if level >= DetailLevel::Profile && cells_left > 0 {
-                draw_bar(
-                    frame,
-                    level,
-                    &rows,
-                    row_group_f,
-                    (frame.x_center)(slot),
-                    ratio,
-                    min_qty,
-                    &mut cells_left,
-                );
-            } else if frame.config.show_poc
-                && let Some(poc) = poc_of(&rows)
-            {
-                draw_poc_dot(frame, (frame.x_center)(slot), poc, row_group_f);
-            }
+            regrouped.push((slot, rows));
         }
     }
 
@@ -634,14 +691,37 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
         draw_zone_mark(frame, mark, row_group_f);
     }
 
+    for (slot, rows) in &regrouped {
+        if level >= DetailLevel::Profile && cells_left > 0 {
+            draw_bar(
+                frame,
+                level,
+                style,
+                rows,
+                row_group_f,
+                (frame.x_center)(*slot),
+                ratio,
+                min_qty,
+                heat,
+                &mut cells_left,
+            );
+        } else if frame.config.show_poc
+            && let Some(poc) = poc_of(rows)
+        {
+            draw_poc_dot(frame, (frame.x_center)(*slot), poc, row_group_f);
+        }
+    }
+
     // The per-bar delta totals strip at the chart's bottom — the reference
     // charts' footer chips: one signed, side-colored number per bar saying
     // who won it overall. From Compact up: at Profile widths the chips
     // would overlap into noise. `bar_delta` is the tested fold.
-    if level >= DetailLevel::Compact
-        && frame.config.show_delta_totals
-        && frame.config.style == crate::footprint_config::FootprintStyle::Split
-    {
+    //
+    // Every style, not just the split. Who won the bar is a reading of the
+    // bar, orthogonal to how its rows are drawn; withholding it from the
+    // ladder made that style strictly poorer than its sibling rather than a
+    // different way of seeing the same thing.
+    if level >= DetailLevel::Compact && frame.config.show_delta_totals {
         for (slot, fp) in visible_ladders() {
             let delta = bar_delta(fp);
             let Some(text) = fmt_delta(delta) else {
@@ -665,7 +745,7 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
             frame.painter.rect_filled(
                 rect,
                 egui::Rounding::same(2.0),
-                side_color(side).gamma_multiply(0.8),
+                theme::side_color(side).gamma_multiply(0.8),
             );
             frame.painter.galley(
                 rect.min + egui::vec2(3.0, 1.5),
@@ -678,6 +758,7 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     draw_legend(
         frame,
         level,
+        style,
         group,
         k,
         aggregated_any,
@@ -759,22 +840,33 @@ fn row_band(frame: &LayerFrame<'_>, row: i64, row_group: f64) -> (f32, f32) {
     frame.scale.band(low, low + row_group)
 }
 
-fn side_color(side: Side) -> egui::Color32 {
-    match side {
-        Side::Buy => theme::BUY,
-        Side::Sell => theme::SELL,
-    }
+/// Where one display row lands on screen, and what the signals say about it.
+///
+/// Bundled because the per-style row painters all need the same seven facts
+/// and none of them need anything else: passing the bundle keeps a new style
+/// from reaching back into `draw_bar`'s locals, which is how the four
+/// style conditions grew in the first place.
+struct RowGeometry {
+    row: i64,
+    top: f32,
+    bottom: f32,
+    row_height: f32,
+    is_poc: bool,
+    buy_imbalance: bool,
+    sell_imbalance: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
 fn draw_bar(
     frame: &LayerFrame<'_>,
     level: DetailLevel,
+    style: crate::footprint_config::FootprintStyle,
     rows: &BTreeMap<i64, FootprintLevel>,
     row_group: f64,
     xc: f32,
     ratio: Decimal,
     min_qty: Decimal,
+    heat: Option<f64>,
     cells_left: &mut usize,
 ) {
     let painter = frame.painter;
@@ -789,6 +881,20 @@ fn draw_bar(
         .map(|level| level.delta().to_f64().unwrap_or(0.0).abs())
         .fold(0.0_f64, f64::max)
         .max(f64::EPSILON);
+    // `bidask` mirrors two bars against one shared scale, and the scale has to
+    // be the larger *side*, never the row total: halving the total would make
+    // a one-sided row look like a balanced one at full width.
+    let max_side_volume = rows
+        .values()
+        .map(|level| {
+            level
+                .buy
+                .to_f64()
+                .unwrap_or(0.0)
+                .max(level.sell.to_f64().unwrap_or(0.0))
+        })
+        .fold(0.0_f64, f64::max)
+        .max(f64::EPSILON);
     let dominates = |qty: Decimal, other: Decimal| -> bool {
         qty >= ratio.saturating_mul(other) && qty.saturating_sub(other) >= min_qty
     };
@@ -801,13 +907,22 @@ fn draw_bar(
             .unwrap_or(Decimal::ZERO)
     };
 
-    // Split style: the footprint owns the candle's interior. A backdrop in
-    // the canvas color keeps the heatmap from bleeding through the rows (it
-    // stays fully visible between candles), and a hairline spine at the
-    // central axis keeps the bar's midline readable after the candle body
-    // fades to outline — the reference charts' thin gray candle spine.
-    if frame.config.style == crate::footprint_config::FootprintStyle::Split
-        && level >= DetailLevel::Profile
+    // The plate: what a style paints under its own content so the content has
+    // a floor it controls.
+    //
+    // The floor matters exactly as much as the content is *digits*. A bar's
+    // length reads the same over any background, so the shape styles ask for
+    // the light backdrop and leave the map visible; a number does not degrade
+    // gracefully, so the digit styles ask for the full casing. Until this was
+    // a style's own answer, the ladder had no plate at all, and its contrast
+    // floor was whatever the candle preset, the canvas switch and the bucket
+    // arithmetic happened to leave behind — 2.2:1 on the `Classic` preset,
+    // 4.1:1 on `Glass`.
+    let plate = match style.plate() {
+        StylePlate::Backdrop => canvas_backdrop(),
+        StylePlate::Casing => theme::CASING,
+    };
+    if level >= DetailLevel::Profile
         && let (Some(&first), Some(&last)) = (rows.keys().next(), rows.keys().next_back())
     {
         // Composed from both rows' screen bands, not from the price names:
@@ -817,19 +932,41 @@ fn draw_bar(
         let (last_top, last_bottom) = row_band(frame, last, row_group);
         let bar_top = first_top.min(last_top);
         let bar_bottom = first_bottom.max(last_bottom);
+        let inset = style.candle_treatment().content_inset();
         let reach = (frame.half - 1.0).max(1.0);
-        painter.rect_filled(
-            egui::Rect::from_min_max(
-                egui::pos2(xc - reach, bar_top),
-                egui::pos2(xc + reach, bar_bottom),
-            ),
-            egui::Rounding::ZERO,
-            canvas_backdrop(),
+        // One plate per bar, never one per cell: thirty rects instead of one,
+        // and — worse — a hairline seam of whatever is behind between every
+        // pair of rows.
+        let box_rect = egui::Rect::from_min_max(
+            egui::pos2(xc - reach + inset, bar_top),
+            egui::pos2(xc + reach, bar_bottom),
         );
-        painter.line_segment(
-            [egui::pos2(xc, bar_top), egui::pos2(xc, bar_bottom)],
-            egui::Stroke::new(1.0_f32, theme::TEXT_FAINT.gamma_multiply(0.3)),
-        );
+        painter.rect_filled(box_rect, egui::Rounding::same(2.0), plate);
+        if inset > 0.0 {
+            // A frame, so the box reads as one object rather than a dark
+            // patch — the reference chart's boxed ladder. Border, never a
+            // competitor: 2.3:1 against the casing.
+            painter.rect_stroke(
+                box_rect,
+                egui::Rounding::same(2.0),
+                egui::Stroke::new(1.0_f32, theme::BORDER),
+            );
+        }
+        // A hairline spine at the central axis keeps the bar's midline
+        // readable after the candle body fades to outline — the reference
+        // charts' thin gray candle spine. On the ladder it does more: it is
+        // the ruler between the two number columns, without which `123 456`
+        // reads as one number, so it is drawn firmer there.
+        let spine = match style {
+            crate::footprint_config::FootprintStyle::Ladder => 0.55,
+            _ => 0.3,
+        };
+        if inset == 0.0 {
+            painter.line_segment(
+                [egui::pos2(xc, bar_top), egui::pos2(xc, bar_bottom)],
+                egui::Stroke::new(1.0_f32, theme::TEXT_FAINT.gamma_multiply(spine)),
+            );
+        }
     }
 
     for (&row, cell) in rows {
@@ -849,9 +986,32 @@ fn draw_bar(
         let buy_imbalance = dominates(cell.buy, neighbour(row - 1, Side::Sell));
         let sell_imbalance = dominates(cell.sell, neighbour(row + 1, Side::Buy));
 
-        if frame.config.style == crate::footprint_config::FootprintStyle::Split
-            && level >= DetailLevel::Profile
-        {
+        // Styles that own their whole row paint it here and return; the two
+        // that share the LOD ladder's generic cell fall through to the match
+        // below. `draws_own_rows` is what decides, so a style added to the
+        // registry declares which half it belongs to instead of being written
+        // into a condition here.
+        if style.draws_own_rows() && level >= DetailLevel::Profile {
+            let geometry = RowGeometry {
+                row,
+                top,
+                bottom,
+                row_height,
+                is_poc,
+                buy_imbalance,
+                sell_imbalance,
+            };
+            match style {
+                crate::footprint_config::FootprintStyle::BidAsk => {
+                    draw_bidask_row(frame, cell, &geometry, xc, max_side_volume, row_group);
+                    continue;
+                }
+                crate::footprint_config::FootprintStyle::Cluster => {
+                    draw_cluster_row(frame, level, cell, &geometry, xc, heat, row_group);
+                    continue;
+                }
+                _ => {}
+            }
             // The reference look, inside the candle: a central axis at the
             // candle's middle, the total-volume profile growing rightward in
             // neutral light (the exocharts silhouette), and a delta bar per
@@ -896,7 +1056,11 @@ fn draw_bar(
             let (left_from, left_color) = match winner {
                 Some(side) => (
                     xc - reach * delta_frac.max(0.04),
-                    side_color(side).gamma_multiply(if chip_side.is_some() { 0.55 } else { 0.5 }),
+                    theme::side_color(side).gamma_multiply(if chip_side.is_some() {
+                        0.55
+                    } else {
+                        0.5
+                    }),
                 ),
                 None => (xc - 2.0, theme::TEXT_FAINT.gamma_multiply(0.35)),
             };
@@ -922,7 +1086,7 @@ fn draw_bar(
                         egui::pos2(xc - 1.0, bottom - 1.5),
                     ),
                     egui::Rounding::ZERO,
-                    egui::Stroke::new(1.0_f32, side_color(side)),
+                    egui::Stroke::new(1.0_f32, theme::side_color(side)),
                 );
             }
             // Deep zoom: the delta number over the left half, side-colored
@@ -943,7 +1107,7 @@ fn draw_bar(
                     egui::Align2::RIGHT_CENTER,
                     text,
                     font,
-                    winner.map_or(theme::TEXT_MUTED, side_color),
+                    winner.map_or(theme::TEXT_MUTED, theme::side_color),
                 );
             }
             if is_poc {
@@ -994,15 +1158,23 @@ fn draw_bar(
                         .clamp(LADDER_MIN_FONT_PX, 13.0),
                 );
                 if is_poc {
-                    painter.rect_filled(
+                    // A ring around the row, not a wash under it. The old
+                    // tint cost the row its contrast (6.8:1 → 4.4:1 — below
+                    // AA on the one row the trader reads first) to say
+                    // something an outline says louder, and the full-width
+                    // line that came with it struck straight through both
+                    // number columns. The split style already refuses that
+                    // line for exactly this reason; the ladder had never been
+                    // told. The ring also gives the POC a *shape*: the only
+                    // framed row in the bar, readable without relying on hue.
+                    painter.rect_stroke(
                         egui::Rect::from_min_max(
-                            egui::pos2(xc - frame.half, top),
-                            egui::pos2(xc + frame.half, bottom),
+                            egui::pos2(xc - frame.half + 0.5, top + 0.5),
+                            egui::pos2(xc + frame.half - 0.5, bottom - 0.5),
                         ),
                         egui::Rounding::ZERO,
-                        theme::POC.gamma_multiply(0.18),
+                        egui::Stroke::new(1.5_f32, theme::POC),
                     );
-                    draw_poc_dot(frame, xc, row, row_group);
                 }
                 let mid = (top + bottom) / 2.0;
                 if level == DetailLevel::Compact {
@@ -1010,37 +1182,36 @@ fn draw_bar(
                         continue;
                     }
                     let delta = cell.delta();
-                    let color = if delta >= Decimal::ZERO {
-                        theme::BUY
+                    let side = if delta >= Decimal::ZERO {
+                        Side::Buy
                     } else {
-                        theme::SELL
+                        Side::Sell
                     };
                     painter.text(
                         egui::pos2(xc, mid),
                         egui::Align2::CENTER_CENTER,
                         fmt_qty(delta),
                         font,
-                        color,
+                        theme::ink(side),
                     );
                 } else {
                     // sell | buy, the tape's own left-to-right: taker-sells
                     // hit the bid printed on the left, taker-buys lift the
-                    // ask on the right. Imbalanced cells get a filled pill so
-                    // the eye catches them before the digits resolve.
+                    // ask on the right.
                     for (side, qty, imbalanced, align, x) in [
                         (
                             Side::Sell,
                             cell.sell,
                             sell_imbalance,
                             egui::Align2::RIGHT_CENTER,
-                            xc - 3.0,
+                            xc - CENTER_GUTTER_PX,
                         ),
                         (
                             Side::Buy,
                             cell.buy,
                             buy_imbalance,
                             egui::Align2::LEFT_CENTER,
-                            xc + 3.0,
+                            xc + CENTER_GUTTER_PX,
                         ),
                     ] {
                         if imbalanced {
@@ -1054,21 +1225,60 @@ fn draw_bar(
                                     egui::pos2(xc + frame.half, bottom - 0.5),
                                 ),
                             };
+                            // The cell goes *deeper* than the plate, not
+                            // brighter. A light pill under text of its own hue
+                            // is arithmetically a trap — it raises the floor
+                            // exactly beneath the digits it means to
+                            // emphasise, and the row carrying the layer's most
+                            // important signal ends up its least legible
+                            // (3.2:1). Darker cell plus lighter ink inverts
+                            // that: 8.6:1 on the same row.
                             painter.rect_filled(
                                 cell_rect,
                                 egui::Rounding::same(2.0),
-                                side_color(side).gamma_multiply(0.35),
+                                theme::side_color(side).gamma_multiply(IMBALANCE_CELL_ALPHA),
+                            );
+                            // And an edge on the *outer* border of the column
+                            // that dominated — sell on the body's left, buy on
+                            // its right. Position carries the side on its own,
+                            // so the colour is redundancy rather than the
+                            // channel, and the mark survives colour blindness.
+                            let edge = match side {
+                                Side::Sell => egui::Rect::from_min_max(
+                                    egui::pos2(cell_rect.left(), cell_rect.top()),
+                                    egui::pos2(
+                                        cell_rect.left() + IMBALANCE_EDGE_PX,
+                                        cell_rect.bottom(),
+                                    ),
+                                ),
+                                Side::Buy => egui::Rect::from_min_max(
+                                    egui::pos2(
+                                        cell_rect.right() - IMBALANCE_EDGE_PX,
+                                        cell_rect.top(),
+                                    ),
+                                    egui::pos2(cell_rect.right(), cell_rect.bottom()),
+                                ),
+                            };
+                            painter.rect_filled(
+                                edge,
+                                egui::Rounding::ZERO,
+                                theme::side_color(side),
                             );
                         }
                         if !frame.config.show_numbers {
-                            // Numbers off leaves the imbalance pills above:
+                            // Numbers off leaves the imbalance cells above:
                             // the shape of the fight without the digits.
                             continue;
                         }
+                        // Over the plate, the ordinary number can afford the
+                        // primary ink (14.2:1 instead of the muted grey's
+                        // 6.8:1 on canvas — and the muted grey's 2.2:1 on a
+                        // `Classic` candle body, which is the reading this
+                        // plate exists to end).
                         let color = if imbalanced {
-                            side_color(side)
+                            theme::ink(side)
                         } else {
-                            theme::TEXT_MUTED
+                            theme::TEXT_PRIMARY
                         };
                         painter.text(egui::pos2(x, mid), align, fmt_qty(qty), font.clone(), color);
                     }
@@ -1141,7 +1351,7 @@ fn draw_bar(
             painter.rect_stroke(
                 anchor.expand(2.0),
                 egui::Rounding::same(2.0),
-                egui::Stroke::new(1.0_f32, side_color(dominant_side)),
+                egui::Stroke::new(1.0_f32, theme::side_color(dominant_side)),
             );
             painter.galley(anchor.min, galley, theme::TEXT_PRIMARY);
         }
@@ -1163,6 +1373,408 @@ fn draw_poc_line(frame: &LayerFrame<'_>, x_from: f32, x_to: f32, row: i64, row_g
     );
 }
 
+/// The heat ramp's thresholds in `t = volume / reference`, lowest first.
+///
+/// Six quantised steps, never a gradient. Three reasons, in order: rounding a
+/// float into a colour every frame is how a pixel moves between two identical
+/// frames; the depth map already owns the "continuous gradient" channel on
+/// this same screen; and steps can be counted, which a gradient cannot.
+const HEAT_STEPS: [f32; 6] = [0.0, 0.08, 0.20, 0.38, 0.60, 0.82];
+
+/// Target relative luminance per step. Deliberately *not* evenly spaced.
+///
+/// Between `L = 0.115` and `L = 0.202` neither available ink reaches 4.5:1 —
+/// [`theme::TEXT_PRIMARY`] has run out of headroom above and
+/// [`theme::CHIP_INK`] has not gained it below. That band is unusable, so the
+/// ramp steps over it: `0.100` sits just under, `0.260` just over. The jump
+/// from step 3 to step 4 is the largest in the ramp precisely because it is
+/// where the ink flips, which turns the one irregularity in the scale into
+/// its most distinguishable boundary.
+const HEAT_LUMINANCE: [f32; 6] = [0.010, 0.024, 0.050, 0.100, 0.260, 0.620];
+
+/// The step at and above which the ink turns dark. See [`HEAT_LUMINANCE`].
+const HEAT_INK_FLIP_STEP: usize = 4;
+
+/// The percentile of per-cell volume the ramp measures against.
+///
+/// Not the bar's own maximum: every bar would then hold a top-step cell, and a
+/// mark that always appears has stopped being a mark — the same argument that
+/// suppresses ratio badges under `badge_min_ratio`. Not the screen's maximum
+/// either: one exhaustion bar would flatten every other bar to step zero. A
+/// high percentile of what is actually printing keeps the comparison *between*
+/// bars true, which is the reading alternative bars exist to give.
+const HEAT_REFERENCE_PCT: usize = 95;
+
+/// How far the cluster's grey silhouette is allowed to lighten its column.
+///
+/// Hard ceiling: past ~0.42 the silhouette pushes the column into the
+/// forbidden luminance band and the total column would need a flip rule of its
+/// own. Staying under it is what buys the column a single ink.
+const CLUSTER_TOTAL_SILHOUETTE_ALPHA: f32 = 0.35;
+/// Inset of the cluster's columns from its box, and the gutter between them.
+const CLUSTER_BOX_PAD_PX: f32 = 2.0;
+const CLUSTER_GUTTER_PX: f32 = 3.0;
+/// Alpha of a `bidask` bar. Low enough that a POC line crosses it readably,
+/// high enough that the two sides separate from the plate at a glance.
+const BIDASK_BAR_ALPHA: f32 = 0.62;
+
+/// The bevel's two faces. Fixed, never derived from the fill underneath.
+///
+/// Derived values would scale the highlight with the base and fade it out at
+/// exactly the ends of the ramp where it has to carry the relief. Fixed, the
+/// two are complementary by construction: on dark steps the white edge does
+/// the work and the shadow disappears, on light steps the shadow does and the
+/// highlight disappears. At no step do both vanish — the better of the two is
+/// never under +11 L\*, four times the just-noticeable difference.
+const BEVEL_HIGHLIGHT: egui::Color32 = egui::Color32::from_rgba_premultiplied(46, 46, 46, 46);
+const BEVEL_SHADOW: egui::Color32 = egui::Color32::from_rgba_premultiplied(0, 0, 0, 102);
+const BEVEL_PX: f32 = 1.0;
+/// Under this row height the bevel is fringe rather than relief: the two
+/// faces plus the row's own inset leave under 4 px of actual cell.
+const BEVEL_MIN_ROW_PX: f32 = 10.0;
+
+/// The heat ramp's denominator: [`HEAT_REFERENCE_PCT`] of per-cell *side*
+/// volume over the newest closed bars.
+///
+/// Per side, not per row, because the ramp colours the bid and ask columns and
+/// a row-total reference would hold every cell in the lower half of the scale.
+/// `None` when there is nothing to measure — a ramp with an invented
+/// denominator is a colour scale that means whatever it likes.
+fn heat_reference<'a>(ladders: impl Iterator<Item = &'a BarFootprint>) -> Option<f64> {
+    let mut sides: Vec<f64> = ladders
+        .flat_map(|fp| fp.levels().values())
+        .flat_map(|level| {
+            [
+                level.buy.to_f64().unwrap_or(0.0),
+                level.sell.to_f64().unwrap_or(0.0),
+            ]
+        })
+        .filter(|volume| *volume > 0.0)
+        .collect();
+    if sides.is_empty() {
+        return None;
+    }
+    // Only one order statistic is read, so partition around it instead of
+    // sorting — the same trade `adaptive_min_qty` makes for the same reason.
+    let index = (sides.len().saturating_sub(1)) * HEAT_REFERENCE_PCT / 100;
+    let (_, value, _) = sides.select_nth_unstable_by(index, f64::total_cmp);
+    Some(*value)
+}
+
+/// Which heat step a quantity falls in. `reference` absent (no closed bars
+/// yet) puts everything on the floor rather than inventing a scale.
+fn heat_step(qty: Decimal, reference: Option<f64>) -> usize {
+    let Some(reference) = reference.filter(|value| *value > 0.0) else {
+        return 0;
+    };
+    let t = (qty.to_f64().unwrap_or(0.0) / reference).clamp(0.0, 1.0) as f32;
+    HEAT_STEPS
+        .iter()
+        .rposition(|threshold| t >= *threshold)
+        .unwrap_or(0)
+}
+
+/// The fill for a step, resolved from the side's own token toward black or
+/// white until it hits that step's target luminance. The hues are the app's;
+/// only their weight is the ramp's.
+fn heat_fill(side: Side, step: usize) -> egui::Color32 {
+    let base = theme::side_color(side);
+    let target = HEAT_LUMINANCE[step.min(HEAT_LUMINANCE.len() - 1)];
+    let base_luminance = relative_luminance(base);
+    let toward = if target < base_luminance {
+        egui::Color32::BLACK
+    } else {
+        egui::Color32::WHITE
+    };
+    // Binary search on the mix: the channel-space mix is monotonic in
+    // luminance, so twenty steps land well inside a single 8-bit level.
+    let (mut low, mut high) = (0.0_f32, 1.0_f32);
+    for _ in 0..20 {
+        let mid = f32::midpoint(low, high);
+        if relative_luminance(mix_toward(base, toward, mid)) < target {
+            if toward == egui::Color32::WHITE {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        } else if toward == egui::Color32::WHITE {
+            high = mid;
+        } else {
+            low = mid;
+        }
+    }
+    mix_toward(base, toward, f32::midpoint(low, high))
+}
+
+/// The ink for a step. A function of the *step*, never of the colour: no
+/// luminance arithmetic at paint time, no float compared per frame.
+fn heat_ink(step: usize) -> egui::Color32 {
+    if step >= HEAT_INK_FLIP_STEP {
+        theme::CHIP_INK
+    } else {
+        theme::TEXT_PRIMARY
+    }
+}
+
+fn mix_toward(from: egui::Color32, to: egui::Color32, amount: f32) -> egui::Color32 {
+    let amount = amount.clamp(0.0, 1.0);
+    let channel = |from: u8, to: u8| -> u8 {
+        (f32::from(from) + (f32::from(to) - f32::from(from)) * amount).round() as u8
+    };
+    egui::Color32::from_rgb(
+        channel(from.r(), to.r()),
+        channel(from.g(), to.g()),
+        channel(from.b(), to.b()),
+    )
+}
+
+/// WCAG relative luminance of an opaque colour.
+fn relative_luminance(color: egui::Color32) -> f32 {
+    let linear = |channel: u8| -> f32 {
+        let value = f32::from(channel) / 255.0;
+        if value <= 0.03928 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(color.r()) + 0.7152 * linear(color.g()) + 0.0722 * linear(color.b())
+}
+
+/// WCAG contrast ratio between two opaque colours. Used by the tests that pin
+/// every number the layer draws against the background it is drawn on.
+#[cfg(test)]
+fn contrast_ratio(a: egui::Color32, b: egui::Color32) -> f32 {
+    let (high, low) = {
+        let (x, y) = (relative_luminance(a), relative_luminance(b));
+        (x.max(y), x.min(y))
+    };
+    (high + 0.05) / (low + 0.05)
+}
+
+/// A light top edge and a dark bottom edge — the cheap bevel.
+///
+/// Two rects rather than four: the left and right faces are the least
+/// informative of the four in a field of cells that already touch sideways,
+/// and they cost 57% more. Rects rather than strokes, because a stroke goes
+/// through the tessellator's feathering, and feathering is exactly what blurs
+/// a one-pixel edge into nothing.
+fn paint_bevel(painter: &egui::Painter, rect: egui::Rect, row_height: f32) {
+    if row_height < BEVEL_MIN_ROW_PX {
+        return;
+    }
+    painter.rect_filled(
+        egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), rect.top() + BEVEL_PX)),
+        egui::Rounding::ZERO,
+        BEVEL_HIGHLIGHT,
+    );
+    painter.rect_filled(
+        egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - BEVEL_PX), rect.max),
+        egui::Rounding::ZERO,
+        BEVEL_SHADOW,
+    );
+}
+
+/// How many number columns the cluster draws: three with the total, two
+/// without. The knob exists because the third column costs ~33 px of candle
+/// width, and a trader who would rather see more bars than one more number
+/// should not have to leave the style to get them.
+fn cluster_columns(config: &crate::footprint_config::FootprintConfig) -> f32 {
+    if config.cluster_show_total { 3.0 } else { 2.0 }
+}
+
+/// One row of the `bidask` style: both sides at their real size, mirrored
+/// around the bar's axis on one shared scale.
+///
+/// The split answers "who won, and how much traded"; this answers "how big was
+/// each side" — a question the split's single delta bar cannot, because 400×380
+/// and 40×20 share a delta and are not the same market. Two mirrored lengths
+/// on one scale make that difference the first thing the eye gets, with no
+/// digit involved, which is why this style survives down to Profile where the
+/// number styles cannot go.
+fn draw_bidask_row(
+    frame: &LayerFrame<'_>,
+    cell: &FootprintLevel,
+    geometry: &RowGeometry,
+    xc: f32,
+    max_side_volume: f64,
+    row_group: f64,
+) {
+    let painter = frame.painter;
+    let reach = (frame.half - 1.0).max(1.0);
+    let top = geometry.top + 0.5;
+    let bottom = geometry.bottom - 0.5;
+    for (side, qty, imbalanced) in [
+        (Side::Sell, cell.sell, geometry.sell_imbalance),
+        (Side::Buy, cell.buy, geometry.buy_imbalance),
+    ] {
+        let frac = (qty.to_f64().unwrap_or(0.0) / max_side_volume) as f32;
+        let span = reach * frac.clamp(0.0, 1.0);
+        if span <= 0.0 {
+            continue;
+        }
+        // Sell grows left, buy grows right: the tape's own left-to-right, the
+        // same one the ladder's columns keep.
+        let bar = match side {
+            Side::Sell => {
+                egui::Rect::from_min_max(egui::pos2(xc - span, top), egui::pos2(xc, bottom))
+            }
+            Side::Buy => {
+                egui::Rect::from_min_max(egui::pos2(xc, top), egui::pos2(xc + span, bottom))
+            }
+        };
+        painter.rect_filled(
+            bar,
+            egui::Rounding::ZERO,
+            theme::side_color(side).gamma_multiply(BIDASK_BAR_ALPHA),
+        );
+        if imbalanced {
+            // A cap on the growing end, in the side's own ink. It reads as a
+            // tipped bar rather than a coloured one — form first, hue as
+            // backup — and it lands where the eye already is, at the end of
+            // the longest bar in the row.
+            let cap = match side {
+                Side::Sell => egui::Rect::from_min_max(
+                    egui::pos2(bar.left(), top),
+                    egui::pos2(bar.left() + IMBALANCE_EDGE_PX, bottom),
+                ),
+                Side::Buy => egui::Rect::from_min_max(
+                    egui::pos2(bar.right() - IMBALANCE_EDGE_PX, top),
+                    egui::pos2(bar.right(), bottom),
+                ),
+            };
+            painter.rect_filled(cap, egui::Rounding::ZERO, theme::ink(side));
+        }
+    }
+    if geometry.is_poc {
+        draw_poc_dot(frame, xc, geometry.row, row_group);
+    }
+}
+
+/// One row of the `cluster` style: the reference chart's boxed ladder — bid,
+/// ask and the row total, each cell shaded by how much volume it holds.
+#[allow(clippy::too_many_arguments)]
+fn draw_cluster_row(
+    frame: &LayerFrame<'_>,
+    level: DetailLevel,
+    cell: &FootprintLevel,
+    geometry: &RowGeometry,
+    xc: f32,
+    heat: Option<f64>,
+    row_group: f64,
+) {
+    let painter = frame.painter;
+    let reach = (frame.half - 1.0).max(1.0);
+    let inset = crate::footprint_config::CANDLE_LANE_PX;
+    let top = geometry.top + 0.5;
+    let bottom = geometry.bottom - 0.5;
+    let columns = cluster_columns(frame.config);
+    let inner = 2.0 * reach - inset - 2.0 * CLUSTER_BOX_PAD_PX;
+    let column_width = ((inner - (columns - 1.0) * CLUSTER_GUTTER_PX) / columns).max(1.0);
+    let bevel = frame.config.cluster_bevel && level == DetailLevel::Detailed;
+    let font = egui::FontId::monospace(
+        (geometry.row_height - 2.0)
+            .min(column_width - 2.0)
+            .clamp(LADDER_MIN_FONT_PX, 13.0),
+    );
+
+    let mut x = xc - reach + inset + CLUSTER_BOX_PAD_PX;
+    let mut column_rect = |painter: &egui::Painter| -> egui::Rect {
+        let rect =
+            egui::Rect::from_min_max(egui::pos2(x, top), egui::pos2(x + column_width, bottom));
+        let _ = painter;
+        x += column_width + CLUSTER_GUTTER_PX;
+        rect
+    };
+
+    // Bid then ask, in that order and never the other: the ramp is
+    // isoluminant between the two sides, so under deuteranopia the hues
+    // collapse and *position* is what still says which side a number is.
+    // That is a deliberate trade — luminance carries the ordinal reading,
+    // which works for everyone — and it only holds while the columns stay put.
+    for (side, qty, imbalanced) in [
+        (Side::Sell, cell.sell, geometry.sell_imbalance),
+        (Side::Buy, cell.buy, geometry.buy_imbalance),
+    ] {
+        let rect = column_rect(painter);
+        let step = heat_step(qty, heat);
+        painter.rect_filled(rect, egui::Rounding::ZERO, heat_fill(side, step));
+        if bevel {
+            paint_bevel(painter, rect, geometry.row_height);
+        }
+        if imbalanced {
+            painter.rect_stroke(
+                rect.shrink(0.5),
+                egui::Rounding::ZERO,
+                egui::Stroke::new(1.5_f32, theme::ink(side)),
+            );
+        }
+        if frame.config.show_numbers {
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                fmt_qty(qty),
+                font.clone(),
+                heat_ink(step),
+            );
+        }
+    }
+
+    // The total column carries a silhouette, not a heat step. The grey bar
+    // answers "where did volume concentrate" on an axis — length — that does
+    // not compete with the digit for contrast, so the whole column lives on a
+    // single ink with no flip rule. It is also the same silhouette the split
+    // style draws, which is the point: one visual idea, two places.
+    if columns > 2.0 {
+        let rect = column_rect(painter);
+        let volume = cell.volume();
+        let frac = heat.map_or(0.0, |reference| {
+            (volume.to_f64().unwrap_or(0.0) / reference).clamp(0.0, 1.0) as f32
+        });
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                rect.min,
+                egui::pos2(rect.left() + rect.width() * frac, rect.bottom()),
+            ),
+            egui::Rounding::ZERO,
+            PROFILE_COLOR.gamma_multiply(CLUSTER_TOTAL_SILHOUETTE_ALPHA),
+        );
+        if bevel {
+            paint_bevel(painter, rect, geometry.row_height);
+        }
+        if frame.config.show_numbers {
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                fmt_qty(volume),
+                font,
+                theme::TEXT_PRIMARY,
+            );
+        }
+    }
+
+    if geometry.is_poc {
+        // A ring, with the casing under-stroke the ramp makes mandatory:
+        // POC yellow over the ramp's brightest step is 1.1:1, and a signal
+        // that vanishes on the busiest rows is worse than no signal.
+        let ring = egui::Rect::from_min_max(
+            egui::pos2(xc - reach + inset, geometry.top + 0.5),
+            egui::pos2(xc + reach, geometry.bottom - 0.5),
+        );
+        painter.rect_stroke(
+            ring,
+            egui::Rounding::ZERO,
+            egui::Stroke::new(1.5 + theme::CASING_EXTRA_PX, theme::CASING),
+        );
+        painter.rect_stroke(
+            ring,
+            egui::Rounding::ZERO,
+            egui::Stroke::new(1.5_f32, theme::POC),
+        );
+    }
+    let _ = row_group;
+}
+
 /// Full-candle POC line, the non-split styles' and Marks level's shape.
 fn draw_poc_dot(frame: &LayerFrame<'_>, xc: f32, row: i64, row_group: f64) {
     draw_poc_line(frame, xc - frame.half, xc + frame.half, row, row_group);
@@ -1178,9 +1790,18 @@ fn draw_zone_mark(frame: &LayerFrame<'_>, mark: &ZoneMark, row_group: f64) {
     let bottom = high_bottom.max(low_bottom);
     let left = (frame.x_center)(mark.first_slot) - frame.half;
     let right = (frame.x_center)(mark.last_slot) + frame.half;
-    // A zone is memory: it outlives its bars to the right edge as a hairline,
-    // and marks its own bars with a firmer band on the side that dominated.
-    let color = side_color(mark.side);
+    // A zone marks the bars that formed it with a wash, and closes on a
+    // firmer band at the right — the side that dominated, one bar past the
+    // last one that re-formed it.
+    //
+    // It does *not* yet outlive those bars. A zone's trading value is memory
+    // — a level to watch for a retest — and memory needs a life after its
+    // origin plus a rule for when it dies (a stacked imbalance dies on a
+    // print through the far edge; absorption dies on a *close* through it,
+    // because a wick that pierces and returns is the defender holding). That
+    // is a level-memory of its own, shared with naked POCs and absorption,
+    // and it is not this change.
+    let color = theme::side_color(mark.side);
     frame.painter.rect_filled(
         egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(right, bottom)),
         egui::Rounding::ZERO,
@@ -1198,6 +1819,7 @@ fn draw_zone_mark(frame: &LayerFrame<'_>, mark: &ZoneMark, row_group: f64) {
 fn draw_legend(
     frame: &LayerFrame<'_>,
     level: DetailLevel,
+    style: crate::footprint_config::FootprintStyle,
     group: Decimal,
     k: i64,
     aggregated_any: bool,
@@ -1207,6 +1829,15 @@ fn draw_legend(
     debug: Option<String>,
 ) {
     let mut text = String::from("footprint");
+    // A style that handed over says so, naming both: the trader asked for one
+    // reading and is looking at another, and a chart that quietly became a
+    // different chart is the same defect as a layer that is on and invisible.
+    if style != frame.config.style {
+        text.push_str(" · ");
+        text.push_str(frame.config.style.id());
+        text.push_str(" → ");
+        text.push_str(style.id());
+    }
     match level {
         DetailLevel::Off => text.push_str(" · zoom in for detail"),
         DetailLevel::Marks => text.push_str(" · marks"),
@@ -1214,13 +1845,10 @@ fn draw_legend(
         DetailLevel::Compact => text.push_str(" · delta"),
         // The legend names what the columns actually are — "sell|buy" over
         // a delta ladder would misread every number (data honesty).
-        DetailLevel::Detailed => text.push_str(
-            if frame.config.style == crate::footprint_config::FootprintStyle::Split {
-                " · delta|volume"
-            } else {
-                " · sell|buy"
-            },
-        ),
+        DetailLevel::Detailed => {
+            text.push_str(" · ");
+            text.push_str(style.detailed_legend());
+        }
     }
     // How much further to zoom, in the only unit the gesture has. "zoom in for
     // numbers" with no number is why this layer read as slow to arrive: a
@@ -1294,27 +1922,27 @@ mod tests {
     fn levels_need_both_width_and_a_reachable_row_height() {
         // Wide candle, healthy rows: full detail.
         assert_eq!(
-            level_for(100.0, 12.0, PROFILE_MIN_ROW),
+            level_for(100.0, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
             DetailLevel::Detailed
         );
         // Wide candle, hairline base rows: grouping x100 still reaches 12px.
         assert_eq!(
-            level_for(100.0, 0.2, PROFILE_MIN_ROW),
+            level_for(100.0, 0.2, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
             DetailLevel::Detailed
         );
         // Wide candle, sub-hairline rows: the extended snap ladder rescues
         // detail far deeper than 100× (an index future on the 0.01 fallback
         // grid), so only truly hopeless rows drop to profile, then marks.
         assert_eq!(
-            level_for(100.0, 0.05, PROFILE_MIN_ROW),
+            level_for(100.0, 0.05, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
             DetailLevel::Detailed
         );
         assert_eq!(
-            level_for(100.0, 0.0006, PROFILE_MIN_ROW),
+            level_for(100.0, 0.0006, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
             DetailLevel::Profile
         );
         assert_eq!(
-            level_for(100.0, 0.0003, PROFILE_MIN_ROW),
+            level_for(100.0, 0.0003, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
             DetailLevel::Marks
         );
         // Width floors gate exactly — stated against the floors themselves, so
@@ -1330,7 +1958,7 @@ mod tests {
             (MARKS_MIN_WIDTH - 1.0, DetailLevel::Off),
         ] {
             assert_eq!(
-                level_for(width, 12.0, PROFILE_MIN_ROW),
+                level_for(width, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
                 expected,
                 "at {width} px per candle"
             );
@@ -1341,6 +1969,216 @@ mod tests {
     /// nudged: a floor under what its own text measures draws digits across
     /// the neighbouring candle, which is worse than making the trader zoom.
     /// This is that derivation, run against whatever the constants say today.
+    /// Compose a translucent colour over an opaque one, the way the painter
+    /// does — so a test measures the pixel the trader sees, not the token.
+    fn over(fg: egui::Color32, bg: egui::Color32) -> egui::Color32 {
+        let alpha = f32::from(fg.a()) / 255.0;
+        // `Color32` is premultiplied, so the source term is already scaled.
+        let channel = |f: u8, b: u8| -> u8 {
+            (f32::from(f) + f32::from(b) * (1.0 - alpha))
+                .round()
+                .min(255.0) as u8
+        };
+        egui::Color32::from_rgb(
+            channel(fg.r(), bg.r()),
+            channel(fg.g(), bg.g()),
+            channel(fg.b(), bg.b()),
+        )
+    }
+
+    /// The floor WCAG calls readable for body text. Every number this layer
+    /// draws is measured against it — no exemptions, because a number a trader
+    /// cannot read is a number that is not there.
+    const AA: f32 = 4.5;
+
+    /// The plate is what makes the ladder's contrast a constant. Proven
+    /// against every background the layer can actually sit on: the canvas, a
+    /// candle body at each of the four appearance presets, and the depth map's
+    /// brightest bands.
+    ///
+    /// Two of those presets used to fail — `Glass` at 4.07:1 and `Classic` at
+    /// 2.18:1 — because the ladder had no plate and inherited whatever the
+    /// trader's taste in candles left behind. That is the defect this test
+    /// exists to keep out.
+    #[test]
+    fn the_ladder_plate_makes_every_background_readable() {
+        let candle_at = |fill: f32, side: egui::Color32| -> egui::Color32 {
+            over(side.gamma_multiply(fill), theme::CANVAS)
+        };
+        let backgrounds = [
+            ("canvas", theme::CANVAS),
+            ("orderflow buy", candle_at(0.20, theme::BUY)),
+            ("orderflow sell", candle_at(0.20, theme::SELL)),
+            ("glass buy", candle_at(0.35, theme::BUY)),
+            ("glass sell", candle_at(0.35, theme::SELL)),
+            ("classic buy", candle_at(1.0, theme::BUY)),
+            ("classic sell", candle_at(1.0, theme::SELL)),
+            ("heat cyan", egui::Color32::from_rgb(0x00, 0xC2, 0xC4)),
+            ("heat amber", egui::Color32::from_rgb(0xFA, 0x9E, 0x2C)),
+            ("heat peak", egui::Color32::from_rgb(0xFF, 0xFA, 0xE8)),
+        ];
+        for (name, background) in backgrounds {
+            let plate = over(theme::CASING, background);
+            for (ink_name, ink) in [
+                ("ordinary", theme::TEXT_PRIMARY),
+                ("buy", theme::ink(Side::Buy)),
+                ("sell", theme::ink(Side::Sell)),
+            ] {
+                let ratio = contrast_ratio(ink, plate);
+                assert!(
+                    ratio >= AA,
+                    "{ink_name} ink over the plate on {name}: {ratio:.2}:1"
+                );
+            }
+            // And on an imbalanced row, where the cell sinks below the plate.
+            for side in [Side::Buy, Side::Sell] {
+                let cell = over(
+                    theme::side_color(side).gamma_multiply(IMBALANCE_CELL_ALPHA),
+                    plate,
+                );
+                let ratio = contrast_ratio(theme::ink(side), cell);
+                assert!(
+                    ratio >= AA,
+                    "{side:?} ink over its imbalanced cell on {name}: {ratio:.2}:1"
+                );
+            }
+        }
+    }
+
+    /// Every step of the heat ramp is readable with the ink that step selects.
+    ///
+    /// This is the assertion the ramp was *designed backwards from*: the ink
+    /// flip sits where it does because between the two inks lies a band of
+    /// luminance neither can serve.
+    #[test]
+    fn every_heat_step_is_readable_with_the_ink_it_picks() {
+        for step in 0..HEAT_STEPS.len() {
+            for side in [Side::Buy, Side::Sell] {
+                let fill = heat_fill(side, step);
+                let ratio = contrast_ratio(heat_ink(step), fill);
+                assert!(
+                    ratio >= AA,
+                    "step {step} on {side:?} ({fill:?}) with its ink: {ratio:.2}:1"
+                );
+            }
+        }
+    }
+
+    /// No step lands in the band where neither ink works.
+    ///
+    /// Between `L = 0.115` (where `TEXT_PRIMARY` runs out of headroom) and
+    /// `L = 0.202` (where `CHIP_INK` gains it) there is no readable ink at
+    /// all. The ramp steps over that gap deliberately, which is why its
+    /// luminance targets are not evenly spaced — and why a well-meant
+    /// "smooth out the ramp" would break it silently.
+    #[test]
+    fn no_heat_step_lands_in_the_unreadable_band() {
+        let forbidden = 0.115..0.202;
+        for step in 0..HEAT_STEPS.len() {
+            for side in [Side::Buy, Side::Sell] {
+                let luminance = relative_luminance(heat_fill(side, step));
+                assert!(
+                    !forbidden.contains(&luminance),
+                    "step {step} on {side:?} sits at L={luminance:.3}, inside the unreadable band"
+                );
+            }
+        }
+        // The flip is where the ramp crosses the band, not an arbitrary index.
+        let below = relative_luminance(heat_fill(Side::Buy, HEAT_INK_FLIP_STEP - 1));
+        let above = relative_luminance(heat_fill(Side::Buy, HEAT_INK_FLIP_STEP));
+        assert!(below < forbidden.start, "step below the flip: L={below:.3}");
+        assert!(above > forbidden.end, "step above the flip: L={above:.3}");
+    }
+
+    /// The cluster's total column carries a silhouette instead of a heat step,
+    /// and that is what buys it one ink with no flip rule. The ceiling is
+    /// load-bearing: past it the column re-enters the unreadable band.
+    #[test]
+    fn the_total_columns_silhouette_stays_under_its_ceiling() {
+        let plate = over(theme::CASING, theme::CANVAS);
+        let filled = over(
+            PROFILE_COLOR.gamma_multiply(CLUSTER_TOTAL_SILHOUETTE_ALPHA),
+            plate,
+        );
+        let ratio = contrast_ratio(theme::TEXT_PRIMARY, filled);
+        assert!(
+            ratio >= AA,
+            "primary ink over the total column's silhouette: {ratio:.2}:1"
+        );
+        const {
+            assert!(
+                CLUSTER_TOTAL_SILHOUETTE_ALPHA <= 0.42,
+                "past 0.42 the silhouette needs a flip rule of its own"
+            );
+        }
+    }
+
+    /// The heat ramp is ordered, and its two sides are isoluminant.
+    ///
+    /// Isoluminance is deliberate: under deuteranopia the two hues collapse,
+    /// and what still separates bid from ask is the *position* of the column.
+    /// That trade only holds while luminance carries the ordinal reading — so
+    /// the ordering is the assertion, and the columns may never swap places.
+    #[test]
+    fn the_heat_ramp_is_ordered_and_isoluminant() {
+        for side in [Side::Buy, Side::Sell] {
+            for step in 1..HEAT_STEPS.len() {
+                let previous = relative_luminance(heat_fill(side, step - 1));
+                let current = relative_luminance(heat_fill(side, step));
+                assert!(
+                    current > previous,
+                    "{side:?} step {step} is not brighter than {}",
+                    step - 1
+                );
+            }
+        }
+        for step in 0..HEAT_STEPS.len() {
+            let buy = relative_luminance(heat_fill(Side::Buy, step));
+            let sell = relative_luminance(heat_fill(Side::Sell, step));
+            assert!(
+                (buy - sell).abs() < 0.02,
+                "step {step}: buy L={buy:.3} vs sell L={sell:.3} — the sides must weigh the same"
+            );
+        }
+    }
+
+    /// A style that cannot pay for its own detail hands over to the one it
+    /// names, and never to itself.
+    #[test]
+    fn cluster_hands_over_below_its_own_floor() {
+        use crate::footprint_config::FootprintStyle;
+        assert_eq!(
+            FootprintStyle::Cluster.fallback(),
+            Some(FootprintStyle::BidAsk)
+        );
+        // The handover target must itself be drawable where the handover
+        // happens, or the fallback is a blank chart.
+        assert!(FootprintStyle::BidAsk.draws_own_rows());
+        assert!(FootprintStyle::BidAsk.fallback().is_none());
+        // And the cluster's floor is genuinely higher, or the handover never
+        // fires and the whole mechanism is decoration.
+        let cluster = detailed_min_width(FootprintStyle::Cluster.detailed_quantity_columns());
+        let ladder = detailed_min_width(FootprintStyle::Ladder.detailed_quantity_columns());
+        assert!(cluster > ladder, "cluster {cluster} vs ladder {ladder}");
+    }
+
+    /// Every style is reachable by the token the hook and the TOML speak, and
+    /// no two share one. A style the registry cannot name is a style the
+    /// second operator cannot pick.
+    #[test]
+    fn every_style_round_trips_through_its_id() {
+        use crate::footprint_config::FootprintStyle;
+        let mut seen = std::collections::BTreeSet::new();
+        for style in FootprintStyle::ALL {
+            assert!(seen.insert(style.id()), "duplicate id {}", style.id());
+            assert_eq!(FootprintStyle::from_id(style.id()), Some(style));
+            assert!(!style.label().is_empty());
+            assert!(!style.hover().is_empty());
+            assert!(!style.detailed_legend().is_empty());
+        }
+        assert_eq!(FootprintStyle::from_id("no-such-style"), None);
+    }
+
     #[test]
     fn every_text_floor_still_fits_the_text_it_draws() {
         let quantity_px = QUANTITY_GLYPHS * GLYPH_EM * LADDER_MIN_FONT_PX;
@@ -1350,11 +2188,24 @@ mod tests {
             compact_body >= quantity_px,
             "compact: {compact_body} px of body for {quantity_px} px of text"
         );
-        // Detailed writes one per half of it.
-        let detailed_half = DETAILED_MIN_WIDTH * TYPICAL_BODY_FRAC / 2.0;
+        // Detailed writes one per half of it — and the halves do not start at
+        // the axis. The ladder anchors its columns at `xc +- CENTER_GUTTER_PX`,
+        // and for two releases that clearance was missing from the floor: at
+        // the floor exactly, the digits reached past the body they were drawn
+        // in. Modelling the gutter here is what stops the two drifting apart
+        // again.
+        let detailed_half = DETAILED_MIN_WIDTH * TYPICAL_BODY_FRAC / 2.0 - CENTER_GUTTER_PX;
         assert!(
             detailed_half >= quantity_px,
-            "detailed: {detailed_half} px per half for {quantity_px} px of text"
+            "detailed: {detailed_half} px per half (gutter removed) for {quantity_px} px of text"
+        );
+        // The same arithmetic has to hold for a style that writes three
+        // quantities across the row rather than two, which is the whole reason
+        // the floor became a function of the column count.
+        let cluster_column = detailed_min_width(3.0) * TYPICAL_BODY_FRAC / 3.0 - CENTER_GUTTER_PX;
+        assert!(
+            cluster_column >= quantity_px,
+            "cluster: {cluster_column} px per column for {quantity_px} px of text"
         );
         // And the ordering that makes them levels at all.
         const {
@@ -1383,8 +2234,8 @@ mod tests {
         let tight = *crate::footprint_config::DETAIL_SCALE_RANGE.start();
         assert!(tight < 1.0);
         for width in [6.0_f32, 10.0, 20.0, 35.0, 63.0, 120.0] {
-            let plain = level_for(width, 12.0, PROFILE_MIN_ROW);
-            let scaled = level_for(width / tight, 12.0, PROFILE_MIN_ROW);
+            let plain = level_for(width, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH);
+            let scaled = level_for(width / tight, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH);
             assert!(scaled >= plain, "at {width} px");
         }
     }
@@ -1410,35 +2261,35 @@ mod tests {
         let mut lod = FootprintLod::default();
         // The first frame takes the strict answer.
         assert_eq!(
-            lod.resolve(floor * 1.2, 12.0, PROFILE_MIN_ROW),
+            lod.resolve(floor * 1.2, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
             DetailLevel::Detailed
         );
         // Just under the floor: inside the 15% band, the level holds.
         assert_eq!(
-            lod.resolve(floor * 0.95, 12.0, PROFILE_MIN_ROW),
+            lod.resolve(floor * 0.95, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
             DetailLevel::Detailed
         );
         // 15% past the floor: the downgrade happens.
         assert_eq!(
-            lod.resolve(floor * 0.83, 12.0, PROFILE_MIN_ROW),
+            lod.resolve(floor * 0.83, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
             DetailLevel::Compact
         );
         // Upgrades need the same clearance: over the floor but not 15% over,
         // so the level holds — an instant upgrade against a banded downgrade
         // is a blinker at the boundary.
         assert_eq!(
-            lod.resolve(floor * 1.1, 12.0, PROFILE_MIN_ROW),
+            lod.resolve(floor * 1.1, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
             DetailLevel::Compact
         );
         assert_eq!(
-            lod.resolve(floor * 1.2, 12.0, PROFILE_MIN_ROW),
+            lod.resolve(floor * 1.2, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
             DetailLevel::Detailed
         );
         // The blinker scenario itself: oscillating across the floor by a
         // hair must not change the level once settled.
         for width in [floor * 1.02, floor * 0.98, floor * 1.02, floor * 0.98] {
             assert_eq!(
-                lod.resolve(width, 12.0, PROFILE_MIN_ROW),
+                lod.resolve(width, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
                 DetailLevel::Detailed,
                 "width {width} blinked"
             );
@@ -1453,12 +2304,12 @@ mod tests {
         let mut lod = FootprintLod::default();
         // Locked at Marks by a startup-era span (rows unreachable)...
         assert_eq!(
-            lod.resolve(100.0, 0.0001, PROFILE_MIN_ROW),
+            lod.resolve(100.0, 0.0001, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
             DetailLevel::Marks
         );
         // ...then the real span arrives: two steps away, no band, snap.
         assert_eq!(
-            lod.resolve(100.0, 12.0, PROFILE_MIN_ROW),
+            lod.resolve(100.0, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
             DetailLevel::Detailed
         );
 

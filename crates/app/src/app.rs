@@ -1669,6 +1669,24 @@ impl QuantickApp {
         if std::env::var("QUANTICK_FOOTPRINT_PANEL").is_ok_and(|value| value == "1") {
             app.show_footprint_settings = true;
         }
+        // Every style by its own id, resolved through the same registry the
+        // panel's selector and the TOML read. A style reachable by click but
+        // not by name is a style the second operator cannot pick, and one
+        // more list to keep in step by hand.
+        if let Ok(value) = std::env::var("QUANTICK_FOOTPRINT_STYLE") {
+            match crate::footprint_config::FootprintStyle::from_id(value.trim()) {
+                Some(style) => app.footprint_config.style = style,
+                // Named and unknown is a typo in a validation script, and a
+                // silent fallback to the default would have it photograph the
+                // wrong style and call it a pass.
+                None => tracing::warn!(
+                    requested = %value,
+                    known = ?crate::footprint_config::FootprintStyle::ALL
+                        .map(crate::footprint_config::FootprintStyle::id),
+                    "QUANTICK_FOOTPRINT_STYLE names no known style; keeping the current one",
+                ),
+            }
+        }
         // The indicator settings dialog (sliders + live preview): pair with
         // an autostart hook that loads an indicator; the dialog opens for
         // the first slot as soon as its inputs arrive from the worker.
@@ -2363,6 +2381,7 @@ impl QuantickApp {
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
         let live_strip_on = tab.flow_pane.live_strip_visible;
+        let footprint_on = tab.flow_pane.footprint_visible;
         let pane = match focused {
             PaneSide::Time => tab.time_pane.as_mut().unwrap_or(&mut tab.flow_pane),
             PaneSide::Flow => &mut tab.flow_pane,
@@ -2387,6 +2406,7 @@ impl QuantickApp {
             heatmap_on,
             bubbles_on,
             live_strip_on,
+            footprint_on,
             dock_visible,
             appearance_open: show_style,
             paper: toolbar::PaperTradeModel {
@@ -2432,6 +2452,13 @@ impl QuantickApp {
             ToolbarAction::SetLiveStrip(shown) => {
                 self.active_tab_mut().flow_pane.live_strip_visible = shown;
             }
+            // The same field the pane's layer menu writes, through the same
+            // setter, so the button and the menu can never disagree about
+            // which layer is on.
+            ToolbarAction::SetFootprint(shown) => {
+                self.active_tab_mut().flow_pane.footprint_visible = shown;
+            }
+            ToolbarAction::OpenFootprintSettings => self.show_footprint_settings = true,
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
             ToolbarAction::ToggleAppearance => self.show_style = !self.show_style,

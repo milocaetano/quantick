@@ -4874,18 +4874,47 @@ impl ChartPane {
         let half = chrome.style.candles.body_half_width(cw);
         let right = history_rect.right();
 
-        // With the footprint on, the candle cedes its interior to the ladder
-        // as the zoom crosses into detail: the body fill fades out and the
-        // outline steps in — the reference charts' outline-box candles. With
-        // the layer off the candles are untouched at any zoom.
+        // How the candle behaves under the footprint is the *style's* answer,
+        // not this function's: a style that draws inside the candle needs its
+        // interior, and one that draws in a box beside it needs the candle out
+        // of the way entirely. With the layer off, candles are untouched at
+        // any zoom.
+        let footprint_style = self
+            .footprint_override
+            .as_ref()
+            .unwrap_or(chrome.footprint)
+            .style;
+        let treatment = footprint_style.candle_treatment();
+        // The lane a sidebar candle keeps at the left of its slot. Zero
+        // otherwise, so nothing moves for the styles that draw in place.
+        let candle_lane = if footprint_on {
+            treatment.content_inset()
+        } else {
+            0.0
+        };
         let mut faded_candles = None;
         if footprint_on {
-            let body = crate::footprint_render::candle_body_fade(cw);
-            if body < 1.0 {
-                let mut faded = chrome.style.candles;
-                faded.fill_opacity *= body;
-                faded.outline_opacity = faded.outline_opacity.max(1.0 - body);
-                faded_candles = Some(faded);
+            match treatment {
+                // The candle cedes its interior to the ladder as the zoom
+                // crosses into detail: the body fill fades out and the outline
+                // steps in — the reference charts' outline-box candles.
+                crate::footprint_config::CandleTreatment::Fade => {
+                    let body = crate::footprint_render::candle_body_fade(cw);
+                    if body < 1.0 {
+                        let mut faded = chrome.style.candles;
+                        faded.fill_opacity *= body;
+                        faded.outline_opacity = faded.outline_opacity.max(1.0 - body);
+                        faded_candles = Some(faded);
+                    }
+                }
+                // Beside the box, the candle is a solid sliver again: nothing
+                // is behind anything, so there is nothing to fade *for*, and a
+                // 3 px outline-only bar would read as a scratch.
+                crate::footprint_config::CandleTreatment::Sidebar => {
+                    let mut sidebar = chrome.style.candles;
+                    sidebar.fill_opacity = 1.0;
+                    faded_candles = Some(sidebar);
+                }
             }
         }
         let candles = faded_candles.as_ref().unwrap_or(&chrome.style.candles);
@@ -5056,18 +5085,23 @@ impl ChartPane {
             let paint = painted
                 .then(|| self.indicators.slot_paint(index..index + 1, forming))
                 .flatten();
-            draw_candle(
-                &clip,
+            // A sidebar candle moves into the lane the footprint left it at
+            // the slot's left edge; every other case draws where it always
+            // did, at full body width. One call, two geometries — never a
+            // second candle path, which would drift from this one.
+            let slot = if candle_lane > 0.0 {
+                let sliver = (candle_lane / 2.0 - 1.0).max(1.0);
+                crate::candle_view::BarSlot {
+                    xc: xc - half + sliver + 1.0,
+                    half_width: sliver,
+                }
+            } else {
                 crate::candle_view::BarSlot {
                     xc,
                     half_width: half,
-                },
-                &scale,
-                bar,
-                forming,
-                candles,
-                paint,
-            );
+                }
+            };
+            draw_candle(&clip, slot, &scale, bar, forming, candles, paint);
         });
         // The footprint rides directly on the candles, before everything
         // drawn over them: it is a representation of the bars themselves,
