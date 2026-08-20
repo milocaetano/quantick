@@ -686,19 +686,6 @@ const FOLD_RING_WIDTH: f32 = 1.0;
 /// pressure the bubble is there to show.
 const FOLD_RING_ALPHA: f32 = 0.55;
 
-/// Where the fold count sits, as a share of the radius below the centre. The
-/// disc's own label owns the centre.
-const FOLD_COUNT_OFFSET_SCALE: f32 = 0.45;
-
-/// Font size of the fold count, as a share of the radius. Smaller than the
-/// quantity label: it is a caveat about the mark, not the mark's headline.
-const FOLD_COUNT_FONT_SCALE: f32 = 0.5;
-
-/// Smallest radius that can carry the count of marks a fold stands for. Under
-/// it the ring is the whole statement — "this is more than one print" — which
-/// is the part a trader must not miss.
-const FOLD_COUNT_MIN_RADIUS: f32 = 7.0;
-
 /// The three colours a shaded bubble interpolates between: lit core, side
 /// colour, darkened rim.
 #[derive(Debug, Clone, Copy)]
@@ -966,28 +953,11 @@ fn draw_bubble(
                 color.gamma_multiply(FOLD_RING_ALPHA * bubbles.opacity),
             ),
         );
-        // Under the centre, not on it: the bubble's own quantity/trade-count
-        // label is drawn centred by the caller, and a fold's size saturates at
-        // the top of the radius range, so a centred count landed on top of it
-        // every time and neither was readable. Kept to two digits — past
-        // ninety-nine the ring and the label carry the story, and a third glyph
-        // does not fit the disc.
-        if radius >= FOLD_COUNT_MIN_RADIUS {
-            let count = if folded > 99 {
-                "99+".to_owned()
-            } else {
-                folded.to_string()
-            };
-            painter.text(
-                center + egui::vec2(0.0, radius * FOLD_COUNT_OFFSET_SCALE),
-                egui::Align2::CENTER_CENTER,
-                count,
-                egui::FontId::proportional(
-                    (radius * FOLD_COUNT_FONT_SCALE).clamp(LABEL_MIN_FONT_PX, LABEL_MAX_FONT_PX),
-                ),
-                colors.text,
-            );
-        }
+        // The count itself lives in the bubble's own label, where the eye
+        // already is, as `⊕4` against a cluster's `×4` — see `bubble_label`.
+        // Drawing it a second time here put two glyph runs on the same pixel,
+        // because a fold's size saturates at the top of the radius range and so
+        // its label always draws too.
     }
 
     // This print ate resting liquidity at this exact price.
@@ -1862,6 +1832,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             && let Some(label) = bubble_label(
                 trade.quantity,
                 trade.trade_count,
+                trade.folded_marks,
                 bubbles.show_quantity_labels,
                 bubbles.show_trade_count,
             )
@@ -2751,17 +2722,32 @@ fn bubble_radius(size: f32, minimum: f32, maximum: f32) -> f32 {
     (minimum.powi(2) + normalized_quantity * (maximum.powi(2) - minimum.powi(2))).sqrt()
 }
 
+/// The text inside a bubble: what traded, and how many prints it stands for.
+///
+/// `folded` is what the frame's budget merged into this mark, and it changes
+/// the *separator* rather than adding a second number. `×4` is a cluster — four
+/// prints that happened together at one price, which is a fact about the
+/// market. `⊕4` is a fold — four marks the frame put together to fit, which is
+/// a fact about the canvas. A trader sizing a position off the first would be
+/// right and off the second would be wrong, so they may not share a glyph. The
+/// ring around a folded disc says the same thing again, further out, for the
+/// dots too small to carry text.
 fn bubble_label(
     quantity: Decimal,
     trade_count: usize,
+    folded: u32,
     show_quantity: bool,
     show_count: bool,
 ) -> Option<String> {
+    let mark = if folded > 1 { '⊕' } else { '×' };
     match (show_quantity, show_count && trade_count > 1) {
         (false, false) => None,
         (true, false) => Some(format_quantity(quantity)),
-        (false, true) => Some(format!("×{trade_count}")),
-        (true, true) => Some(format!("{} · ×{trade_count}", format_quantity(quantity))),
+        (false, true) => Some(format!("{mark}{trade_count}")),
+        (true, true) => Some(format!(
+            "{} · {mark}{trade_count}",
+            format_quantity(quantity)
+        )),
     }
 }
 
@@ -3226,13 +3212,13 @@ mod tests {
     #[test]
     fn labels_are_honest_and_compact() {
         assert_eq!(
-            bubble_label(Decimal::from(1_250), 4, true, true),
+            bubble_label(Decimal::from(1_250), 4, 0, true, true),
             Some("1.25K · ×4".to_owned())
         );
         assert_eq!(format_quantity(Decimal::from(100)), "100");
         assert_eq!(format_quantity(Decimal::ZERO), "0");
         assert_eq!(
-            bubble_label(Decimal::ONE, 1, false, true),
+            bubble_label(Decimal::ONE, 1, 0, false, true),
             None,
             "one trade does not need a redundant count"
         );
@@ -4701,10 +4687,9 @@ mod tests {
             fold.len() > print.len(),
             "the fold has to add ink, not swap it"
         );
-        assert!(
-            fold.contains("\"4\""),
-            "a bubble this size has room to say how many marks it stands for"
-        );
+        // The count itself is the label's business now (`⊕4` against a
+        // cluster's `×4`); what `draw_bubble` owes is the ring, which is what
+        // the dots too small for text have to rely on.
 
         // At dot size the count will not fit, and the ring alone has to carry
         // the statement — the part a trader must not miss is "more than one".
@@ -4719,6 +4704,26 @@ mod tests {
         assert_ne!(
             dot_print, dot_fold,
             "a folded dot is indistinguishable from a single print"
+        );
+    }
+    /// A fold and a cluster may not read the same.
+    ///
+    /// `×4` says four prints happened together at one price — a fact about the
+    /// market, and a size a trader may act on. `⊕4` says the frame put four
+    /// marks together to fit its budget — a fact about the canvas, and a size
+    /// that never crossed the tape at once. Sharing a glyph would let the
+    /// second be read as the first.
+    #[test]
+    fn a_fold_and_a_cluster_do_not_share_a_glyph() {
+        let cluster =
+            bubble_label(rust_decimal::Decimal::from(20), 4, 0, true, true).expect("labels are on");
+        let fold =
+            bubble_label(rust_decimal::Decimal::from(20), 4, 4, true, true).expect("labels are on");
+        assert_eq!(cluster, "20 · ×4");
+        assert_eq!(fold, "20 · ⊕4");
+        assert_ne!(
+            cluster, fold,
+            "a budget fold reads as four prints that traded"
         );
     }
 }
