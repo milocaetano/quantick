@@ -177,6 +177,12 @@ impl OrderflowRenderStyle {
             aggression_layer: config.show_aggressions,
             lane_depth_layer: config.lane_depth_drawn(),
             lane_aggression_layer: config.lane_aggressions_drawn(),
+            // The trader's own four switches, carried raw. Whether a *pane*
+            // still draws a book is a second question, and it is asked where
+            // the pane is known — `draw_liquidity_events` for the reductions,
+            // the depth clip for the cells. Folding the two together here would
+            // answer "is a book drawn anywhere", which clears the candles only
+            // when the tape's map is off too.
             show_liquidity: config.show_liquidity,
             show_buy: config.show_buy_aggressions,
             show_sell: config.show_sell_aggressions,
@@ -1366,6 +1372,17 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
     }
 
     for gap in context.projection.gaps.iter() {
+        // Same two questions the reductions answer, and for the same reason: a
+        // coverage gap explains a hole in the *book*, so it belongs to the pane
+        // that draws one, and `show_gaps` reached only the legend until now.
+        let pane_draws_book = if context.layout.in_lane(gap.x0) {
+            style.lane_depth_layer
+        } else {
+            style.depth_layer
+        };
+        if !pane_draws_book || !style.show_gaps {
+            continue;
+        }
         let x0 = context.layout.x(gap.x0);
         let x1 = context.layout.x(gap.x1);
         let rect = egui::Rect::from_min_max(
@@ -1500,6 +1517,33 @@ pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderCon
     let right_edge = context.layout.chart_rect.right();
 
     for event in &context.projection.liquidity_events {
+        // Two questions, both answered here because nowhere else asks.
+        //
+        // Does the pane this mark lands on still draw a book? A reduction is a
+        // statement about the order book, so it goes when the book does — and
+        // *per pane*, because the two switched apart: the candles' map off with
+        // the tape's still on has to clear the candles and leave the tape, which
+        // is exactly the state the report came from.
+        //
+        // And is this kind switched on? The projection filters these events by
+        // *threshold* and never by the trader's choice — deliberately, since
+        // both kinds are factual and the retained history stays complete — so
+        // with nothing checking here, unticking "L2 reduction (unattributed)"
+        // dropped the legend entry and left every violet mark painting. The
+        // legend said the layer was off while the trader looked straight at it.
+        let on_tape = context.layout.in_lane(event.x);
+        let pane_draws_book = if on_tape {
+            style.lane_depth_layer
+        } else {
+            style.depth_layer
+        };
+        let kind_shown = match event.evidence {
+            LiquidityEvidence::AggressionAligned => style.show_aligned,
+            LiquidityEvidence::DepthOnly => style.show_unattributed,
+        };
+        if !pane_draws_book || !kind_shown {
+            continue;
+        }
         let band = context
             .layout
             .event_band(event.x, event.y0, event.y1, style.min_cell_height);
@@ -4724,6 +4768,168 @@ mod tests {
         assert_ne!(
             cluster, fold,
             "a budget fold reads as four prints that traded"
+        );
+    }
+    /// A reduction kind switched off leaves the canvas, not just the legend.
+    ///
+    /// The trader's report: unchecking "L2 reduction (unattributed)" took the
+    /// entry out of the legend and left every violet mark painting. The
+    /// projection filters those events by threshold and never by choice - both
+    /// kinds are factual and the history stays complete - so the renderer is
+    /// the only place the switch can be honoured, and it was not asking. The
+    /// legend then said the layer was off while the trader looked straight at
+    /// it, which is the data-honesty rule inverted.
+    #[test]
+    fn the_legend_and_the_canvas_agree_about_a_reduction_kind() {
+        // The legend already honoured both switches; the canvas did not. Pin
+        // them to the same two flags so they cannot drift apart again.
+        let entries = |aligned: bool, unattributed: bool| {
+            let style = OrderflowRenderStyle {
+                depth_layer: true,
+                aggression_layer: true,
+                show_aligned: aligned,
+                show_unattributed: unattributed,
+                ..OrderflowRenderStyle::default()
+            };
+            legend_entries(&style, "liquidity".to_owned())
+                .into_iter()
+                .map(|(_, label)| label)
+                .collect::<Vec<_>>()
+        };
+        let both = entries(true, true);
+        assert!(both.iter().any(|l| l.contains("unattributed")));
+        assert!(both.iter().any(|l| l.contains("aggression-aligned")));
+
+        let aligned_only = entries(true, false);
+        assert!(
+            !aligned_only.iter().any(|l| l.contains("unattributed")),
+            "the legend drops the entry"
+        );
+        assert!(
+            aligned_only
+                .iter()
+                .any(|l| l.contains("aggression-aligned"))
+        );
+    }
+
+    /// Switching the book off clears the marks that describe it, on the pane
+    /// that lost it — and switching one kind off clears that kind everywhere.
+    ///
+    /// Both were broken and both looked the same from the chair: the trader
+    /// unticked "L2 reduction (unattributed)", the legend dropped the entry,
+    /// and every violet mark kept painting. `draw_liquidity_events` walked the
+    /// projection and drew each event without ever reading a switch — the
+    /// projection filters these by *threshold* and never by choice, since both
+    /// kinds are factual and the retained history stays complete, so the
+    /// renderer was the only place left to ask and it was not asking.
+    ///
+    /// The pane half matters just as much: the two maps switch apart, so
+    /// "the book is off" is a question per canvas. Answering it with "is a book
+    /// drawn anywhere" left the candles violet whenever the tape still had one.
+    #[test]
+    fn a_reduction_leaves_the_canvas_with_the_book_that_explains_it() {
+        let viewport = Viewport::new();
+        let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        // A lane 200 px wide: everything past x = 600 belongs to the tape.
+        let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 200.0);
+        let mut projection = HeatmapProjection::empty(
+            true,
+            crate::orderflow::EffectiveGrouping::resolve(
+                crate::orderflow::DisplayGrouping::Native,
+                rust_decimal::Decimal::ONE,
+                rust_decimal::Decimal::from(100),
+            ),
+        );
+        let event = |event_id: u64, x: f64, evidence: LiquidityEvidence| {
+            crate::orderflow::LiquidityEventPrimitive {
+                event_id,
+                generation: 1,
+                side: quantick_orderbook::BookSide::Bid,
+                price_bucket: rust_decimal::Decimal::from(100),
+                timestamp_ms: 0,
+                before: rust_decimal::Decimal::from(10),
+                after: rust_decimal::Decimal::ZERO,
+                removed: rust_decimal::Decimal::from(10),
+                fraction: 1.0,
+                full_removal: true,
+                matched_quantity: rust_decimal::Decimal::ZERO,
+                matched_fraction: 0.0,
+                evidence,
+                x,
+                y0: 0.4,
+                y1: 0.6,
+            }
+        };
+        // One of each kind on the candles, one of each on the tape.
+        projection.liquidity_events = vec![
+            event(1, 0.2, LiquidityEvidence::DepthOnly),
+            event(2, 0.3, LiquidityEvidence::AggressionAligned),
+            event(3, 0.9, LiquidityEvidence::DepthOnly),
+            event(4, 0.95, LiquidityEvidence::AggressionAligned),
+        ];
+
+        let ink = |style: &OrderflowRenderStyle| {
+            painted(|painter| {
+                draw_liquidity_events(painter, &RenderContext::new(&projection, layout, style))
+            })
+        };
+        let both_maps = OrderflowRenderStyle {
+            depth_layer: true,
+            lane_depth_layer: true,
+            ..OrderflowRenderStyle::default()
+        };
+        let all = ink(&both_maps);
+        assert!(all.len() > 200, "the baseline has to actually paint");
+
+        // The candles lose their map, the tape keeps its own.
+        let candles_clear = ink(&OrderflowRenderStyle {
+            depth_layer: false,
+            ..both_maps.clone()
+        });
+        assert!(
+            candles_clear.len() < all.len(),
+            "removing the candles' book removed no ink"
+        );
+        let tape_clear = ink(&OrderflowRenderStyle {
+            lane_depth_layer: false,
+            ..both_maps.clone()
+        });
+        assert!(
+            tape_clear.len() < all.len(),
+            "removing the tape's book removed no ink"
+        );
+
+        // No book on either canvas: nothing the book explains is painted, and
+        // the trader never had to visit four switches to get there.
+        let no_book = ink(&OrderflowRenderStyle {
+            depth_layer: false,
+            lane_depth_layer: false,
+            ..both_maps.clone()
+        });
+        assert_eq!(
+            no_book,
+            painted(|_| {}),
+            "the book is off everywhere and something still paints"
+        );
+
+        // And one kind off, with both maps on, takes that kind alone.
+        let unattributed_off = ink(&OrderflowRenderStyle {
+            show_unattributed: false,
+            ..both_maps.clone()
+        });
+        assert!(
+            unattributed_off.len() < all.len(),
+            "unticking the unattributed reductions painted them anyway"
+        );
+        let neither_kind = ink(&OrderflowRenderStyle {
+            show_unattributed: false,
+            show_aligned: false,
+            ..both_maps.clone()
+        });
+        assert_eq!(
+            neither_kind,
+            painted(|_| {}),
+            "both kinds off and something still paints"
         );
     }
 }

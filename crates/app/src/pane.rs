@@ -20,7 +20,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 use smallvec::SmallVec;
 
-use crate::app::{PlotAreas, fmt_time_as, gesture_hits_lane, plot_split, split_time_strip};
+use crate::app::{PlotAreas, fmt_time_as, plot_split, split_time_strip};
 use crate::bands::{self, Band, BandLabel, Bands};
 use crate::candle_view::draw_candle;
 use crate::chart::{self, PriceScale};
@@ -3814,7 +3814,14 @@ impl ChartPane {
         let height = self.last_chart_height;
         let total = self.slots();
         let divider = self.last_lane_divider_x;
-        let in_lane = |position: egui::Pos2| gesture_hits_lane(divider, position.x);
+        // Only the divider's own handle is off limits to the pan, not the whole
+        // band: the resize gesture and the pan must never both fire on one
+        // pixel, which is what `gesture_hits_lane` was written for — but
+        // spending a third of the canvas to protect a ten-pixel handle is a
+        // dead zone, not a guard.
+        let on_divider = |position: egui::Pos2| {
+            crate::app::gesture_hits_lane_divider(divider, position.x, LANE_HANDLE_HALF_WIDTH_PX)
+        };
 
         // Chart body: drag pans both axes; scroll zooms time.
         let chart = ui.interact(
@@ -4339,12 +4346,21 @@ impl ChartPane {
         // anchor, so it cannot also pan — which is exactly why the middle
         // button does.
         let primary_free = !tool_armed && !drawing_drag_consumes_gesture && !paper_gesture;
-        // Where the press landed, not where the pointer is now: a pan that
-        // started on the candles keeps working when it crosses the divider.
-        let dragging_candles = chart
-            .interact_pointer_pos()
-            .is_some_and(|press| !in_lane(press));
-        if total > 0 && chart.dragged() && dragging_candles && primary_free {
+        // Anywhere on the canvas, tape band included — the same call the wheel
+        // already answers this way, and for the same reason. The lane used to
+        // swallow the drag while the pointer was over it: a third of the canvas
+        // where pressing and pulling did nothing at all, with nothing on screen
+        // saying why. That was survivable while a lane only existed on a feed
+        // with a book; now that the tape is anchored on prints it appears on
+        // every feed, and the dead zone became the first thing a trader hits.
+        //
+        // The lane keeps the gestures that are unambiguously its own: the
+        // divider resizes it, and its own time strip sets its window. A drag
+        // across the band is not one of them — the tape does not pan, it is
+        // pinned to the live edge, so a drag there had no second meaning to
+        // protect.
+        let grabbing_divider = chart.interact_pointer_pos().is_some_and(&on_divider);
+        if total > 0 && chart.dragged() && !grabbing_divider && primary_free {
             let drag = chart.drag_delta();
             self.viewport.pan_pixels(drag.x, total);
             if let Some(auto) = auto
@@ -4405,7 +4421,7 @@ impl ChartPane {
             if middle_down
                 && chart
                     .hover_pos()
-                    .is_some_and(|position| areas.chart.contains(position) && !in_lane(position))
+                    .is_some_and(|position| areas.chart.contains(position) && !on_divider(position))
             {
                 self.viewport.pan_pixels(delta.x, total);
                 if let Some(auto) = auto
