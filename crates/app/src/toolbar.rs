@@ -37,6 +37,10 @@ pub const TOOLBAR_HEIGHT: f32 = 44.0;
 const LAYER_INDICATORS_ICON: &str = icons::CHART_LINE;
 /// The live strip: a sideways histogram, which is what it draws.
 const LAYER_STRIP_ICON: &str = icons::CHART_BAR_HORIZONTAL;
+/// The footprint: the grid of per-price cells the layer draws inside each
+/// candle. Same alphabet rule as its neighbours — the glyph is the shape on
+/// the chart, never a metaphor for it.
+const LAYER_FOOTPRINT_ICON: &str = icons::GRID_NINE;
 
 // Width estimates for the overflow rule, in pixels. egui sizes widgets while
 // drawing them, so the plan is decided up front from these; they only need to
@@ -241,6 +245,8 @@ pub struct ToolbarModel<'a> {
     pub bubbles_on: bool,
     /// Whether the live strip is shown.
     pub live_strip_on: bool,
+    /// Whether the candle footprint is drawn.
+    pub footprint_on: bool,
     /// Whether the dock (strip included) is shown.
     pub dock_visible: bool,
     /// Whether the appearance dialog is open.
@@ -320,6 +326,14 @@ pub enum ToolbarAction {
     /// Show or hide the live strip (the book's current depth beside the
     /// price axis). Display-only: capture is untouched.
     SetLiveStrip(bool),
+    /// Show or hide the candle footprint — the per-price ladder inside the
+    /// bars. Display-only: the ladders keep accumulating either way.
+    SetFootprint(bool),
+    /// Open the footprint's settings window. Like every other right-click in
+    /// this group, looking is not enabling: it opens with the layer off too,
+    /// because configuring before switching on is a legitimate order of
+    /// operations.
+    OpenFootprintSettings,
     /// Open a dock tab (a layer's settings; never toggles the layer).
     OpenDockTab(DockTab),
     /// Show or hide the dock.
@@ -751,6 +765,30 @@ fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolba
     // Never capability-gated: the aggression histogram runs on the trade
     // stream every source provides (replay included), and without book data
     // the strip honestly degrades to it.
+    // The footprint had lived only in the pane's right-click layer menu — a
+    // representation of the candle itself, reachable only by a gesture two
+    // levels deep, while three lesser layers each had a button. Here it
+    // speaks the group's own language: left-click toggles, right-click opens
+    // its settings.
+    let footprint = IconButton::new(LAYER_FOOTPRINT_ICON, TOOLBAR_ICON)
+        .active(model.footprint_on)
+        .accent(theme::POC)
+        // Same gate as the bubbles, and for the same reason: a ladder of
+        // buyer-against-seller quantities cannot be built from a quote stream
+        // that prints no traded volume.
+        .enabled(model.capabilities.traded_volume)
+        .hover_text(
+            "candle footprint: the buy/sell split per price inside each bar — detail follows the zoom. Right-click for style and thresholds",
+        )
+        .disabled_explanation("this source quotes prices but prints no traded volume")
+        .show(ui);
+    if footprint.clicked() {
+        actions.push(ToolbarAction::SetFootprint(!model.footprint_on));
+    }
+    if footprint.secondary_clicked() {
+        actions.push(ToolbarAction::OpenFootprintSettings);
+    }
+
     let strip = IconButton::new(LAYER_STRIP_ICON, TOOLBAR_ICON)
         .active(model.live_strip_on)
         .accent(theme::ACCENT)
@@ -1159,6 +1197,7 @@ mod tests {
                         },
                         heatmap_on: false,
                         bubbles_on: true,
+                        footprint_on: false,
                         live_strip_on: false,
                         dock_visible: true,
                         appearance_open: false,
@@ -1246,6 +1285,7 @@ mod tests {
                     },
                     heatmap_on: false,
                     bubbles_on: false,
+                    footprint_on: false,
                     live_strip_on: false,
                     dock_visible: true,
                     appearance_open: false,
@@ -1320,6 +1360,7 @@ mod tests {
                         },
                         heatmap_on: false,
                         bubbles_on: false,
+                        footprint_on: false,
                         live_strip_on: false,
                         dock_visible: true,
                         appearance_open: false,
@@ -1389,6 +1430,7 @@ mod tests {
                     },
                     heatmap_on: false,
                     bubbles_on: false,
+                    footprint_on: false,
                     live_strip_on: false,
                     dock_visible: true,
                     appearance_open: false,

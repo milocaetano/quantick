@@ -57,6 +57,13 @@ pub const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
 /// the magnet to take the anchor. Generous enough to catch the swing you
 /// aimed at, tight enough to still draw a free diagonal between bars.
 const MAGNET_REACH_PX: f32 = 12.0;
+/// How much of a sidebar candle's lane its *body* takes, as a fraction of the
+/// half-lane.
+///
+/// Seven tenths, so the body reads as a body and the wick still shows either
+/// side of it. Derived from the lane rather than fixed, so widening the lane
+/// widens the candle instead of leaving a wider gap around the same sliver.
+const SIDEBAR_BODY_FRAC: f32 = 0.35;
 /// The candle magnet has no reach: [`drawings::AnchorSnap::NearestOhlc`]
 /// never lets go, however far the pointer floats from the candle.
 const MAGNET_REACH_UNLIMITED_PX: f32 = f32::INFINITY;
@@ -4890,18 +4897,58 @@ impl ChartPane {
         let half = chrome.style.candles.body_half_width(cw);
         let right = history_rect.right();
 
-        // With the footprint on, the candle cedes its interior to the ladder
-        // as the zoom crosses into detail: the body fill fades out and the
-        // outline steps in — the reference charts' outline-box candles. With
-        // the layer off the candles are untouched at any zoom.
+        // How the candle behaves under the footprint is the *style's* answer,
+        // not this function's: a style that draws inside the candle needs its
+        // interior, and one that draws in a box beside it needs the candle out
+        // of the way entirely. With the layer off, candles are untouched at
+        // any zoom.
+        // The style that will actually draw, not the one that was asked for: a
+        // style below its own zoom floor hands over, and the candle must be
+        // laid out for whichever one paints. Asking the requested style put a
+        // sidebar lane under a style that draws full width.
+        let requested_style = self
+            .footprint_override
+            .as_ref()
+            .unwrap_or(chrome.footprint)
+            .style;
+        let footprint_style = self.footprint_lod.effective_style(requested_style);
+        let treatment = footprint_style.candle_treatment();
+        // The lane a sidebar candle keeps at the left of its slot. Zero
+        // otherwise, so nothing moves for the styles that draw in place.
+        let candle_lane = if footprint_on {
+            treatment.content_inset()
+        } else {
+            0.0
+        };
+        // The half-width the footprint's content actually spans. The lane is
+        // cut out of *this*, so the candle placed beside it has to be measured
+        // from the same edge — measuring from the candle's own body width put
+        // it inside the box the lane was reserved next to, where the opaque
+        // plate then painted straight over it.
+        let content_half = treatment.content_half_width(cw, half);
         let mut faded_candles = None;
         if footprint_on {
-            let body = crate::footprint_render::candle_body_fade(cw);
-            if body < 1.0 {
-                let mut faded = chrome.style.candles;
-                faded.fill_opacity *= body;
-                faded.outline_opacity = faded.outline_opacity.max(1.0 - body);
-                faded_candles = Some(faded);
+            match treatment {
+                // The candle cedes its interior to the ladder as the zoom
+                // crosses into detail: the body fill fades out and the outline
+                // steps in — the reference charts' outline-box candles.
+                crate::footprint_config::CandleTreatment::Fade => {
+                    let body = crate::footprint_render::candle_body_fade(cw);
+                    if body < 1.0 {
+                        let mut faded = chrome.style.candles;
+                        faded.fill_opacity *= body;
+                        faded.outline_opacity = faded.outline_opacity.max(1.0 - body);
+                        faded_candles = Some(faded);
+                    }
+                }
+                // Beside the box, the candle is a solid sliver again: nothing
+                // is behind anything, so there is nothing to fade *for*, and a
+                // 3 px outline-only bar would read as a scratch.
+                crate::footprint_config::CandleTreatment::Sidebar => {
+                    let mut sidebar = chrome.style.candles;
+                    sidebar.fill_opacity = 1.0;
+                    faded_candles = Some(sidebar);
+                }
             }
         }
         let candles = faded_candles.as_ref().unwrap_or(&chrome.style.candles);
@@ -5072,18 +5119,25 @@ impl ChartPane {
             let paint = painted
                 .then(|| self.indicators.slot_paint(index..index + 1, forming))
                 .flatten();
-            draw_candle(
-                &clip,
+            // A sidebar candle moves into the lane the footprint left it at
+            // the slot's left edge; every other case draws where it always
+            // did, at full body width. One call, two geometries — never a
+            // second candle path, which would drift from this one.
+            let slot = if candle_lane > 0.0 {
+                // A third of the lane each side, so the body is a body and the
+                // wick still has room to show either side of it.
+                let sliver = (candle_lane * SIDEBAR_BODY_FRAC).max(1.0);
+                crate::candle_view::BarSlot {
+                    xc: xc - content_half + sliver + 1.0,
+                    half_width: sliver,
+                }
+            } else {
                 crate::candle_view::BarSlot {
                     xc,
                     half_width: half,
-                },
-                &scale,
-                bar,
-                forming,
-                candles,
-                paint,
-            );
+                }
+            };
+            draw_candle(&clip, slot, &scale, bar, forming, candles, paint);
         });
         // The footprint rides directly on the candles, before everything
         // drawn over them: it is a representation of the bars themselves,
@@ -5111,9 +5165,19 @@ impl ChartPane {
                     .filter(|_| partial_visible.is_some()),
                 partial_slot: closed_total,
                 x_center: &|slot| viewport.x_center(slot, right, total),
-                half,
+                // The *content* half-width, which is not always the candle's.
+                // A style that draws inside the candle is bounded by it; one
+                // that draws in a box beside it is bounded only by the slot,
+                // and charging it the candle gap as well spends a quarter of
+                // the row on air twice over.
+                half: content_half,
                 candle_width: cw,
                 side_inferred: chrome.side_inferred,
+                depth_visible: self
+                    .orderflow
+                    .as_ref()
+                    .is_some_and(OrderflowView::depth_visible),
+                pixels_per_point: painter.ctx().pixels_per_point(),
                 // Field access, not `self.footprint_config(..)`: the method
                 // borrows all of `self` and the draw below needs
                 // `self.footprint_lod` mutably. Same resolution rule.

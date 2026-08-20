@@ -1673,6 +1673,24 @@ impl QuantickApp {
         if std::env::var("QUANTICK_FOOTPRINT_PANEL").is_ok_and(|value| value == "1") {
             app.show_footprint_settings = true;
         }
+        // Every style by its own id, resolved through the same registry the
+        // panel's selector and the TOML read. A style reachable by click but
+        // not by name is a style the second operator cannot pick, and one
+        // more list to keep in step by hand.
+        if let Ok(value) = std::env::var("QUANTICK_FOOTPRINT_STYLE") {
+            match crate::footprint_config::FootprintStyle::from_id(value.trim()) {
+                Some(style) => app.footprint_config.style = style,
+                // Named and unknown is a typo in a validation script, and a
+                // silent fallback to the default would have it photograph the
+                // wrong style and call it a pass.
+                None => tracing::warn!(
+                    requested = %value,
+                    known = ?crate::footprint_config::FootprintStyle::ALL
+                        .map(crate::footprint_config::FootprintStyle::id),
+                    "QUANTICK_FOOTPRINT_STYLE names no known style; keeping the current one",
+                ),
+            }
+        }
         // The indicator settings dialog (sliders + live preview): pair with
         // an autostart hook that loads an indicator; the dialog opens for
         // the first slot as soon as its inputs arrive from the worker.
@@ -2371,6 +2389,11 @@ impl QuantickApp {
             PaneSide::Time => tab.time_pane.as_mut().unwrap_or(&mut tab.flow_pane),
             PaneSide::Flow => &mut tab.flow_pane,
         };
+        // The focused pane's, like every other BARS reading: the footprint is
+        // per-pane — each pane folds its own retained trades — so a lamp lit
+        // from the flow pane while the time pane has focus reports a layer the
+        // trader is not looking at.
+        let footprint_on = pane.footprint_visible;
         let mut model = toolbar::ToolbarModel {
             feeds,
             feed_id: &mut tab.feed_id,
@@ -2391,6 +2414,7 @@ impl QuantickApp {
             heatmap_on,
             bubbles_on,
             live_strip_on,
+            footprint_on,
             dock_visible,
             appearance_open: show_style,
             paper: toolbar::PaperTradeModel {
@@ -2436,6 +2460,13 @@ impl QuantickApp {
             ToolbarAction::SetLiveStrip(shown) => {
                 self.active_tab_mut().flow_pane.live_strip_visible = shown;
             }
+            // The focused pane's own field, through the same setter the pane's
+            // layer menu calls — so the button, the menu and the lamp can
+            // never disagree about which chart the command described.
+            ToolbarAction::SetFootprint(shown) => {
+                self.focused_pane_mut().footprint_visible = shown;
+            }
+            ToolbarAction::OpenFootprintSettings => self.show_footprint_settings = true,
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
             ToolbarAction::ToggleAppearance => self.show_style = !self.show_style,

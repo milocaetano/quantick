@@ -81,6 +81,56 @@ pub const TEXT_SUPPORT: Color32 = Color32::from_rgb(0x86, 0x92, 0xA4);
 /// buttons, the position HUD's side tag, the jump-to-live chip).
 pub const CHIP_INK: Color32 = Color32::from_rgb(0x0E, 0x12, 0x1A);
 
+/// `casing` — the dark base under ink that has to survive whatever is behind
+/// it: the liquidity map, a candle body at any of the four appearance
+/// presets, or a canvas the trader switched off.
+///
+/// Deliberately *darker* than [`CANVAS`], because the heat ramp's floor is
+/// black: a casing that matches that floor stops separating exactly where
+/// separation is needed. Composed over the map's brightest band it still
+/// lands near canvas-dark, which is the whole point — it makes the floor a
+/// constant instead of a function of whatever happens to be underneath.
+///
+/// Born in the fixed-range profile, which needed a readable histogram over
+/// the depth map; promoted here the day the footprint's ladder needed the
+/// same guarantee. A colour copied by hand goes stale the day the theme
+/// moves, with no test to notice.
+pub const CASING: Color32 = Color32::from_rgba_premultiplied(5, 7, 12, 235);
+/// How far a casing extends past the ink it carries: one pixel a side.
+pub const CASING_EXTRA_PX: f32 = 2.0;
+
+/// How far a side's ink is mixed toward white. See [`ink`].
+const INK_WHITE_MIX: f32 = 0.45;
+
+/// Readable ink in a side's own hue — [`BUY`] and [`SELL`] lightened toward
+/// white until they clear 4.5:1 over [`CASING`] and over a side-tinted cell
+/// drawn on top of it.
+///
+/// The raw side colours are chart *fills*, not text: `SELL` written on a
+/// sell-tinted pill is 3.2:1, which is how a footprint ends up with its most
+/// important cell less legible than its ordinary ones. Lightening keeps the
+/// hue — so a column still scans without being read — and buys the contrast
+/// the fill colour never had.
+#[must_use]
+pub fn ink(side: quantick_engine::Side) -> Color32 {
+    let base = side_color(side);
+    let lighten = |channel: u8| -> u8 {
+        let from = f32::from(channel);
+        (from + (255.0 - from) * INK_WHITE_MIX).round() as u8
+    };
+    Color32::from_rgb(lighten(base.r()), lighten(base.g()), lighten(base.b()))
+}
+
+/// The fill colour of an aggressor side. One answer for the whole app: every
+/// surface that paints buy against sell reads it here.
+#[must_use]
+pub const fn side_color(side: quantick_engine::Side) -> Color32 {
+    match side {
+        quantick_engine::Side::Buy => BUY,
+        quantick_engine::Side::Sell => SELL,
+    }
+}
+
 /// `draw/violet` and `draw/cyan` — the two drawing colours no chart element
 /// already owns. They exist because the drawing palette needs hues that do
 /// not collide with meaning: green and red are the candles, blue is

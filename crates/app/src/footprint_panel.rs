@@ -153,23 +153,14 @@ pub fn draw(ctx: &egui::Context, input: PanelInput<'_>) -> PanelOutcome {
 
             ui.separator();
             ui.heading("Style");
-            ui.horizontal(|ui| {
-                for (style, label, hover) in [
-                    (
-                        FootprintStyle::Split,
-                        "profile",
-                        "volume profile on the right, the winning side's delta bar \
-                         on the left — the reference look, and the default",
-                    ),
-                    (
-                        FootprintStyle::Ladder,
-                        "sell|buy",
-                        "the classic footprint ladder: sell and buy quantities per row",
-                    ),
-                ] {
+            // The registry draws this row, never a list kept here: a style
+            // that exists is a style the panel offers, with the same name and
+            // the same explanation the TOML and the env hook answer to.
+            ui.horizontal_wrapped(|ui| {
+                for style in FootprintStyle::ALL {
                     if ui
-                        .selectable_label(config.style == style, label)
-                        .on_hover_text(hover)
+                        .selectable_label(config.style == style, style.label())
+                        .on_hover_text(style.hover())
                         .clicked()
                         && config.style != style
                     {
@@ -178,6 +169,44 @@ pub fn draw(ctx: &egui::Context, input: PanelInput<'_>) -> PanelOutcome {
                     }
                 }
             });
+
+            // Only where they mean something. A knob for a style that is not
+            // selected is a knob whose effect the trader cannot see, and this
+            // window is small on purpose.
+            if config.style == FootprintStyle::Cluster {
+                ui.indent("cluster_knobs", |ui| {
+                    // Said here, not only in the hover: a trader who has just
+                    // picked this style is no longer hovering over it, and
+                    // getting a different style than the one selected — with
+                    // only a legend line to explain it — reads as a bug.
+                    ui.label(
+                        egui::RichText::new(
+                            "three numbers a row needs a wide candle: below about 126 px this draws \"both sides\" instead, and the chart legend names both",
+                        )
+                        .size(10.5)
+                        .color(theme::TEXT_MUTED),
+                    );
+                    changed |= ui
+                        .checkbox(&mut config.cluster_show_total, "row total column")
+                        .on_hover_text(
+                            "the third column, bid × ask × total — what makes this \
+                             style read like the reference chart. It costs about a \
+                             third more candle width before the numbers fit; off, \
+                             the style arrives at the same zoom the sell|buy ladder \
+                             does",
+                        )
+                        .changed();
+                    changed |= ui
+                        .checkbox(&mut config.cluster_bevel, "raised cells")
+                        .on_hover_text(
+                            "a light top edge and a dark base on every cell, at the \
+                             deepest zoom only — the reference chart's relief. Never \
+                             drawn at shallower zooms: relief on a four-pixel cell is \
+                             dirt",
+                        )
+                        .changed();
+                });
+            }
 
             ui.separator();
             ui.heading("Rows");

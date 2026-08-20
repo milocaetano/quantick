@@ -2,12 +2,27 @@
 #
 # Every knob is optional: an absent one keeps the built-in default, and this
 # file's presence changes nothing by itself — the layer still opens off and
-# is switched in the pane's right-click layer menu. Override the file
+# is switched from the toolbar's LAYERS group (left-click; right-click opens
+# these settings) or the pane's right-click layer menu. Override the file
 # location with QUANTICK_FOOTPRINT=<path>.
 
-# How the ladder is drawn (default "split"): "split" = volume profile on the
-# right, the winning side's delta bar on the left, yellow POC — the reference
-# look; "ladder" = the classic sell|buy number columns.
+# How the ladder is drawn (default "split"). Four readings of the same tape:
+#
+#   "split"   — volume profile on the right, the winning side's delta bar on
+#               the left, yellow POC. The reference look, and the default.
+#   "bidask"  — both sides at their real size, mirrored on one scale, no
+#               digits. 400x380 and 40x20 share a delta and are not the same
+#               market; this is the style that says so. Reads at zooms where
+#               numbers cannot fit.
+#   "ladder"  — the classic sell|buy quantity columns.
+#   "cluster" — each bar in its own boxed ladder: bid, ask and the row total,
+#               the cell shaded by how much volume it holds, the candle beside
+#               the box rather than behind it. Needs the deepest zoom — three
+#               quantities per row is half again the candle width two need —
+#               and above that it hands over to "bidask", which the legend
+#               announces rather than degrading in silence.
+#
+# Also reachable without a click: QUANTICK_FOOTPRINT_STYLE=<id>.
 #style = "split"
 
 # One side must be at least this many times its diagonal neighbour to count
@@ -43,4 +58,19 @@
 #show_numbers = true
 
 # The per-bar delta chips along the chart's bottom edge (default true).
+# Every style, not only "split": who won the bar is a reading of the bar,
+# orthogonal to how its rows are drawn.
 #show_delta_totals = true
+
+# --- "cluster" style only -----------------------------------------------
+
+# The third column, the row total (default true). It is what makes the style
+# read like the reference chart, and it costs roughly a third more candle
+# width before the numbers fit. Off, the style keeps bid and ask and arrives
+# at the same zoom the ladder does.
+#cluster_show_total = true
+
+# The raised-cell relief, at the deepest zoom only (default true). Never
+# offered at shallower levels at any price: relief on a four-pixel cell is
+# dirt, the same reason this layer has no fades.
+#cluster_bevel = true

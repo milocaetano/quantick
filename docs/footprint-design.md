@@ -200,3 +200,174 @@ close.
 - Legend always states the current state, including effective grouping and
   the "zoom in" hint when the layer is on but below its readable threshold —
   an on-but-invisible layer must explain itself or it reads as broken.
+
+## v2 — the style registry, and the ladder's contrast floor
+
+Status: 2026-08-20. Written after a colour/contrast pass and an order-flow
+domain consult, both prompted by the same report: the second style "looks
+visibly bad".
+
+### The ladder was broken, and it was a composition bug
+
+The `ladder` had been given the half of the split's treatment that *removes*
+its background (`candle_body_fade` hands the candle's interior to the layer)
+without the half that *replaces* it (the `canvas_backdrop()` plate, which was
+gated on `style == Split`). Its contrast floor was therefore whatever three
+unrelated settings happened to leave behind:
+
+| Candle preset | buy number | sell number |
+| --- | --- | --- |
+| `OrderFlow` (default) | 5.14:1 | 4.57:1 |
+| `Glass` | 4.46:1 ❌ | 4.07:1 ❌ |
+| `OutlineOnly` | 5.97:1 | 5.13:1 |
+| `Classic` | 2.23:1 ❌ | 2.18:1 ❌ |
+
+Two of the four failed WCAG AA, and the default passed by 0.07. Switching
+candle *appearance* — a choice with nothing to do with this layer — silently
+cost the trader the footprint's numbers. Three more defects sat in the same
+branch: the POC's 0.18 wash dropped the most-read row from 6.77:1 to 4.37:1
+and its full-width line struck through both number columns (the split refuses
+that line deliberately; the ladder had never been told), the stacked-zone wash
+was painted *after* the cells and so tinted the digits along with their
+background, and the delta totals strip was withheld from the style entirely.
+
+**Not the cause, though it was the first suspicion**: the depth map does not
+bleed through the ladder in the default state — `pane.rs` already clears the
+heat behind each candle's high–low span. The plate is justified by robustness
+instead: against the candle preset, against `background_enabled = false`
+(which makes that clear paint transparent and clear nothing), and against the
+bucket bands at a bar's extremes, which extend past the cleared span.
+
+The rule the fix encodes: **a style whose content is digits owns its own
+floor; a style whose content is geometry does not need one.** A bar's length
+reads the same over any background. A number does not degrade gracefully.
+
+### `FootprintStyle` is a registry
+
+Four `if style ==` tests for two styles scales to two. The enum now carries
+`ALL`, `id`, `label`, `hover`, `detailed_quantity_columns`,
+`candle_treatment`, `plate`, `draws_own_rows`, `fallback` and
+`detailed_legend`; the panel iterates it, the TOML and
+`QUANTICK_FOOTPRINT_STYLE` resolve through the same `from_id`, and the draw
+code dispatches instead of branching. Adding a style is a registry edit.
+
+### The two new styles
+
+- **`bidask`** — both sides at absolute size, mirrored on one shared scale
+  (the larger *side*, never the row total, or a one-sided row would draw at
+  the same width as a balanced one). No digits, so it lives from Profile up
+  and fills the 10–33 px band where the number styles cannot go. It answers
+  what the split cannot: 400×380 and 40×20 share a delta and are not the same
+  market.
+- **`cluster`** — the reference chart's boxed ladder: `bid | ask | total` per
+  row, each bar in its own cased box with a border, the candle moved out into
+  a lane at the left of the slot rather than sitting behind the box, and a
+  raised-cell relief at the deepest zoom. It declares its own Detailed floor —
+  ~126 px with its total column, ~68 without, because the floor counts the
+  furniture (the candle lane, the box padding, the gutters) and not only the
+  digits — and hands over to `bidask` above it, announced in the legend as
+  `cluster → bidask`.
+
+  The zoom ceiling rose 160 → 256 px to keep that floor reachable at the top of
+  the `detail_scale` range. A style the registry offers and no zoom can draw is
+  a broken promise, and
+  `every_style_is_reachable_at_some_zoom_and_every_detail_scale` is what makes
+  the next style with a wider floor fail loudly instead of quietly.
+
+### The heat ramp, and the band it steps over
+
+Six quantised steps, never a gradient: rounding a float into a colour every
+frame is how a pixel moves between two identical frames, the depth map already
+owns the continuous-gradient channel on this screen, and steps can be counted.
+
+The ramp measures **rank, not ratio** — where a cell falls in the distribution
+of the ladders currently on screen, cut at fixed percentiles.
+
+That was learned the expensive way, and it is worth writing down because the
+wrong answer is the intuitive one. The first build divided each cell by the
+95th percentile of side volume over the newest closed bars. Two things were
+wrong with it, and a screen capture measured both:
+
+- **The wrong bars.** "Newest closed bars of the series" is not "what is on
+  screen": the colours moved with where the replay's live edge happened to
+  be, not with what the trader was looking at.
+- **The wrong statistic.** Per-cell volume is heavily skewed and the shape of
+  that skew changes with the market, so one denominator cannot serve both a
+  quiet stretch and a busy one. Measured, ratio-to-p95 put **47% of cells in
+  the top step**: the brightest colour on screen was also the most common one,
+  which leaves nothing for it to stand out against. An earlier variant had the
+  mirror defect, with nearly everything on the floor.
+
+Percentile cuts fix both ends by construction — the busiest cells are always
+the top step and the quiet ones always the floor, in any regime — and the cuts
+are deliberately uneven, because most rows are ordinary and the bright steps
+are worth spending on the tail. The test
+`the_heat_ramp_spreads_over_a_skewed_distribution` guards it against a skewed
+fixture, not a uniform one: a ramp that only behaves on uniform data proves
+nothing about a tape.
+
+The step lightnesses are **not evenly spaced**, and that is the design. There
+is a band of lightness where no available ink reaches 4.5:1 — the light ink has
+run out of headroom, the dark one has not gained it — so the ramp steps over
+it, and the largest jump in the scale is exactly where the ink flips. The
+irregularity is the most distinguishable boundary in the scale.
+
+What guards it is `both_ink_boundaries_are_forced_by_contrast`, and it guards
+the *contract* rather than the construction: it proves neither boundary can
+move a step in either direction without dropping something under 4.5:1. So a
+well-meant "smooth out the ramp" fails loudly rather than quietly, and it fails
+on the property that matters instead of on a number that happens to be true.
+
+The two sides' ramps are **isoluminant by construction**. Under deuteranopia
+their hues collapse, and what still separates bid from ask is the *position*
+of the column — constant, and independent of the data. Luminance carries the
+ordinal reading, which works for everyone. The derived requirement: **the
+columns may never swap places, not even by config.**
+
+Rejected from the reference chart: its **orange** (collides with `AMBER`,
+reserved for provenance, and sits a few degrees from `POC`) and the
+**light blue** of its total column (collides with `ACCENT`). The total column
+carries a neutral grey silhouette instead of a heat step — the same silhouette
+the split style draws — which is what lets it live on a single ink with no
+flip rule at all.
+
+### The relief
+
+Two mesh quads per cell (a light top edge, a dark base), `Detailed` only.
+Fixed alphas rather than values derived from the fill: derived ones would
+scale the highlight with the base and fade it out at exactly the ends of the
+ramp where it has to carry the relief. Fixed, the two are complementary — on
+dark steps the white edge works and the shadow vanishes, on light steps the
+reverse — and the better of the two never falls under +11 L\*, four times the
+just-noticeable difference. The left and right faces are not drawn: in a field
+of cells that already touch sideways they are the least informative of the
+four, and they cost 57% more.
+
+Rects, never strokes: a stroke goes through the tessellator's feathering, and
+feathering is precisely what blurs a one-pixel edge into nothing.
+
+### Reaching it
+
+The layer had lived only in the pane's right-click layer menu — a
+representation of the candle itself, two levels deep in a gesture, while three
+lesser layers each had a toolbar button. It now sits in the toolbar's LAYERS
+group: left-click toggles, right-click opens the settings window, the same
+language its neighbours speak. Its glyph is the grid of cells it draws, per
+the group's alphabet rule.
+
+### Still not built
+
+The stacked-zone mark **does not outlive the bars that formed it**, despite a
+code comment that claimed it did (now corrected). Real persistence needs a
+level memory with a death rule — a stacked imbalance dies on a print through
+the far edge, absorption dies on a *close* through it, because a wick that
+pierces and returns is the defender holding — and the domain consult
+recommends building it once for three producers: stacked zones, absorption
+(WP-12) and naked POCs. That is its own package.
+
+Also specified and not built here: the three-lane footer (volume-or-duration,
+delta with delta %, max/min delta), unfinished auction, single prints, and
+intra-bar max/min delta. **Session delta is deliberately not among them**: it
+is the integral of the lane above it drawn in the form that hides its own
+information, and on a tick-rule instrument it accumulates classification error
+for the whole session and prints the sum to four digits.

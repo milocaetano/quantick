@@ -1822,7 +1822,7 @@ impl PaperTrading {
         }
 
         if let Some(position) = self.sim.position().cloned() {
-            let color = side_color(position.side);
+            let color = theme::side_color(position.side);
             let entry_y = ctx.scale.y(position.avg_price.to_f64().unwrap_or_default());
             if ctx.in_range(entry_y) {
                 ctx.level_line(entry_y, color, false, POSITION_LINE_WIDTH_PX, false, false);
@@ -1960,7 +1960,7 @@ impl PaperTrading {
         if !ctx.in_range(preview.pointer.y) {
             return;
         }
-        let color = side_color(preview.side);
+        let color = theme::side_color(preview.side);
         // Lay out against the band the input hit-tests (its right edge is
         // the lane divider when the live tape lane is up), never the full
         // chart rect — a label painted right of the divider would be a
@@ -2812,7 +2812,7 @@ impl PaperTrading {
             }
             return;
         };
-        let color = side_color(position.side);
+        let color = theme::side_color(position.side);
         let open = self.sim.mark_price().map(|mark| position.open_points(mark));
 
         // Identity: the HUD's own chip, so the two surfaces read as one.
@@ -3111,7 +3111,7 @@ impl PaperTrading {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             for side in [Side::Buy, Side::Sell] {
-                let color = side_color(side);
+                let color = theme::side_color(side);
                 let armed_here = self.armed.is_some_and(|armed| armed.side == side);
                 let armed_other = self.armed.is_some_and(|armed| armed.side != side);
                 let label = match (self.order_type, armed_here) {
@@ -3339,7 +3339,7 @@ impl PaperTrading {
                 ui.label(
                     egui::RichText::new(side_word_upper(order.side))
                         .monospace()
-                        .color(side_color(order.side)),
+                        .color(theme::side_color(order.side)),
                 );
                 let mut line = format!(
                     "{} {} @ {}",
@@ -5413,7 +5413,7 @@ fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) -> bool {
                                 position_word(trade.side),
                                 fmt_decimal(trade.quantity)
                             ),
-                            side_color(trade.side),
+                            theme::side_color(trade.side),
                         ),
                         (
                             format!(
@@ -6112,14 +6112,6 @@ fn rr_ratio(leg: &LegPaint<'_>, dragged: Decimal) -> Option<String> {
     (risk > Decimal::ZERO).then(|| fmt_points(reward / risk))
 }
 
-/// The side's chrome colour — one mapping for every paper surface.
-fn side_color(side: Side) -> egui::Color32 {
-    match side {
-        Side::Buy => theme::BUY,
-        Side::Sell => theme::SELL,
-    }
-}
-
 /// Three-letter order kind for the compact chart tags (`LMT`, `STP`, `MKT`).
 fn kind_short(kind: EntryKind) -> &'static str {
     match kind {
@@ -6359,7 +6351,7 @@ fn draw_open_row(
             egui::pos2(rect.left() + SIDE_RAIL_WIDTH_PX, rect.bottom()),
         ),
         egui::Rounding::ZERO,
-        side_color(summary.side),
+        theme::side_color(summary.side),
     );
     let exit = mark.map_or_else(|| "…".to_owned(), fmt_decimal);
     let held = held_ms.map_or_else(String::new, |ms| format!("open {}", fmt_duration_ms(ms)));
@@ -6408,7 +6400,7 @@ fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
     let x = rect.left() + SIDE_RAIL_WIDTH_PX + 6.0;
     let y1 = rect.top() + 9.0;
     let y2 = rect.top() + 24.0;
-    let color = side_color(lines.side);
+    let color = theme::side_color(lines.side);
     let head = painter.layout_no_wrap(lines.head, font.clone(), color);
     let head_w = head.size().x;
     painter.galley(egui::pos2(x, y1 - head.size().y / 2.0), head, color);
@@ -6528,7 +6520,7 @@ fn draw_ledger_row(
             egui::pos2(rect.left() + SIDE_RAIL_WIDTH_PX, rect.bottom()),
         ),
         egui::Rounding::ZERO,
-        side_color(trade.side),
+        theme::side_color(trade.side),
     );
     let detail = ledger_detail(trade, tz);
     draw_row_lines(
