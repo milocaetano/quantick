@@ -130,6 +130,15 @@ any of them still connects and still streams ticks.
 - `bid`/`ask`/`last` — price strings with exactly `digits` decimals; `"0"`
   when the feed carries none (B3 history ticks have no quotes).
 - `volume` — contracts; `0` on quote-only ticks.
+- **Which ticks travel.** On a `"trades"` tape the bridge asks the terminal
+  for `COPY_TICKS_TRADE` and sends nothing else: the feed already discards
+  every tick without a LAST bit, and on a busy exchange tape those quotes
+  outnumber the prints several times over. Sending them cost the one thing the
+  tape cannot spare — they share the socket with the prints and delay them,
+  and because a book image restamps itself on the way out (see `book`) the
+  delay is invisible in the depth map and fully visible in the bubbles, which
+  drift left of the tape's edge until they fall off it. On a `"quotes"` tape
+  every tick still travels: there the quotes *are* the data.
 - `flags` — raw `MqlTick.flags`: BID=2 ASK=4 LAST=8 VOLUME=16 BUY=32 SELL=64.
   Real feeds set undocumented extra bits (B3 sets 1024); consumers must mask,
   not reject. **Known pathology**: some B3 brokers set BUY on every tick —

@@ -1720,6 +1720,22 @@ impl QuantickApp {
                 tab.tape_mut().set_primitive_budget(budget);
             }
         }
+        // A starved tape, scriptable — the state this whole fix is about. The
+        // bubbles trailing the lane's right edge, and past its window leaving
+        // it empty, happen when the book keeps arriving and nothing prints. No
+        // setting produces that and no capture can wait for the market to do
+        // it, so `QUANTICK_TAPE_STARVE_AFTER_MS=8000` stops feeding the tape
+        // eight seconds in and lets the book run. Nothing is forged: the
+        // prints are withheld through the feed's own call, and the axis then
+        // reports the age it actually observes.
+        if let Ok(value) = std::env::var("QUANTICK_TAPE_STARVE_AFTER_MS")
+            && let Ok(after_ms) = value.trim().parse::<i64>()
+            && after_ms >= 0
+        {
+            for tab in &mut app.tabs {
+                tab.tape_mut().set_starve_tape_after_ms(after_ms);
+            }
+        }
         // The pan, scriptable, for the same reason: the projection margin and
         // the way back from history are states a screenshot cannot otherwise
         // reach. `QUANTICK_PAN_PX=-9000` is "shove the chart as far left as it
@@ -4930,6 +4946,11 @@ impl QuantickApp {
             book_last_event_ms = book.last_event_ms,
             book_snapshot_observed_ms = book.last_snapshot_observed_ms,
             book_arrival_ms = book_lag,
+            // How far the newest print sits behind the instant the lane calls
+            // now. It is the pixel gap between the last bubble and the tape's
+            // right edge, in milliseconds: a number, so "the bubbles are
+            // trailing" can be measured rather than argued about.
+            tape_newest_print_age_ms = book.newest_print_age_ms,
             book_updates_per_s = book_rate,
             book_updates_total = book.depth_updates,
             book_queue_len,

@@ -36,7 +36,7 @@ use crate::indicator_worker::{
 use crate::indicators::{IndicatorViews, MIN_PANE_HEIGHT_PX, PaneSizing};
 use crate::orderflow::{
     LANE_WINDOW_PRESETS_MS, LaneWindow, MAX_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_WINDOW_MS,
-    format_window_ms, lane_window_label, reserved_span_ms, same_lane_window,
+    format_window_ms, lane_lag_label, lane_window_label, reserved_span_ms, same_lane_window,
 };
 use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
 use crate::paper_trading::{ChartInput, PaperTrading};
@@ -255,6 +255,13 @@ pub fn split_time_pane(area: egui::Rect) -> TimePaneAreas {
 /// what makes it draggable, and the resize cursor is the only thing that says
 /// so.
 const LANE_HANDLE_HALF_WIDTH_PX: f32 = 5.0;
+
+/// Type size of the axis under the tape.
+const LANE_AXIS_FONT_PX: f32 = 10.0;
+
+/// Breathing room between the tape's two axis labels, and between the warning
+/// and the strip's own right edge.
+const LANE_AXIS_GAP_PX: f32 = 8.0;
 
 /// Pixels of lane the ladder spends one rung on.
 ///
@@ -5503,6 +5510,7 @@ impl ChartPane {
                 painter,
                 split_time_strip(areas.time_strip, self.last_lane_divider_x).1,
                 orderflow.live_lane_window_ms(closed),
+                orderflow.newest_print_age_ms(),
             );
             // The automatic reference this frame, kept for the tape's menu:
             // the entry that says "follows the bars" has to be able to say
@@ -5632,17 +5640,49 @@ impl ChartPane {
         painter: &egui::Painter,
         lane_strip: Option<egui::Rect>,
         window_ms: i64,
+        newest_print_age_ms: Option<i64>,
     ) {
         let Some(strip) = lane_strip else {
             return;
         };
-        painter.text(
-            strip.center(),
-            egui::Align2::CENTER_CENTER,
-            format!("tape · {}", format_window_ms(window_ms)),
-            egui::FontId::monospace(10.0),
-            theme::TEXT_MUTED,
-        );
+        let font = egui::FontId::monospace(LANE_AXIS_FONT_PX);
+        // The warning is its own text, pinned to the right end of the strip,
+        // and the window keeps the centre it has always had. One label growing
+        // a suffix would re-centre itself every time a quiet stretch started
+        // and ended — a caption sliding under a tape being read for flow. The
+        // right end is also where it belongs: directly under the edge the
+        // missing marks should have reached.
+        let warning = lane_lag_label(window_ms, newest_print_age_ms)
+            .map(|lag| painter.layout_no_wrap(lag, font.clone(), theme::WARN));
+        let taken = warning
+            .as_ref()
+            .map_or(0.0, |galley| galley.size().x + LANE_AXIS_GAP_PX);
+        let window_label = format!("tape · {}", format_window_ms(window_ms));
+        let window_galley = painter.layout_no_wrap(window_label, font, theme::TEXT_MUTED);
+        // A strip too narrow for both keeps the urgent one. The window is a
+        // setting the trader chose and can read from the menu; how old the
+        // newest mark is exists nowhere else.
+        if window_galley.size().x + taken <= strip.width() {
+            painter.galley(
+                egui::Align2::CENTER_CENTER
+                    .align_size_within_rect(window_galley.size(), strip)
+                    .min,
+                window_galley,
+                theme::TEXT_MUTED,
+            );
+        }
+        if let Some(galley) = warning {
+            painter.galley(
+                egui::Align2::RIGHT_CENTER
+                    .align_size_within_rect(
+                        galley.size(),
+                        strip.shrink2(egui::vec2(LANE_AXIS_GAP_PX, 0.0)),
+                    )
+                    .min,
+                galley,
+                theme::WARN,
+            );
+        }
     }
 
     /// Right-hand price axis: round-number gridlines and labels. `axis_x` is

@@ -792,6 +792,50 @@ pub fn format_window_ms(ms: i64) -> String {
     }
 }
 
+/// Share of the lane's own window a print must fall behind before the axis
+/// says so.
+///
+/// Below it the newest bubble is a couple of pixels off the edge — saying
+/// anything would be noise on a tape that is, to the eye, current. The
+/// threshold is a share rather than a duration because the lane's window is
+/// the trader's own setting: what reads as "behind" on a four-second tape is
+/// invisible on a two-minute one.
+///
+/// A sixth of the tape, because the caption has to earn its appearance. A
+/// tighter threshold would light it up every time an ordinary market went
+/// quiet for a moment, and a warning that cries wolf during lunch is one the
+/// trader stops reading before the session that matters.
+const LANE_LAG_LABEL_SHARE: f64 = 0.15;
+
+/// What the axis under the tape says about how old its newest mark is, or
+/// `None` while the tape is current enough that saying anything is noise.
+///
+/// The lane's right edge is the newer of the book clock and the print clock,
+/// and only prints draw bubbles. So a book running ahead of the tape — a quiet
+/// stretch, or prints held up on their way here — puts every bubble left of
+/// the edge, and past the whole window puts none of them on the tape at all.
+/// An empty tape reads as "nothing is trading", which is the one thing it
+/// never means: the prints are on the chart, in their bar's slot. The axis is
+/// where that gets said, because it is already the readout for what the lane
+/// is showing.
+#[must_use]
+pub fn lane_lag_label(window_ms: i64, newest_print_age_ms: Option<i64>) -> Option<String> {
+    let age = newest_print_age_ms?;
+    let window = window_ms.max(1);
+    #[allow(clippy::cast_precision_loss)]
+    let floor_ms = (window as f64 * LANE_LAG_LABEL_SHARE) as i64;
+    if age <= floor_ms {
+        return None;
+    }
+    // Past the window there is no bubble left on the tape to be late: the
+    // wording changes with it, because "last print 40 s ago" beside an empty
+    // tape still invites the reader to look for the mark it describes.
+    if age >= window {
+        return Some(format!("no print for {}", format_window_ms(age)));
+    }
+    Some(format!("last print {} back", format_window_ms(age)))
+}
+
 /// How a tape window reads in a menu.
 ///
 /// `reference_ms` is the automatic reference, when the caller knows it. The
@@ -1833,6 +1877,64 @@ mod tests {
         untouched.zoom_by(0.0);
         untouched.zoom_by(-1.0);
         assert_eq!(untouched, LaneWindow::Fixed { ms: 60_000 });
+    }
+
+    /// An empty tape has two possible meanings and only one of them is
+    /// "nothing is trading". The axis has to separate them.
+    ///
+    /// The lane's right edge follows the newer of the book clock and the print
+    /// clock; only prints draw bubbles. So a book running ahead of the tape
+    /// puts every bubble left of the edge, and past the whole window puts none
+    /// of them on the tape — while the prints themselves are still on the
+    /// chart, in the slot of the bar they happened in. A scalper reading an
+    /// empty tape as a still market is reading a delivery gap as a fact about
+    /// the market, which is the expensive kind of wrong.
+    #[test]
+    fn the_axis_says_how_old_the_newest_mark_is() {
+        // Current: nothing to say. Not "0 s behind" — a tape that is on the
+        // edge must not carry a caption about being late.
+        assert_eq!(lane_lag_label(30_000, None), None);
+        // Under the floor: an ordinary quiet moment on a 30 s tape, which the
+        // eye reads as a tape that is running.
+        assert_eq!(lane_lag_label(30_000, Some(3_000)), None);
+        // Visibly behind, but the newest mark is still on the tape, so the
+        // wording points at the mark the reader can find.
+        assert_eq!(
+            lane_lag_label(30_000, Some(6_000)),
+            Some("last print 6 s back".to_owned())
+        );
+        // Past the window: no mark left to point at, so the wording stops
+        // describing one.
+        assert_eq!(
+            lane_lag_label(30_000, Some(41_000)),
+            Some("no print for 41 s".to_owned())
+        );
+        // The floor follows the window, because "behind" is relative to what
+        // the tape is showing: one second is a fifth of a four-second tape and
+        // invisible on a two-minute one.
+        assert_eq!(
+            lane_lag_label(4_000, Some(1_000)),
+            Some("last print 1 s back".to_owned())
+        );
+        assert_eq!(lane_lag_label(120_000, Some(1_000)), None);
+        // And the same seventeen seconds is four whole four-second tapes and
+        // an ordinary quiet stretch of a two-minute one.
+        assert_eq!(
+            lane_lag_label(4_000, Some(17_000)),
+            Some("no print for 17 s".to_owned())
+        );
+        assert_eq!(lane_lag_label(120_000, Some(17_000)), None);
+        assert_eq!(
+            lane_lag_label(120_000, Some(30_000)),
+            Some("last print 30 s back".to_owned())
+        );
+        // A degenerate window must not divide the label by zero or claim a
+        // current tape is late.
+        assert_eq!(lane_lag_label(0, None), None);
+        assert_eq!(
+            lane_lag_label(0, Some(5_000)),
+            Some("no print for 5 s".to_owned())
+        );
     }
 
     /// A menu that offers "auto" against "30 s" is asking the trader to

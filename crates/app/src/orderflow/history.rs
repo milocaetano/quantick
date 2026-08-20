@@ -383,6 +383,29 @@ impl LiquidityHistory {
         }
     }
 
+    /// How far the newest print sits behind the instant the chart calls now.
+    ///
+    /// The live lane's right edge is [`latest_ms`](Self::latest_ms), the newer
+    /// of two independent clocks, and the aggression bubbles are placed by the
+    /// print clock alone. So whenever the book runs ahead of the tape the
+    /// newest bubble lands this far *left* of the edge, and once the gap
+    /// exceeds the lane's window there is no bubble on the tape at all — the
+    /// prints are still on the chart, drawn in their bar's slot, but the tape
+    /// looks empty and says nothing about why.
+    ///
+    /// Two very different things produce it, and the chart cannot tell them
+    /// apart from here: a market that has not printed for a while (honest and
+    /// worth showing), and a delivery backlog between the venue and this
+    /// process (a defect, and worth showing more). Either way the trader is
+    /// reading marks that are this old, so the number is reported rather than
+    /// smoothed away. `None` when the two clocks agree or one of them has yet
+    /// to move.
+    #[must_use]
+    pub fn newest_print_age_ms(&self) -> Option<i64> {
+        let (book, print_ms) = (self.latest_book_ms?, self.latest_print_ms?);
+        book.checked_sub(print_ms).filter(|age| *age > 0)
+    }
+
     /// Oldest timestamp still renderable under the configured retention
     /// window. Long-lived archived runs keep their original metadata; callers
     /// clip them to this floor instead of rewriting the full archive on every
@@ -1514,5 +1537,72 @@ mod tests {
             Some(1_700),
             "the edge only moves forward"
         );
+    }
+
+    /// The distance between the two clocks is exactly the gap the trader sees
+    /// between the newest bubble and the tape's right edge.
+    ///
+    /// It is worth a number of its own because the chart cannot show it any
+    /// other way: the depth map is drawn out to the book's clock and the
+    /// bubbles to the print clock, so the two halves of one frame end in
+    /// different places and nothing on the canvas says by how much. Past the
+    /// lane's own window the bubbles stop being drawn on the tape altogether,
+    /// which reads as "no aggression happened" — the one thing it never means.
+    #[test]
+    fn the_gap_between_the_two_clocks_is_reported_as_a_number() {
+        let config = HeatmapConfig {
+            enabled: true,
+            price_grouping: Decimal::ONE,
+            show_aggressions: true,
+            ..HeatmapConfig::default()
+        };
+        let mut history = LiquidityHistory::new(config);
+        assert_eq!(
+            history.newest_print_age_ms(),
+            None,
+            "no clock has moved: there is no gap to report"
+        );
+
+        history.install_snapshot(10_000, 1, snapshot(10)).unwrap();
+        assert_eq!(
+            history.newest_print_age_ms(),
+            None,
+            "a book with no tape beside it is not a late tape"
+        );
+
+        // A print from four seconds before the book's instant: the bubble is
+        // drawn four seconds left of an edge the book put where it is.
+        history.record_aggression(&Trade {
+            agg_id: 1,
+            timestamp_ms: 6_000,
+            price: Decimal::from(100),
+            quantity: Decimal::from(2),
+            side: Side::Buy,
+        });
+        assert_eq!(history.newest_print_age_ms(), Some(4_000));
+
+        // The tape catches up: the two clocks agree and there is nothing to
+        // declare. Reported as absent rather than as zero, so a caller cannot
+        // print "0 s behind" at a tape that is perfectly current.
+        history.record_aggression(&Trade {
+            agg_id: 2,
+            timestamp_ms: 10_000,
+            price: Decimal::from(100),
+            quantity: Decimal::from(2),
+            side: Side::Buy,
+        });
+        assert_eq!(history.newest_print_age_ms(), None);
+
+        // And a tape running ahead of the book is not a late tape either —
+        // the lane's edge follows whichever clock is newer, so the newest
+        // bubble is sitting on it.
+        history.record_aggression(&Trade {
+            agg_id: 3,
+            timestamp_ms: 12_000,
+            price: Decimal::from(100),
+            quantity: Decimal::from(2),
+            side: Side::Buy,
+        });
+        assert_eq!(history.newest_print_age_ms(), None);
     }
 }
