@@ -266,6 +266,8 @@ pub struct OrderflowHealth {
     pub projection_liquidity_events: usize,
     pub dropped_cells: usize,
     pub folded_aggressions: usize,
+    /// Exact quantity the trader's own display floor kept off the canvas.
+    pub floored_quantity: Decimal,
     pub dropped_liquidity_events: usize,
     pub effective_grouping: Decimal,
     pub effective_grouping_multiple: u32,
@@ -302,6 +304,7 @@ impl OrderflowHealth {
             projection_liquidity_events: 0,
             dropped_cells: 0,
             folded_aggressions: 0,
+            floored_quantity: Decimal::ZERO,
             dropped_liquidity_events: 0,
             effective_grouping: Decimal::new(1, 2),
             effective_grouping_multiple: 1,
@@ -473,6 +476,7 @@ pub struct BookEngine {
     last_projection_liquidity_events: usize,
     last_dropped_cells: usize,
     last_folded_aggressions: usize,
+    last_floored_quantity: Decimal,
     last_dropped_liquidity_events: usize,
     last_effective_grouping: Decimal,
     last_effective_grouping_multiple: u32,
@@ -520,6 +524,7 @@ impl BookEngine {
             last_projection_liquidity_events: 0,
             last_dropped_cells: 0,
             last_folded_aggressions: 0,
+            last_floored_quantity: Decimal::ZERO,
             last_dropped_liquidity_events: 0,
             last_effective_grouping: HeatmapConfig::default().price_grouping,
             last_effective_grouping_multiple: 1,
@@ -577,6 +582,7 @@ impl BookEngine {
         self.last_projection_liquidity_events = 0;
         self.last_dropped_cells = 0;
         self.last_folded_aggressions = 0;
+        self.last_floored_quantity = Decimal::ZERO;
         self.last_dropped_liquidity_events = 0;
         self.last_effective_grouping = self.config.price_grouping;
         self.last_effective_grouping_multiple = 1;
@@ -1087,6 +1093,7 @@ impl BookEngine {
         self.last_projection_aggressions = projection.aggressions.len();
         self.last_projection_liquidity_events = projection.liquidity_events.len();
         self.last_folded_aggressions = projection.folded_aggressions;
+        self.last_floored_quantity = projection.floored_quantity;
         self.last_dropped_liquidity_events = projection.dropped_liquidity_events;
         let frame = Arc::new(VisibleOrderflow {
             projection: Arc::new(projection),
@@ -1180,6 +1187,7 @@ impl BookEngine {
             projection_liquidity_events: self.last_projection_liquidity_events,
             dropped_cells: self.last_dropped_cells,
             folded_aggressions: self.last_folded_aggressions,
+            floored_quantity: self.last_floored_quantity,
             dropped_liquidity_events: self.last_dropped_liquidity_events,
             effective_grouping: self.last_effective_grouping,
             effective_grouping_multiple: self.last_effective_grouping_multiple,

@@ -1974,6 +1974,18 @@ impl OrderflowView {
                             "{} {noun} projected · {} aggressions retained",
                             health.projection_aggressions, health.aggression_count
                         ));
+                        if health.floored_quantity > Decimal::ZERO {
+                            ui.small(format!(
+                                "{} contracts below your display floor are not drawn",
+                                health.floored_quantity
+                            ))
+                            .on_hover_text(concat!(
+                                "the minimum-quantity setting under bubble visuals. It is the ",
+                                "only thing left that keeps contracts off the canvas, so it says ",
+                                "how many - in contracts, not in dots, because what matters is ",
+                                "the size of what is missing. Set it to zero to draw everything",
+                            ));
+                        }
                         if health.folded_aggressions > 0 {
                             ui.small(format!(
                                 "{} marks merged into a neighbour to fit the frame",

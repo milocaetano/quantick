@@ -208,6 +208,13 @@ impl GapPrimitive {
 pub struct HeatmapProjection {
     /// Whether the feature was enabled in sanitized configuration.
     pub enabled: bool,
+    /// Exact quantity the trader's own display floor
+    /// ([`BubbleStyle::min_quantity`]) kept off the canvas.
+    ///
+    /// The only contracts a frame still leaves undrawn, and reported in
+    /// contracts rather than in marks so the reading is the size of what is
+    /// missing, not the number of dots. Zero unless the floor is set.
+    pub floored_quantity: Decimal,
     /// Whether this frame's candle marks are bar summaries rather than raw
     /// clusters.
     ///
@@ -263,6 +270,7 @@ impl HeatmapProjection {
         Self {
             enabled,
             summarized: false,
+            floored_quantity: Decimal::ZERO,
             cells: Arc::new(Vec::new()),
             aggressions: Vec::new(),
             liquidity_events: Vec::new(),
@@ -286,6 +294,13 @@ impl HeatmapProjection {
 /// moving, and is rebuilt as often as the chart draws.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettledProjection {
+    /// Exact quantity the trader's own display floor
+    /// ([`BubbleStyle::min_quantity`]) kept off the canvas.
+    ///
+    /// The only contracts a frame still leaves undrawn, and reported in
+    /// contracts rather than in marks so the reading is the size of what is
+    /// missing, not the number of dots. Zero unless the floor is set.
+    pub floored_quantity: Decimal,
     /// Whether this half's marks are bar summaries. See
     /// [`HeatmapProjection::summarized`].
     pub summarized: bool,
@@ -342,6 +357,8 @@ pub struct LiveMarks {
     pub dropped_liquidity_events: usize,
     /// Marks this half folded into a neighbour to fit its pane's budget.
     pub folded_aggressions: usize,
+    /// Exact quantity this half's display floor kept off the canvas.
+    pub floored_quantity: Decimal,
     /// Normalized x the live edge has reached inside the lane.
     pub live_now_x: Option<f64>,
 }
@@ -352,6 +369,7 @@ impl SettledProjection {
         Self {
             enabled,
             summarized: false,
+            floored_quantity: Decimal::ZERO,
             cells: Arc::new(Vec::new()),
             aggressions: Vec::new(),
             liquidity_events: Vec::new(),
@@ -418,6 +436,7 @@ impl SettledProjection {
         HeatmapProjection {
             enabled: self.enabled,
             summarized: self.summarized,
+            floored_quantity: self.floored_quantity + live.floored_quantity,
             cells: Arc::clone(&self.cells),
             aggressions,
             liquidity_events,
@@ -780,7 +799,7 @@ pub fn project_settled(
     correlate_tier(&mut events, &mut settled, config, summarizing);
     let dropped_liquidity_events = filter_events(&mut events, config, liquidity_reference);
 
-    let settled_marks = refine_tier(
+    let (settled_marks, floored_quantity) = refine_tier(
         settled,
         config,
         aggression_reference,
@@ -895,6 +914,7 @@ pub fn project_settled(
     SettledProjection {
         enabled: true,
         summarized: summarizing,
+        floored_quantity,
         cells: Arc::new(cells),
         aggressions,
         liquidity_events,
@@ -979,7 +999,7 @@ pub fn project_live(
     let mut events = settled.live_events.clone();
     correlate_tier(&mut events, &mut tier, config, summarizing);
     let dropped_liquidity_events = filter_events(&mut events, config, settled.liquidity_reference);
-    let marks = refine_tier(
+    let (marks, floored_quantity) = refine_tier(
         tier,
         config,
         settled.aggression_reference,
@@ -1033,6 +1053,7 @@ pub fn project_live(
         liquidity_events: event_primitives(events, timeline, prices, settled.effective_grouping),
         dropped_liquidity_events,
         folded_aggressions,
+        floored_quantity,
         live_now_x,
     }
 }
@@ -1631,8 +1652,14 @@ fn refine_tier(
     timeline: &BarTimeline,
     grouping: EffectiveGrouping,
     summarizing: bool,
-) -> TierClusters {
+) -> (TierClusters, Decimal) {
     let regionalizing = config.bubble_region_rows > 1;
+    // What the trader's own display floor takes off the canvas. Counted rather
+    // than merely applied: it is the one discard left in this pipeline, it is a
+    // setting the trader chose, and a setting that quietly removes contracts
+    // without saying how many is the same dishonesty the budget just stopped
+    // committing.
+    let mut floored = Decimal::ZERO;
 
     // Display floor for bubbles. Applied after association so a hidden small
     // print still counts as the evidence behind an aligned reduction: the
@@ -1643,9 +1670,21 @@ fn refine_tier(
     // prints fold into their region, and only still-small *regions* are
     // hidden.
     if let Some(floor) = config.bubbles.min_quantity_decimal() {
-        tier.tape.retain(|cluster| cluster.quantity >= floor);
+        tier.tape.retain(|cluster| {
+            let kept = cluster.quantity >= floor;
+            if !kept {
+                floored += cluster.quantity;
+            }
+            kept
+        });
         if !regionalizing {
-            tier.slot.retain(|cluster| cluster.quantity >= floor);
+            tier.slot.retain(|cluster| {
+                let kept = cluster.quantity >= floor;
+                if !kept {
+                    floored += cluster.quantity;
+                }
+                kept
+            });
         }
     }
 
@@ -1687,7 +1726,13 @@ fn refine_tier(
         let region_width = grouping.bucket_width * Decimal::from(config.bubble_region_rows);
         tier.slot = regionalize_clusters(tier.slot, region_width, config.bubble_region_ms, bar_of);
         if let Some(floor) = config.bubbles.min_quantity_decimal() {
-            tier.slot.retain(|cluster| cluster.quantity >= floor);
+            tier.slot.retain(|cluster| {
+                let kept = cluster.quantity >= floor;
+                if !kept {
+                    floored += cluster.quantity;
+                }
+                kept
+            });
         }
     }
 
@@ -1700,7 +1745,7 @@ fn refine_tier(
     if summarizing {
         tier.slot = summarize_clusters(std::mem::take(&mut tier.slot), bar_of);
     }
-    tier
+    (tier, floored)
 }
 
 /// Place one tier's marks on the chart, each on the scale its view reads on.
@@ -4443,6 +4488,174 @@ mod tests {
             quick.iter().map(|mark| mark.1).sum::<Decimal>(),
             slow.iter().map(|mark| mark.1).sum::<Decimal>(),
             "changing the tape's speed changed how much the frame says traded"
+        );
+    }
+
+    /// The mission's invariant, over the whole grid a trader can put the chart
+    /// in: every grouping mode crossed with every tape speed, and both budget
+    /// regimes.
+    ///
+    /// For each cell: the contracts drawn, plus the contracts an explicit
+    /// display floor removed, equal the contracts that traded inside the
+    /// window. Nothing else may go missing, whatever the zoom or the speed.
+    #[test]
+    fn conservation_holds_across_every_grouping_and_every_tape_speed() {
+        let groupings = [
+            DisplayGrouping::Native,
+            DisplayGrouping::Multiple(4),
+            DisplayGrouping::Adaptive { target_rows: 8 },
+            DisplayGrouping::Adaptive { target_rows: 160 },
+        ];
+        let speeds = [1_500_i64, 3_000, 9_000, 21_000];
+        // Roomy enough that nothing folds, and tight enough that everything
+        // does — the invariant may not notice the difference.
+        let budgets = [4_usize, 400];
+        let prices = PriceWindow::new(dec("90"), dec("140")).unwrap();
+
+        for display_grouping in groupings {
+            for window_ms in speeds {
+                for max_aggression_primitives in budgets {
+                    let history = crowded_history(HeatmapConfig {
+                        display_grouping,
+                        max_aggression_primitives,
+                        ..bubbles_only()
+                    });
+                    let closed: Vec<Bar> =
+                        (0..6).map(|i| bar(i * 3_000, i * 3_000 + 2_999)).collect();
+                    let partial = bar(18_000, 21_000);
+                    let timeline = BarTimeline::from_bars(
+                        0,
+                        &closed,
+                        Some(&partial),
+                        Some(crate::orderflow::LiveEdge {
+                            now_ms: 18_100,
+                            window_ms,
+                            reference_ms: 3_000,
+                            on_newest_bar: true,
+                        }),
+                    );
+                    let projection = project(&history, &timeline, prices);
+                    let cell = format!(
+                        "grouping {display_grouping:?}, window {window_ms} ms, budget \
+                         {max_aggression_primitives}"
+                    );
+
+                    // Every print of the fixture is inside this price window and
+                    // inside the timeline, so the tape is the whole retained set.
+                    let traded: Decimal = history.aggressions().map(|trade| trade.quantity).sum();
+                    let drawn: Decimal = projection
+                        .aggressions
+                        .iter()
+                        .map(|mark| mark.quantity)
+                        .sum();
+                    assert_eq!(
+                        drawn + projection.floored_quantity,
+                        traded,
+                        "contracts went missing at {cell}"
+                    );
+                    assert_eq!(
+                        projection.floored_quantity,
+                        Decimal::ZERO,
+                        "no floor is set in this fixture, so nothing may be floored at {cell}"
+                    );
+                    // And a fold never crossed a bar to get there.
+                    for mark in projection.aggressions.iter().filter(|mark| !mark.live) {
+                        assert_eq!(
+                            timeline
+                                .locate(mark.first_timestamp_ms)
+                                .map(|position| position.bar_index),
+                            timeline
+                                .locate(mark.last_timestamp_ms)
+                                .map(|position| position.bar_index),
+                            "a candle mark spans two bars at {cell}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The one discard left is the trader's own, and the frame says how big it
+    /// is — in contracts, because what matters is the size of what is missing
+    /// and not the number of dots.
+    #[test]
+    fn the_display_floor_is_the_only_thing_missing_and_it_is_declared() {
+        let floored = project(
+            &crowded_history(HeatmapConfig {
+                bubbles: BubbleStyle {
+                    min_quantity: 5.0,
+                    readable_min_radius: 0.0,
+                    ..BubbleStyle::default()
+                },
+                ..bubbles_only()
+            }),
+            &crowded_timeline(),
+            PriceWindow::new(dec("90"), dec("140")).unwrap(),
+        );
+        let history = crowded_history(bubbles_only());
+        let traded: Decimal = history.aggressions().map(|trade| trade.quantity).sum();
+        let drawn: Decimal = floored.aggressions.iter().map(|mark| mark.quantity).sum();
+
+        assert!(
+            floored.floored_quantity > Decimal::ZERO,
+            "a floor of five over a ladder of ones has to remove something"
+        );
+        assert_eq!(
+            drawn + floored.floored_quantity,
+            traded,
+            "the floor's residue does not account for what is off the canvas"
+        );
+        for mark in &floored.aggressions {
+            assert!(
+                mark.quantity >= dec("5"),
+                "a mark under the floor survived it"
+            );
+        }
+    }
+
+    /// Reversibility, on both axes. The projection is a function of the window
+    /// it is handed, so a trader who zooms out to look around — or slows the
+    /// tape down and speeds it back up — finds exactly the frame they left.
+    #[test]
+    fn returning_to_a_window_or_a_speed_returns_its_frame() {
+        let history = crowded_history(HeatmapConfig {
+            display_grouping: DisplayGrouping::Adaptive { target_rows: 8 },
+            max_aggression_primitives: 12,
+            ..bubbles_only()
+        });
+        let frame_at = |window_ms: i64, prices: PriceWindow| {
+            let closed: Vec<Bar> = (0..6).map(|i| bar(i * 3_000, i * 3_000 + 2_999)).collect();
+            let partial = bar(18_000, 21_000);
+            let timeline = BarTimeline::from_bars(
+                0,
+                &closed,
+                Some(&partial),
+                Some(crate::orderflow::LiveEdge {
+                    now_ms: 18_100,
+                    window_ms,
+                    reference_ms: 3_000,
+                    on_newest_bar: true,
+                }),
+            );
+            project(&history, &timeline, prices).aggressions
+        };
+        let home = PriceWindow::new(dec("99"), dec("104")).unwrap();
+        let away = PriceWindow::new(dec("90"), dec("140")).unwrap();
+
+        let first = frame_at(3_000, home);
+        let _ = frame_at(3_000, away);
+        assert_eq!(
+            first,
+            frame_at(3_000, home),
+            "the same price window gave a different frame the second time"
+        );
+
+        let quick = frame_at(1_500, away);
+        let _ = frame_at(21_000, away);
+        assert_eq!(
+            quick,
+            frame_at(1_500, away),
+            "the same tape speed gave a different frame the second time"
         );
     }
 

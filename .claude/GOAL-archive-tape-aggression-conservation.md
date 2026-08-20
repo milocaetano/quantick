@@ -156,3 +156,25 @@ salário é o cliente — a fita tem que ser honesta com ele.
 - **Tremulação do fold da fita entre frames.** Confinada à borda esquerda pelo `OldestFirst`. Corrigir de vez exige ancorar os grupos em janelas de tempo fixas.
 - **O fold no seu próprio módulo.** `projection.rs` passou de 4300 linhas.
 - **Os outros caminhos de descarte** (piso `min_quantity`, recorte pela faixa de preço visível, retenção) continuam sem declaração em contratos na tela.
+
+## Todo caminho por onde uma agressão deixa de ser desenhada
+
+Rastreado até `arquivo:linha` no código como ele fica depois desta branch.
+Veredito por caminho, e o que a branch fez com cada um.
+
+| Caminho | Local (pós-branch) | Depende do zoom? | Veredito | O que ficou |
+|---|---|---|---|---|
+| **Teto de primitivas** — era `sort by quantity` + `truncate`, sobre as duas metades juntas | `projection.rs:1240` (`fold_to_budget`) | Era **sim** — o número de marcas dependia da janela | **BUG.** Era a causa principal do sintoma | **Corrigido.** Funde em vez de descartar; orçamento por painel. Nada se perde |
+| **Piso de exibição** `min_quantity` | `projection.rs:1672` e `:1728` (`retain`) | Não | **POLÍTICA** — o trader escolheu o piso | **Agora declarado.** `floored_quantity` conta os contratos removidos e a régua de saúde os mostra em contratos |
+| **Recorte pela janela de preço/tempo visível** | `projection.rs:1602` (`prices.y(...).is_none()`) | **Sim**, por construção | **POLÍTICA.** Uma bolha num preço fora da tela não tem onde ser desenhada | Não mexido. Ver a assimetria abaixo |
+| **Retenção** — o print mais antigo sai da memória | `history.rs:864` (`aggressions_evicted`) | Não | **POLÍTICA** — `max_aggressions`, limite de memória | Não mexido. O contador existe mas não chega à tela |
+| **Teto de eventos de liquidez** — `cap_events` ainda trunca | `projection.rs:1161-1173` | Sim | **POLÍTICA declarada** — são marcas de profundidade, não agressões, e `dropped_liquidity_events` já sobe ao WARN | Não mexido; é o que o WARN passou a vigiar sozinho |
+| **Prints da fita fora do slot da vela** — a exclusividade entre os painéis | `projection.rs:1604-1614` | Não (a janela da fita é da fita) | **POLÍTICA.** Cada print é desenhado por exatamente um painel; alargar a fita **move**, nunca apaga | Documentado no código; provado por `changing_the_tape_window_leaves_every_chart_primitive_alone` |
+
+### A assimetria que fica em aberto
+
+O mapa de calor **conta** os buckets fora da tela no total da faixa visível
+(`sweep_grouped_runs`, provado por `partially_visible_range_keeps_offscreen_base_quantity`).
+As bolhas **descartam** o print fora da faixa (`projection.rs:1602`). Numa faixa
+parcialmente visível as duas camadas mostram totais diferentes **no mesmo
+frame**. É um achado real, fora do escopo desta missão, e está declarado no PR.
