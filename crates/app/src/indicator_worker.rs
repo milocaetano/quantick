@@ -1760,15 +1760,24 @@ mod exhaustion_reversal_chain_tests {
         }
     }
 
-    /// 24 tick(2) bars sized for the script's *defaults*: twenty quiet
-    /// bullish bars (body 1) to warm a 20-bar body average and a 10-bar
-    /// extreme, then a body-10 bar taking out the high, then three bearish
-    /// bars handing 80% of it back.
+    /// Quiet bars before the force bar. The 20-bar body average this script
+    /// defaults to first exists on bar 20 (`body[1]` is `na` on bar 0 and
+    /// that NaN sits in the window until it slides out), so a fixture with
+    /// exactly 20 would put the force bar on the very first bar that can be
+    /// judged at all — and any edit that shifts warm-up by one would fail
+    /// this test with an empty marker column, which reads as a broken
+    /// channel rather than as a fixture one bar short.
+    const WARMUP_BARS: usize = 25;
+
+    /// 29 tick(2) bars sized for the script's *defaults*: the quiet bullish
+    /// run above (body 1) to warm a 20-bar body average and a 10-bar extreme,
+    /// then a body-10 bar taking out the high, then three bearish bars
+    /// handing 80% of it back.
     fn tape() -> Vec<Bar> {
         // Two prints per bar, so each pair below *is* one bar's open and
         // close (and, with no third print, its low and high).
         let mut prices: Vec<i64> = Vec::new();
-        for _ in 0..20 {
+        for _ in 0..WARMUP_BARS {
             prices.extend([100, 101]);
         }
         // 20: the force bar — body 10 against an average of 1, high 111
@@ -1808,7 +1817,7 @@ mod exhaustion_reversal_chain_tests {
     #[test]
     fn the_embedded_exhaustion_reversal_marks_through_the_whole_chain() {
         let bars = tape();
-        assert_eq!(bars.len(), 24, "fixture shape");
+        assert_eq!(bars.len(), WARMUP_BARS + 4, "fixture shape");
 
         let source = EMBEDDED_SCRIPTS
             .iter()
@@ -1836,7 +1845,7 @@ mod exhaustion_reversal_chain_tests {
         assert_eq!(views.all()[0].rows, bars.len());
         assert_eq!(
             marks(&views, "Exhaustion reversal: sell"),
-            vec![23],
+            vec![WARMUP_BARS + 3],
             "the triangle lands on the bar closing the give-back, with the \
              defaults a trader gets from the menu — no test-only inputs"
         );

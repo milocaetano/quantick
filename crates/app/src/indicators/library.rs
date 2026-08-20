@@ -236,7 +236,7 @@ mod tests {
 
     /// Same pin, same reason: `exhaustion_reversal_semantics.rs` proves the
     /// force-bar / give-back pairs against the corpus copy, and a drift would
-    /// leave twelve passing tests describing a script nobody ships.
+    /// leave a suite of passing tests describing a script nobody ships.
     #[test]
     fn the_embedded_exhaustion_reversal_matches_its_semantics_fixture() {
         assert_eq!(

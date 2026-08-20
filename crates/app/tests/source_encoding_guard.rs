@@ -20,6 +20,15 @@ use std::path::Path;
 /// mangled multi-byte character.
 const MOJIBAKE: &[&str] = &["Â", "Ã", "â€", "âœ", "â†", "Ð"];
 
+/// Extensions worth scanning. `.pine` is here for the same reason `.rs` is,
+/// and arguably more: `crates/app/scripts/*.pine` hold the repo's densest
+/// non-ASCII prose — trader-facing headers full of `—`, plus input titles
+/// like `min body (×average)` that the settings dialog renders verbatim. A
+/// folder-wide rewrite mangles a script and its byte-identical corpus copy
+/// together, so the pin test that compares the two stays green while the
+/// dialog fills with `Ã—`.
+const SCANNED: &[&str] = &["rs", "pine"];
+
 /// The UTF-8 byte-order mark. Legal UTF-8, but nothing in this repo carries
 /// one, and a tool that adds one has usually changed the encoding too.
 const BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
@@ -31,7 +40,10 @@ fn scan(dir: &Path, violations: &mut Vec<String>) {
             scan(&path, violations);
             continue;
         }
-        if path.extension().is_none_or(|e| e != "rs") {
+        if path
+            .extension()
+            .is_none_or(|e| !SCANNED.iter().any(|ext| e == *ext))
+        {
             continue;
         }
         let bytes = fs::read(&path).expect("source file is readable");
@@ -59,9 +71,10 @@ fn scan(dir: &Path, violations: &mut Vec<String>) {
 
 #[test]
 fn sources_are_utf8_without_a_bom_or_mojibake() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut violations = Vec::new();
-    scan(&src, &mut violations);
+    scan(&crate_dir.join("src"), &mut violations);
+    scan(&crate_dir.join("scripts"), &mut violations);
     assert!(
         violations.is_empty(),
         "source files were rewritten in the wrong encoding (write them as UTF-8 without a \

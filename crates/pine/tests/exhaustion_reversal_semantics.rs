@@ -5,20 +5,24 @@
 //! triangle appears would pass on a script that marks every bar, and the
 //! whole value of this indicator is the bars it stays silent on.
 //!
+//! One test does not read rows at all: `the_declared_marks_are_the_ones_the_
+//! renderer_draws` pins shape, location and colour. Those three fold at load
+//! time with silent fallbacks, so a swapped `location.abovebar` — the sell
+//! triangle drawn under the low — is invisible to every row assertion here.
+//!
 //! The tapes are written as raw `(open, high, low, close)` rows because those
 //! four numbers are the entire input surface of this script — no volume, no
 //! delta, no CVD. What each row is for is stated beside it.
 
-use quantick_indicators::{Ctx, Indicator, IndicatorBar, InputValue, PlotId, Rgba8};
+use quantick_indicators::{
+    Ctx, Indicator, IndicatorBar, InputSpec, InputValue, MarkerLocation, MarkerShape, PlotId, Rgba8,
+};
 use quantick_pine::{ScriptIndicator, compile};
 
 const SCRIPT: &str = include_str!("corpus/ok/exhaustion_reversal.pine");
 
 const SELL_PLOT: &str = "Exhaustion reversal: sell";
 const BUY_PLOT: &str = "Exhaustion reversal: buy";
-
-const TOP_COLOUR: Rgba8 = Rgba8::opaque(1, 0, 0);
-const BOTTOM_COLOUR: Rgba8 = Rgba8::opaque(2, 0, 0);
 
 /// (open, high, low, close).
 type Ohlc = (f64, f64, f64, f64);
@@ -27,30 +31,32 @@ type Ohlc = (f64, f64, f64, f64);
 /// identical at any length. Positional — the script's `input.*` order.
 fn inputs() -> Vec<InputValue> {
     vec![
-        InputValue::Int(4),               // 0  1 Force bar: body average window
-        InputValue::Float(1.5),           // 1  1 Force bar: min body (×average)
-        InputValue::Int(4),               // 2  1 Force bar: new extreme over (bars)
-        InputValue::Bool(true),           // 3  1 Force bar: must close with the push
-        InputValue::Bool(true),           // 4  2 Run: on
-        InputValue::Int(3),               // 5  2 Run: opposite candles in a row
-        InputValue::Int(5),               // 6  2 Run: window after the force bar
-        InputValue::Float(0.7),           // 7  2 Run: min give-back
-        InputValue::Bool(true),           // 8  3 Engulf: on
-        InputValue::Int(3),               // 9  3 Engulf: window after the force bar
-        InputValue::Float(0.7),           // 10 3 Engulf: min overlap
-        InputValue::Bool(true),           // 11 4 Display: mark top reversals
-        InputValue::Bool(true),           // 12 4 Display: mark bottom reversals
-        InputValue::Color(TOP_COLOUR),    // 13
-        InputValue::Color(BOTTOM_COLOUR), // 14
+        InputValue::Int(4),     // 0  1 Force bar: body average window
+        InputValue::Float(1.5), // 1  1 Force bar: min body (×average)
+        InputValue::Int(4),     // 2  1 Force bar: reaches the extreme of
+        InputValue::Bool(true), // 3  1 Force bar: must close with the push
+        InputValue::Bool(true), // 4  2 Run: on
+        InputValue::Int(3),     // 5  2 Run: opposite candles in a row
+        InputValue::Int(5),     // 6  2 Run: window after the force bar
+        InputValue::Float(0.7), // 7  2 Run: min give-back
+        InputValue::Bool(true), // 8  3 Cover: on
+        InputValue::Int(3),     // 9  3 Cover: window after the force bar
+        InputValue::Float(0.7), // 10 3 Cover: min overlap
+        InputValue::Bool(true), // 11 4 Display: mark top reversals
+        InputValue::Bool(true), // 12 4 Display: mark bottom reversals
     ]
 }
 
-/// Input slots the tests reach for by name, so a reordering of the script's
-/// inputs breaks compilation here instead of silently testing the wrong knob.
+// Positions into the hand-ordered `Vec` above. Naming them keeps a test from
+// reading as `off[8] = false` — but note this is legibility only: the bind
+// path checks the input *count*, never a name, so reordering two same-typed
+// inputs would leave these pointing at the wrong knob with the suite green.
+// There is no by-name input API to reach for; the behavioural assertions are
+// what actually catch a reorder.
 const NEED_DIRECTION: usize = 3;
 const USE_RUN: usize = 4;
 const RUN_WINDOW: usize = 6;
-const USE_ENGULF: usize = 8;
+const USE_COVER: usize = 8;
 const SHOW_TOP: usize = 11;
 
 fn make(index: usize, row: Ohlc) -> IndicatorBar {
@@ -71,12 +77,12 @@ fn make(index: usize, row: Ohlc) -> IndicatorBar {
 
 /// Five flat bullish bars: body 1.0, range 1.0, every high identical. The
 /// averages the force bar is judged against are therefore exactly 1.0, and
-/// the extreme it must clear is exactly 101.0.
+/// the extreme it must reach is exactly 101.0.
 fn context_up() -> Vec<Ohlc> {
     vec![(100.0, 101.0, 100.0, 101.0); 5]
 }
 
-/// The mirror: flat bearish bars, extreme to clear exactly 100.0.
+/// The mirror: flat bearish bars, extreme to reach exactly 100.0.
 fn context_down() -> Vec<Ohlc> {
     vec![(101.0, 101.0, 100.0, 100.0); 5]
 }
@@ -86,8 +92,12 @@ fn context_down() -> Vec<Ohlc> {
 /// 104.0 gives back the required 70%.
 const FORCE_UP: Ohlc = (101.0, 111.0, 101.0, 111.0);
 
-/// The canonical tape: force bar, then three bearish candles closing at 103
-/// — 80% of the force bar handed back on the third.
+/// The mirror: a selling push at a new low, range 90..100.
+const FORCE_DOWN: Ohlc = (100.0, 100.0, 90.0, 90.0);
+
+/// The canonical run tape: force bar, then three bearish candles closing at
+/// 103 — 80% of the force bar handed back on the third. Its deepest single
+/// body overlaps only 40%, so the cover shape cannot see this tape.
 fn sell_tape() -> Vec<Ohlc> {
     let mut t = context_up();
     t.push(FORCE_UP); //                      5  force bar
@@ -97,7 +107,26 @@ fn sell_tape() -> Vec<Ohlc> {
     t
 }
 
-fn run(inputs: Vec<InputValue>, rows: &[Ohlc]) -> ScriptIndicator {
+/// The mirror of `sell_tape`.
+fn buy_tape() -> Vec<Ohlc> {
+    let mut t = context_down();
+    t.push(FORCE_DOWN); //                5  selling push at a new low
+    t.push((90.0, 92.0, 90.0, 92.0)); //  6  give-back 1 of 3
+    t.push((92.0, 94.0, 92.0, 94.0)); //  7  give-back 2 of 3
+    t.push((94.0, 98.0, 94.0, 98.0)); //  8  give-back 3 of 3 -> 80%, marks
+    t
+}
+
+/// Force bar, then one bearish candle whose body covers 80% of its range —
+/// the shape the run cannot see, because one candle is not three.
+fn cover_tape() -> Vec<Ohlc> {
+    let mut t = context_up();
+    t.push(FORCE_UP); //                      5  force bar, range 101..111
+    t.push((111.0, 111.0, 103.0, 103.0)); //  6  body 111->103 = 80% overlap
+    t
+}
+
+fn load() -> ScriptIndicator {
     let compiled = match compile(SCRIPT, "exhaustion_reversal.pine") {
         Ok(c) => c,
         Err(errors) => panic!(
@@ -109,7 +138,24 @@ fn run(inputs: Vec<InputValue>, rows: &[Ohlc]) -> ScriptIndicator {
                 .join("\n")
         ),
     };
-    let mut indicator = ScriptIndicator::with_inputs(compiled, SCRIPT, inputs);
+    ScriptIndicator::new(compiled, SCRIPT)
+}
+
+/// Borrowed inputs on purpose: a test that flips two switches would otherwise
+/// have to build the vector twice, and the second copy silently drifts.
+fn run(inputs: &[InputValue], rows: &[Ohlc]) -> ScriptIndicator {
+    let compiled = match compile(SCRIPT, "exhaustion_reversal.pine") {
+        Ok(c) => c,
+        Err(errors) => panic!(
+            "exhaustion_reversal.pine must compile:\n{}",
+            errors
+                .iter()
+                .map(|e| e.render("exhaustion_reversal.pine", SCRIPT))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    };
+    let mut indicator = ScriptIndicator::with_inputs(compiled, SCRIPT, inputs.to_vec());
 
     let mut cvd = Vec::new();
     let mut sum = 0.0;
@@ -157,8 +203,75 @@ fn none() -> Vec<usize> {
 }
 
 #[test]
+fn the_declared_marks_are_the_ones_the_renderer_draws() {
+    // Shape, location and colour all fold at load time and all fall back
+    // SILENTLY when they do not fold — `plotshape` has no unfoldable-argument
+    // warning. So every row assertion in this file would survive a sell
+    // triangle pointing up, drawn under the bar, in the wrong colour.
+    let indicator = load();
+    let plots = &indicator.descriptor().plots;
+    assert_eq!(plots.len(), 2, "one plot per side, and nothing else");
+
+    let sell = plots
+        .iter()
+        .find(|p| p.title == SELL_PLOT)
+        .expect("sell plot");
+    let sell_marker = sell.marker.as_ref().expect("the sell plot is a marker");
+    assert_eq!(sell_marker.shape, MarkerShape::TriangleDown);
+    assert_eq!(
+        sell_marker.location,
+        MarkerLocation::AboveBar,
+        "a sell mark sits above the bar; below it would point at the wrong \
+         price and cover the candle it is about"
+    );
+    assert_eq!(
+        sell.base_color,
+        Rgba8::new(0xF2, 0x36, 0x45, 0xFF),
+        "color.red — an unfoldable colour argument lands as amber instead, \
+         which is how both sides once shipped the same colour"
+    );
+
+    let buy = plots
+        .iter()
+        .find(|p| p.title == BUY_PLOT)
+        .expect("buy plot");
+    let buy_marker = buy.marker.as_ref().expect("the buy plot is a marker");
+    assert_eq!(buy_marker.shape, MarkerShape::TriangleUp);
+    assert_eq!(buy_marker.location, MarkerLocation::BelowBar);
+    assert_eq!(
+        buy.base_color,
+        Rgba8::new(0x00, 0x89, 0x7B, 0xFF),
+        "color.teal, and distinct from the sell colour"
+    );
+}
+
+#[test]
+fn no_declared_input_is_a_control_that_does_nothing() {
+    // `input.color` does not fold in this dialect, so a colour handed to a
+    // `plotshape` is dropped for the default amber — silently, because
+    // `plotshape` has no unfoldable-argument warning. The settings dialog
+    // still renders the picker, so the trader gets a control that moves
+    // nothing, which the repo treats as worse than an absent one. This
+    // script therefore declares no colour input at all and takes its colours
+    // from the Style tab; the assertion is here so nobody adds one back.
+    let indicator = load();
+    let inputs = &indicator.descriptor().inputs;
+    assert_eq!(
+        inputs.len(),
+        13,
+        "four force-bar knobs, four run, three cover, two display"
+    );
+    for spec in inputs {
+        assert!(
+            !matches!(spec, InputSpec::Color { .. }),
+            "colour inputs cannot reach a plot in this dialect: {spec:?}"
+        );
+    }
+}
+
+#[test]
 fn three_bearish_candles_give_back_the_push_and_a_shallower_run_does_not() {
-    let hit = run(inputs(), &sell_tape());
+    let hit = run(&inputs(), &sell_tape());
     assert_eq!(
         sells(&hit),
         vec![8],
@@ -170,7 +283,7 @@ fn three_bearish_candles_give_back_the_push_and_a_shallower_run_does_not() {
     let mut shallow = sell_tape();
     shallow[8] = (107.0, 107.0, 105.0, 105.0);
     assert_eq!(
-        sells(&run(inputs(), &shallow)),
+        sells(&run(&inputs(), &shallow)),
         none(),
         "60% is not 70% — the threshold is real, not decorative"
     );
@@ -188,7 +301,7 @@ fn two_pause_bars_still_count_and_three_pause_bars_are_too_late() {
     paused.push((110.0, 110.0, 107.0, 107.0)); //  9  give-back 2 of 3
     paused.push((107.0, 107.0, 103.0, 103.0)); // 10  give-back 3 of 3, age 5
     assert_eq!(
-        sells(&run(inputs(), &paused)),
+        sells(&run(&inputs(), &paused)),
         vec![10],
         "age 5 is the last bar the window covers, and it still marks"
     );
@@ -203,7 +316,7 @@ fn two_pause_bars_still_count_and_three_pause_bars_are_too_late() {
     late.push((110.0, 110.0, 107.0, 107.0)); // 10  give-back 2 of 3
     late.push((107.0, 107.0, 103.0, 103.0)); // 11  give-back 3 of 3, age 6
     assert_eq!(
-        sells(&run(inputs(), &late)),
+        sells(&run(&inputs(), &late)),
         none(),
         "the same give-back one bar later is a micro range, not a reversal — \
          this pair is the entire reason the window exists"
@@ -222,9 +335,30 @@ fn the_run_must_be_consecutive() {
     broken.push((108.0, 108.0, 105.0, 105.0)); //  9  bearish (1 of a new run)
     broken.push((105.0, 105.0, 103.0, 103.0)); // 10  bearish (2), 80% given back
     assert_eq!(
-        sells(&run(inputs(), &broken)),
+        sells(&run(&inputs(), &broken)),
         none(),
         "the push was given back, but not by a run — two in a row is not three"
+    );
+}
+
+#[test]
+fn the_streak_and_the_give_back_are_independent_tests() {
+    // Documented behaviour, pinned so nobody "fixes" it by accident: the run
+    // asks (a) did the last three candles close against the push, and (b) is
+    // price now back off the extreme. It does NOT ask that the three candles
+    // did the travelling. Here a single bullish gap hands back 80% and the
+    // three bearish candles that follow move 1% between them.
+    let mut cosmetic = context_up();
+    cosmetic.push(FORCE_UP); //                        5  force bar, range 10
+    cosmetic.push((102.0, 103.2, 101.8, 103.0)); //    6  bullish gap — gives back 80%
+    cosmetic.push((103.0, 103.0, 102.9, 102.9)); //    7  bearish by 0.1
+    cosmetic.push((102.9, 102.9, 102.8, 102.8)); //    8  bearish by 0.1
+    cosmetic.push((102.8, 102.8, 102.7, 102.7)); //    9  bearish by 0.1 -> marks
+    assert_eq!(
+        sells(&run(&inputs(), &cosmetic)),
+        vec![9],
+        "price is back and the tape is still leaning down, which is what the \
+         two conditions actually say — the header says so too"
     );
 }
 
@@ -236,25 +370,45 @@ fn an_ordinary_bar_at_a_new_high_is_not_a_force_bar() {
     weak.push((101.5, 101.5, 101.0, 101.0)); // 7
     weak.push((101.0, 101.0, 100.5, 100.5)); // 8  gives back far more than 70%
     assert_eq!(
-        sells(&run(inputs(), &weak)),
+        sells(&run(&inputs(), &weak)),
         none(),
         "a breakout the tape did not have to work for is not exhaustion"
     );
 }
 
 #[test]
-fn a_force_bar_that_takes_out_no_extreme_is_not_a_force_bar() {
+fn a_force_bar_that_reaches_no_extreme_is_not_a_force_bar() {
     // Identical to the canonical tape except bar 3, which leaves a 120 high
     // standing above everything the force bar can reach.
     let mut buried = sell_tape();
     buried[3] = (100.0, 120.0, 100.0, 101.0); // tall wick, body still 1.0
     assert_eq!(
-        sells(&run(inputs(), &buried)),
+        sells(&run(&inputs(), &buried)),
         none(),
         "a big body in the middle of a move is not a move ending"
     );
     // The pair: the same tape without that overhead high does mark.
-    assert_eq!(sells(&run(inputs(), &sell_tape())), vec![8]);
+    assert_eq!(sells(&run(&inputs(), &sell_tape())), vec![8]);
+}
+
+#[test]
+fn touching_the_extreme_is_enough_to_anchor() {
+    // Equalling the last N highs anchors: on futures the offer parks at a
+    // price and highs tie constantly, and a push that shoves into a level the
+    // tape touched N bars ago is the same event as one that clears it.
+    let mut tie = context_up();
+    // A bullish body of 10 whose high is exactly the window's high of 101 —
+    // it ties the extreme rather than clearing it.
+    tie.push((91.0, 101.0, 91.0, 101.0)); //  5  force bar, high ties 101
+    tie.push((101.0, 101.0, 99.0, 99.0)); //  6  give-back 1 of 3
+    tie.push((99.0, 99.0, 97.0, 97.0)); //    7  give-back 2 of 3
+    tie.push((97.0, 97.0, 93.0, 93.0)); //    8  give-back 3 of 3 -> 80%
+    assert_eq!(
+        sells(&run(&inputs(), &tie)),
+        vec![8],
+        "a tied high still anchors; the body test is what keeps a flat, quiet \
+         stretch of tied highs from ever getting here"
+    );
 }
 
 #[test]
@@ -268,7 +422,7 @@ fn the_direction_rule_decides_whether_a_reversal_bar_can_anchor() {
     wick.push((99.0, 99.0, 98.0, 98.0)); //     8  bearish, 127% given back
 
     assert_eq!(
-        sells(&run(inputs(), &wick)),
+        sells(&run(&inputs(), &wick)),
         none(),
         "with the direction rule on, only a bar closing up can be a buying push"
     );
@@ -276,7 +430,7 @@ fn the_direction_rule_decides_whether_a_reversal_bar_can_anchor() {
     let mut loose = inputs();
     loose[NEED_DIRECTION] = InputValue::Bool(false);
     assert_eq!(
-        sells(&run(loose, &wick)),
+        sells(&run(&loose, &wick)),
         vec![8],
         "with it off, any big bar at a new extreme anchors — the input is \
          wired to the clause it names"
@@ -285,13 +439,7 @@ fn the_direction_rule_decides_whether_a_reversal_bar_can_anchor() {
 
 #[test]
 fn the_buy_side_is_the_exact_mirror() {
-    let mut t = context_down();
-    t.push((100.0, 100.0, 90.0, 90.0)); //  5  selling push at a new low
-    t.push((90.0, 92.0, 90.0, 92.0)); //    6  give-back 1 of 3
-    t.push((92.0, 94.0, 92.0, 94.0)); //    7  give-back 2 of 3
-    t.push((94.0, 98.0, 94.0, 98.0)); //    8  give-back 3 of 3 -> 80%
-
-    let hit = run(inputs(), &t);
+    let hit = run(&inputs(), &buy_tape());
     assert_eq!(buys(&hit), vec![8]);
     assert_eq!(sells(&hit), none(), "a faded selling push marks no short");
 }
@@ -301,26 +449,36 @@ fn a_push_is_spent_by_its_own_signal() {
     // A fourth bearish candle, still inside the window, giving back even more.
     let mut long_run = sell_tape();
     long_run.push((103.0, 103.0, 101.0, 101.0)); // 9  age 4, run 4, 100% back
+    assert_eq!(long_run.len(), 10, "the tape really is ten bars long");
     assert_eq!(
-        run(inputs(), &long_run)
-            .plots()
-            .column(PlotId::new(0))
-            .len(),
-        10,
-        "the tape really is ten bars long"
-    );
-    assert_eq!(
-        sells(&run(inputs(), &long_run)),
+        sells(&run(&inputs(), &long_run)),
         vec![8],
         "one arrow per push: the same reversal must not be marked twice"
     );
 }
 
 #[test]
-fn nothing_is_marked_while_the_averages_are_warming_up() {
-    let warm = run(inputs(), &context_up());
-    assert_eq!(sells(&warm), none());
-    assert_eq!(buys(&warm), none());
+fn the_warm_up_guards_keep_the_opening_stretch_clean() {
+    // `ta.sma(body[1], 4)` carries a NaN until bar 4, so a textbook shape one
+    // bar earlier must not mark. The two tapes are the same shape, one bar
+    // apart — without the `not na` guards the first would mark too.
+    let mut too_early = vec![(100.0, 101.0, 100.0, 101.0); 3];
+    too_early.push(FORCE_UP); //                      3  force shape, still warming
+    too_early.push((111.0, 111.0, 103.0, 103.0)); //  4  would cover 80%
+    assert_eq!(
+        sells(&run(&inputs(), &too_early)),
+        none(),
+        "the body average does not exist yet, so nothing can beat it"
+    );
+
+    let mut warm = vec![(100.0, 101.0, 100.0, 101.0); 4];
+    warm.push(FORCE_UP); //                      4  the same force shape, warm
+    warm.push((111.0, 111.0, 103.0, 103.0)); //  5  covers 80% -> marks
+    assert_eq!(
+        sells(&run(&inputs(), &warm)),
+        vec![5],
+        "one bar later the average exists and the identical shape marks"
+    );
 }
 
 #[test]
@@ -330,7 +488,7 @@ fn a_window_shorter_than_the_run_still_means_the_run() {
     let mut impossible = inputs();
     impossible[RUN_WINDOW] = InputValue::Int(1);
     assert_eq!(
-        sells(&run(impossible, &sell_tape())),
+        sells(&run(&impossible, &sell_tape())),
         vec![8],
         "an input that cannot fire is a trap, not a setting"
     );
@@ -341,20 +499,12 @@ fn a_display_toggle_silences_its_own_side_and_nothing_else() {
     let mut top_off = inputs();
     top_off[SHOW_TOP] = InputValue::Bool(false);
     assert_eq!(
-        sells(&run(top_off, &sell_tape())),
+        sells(&run(&top_off, &sell_tape())),
         none(),
         "the sell side goes quiet"
     );
-
-    let mut t = context_down();
-    t.push((100.0, 100.0, 90.0, 90.0));
-    t.push((90.0, 92.0, 90.0, 92.0));
-    t.push((92.0, 94.0, 92.0, 94.0));
-    t.push((94.0, 98.0, 94.0, 98.0));
-    let mut top_off_again = inputs();
-    top_off_again[SHOW_TOP] = InputValue::Bool(false);
     assert_eq!(
-        buys(&run(top_off_again, &t)),
+        buys(&run(&top_off, &buy_tape())),
         vec![8],
         "…while the other side keeps marking: the toggle gates one draw site"
     );
@@ -413,48 +563,40 @@ fn a_forming_bar_never_shows_the_mark_and_never_consumes_the_push() {
 }
 
 // ---------------------------------------------------------------------------
-// The engulf: one opposite candle covering the force bar by itself.
+// The cover: one opposite candle sitting on top of the force bar.
 //
-// Measured as OVERLAP, not as give-back: the two shapes answer different
-// questions, and these tapes are chosen so that each is invisible to the
-// other. `engulf_tape` has no run (one candle is not three); `sell_tape` has
-// no engulf (its deepest single body overlaps 40%). Anything that mixed the
-// two measures up would light both tapes.
+// Measured as OVERLAP, not as travel: the two shapes answer different
+// questions, and these tapes are chosen so each is invisible to the other.
+// `cover_tape` has no run (one candle is not three); `sell_tape` has no cover
+// (its deepest single body overlaps 40%). Anything that mixed the two
+// measures up would light both tapes.
 // ---------------------------------------------------------------------------
-
-/// Force bar, then one bearish candle whose body covers 80% of its range.
-fn engulf_tape() -> Vec<Ohlc> {
-    let mut t = context_up();
-    t.push(FORCE_UP); //                      5  force bar, range 101..111
-    t.push((111.0, 111.0, 103.0, 103.0)); //  6  body 111->103 = 80% overlap
-    t
-}
 
 #[test]
 fn one_opposite_candle_covering_the_force_bar_marks_on_its_own() {
     assert_eq!(
-        sells(&run(inputs(), &engulf_tape())),
+        sells(&run(&inputs(), &cover_tape())),
         vec![6],
-        "the engulf answers the push the bar after it, long before three \
+        "the cover answers the push the bar after it, long before three \
          candles could line up"
     );
 
     let mut run_only = inputs();
-    run_only[USE_ENGULF] = InputValue::Bool(false);
+    run_only[USE_COVER] = InputValue::Bool(false);
     assert_eq!(
-        sells(&run(run_only, &engulf_tape())),
+        sells(&run(&run_only, &cover_tape())),
         none(),
-        "with the engulf switched off the same tape goes quiet: the checkbox \
+        "with the cover switched off the same tape goes quiet: the checkbox \
          is wired to the shape it names"
     );
 }
 
 #[test]
-fn an_engulf_short_of_the_overlap_threshold_does_not_mark() {
-    let mut shallow = engulf_tape();
+fn a_cover_short_of_the_overlap_threshold_does_not_mark() {
+    let mut shallow = cover_tape();
     shallow[6] = (111.0, 111.0, 105.0, 105.0); // covers 60%, not 70%
     assert_eq!(
-        sells(&run(inputs(), &shallow)),
+        sells(&run(&inputs(), &shallow)),
         none(),
         "60% of the force bar is not enough, and nothing else on this tape \
          can mark it"
@@ -462,15 +604,32 @@ fn an_engulf_short_of_the_overlap_threshold_does_not_mark() {
 }
 
 #[test]
-fn the_engulf_has_its_own_shorter_window() {
+fn a_candle_inside_the_force_bar_still_covers_it() {
+    // High below the force bar's high, low above its low — the opposite of a
+    // classical engulfing candle, and it marks, because its body still erases
+    // 80% of the push. Pinned because the name "cover" was chosen over
+    // "engulf" precisely to stop this reading as a bug.
+    let mut inside = context_up();
+    inside.push(FORCE_UP); //                        5  force bar, range 101..111
+    inside.push((110.0, 110.5, 101.5, 102.0)); //    6  strictly inside, covers 80%
+    assert_eq!(
+        sells(&run(&inputs(), &inside)),
+        vec![6],
+        "a small bar that erases most of a large one is the exhaustion this \
+         is looking for, whether or not it pokes out the ends"
+    );
+}
+
+#[test]
+fn the_cover_has_its_own_shorter_window() {
     // Two pause bars: the covering candle lands at age 3, the last bar the
-    // engulf window covers.
+    // cover window covers.
     let mut in_time = context_up();
     in_time.push(FORCE_UP); //                      5  force bar
     in_time.push((111.0, 111.6, 110.9, 111.5)); //  6  pause
     in_time.push((111.5, 112.1, 111.4, 112.0)); //  7  pause
     in_time.push((112.0, 112.0, 103.0, 103.0)); //  8  covers 80%, age 3
-    assert_eq!(sells(&run(inputs(), &in_time)), vec![8]);
+    assert_eq!(sells(&run(&inputs(), &in_time)), vec![8]);
 
     // One more pause and the identical candle is a bar too late — even though
     // the run's own window (5) would still have the force bar armed.
@@ -481,19 +640,19 @@ fn the_engulf_has_its_own_shorter_window() {
     late.push((112.0, 112.6, 111.9, 112.5)); //  8  pause
     late.push((112.5, 112.5, 103.0, 103.0)); //  9  covers 80%, age 4
     assert_eq!(
-        sells(&run(inputs(), &late)),
+        sells(&run(&inputs(), &late)),
         none(),
         "a bar reacting four bars later is reacting to something else"
     );
 }
 
 #[test]
-fn a_candle_closing_with_the_push_never_engulfs_it() {
+fn a_candle_closing_with_the_push_never_covers_it() {
     let mut wrong_way = context_up();
     wrong_way.push(FORCE_UP); //                     5  force bar
     wrong_way.push((103.0, 111.5, 102.5, 111.0)); // 6  wide, but BULLISH
     assert_eq!(
-        sells(&run(inputs(), &wrong_way)),
+        sells(&run(&inputs(), &wrong_way)),
         none(),
         "a body spanning the force bar in the push's own direction is the \
          push continuing, not a reversal of it"
@@ -501,53 +660,62 @@ fn a_candle_closing_with_the_push_never_engulfs_it() {
 }
 
 #[test]
-fn the_engulf_marks_the_buy_side_too() {
+fn the_cover_marks_the_buy_side_too() {
     let mut t = context_down();
-    t.push((100.0, 100.0, 90.0, 90.0)); // 5  selling push at a new low
-    t.push((90.0, 98.0, 90.0, 98.0)); //   6  bullish body covering 80%
-    let hit = run(inputs(), &t);
+    t.push(FORCE_DOWN); //                5  selling push at a new low
+    t.push((90.0, 98.0, 90.0, 98.0)); //  6  bullish body covering 80%
+    let hit = run(&inputs(), &t);
     assert_eq!(buys(&hit), vec![6]);
     assert_eq!(sells(&hit), none());
 }
 
 #[test]
 fn the_two_shapes_share_one_arrow_per_push() {
-    // The engulf fires at bar 6; bars 7 and 8 then complete a three-candle
-    // run that gives back 100% and would fire on its own.
-    let mut both = engulf_tape();
+    // The cover fires at bar 6; bars 7 and 8 then complete a three-candle run
+    // that gives back 100% and would fire on its own.
+    let mut both = cover_tape();
     both.push((103.0, 103.0, 102.0, 102.0)); // 7  bearish
     both.push((102.0, 102.0, 101.0, 101.0)); // 8  bearish — run of 3, 100% back
     assert_eq!(
-        sells(&run(inputs(), &both)),
+        sells(&run(&inputs(), &both)),
         vec![6],
-        "the push was spent by the engulf; the run must not mark it again"
+        "the push was spent by the cover; the run must not mark it again"
+    );
+
+    // Switching a shape off does not only remove marks — it can move one,
+    // because a push the cover never spent is still there for the run to
+    // find. The script header says so; this is the tape that proves it.
+    let mut run_only = inputs();
+    run_only[USE_COVER] = InputValue::Bool(false);
+    assert_eq!(
+        sells(&run(&run_only, &both)),
+        vec![8],
+        "with the cover off the same push is marked three bars later, where \
+         the run completes — a jump, not an inconsistency"
     );
 }
 
 #[test]
-fn switching_the_run_off_leaves_the_engulf_alone_and_vice_versa() {
-    let mut engulf_only = inputs();
-    engulf_only[USE_RUN] = InputValue::Bool(false);
+fn switching_the_run_off_leaves_the_cover_alone_and_vice_versa() {
+    let mut cover_only = inputs();
+    cover_only[USE_RUN] = InputValue::Bool(false);
     assert_eq!(
-        sells(&run(engulf_only, &sell_tape())),
+        sells(&run(&cover_only, &sell_tape())),
         none(),
         "the canonical run tape has no single candle covering 70% — its \
          deepest body overlaps 40%"
     );
-
-    let mut engulf_only_again = inputs();
-    engulf_only_again[USE_RUN] = InputValue::Bool(false);
     assert_eq!(
-        sells(&run(engulf_only_again, &engulf_tape())),
+        sells(&run(&cover_only, &cover_tape())),
         vec![6],
-        "…while the engulf tape still marks with the run switched off"
+        "…while the cover tape still marks with the run switched off"
     );
 
     let mut neither = inputs();
     neither[USE_RUN] = InputValue::Bool(false);
-    neither[USE_ENGULF] = InputValue::Bool(false);
+    neither[USE_COVER] = InputValue::Bool(false);
     assert_eq!(
-        sells(&run(neither, &engulf_tape())),
+        sells(&run(&neither, &cover_tape())),
         none(),
         "both shapes off is an indicator that marks nothing at all"
     );
