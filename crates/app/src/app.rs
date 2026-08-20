@@ -1683,6 +1683,21 @@ impl QuantickApp {
             app.scripted_candle_width = Some(px);
             app.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
         }
+        // The bubble budget, scriptable. The fold is the one bubble state a
+        // capture cannot otherwise reach: it needs a tape dense enough to
+        // exhaust a budget of seven hundred, which is a market condition and
+        // not a setting. `QUANTICK_BUBBLE_BUDGET=8` squeezes the same budget
+        // the frame always spends, through the same field the projection
+        // reads, so what a screenshot shows is what a busy session shows —
+        // folded marks wearing their ring and their count.
+        if let Ok(value) = std::env::var("QUANTICK_BUBBLE_BUDGET")
+            && let Ok(budget) = value.trim().parse::<usize>()
+            && budget > 0
+        {
+            for tab in &mut app.tabs {
+                tab.tape_mut().set_primitive_budget(budget);
+            }
+        }
         // The pan, scriptable, for the same reason: the projection margin and
         // the way back from history are states a screenshot cannot otherwise
         // reach. `QUANTICK_PAN_PX=-9000` is "shove the chart as far left as it

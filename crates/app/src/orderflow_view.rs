@@ -246,6 +246,23 @@ impl OrderflowView {
         self.commit_config_changes(before);
     }
 
+    /// Squeeze the frame's bubble budget, through the same field the
+    /// projection reads.
+    ///
+    /// The scripted way to reach a folded frame. The fold is the one bubble
+    /// state a capture cannot otherwise arrange: it needs a tape dense enough
+    /// to exhaust the budget, which is a market condition rather than a
+    /// setting. One path, never two — the projection reads this field whoever
+    /// wrote it.
+    pub fn set_primitive_budget(&mut self, budget: usize) {
+        if budget == 0 || self.config.max_aggression_primitives == budget {
+            return;
+        }
+        let before = self.config.clone();
+        self.config.max_aggression_primitives = budget;
+        self.commit_config_changes(before);
+    }
+
     /// Whether the tape is on the canvas at all.
     #[must_use]
     pub fn lane_enabled(&self) -> bool {
