@@ -739,6 +739,15 @@ enum VenueHistoryDemo {
 /// chrome is what is single-instance by nature — one menu bar, one toolbox,
 /// one dock, one appearance, one status line — plus the indicator persistence
 /// layer, which describes a workspace rather than a market.
+/// Read-only frame observations exposed to on-demand semantic projections.
+pub(crate) struct ControlFrameMetrics {
+    pub wall_average_ms: Option<f32>,
+    pub wall_worst_ms: Option<f32>,
+    pub frames_per_second: Option<f32>,
+    pub cpu_average_ms: Option<f32>,
+    pub cpu_worst_ms: Option<f32>,
+}
+
 pub struct QuantickApp {
     /// The open markets, left to right as the strip shows them (§11).
     ///
@@ -2103,6 +2112,39 @@ impl QuantickApp {
     /// See [`Self::active_tab`].
     fn active_tab_mut(&mut self) -> &mut Tab {
         &mut self.tabs[self.active_tab]
+    }
+
+    /// Read-only application roots available to the on-demand control
+    /// projections. The gateway never receives `QuantickApp`; it receives the
+    /// owned DTOs built from these narrow views.
+    pub(crate) fn control_tabs(&self) -> &[Tab] {
+        &self.tabs
+    }
+
+    pub(crate) fn control_active_tab_index(&self) -> usize {
+        self.active_tab
+    }
+
+    pub(crate) fn control_config(&self) -> &AppConfig {
+        &self.config
+    }
+
+    pub(crate) fn control_timezone(&self) -> TzOffset {
+        self.tz
+    }
+
+    pub(crate) fn control_workspace_flags(&self) -> (bool, bool, bool) {
+        (self.save_on_exit, self.show_perf, self.progressive_history)
+    }
+
+    pub(crate) fn control_frame_metrics(&self) -> ControlFrameMetrics {
+        ControlFrameMetrics {
+            wall_average_ms: self.frames.avg_ms(),
+            wall_worst_ms: self.frames.worst_ms(),
+            frames_per_second: self.frames.fps(),
+            cpu_average_ms: self.cpu_frames.avg_ms(),
+            cpu_worst_ms: self.cpu_frames.worst_ms(),
+        }
     }
 
     /// The pane the chrome speaks for: the active tab's focused pane (§11).
@@ -24309,6 +24351,465 @@ plot(close)
         // Separate engines: what one holds says nothing about the other.
         assert!(!app.tabs[0].flow_pane.state.bars().is_empty());
         assert!(app.tabs[1].flow_pane.state.bars().is_empty());
+    }
+
+    fn observer_instance() -> quantick_control::id::InstanceId {
+        quantick_control::id::InstanceId::from_bytes([0x42; 16])
+    }
+
+    fn observer_scope(name: &str) -> quantick_control::id::SnapshotScopeId {
+        quantick_control::id::SnapshotScopeId::new(name).expect("test scope ID is valid")
+    }
+
+    #[test]
+    fn observer_modules_project_headless_state_that_matches_their_schemas() {
+        let (app, _commands) = app_with_history(12);
+        let mut registry = crate::control::standard_registry().unwrap();
+        let descriptors = registry
+            .descriptors()
+            .map(|descriptor| (descriptor.scope_id.clone(), descriptor.schema.clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(descriptors.len(), 7, "every initial scope is registered");
+        let scopes = descriptors
+            .iter()
+            .map(|(scope_id, _)| scope_id.clone())
+            .collect::<Vec<_>>();
+
+        let capture = registry
+            .capture(&app, &observer_instance(), &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        assert!(capture.omitted_scopes.is_empty());
+        for (scope_id, schema) in descriptors {
+            let value = &capture
+                .scopes
+                .get(&scope_id)
+                .unwrap_or_else(|| panic!("{scope_id} was projected"))
+                .value;
+            quantick_control::schema::validate_instance(&schema, value)
+                .unwrap_or_else(|error| panic!("{scope_id} instance is invalid: {error}"));
+        }
+
+        let chart = &capture.scopes[&observer_scope("chart.summary")].value;
+        assert_eq!(chart["panes"][0]["closed_bar_count"], "12");
+        assert_eq!(chart["panes"][0]["symbol"], "TESTUSDT");
+        assert_eq!(chart["panes"][0]["viewport"]["geometry_available"], false);
+        assert_eq!(chart["panes"][0]["viewport"]["visible_start_slot"], "0");
+        assert_eq!(
+            chart["panes"][0]["viewport"]["visible_end_slot_exclusive"],
+            "0"
+        );
+        let feed = &capture.scopes[&observer_scope("feed.status")].value;
+        assert_eq!(feed["tabs"][0]["history_trade_count"], "12");
+        assert_eq!(
+            feed["tabs"][0]["provenance"]["price"],
+            "venue_or_broker_trade"
+        );
+    }
+
+    #[test]
+    fn observer_capture_revisions_are_coherent_and_monotonic() {
+        let (mut app, _commands) = app_with_history(4);
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scopes = [
+            observer_scope("feed.status"),
+            observer_scope("chart.summary"),
+        ];
+        let instance = observer_instance();
+
+        let first = registry
+            .capture(&app, &instance, &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        assert_eq!(first.omitted_scopes.len(), 5);
+        let second = registry
+            .capture(&app, &instance, &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        assert_eq!(
+            first.capture_revision.get() + 1,
+            second.capture_revision.get()
+        );
+        assert_eq!(first.module_revisions, second.module_revisions);
+
+        let next = trade(5);
+        app.active_tab_mut()
+            .ingest_live_trade_at(&next, next.timestamp_ms);
+        let third = registry
+            .capture(&app, &instance, &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        assert_eq!(
+            second.capture_revision.get() + 1,
+            third.capture_revision.get()
+        );
+        for before in &second.module_revisions {
+            let after = third
+                .module_revisions
+                .iter()
+                .find(|revision| revision.module_id == before.module_id)
+                .expect("the same requested modules are present");
+            assert!(
+                after.revision > before.revision,
+                "{} advances after one normal live ingest",
+                before.module_id
+            );
+        }
+    }
+
+    #[test]
+    fn observer_core_capture_p99_stays_within_the_ui_budget() {
+        const WARMUP_CAPTURES: usize = 25;
+        const MEASURED_CAPTURES: usize = 500;
+
+        let (app, _commands) = app_with_history(2_000);
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scopes = registry
+            .descriptors()
+            .map(|descriptor| descriptor.scope_id.clone())
+            .collect::<Vec<_>>();
+        let instance = observer_instance();
+        for _ in 0..WARMUP_CAPTURES {
+            drop(registry.capture(&app, &instance, &scopes).unwrap());
+        }
+        let mut elapsed_us = Vec::with_capacity(MEASURED_CAPTURES);
+        for _ in 0..MEASURED_CAPTURES {
+            drop(registry.capture(&app, &instance, &scopes).unwrap());
+            elapsed_us.push(registry.performance().last_capture_us);
+        }
+        elapsed_us.sort_unstable();
+        let p99_index = (elapsed_us.len() * 99).div_ceil(100).saturating_sub(1);
+        let p99_us = elapsed_us[p99_index];
+        println!(
+            "CONTROL_CORE_CAPTURE {{\"capture_p99_us\":{p99_us},\"capture_worst_us\":{},\"captures\":{MEASURED_CAPTURES}}}",
+            elapsed_us.last().unwrap()
+        );
+        assert!(
+            p99_us <= quantick_control::limits::CONTROL_UI_BUDGET_US,
+            "core capture p99 {p99_us} us exceeds the {} us UI budget",
+            quantick_control::limits::CONTROL_UI_BUDGET_US
+        );
+    }
+
+    #[test]
+    fn observer_preserves_split_pane_focus_and_market_provenance() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 80);
+        let time_point = pane_point(&app, PaneSide::Time);
+        click_chart(&mut app, &ctx, time_point);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scopes = [
+            observer_scope("workspace.summary"),
+            observer_scope("chart.summary"),
+        ];
+        let capture = registry
+            .capture(&app, &observer_instance(), &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let workspace = &capture.scopes[&scopes[0]].value;
+        assert_eq!(workspace["tabs"][0]["layout"], "time_and_flow");
+        assert_eq!(workspace["tabs"][0]["focused_pane"], "time");
+        let visible = workspace["tabs"][0]["panes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|pane| pane["visible"] == true)
+            .collect::<Vec<_>>();
+        assert_eq!(visible.len(), 2);
+        assert_eq!(
+            visible
+                .iter()
+                .filter(|pane| pane["focused"] == true)
+                .count(),
+            1
+        );
+
+        let chart = &capture.scopes[&scopes[1]].value;
+        let panes = chart["panes"].as_array().unwrap();
+        assert_eq!(panes.len(), 2);
+        assert!(panes.iter().all(|pane| pane["feed_id"] == "binance"));
+        assert!(panes.iter().all(|pane| pane["symbol"] == "TESTUSDT"));
+        assert_eq!(
+            panes.iter().filter(|pane| pane["focused"] == true).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn observer_cursor_resolves_the_exact_bar_under_the_pointer() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(40);
+        run_frame(&mut app, &ctx);
+        let expected_slot = 20usize;
+        let position = {
+            let pane = &app.active_tab().flow_pane;
+            let chart = pane.last_chart_area.expect("the pane reported its rect");
+            let right = pane.last_lane_divider_x.unwrap_or_else(|| chart.right());
+            egui::pos2(
+                pane.viewport.x_center(expected_slot, right, pane.slots()),
+                chart.center().y,
+            )
+        };
+        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(position)]);
+
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scope = observer_scope("interaction.cursor");
+        let capture = registry
+            .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let cursor = &capture.scopes[&scope].value;
+        assert_eq!(cursor["pointer_availability"]["available"], true);
+        assert_eq!(cursor["pointer"]["slot"], expected_slot.to_string());
+        assert_eq!(cursor["pointer"]["bar"]["slot"], expected_slot.to_string());
+        assert_eq!(cursor["pointer"]["bar"]["state"], "closed");
+        assert_eq!(cursor["pointer"]["symbol"], "TESTUSDT");
+    }
+
+    #[test]
+    fn observer_resolves_mirrored_drawings_without_leaking_user_text() {
+        const CANARY: &str = "CANARY_PRIVATE_PATH_C:\\Users\\Trader\\secret";
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        let slot = 100;
+        let (time, price) = {
+            let pane = &app.active_tab().flow_pane;
+            let bar = pane.closed_bar(slot).expect("fixture bar");
+            (
+                pane.slot_open_time(slot).expect("fixture market time"),
+                rust_decimal::prelude::ToPrimitive::to_f64(&bar.close).unwrap(),
+            )
+        };
+        let flow = &mut app.active_tab_mut().flow_pane;
+        assert!(flow.drawings.place_with(
+            drawing_tool("horizontal-line"),
+            &drawings::DrawingBand::Price,
+            ChartPoint::at_time(slot as f32 + 0.5, price, Some(time)),
+            |tool| drawings::NewDrawing {
+                style: drawings::DrawingStyle::default(),
+                payload: tool.default_payload(),
+            },
+        ));
+        let selected = flow.drawings.selected().expect("placement selects");
+        flow.drawings.rename_at(selected, CANARY);
+        flow.drawings
+            .selected_mut()
+            .expect("selected drawing")
+            .scope = drawings::DrawingScope::AllCharts;
+        app.active_tab_mut().notice = FeedNotice::attention(CANARY, CANARY);
+        run_frame(&mut app, &ctx);
+
+        let time_chart = app
+            .active_tab()
+            .pane(PaneSide::Time)
+            .last_chart_area
+            .expect("time pane reported its rect");
+        let position = egui::pos2(time_chart.center().x, price_y(&app, PaneSide::Time, price));
+        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(position)]);
+
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scopes = [
+            observer_scope("feed.status"),
+            observer_scope("interaction.cursor"),
+            observer_scope("interaction.selection"),
+        ];
+        let capture = registry
+            .capture(&app, &observer_instance(), &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let encoded = serde_json::to_string(&capture).unwrap();
+        assert!(
+            !encoded.contains(CANARY),
+            "observer output redacts user text"
+        );
+
+        let notice = &capture.scopes[&scopes[0]].value["tabs"][0]["notice"];
+        assert_eq!(notice["kind"], "attention");
+        assert_eq!(notice["headline_present"], true);
+        assert_eq!(notice["next_step_present"], true);
+        assert_eq!(
+            notice["text_availability"],
+            "redacted_pending_attention_scope"
+        );
+        let drawing = &capture.scopes[&scopes[1]].value["pointer"]["drawing"];
+        assert_eq!(drawing["mirrored"], true);
+        assert_eq!(drawing["owner_pane_side"], "flow");
+        assert_eq!(drawing["user_label_present"], true);
+        let selection = &capture.scopes[&scopes[2]].value["drawing"];
+        assert_eq!(selection["user_label_present"], true);
+    }
+
+    #[test]
+    fn observer_chart_pagination_allows_append_but_rejects_prefix_changes() {
+        use crate::control::chart::{ChartWindowQuery, ChartWindowRange, chart_window};
+        use quantick_control::{error::codes, wire::WireU64};
+
+        let (mut app, _commands) = app_with_history(8);
+        let tab_id = app.active_tab().id;
+        let pane_id = app.active_tab().flow_pane.id;
+        let query = ChartWindowQuery {
+            tab_id: WireU64::new(tab_id),
+            pane_id: WireU64::new(pane_id),
+            range: ChartWindowRange::Slots {
+                start_slot: WireU64::new(0),
+                end_slot_exclusive: WireU64::new(8),
+            },
+            page_size: 2,
+        };
+        let instance = observer_instance();
+        let visible_query = ChartWindowQuery::visible(tab_id, pane_id);
+        let unavailable = chart_window(&app, &instance, &visible_query, None).unwrap_err();
+        assert_eq!(
+            unavailable.code.as_str(),
+            quantick_control::error::codes::INVALID_REQUEST
+        );
+        let first = chart_window(&app, &instance, &query, None).unwrap();
+        assert_eq!(
+            first
+                .omitted_modules
+                .iter()
+                .map(|module| module.as_str())
+                .collect::<Vec<_>>(),
+            vec!["drawings", "indicators", "orderflow"]
+        );
+        let cursor = first.bars.next_cursor.expect("more closed bars remain");
+
+        let appended = trade(9);
+        app.active_tab_mut()
+            .ingest_live_trade_at(&appended, appended.timestamp_ms);
+        let second = chart_window(&app, &instance, &query, Some(&cursor)).unwrap();
+        assert_eq!(
+            second
+                .bars
+                .items
+                .iter()
+                .map(|bar| bar.slot.get())
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+
+        app.active_tab_mut()
+            .flow_pane
+            .prepend_history(std::slice::from_ref(&trade(0)));
+        let error = chart_window(&app, &instance, &query, Some(&cursor)).unwrap_err();
+        assert_eq!(error.code.as_str(), codes::PAGE_STALE);
+        assert!(error.retryable);
+    }
+
+    #[test]
+    fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
+        let documents = crate::control::schema_catalog::documents();
+        assert_eq!(documents.len(), 10);
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("schemas/control");
+        let update =
+            std::env::var_os("QUANTICK_UPDATE_CONTROL_SCHEMAS").is_some_and(|value| value == "1");
+        if update {
+            std::fs::create_dir_all(&root).unwrap();
+        }
+        for document in documents {
+            quantick_control::schema::validate_schema(&document.schema)
+                .unwrap_or_else(|error| panic!("{} is invalid: {error}", document.file_name));
+            let json = format!(
+                "{}\n",
+                serde_json::to_string_pretty(&document.schema).unwrap()
+            );
+            assert!(
+                !json.to_ascii_lowercase().contains("egui"),
+                "{} leaks a UI implementation type",
+                document.file_name
+            );
+            let path = root.join(document.file_name);
+            if update {
+                std::fs::write(&path, &json).unwrap();
+            }
+            let committed = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+                panic!(
+                    "read {} ({error}); regenerate observer schemas with QUANTICK_UPDATE_CONTROL_SCHEMAS=1",
+                    path.display()
+                )
+            });
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+                serde_json::from_str::<serde_json::Value>(&committed).unwrap(),
+                "regenerate and review {}",
+                document.file_name
+            );
+        }
+    }
+
+    /// Reproducible application-frame comparison for control-plane PRs.
+    ///
+    /// This is ignored because timing assertions do not belong in CI. Run the
+    /// exact test on `origin/main` and the candidate branch on the same host,
+    /// alternating order between samples. The normal frame never calls the
+    /// observer registry; this workload makes any accidental docking cost
+    /// visible while live batches are continuously drained and painted.
+    #[test]
+    #[ignore = "manual shared-host APP_HEALTH_SUMMARY comparison"]
+    fn control_idle_dense_replay_benchmark() {
+        const WARMUP_FRAMES: u64 = 30;
+        const MEASURED_FRAMES: u64 = 600;
+        const TRADES_PER_FRAME: u64 = 64;
+
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands, _book) = test_app();
+        app.active_tab_mut().flow_pane.tick_n = 16;
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
+        events
+            .try_send(FeedEvent::Backfilled((1..=8_000).map(trade).collect()))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+
+        let mut next_trade = 8_001;
+        for _ in 0..WARMUP_FRAMES {
+            let after = next_trade + TRADES_PER_FRAME;
+            events
+                .try_send(FeedEvent::LiveBatch(
+                    (next_trade..after).map(trade).collect(),
+                ))
+                .unwrap();
+            next_trade = after;
+            run_frame(&mut app, &ctx);
+        }
+
+        let started = Instant::now();
+        let mut frame_cpu_ms = Vec::with_capacity(MEASURED_FRAMES as usize);
+        for _ in 0..MEASURED_FRAMES {
+            let after = next_trade + TRADES_PER_FRAME;
+            events
+                .try_send(FeedEvent::LiveBatch(
+                    (next_trade..after).map(trade).collect(),
+                ))
+                .unwrap();
+            next_trade = after;
+            let frame_started = Instant::now();
+            run_frame(&mut app, &ctx);
+            frame_cpu_ms.push(frame_started.elapsed().as_secs_f64() * 1_000.0);
+        }
+        let elapsed = started.elapsed().as_secs_f64();
+        frame_cpu_ms.sort_by(f64::total_cmp);
+        let average = frame_cpu_ms.iter().sum::<f64>() / frame_cpu_ms.len() as f64;
+        let p99_index = (frame_cpu_ms.len() * 99).div_ceil(100).saturating_sub(1);
+        let p99 = frame_cpu_ms[p99_index];
+        let worst = *frame_cpu_ms.last().unwrap();
+        let trades_per_second = MEASURED_FRAMES as f64 * TRADES_PER_FRAME as f64 / elapsed;
+        println!(
+            "CONTROL_IDLE_DENSE_REPLAY {{\"frame_cpu_ms\":{average:.6},\"frame_p99_ms\":{p99:.6},\"frame_worst_ms\":{worst:.6},\"feed_arrival_ms\":{:?},\"trades_per_s\":{trades_per_second:.3},\"frames\":{MEASURED_FRAMES},\"trades_per_frame\":{TRADES_PER_FRAME}}}",
+            app.active_tab().trade_arrival_ms()
+        );
     }
 
     #[test]

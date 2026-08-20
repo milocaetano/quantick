@@ -1,0 +1,242 @@
+{
+  "$defs": {
+    "BarSpecDto": {
+      "properties": {
+        "imbalance_unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "parameter": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "parameter_unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "parameter",
+        "parameter_unit"
+      ],
+      "type": "object"
+    },
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "ChartCoverage": {
+      "properties": {
+        "newest_close_time_unix_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "older_history_paging_supported": {
+          "type": "boolean"
+        },
+        "oldest_open_time_unix_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "venue_prefix_present": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "older_history_paging_supported",
+        "venue_prefix_present"
+      ],
+      "type": "object"
+    },
+    "ChartPaneSnapshot": {
+      "properties": {
+        "backfill_boundary_slot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bar_spec": {
+          "$ref": "#/$defs/BarSpecDto"
+        },
+        "closed_bar_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "coverage": {
+          "$ref": "#/$defs/ChartCoverage"
+        },
+        "feed_id": {
+          "type": "string"
+        },
+        "focused": {
+          "type": "boolean"
+        },
+        "has_in_progress_bar": {
+          "type": "boolean"
+        },
+        "pagination_revision": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "side": {
+          "$ref": "#/$defs/PaneSideDto"
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "timeline_revision": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "venue_history_bar_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "viewport": {
+          "$ref": "#/$defs/ViewportSnapshot"
+        },
+        "visible": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "tab_id",
+        "pane_id",
+        "side",
+        "feed_id",
+        "symbol",
+        "visible",
+        "focused",
+        "bar_spec",
+        "timeline_revision",
+        "pagination_revision",
+        "closed_bar_count",
+        "venue_history_bar_count",
+        "has_in_progress_bar",
+        "viewport",
+        "coverage"
+      ],
+      "type": "object"
+    },
+    "DecimalRange": {
+      "properties": {
+        "high": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "low": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        }
+      },
+      "required": [
+        "low",
+        "high"
+      ],
+      "type": "object"
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "ViewportSnapshot": {
+      "properties": {
+        "chart_width_px": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-unit": "pixels"
+        },
+        "follows_live": {
+          "type": "boolean"
+        },
+        "geometry_available": {
+          "type": "boolean"
+        },
+        "pixels_per_bar": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels_per_bar"
+        },
+        "price_auto_fit": {
+          "type": "boolean"
+        },
+        "price_axis_inverted": {
+          "type": "boolean"
+        },
+        "price_range": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DecimalRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "right_edge_bar": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "visible_end_slot_exclusive": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "visible_start_slot": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "geometry_available",
+        "visible_start_slot",
+        "visible_end_slot_exclusive",
+        "pixels_per_bar",
+        "right_edge_bar",
+        "follows_live",
+        "price_auto_fit",
+        "price_axis_inverted"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "panes": {
+      "items": {
+        "$ref": "#/$defs/ChartPaneSnapshot"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "panes"
+  ],
+  "title": "ChartSnapshot",
+  "type": "object"
+}

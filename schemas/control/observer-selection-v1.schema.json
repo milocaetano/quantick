@@ -1,0 +1,145 @@
+{
+  "$defs": {
+    "AvailabilitySnapshot": {
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "available"
+      ],
+      "type": "object"
+    },
+    "DrawingSelectionSnapshot": {
+      "properties": {
+        "band": {
+          "type": "string"
+        },
+        "drawing_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "foreign_market": {
+          "type": "boolean"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": "string"
+        },
+        "locked": {
+          "type": "boolean"
+        },
+        "off_series": {
+          "type": "boolean"
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "pane_side": {
+          "$ref": "#/$defs/PaneSideDto"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "tool_id": {
+          "type": "string"
+        },
+        "user_label_present": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pane_id",
+        "pane_side",
+        "drawing_id",
+        "tool_id",
+        "label",
+        "user_label_present",
+        "band",
+        "scope",
+        "locked",
+        "hidden",
+        "foreign_market",
+        "off_series"
+      ],
+      "type": "object"
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "PaperTradeSelectionSnapshot": {
+      "properties": {
+        "provenance": {
+          "type": "string"
+        },
+        "row_index": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "row_index",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "active_tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "drawing": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DrawingSelectionSnapshot"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "event_row": {
+      "$ref": "#/$defs/AvailabilitySnapshot"
+    },
+    "focused_pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "focused_pane_side": {
+      "$ref": "#/$defs/PaneSideDto"
+    },
+    "paper_trade_row": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PaperTradeSelectionSnapshot"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "active_tab_id",
+    "focused_pane_id",
+    "focused_pane_side",
+    "event_row"
+  ],
+  "title": "SelectionSnapshot",
+  "type": "object"
+}

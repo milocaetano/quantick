@@ -1,0 +1,178 @@
+{
+  "$defs": {
+    "FeedCapabilitiesSnapshot": {
+      "properties": {
+        "book_capture": {
+          "type": "boolean"
+        },
+        "history_paging": {
+          "type": "boolean"
+        },
+        "traded_volume": {
+          "type": "boolean"
+        },
+        "venue_ohlcv_generation": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "venue_ohlcv_history": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "book_capture",
+        "history_paging",
+        "traded_volume",
+        "venue_ohlcv_history",
+        "venue_ohlcv_generation"
+      ],
+      "type": "object"
+    },
+    "FeedNoticeSnapshot": {
+      "properties": {
+        "headline_present": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "next_step_present": {
+          "type": "boolean"
+        },
+        "text_availability": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "headline_present",
+        "next_step_present",
+        "text_availability"
+      ],
+      "type": "object"
+    },
+    "FeedTabSnapshot": {
+      "properties": {
+        "active_feed_id": {
+          "type": "string"
+        },
+        "active_symbol": {
+          "type": "string"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/FeedCapabilitiesSnapshot"
+        },
+        "connection_state": {
+          "type": "string"
+        },
+        "feed_display_name": {
+          "type": "string"
+        },
+        "history_trade_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "latest_arrival_latency_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "milliseconds"
+        },
+        "latest_trade_unix_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "live_trade_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "notice": {
+          "$ref": "#/$defs/FeedNoticeSnapshot"
+        },
+        "provenance": {
+          "$ref": "#/$defs/MarketDataProvenance"
+        },
+        "requested_feed_id": {
+          "type": "string"
+        },
+        "requested_symbol": {
+          "type": "string"
+        },
+        "source_mode": {
+          "type": "string"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "tape_age_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "milliseconds"
+        }
+      },
+      "required": [
+        "tab_id",
+        "requested_feed_id",
+        "requested_symbol",
+        "active_feed_id",
+        "active_symbol",
+        "feed_display_name",
+        "source_mode",
+        "connection_state",
+        "notice",
+        "capabilities",
+        "provenance",
+        "history_trade_count",
+        "live_trade_count"
+      ],
+      "type": "object"
+    },
+    "MarketDataProvenance": {
+      "properties": {
+        "aggressor_side": {
+          "type": "string"
+        },
+        "price": {
+          "type": "string"
+        },
+        "replay": {
+          "type": "boolean"
+        },
+        "volume": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "price",
+        "volume",
+        "aggressor_side",
+        "replay"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "tabs": {
+      "items": {
+        "$ref": "#/$defs/FeedTabSnapshot"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "tabs"
+  ],
+  "title": "FeedSnapshot",
+  "type": "object"
+}

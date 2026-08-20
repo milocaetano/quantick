@@ -1,0 +1,123 @@
+{
+  "$defs": {
+    "InstanceId": {
+      "description": "The identity of one running Quantick instance.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "ModuleId": {
+      "description": "A module contributing control-plane behavior.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "ModuleRevision": {
+      "properties": {
+        "module_id": {
+          "$ref": "#/$defs/ModuleId"
+        },
+        "revision": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "module_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "SerializedScope": {
+      "properties": {
+        "module_id": {
+          "$ref": "#/$defs/ModuleId"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "value": true
+      },
+      "required": [
+        "module_id",
+        "schema_version",
+        "value"
+      ],
+      "type": "object"
+    },
+    "SnapshotScopeId": {
+      "description": "A namespaced semantic snapshot projection.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Transport-ready form produced after the owned capture leaves the UI\nthread.",
+  "properties": {
+    "capture_budget_us": {
+      "$ref": "#/$defs/WireU64",
+      "x-unit": "microseconds"
+    },
+    "capture_elapsed_us": {
+      "$ref": "#/$defs/WireU64",
+      "x-unit": "microseconds"
+    },
+    "capture_revision": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "capture_within_budget": {
+      "type": "boolean"
+    },
+    "captured_at_unix_ms": {
+      "format": "int64",
+      "type": "integer",
+      "x-unit": "unix_milliseconds"
+    },
+    "instance_id": {
+      "$ref": "#/$defs/InstanceId"
+    },
+    "module_revisions": {
+      "items": {
+        "$ref": "#/$defs/ModuleRevision"
+      },
+      "type": "array"
+    },
+    "omitted_scopes": {
+      "items": {
+        "$ref": "#/$defs/SnapshotScopeId"
+      },
+      "type": "array"
+    },
+    "scopes": {
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$": {
+          "$ref": "#/$defs/SerializedScope"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "instance_id",
+    "capture_revision",
+    "captured_at_unix_ms",
+    "module_revisions",
+    "capture_elapsed_us",
+    "capture_budget_us",
+    "capture_within_budget",
+    "omitted_scopes",
+    "scopes"
+  ],
+  "title": "SerializedSnapshotCapture",
+  "type": "object"
+}

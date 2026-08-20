@@ -216,7 +216,7 @@ instructions, capability descriptions, schema text, or executable commands.
 | O-09 | Prompt injection arrives through feed, logs, notes, or symbols | Treat external strings as typed data; fixed server instructions; no command interpolation | Fixtures containing instruction-like strings remain payload data |
 | O-10 | Oversized or malformed frames exhaust memory | Length prefix checked before allocation; hard byte, depth, item, and string bounds; truncated-frame timeout | Fuzz and boundary tests |
 | O-11 | Long polls or slow clients starve the UI | Park waiters off the UI queue; bounded waiter count; write timeouts; no UI-thread socket work | Concurrent wait/read and slow-reader tests |
-| O-12 | Request flood consumes frames | Per-client rate and burst limits; bounded connections and queue; 1 ms opening frame budget | Flood test plus frame-budget instrumentation |
+| O-12 | Request flood consumes frames | Per-client rate and burst limits; bounded connections and queue; calibrated 250 microsecond frame budget | Flood test plus frame-budget instrumentation |
 | O-13 | Snapshot combines incompatible moments | One UI-thread capture revision; owned DTO; module revisions; explicit gaps | Mutation-between-modules test |
 | O-14 | Client acts on the wrong instance | Deterministic list; explicit selection on ambiguity; instance ID on every envelope | Two-instance test |
 | O-15 | Adapter launches a hidden app | No launch code or process capability; empty discovery returns a next step | Process-spawn guard and zero-instance integration test |

@@ -32,7 +32,12 @@ pub const CONTROL_CLIENT_RATE_PER_SECOND: u32 = 20;
 pub const CONTROL_CLIENT_BURST: u32 = 40;
 pub const CONTROL_NOTIFICATION_RATE_PER_MINUTE: u32 = 6;
 pub const CONTROL_NOTIFICATION_BURST: u32 = 2;
-pub const CONTROL_UI_BUDGET_US: u64 = 1_000;
+/// Maximum control-plane work admitted in one application frame.
+///
+/// Calibrated by PR 2 at roughly nine times the measured 28 us p99 for one
+/// coherent capture of every core observer scope. Later modules must remain
+/// below this bound or paginate their payloads.
+pub const CONTROL_UI_BUDGET_US: u64 = 250;
 pub const CONTROL_EVENT_JOURNAL_CAPACITY: usize = 8_192;
 pub const CONTROL_EVENT_MAX_BYTES: usize = 64 * 1024;
 pub const CONTROL_EVENT_JOURNAL_MAX_BYTES: usize = 32 * 1024 * 1024;

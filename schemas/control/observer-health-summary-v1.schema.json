@@ -1,0 +1,386 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "FrameHealthSnapshot": {
+      "properties": {
+        "cpu_average_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-unit": "milliseconds"
+        },
+        "cpu_worst_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-unit": "milliseconds"
+        },
+        "frames_per_second": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-unit": "frames_per_second"
+        },
+        "wall_average_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-unit": "milliseconds"
+        },
+        "wall_worst_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-unit": "milliseconds"
+        }
+      },
+      "type": "object"
+    },
+    "IndicatorIssueSnapshot": {
+      "properties": {
+        "bar_index": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "detail": {
+          "type": "string"
+        },
+        "slot_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "source_kind": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "user_text_redacted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "slot_id",
+        "source_kind",
+        "state",
+        "detail",
+        "user_text_redacted"
+      ],
+      "type": "object"
+    },
+    "LoadingTaskSnapshot": {
+      "properties": {
+        "operation_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "task": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task",
+        "operation_count"
+      ],
+      "type": "object"
+    },
+    "OrderflowHealthSnapshot": {
+      "properties": {
+        "active_levels": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "aggression_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "archived_runs": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "arrival_latency_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "milliseconds"
+        },
+        "ask_levels": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "bid_levels": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "config_revision": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "depth_updates": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "depth_updates_since_summary": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "dropped_aggressions": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "dropped_cells": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "dropped_liquidity_events": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "effective_grouping_multiple": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "effective_price_grouping": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "gaps": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "generation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "history_bytes": {
+          "$ref": "#/$defs/WireU64",
+          "x-unit": "bytes"
+        },
+        "last_event_unix_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "last_snapshot_observed_unix_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "last_update_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "live_projection_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-unit": "milliseconds"
+        },
+        "projection_aggressions": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "projection_builds": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "projection_cache_hits": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "projection_cells": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "projection_liquidity_events": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "projection_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-unit": "milliseconds"
+        },
+        "snapshots": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "status",
+        "bid_levels",
+        "ask_levels",
+        "active_levels",
+        "archived_runs",
+        "aggression_count",
+        "history_bytes",
+        "projection_cells",
+        "projection_aggressions",
+        "projection_liquidity_events",
+        "dropped_cells",
+        "dropped_aggressions",
+        "dropped_liquidity_events",
+        "effective_price_grouping",
+        "effective_grouping_multiple",
+        "projection_builds",
+        "projection_cache_hits",
+        "config_revision",
+        "depth_updates",
+        "depth_updates_since_summary",
+        "snapshots",
+        "gaps"
+      ],
+      "type": "object"
+    },
+    "PaneHealthSnapshot": {
+      "properties": {
+        "indicator_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "indicator_error_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "indicator_issues": {
+          "items": {
+            "$ref": "#/$defs/IndicatorIssueSnapshot"
+          },
+          "type": "array"
+        },
+        "indicator_stale_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "orderflow": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OrderflowHealthSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "side": {
+          "$ref": "#/$defs/PaneSideDto"
+        }
+      },
+      "required": [
+        "pane_id",
+        "side",
+        "indicator_count",
+        "indicator_error_count",
+        "indicator_stale_count",
+        "indicator_issues"
+      ],
+      "type": "object"
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "TabHealthSnapshot": {
+      "properties": {
+        "active_loading_tasks": {
+          "items": {
+            "$ref": "#/$defs/LoadingTaskSnapshot"
+          },
+          "type": "array"
+        },
+        "panes": {
+          "items": {
+            "$ref": "#/$defs/PaneHealthSnapshot"
+          },
+          "type": "array"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "tab_id",
+        "active_loading_tasks",
+        "panes"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "frame": {
+      "$ref": "#/$defs/FrameHealthSnapshot"
+    },
+    "tabs": {
+      "items": {
+        "$ref": "#/$defs/TabHealthSnapshot"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "frame",
+    "tabs"
+  ],
+  "title": "HealthSnapshot",
+  "type": "object"
+}

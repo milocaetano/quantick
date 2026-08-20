@@ -1,0 +1,395 @@
+{
+  "$defs": {
+    "BarProvenance": {
+      "properties": {
+        "aggressor_side": {
+          "type": "string"
+        },
+        "completeness": {
+          "type": "string"
+        },
+        "price": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "trade_count": {
+          "type": "string"
+        },
+        "volume": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "completeness",
+        "price",
+        "volume",
+        "aggressor_side",
+        "trade_count"
+      ],
+      "type": "object"
+    },
+    "BarSnapshot": {
+      "properties": {
+        "buy_volume": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "close": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "close_time_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "delta": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "high": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "low": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "open": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "open_time_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "provenance": {
+          "$ref": "#/$defs/BarProvenance"
+        },
+        "sell_volume": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "slot": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "state": {
+          "$ref": "#/$defs/BarStateDto"
+        },
+        "trade_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "volume": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        }
+      },
+      "required": [
+        "slot",
+        "state",
+        "open_time_unix_ms",
+        "close_time_unix_ms",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "buy_volume",
+        "sell_volume",
+        "delta",
+        "trade_count",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "BarStateDto": {
+      "enum": [
+        "closed",
+        "in_progress"
+      ],
+      "type": "string"
+    },
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "DecimalRange": {
+      "properties": {
+        "high": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "low": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        }
+      },
+      "required": [
+        "low",
+        "high"
+      ],
+      "type": "object"
+    },
+    "InstanceId": {
+      "description": "The identity of one running Quantick instance.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "ModuleId": {
+      "description": "A module contributing control-plane behavior.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "Page": {
+      "properties": {
+        "has_more": {
+          "type": "boolean"
+        },
+        "item_count": {
+          "format": "uint",
+          "maximum": 2048,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/BarSnapshot"
+          },
+          "maxItems": 2048,
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PageCursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "item_count",
+        "has_more"
+      ],
+      "type": "object"
+    },
+    "PageCursor": {
+      "properties": {
+        "consistency_mode": {
+          "$ref": "#/$defs/PaginationConsistency"
+        },
+        "consistency_revision": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "high_water_position": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "instance_id": {
+          "$ref": "#/$defs/InstanceId"
+        },
+        "next_position": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "query_digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "resource_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResourceId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope_id": {
+          "$ref": "#/$defs/SnapshotScopeId"
+        }
+      },
+      "required": [
+        "instance_id",
+        "scope_id",
+        "query_digest",
+        "consistency_mode",
+        "consistency_revision",
+        "next_position"
+      ],
+      "type": "object"
+    },
+    "PaginationConsistency": {
+      "enum": [
+        "revision_locked",
+        "append_only",
+        "retained_resource"
+      ],
+      "type": "string"
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "ResourceId": {
+      "description": "A retained immutable resource identity.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "maxLength": 71,
+      "minLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "SnapshotScopeId": {
+      "description": "A namespaced semantic snapshot projection.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "ViewportSnapshot": {
+      "properties": {
+        "chart_width_px": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-unit": "pixels"
+        },
+        "follows_live": {
+          "type": "boolean"
+        },
+        "geometry_available": {
+          "type": "boolean"
+        },
+        "pixels_per_bar": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels_per_bar"
+        },
+        "price_auto_fit": {
+          "type": "boolean"
+        },
+        "price_axis_inverted": {
+          "type": "boolean"
+        },
+        "price_range": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DecimalRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "right_edge_bar": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "visible_end_slot_exclusive": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "visible_start_slot": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "geometry_available",
+        "visible_start_slot",
+        "visible_end_slot_exclusive",
+        "pixels_per_bar",
+        "right_edge_bar",
+        "follows_live",
+        "price_auto_fit",
+        "price_axis_inverted"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "bars": {
+      "$ref": "#/$defs/Page"
+    },
+    "captured_at_unix_ms": {
+      "format": "int64",
+      "type": "integer",
+      "x-unit": "unix_milliseconds"
+    },
+    "consistency_revision": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "feed_id": {
+      "type": "string"
+    },
+    "high_water_slot_exclusive": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "in_progress_bar": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BarSnapshot"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "omitted_modules": {
+      "items": {
+        "$ref": "#/$defs/ModuleId"
+      },
+      "type": "array"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "side": {
+      "$ref": "#/$defs/PaneSideDto"
+    },
+    "symbol": {
+      "type": "string"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "viewport": {
+      "$ref": "#/$defs/ViewportSnapshot"
+    }
+  },
+  "required": [
+    "captured_at_unix_ms",
+    "tab_id",
+    "pane_id",
+    "side",
+    "feed_id",
+    "symbol",
+    "consistency_revision",
+    "high_water_slot_exclusive",
+    "viewport",
+    "bars",
+    "omitted_modules"
+  ],
+  "title": "ChartWindowPage",
+  "type": "object"
+}

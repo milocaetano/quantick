@@ -1,0 +1,143 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "CanvasLayoutDto": {
+      "enum": [
+        "flow",
+        "time",
+        "time_and_flow"
+      ],
+      "type": "string"
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    },
+    "WorkspacePane": {
+      "properties": {
+        "focused": {
+          "type": "boolean"
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "side": {
+          "$ref": "#/$defs/PaneSideDto"
+        },
+        "visible": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pane_id",
+        "side",
+        "visible",
+        "focused"
+      ],
+      "type": "object"
+    },
+    "WorkspaceTab": {
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "feed_id": {
+          "type": "string"
+        },
+        "focused_pane": {
+          "$ref": "#/$defs/PaneSideDto"
+        },
+        "index": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "label": {
+          "type": "string"
+        },
+        "layout": {
+          "$ref": "#/$defs/CanvasLayoutDto"
+        },
+        "panes": {
+          "items": {
+            "$ref": "#/$defs/WorkspacePane"
+          },
+          "type": "array"
+        },
+        "split_fraction": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "index",
+        "tab_id",
+        "label",
+        "feed_id",
+        "symbol",
+        "active",
+        "layout",
+        "focused_pane",
+        "split_fraction",
+        "panes"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "active_tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "active_tab_index": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "performance_readings_visible": {
+      "type": "boolean"
+    },
+    "progressive_venue_history": {
+      "type": "boolean"
+    },
+    "save_on_exit": {
+      "type": "boolean"
+    },
+    "tabs": {
+      "items": {
+        "$ref": "#/$defs/WorkspaceTab"
+      },
+      "type": "array"
+    },
+    "timezone_label": {
+      "type": "string"
+    },
+    "timezone_offset_minutes": {
+      "format": "int32",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "active_tab_index",
+    "active_tab_id",
+    "timezone_offset_minutes",
+    "timezone_label",
+    "save_on_exit",
+    "performance_readings_visible",
+    "progressive_venue_history",
+    "tabs"
+  ],
+  "title": "WorkspaceSnapshot",
+  "type": "object"
+}

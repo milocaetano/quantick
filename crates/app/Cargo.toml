@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+quantick-control = { path = "../control" }
 quantick-engine = { path = "../engine" }
 quantick-indicators = { path = "../indicators" }
 quantick-pine = { path = "../pine" }
@@ -17,6 +18,7 @@ quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
 quantick-strategy = { path = "../strategy" }
 rust_decimal = "1"
+schemars = { version = "=1.2.2", features = ["derive"] }
 # The user's documents folder (Known Folders on Windows, XDG on Linux) —
 # the paper-trading journal's durable default home. Path lookup only; no
 # path is ever invented when the platform reports none.

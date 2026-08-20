@@ -1230,6 +1230,24 @@ impl<'a> ProjectedLayout<'a> {
         )
     }
 
+    /// Screen rectangle occupied by one semantic heatmap cell.
+    ///
+    /// Kept on the renderer's projection object so the on-demand pointer
+    /// resolver and the paint path cannot grow two pixel mappings. This does
+    /// no work unless a control snapshot explicitly asks what is under the
+    /// cursor.
+    #[must_use]
+    pub(crate) fn heat_cell_rect(
+        self,
+        x0: f64,
+        x1: f64,
+        y0: f64,
+        y1: f64,
+        min_height: f32,
+    ) -> egui::Rect {
+        self.band(x0, x1, y0, y1, min_height)
+    }
+
     #[must_use]
     fn event_band(self, x: f64, y0: f64, y1: f64, min_height: f32) -> EventBand {
         let top = self.y(y0);
