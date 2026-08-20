@@ -673,6 +673,24 @@ fn sphere_edge_color(color: egui::Color32, shading: f32) -> egui::Color32 {
 /// sweep from here runs clockwise, the direction a pie chart is read in.
 const PIE_START_ANGLE: f32 = -std::f32::consts::FRAC_PI_2;
 
+/// Gap between a folded bubble's disc and the ring that marks it as a fold,
+/// in points. Wide enough to read as a separate ring at dot size, narrow
+/// enough that two neighbouring folds do not run into each other.
+const FOLD_RING_GAP: f32 = 2.0;
+
+/// Stroke width of that ring.
+const FOLD_RING_WIDTH: f32 = 1.0;
+
+/// Its alpha. Below the rim's, because a fold ring is a caveat about the mark
+/// and not part of the mark: it has to be findable without competing with the
+/// pressure the bubble is there to show.
+const FOLD_RING_ALPHA: f32 = 0.55;
+
+/// Smallest radius that can carry the count of marks a fold stands for. Under
+/// it the ring is the whole statement — "this is more than one print" — which
+/// is the part a trader must not miss.
+const FOLD_COUNT_MIN_RADIUS: f32 = 7.0;
+
 /// The three colours a shaded bubble interpolates between: lit core, side
 /// colour, darkened rim.
 #[derive(Debug, Clone, Copy)]
@@ -787,6 +805,9 @@ struct BubbleMark {
     /// `[0,1]` share of the quantity buyers took. Anything strictly between
     /// the ends is a bubble carrying both sides, drawn as a pie.
     buy_share: f32,
+    /// How many separate marks the frame's budget folded into this one; zero
+    /// on a bubble that is what it looks like.
+    folded: u32,
 }
 
 /// Draw one bubble: halo, fill, rim and — when the print ate resting
@@ -810,6 +831,7 @@ fn draw_bubble(
         size,
         matched,
         buy_share,
+        folded,
     } = mark;
     let color = colors.for_side(side);
 
@@ -919,6 +941,34 @@ fn draw_bubble(
             radius,
             egui::Stroke::new(bubbles.outline_width, rim.gamma_multiply(RIM_ALPHA)),
         );
+    }
+
+    // A fold is not a print, and must not read as one. The budget merges marks
+    // rather than discarding them — nothing a trader needs is ever missing —
+    // but a merged bubble carries a quantity that never crossed the tape at
+    // once, and sizing a position off it as if it had is exactly the harm this
+    // whole change exists to prevent. So a fold wears a ring, and says how many
+    // marks are under it wherever there is room to say it.
+    if folded > 1 {
+        painter.circle_stroke(
+            center,
+            radius + FOLD_RING_GAP,
+            egui::Stroke::new(
+                FOLD_RING_WIDTH,
+                color.gamma_multiply(FOLD_RING_ALPHA * bubbles.opacity),
+            ),
+        );
+        if radius >= FOLD_COUNT_MIN_RADIUS {
+            painter.text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                folded.to_string(),
+                egui::FontId::proportional(
+                    (radius * LABEL_FONT_SCALE).clamp(LABEL_MIN_FONT_PX, LABEL_MAX_FONT_PX),
+                ),
+                colors.text,
+            );
+        }
     }
 
     // This print ate resting liquidity at this exact price.
@@ -1783,6 +1833,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 size: trade.size,
                 matched: linked_reduction.then_some(trade.matched_fraction),
                 buy_share: trade.buy_share,
+                folded: trade.folded_marks,
             },
             bubbles,
             &colors,
@@ -2408,6 +2459,7 @@ fn draw_preview_bubble(
             size,
             matched: linked_reduction.then_some(PREVIEW_MATCHED_FRACTION),
             buy_share,
+            folded: 0,
         },
         bubbles,
         colors,
@@ -3017,6 +3069,7 @@ mod tests {
             size: 0.02,
             matched: None,
             buy_share: 1.0,
+            folded: 0,
         };
         let solid = BubbleStyle {
             hollow_small_buys: false,
@@ -3298,6 +3351,7 @@ mod tests {
                     size: 0.1,
                     matched: None,
                     buy_share: 0.0,
+                    folded: 0,
                 },
                 &bubbles,
                 &colors,
@@ -3339,6 +3393,7 @@ mod tests {
                     size: PREVIEW_LARGE_PRINT_SIZE,
                     matched: Some(PREVIEW_MATCHED_FRACTION),
                     buy_share: 1.0,
+                    folded: 0,
                 },
                 &bubbles,
                 &colors,
@@ -3568,6 +3623,7 @@ mod tests {
             size: 0.6,
             matched: Some(0.7),
             buy_share: 1.0,
+            folded: 0,
         };
         let crowned = painted(|painter| draw_bubble(painter, mark, &bubbles, &colors));
         let fronted = painted(|painter| {
@@ -3669,6 +3725,7 @@ mod tests {
             size: 0.8,
             matched: None,
             buy_share: 1.0,
+            folded: 0,
         };
         let palette = Palette::for_theme(HeatmapTheme::Bookmap);
         // Both modes are named explicitly: the shipped default is the sphere
@@ -3731,6 +3788,7 @@ mod tests {
                     size: PREVIEW_LARGE_PRINT_SIZE,
                     matched: Some(PREVIEW_MATCHED_FRACTION),
                     buy_share: 1.0,
+                    folded: 0,
                 },
                 &bubbles,
                 &colors,
@@ -3779,6 +3837,7 @@ mod tests {
             size: 0.05,
             matched: None,
             buy_share: 1.0,
+            folded: 0,
         };
 
         // Below the readability floor — where colour alone stops working —
@@ -3956,6 +4015,7 @@ mod tests {
             size: 0.6,
             matched: None,
             buy_share,
+            folded: 0,
         };
         // Compared after the fill alpha, which is what actually lands in the
         // mesh vertices.
@@ -4023,6 +4083,7 @@ mod tests {
             size: 0.5,
             matched: None,
             buy_share: 0.5,
+            folded: 0,
         };
         let sell_ink = format!("{:?}", colors.sell.gamma_multiply(dense_tape_btc.opacity));
 
@@ -4583,5 +4644,57 @@ mod tests {
         // ...while the tape's own pane starts there and reaches the edge.
         assert!((layout.pane(1.0).left() - divider).abs() < 0.01);
         assert!((layout.pane(1.0).right() - rect.right()).abs() < 0.01);
+    }
+    /// A folded bubble does not look like a print.
+    ///
+    /// The budget merges marks instead of discarding them, so nothing a trader
+    /// needs is ever missing — but a merged bubble carries a quantity that
+    /// never crossed the tape at once. Sizing a position off it as if it had
+    /// is the exact harm the fold was introduced to avoid, so the two must be
+    /// distinguishable on the canvas and not only in a settings panel.
+    #[test]
+    fn a_folded_bubble_wears_a_ring_a_print_does_not() {
+        let bubbles = BubbleStyle::default();
+        let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
+        let mark = BubbleMark {
+            center: egui::pos2(40.0, 40.0),
+            radius: 10.0,
+            side: Side::Buy,
+            size: 0.5,
+            matched: None,
+            buy_share: 1.0,
+            folded: 0,
+        };
+        let print = painted(|painter| draw_bubble(painter, mark, &bubbles, &colors));
+        let fold = painted(|painter| {
+            draw_bubble(painter, BubbleMark { folded: 4, ..mark }, &bubbles, &colors)
+        });
+        assert_ne!(
+            print, fold,
+            "a fold of four marks painted exactly what one print paints"
+        );
+        assert!(
+            fold.len() > print.len(),
+            "the fold has to add ink, not swap it"
+        );
+        assert!(
+            fold.contains("\"4\""),
+            "a bubble this size has room to say how many marks it stands for"
+        );
+
+        // At dot size the count will not fit, and the ring alone has to carry
+        // the statement — the part a trader must not miss is "more than one".
+        let dot = BubbleMark {
+            radius: 3.0,
+            ..mark
+        };
+        let dot_print = painted(|painter| draw_bubble(painter, dot, &bubbles, &colors));
+        let dot_fold = painted(|painter| {
+            draw_bubble(painter, BubbleMark { folded: 2, ..dot }, &bubbles, &colors)
+        });
+        assert_ne!(
+            dot_print, dot_fold,
+            "a folded dot is indistinguishable from a single print"
+        );
     }
 }

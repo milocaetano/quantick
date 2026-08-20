@@ -656,6 +656,7 @@ impl OrderflowView {
         timeline: VisibleBarTimeline<'_>,
         lane: bool,
         on_newest_bar: bool,
+        lane_reference_ms: Option<i64>,
         price_range: (f64, f64),
     ) -> Option<Arc<VisibleOrderflow>> {
         if !self.config.any_layer_enabled() {
@@ -669,6 +670,7 @@ impl OrderflowView {
             partial: timeline.partial.cloned(),
             lane,
             on_newest_bar,
+            lane_reference_ms,
             price_range,
         };
         // Every frame, with no gate of its own. The worker coalesces requests
@@ -2468,11 +2470,11 @@ mod tests {
 
         let bars = [bar(900, 1_100)];
         // First call queues the projection; the frame appears after a flush.
-        let first = view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
+        let first = view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
         assert!(first.is_none());
         view.flush_for_test();
         let frame = view
-            .project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+            .project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
             .expect("published frame");
         assert!(frame.projection.enabled);
         assert!(!frame.projection.cells.is_empty());
@@ -2548,7 +2550,7 @@ mod tests {
         // One 99 bid and one 101 ask (see `snapshot_event`).
         view.handle_depth_event(snapshot_event(10));
         let bars = [bar(900, 1_100)];
-        view.project_visible(visible_timeline(&bars), true, true, (100.0, 102.0));
+        view.project_visible(visible_timeline(&bars), true, true, None, (100.0, 102.0));
         view.flush_for_test();
 
         let ladder = view.published.ladder.as_ref().expect("published ladder");
@@ -2626,12 +2628,36 @@ mod tests {
         assert_eq!(view.health().aggression_count, 1);
 
         let bars = [bar(900, 1_100)];
-        view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
+        view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
         view.flush_for_test();
         let frame = view
-            .project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+            .project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
             .expect("published frame");
-        assert_eq!(frame.projection.aggressions.len(), 1);
+        // One print, two marks, and both are meant: the tape draws it where it
+        // landed, and the bar it belongs to counts it into the running summary
+        // pie the active preset asks for. The tape exists here at all only
+        // because the live edge now comes from prints — with capture off it
+        // used to come from the book, so there was no tape and no mark on it.
+        assert_eq!(
+            frame
+                .projection
+                .aggressions
+                .iter()
+                .filter(|mark| mark.live)
+                .count(),
+            1,
+            "the tape draws the print"
+        );
+        assert_eq!(
+            frame
+                .projection
+                .aggressions
+                .iter()
+                .filter(|mark| !mark.live)
+                .count(),
+            1,
+            "and its bar counts it into the summary"
+        );
         assert!(frame.projection.cells.is_empty(), "no map without capture");
 
         // Turning the bubbles off over the candles does *not* close the
@@ -2641,7 +2667,7 @@ mod tests {
         view.set_bubbles_enabled(false);
         assert!(view.lane_bubbles_enabled(), "the tape kept them");
         assert!(
-            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+            view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
                 .is_some(),
             "a tape nobody switched off may not lose the frame that feeds it"
         );
@@ -2651,7 +2677,7 @@ mod tests {
         view.set_lane_bubbles_enabled(false);
         view.flush_for_test();
         assert!(
-            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+            view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
                 .is_none()
         );
     }
@@ -2724,10 +2750,10 @@ mod tests {
         view.handle_depth_event(snapshot_event(10));
         view.flush_for_test();
         let bars = [bar(900, 1_100)];
-        view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
+        view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
         view.flush_for_test();
         let frame = view
-            .project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+            .project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
             .expect("published frame");
 
         let text_of = |view: &OrderflowView, legend: bool| {
@@ -2813,14 +2839,20 @@ mod tests {
         assert_eq!(view.health().aggression_count, 1, "the print was retained");
 
         let bars = [bar(900, 1_100)];
-        view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
+        view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
         view.flush_for_test();
         let frame = view
-            .project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+            .project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
             .expect("the strip's own frame");
+        // The one print reaches the frame twice on purpose: once on the tape,
+        // which exists here because the live edge comes from prints rather than
+        // from a book nobody is capturing, and once inside the running summary
+        // pie of the bar it landed in. What matters to this test is that the
+        // clusters exist at all while the bubble layer is off — the strip is
+        // reading them.
         assert_eq!(
             frame.projection.aggressions.len(),
-            1,
+            2,
             "the strip reads the clusters the hidden bubbles would have drawn"
         );
         assert!(
@@ -2832,7 +2864,7 @@ mod tests {
         // keeps running for a surface nobody is showing.
         view.set_projection_demand(false);
         assert!(
-            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+            view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
                 .is_none()
         );
     }
@@ -2843,10 +2875,10 @@ mod tests {
         view.set_enabled(true, 10);
         view.handle_depth_event(snapshot_event(10));
         let bars = [bar(900, 1_100)];
-        view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
+        view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
         view.flush_for_test();
         assert!(
-            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+            view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
                 .is_some()
         );
 
@@ -2861,14 +2893,14 @@ mod tests {
             "the tape was never asked to stop"
         );
         assert!(
-            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+            view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
                 .is_some()
         );
 
         // With the tape off as well nobody is reading, and the frame goes.
         view.set_lane_enabled(false);
         assert!(
-            view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0))
+            view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
                 .is_none()
         );
         view.flush_for_test();

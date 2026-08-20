@@ -4916,7 +4916,16 @@ impl ChartPane {
         let demand = self.projection_demand();
         let orderflow_frame = self.orderflow.as_mut().and_then(|orderflow| {
             orderflow.set_projection_demand(demand);
-            orderflow.project_visible(timeline, lane_width_px > 0.0, end == total, scale.range())
+            // The tape's automatic window comes from the newest bars of the
+            // series, never from the slice on screen: panning the candles is
+            // not a statement about how much market time the tape shows.
+            orderflow.project_visible(
+                timeline,
+                lane_width_px > 0.0,
+                end == total,
+                Some(crate::orderflow::reserved_span_ms(self.state.bars())),
+                scale.range(),
+            )
         });
         if let Some(orderflow) = self.orderflow.as_mut()
             && let Some(frame) = &orderflow_frame

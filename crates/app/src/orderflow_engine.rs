@@ -198,6 +198,15 @@ pub(crate) struct ProjectionRequest {
     /// pinned to the chart and runs whether it is or not; the difference is
     /// that only the newest bar's slot may be stretched to the live edge.
     pub on_newest_bar: bool,
+    /// The automatic lane window, measured over the newest closed bars of the
+    /// whole series rather than the visible slice.
+    ///
+    /// It travels with the request because the tape's window is the tape's:
+    /// deriving it from `closed` — the bars that happen to be on screen —
+    /// meant panning into the past, or zooming until fewer than eight closed
+    /// bars were visible, changed how much market time the tape showed. The
+    /// candles' viewport is not a statement about the tape.
+    pub lane_reference_ms: Option<i64>,
     pub price_range: (f64, f64),
 }
 
@@ -221,6 +230,16 @@ struct ProjectionCache {
     timeline_revision: u64,
     /// Settled-history version represented by this projection.
     settled_revision: u64,
+    /// The seam this half was cut at: the instant before which every print is
+    /// settled, and after which the tape owns them.
+    ///
+    /// Part of the key because it decides the half's *content*, not just its
+    /// geometry — and it is cheap to key on because it snaps to a bar open, so
+    /// it moves once a bar rather than once a print. The lane's own left edge
+    /// deliberately does *not* appear here: the settled half no longer asks
+    /// where the tape starts, which is what lets this cache stay valid while
+    /// the trader moves the tape's speed.
+    seam_ms: Option<i64>,
     /// The finished half of the chart, reused until the layout moves or a dirty
     /// revision is old enough to rebuild.
     settled: Arc<SettledProjection>,
@@ -982,9 +1001,13 @@ impl BookEngine {
         if !request.lane {
             return None;
         }
-        let reference_ms = reserved_span_ms(&request.closed);
+        let reference_ms = request
+            .lane_reference_ms
+            .unwrap_or_else(|| reserved_span_ms(&request.closed));
         Some(LiveEdge {
-            now_ms: self.history.latest_book_ms()?,
+            // Whichever stream is running. Reading this off the book alone is
+            // what left a prints-only feed with no live edge, and so no tape.
+            now_ms: self.history.latest_ms()?,
             window_ms: self.config.live_lane.window_ms(reference_ms),
             reference_ms,
             on_newest_bar: request.on_newest_bar,
@@ -1027,6 +1050,7 @@ impl BookEngine {
         let settled = match &self.projection_cache {
             Some(cache)
                 if cache.layout == layout
+                    && cache.seam_ms == timeline.live_boundary_ms()
                     && ((cache.settled_revision == self.settled_revision
                         && cache.timeline_revision == request.timeline_revision)
                         || cache_now.saturating_duration_since(cache.built_at)
@@ -1049,6 +1073,7 @@ impl BookEngine {
                     layout,
                     timeline_revision: request.timeline_revision,
                     settled_revision: self.settled_revision,
+                    seam_ms: timeline.live_boundary_ms(),
                     settled: Arc::clone(&settled),
                 });
                 settled
@@ -1455,6 +1480,7 @@ mod tests {
             partial: None,
             lane: true,
             on_newest_bar: true,
+            lane_reference_ms: None,
             price_range,
         }
     }

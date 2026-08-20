@@ -722,9 +722,14 @@ pub fn project_settled(
         timeline,
         prices,
         &coverage,
-        effective_grouping,
-        lane_grouping(config),
-        (None, live_from_ms),
+        TierGrouping {
+            slots: effective_grouping,
+            lane: lane_grouping(config),
+        },
+        TierCut {
+            range: (None, live_from_ms),
+            tape_from_ms: None,
+        },
         summarizing,
     );
     // The size scale is a statement about the session, never about the
@@ -944,9 +949,14 @@ pub fn project_live(
         timeline,
         prices,
         &coverage,
-        settled.effective_grouping,
-        lane_grouping(config),
-        (Some(live_from_ms), None),
+        TierGrouping {
+            slots: settled.effective_grouping,
+            lane: lane_grouping(config),
+        },
+        TierCut {
+            range: (Some(live_from_ms), None),
+            tape_from_ms: timeline.lane_start_ms(),
+        },
         summarizing,
     );
     let mut events = settled.live_events.clone();
@@ -1329,6 +1339,39 @@ fn lane_grouping(config: &HeatmapConfig) -> EffectiveGrouping {
     )
 }
 
+/// Where one tier is cut out of the retained tape.
+///
+/// The two questions travel together because they are the same decision seen
+/// from both ends: which prints this tier owns at all, and which of the ones it
+/// owns belong on the tape rather than in a bar slot.
+#[derive(Debug, Clone, Copy)]
+struct TierCut {
+    /// Half-open `[from, until)` in exchange milliseconds.
+    range: (Option<i64>, Option<i64>),
+    // Where the tape begins, for the half that owns the tape — `None` for the
+    // settled half, which owns none of it. Carried here rather than read off
+    // the timeline because "am I on the tape?" is only a question for the live
+    // half: the settled half asking it made its *content* depend on the lane's
+    // left edge, and that edge moves with every print. The cached half would
+    // have had to be rebuilt every frame to stay truthful, and the one that was
+    // not rebuilt drew a print in a bar slot while the live half drew the same
+    // print on the tape.
+    tape_from_ms: Option<i64>,
+}
+
+/// The price resolutions the two views cluster on.
+///
+/// One type rather than two loose arguments, because the pair *is* the rule:
+/// the compressed slots fuse prints into whatever visual row the candles'
+/// zoom resolved, and the tape never does.
+#[derive(Debug, Clone, Copy)]
+struct TierGrouping {
+    /// What the bar slots fuse prints into: the adaptive display grouping.
+    slots: EffectiveGrouping,
+    /// What the tape fuses prints into: capture resolution, always.
+    lane: EffectiveGrouping,
+}
+
 /// The clustered prints of one stretch of the chart, in the two views a print
 /// can be drawn in.
 struct TierClusters {
@@ -1352,14 +1395,15 @@ fn cluster_tier(
     timeline: &BarTimeline,
     prices: PriceWindow,
     coverage: &[CoverageSegment],
-    grouping: EffectiveGrouping,
-    lane_grouping: EffectiveGrouping,
-    range: (Option<i64>, Option<i64>),
+    grouping: TierGrouping,
+    cut: TierCut,
     summarizing: bool,
 ) -> TierClusters {
     let config = history.config();
-    let lane_start_ms = timeline.lane_start_ms();
-    let (from_ms, until_ms) = range;
+    let TierCut {
+        range: (from_ms, until_ms),
+        tape_from_ms,
+    } = cut;
     let mut tape_prints = Vec::new();
     let mut slot_prints = Vec::new();
     for trade in history.aggressions() {
@@ -1371,7 +1415,7 @@ fn cluster_tier(
         if timeline.locate(trade.timestamp_ms).is_none() || prices.y(trade.price).is_none() {
             continue;
         }
-        let on_tape = lane_start_ms.is_some_and(|start| trade.timestamp_ms >= start);
+        let on_tape = tape_from_ms.is_some_and(|start| trade.timestamp_ms >= start);
         if on_tape {
             tape_prints.push(trade);
         }
@@ -1396,7 +1440,7 @@ fn cluster_tier(
         tape: cluster_aggressions(
             tape_prints,
             coverage,
-            lane_grouping,
+            grouping.lane,
             config.live_lane.effective_cluster_ms(
                 config.bubble_cluster_ms,
                 // No lane means no tape prints to cluster, so the reference
@@ -1404,7 +1448,12 @@ fn cluster_tier(
                 timeline.lane_reference_ms().unwrap_or(1),
             ),
         ),
-        slot: cluster_aggressions(slot_prints, coverage, grouping, config.bubble_cluster_ms),
+        slot: cluster_aggressions(
+            slot_prints,
+            coverage,
+            grouping.slots,
+            config.bubble_cluster_ms,
+        ),
     }
 }
 
