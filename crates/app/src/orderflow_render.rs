@@ -673,6 +673,19 @@ fn sphere_edge_color(color: egui::Color32, shading: f32) -> egui::Color32 {
 /// sweep from here runs clockwise, the direction a pie chart is read in.
 const PIE_START_ANGLE: f32 = -std::f32::consts::FRAC_PI_2;
 
+/// Gap between a folded bubble's disc and the ring that marks it as a fold,
+/// in points. Wide enough to read as a separate ring at dot size, narrow
+/// enough that two neighbouring folds do not run into each other.
+const FOLD_RING_GAP: f32 = 2.0;
+
+/// Stroke width of that ring.
+const FOLD_RING_WIDTH: f32 = 1.0;
+
+/// Its alpha. Below the rim's, because a fold ring is a caveat about the mark
+/// and not part of the mark: it has to be findable without competing with the
+/// pressure the bubble is there to show.
+const FOLD_RING_ALPHA: f32 = 0.55;
+
 /// The three colours a shaded bubble interpolates between: lit core, side
 /// colour, darkened rim.
 #[derive(Debug, Clone, Copy)]
@@ -787,6 +800,9 @@ struct BubbleMark {
     /// `[0,1]` share of the quantity buyers took. Anything strictly between
     /// the ends is a bubble carrying both sides, drawn as a pie.
     buy_share: f32,
+    /// How many separate marks the frame's budget folded into this one; zero
+    /// on a bubble that is what it looks like.
+    folded: u32,
 }
 
 /// Draw one bubble: halo, fill, rim and — when the print ate resting
@@ -810,6 +826,7 @@ fn draw_bubble(
         size,
         matched,
         buy_share,
+        folded,
     } = mark;
     let color = colors.for_side(side);
 
@@ -919,6 +936,28 @@ fn draw_bubble(
             radius,
             egui::Stroke::new(bubbles.outline_width, rim.gamma_multiply(RIM_ALPHA)),
         );
+    }
+
+    // A fold is not a print, and must not read as one. The budget merges marks
+    // rather than discarding them — nothing a trader needs is ever missing —
+    // but a merged bubble carries a quantity that never crossed the tape at
+    // once, and sizing a position off it as if it had is exactly the harm this
+    // whole change exists to prevent. So a fold wears a ring, and says how many
+    // marks are under it wherever there is room to say it.
+    if folded > 1 {
+        painter.circle_stroke(
+            center,
+            radius + FOLD_RING_GAP,
+            egui::Stroke::new(
+                FOLD_RING_WIDTH,
+                color.gamma_multiply(FOLD_RING_ALPHA * bubbles.opacity),
+            ),
+        );
+        // The count itself lives in the bubble's own label, where the eye
+        // already is, as `⊕4` against a cluster's `×4` — see `bubble_label`.
+        // Drawing it a second time here put two glyph runs on the same pixel,
+        // because a fold's size saturates at the top of the radius range and so
+        // its label always draws too.
     }
 
     // This print ate resting liquidity at this exact price.
@@ -1783,6 +1822,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 size: trade.size,
                 matched: linked_reduction.then_some(trade.matched_fraction),
                 buy_share: trade.buy_share,
+                folded: trade.folded_marks,
             },
             bubbles,
             &colors,
@@ -1792,6 +1832,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             && let Some(label) = bubble_label(
                 trade.quantity,
                 trade.trade_count,
+                trade.folded_marks,
                 bubbles.show_quantity_labels,
                 bubbles.show_trade_count,
             )
@@ -2408,6 +2449,7 @@ fn draw_preview_bubble(
             size,
             matched: linked_reduction.then_some(PREVIEW_MATCHED_FRACTION),
             buy_share,
+            folded: 0,
         },
         bubbles,
         colors,
@@ -2680,17 +2722,32 @@ fn bubble_radius(size: f32, minimum: f32, maximum: f32) -> f32 {
     (minimum.powi(2) + normalized_quantity * (maximum.powi(2) - minimum.powi(2))).sqrt()
 }
 
+/// The text inside a bubble: what traded, and how many prints it stands for.
+///
+/// `folded` is what the frame's budget merged into this mark, and it changes
+/// the *separator* rather than adding a second number. `×4` is a cluster — four
+/// prints that happened together at one price, which is a fact about the
+/// market. `⊕4` is a fold — four marks the frame put together to fit, which is
+/// a fact about the canvas. A trader sizing a position off the first would be
+/// right and off the second would be wrong, so they may not share a glyph. The
+/// ring around a folded disc says the same thing again, further out, for the
+/// dots too small to carry text.
 fn bubble_label(
     quantity: Decimal,
     trade_count: usize,
+    folded: u32,
     show_quantity: bool,
     show_count: bool,
 ) -> Option<String> {
+    let mark = if folded > 1 { '⊕' } else { '×' };
     match (show_quantity, show_count && trade_count > 1) {
         (false, false) => None,
         (true, false) => Some(format_quantity(quantity)),
-        (false, true) => Some(format!("×{trade_count}")),
-        (true, true) => Some(format!("{} · ×{trade_count}", format_quantity(quantity))),
+        (false, true) => Some(format!("{mark}{trade_count}")),
+        (true, true) => Some(format!(
+            "{} · {mark}{trade_count}",
+            format_quantity(quantity)
+        )),
     }
 }
 
@@ -3017,6 +3074,7 @@ mod tests {
             size: 0.02,
             matched: None,
             buy_share: 1.0,
+            folded: 0,
         };
         let solid = BubbleStyle {
             hollow_small_buys: false,
@@ -3154,13 +3212,13 @@ mod tests {
     #[test]
     fn labels_are_honest_and_compact() {
         assert_eq!(
-            bubble_label(Decimal::from(1_250), 4, true, true),
+            bubble_label(Decimal::from(1_250), 4, 0, true, true),
             Some("1.25K · ×4".to_owned())
         );
         assert_eq!(format_quantity(Decimal::from(100)), "100");
         assert_eq!(format_quantity(Decimal::ZERO), "0");
         assert_eq!(
-            bubble_label(Decimal::ONE, 1, false, true),
+            bubble_label(Decimal::ONE, 1, 0, false, true),
             None,
             "one trade does not need a redundant count"
         );
@@ -3298,6 +3356,7 @@ mod tests {
                     size: 0.1,
                     matched: None,
                     buy_share: 0.0,
+                    folded: 0,
                 },
                 &bubbles,
                 &colors,
@@ -3339,6 +3398,7 @@ mod tests {
                     size: PREVIEW_LARGE_PRINT_SIZE,
                     matched: Some(PREVIEW_MATCHED_FRACTION),
                     buy_share: 1.0,
+                    folded: 0,
                 },
                 &bubbles,
                 &colors,
@@ -3568,6 +3628,7 @@ mod tests {
             size: 0.6,
             matched: Some(0.7),
             buy_share: 1.0,
+            folded: 0,
         };
         let crowned = painted(|painter| draw_bubble(painter, mark, &bubbles, &colors));
         let fronted = painted(|painter| {
@@ -3669,6 +3730,7 @@ mod tests {
             size: 0.8,
             matched: None,
             buy_share: 1.0,
+            folded: 0,
         };
         let palette = Palette::for_theme(HeatmapTheme::Bookmap);
         // Both modes are named explicitly: the shipped default is the sphere
@@ -3731,6 +3793,7 @@ mod tests {
                     size: PREVIEW_LARGE_PRINT_SIZE,
                     matched: Some(PREVIEW_MATCHED_FRACTION),
                     buy_share: 1.0,
+                    folded: 0,
                 },
                 &bubbles,
                 &colors,
@@ -3779,6 +3842,7 @@ mod tests {
             size: 0.05,
             matched: None,
             buy_share: 1.0,
+            folded: 0,
         };
 
         // Below the readability floor — where colour alone stops working —
@@ -3956,6 +4020,7 @@ mod tests {
             size: 0.6,
             matched: None,
             buy_share,
+            folded: 0,
         };
         // Compared after the fill alpha, which is what actually lands in the
         // mesh vertices.
@@ -4023,6 +4088,7 @@ mod tests {
             size: 0.5,
             matched: None,
             buy_share: 0.5,
+            folded: 0,
         };
         let sell_ink = format!("{:?}", colors.sell.gamma_multiply(dense_tape_btc.opacity));
 
@@ -4101,6 +4167,7 @@ mod tests {
                 x,
                 y: 0.5,
                 size: 1.0,
+                folded_marks: 0,
             });
         }
 
@@ -4126,7 +4193,12 @@ mod tests {
         assert_eq!(projection.aggressions.len(), 2);
         // The strip builds its histogram from exactly these clusters, so it
         // still has both prints with the bubble layer off.
-        let rows = crate::live_strip::aggression_rows(&projection.aggressions, 0);
+        let rows = crate::live_strip::aggression_rows(
+            &projection.aggressions,
+            0,
+            projection.summarized,
+            projection.effective_grouping.bucket_width,
+        );
         assert_eq!(rows.len(), 1, "both prints share one bucket");
         assert_eq!(rows[0].buy, rust_decimal::Decimal::ONE);
         assert_eq!(rows[0].sell, rust_decimal::Decimal::ONE);
@@ -4199,6 +4271,7 @@ mod tests {
                 x: 0.5,
                 y: 0.5,
                 size: 1.0,
+                folded_marks: 0,
             });
             painted(|painter| {
                 draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
@@ -4271,6 +4344,7 @@ mod tests {
                 x,
                 y: 0.5,
                 size: 1.0,
+                folded_marks: 0,
             });
             painted(|painter| {
                 draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
@@ -4340,6 +4414,7 @@ mod tests {
                 x,
                 y: 0.5,
                 size: 1.0,
+                folded_marks: 0,
             });
         }
 
@@ -4579,5 +4654,76 @@ mod tests {
         // ...while the tape's own pane starts there and reaches the edge.
         assert!((layout.pane(1.0).left() - divider).abs() < 0.01);
         assert!((layout.pane(1.0).right() - rect.right()).abs() < 0.01);
+    }
+    /// A folded bubble does not look like a print.
+    ///
+    /// The budget merges marks instead of discarding them, so nothing a trader
+    /// needs is ever missing — but a merged bubble carries a quantity that
+    /// never crossed the tape at once. Sizing a position off it as if it had
+    /// is the exact harm the fold was introduced to avoid, so the two must be
+    /// distinguishable on the canvas and not only in a settings panel.
+    #[test]
+    fn a_folded_bubble_wears_a_ring_a_print_does_not() {
+        let bubbles = BubbleStyle::default();
+        let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
+        let mark = BubbleMark {
+            center: egui::pos2(40.0, 40.0),
+            radius: 10.0,
+            side: Side::Buy,
+            size: 0.5,
+            matched: None,
+            buy_share: 1.0,
+            folded: 0,
+        };
+        let print = painted(|painter| draw_bubble(painter, mark, &bubbles, &colors));
+        let fold = painted(|painter| {
+            draw_bubble(painter, BubbleMark { folded: 4, ..mark }, &bubbles, &colors)
+        });
+        assert_ne!(
+            print, fold,
+            "a fold of four marks painted exactly what one print paints"
+        );
+        assert!(
+            fold.len() > print.len(),
+            "the fold has to add ink, not swap it"
+        );
+        // The count itself is the label's business now (`⊕4` against a
+        // cluster's `×4`); what `draw_bubble` owes is the ring, which is what
+        // the dots too small for text have to rely on.
+
+        // At dot size the count will not fit, and the ring alone has to carry
+        // the statement — the part a trader must not miss is "more than one".
+        let dot = BubbleMark {
+            radius: 3.0,
+            ..mark
+        };
+        let dot_print = painted(|painter| draw_bubble(painter, dot, &bubbles, &colors));
+        let dot_fold = painted(|painter| {
+            draw_bubble(painter, BubbleMark { folded: 2, ..dot }, &bubbles, &colors)
+        });
+        assert_ne!(
+            dot_print, dot_fold,
+            "a folded dot is indistinguishable from a single print"
+        );
+    }
+    /// A fold and a cluster may not read the same.
+    ///
+    /// `×4` says four prints happened together at one price — a fact about the
+    /// market, and a size a trader may act on. `⊕4` says the frame put four
+    /// marks together to fit its budget — a fact about the canvas, and a size
+    /// that never crossed the tape at once. Sharing a glyph would let the
+    /// second be read as the first.
+    #[test]
+    fn a_fold_and_a_cluster_do_not_share_a_glyph() {
+        let cluster =
+            bubble_label(rust_decimal::Decimal::from(20), 4, 0, true, true).expect("labels are on");
+        let fold =
+            bubble_label(rust_decimal::Decimal::from(20), 4, 4, true, true).expect("labels are on");
+        assert_eq!(cluster, "20 · ×4");
+        assert_eq!(fold, "20 · ⊕4");
+        assert_ne!(
+            cluster, fold,
+            "a budget fold reads as four prints that traded"
+        );
     }
 }

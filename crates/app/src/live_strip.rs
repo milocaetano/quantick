@@ -58,30 +58,83 @@ pub(crate) struct HistogramRow {
     pub sell: Decimal,
 }
 
+/// Split one mark's quantity into the two sides it actually carries.
+///
+/// Single-sided marks — every tape print — land wholly on their own side, with
+/// no arithmetic and no rounding. Only a two-sided summary is divided, by the
+/// buy share the projection already computed.
+fn split_by_side(cluster: &AggressionPrimitive) -> (Decimal, Decimal) {
+    let share = f64::from(cluster.buy_share);
+    if !share.is_finite() || share >= 1.0 {
+        return match cluster.side {
+            Side::Buy => (cluster.quantity, Decimal::ZERO),
+            Side::Sell => (Decimal::ZERO, cluster.quantity),
+        };
+    }
+    if share <= 0.0 {
+        return (Decimal::ZERO, cluster.quantity);
+    }
+    let Ok(buy_share) = Decimal::try_from(share) else {
+        return match cluster.side {
+            Side::Buy => (cluster.quantity, Decimal::ZERO),
+            Side::Sell => (Decimal::ZERO, cluster.quantity),
+        };
+    };
+    // Rounded to the quantity's own scale: the share is an `f32`, so the raw
+    // product carries float noise a contract count never has. The remainder is
+    // taken by subtraction, so the two sides still add up to exactly what
+    // traded whatever the rounding did.
+    let buy = (cluster.quantity * buy_share).round_dp(cluster.quantity.scale());
+    (buy, cluster.quantity - buy)
+}
+
 /// Sum the forming bar's aggression clusters per price bucket. `bar_open_ms`
 /// is the forming bar's open time: clusters that ended before it belong to
 /// closed bars and are dropped, which is the whole "resets on close" rule.
 /// Ascending bucket order, deterministic.
+///
+/// `summarized` says whether the frame's candle marks are bar summaries. When
+/// they are, a print inside the tape's window is deliberately carried twice —
+/// once as a tape mark and once inside its bar's pie — so only the pies are
+/// read here. Summing both would count the same contract twice and quietly
+/// lengthen the newest rows.
+///
+/// `grouping` is the frame's visual row height, and every mark is snapped to
+/// it. The tape clusters at capture resolution while the candles cluster at
+/// the display grouping, so without this one price arrives as two keys and the
+/// strip draws two rows for it, each sized against a width that matches
+/// neither.
 pub(crate) fn aggression_rows(
     aggressions: &[AggressionPrimitive],
     bar_open_ms: i64,
+    summarized: bool,
+    grouping: Decimal,
 ) -> Vec<HistogramRow> {
     let mut buckets: std::collections::BTreeMap<Decimal, (Decimal, Decimal, Decimal)> =
         std::collections::BTreeMap::new();
+    let width = if grouping > Decimal::ZERO {
+        grouping
+    } else {
+        Decimal::ONE
+    };
     for cluster in aggressions {
         if cluster.last_timestamp_ms < bar_open_ms {
             continue;
         }
-        let entry = buckets.entry(cluster.price_bucket).or_insert((
-            Decimal::ZERO,
-            Decimal::ZERO,
-            Decimal::ZERO,
-        ));
-        match cluster.side {
-            Side::Buy => entry.0 += cluster.quantity,
-            Side::Sell => entry.1 += cluster.quantity,
+        if summarized && cluster.live {
+            continue;
         }
-        entry.2 = entry.2.max(cluster.price_span);
+        let row = (cluster.price_bucket / width).floor() * width;
+        let entry = buckets
+            .entry(row)
+            .or_insert((Decimal::ZERO, Decimal::ZERO, Decimal::ZERO));
+        // A summary mark carries both sides at once, and its `side` is only
+        // the dominant one. Reading that as "all of it was buying" puts a
+        // whole bar's volume in one column of a mirrored histogram.
+        let (buy, sell) = split_by_side(cluster);
+        entry.0 += buy;
+        entry.1 += sell;
+        entry.2 = entry.2.max(cluster.price_span.max(width));
     }
     buckets
         .into_iter()
@@ -141,6 +194,7 @@ mod tests {
             x: 0.5,
             y: 0.5,
             size: 0.5,
+            folded_marks: 0,
         }
     }
 
@@ -154,7 +208,7 @@ mod tests {
             cluster(Side::Buy, "100", "3", 1_200),
             cluster(Side::Sell, "99", "4", 1_150),
         ];
-        let rows = aggression_rows(&clusters, 1_000);
+        let rows = aggression_rows(&clusters, 1_000, false, Decimal::ONE);
         assert_eq!(
             rows,
             vec![
@@ -175,5 +229,50 @@ mod tests {
         // The bar's heaviest single-side bucket sets full width.
         assert_eq!(histogram_reference(&rows), dec("5"));
         assert_eq!(histogram_reference(&[]), Decimal::ZERO);
+    }
+    /// A summarized frame carries the forming bar's prints twice on purpose —
+    /// once on the tape, once inside the bar's pie — so the strip reads the
+    /// pies alone. Summing both counted the same contract twice and quietly
+    /// lengthened exactly the rows a trader is watching.
+    #[test]
+    fn a_summarized_frame_is_not_counted_twice() {
+        let mut pie = cluster(Side::Buy, "100", "10", 1_500);
+        pie.live = false;
+        pie.buy_share = 0.6;
+        let mut tape = cluster(Side::Buy, "100", "6", 1_500);
+        tape.live = true;
+
+        let summarized = aggression_rows(&[pie.clone(), tape.clone()], 1_000, true, Decimal::ONE);
+        assert_eq!(summarized.len(), 1);
+        assert_eq!(
+            summarized[0].buy + summarized[0].sell,
+            dec("10"),
+            "the pie already holds the tape's prints"
+        );
+        assert_eq!(
+            (summarized[0].buy, summarized[0].sell),
+            (dec("6"), dec("4")),
+            "a two-sided mark is split by its buy share, not dumped on one column"
+        );
+
+        // Without the summary the two panes are disjoint, so both are read.
+        let raw = aggression_rows(&[pie, tape], 1_000, false, Decimal::ONE);
+        assert_eq!(raw[0].buy + raw[0].sell, dec("16"));
+    }
+
+    /// The tape clusters at capture resolution and the candles at the display
+    /// grouping, so one price arrives as two keys. The strip snaps both to the
+    /// frame's own row height or it draws two rows for one price, each sized
+    /// against a width that matches neither.
+    #[test]
+    fn marks_from_both_panes_land_in_one_row() {
+        let mut fine = cluster(Side::Buy, "100.03", "2", 1_500);
+        fine.live = true;
+        let mut coarse = cluster(Side::Buy, "100.00", "3", 1_500);
+        coarse.live = false;
+        let rows = aggression_rows(&[fine, coarse], 1_000, false, dec("0.04"));
+        assert_eq!(rows.len(), 1, "one price, one row");
+        assert_eq!(rows[0].price_bucket, dec("100.00"));
+        assert_eq!(rows[0].buy, dec("5"));
     }
 }

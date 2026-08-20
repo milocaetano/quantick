@@ -198,6 +198,15 @@ pub(crate) struct ProjectionRequest {
     /// pinned to the chart and runs whether it is or not; the difference is
     /// that only the newest bar's slot may be stretched to the live edge.
     pub on_newest_bar: bool,
+    /// The automatic lane window, measured over the newest closed bars of the
+    /// whole series rather than the visible slice.
+    ///
+    /// It travels with the request because the tape's window is the tape's:
+    /// deriving it from `closed` — the bars that happen to be on screen —
+    /// meant panning into the past, or zooming until fewer than eight closed
+    /// bars were visible, changed how much market time the tape showed. The
+    /// candles' viewport is not a statement about the tape.
+    pub lane_reference_ms: Option<i64>,
     pub price_range: (f64, f64),
 }
 
@@ -221,6 +230,16 @@ struct ProjectionCache {
     timeline_revision: u64,
     /// Settled-history version represented by this projection.
     settled_revision: u64,
+    /// The seam this half was cut at: the instant before which every print is
+    /// settled, and after which the tape owns them.
+    ///
+    /// Part of the key because it decides the half's *content*, not just its
+    /// geometry — and it is cheap to key on because it snaps to a bar open, so
+    /// it moves once a bar rather than once a print. The lane's own left edge
+    /// deliberately does *not* appear here: the settled half no longer asks
+    /// where the tape starts, which is what lets this cache stay valid while
+    /// the trader moves the tape's speed.
+    seam_ms: Option<i64>,
     /// The finished half of the chart, reused until the layout moves or a dirty
     /// revision is old enough to rebuild.
     settled: Arc<SettledProjection>,
@@ -246,7 +265,9 @@ pub struct OrderflowHealth {
     pub projection_aggressions: usize,
     pub projection_liquidity_events: usize,
     pub dropped_cells: usize,
-    pub dropped_aggressions: usize,
+    pub folded_aggressions: usize,
+    /// Exact quantity the trader's own display floor kept off the canvas.
+    pub floored_quantity: Decimal,
     pub dropped_liquidity_events: usize,
     pub effective_grouping: Decimal,
     pub effective_grouping_multiple: u32,
@@ -282,7 +303,8 @@ impl OrderflowHealth {
             projection_aggressions: 0,
             projection_liquidity_events: 0,
             dropped_cells: 0,
-            dropped_aggressions: 0,
+            folded_aggressions: 0,
+            floored_quantity: Decimal::ZERO,
             dropped_liquidity_events: 0,
             effective_grouping: Decimal::new(1, 2),
             effective_grouping_multiple: 1,
@@ -453,7 +475,8 @@ pub struct BookEngine {
     last_projection_aggressions: usize,
     last_projection_liquidity_events: usize,
     last_dropped_cells: usize,
-    last_dropped_aggressions: usize,
+    last_folded_aggressions: usize,
+    last_floored_quantity: Decimal,
     last_dropped_liquidity_events: usize,
     last_effective_grouping: Decimal,
     last_effective_grouping_multiple: u32,
@@ -500,7 +523,8 @@ impl BookEngine {
             last_projection_aggressions: 0,
             last_projection_liquidity_events: 0,
             last_dropped_cells: 0,
-            last_dropped_aggressions: 0,
+            last_folded_aggressions: 0,
+            last_floored_quantity: Decimal::ZERO,
             last_dropped_liquidity_events: 0,
             last_effective_grouping: HeatmapConfig::default().price_grouping,
             last_effective_grouping_multiple: 1,
@@ -557,7 +581,8 @@ impl BookEngine {
         self.last_projection_aggressions = 0;
         self.last_projection_liquidity_events = 0;
         self.last_dropped_cells = 0;
-        self.last_dropped_aggressions = 0;
+        self.last_folded_aggressions = 0;
+        self.last_floored_quantity = Decimal::ZERO;
         self.last_dropped_liquidity_events = 0;
         self.last_effective_grouping = self.config.price_grouping;
         self.last_effective_grouping_multiple = 1;
@@ -982,9 +1007,13 @@ impl BookEngine {
         if !request.lane {
             return None;
         }
-        let reference_ms = reserved_span_ms(&request.closed);
+        let reference_ms = request
+            .lane_reference_ms
+            .unwrap_or_else(|| reserved_span_ms(&request.closed));
         Some(LiveEdge {
-            now_ms: self.history.latest_book_ms()?,
+            // Whichever stream is running. Reading this off the book alone is
+            // what left a prints-only feed with no live edge, and so no tape.
+            now_ms: self.history.latest_ms()?,
             window_ms: self.config.live_lane.window_ms(reference_ms),
             reference_ms,
             on_newest_bar: request.on_newest_bar,
@@ -1027,6 +1056,7 @@ impl BookEngine {
         let settled = match &self.projection_cache {
             Some(cache)
                 if cache.layout == layout
+                    && cache.seam_ms == timeline.live_boundary_ms()
                     && ((cache.settled_revision == self.settled_revision
                         && cache.timeline_revision == request.timeline_revision)
                         || cache_now.saturating_duration_since(cache.built_at)
@@ -1049,6 +1079,7 @@ impl BookEngine {
                     layout,
                     timeline_revision: request.timeline_revision,
                     settled_revision: self.settled_revision,
+                    seam_ms: timeline.live_boundary_ms(),
                     settled: Arc::clone(&settled),
                 });
                 settled
@@ -1061,7 +1092,8 @@ impl BookEngine {
         self.last_live_ms = live_started.elapsed().as_secs_f32() * 1000.0;
         self.last_projection_aggressions = projection.aggressions.len();
         self.last_projection_liquidity_events = projection.liquidity_events.len();
-        self.last_dropped_aggressions = projection.dropped_aggressions;
+        self.last_folded_aggressions = projection.folded_aggressions;
+        self.last_floored_quantity = projection.floored_quantity;
         self.last_dropped_liquidity_events = projection.dropped_liquidity_events;
         let frame = Arc::new(VisibleOrderflow {
             projection: Arc::new(projection),
@@ -1154,7 +1186,8 @@ impl BookEngine {
             projection_aggressions: self.last_projection_aggressions,
             projection_liquidity_events: self.last_projection_liquidity_events,
             dropped_cells: self.last_dropped_cells,
-            dropped_aggressions: self.last_dropped_aggressions,
+            folded_aggressions: self.last_folded_aggressions,
+            floored_quantity: self.last_floored_quantity,
             dropped_liquidity_events: self.last_dropped_liquidity_events,
             effective_grouping: self.last_effective_grouping,
             effective_grouping_multiple: self.last_effective_grouping_multiple,
@@ -1179,12 +1212,16 @@ impl BookEngine {
             health: self.health(),
             // Gated on visibility, not on capture: the live tail and the strip
             // are pixels, and a recorder nobody is watching must not pay for
-            // them. Visibility on *either* pane — this instant is what anchors
-            // the tape, so answering it from the candles' switch alone would
-            // let clearing the candles take the whole tape with it, bubbles
-            // and all.
-            live_end_ms: if self.config.depth_visible_anywhere() {
-                self.history.latest_book_ms()
+            // them. Visibility of *any* flow layer, not of the depth map: this
+            // instant is what anchors the tape, and gating it on the map made
+            // the tape a hostage of L2 — clearing both maps deleted the band,
+            // its bubbles and its own menu, and a feed that streams no book at
+            // all never had a tape to begin with.
+            //
+            // And it is read off `latest_ms`, not off the book alone, for the
+            // same reason: a chart fed by prints has a now.
+            live_end_ms: if self.config.any_layer_enabled() {
+                self.history.latest_ms()
             } else {
                 None
             },
@@ -1451,6 +1488,7 @@ mod tests {
             partial: None,
             lane: true,
             on_newest_bar: true,
+            lane_reference_ms: None,
             price_range,
         }
     }
@@ -2051,5 +2089,48 @@ mod tests {
         engine.set_enabled(true, 1);
         engine.handle_depth_event(snapshot_event(1));
         assert_eq!(engine.base_capture_grouping(), Decimal::new(5, 1));
+    }
+    /// The tape exists on a feed that streams prints and no book at all.
+    ///
+    /// This is the end of the chain the mission opened: `live_end_ms` was read
+    /// off `latest_book_ms` behind a `depth_visible_anywhere()` gate, so
+    /// MetaTrader without market depth and every recorded replay published no
+    /// live edge — and with no live edge there is no lane, no divider, no
+    /// bubbles on the tape and no menu to configure it. The chip said "on" and
+    /// nothing was drawn.
+    #[test]
+    fn a_feed_of_prints_alone_publishes_a_live_edge() {
+        let mut engine = BookEngine::new("BTCUSDT");
+        let prints_only = HeatmapConfig {
+            enabled: false,
+            show_depth: false,
+            show_aggressions: true,
+            live_lane: LiveLaneStyle {
+                enabled: true,
+                show_depth: false,
+                show_aggressions: true,
+                ..engine.config.live_lane.clone()
+            },
+            ..engine.config.clone()
+        };
+        engine.apply_visual_config(prints_only);
+        assert!(
+            !engine.depth_visible(),
+            "no map is being drawn on either pane"
+        );
+        assert!(engine.any_layer_enabled(), "the bubbles are, on both panes");
+
+        engine.record_trade(&Trade {
+            agg_id: 1,
+            timestamp_ms: 4_200,
+            price: Decimal::from(100),
+            quantity: Decimal::from(2),
+            side: Side::Buy,
+        });
+        assert_eq!(
+            engine.published().live_end_ms,
+            Some(4_200),
+            "a chart fed by prints has a now, and therefore a tape"
+        );
     }
 }

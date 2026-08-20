@@ -237,6 +237,14 @@ pub struct LiquidityHistory {
     generation: Option<u64>,
     last_generation: Option<u64>,
     latest_book_ms: Option<i64>,
+    /// Most recent accepted print timestamp.
+    ///
+    /// The tape's own clock. It exists because the live edge used to be read
+    /// off the *book*, so a feed that streams trades and no depth — MetaTrader
+    /// without market depth, a recorded replay — reported no live edge at all
+    /// and therefore had no tape, in any configuration. A tape drawn from
+    /// prints is anchored by prints.
+    latest_print_ms: Option<i64>,
     archived: VecDeque<LiquidityRun>,
     active: BTreeMap<LevelKey, LiquidityRun>,
     aggressions: VecDeque<Aggression>,
@@ -261,6 +269,7 @@ impl LiquidityHistory {
             generation: None,
             last_generation: None,
             latest_book_ms: None,
+            latest_print_ms: None,
             archived: VecDeque::new(),
             active: BTreeMap::new(),
             aggressions: VecDeque::new(),
@@ -348,6 +357,30 @@ impl LiquidityHistory {
     #[must_use]
     pub fn latest_book_ms(&self) -> Option<i64> {
         self.latest_book_ms
+    }
+
+    /// Most recent accepted print timestamp.
+    ///
+    /// Kept beside [`latest_book_ms`](Self::latest_book_ms) rather than folded
+    /// into [`latest_ms`](Self::latest_ms) so a test — and a future caller that
+    /// needs to tell the two streams apart — can ask which clock moved.
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn latest_print_ms(&self) -> Option<i64> {
+        self.latest_print_ms
+    }
+
+    /// The newest instant any recorded stream has reached — book or tape.
+    ///
+    /// What the live edge is measured from. Reading it off the book alone was
+    /// the bug: the two streams are independent sources of "now", and a chart
+    /// fed by only one of them still has a now.
+    #[must_use]
+    pub fn latest_ms(&self) -> Option<i64> {
+        match (self.latest_book_ms, self.latest_print_ms) {
+            (Some(book), Some(print_ms)) => Some(book.max(print_ms)),
+            (book, print_ms) => book.or(print_ms),
+        }
     }
 
     /// Oldest timestamp still renderable under the configured retention
@@ -587,6 +620,10 @@ impl LiquidityHistory {
             generation: self.generation,
         });
         self.counters.aggressions_recorded += 1;
+        self.latest_print_ms = Some(
+            self.latest_print_ms
+                .map_or(trade.timestamp_ms, |latest| latest.max(trade.timestamp_ms)),
+        );
         let prune_at = self.latest_book_ms.map_or(trade.timestamp_ms, |book_ms| {
             book_ms.max(trade.timestamp_ms)
         });
@@ -616,6 +653,9 @@ impl LiquidityHistory {
         self.book = OrderBook::new();
         self.generation = None;
         self.latest_book_ms = None;
+        // The prints go with the runs: a grouping change discards both, so the
+        // tape's clock has nothing left to point at either.
+        self.latest_print_ms = None;
         self.archived.clear();
         self.active.clear();
         self.aggressions.clear();
@@ -1420,5 +1460,59 @@ mod tests {
                 got: 1
             })
         ));
+    }
+    /// A feed that streams prints and no book still knows what time it is.
+    ///
+    /// The chart's live edge — the instant the tape's right edge stands for —
+    /// used to be read off `latest_book_ms`, and only a depth snapshot or
+    /// delta ever writes that. MetaTrader without market depth and every
+    /// recorded replay therefore reported no live edge, so they had no tape at
+    /// all: the chip said "on" and the canvas stayed empty. The tape is drawn
+    /// from prints, so prints are what anchor it.
+    #[test]
+    fn a_print_moves_the_clock_with_no_book_at_all() {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            enabled: false,
+            show_aggressions: true,
+            ..HeatmapConfig::default()
+        });
+        assert_eq!(history.latest_ms(), None, "nothing has arrived yet");
+
+        history.record_aggression(&Trade {
+            agg_id: 1,
+            timestamp_ms: 1_700,
+            price: Decimal::from(100),
+            quantity: Decimal::from(3),
+            side: Side::Buy,
+        });
+        assert_eq!(
+            history.latest_book_ms(),
+            None,
+            "no book was captured, and none is claimed"
+        );
+        assert_eq!(
+            history.latest_print_ms(),
+            Some(1_700),
+            "the tape has its own clock"
+        );
+        assert_eq!(
+            history.latest_ms(),
+            Some(1_700),
+            "and the chart's now comes from whichever stream is running"
+        );
+
+        // An older print never rewinds the edge.
+        history.record_aggression(&Trade {
+            agg_id: 2,
+            timestamp_ms: 1_200,
+            price: Decimal::from(100),
+            quantity: Decimal::from(1),
+            side: Side::Sell,
+        });
+        assert_eq!(
+            history.latest_ms(),
+            Some(1_700),
+            "the edge only moves forward"
+        );
     }
 }

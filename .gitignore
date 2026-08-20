@@ -32,3 +32,6 @@ indicator-presets.toml
 # (21 of them are) — that one is a record of a shipped change, this one is
 # scratch.
 .claude/GOAL.md
+
+# Session scratch: the investigation record before it becomes an archive.
+.claude/laudo-scratch.md

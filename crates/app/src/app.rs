@@ -1683,6 +1683,21 @@ impl QuantickApp {
             app.scripted_candle_width = Some(px);
             app.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
         }
+        // The bubble budget, scriptable. The fold is the one bubble state a
+        // capture cannot otherwise reach: it needs a tape dense enough to
+        // exhaust a budget of seven hundred, which is a market condition and
+        // not a setting. `QUANTICK_BUBBLE_BUDGET=8` squeezes the same budget
+        // the frame always spends, through the same field the projection
+        // reads, so what a screenshot shows is what a busy session shows —
+        // folded marks wearing their ring and their count.
+        if let Ok(value) = std::env::var("QUANTICK_BUBBLE_BUDGET")
+            && let Ok(budget) = value.trim().parse::<usize>()
+            && budget > 0
+        {
+            for tab in &mut app.tabs {
+                tab.tape_mut().set_primitive_budget(budget);
+            }
+        }
         // The pan, scriptable, for the same reason: the projection margin and
         // the way back from history are states a screenshot cannot otherwise
         // reach. `QUANTICK_PAN_PX=-9000` is "shove the chart as far left as it
@@ -4896,7 +4911,7 @@ impl QuantickApp {
             heatmap_effective_grouping = %book.effective_grouping,
             heatmap_effective_grouping_multiple = book.effective_grouping_multiple,
             heatmap_dropped_cells = book.dropped_cells,
-            heatmap_dropped_aggressions = book.dropped_aggressions,
+            heatmap_folded_aggressions = book.folded_aggressions,
             heatmap_dropped_liquidity_events = book.dropped_liquidity_events,
             heatmap_projection_ms = book.projection_ms,
             heatmap_live_ms = book.live_ms,
@@ -4969,20 +4984,25 @@ impl QuantickApp {
                 "order-book events are arriving late"
             );
         }
-        if book.dropped_cells > 0
-            || book.dropped_aggressions > 0
-            || book.dropped_liquidity_events > 0
-        {
+        // Losses only. Folding is the expected steady state on a busy tape and
+        // loses nothing — warning about it would tell an operator (and the
+        // planned assistant reading these events) to go fix something that is
+        // not broken. The fold count still rides in the info summary above.
+        if book.dropped_cells > 0 || book.dropped_liquidity_events > 0 {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "HEATMAP_PROJECTION_CAPPED",
                 symbol = self.active_tab().symbol.as_str(),
                 dropped_cells = book.dropped_cells,
-                dropped_aggressions = book.dropped_aggressions,
                 dropped_liquidity_events = book.dropped_liquidity_events,
+                // Not "group harder". Grouping is exactly what the trader is
+                // complaining about when marks read as one blob, and the
+                // aggression budget no longer discards anything to begin with —
+                // it folds, and says how much it folded. What is worth widening
+                // is the budget or the pane, so that is what this names.
                 action = "increase_grouping_or_reduce_retention",
-                "heatmap primitive cap was reached"
+                "heatmap depth primitive cap dropped items"
             );
         }
 
