@@ -191,13 +191,19 @@ impl FootprintStyle {
     /// two, and a shared constant would either starve the cluster or make the
     /// ladder wait for room it does not need.
     #[must_use]
-    pub fn detailed_quantity_columns(self) -> f32 {
+    pub fn detailed_quantity_columns(self, config: &FootprintConfig) -> f32 {
         match self {
             // Neither draws a full ladder of digits at Detailed: the split
             // writes one delta over its left half, and `bidask` writes none.
             Self::Split | Self::BidAsk => 2.0,
             Self::Ladder => 2.0,
-            Self::Cluster => 3.0,
+            // The config, not a constant: the third column is a switch, and
+            // the whole reason to turn it off is to reach the style at a
+            // shallower zoom. A floor that stayed at three columns made that
+            // switch do nothing a trader could see, while the file and the
+            // panel both promised otherwise.
+            Self::Cluster if config.cluster_show_total => 3.0,
+            Self::Cluster => 2.0,
         }
     }
 

@@ -181,7 +181,7 @@ pub fn draw(ctx: &egui::Context, input: PanelInput<'_>) -> PanelOutcome {
                     // only a legend line to explain it — reads as a bug.
                     ui.label(
                         egui::RichText::new(
-                            "three numbers a row needs a wide candle: below about                              120 px this draws \"both sides\" instead, and the                              chart legend names both",
+                            "three numbers a row needs a wide candle: below about 126 px this draws \"both sides\" instead, and the chart legend names both",
                         )
                         .size(10.5)
                         .color(theme::TEXT_MUTED),

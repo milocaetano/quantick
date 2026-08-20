@@ -262,9 +262,17 @@ code dispatches instead of branching. Adding a style is a registry edit.
 - **`cluster`** — the reference chart's boxed ladder: `bid | ask | total` per
   row, each bar in its own cased box with a border, the candle moved out into
   a lane at the left of the slot rather than sitting behind the box, and a
-  raised-cell relief at the deepest zoom. It declares its own Detailed floor
-  (~102 px, for the third quantity it writes) and hands over to `bidask` above
-  it, announced in the legend as `cluster → bidask`.
+  raised-cell relief at the deepest zoom. It declares its own Detailed floor —
+  ~126 px with its total column, ~68 without, because the floor counts the
+  furniture (the candle lane, the box padding, the gutters) and not only the
+  digits — and hands over to `bidask` above it, announced in the legend as
+  `cluster → bidask`.
+
+  The zoom ceiling rose 160 → 256 px to keep that floor reachable at the top of
+  the `detail_scale` range. A style the registry offers and no zoom can draw is
+  a broken promise, and
+  `every_style_is_reachable_at_some_zoom_and_every_detail_scale` is what makes
+  the next style with a wider floor fail loudly instead of quietly.
 
 ### The heat ramp, and the band it steps over
 
@@ -295,19 +303,20 @@ the top step and the quiet ones always the floor, in any regime — and the cuts
 are deliberately uneven, because most rows are ordinary and the bright steps
 are worth spending on the tail. The test
 `the_heat_ramp_spreads_over_a_skewed_distribution` guards it against a skewed
-fixture, not a uniform one: a ramp that only
-behaves on uniform data proves nothing about a tape.
+fixture, not a uniform one: a ramp that only behaves on uniform data proves
+nothing about a tape.
 
-The step luminances are **not evenly spaced**, and that is the design:
+The step lightnesses are **not evenly spaced**, and that is the design. There
+is a band of lightness where no available ink reaches 4.5:1 — the light ink has
+run out of headroom, the dark one has not gained it — so the ramp steps over
+it, and the largest jump in the scale is exactly where the ink flips. The
+irregularity is the most distinguishable boundary in the scale.
 
-> Between `L = 0.115` and `L = 0.202` neither available ink reaches 4.5:1 —
-> `TEXT_PRIMARY` has run out of headroom above, `CHIP_INK` has not gained it
-> below. The ramp steps over that band: `0.100` just under, `0.260` just over.
-
-The largest jump in the scale is therefore exactly where the ink flips from
-light to dark, which turns the one irregularity into the most distinguishable
-boundary. `no_heat_step_lands_in_the_unreadable_band` guards it, so a
-well-meant "smooth out the ramp" fails loudly instead of quietly.
+What guards it is `both_ink_boundaries_are_forced_by_contrast`, and it guards
+the *contract* rather than the construction: it proves neither boundary can
+move a step in either direction without dropping something under 4.5:1. So a
+well-meant "smooth out the ramp" fails loudly rather than quietly, and it fails
+on the property that matters instead of on a number that happens to be true.
 
 The two sides' ramps are **isoluminant by construction**. Under deuteranopia
 their hues collapse, and what still separates bid from ask is the *position*

@@ -2381,11 +2381,15 @@ impl QuantickApp {
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
         let live_strip_on = tab.flow_pane.live_strip_visible;
-        let footprint_on = tab.flow_pane.footprint_visible;
         let pane = match focused {
             PaneSide::Time => tab.time_pane.as_mut().unwrap_or(&mut tab.flow_pane),
             PaneSide::Flow => &mut tab.flow_pane,
         };
+        // The focused pane's, like every other BARS reading: the footprint is
+        // per-pane — each pane folds its own retained trades — so a lamp lit
+        // from the flow pane while the time pane has focus reports a layer the
+        // trader is not looking at.
+        let footprint_on = pane.footprint_visible;
         let mut model = toolbar::ToolbarModel {
             feeds,
             feed_id: &mut tab.feed_id,
@@ -2452,11 +2456,11 @@ impl QuantickApp {
             ToolbarAction::SetLiveStrip(shown) => {
                 self.active_tab_mut().flow_pane.live_strip_visible = shown;
             }
-            // The same field the pane's layer menu writes, through the same
-            // setter, so the button and the menu can never disagree about
-            // which layer is on.
+            // The focused pane's own field, through the same setter the pane's
+            // layer menu calls — so the button, the menu and the lamp can
+            // never disagree about which chart the command described.
             ToolbarAction::SetFootprint(shown) => {
-                self.active_tab_mut().flow_pane.footprint_visible = shown;
+                self.focused_pane_mut().footprint_visible = shown;
             }
             ToolbarAction::OpenFootprintSettings => self.show_footprint_settings = true,
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),

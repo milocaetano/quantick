@@ -100,6 +100,9 @@ const TYPICAL_BODY_FRAC: f32 = 0.72;
 /// drawn in. Naming it is what keeps the two in step: the draw call and the
 /// floor now read the same constant, and the test models it.
 const CENTER_GUTTER_PX: f32 = 2.0;
+/// Quantities the sell|buy ladder writes across a row. Fixed, unlike the
+/// cluster's, which the trader can switch between two and three.
+const LADDER_QUANTITY_COLUMNS: f32 = 2.0;
 /// How far an imbalanced cell sinks *below* its plate.
 ///
 /// Below, never above: a light pill under text of the cell's own hue raises
@@ -116,7 +119,7 @@ const IMBALANCE_EDGE_PX: f32 = 2.0;
 /// hysteresis tests and `candle_body_fade` reason about a single reference
 /// width; every *style* asks [`detailed_min_width`] for its own.
 fn ladder_detailed_min_width() -> f32 {
-    detailed_min_width(FootprintStyle::Ladder)
+    detailed_min_width_for(FootprintStyle::Ladder, LADDER_QUANTITY_COLUMNS)
 }
 
 /// The candle width at which a style's deepest level fits what it writes, in
@@ -130,8 +133,17 @@ fn ladder_detailed_min_width() -> f32 {
 /// candle lane, its box padding and its gutters before a digit is drawn, and
 /// with those unbudgeted its columns overlap at exactly the width the floor
 /// declares legible.
-fn detailed_min_width(style: FootprintStyle) -> f32 {
-    let columns = style.detailed_quantity_columns();
+fn detailed_min_width(
+    style: FootprintStyle,
+    config: &crate::footprint_config::FootprintConfig,
+) -> f32 {
+    detailed_min_width_for(style, style.detailed_quantity_columns(config))
+}
+
+/// The same, for a column count already known. Split out because the ladder's
+/// count is fixed, and the fade curve below needs its floor without having a
+/// config to hand.
+fn detailed_min_width_for(style: FootprintStyle, columns: f32) -> f32 {
     let text = columns * (QUANTITY_PX + QUANTITY_PADDING_PX / 2.0);
     let furniture = match style {
         FootprintStyle::Cluster => {
@@ -236,6 +248,19 @@ pub struct FootprintLod {
     /// `(first slot, last slot, closed bar count, display multiple)`. See
     /// [`Self::heat_scale`].
     heat: Option<(usize, usize, usize, i64, Option<HeatScale>)>,
+    /// The style the last painted frame actually drew, after any handover.
+    ///
+    /// Published because the *candle* has to be laid out before the layer
+    /// paints, and its layout depends on which style is really drawing: a
+    /// boxed style moves the candle into a lane beside it, and a style that
+    /// handed over does not. Reading the requested style instead squeezed the
+    /// candle into a lane that the style which actually drew then painted
+    /// straight over.
+    ///
+    /// One frame behind, and that is the whole cost: the level is sticky with
+    /// its own dead band, so the boundary is crossed once and the stale answer
+    /// survives a single frame of a gesture.
+    drawn_style: Option<crate::footprint_config::FootprintStyle>,
 }
 
 impl FootprintLod {
@@ -312,6 +337,21 @@ impl FootprintLod {
         let floor = compute();
         self.floor = Some((bars, group, floor));
         floor
+    }
+
+    /// The style the previous painted frame drew, or `requested` before there
+    /// has been one. See [`Self::drawn_style`].
+    #[must_use]
+    pub fn effective_style(
+        &self,
+        requested: crate::footprint_config::FootprintStyle,
+    ) -> crate::footprint_config::FootprintStyle {
+        match self.drawn_style {
+            // A handover only ever goes one way, so a remembered style that is
+            // not this one is only meaningful while it is this one's fallback.
+            Some(drawn) if requested.fallback() == Some(drawn) => drawn,
+            _ => requested,
+        }
     }
 
     /// The heat ramp's cuts, recomputed only when the window they describe
@@ -603,6 +643,10 @@ pub struct LayerFrame<'a> {
     /// bars, and a map with holes in it that nothing explains reads as a map
     /// that lost data.
     pub depth_visible: bool,
+    /// Device pixels per egui point, for the one thing that must land on a
+    /// whole device pixel. Carried rather than asked for per cell: reading it
+    /// from the context takes an exclusive lock.
+    pub pixels_per_point: f32,
     /// The signal tunables (ratio, min-qty override, stack length, POC and
     /// badge switches).
     pub config: &'a crate::footprint_config::FootprintConfig,
@@ -633,7 +677,7 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
         scaled_width,
         base_row_px,
         frame.config.profile_row_px,
-        detailed_min_width(requested),
+        detailed_min_width(requested, frame.config),
     );
     // A style that cannot pay for itself at this zoom hands over to the one it
     // names, rather than drawing a worse version of itself. The legend says
@@ -643,6 +687,9 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
         Some(fallback) if level < DetailLevel::Detailed => fallback,
         _ => requested,
     };
+    // Published for the next frame's candle layout, which has to run before
+    // this one paints.
+    lod.drawn_style = Some(style);
     // QUANTICK_FOOTPRINT_DEBUG=1 appends the level inputs to the legend —
     // the boundary bugs so far were all states the eye could not explain
     // from the outside (wedged k, stale group), and the chart telling its
@@ -716,18 +763,6 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
         }),
     };
     let ratio = frame.config.imbalance_ratio;
-    // The heat ramp's denominator: a high percentile of per-cell volume over
-    // the newest closed bars. Folded here rather than per bar so the ramp
-    // compares bars against each other — which is the reading alternative bars
-    // exist to give — and only for the one style that draws it.
-    let heat = if style == crate::footprint_config::FootprintStyle::Cluster {
-        lod.heat_scale((start, end), frame.footprints.len(), k, || {
-            heat_scale(visible_ladders().map(|(_, fp)| regroup(fp, k)))
-        })
-    } else {
-        None
-    };
-
     let mut cells_left = CELL_BUDGET;
     let mut aggregated_any = false;
     let mut zones: Vec<(usize, StackedZone)> = Vec::new();
@@ -738,7 +773,8 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     // a row that was both POC and inside a zone read at ~3.9:1. The regrouped
     // rows are carried between the passes rather than folded twice, so the
     // second pass costs nothing but the walk.
-    let mut regrouped: Vec<(usize, BTreeMap<i64, FootprintLevel>)> = Vec::new();
+    let mut regrouped: Vec<(usize, BTreeMap<i64, FootprintLevel>)> =
+        Vec::with_capacity(end.saturating_sub(start));
     if level >= DetailLevel::Marks {
         for (slot, fp) in visible_ladders() {
             if fp.is_aggregated() {
@@ -764,20 +800,32 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
         draw_zone_mark(frame, mark, row_group_f);
     }
 
+    // The heat ramp's cuts: percentiles of the distribution the visible ladders
+    // hold, on the display grid they are drawn on. Read from the maps the pass
+    // above already built rather than folding them a second time — the cache
+    // key moves with the visible window, so during a drag every frame is a
+    // miss, and a second fold there was a full regroup of every visible bar at
+    // frame rate.
+    let heat = if style == crate::footprint_config::FootprintStyle::Cluster {
+        lod.heat_scale((start, end), frame.footprints.len(), k, || {
+            heat_scale(regrouped.iter().map(|(_, rows)| rows))
+        })
+    } else {
+        None
+    };
+
+    let paint = BarPaint {
+        frame,
+        level,
+        style,
+        row_group: row_group_f,
+        ratio,
+        min_qty,
+        heat,
+    };
     for (slot, rows) in &regrouped {
         if level >= DetailLevel::Profile && cells_left > 0 {
-            draw_bar(
-                frame,
-                level,
-                style,
-                rows,
-                row_group_f,
-                (frame.x_center)(*slot),
-                ratio,
-                min_qty,
-                heat,
-                &mut cells_left,
-            );
+            draw_bar(&paint, rows, (frame.x_center)(*slot), &mut cells_left);
         } else if frame.config.show_poc
             && let Some(poc) = poc_of(rows)
         {
@@ -929,19 +977,40 @@ struct RowGeometry {
     sell_imbalance: bool,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn draw_bar(
-    frame: &LayerFrame<'_>,
+/// What every bar in a frame is painted against — resolved once, then lent to
+/// each bar.
+///
+/// The split is the point, not the parameter count: these seven are facts
+/// about the *frame* (the level the zoom supports, the style in force after
+/// any handover, the row geometry, the thresholds, the heat cuts), while a bar
+/// contributes only its own rows and its own x. Passing them one at a time
+/// invited each new one to be threaded through by hand, and the signature had
+/// grown to nine on exactly that path.
+struct BarPaint<'a> {
+    frame: &'a LayerFrame<'a>,
     level: DetailLevel,
     style: crate::footprint_config::FootprintStyle,
-    rows: &BTreeMap<i64, FootprintLevel>,
     row_group: f64,
-    xc: f32,
     ratio: Decimal,
     min_qty: Decimal,
     heat: Option<HeatScale>,
+}
+
+fn draw_bar(
+    paint: &BarPaint<'_>,
+    rows: &BTreeMap<i64, FootprintLevel>,
+    xc: f32,
     cells_left: &mut usize,
 ) {
+    let &BarPaint {
+        frame,
+        level,
+        style,
+        row_group,
+        ratio,
+        min_qty,
+        heat,
+    } = paint;
     let painter = frame.painter;
     let poc = frame.config.show_poc.then(|| poc_of(rows)).flatten();
     let max_volume = rows
@@ -1080,9 +1149,7 @@ fn draw_bar(
                     continue;
                 }
                 crate::footprint_config::FootprintStyle::Cluster => {
-                    draw_cluster_row(
-                        frame, level, cell, &geometry, xc, heat, max_volume, row_group,
-                    );
+                    draw_cluster_row(frame, level, cell, &geometry, xc, heat, max_volume);
                     continue;
                 }
                 _ => {}
@@ -1178,7 +1245,7 @@ fn draw_bar(
                         .clamp(LADDER_MIN_FONT_PX, 13.0),
                 );
                 painter.text(
-                    egui::pos2(xc - 3.0, (top + bottom) / 2.0),
+                    egui::pos2(xc - CENTER_GUTTER_PX, (top + bottom) / 2.0),
                     egui::Align2::RIGHT_CENTER,
                     text,
                     font,
@@ -1477,10 +1544,14 @@ const _: () = assert!(
 ///   what the reference charts get their heat from. Here the top step carries
 ///   more chroma than the token it came from.
 /// - **The hue is free to travel.** Heat reads as a drift toward orange, and a
-///   mix toward white cannot drift. The sell ramp walks 24° to 52°, ending on
-///   an orange still 41° away from [`crate::theme::AMBER`], which stays
-///   reserved for provenance. Yellow is never reached: at this lightness it
-///   would land on AMBER's own hue.
+///   mix toward white cannot drift. The sell ramp walks toward it and stops
+///   with **25.9° to spare** against [`crate::theme::AMBER`], which stays
+///   reserved for provenance — measured the way
+///   `the_heat_ramp_stays_clear_of_the_reserved_hues` measures it, and that
+///   test's floor of 25° is under a degree below. The margin is thin on
+///   purpose: it is the statement that the top step cannot be warmed any
+///   further without taking a hue the app has already spent. Yellow is never
+///   reached at all; at this lightness it would land on AMBER itself.
 /// - **No arithmetic at paint time.** No binary search, no float compared per
 ///   cell, and the ramp is bit-exact for ever — a search in `f32` can walk an
 ///   8-bit level the day anything upstream of it moves.
@@ -1597,9 +1668,11 @@ const HEAT_PERCENTILES: [usize; 5] = [45, 68, 83, 93, 98];
 /// key that means whatever it likes.
 type HeatScale = [f64; 5];
 
-fn heat_scale(rows: impl Iterator<Item = BTreeMap<i64, FootprintLevel>>) -> Option<HeatScale> {
+fn heat_scale<'a>(
+    rows: impl Iterator<Item = &'a BTreeMap<i64, FootprintLevel>>,
+) -> Option<HeatScale> {
     let mut sides: Vec<f64> = rows
-        .flat_map(|rows| rows.into_values().collect::<Vec<_>>())
+        .flat_map(BTreeMap::values)
         .flat_map(|level| {
             [
                 level.buy.to_f64().unwrap_or(0.0),
@@ -1683,7 +1756,13 @@ fn contrast_ratio(a: egui::Color32, b: egui::Color32) -> f32 {
 /// and they cost 57% more. Rects rather than strokes, because a stroke goes
 /// through the tessellator's feathering, and feathering is exactly what blurs
 /// a one-pixel edge into nothing.
-fn paint_bevel(painter: &egui::Painter, rect: egui::Rect, row_height: f32, step: usize) {
+fn paint_bevel(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    row_height: f32,
+    step: usize,
+    pixels_per_point: f32,
+) {
     if row_height < BEVEL_MIN_ROW_PX || rect.width() < BEVEL_MIN_CELL_PX {
         return;
     }
@@ -1697,8 +1776,13 @@ fn paint_bevel(painter: &egui::Painter, rect: egui::Rect, row_height: f32, step:
     // point is 1.25 or 1.5 physical pixels, so rounding before the scale is
     // applied lands the edge back on a fraction — which is the very thing this
     // is here to avoid, and it would only show on the machines that scale.
-    let scale = painter.ctx().pixels_per_point().max(f32::EPSILON);
-    let snap = |v: f32| (v * scale).round() / scale;
+    //
+    // Handed in, never asked for here: `Context::pixels_per_point` takes an
+    // *exclusive* lock on the context, and this runs two or three times per
+    // row against a twelve-thousand-row budget. The value is constant for the
+    // frame, so asking once and lending it is the difference between one lock
+    // and tens of thousands.
+    let snap = |v: f32| (v * pixels_per_point).round() / pixels_per_point;
     let rect = egui::Rect::from_min_max(
         egui::pos2(snap(rect.left()), snap(rect.top())),
         egui::pos2(snap(rect.right()), snap(rect.bottom())),
@@ -1744,7 +1828,8 @@ fn cluster_column_px_from(body_width: f32, columns: f32) -> f32 {
 fn cluster_column_px(candle_width: f32) -> f32 {
     cluster_column_px_from(
         candle_width * TYPICAL_BODY_FRAC,
-        FootprintStyle::Cluster.detailed_quantity_columns(),
+        FootprintStyle::Cluster
+            .detailed_quantity_columns(&crate::footprint_config::FootprintConfig::default()),
     )
 }
 
@@ -1835,7 +1920,6 @@ fn draw_cluster_row(
     xc: f32,
     heat: Option<HeatScale>,
     max_volume: f64,
-    row_group: f64,
 ) {
     let painter = frame.painter;
     let reach = (frame.half - 1.0).max(1.0);
@@ -1849,6 +1933,7 @@ fn draw_cluster_row(
     let columns = cluster_columns(frame.config);
     let column_width = cluster_column_px_from(2.0 * reach, columns);
     let bevel = frame.config.cluster_bevel && level == DetailLevel::Detailed;
+    let pixels_per_point = frame.pixels_per_point;
     // The width budget is a *font size*, not a width: a five-glyph quantity is
     // `QUANTITY_GLYPHS * GLYPH_EM` ≈ 3 em of monospace, so the room a column
     // has buys a third of that in point size. Handing the column's raw width
@@ -1863,10 +1948,9 @@ fn draw_cluster_row(
     );
 
     let mut x = xc - reach + inset + CLUSTER_BOX_PAD_PX;
-    let mut column_rect = |painter: &egui::Painter| -> egui::Rect {
+    let mut column_rect = || -> egui::Rect {
         let rect =
             egui::Rect::from_min_max(egui::pos2(x, top), egui::pos2(x + column_width, bottom));
-        let _ = painter;
         x += column_width + CLUSTER_GUTTER_PX;
         rect
     };
@@ -1880,11 +1964,11 @@ fn draw_cluster_row(
         (Side::Sell, cell.sell, geometry.sell_imbalance),
         (Side::Buy, cell.buy, geometry.buy_imbalance),
     ] {
-        let rect = column_rect(painter);
+        let rect = column_rect();
         let step = heat_step(qty, heat);
         painter.rect_filled(rect, egui::Rounding::ZERO, heat_fill(side, step));
         if bevel {
-            paint_bevel(painter, rect, geometry.row_height, step);
+            paint_bevel(painter, rect, geometry.row_height, step, pixels_per_point);
         }
         if imbalanced {
             // The outline flips with the ink, and for the same reason. A
@@ -1920,7 +2004,7 @@ fn draw_cluster_row(
     // single ink with no flip rule. It is also the same silhouette the split
     // style draws, which is the point: one visual idea, two places.
     if columns > 2.0 {
-        let rect = column_rect(painter);
+        let rect = column_rect();
         let volume = cell.volume();
         // Against the bar's own busiest row, not the screen-wide side scale.
         // A row total is structurally about twice one side, so measuring it
@@ -1942,7 +2026,7 @@ fn draw_cluster_row(
             PROFILE_COLOR.gamma_multiply(CLUSTER_TOTAL_SILHOUETTE_ALPHA),
         );
         if bevel {
-            paint_bevel(painter, rect, geometry.row_height, 0);
+            paint_bevel(painter, rect, geometry.row_height, 0, pixels_per_point);
         }
         if frame.config.show_numbers {
             painter.text(
@@ -1974,7 +2058,6 @@ fn draw_cluster_row(
             egui::Stroke::new(1.5_f32, theme::POC),
         );
     }
-    let _ = row_group;
 }
 
 /// Full-candle POC line, the non-split styles' and Marks level's shape.
@@ -2087,8 +2170,10 @@ fn draw_legend(
     // they control — so where the map used to show through, it no longer
     // does. Said out loud for the same reason the effective row size is: a
     // trader reading the liquidity map must never wonder whether the gaps are
-    // the market or the chart.
-    if frame.depth_visible && style.plate() == StylePlate::Casing {
+    // the market or the chart. And only where a plate is actually painted:
+    // claiming occlusion that is not there undercuts the same guarantee from
+    // the other side.
+    if frame.depth_visible && style.plate() == StylePlate::Casing && level >= DetailLevel::Profile {
         text.push_str(" · map hidden behind the bars");
     }
     if capped {
@@ -2130,9 +2215,57 @@ mod tests {
     /// A cross-constant guard on purpose: it fires when either constant
     /// drifts under the other.
     #[test]
-    #[allow(clippy::assertions_on_constants)]
-    fn the_zoom_ceiling_reaches_the_detailed_level() {
-        assert!(crate::viewport::MAX_CANDLE_WIDTH >= ladder_detailed_min_width());
+    fn every_style_is_reachable_at_some_zoom_and_every_detail_scale() {
+        use crate::footprint_config::{DETAIL_SCALE_RANGE, FootprintConfig, FootprintStyle};
+        // The zoom the trader can actually reach is the ceiling divided by the
+        // detail scale, and the scale goes to the top of its own range. A
+        // style whose floor is above that is a style the registry offers and
+        // the chart can never draw — the legend would say `cluster → bidask`
+        // for ever, and the slider that caused it is in another window.
+        let reachable = crate::viewport::MAX_CANDLE_WIDTH / DETAIL_SCALE_RANGE.end();
+        for style in FootprintStyle::ALL {
+            for config in [
+                FootprintConfig::default(),
+                FootprintConfig {
+                    cluster_show_total: false,
+                    ..FootprintConfig::default()
+                },
+            ] {
+                let floor = detailed_min_width(style, &config);
+                assert!(
+                    reachable >= floor,
+                    "{}: floor {floor:.1} px is past the {reachable:.1} px the zoom can reach",
+                    style.id()
+                );
+            }
+        }
+    }
+
+    /// Turning the third column off is meant to buy a shallower zoom, and the
+    /// file and the panel both say so. It has to actually move the floor.
+    #[test]
+    fn dropping_the_total_column_lowers_the_clusters_floor() {
+        use crate::footprint_config::{FootprintConfig, FootprintStyle};
+        let with = FootprintConfig::default();
+        let without = FootprintConfig {
+            cluster_show_total: false,
+            ..FootprintConfig::default()
+        };
+        let three = detailed_min_width(FootprintStyle::Cluster, &with);
+        let two = detailed_min_width(FootprintStyle::Cluster, &without);
+        assert!(
+            two < three,
+            "two columns {two:.1} px vs three {three:.1} px"
+        );
+        // And the styles that do not own that switch are unmoved by it.
+        for style in [FootprintStyle::Split, FootprintStyle::Ladder] {
+            assert!(
+                (detailed_min_width(style, &with) - detailed_min_width(style, &without)).abs()
+                    < f32::EPSILON,
+                "{} moved with a knob it does not own",
+                style.id()
+            );
+        }
     }
 
     #[test]
@@ -2300,7 +2433,7 @@ mod tests {
             })
             .collect();
         let ladder = ladder_of(&quantities);
-        let scale = heat_scale(std::iter::once(regroup(&ladder, 1))).expect("a scale");
+        let scale = heat_scale(std::iter::once(&regroup(&ladder, 1))).expect("a scale");
 
         let mut population = [0_usize; HEAT_STEP_COUNT];
         for qty in &quantities {
@@ -2331,7 +2464,7 @@ mod tests {
     fn the_heat_scale_is_monotonic() {
         let quantities: Vec<Decimal> = (1..=200).map(Decimal::from).collect();
         let ladder = ladder_of(&quantities);
-        let scale = heat_scale(std::iter::once(regroup(&ladder, 1))).expect("a scale");
+        let scale = heat_scale(std::iter::once(&regroup(&ladder, 1))).expect("a scale");
         for pair in scale.windows(2) {
             assert!(pair[1] >= pair[0], "cuts not ascending: {scale:?}");
         }
@@ -2532,8 +2665,9 @@ mod tests {
         assert!(FootprintStyle::BidAsk.fallback().is_none());
         // And the cluster's floor is genuinely higher, or the handover never
         // fires and the whole mechanism is decoration.
-        let cluster = detailed_min_width(FootprintStyle::Cluster);
-        let ladder = detailed_min_width(FootprintStyle::Ladder);
+        let defaults = crate::footprint_config::FootprintConfig::default();
+        let cluster = detailed_min_width(FootprintStyle::Cluster, &defaults);
+        let ladder = detailed_min_width(FootprintStyle::Ladder, &defaults);
         assert!(cluster > ladder, "cluster {cluster} vs ladder {ladder}");
     }
 
@@ -2578,7 +2712,9 @@ mod tests {
         // The same arithmetic has to hold for a style that writes three
         // quantities across the row rather than two, which is the whole reason
         // the floor became a function of the column count.
-        let cluster_column = cluster_column_px(detailed_min_width(FootprintStyle::Cluster));
+        let defaults = crate::footprint_config::FootprintConfig::default();
+        let cluster_column =
+            cluster_column_px(detailed_min_width(FootprintStyle::Cluster, &defaults));
         assert!(
             cluster_column >= quantity_px,
             "cluster: {cluster_column} px per column for {quantity_px} px of text"

@@ -4886,11 +4886,16 @@ impl ChartPane {
         // interior, and one that draws in a box beside it needs the candle out
         // of the way entirely. With the layer off, candles are untouched at
         // any zoom.
-        let footprint_style = self
+        // The style that will actually draw, not the one that was asked for: a
+        // style below its own zoom floor hands over, and the candle must be
+        // laid out for whichever one paints. Asking the requested style put a
+        // sidebar lane under a style that draws full width.
+        let requested_style = self
             .footprint_override
             .as_ref()
             .unwrap_or(chrome.footprint)
             .style;
+        let footprint_style = self.footprint_lod.effective_style(requested_style);
         let treatment = footprint_style.candle_treatment();
         // The lane a sidebar candle keeps at the left of its slot. Zero
         // otherwise, so nothing moves for the styles that draw in place.
@@ -4899,6 +4904,12 @@ impl ChartPane {
         } else {
             0.0
         };
+        // The half-width the footprint's content actually spans. The lane is
+        // cut out of *this*, so the candle placed beside it has to be measured
+        // from the same edge — measuring from the candle's own body width put
+        // it inside the box the lane was reserved next to, where the opaque
+        // plate then painted straight over it.
+        let content_half = treatment.content_half_width(cw, half);
         let mut faded_candles = None;
         if footprint_on {
             match treatment {
@@ -5101,7 +5112,7 @@ impl ChartPane {
                 // wick still has room to show either side of it.
                 let sliver = (candle_lane * SIDEBAR_BODY_FRAC).max(1.0);
                 crate::candle_view::BarSlot {
-                    xc: xc - half + sliver + 1.0,
+                    xc: xc - content_half + sliver + 1.0,
                     half_width: sliver,
                 }
             } else {
@@ -5143,13 +5154,14 @@ impl ChartPane {
                 // that draws in a box beside it is bounded only by the slot,
                 // and charging it the candle gap as well spends a quarter of
                 // the row on air twice over.
-                half: treatment.content_half_width(cw, half),
+                half: content_half,
                 candle_width: cw,
                 side_inferred: chrome.side_inferred,
                 depth_visible: self
                     .orderflow
                     .as_ref()
                     .is_some_and(OrderflowView::depth_visible),
+                pixels_per_point: painter.ctx().pixels_per_point(),
                 // Field access, not `self.footprint_config(..)`: the method
                 // borrows all of `self` and the draw below needs
                 // `self.footprint_lod` mutably. Same resolution rule.

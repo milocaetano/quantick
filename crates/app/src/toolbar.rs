@@ -778,7 +778,7 @@ fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolba
         // that prints no traded volume.
         .enabled(model.capabilities.traded_volume)
         .hover_text(
-            "candle footprint: the buy/sell split per price inside each bar —              detail follows the zoom. Right-click for style and thresholds",
+            "candle footprint: the buy/sell split per price inside each bar — detail follows the zoom. Right-click for style and thresholds",
         )
         .disabled_explanation("this source quotes prices but prints no traded volume")
         .show(ui);

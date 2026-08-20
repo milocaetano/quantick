@@ -35,11 +35,19 @@ pub const MIN_PX_PER_BAR: f32 = 1.0;
 pub const DEFAULT_PX_PER_BAR: f32 = 8.0;
 /// Widest a candle slot can be, in pixels (max zoom-in).
 ///
-/// Sized for the footprint's Detailed level: a `sell × buy` ladder cell is
-/// only a number from ~72 px of candle, so the old 64 px ceiling kept the
-/// most detailed view of the tape permanently out of reach. 160 px shows a
-/// handful of bars with full ladders — the "read these five candles" zoom.
-pub const MAX_CANDLE_WIDTH: f32 = 160.0;
+/// Sized for the footprint's widest style at the latest the trader can ask
+/// detail to arrive. The ceiling has moved twice for the same reason: 64 px
+/// kept the `sell × buy` ladder permanently out of reach, and 160 did the same
+/// to the three-column cluster once `detail_scale` was turned up — the style
+/// existed, the registry offered it, and no zoom could draw it.
+///
+/// The number is that promise, stated: the widest floor any style declares,
+/// multiplied by the top of the detail-scale range, rounded up. It is guarded
+/// by `every_style_is_reachable_at_some_zoom_and_every_detail_scale`, so a
+/// style added with a wider floor fails loudly here rather than becoming an
+/// entry nothing can select into view. At this width a 1900 px pane holds
+/// seven bars — the "read these few candles" zoom the cluster is for.
+pub const MAX_CANDLE_WIDTH: f32 = 256.0;
 /// Most of the window the projection margin may take, as a fraction.
 ///
 /// Four fifths, so a fifth of the screen always still holds candles. Leaving
