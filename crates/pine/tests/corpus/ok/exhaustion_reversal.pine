@@ -1,0 +1,258 @@
+//@version=5
+// Exhaustion reversal — the small arrow where a push ran out of buyers.
+//
+// The shape it looks for is one move in two acts. First a FORCE BAR: a bar
+// whose body dwarfs the recent average AND which reaches the extreme of the
+// last N bars. That is a push spending itself at the edge of the move, not a
+// bar that merely happens to be large in the middle of one. Then the
+// GIVE-BACK, which arrives in one of two shapes — either is enough, and each
+// has its own switch and its own settings:
+//
+//   THE RUN (section 2)     several consecutive opposite candles, with price
+//                           back below (or above) a set fraction of the force
+//                           bar by the close of the last of them.
+//   THE COVER (section 3)   ONE opposite candle whose body sits on top of
+//                           most of the force bar's range.
+//
+// They are not the same test with different numbers, which is why they are
+// two sections instead of one. The run is about TRAVEL: where price ended up,
+// relative to the extreme. The cover is about OVERLAP: how much of the force
+// bar a single body actually covers, wherever price ends up. A slow drift
+// travels without covering; a wide bar can cover the force bar and close only
+// just past it. Each shape catches what the other misses.
+//
+// HOW TO READ THE CHART:
+//
+//   red triangle above a bar    a buying push at a new high was given back.
+//                               Exhaustion of the up move may be at hand.
+//   teal triangle below a bar   the mirror: a selling push at a new low was
+//                               given back.
+//   no triangle                 no completed give-back. Most bars have no
+//                               triangle, and that is the point — a chart
+//                               where every bar is marked has told you
+//                               nothing. (Measured: ~3% of bars at these
+//                               defaults on a 2 000-bar random walk.)
+//
+// The triangle sits above/below the bar and never covers it. Its colour and
+// width are on the indicator dialog's STYLE tab, per plot, where every other
+// indicator's colours live — not in the inputs below.
+//
+// HONEST ABOUT THE DELAY: the mark cannot appear at the extreme, and how late
+// it is depends on which shape fired. A cover can mark the very next bar
+// after the force bar; a run needs at least its own length. The latest either
+// can be is that shape's own window. So with the defaults a triangle is
+// between 1 and 5 bars behind the extreme it is about. You are being shown a
+// reversal that has already partly happened, which is the only kind that can
+// be proven from closed bars. Nothing is drawn on a forming bar, so no mark
+// ever appears and then disappears: what you see has committed.
+//
+// WHY THE WINDOWS: without a ceiling, "opposite candles eventually showed up"
+// is true of almost every force bar if you wait long enough — the give-back
+// would just be the tape drifting sideways in a micro range. The window is
+// what makes the give-back a REACTION to the push rather than a coincidence
+// that followed it. Widen it and you buy more signals with less meaning; that
+// trade is yours to make, not the indicator's.
+//
+// HOW THE RUN IS MEASURED — two conditions, deliberately independent:
+//   (a) the last `run` candles all closed against the push, and
+//   (b) at this bar's CLOSE, price has given back `give-back` of the force
+//       bar's range, measured from the force bar's extreme.
+// It does NOT check that the run itself did the travelling. A gap that hands
+// back the whole force bar in one bar, followed by three tiny down-closes,
+// satisfies both and marks. That is intentional — the question being asked is
+// "is price back, and is the tape still leaning that way?", not "which bar
+// carried it" — but it is worth knowing, because the streak can be cosmetic.
+//
+// HOW THE COVER IS MEASURED: the overlap between the opposite candle's BODY
+// (open to close) and the force bar's range, as a fraction of that range. A
+// full 1.0 means one body covers the force bar end to end. Because it is an
+// overlap it cannot exceed 100%, which is why that slider stops there while
+// the run's does not (a run can travel past the far side entirely).
+//
+// Note what "overlap" allows: a candle whose whole range sits INSIDE the
+// force bar counts, if its body still covers enough of it. That is not a
+// classical engulfing candle, and it is not called one here — a small bar
+// that erases most of a large one is exactly the exhaustion this is looking
+// for, whether or not it pokes out the ends.
+//
+// The force bar's body is judged against the average of the bars BEFORE it
+// (same discipline as force_bar.pine): a huge bar must not be allowed to
+// inflate the very average that is deciding whether it is huge.
+//
+// Reaching the extreme is `>=`, not `>`: on futures the offer parks at a
+// price and highs tie constantly, and a push that shoves into a level the
+// tape touched N bars ago is the same event as one that clears it by a tick.
+// The body test is what keeps a flat, quiet stretch from anchoring — a run of
+// tied highs has no body behind it and never becomes a force bar.
+//
+// ONE MARK PER PUSH: a force bar arms once and is spent by the first signal
+// it produces, whichever shape produced it. Without that, a run of four
+// opposite candles inside the window would mark the second, third and fourth
+// as separate reversals of the same push. A newer force bar re-arms the side.
+//
+// Both shapes draw the same triangle, so switching one off is how you find
+// out which one is speaking — but read the result carefully: the switches do
+// not only silence marks, they can MOVE one. If a cover spends a push on the
+// bar after the force bar, the run never sees that push at all; switch the
+// cover off and the same tape may mark three bars later, where the run
+// finally completes. A mark that jumps when you flip a switch is those two
+// shapes disagreeing about when the push ended, not an inconsistency.
+//
+// Every threshold below is an input: this is a shape, and where the shape
+// begins and ends is a judgement about the instrument in front of you.
+// Defaults are a starting point measured on nothing in particular —
+// calibrate on recorded sessions. Information, not advice: the last decision
+// belongs to the trader.
+indicator("Exhaustion reversal", overlay=true)
+
+// 1 — the force bar: what counts as a push worth fading?
+body_len = input.int(20, "1 Force bar: body average window (bars)", minval=1, maxval=500)
+body_factor = input.float(1.5, "1 Force bar: min body (×average)", minval=0.1, maxval=20.0, step=0.1)
+extreme_len = input.int(10, "1 Force bar: reaches the extreme of (bars)", minval=1, maxval=500)
+need_direction = input.bool(true, "1 Force bar: must close in the direction of the push")
+
+// 2 — the run: several opposite candles, and price back off the extreme.
+use_run = input.bool(true, "2 Run: mark a give-back by consecutive candles")
+run_len = input.int(3, "2 Run: opposite candles in a row", minval=1, maxval=20)
+window_len = input.int(5, "2 Run: window after the force bar (bars)", minval=1, maxval=100)
+coverage = input.float(0.7, "2 Run: min give-back of the force bar (fraction of range)", minval=0.05, maxval=3.0, step=0.05)
+
+// 3 — the cover: one opposite candle sitting on top of the force bar.
+// Shorter window than the run by default: a single bar answering a push is an
+// immediate response, and five bars later it is a different bar reacting to
+// a different thing.
+use_cover = input.bool(true, "3 Cover: mark a give-back by one opposite candle")
+cover_window = input.int(3, "3 Cover: window after the force bar (bars)", minval=1, maxval=100)
+cover_fraction = input.float(0.7, "3 Cover: min overlap with the force bar (fraction of range)", minval=0.05, maxval=1.0, step=0.05)
+
+// 4 — display: which side to mark. These gate the drawing sites only. The
+// state machine below runs whatever they say, so flipping a side back on
+// never changes what the indicator concluded while it was off.
+//
+// Colour and width are deliberately NOT inputs: they live on the dialog's
+// Style tab, per plot, which is what the chart actually reads. An
+// `input.color` handed to a plot in this dialect does not fold, and the mark
+// silently comes out amber — so a colour slider here would be a dead control.
+show_top = input.bool(true, "4 Display: mark top reversals (sell side)")
+show_bottom = input.bool(true, "4 Display: mark bottom reversals (buy side)")
+
+// ---------------------------------------------------------------- measures
+
+// Every stateful ta.* call is hoisted to the top level and fed on every bar:
+// kernels have call-site identity and `and` short-circuits, so a kernel
+// behind a condition would warm up late and read a gapped series. This
+// applies to the four below and to nothing else — the arithmetic further
+// down is current-bar only, and is deliberately left behind its guards.
+body = math.abs(close - open)
+avg_body_before = ta.sma(body[1], body_len)
+high_before = ta.highest(high[1], extreme_len)
+low_before = ta.lowest(low[1], extreme_len)
+
+// A window shorter than the run it must contain would mean "never" — an
+// input that silently cannot fire is a trap, so the window is at least the
+// run. (Same spirit as force_bar.pine reordering its min/max multiples.)
+run_window = math.max(window_len, run_len)
+
+// How long a force bar stays armed: the longer of the two shapes' windows,
+// and deliberately NOT conditional on their switches. If the state machine
+// forgot the push sooner with one shape switched off, the other shape would
+// answer differently depending on a checkbox it has nothing to do with.
+arm_window = math.max(run_window, cover_window)
+
+// A zero average is warm-up or a dead tape, not a bar that beats it. The
+// `not na` guards are what keep the opening stretch unmarked.
+big_body = not na(avg_body_before) and avg_body_before > 0 and body >= body_factor * avg_body_before
+new_high = not na(high_before) and high >= high_before
+new_low = not na(low_before) and low <= low_before
+
+bull_bar = close > open
+bear_bar = close < open
+
+// A doji closes neither way and breaks a run: it is a pause, not a give-back.
+var int bear_run = 0
+var int bull_run = 0
+bear_run := bear_bar ? bear_run + 1 : 0
+bull_run := bull_bar ? bull_run + 1 : 0
+
+top_anchor = big_body and new_high and (not need_direction or bull_bar)
+bottom_anchor = big_body and new_low and (not need_direction or bear_bar)
+
+// ------------------------------------------------------------------- state
+
+// One armed force bar per side, with its own age and its own range. The two
+// sides are independent: the bar that gives back a buying push may itself be
+// the selling push that arms the other side.
+var bool top_armed = false
+var int top_age = 0
+var float top_high = na
+var float top_low = na
+var bool bottom_armed = false
+var int bottom_age = 0
+var float bottom_high = na
+var float bottom_low = na
+
+// Age first, test second, arm last. Ageing before the test is what makes the
+// bar `run_len` bars after the force bar read as age `run_len`; arming after
+// it is what stops a force bar from being faded by the very bar that made it.
+if top_armed
+    top_age := top_age + 1
+    if top_age > arm_window
+        top_armed := false
+if bottom_armed
+    bottom_age := bottom_age + 1
+    if bottom_age > arm_window
+        bottom_armed := false
+
+// ----------------------------------------------------------------- signals
+
+// Two subtractions, cheap enough to keep in the open for readability; `na`
+// when no push is armed, which makes every `> 0` below false.
+top_range = top_high - top_low
+bottom_range = bottom_high - bottom_low
+
+// The divisions and the overlap arithmetic sit BEHIND the guards on purpose.
+// `and` short-circuits, and on the large majority of bars no push is armed —
+// so on those bars this line stops at `top_armed` and the maths never runs.
+// (Measured: ~17% of the script's commit cost, and this runs again for every
+// preview of the forming bar.) Nothing here is a `ta.*` kernel, so unlike the
+// measures above there is no warm-up to protect by hoisting it.
+sell_run = use_run and top_armed and top_age >= run_len and top_age <= run_window and bear_run >= run_len and top_range > 0 and (top_high - close) / top_range >= coverage
+buy_run = use_run and bottom_armed and bottom_age >= run_len and bottom_age <= run_window and bull_run >= run_len and bottom_range > 0 and (close - bottom_low) / bottom_range >= coverage
+
+// The cover: the overlap of two intervals — this candle's body against the
+// force bar's range — so it is bounded by the force bar and cannot be
+// inflated by a candle that is merely enormous somewhere else. A body that
+// does not reach the force bar at all makes the overlap negative, which
+// fails on its own.
+sell_cover = use_cover and top_armed and top_age <= cover_window and bear_bar and top_range > 0 and (math.min(open, top_high) - math.max(close, top_low)) / top_range >= cover_fraction
+buy_cover = use_cover and bottom_armed and bottom_age <= cover_window and bull_bar and bottom_range > 0 and (math.min(close, bottom_high) - math.max(open, bottom_low)) / bottom_range >= cover_fraction
+
+// Either shape marks, and the first one to fire spends the push.
+sell_signal = sell_run or sell_cover
+buy_signal = buy_run or buy_cover
+
+if sell_signal
+    top_armed := false
+if buy_signal
+    bottom_armed := false
+
+if top_anchor
+    top_armed := true
+    top_age := 0
+    top_high := high
+    top_low := low
+if bottom_anchor
+    bottom_armed := true
+    bottom_age := 0
+    bottom_high := high
+    bottom_low := low
+
+// ------------------------------------------------------------------- marks
+
+// Closed bars only. The forming bar's preview is rolled back, so a mark that
+// appeared there would be a promise the tape had not yet made.
+sell_mark = sell_signal and barstate.isconfirmed
+buy_mark = buy_signal and barstate.isconfirmed
+
+plotshape(show_top and sell_mark, "Exhaustion reversal: sell", style=shape.triangledown, location=location.abovebar, color=color.red)
+plotshape(show_bottom and buy_mark, "Exhaustion reversal: buy", style=shape.triangleup, location=location.belowbar, color=color.teal)

@@ -42,6 +42,10 @@ pub(crate) const EMBEDDED_SCRIPTS: &[(&str, &str)] = &[
         "force_bar.pine",
         include_str!("../../scripts/force_bar.pine"),
     ),
+    (
+        "exhaustion_reversal.pine",
+        include_str!("../../scripts/exhaustion_reversal.pine"),
+    ),
 ];
 
 /// One loadable script.
@@ -227,6 +231,19 @@ mod tests {
             embedded("force_bar.pine"),
             include_str!("../../../pine/tests/corpus/ok/force_bar.pine"),
             "sync crates/pine/tests/corpus/ok/force_bar.pine with crates/app/scripts/force_bar.pine"
+        );
+    }
+
+    /// Same pin, same reason: `exhaustion_reversal_semantics.rs` proves the
+    /// force-bar / give-back pairs against the corpus copy, and a drift would
+    /// leave a suite of passing tests describing a script nobody ships.
+    #[test]
+    fn the_embedded_exhaustion_reversal_matches_its_semantics_fixture() {
+        assert_eq!(
+            embedded("exhaustion_reversal.pine"),
+            include_str!("../../../pine/tests/corpus/ok/exhaustion_reversal.pine"),
+            "sync crates/pine/tests/corpus/ok/exhaustion_reversal.pine with \
+             crates/app/scripts/exhaustion_reversal.pine"
         );
     }
 
