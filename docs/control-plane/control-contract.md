@@ -377,6 +377,10 @@ The host also owns a `PermissionRegistry`. Each permission descriptor supplies
 an ID, label, explanation of data or authority granted, sensitivity, default
 grant policy, and the profile ceilings under which it may appear. Snapshot and
 action modules register their permissions beside their scopes or capabilities.
+A permission ceiling contributes that permission to the named profile and its
+descendants during finalization; it does not bypass the separate current user
+grant applied by the handshake. This two-phase registration lets a module add a
+scope without editing a central profile descriptor.
 A capability that names an undeclared permission fails registration; a client
 that requests an undeclared permission fails closed. The in-app consent UI is
 generated from these descriptors rather than a hand-maintained MCP-only list.
@@ -547,6 +551,7 @@ a hard limit requires a reviewed contract change and threat-model check.
 | `CONTROL_RUNTIME_ID_BYTES` | 16 | hard | 128-bit generated runtime identifiers |
 | `CONTROL_REQUEST_ID_MAX_BYTES` | 128 | hard | Bound client correlation identifiers |
 | `CONTROL_DESCRIPTOR_MAX_BYTES` | 16 KiB | hard | Bound descriptor reads before JSON parsing |
+| `CONTROL_CAPABILITY_DESCRIPTOR_MAX_BYTES` | 16 KiB | hard | Bound one registry descriptor, including schemas and examples |
 | `CONTROL_PROTOCOL_MAX_FRAME_BYTES` | 16 MiB | hard | Reject a frame before allocation or JSON parsing |
 | `CONTROL_MAX_REQUEST_BYTES` | 1 MiB | hard | Bound schemas, scripts, and action inputs |
 | `CONTROL_MAX_RESPONSE_BYTES` | 8 MiB | hard | Force pagination or resource chunking |

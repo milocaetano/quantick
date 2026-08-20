@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "vectors": [
+    {
+      "name": "object_keys_are_sorted",
+      "input": { "b": 2, "a": 1 },
+      "canonical": "{\"a\":1,\"b\":2}",
+      "digest": "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
+    },
+    {
+      "name": "array_order_one_two",
+      "input": [1, 2],
+      "canonical": "[1,2]",
+      "digest": "sha256:49a64717d5d4cb19952e6eac2946415cf6879adacf9908e7d872332d32c6e684"
+    },
+    {
+      "name": "array_order_two_one",
+      "input": [2, 1],
+      "canonical": "[2,1]",
+      "digest": "sha256:af1a1fc110b6094c48582b0ef83553cb7908d7a4365424eef28e76ef6c88d630"
+    },
+    {
+      "name": "composed_utf8_is_preserved",
+      "input": "é",
+      "canonical": "\"é\"",
+      "digest": "sha256:f2886017e9c7abacf804b54d64787dce2b611c9544ba21f3affdd126a6e50086"
+    },
+    {
+      "name": "decomposed_utf8_is_preserved",
+      "input": "é",
+      "canonical": "\"é\"",
+      "digest": "sha256:3d68ce21f2899a475713cdbe7562ba9bdb6b1dfde8af1f221bdff4a0935b53b2"
+    },
+    {
+      "name": "required_string_escapes_only",
+      "input": { "slash": "\\", "line": "a\nb" },
+      "canonical": "{\"line\":\"a\\nb\",\"slash\":\"\\\\\"}",
+      "digest": "sha256:3ede452bbace147ac89685a1cfc4f0586bd89dc2edcd48e0b6c0e0e1960fc371"
+    }
+  ]
+}

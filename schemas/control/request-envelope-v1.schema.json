@@ -1,0 +1,115 @@
+{
+  "$defs": {
+    "CapabilityId": {
+      "description": "A versioned operation exposed by a module.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "IdempotencyKey": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[\\x20-\\x7e]+$",
+      "type": "string"
+    },
+    "InstanceId": {
+      "description": "The identity of one running Quantick instance.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "ModuleId": {
+      "description": "A module contributing control-plane behavior.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "ModuleRevision": {
+      "properties": {
+        "module_id": {
+          "$ref": "#/$defs/ModuleId"
+        },
+        "revision": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "module_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "RequestId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[\\x20-\\x7e]+$",
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "capability_id": {
+      "$ref": "#/$defs/CapabilityId"
+    },
+    "capability_version": {
+      "format": "uint32",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "expected_revisions": {
+      "items": {
+        "$ref": "#/$defs/ModuleRevision"
+      },
+      "type": "array"
+    },
+    "idempotency_key": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IdempotencyKey"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "instance_id": {
+      "$ref": "#/$defs/InstanceId"
+    },
+    "payload": true,
+    "protocol_version": {
+      "format": "uint32",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "reason": {
+      "maxLength": 1024,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "request_id": {
+      "$ref": "#/$defs/RequestId"
+    }
+  },
+  "required": [
+    "protocol_version",
+    "request_id",
+    "instance_id",
+    "capability_id",
+    "capability_version",
+    "payload"
+  ],
+  "title": "RequestEnvelope",
+  "type": "object"
+}

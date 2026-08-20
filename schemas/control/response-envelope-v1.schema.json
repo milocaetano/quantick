@@ -1,0 +1,191 @@
+{
+  "$defs": {
+    "ControlError": {
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "current_revisions": {
+          "items": {
+            "$ref": "#/$defs/ModuleRevision"
+          },
+          "type": "array"
+        },
+        "details": true,
+        "diagnostic_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "next_steps": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "violated_precondition": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PreconditionId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "type": "object"
+    },
+    "ControlWarning": {
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "ErrorCode": {
+      "description": "A stable machine-readable error code.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "InstanceId": {
+      "description": "The identity of one running Quantick instance.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "ModuleId": {
+      "description": "A module contributing control-plane behavior.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "ModuleRevision": {
+      "properties": {
+        "module_id": {
+          "$ref": "#/$defs/ModuleId"
+        },
+        "revision": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "module_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "PreconditionId": {
+      "description": "A stable namespaced capability precondition.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "RequestId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[\\x20-\\x7e]+$",
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "not": {
+        "required": [
+          "error"
+        ]
+      },
+      "required": [
+        "result"
+      ]
+    },
+    {
+      "not": {
+        "required": [
+          "result"
+        ]
+      },
+      "required": [
+        "error"
+      ]
+    }
+  ],
+  "properties": {
+    "capture_revision": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "$ref": "#/$defs/ControlError"
+    },
+    "instance_id": {
+      "$ref": "#/$defs/InstanceId"
+    },
+    "module_revisions": {
+      "items": {
+        "$ref": "#/$defs/ModuleRevision"
+      },
+      "type": "array"
+    },
+    "protocol_version": {
+      "format": "uint32",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "request_id": {
+      "$ref": "#/$defs/RequestId"
+    },
+    "result": true,
+    "warnings": {
+      "items": {
+        "$ref": "#/$defs/ControlWarning"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "protocol_version",
+    "request_id",
+    "instance_id",
+    "module_revisions",
+    "warnings"
+  ],
+  "title": "ResponseEnvelope",
+  "type": "object"
+}

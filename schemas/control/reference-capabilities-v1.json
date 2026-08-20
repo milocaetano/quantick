@@ -1,0 +1,231 @@
+{
+  "capabilities": [
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Return the bounded text supplied by the caller.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [
+        {
+          "input": {
+            "text": "hello"
+          },
+          "output": {
+            "echo": "hello"
+          },
+          "title": "Echo a message"
+        }
+      ],
+      "expected_cost": {
+        "class": "immediate",
+        "max_items": 1,
+        "max_response_bytes": 1024
+      },
+      "id": "extension.echo",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      },
+      "module": "extension",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "echo": {
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "required": [
+          "echo"
+        ],
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "Echo text",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Return one coherent value and revision.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [
+        {
+          "input": {},
+          "output": {
+            "revision": "0",
+            "value": 0
+          },
+          "title": "Initial value"
+        }
+      ],
+      "expected_cost": {
+        "class": "immediate",
+        "max_items": 1,
+        "max_response_bytes": 1024
+      },
+      "id": "fake.counter.read",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "module": "fake",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          },
+          "value": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "Read reference counter",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "session",
+      "description": "Replace the counter after an optimistic revision check.",
+      "destructive": true,
+      "dry_run_supported": true,
+      "effect": "fake.mutate",
+      "examples": [
+        {
+          "input": {
+            "value": 5
+          },
+          "output": {
+            "actor_kind": "agent",
+            "current": 5,
+            "previous": 0
+          },
+          "title": "Replace the initial value"
+        }
+      ],
+      "expected_cost": {
+        "class": "immediate",
+        "max_items": 1,
+        "max_response_bytes": 1024
+      },
+      "id": "fake.counter.set",
+      "idempotency": "required",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "value": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "type": "object"
+      },
+      "module": "fake",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "actor_kind": {
+            "const": "agent"
+          },
+          "current": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          },
+          "previous": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "previous",
+          "current",
+          "actor_kind"
+        ],
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [
+        {
+          "description": "The expected fake-module revision is current.",
+          "id": "fake.revision_matches"
+        }
+      ],
+      "read_only": false,
+      "required_permissions": [
+        "fake.write"
+      ],
+      "reversible": true,
+      "revision_policy": "required",
+      "risk_flags": [
+        "state_loss"
+      ],
+      "risk_reducing": false,
+      "title": "Set reference counter",
+      "version": 1
+    }
+  ],
+  "catalog_version": 1
+}
