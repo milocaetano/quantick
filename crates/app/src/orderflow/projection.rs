@@ -1175,13 +1175,13 @@ fn merge_marks(mark: &mut AggressionPrimitive, other: AggressionPrimitive, refer
     } else {
         0.0
     };
+    // Appended, never sorted here. A fold absorbs many marks in a row, and
+    // sorting the growing list once per absorption is quadratic — it was worth
+    // 25x the frame cost on a dense tape. `settle_ids` tidies each finished
+    // fold exactly once instead.
     mark.agg_ids.extend(other.agg_ids);
-    mark.agg_ids.sort_unstable();
-    mark.agg_ids.dedup();
     mark.agg_id = mark.agg_id.min(other.agg_id);
     mark.liquidity_event_ids.extend(other.liquidity_event_ids);
-    mark.liquidity_event_ids.sort_unstable();
-    mark.liquidity_event_ids.dedup();
     if mark.generation != other.generation {
         mark.generation = None;
     }
@@ -1191,6 +1191,14 @@ fn merge_marks(mark: &mut AggressionPrimitive, other: AggressionPrimitive, refer
     // the reference the pane was already drawn on — merging is a drawing
     // decision and must not rescale the marks it left alone.
     mark.size = normalized_area_size(mark.quantity, reference);
+}
+
+/// Put one finished fold's id lists back in order, once.
+fn settle_ids(mark: &mut AggressionPrimitive) {
+    mark.agg_ids.sort_unstable();
+    mark.agg_ids.dedup();
+    mark.liquidity_event_ids.sort_unstable();
+    mark.liquidity_event_ids.dedup();
 }
 
 /// Which mark folds first, per pane.
@@ -1235,54 +1243,80 @@ fn fold_to_budget(
     order: FoldOrder,
     reference: Decimal,
 ) {
-    if marks.len() <= limit.max(2) {
+    let limit = limit.max(2);
+    if marks.len() <= limit {
         return;
     }
+    // Ranked by what the pane is willing to lose resolution on first, across
+    // both sides: the candles rank by size, the tape by age.
     match order {
         FoldOrder::SmallestFirst => marks.sort_by(|a, b| {
-            side_key(a.side)
-                .cmp(&side_key(b.side))
-                .then_with(|| a.quantity.cmp(&b.quantity))
+            a.quantity
+                .cmp(&b.quantity)
                 .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
+                .then_with(|| side_key(a.side).cmp(&side_key(b.side)))
                 .then_with(|| a.price_bucket.cmp(&b.price_bucket))
                 .then_with(|| a.agg_id.cmp(&b.agg_id))
         }),
-        // Side first in both orders, and it is not cosmetic: a fold never
-        // crosses sides, so ordering by time alone leaves a tape of
-        // alternating buys and sells with no two neighbours it is allowed to
-        // merge — it would walk the whole pane, fold nothing, and quietly
-        // hand back more marks than the budget. Grouping by side first means
-        // "oldest first" reads as "the oldest of each side first", which is
-        // what the left edge of the tape is anyway.
         FoldOrder::OldestFirst => marks.sort_by(|a, b| {
-            side_key(a.side)
-                .cmp(&side_key(b.side))
-                .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
+            a.first_timestamp_ms
+                .cmp(&b.first_timestamp_ms)
+                .then_with(|| a.quantity.cmp(&b.quantity))
+                .then_with(|| side_key(a.side).cmp(&side_key(b.side)))
                 .then_with(|| a.price_bucket.cmp(&b.price_bucket))
                 .then_with(|| a.agg_id.cmp(&b.agg_id))
         }),
     }
-    let limit = limit.max(2);
-    let mut excess = marks.len() - limit;
-    while excess > 0 {
-        let before = marks.len();
-        let mut folded: Vec<AggressionPrimitive> = Vec::with_capacity(marks.len());
-        for mark in std::mem::take(marks) {
-            match folded.last_mut() {
-                Some(previous) if excess > 0 && previous.side == mark.side => {
-                    merge_marks(previous, mark, reference);
-                    excess -= 1;
+
+    // Only the front of that ranking is touched, and the tail comes through
+    // untouched — which is the whole point of ranking. On the candles the big
+    // prints a trader is reading stay exactly as they were; on the tape the
+    // newest prints at the right edge stay one per execution, and the pressure
+    // is paid at the left edge where a print was leaving anyway.
+    let excess = marks.len() - limit;
+    let (pool_len, target) = if excess * 2 <= marks.len() {
+        // Twice the excess folded two-at-a-time is the smallest pool that fits,
+        // so the loss is spread thin and most of the pane is untouched.
+        (excess * 2, excess)
+    } else {
+        // Far past budget: everything folds, in even groups.
+        (marks.len(), limit)
+    };
+
+    let mut ranked = std::mem::take(marks);
+    let tail = ranked.split_off(pool_len);
+    // A fold never crosses sides — a buy and a sell are not one pressure — so
+    // each side is chunked on its own. The group size accounts for both,
+    // because two part-full groups (one per side) is two marks, not one, and a
+    // budget that ignored that would be quietly overspent.
+    let (buys, sells): (Vec<_>, Vec<_>) = ranked
+        .into_iter()
+        .partition(|mark| side_key(mark.side) == 0);
+    let mut group = pool_len.div_ceil(target.max(1)).max(2);
+    while group < pool_len
+        && buys.len().div_ceil(group) + sells.len().div_ceil(group) > target.max(1)
+    {
+        group += 1;
+    }
+
+    let mut folded: Vec<AggressionPrimitive> = Vec::with_capacity(limit + 2);
+    for side_pool in [buys, sells] {
+        for (index, mark) in side_pool.into_iter().enumerate() {
+            if index % group == 0 {
+                if let Some(previous) = folded.last_mut() {
+                    settle_ids(previous);
                 }
-                _ => folded.push(mark),
+                folded.push(mark);
+            } else if let Some(previous) = folded.last_mut() {
+                merge_marks(previous, mark, reference);
             }
         }
-        *marks = folded;
-        if marks.len() == before {
-            // Nothing merged this pass: every neighbour disagreed on side, and
-            // no further pass can change that. The pane draws what it has.
-            break;
-        }
     }
+    if let Some(previous) = folded.last_mut() {
+        settle_ids(previous);
+    }
+    folded.extend(tail);
+    *marks = folded;
 }
 
 /// Place reductions on the chart.
@@ -4015,6 +4049,64 @@ mod tests {
         );
     }
 
+    /// The fold is paid where it costs least, and the rest of the pane is
+    /// untouched.
+    ///
+    /// This is the rule the product owner chose over "merge everything
+    /// evenly": on the tape the newest prints at the right edge are what a
+    /// scalper is reading right now, so they stay one mark per execution and
+    /// the left edge — where a print was sliding out anyway — carries the
+    /// loss. On the candles the big prints carry the story, so the small ones
+    /// fold and the big ones are left exactly as they were.
+    #[test]
+    fn the_fold_spares_the_newest_on_the_tape_and_the_biggest_on_the_candles() {
+        let history = crowded_history(HeatmapConfig {
+            max_aggression_primitives: 24,
+            ..bubbles_only()
+        });
+        let projection = project(
+            &history,
+            &crowded_timeline(),
+            PriceWindow::new(dec("98"), dec("120")).unwrap(),
+        );
+
+        let lane: Vec<_> = projection
+            .aggressions
+            .iter()
+            .filter(|mark| mark.live)
+            .collect();
+        assert!(lane.len() >= 2, "the tape needs marks to compare");
+        let newest = lane
+            .iter()
+            .max_by_key(|mark| mark.last_timestamp_ms)
+            .expect("the tape has a newest mark");
+        assert_eq!(
+            newest.folded_marks, 0,
+            "the newest print on the tape was folded into something else"
+        );
+
+        let candles: Vec<_> = projection
+            .aggressions
+            .iter()
+            .filter(|mark| !mark.live)
+            .collect();
+        // A fold sums, so a fold of four small prints can out-weigh the
+        // biggest single one — that is arithmetic, not a lost print. What has
+        // to hold is that the biggest *print* is still drawn as itself: the
+        // ladder tops out at seven contracts, and seven has to be on the canvas
+        // as one untouched mark.
+        assert!(candles.len() > 1, "the candles need marks to compare");
+        assert_eq!(
+            candles
+                .iter()
+                .filter(|mark| mark.folded_marks == 0)
+                .map(|mark| mark.quantity)
+                .max(),
+            Some(dec("7")),
+            "the biggest print on the candles was folded away"
+        );
+    }
+
     /// Zooming the candles is a statement about the candles. Every mark in the
     /// lane must come out of the projection identical — same count, same
     /// quantities, same folds — because nothing about the tape changed.
@@ -4116,5 +4208,57 @@ mod tests {
             first.aggressions, back.aggressions,
             "the same window gave a different frame the second time"
         );
+    }
+
+    /// Wall-clock cost of one projection over a dense tape, printed for the
+    /// mission's performance gate. Ignored by default: it is a measurement,
+    /// not an assertion.
+    #[test]
+    #[ignore]
+    fn bench_projection_over_a_dense_tape() {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            display_grouping: DisplayGrouping::Adaptive { target_rows: 128 },
+            bubble_candle_summary: true,
+            ..bubbles_only()
+        });
+        // 40 000 prints over 200 bars: a busy session, well past the budget.
+        for i in 0..40_000_u64 {
+            history.record_aggression(&Trade {
+                agg_id: i + 1,
+                timestamp_ms: 100 + i as i64 * 25,
+                price: dec("100") + Decimal::from(i % 400),
+                quantity: Decimal::from(i % 23 + 1),
+                side: if i % 2 == 0 { Side::Buy } else { Side::Sell },
+            });
+        }
+        let closed: Vec<Bar> = (0..200)
+            .map(|i| bar(i * 5_000, i * 5_000 + 4_999))
+            .collect();
+        let partial = bar(1_000_000, 1_005_000);
+        let timeline = BarTimeline::from_bars(
+            0,
+            &closed,
+            Some(&partial),
+            Some(crate::orderflow::LiveEdge {
+                now_ms: 1_000_100,
+                window_ms: 5_000,
+                reference_ms: 5_000,
+                on_newest_bar: true,
+            }),
+        );
+        let prices = PriceWindow::new(dec("90"), dec("520")).unwrap();
+
+        // Warm the caches the allocator and the CPU keep.
+        for _ in 0..3 {
+            let _ = project(&history, &timeline, prices);
+        }
+        let runs = 30;
+        let started = std::time::Instant::now();
+        let mut marks = 0;
+        for _ in 0..runs {
+            marks = project(&history, &timeline, prices).aggressions.len();
+        }
+        let per_run = started.elapsed().as_secs_f64() * 1000.0 / f64::from(runs);
+        eprintln!("BENCH projection_ms_per_frame={per_run:.3} marks={marks}");
     }
 }
