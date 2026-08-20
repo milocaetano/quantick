@@ -4969,20 +4969,25 @@ impl QuantickApp {
                 "order-book events are arriving late"
             );
         }
-        if book.dropped_cells > 0
-            || book.folded_aggressions > 0
-            || book.dropped_liquidity_events > 0
-        {
+        // Losses only. Folding is the expected steady state on a busy tape and
+        // loses nothing — warning about it would tell an operator (and the
+        // planned assistant reading these events) to go fix something that is
+        // not broken. The fold count still rides in the info summary above.
+        if book.dropped_cells > 0 || book.dropped_liquidity_events > 0 {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "HEATMAP_PROJECTION_CAPPED",
                 symbol = self.active_tab().symbol.as_str(),
                 dropped_cells = book.dropped_cells,
-                folded_aggressions = book.folded_aggressions,
                 dropped_liquidity_events = book.dropped_liquidity_events,
+                // Not "group harder". Grouping is exactly what the trader is
+                // complaining about when marks read as one blob, and the
+                // aggression budget no longer discards anything to begin with —
+                // it folds, and says how much it folded. What is worth widening
+                // is the budget or the pane, so that is what this names.
                 action = "increase_grouping_or_reduce_retention",
-                "heatmap primitive cap was reached"
+                "heatmap depth primitive cap dropped items"
             );
         }
 

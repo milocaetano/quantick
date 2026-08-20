@@ -852,9 +852,12 @@ impl OrderflowView {
         // projection clusters the bubbles draw — one engine, one aggregation
         // path. Empty whenever those layers publish nothing.
         let histogram = match (frame.as_deref(), bar_open_ms) {
-            (Some(frame), Some(open_ms)) => {
-                live_strip::aggression_rows(&frame.projection.aggressions, open_ms)
-            }
+            (Some(frame), Some(open_ms)) => live_strip::aggression_rows(
+                &frame.projection.aggressions,
+                open_ms,
+                frame.projection.summarized,
+                frame.projection.effective_grouping.bucket_width,
+            ),
             _ => Vec::new(),
         };
         if !histogram.is_empty() {
@@ -1973,12 +1976,19 @@ impl OrderflowView {
                         ));
                         if health.folded_aggressions > 0 {
                             ui.small(format!(
-                                "{} folded into a neighbour to fit the frame —                                  every contract they carried is still drawn",
+                                "{} marks merged into a neighbour to fit the frame",
                                 health.folded_aggressions
                             ))
-                            .on_hover_text(
-                                "the frame draws a bounded number of bubbles, split                                  between the candles and the tape so neither can crowd                                  the other out. Over that budget the marks merge — the                                  candles fold their smallest together, the tape folds                                  its oldest — and a merged bubble carries the exact                                  summed quantity and says how many marks it stands for.                                  Nothing is discarded",
-                            );
+                            .on_hover_text(concat!(
+                                "the frame draws a bounded number of bubbles, split between ",
+                                "the candles and the tape so neither can crowd the other out. ",
+                                "Over that budget the marks merge - the candles fold their ",
+                                "smallest together, the tape folds its oldest - and a merged ",
+                                "bubble carries the exact summed quantity and says how many ",
+                                "marks it stands for. A fold never crosses a side, a pane or a ",
+                                "bar, so a frame with more of those than it has budget draws ",
+                                "the extra marks instead. Nothing is discarded",
+                            ));
                         }
                         if ui
                             .button("reset bubble visuals")
@@ -2856,7 +2866,13 @@ mod tests {
             "the strip reads the clusters the hidden bubbles would have drawn"
         );
         assert!(
-            !live_strip::aggression_rows(&frame.projection.aggressions, 900).is_empty(),
+            !live_strip::aggression_rows(
+                &frame.projection.aggressions,
+                900,
+                frame.projection.summarized,
+                frame.projection.effective_grouping.bucket_width,
+            )
+            .is_empty(),
             "and they become histogram rows"
         );
 

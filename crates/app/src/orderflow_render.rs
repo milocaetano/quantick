@@ -686,6 +686,14 @@ const FOLD_RING_WIDTH: f32 = 1.0;
 /// pressure the bubble is there to show.
 const FOLD_RING_ALPHA: f32 = 0.55;
 
+/// Where the fold count sits, as a share of the radius below the centre. The
+/// disc's own label owns the centre.
+const FOLD_COUNT_OFFSET_SCALE: f32 = 0.45;
+
+/// Font size of the fold count, as a share of the radius. Smaller than the
+/// quantity label: it is a caveat about the mark, not the mark's headline.
+const FOLD_COUNT_FONT_SCALE: f32 = 0.5;
+
 /// Smallest radius that can carry the count of marks a fold stands for. Under
 /// it the ring is the whole statement — "this is more than one print" — which
 /// is the part a trader must not miss.
@@ -958,13 +966,24 @@ fn draw_bubble(
                 color.gamma_multiply(FOLD_RING_ALPHA * bubbles.opacity),
             ),
         );
+        // Under the centre, not on it: the bubble's own quantity/trade-count
+        // label is drawn centred by the caller, and a fold's size saturates at
+        // the top of the radius range, so a centred count landed on top of it
+        // every time and neither was readable. Kept to two digits — past
+        // ninety-nine the ring and the label carry the story, and a third glyph
+        // does not fit the disc.
         if radius >= FOLD_COUNT_MIN_RADIUS {
+            let count = if folded > 99 {
+                "99+".to_owned()
+            } else {
+                folded.to_string()
+            };
             painter.text(
-                center,
+                center + egui::vec2(0.0, radius * FOLD_COUNT_OFFSET_SCALE),
                 egui::Align2::CENTER_CENTER,
-                folded.to_string(),
+                count,
                 egui::FontId::proportional(
-                    (radius * LABEL_FONT_SCALE).clamp(LABEL_MIN_FONT_PX, LABEL_MAX_FONT_PX),
+                    (radius * FOLD_COUNT_FONT_SCALE).clamp(LABEL_MIN_FONT_PX, LABEL_MAX_FONT_PX),
                 ),
                 colors.text,
             );
@@ -4188,7 +4207,12 @@ mod tests {
         assert_eq!(projection.aggressions.len(), 2);
         // The strip builds its histogram from exactly these clusters, so it
         // still has both prints with the bubble layer off.
-        let rows = crate::live_strip::aggression_rows(&projection.aggressions, 0);
+        let rows = crate::live_strip::aggression_rows(
+            &projection.aggressions,
+            0,
+            projection.summarized,
+            projection.effective_grouping.bucket_width,
+        );
         assert_eq!(rows.len(), 1, "both prints share one bucket");
         assert_eq!(rows[0].buy, rust_decimal::Decimal::ONE);
         assert_eq!(rows[0].sell, rust_decimal::Decimal::ONE);

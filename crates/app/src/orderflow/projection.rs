@@ -8,8 +8,8 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use super::config::{
-    DEFAULT_LIVE_LANE_SHARE, DisplayGrouping, HeatmapConfig, IntensityMode, MAX_LIVE_LANE_SHARE,
-    MIN_LIVE_LANE_SHARE,
+    DEFAULT_LIVE_LANE_SHARE, DisplayGrouping, HeatmapConfig, IntensityMode, LiveLaneStyle,
+    MAX_LIVE_LANE_SHARE, MIN_LIVE_LANE_SHARE,
 };
 use super::grouping::{EffectiveGrouping, GroupedLiquidity, GroupingWindow, sweep_grouped_runs};
 use super::history::{AggressorSide, CoverageSegment, LiquidityHistory, RestingSide};
@@ -208,6 +208,14 @@ impl GapPrimitive {
 pub struct HeatmapProjection {
     /// Whether the feature was enabled in sanitized configuration.
     pub enabled: bool,
+    /// Whether this frame's candle marks are bar summaries rather than raw
+    /// clusters.
+    ///
+    /// A summary counts a print in its bar *and* leaves it on the tape, on
+    /// purpose — the pie is an aggregate, the tape mark is the detail. Any
+    /// consumer that sums across both panes has to know, or it counts the same
+    /// contract twice.
+    pub summarized: bool,
     /// Visible heatmap rectangles.
     ///
     /// Shared rather than owned: this layer is rebuilt on the projection
@@ -254,6 +262,7 @@ impl HeatmapProjection {
     pub(crate) fn empty(enabled: bool, effective_grouping: EffectiveGrouping) -> Self {
         Self {
             enabled,
+            summarized: false,
             cells: Arc::new(Vec::new()),
             aggressions: Vec::new(),
             liquidity_events: Vec::new(),
@@ -277,6 +286,9 @@ impl HeatmapProjection {
 /// moving, and is rebuilt as often as the chart draws.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettledProjection {
+    /// Whether this half's marks are bar summaries. See
+    /// [`HeatmapProjection::summarized`].
+    pub summarized: bool,
     /// Whether the feature was enabled in sanitized configuration.
     pub enabled: bool,
     /// Visible heatmap rectangles.
@@ -328,6 +340,8 @@ pub struct LiveMarks {
     pub liquidity_events: Vec<LiquidityEventPrimitive>,
     /// Reductions the safety cap left out of this half.
     pub dropped_liquidity_events: usize,
+    /// Marks this half folded into a neighbour to fit its pane's budget.
+    pub folded_aggressions: usize,
     /// Normalized x the live edge has reached inside the lane.
     pub live_now_x: Option<f64>,
 }
@@ -337,6 +351,7 @@ impl SettledProjection {
     pub(crate) fn empty(enabled: bool, effective_grouping: EffectiveGrouping) -> Self {
         Self {
             enabled,
+            summarized: false,
             cells: Arc::new(Vec::new()),
             aggressions: Vec::new(),
             liquidity_events: Vec::new(),
@@ -356,30 +371,18 @@ impl SettledProjection {
     /// Put the two halves together into the frame a renderer draws.
     ///
     /// Each pane arrives already inside *its own* share of the bubble budget —
-    /// the candles folded theirs where they were built, the tape folds its own
-    /// here — so joining them is a concatenation and never a competition. One
-    /// shared budget was the bug: the candles' marks each carry a bar and the
-    /// tape's each carry a print, so ranking them together made zooming the
-    /// candles out empty the tape.
+    /// both halves fold where they are built, against the pane each mark
+    /// belongs to — so joining them is a concatenation and never a
+    /// competition. One shared budget was the bug: the candles' marks each
+    /// carry a bar and the tape's each carry a print, so ranking them together
+    /// made zooming the candles out empty the tape.
     #[must_use]
     pub fn with_live(&self, live: LiveMarks, config: &HeatmapConfig) -> HeatmapProjection {
-        let (_, lane_budget) = pane_budgets(
-            config.max_aggression_primitives,
-            config.live_lane.width_share,
-        );
-        let mut lane_marks = live.aggressions;
-        let lane_before = lane_marks.len();
-        fold_to_budget(
-            &mut lane_marks,
-            lane_budget,
-            FoldOrder::OldestFirst,
-            self.aggression_reference,
-        );
-        let folded_aggressions =
-            self.folded_aggressions + lane_before.saturating_sub(lane_marks.len());
-        let mut aggressions = Vec::with_capacity(self.aggressions.len() + lane_marks.len());
+        let _ = config;
+        let folded_aggressions = self.folded_aggressions + live.folded_aggressions;
+        let mut aggressions = Vec::with_capacity(self.aggressions.len() + live.aggressions.len());
         aggressions.extend(self.aggressions.iter().cloned());
-        aggressions.extend(lane_marks);
+        aggressions.extend(live.aggressions);
         // Folded first, then ordered: a fold picks by size or by age, but what
         // a frame draws is ordered by time, so a chart that is over the budget
         // stacks its bubbles the same way as one that is under it.
@@ -414,6 +417,7 @@ impl SettledProjection {
 
         HeatmapProjection {
             enabled: self.enabled,
+            summarized: self.summarized,
             cells: Arc::clone(&self.cells),
             aggressions,
             liquidity_events,
@@ -809,16 +813,19 @@ pub fn project_settled(
         aggression_reference,
         summary_reference,
     );
-    let (chart_budget, _) = pane_budgets(
-        config.max_aggression_primitives,
-        config.live_lane.width_share,
-    );
+    let (chart_budget, _) = pane_budgets(config.max_aggression_primitives, &config.live_lane);
     let before_fold = aggressions.len();
     fold_to_budget(
         &mut aggressions,
         chart_budget,
         FoldOrder::SmallestFirst,
-        aggression_reference,
+        // The scale the marks were drawn on. With the summary on these are
+        // pies carrying whole bars, sized against `summary_reference`; folding
+        // them against the print scale pegs every one at the largest radius
+        // (`normalized_area_size` clamps the ratio), so a summarized chart over
+        // budget would fill with max-size pies beside honestly sized ones.
+        summary_reference,
+        Some(timeline),
     );
     let folded_aggressions = before_fold.saturating_sub(aggressions.len());
 
@@ -887,6 +894,7 @@ pub fn project_settled(
 
     SettledProjection {
         enabled: true,
+        summarized: summarizing,
         cells: Arc::new(cells),
         aggressions,
         liquidity_events,
@@ -979,16 +987,52 @@ pub fn project_live(
         settled.effective_grouping,
         summarizing,
     );
+    // This half carries marks for *both* panes: the prints rolling through the
+    // tape, and — while the summary is on — the forming bar's own slot marks.
+    // They are folded apart, because a fold that mixed them would draw one
+    // pane's volume inside the other: the renderer clips by `x`, sizes by the
+    // pane's own radius range and gates on the pane's own switch, so a merged
+    // mark would be clipped into one pane, sized for the other, and hidden by
+    // the wrong control.
+    let (mut tape_marks, mut slot_marks): (Vec<_>, Vec<_>) = tier_primitives(
+        marks,
+        timeline,
+        prices,
+        settled.aggression_reference,
+        settled.summary_reference,
+    )
+    .into_iter()
+    .partition(|mark| mark.live);
+    let before = tape_marks.len() + slot_marks.len();
+    let (chart_budget, lane_budget) =
+        pane_budgets(config.max_aggression_primitives, &config.live_lane);
+    fold_to_budget(
+        &mut tape_marks,
+        lane_budget,
+        FoldOrder::OldestFirst,
+        settled.aggression_reference,
+        None,
+    );
+    // The forming bar's marks are candle marks and answer to the candles'
+    // budget and the candles' ranking. Sized on the summary scale when there is
+    // one, for the same reason `tier_primitives` drew them on it: a pie carries
+    // a whole bar and a tape mark carries one print, so folding a pie against
+    // the print scale would peg it at the largest radius.
+    fold_to_budget(
+        &mut slot_marks,
+        chart_budget,
+        FoldOrder::SmallestFirst,
+        settled.summary_reference,
+        Some(timeline),
+    );
+    tape_marks.append(&mut slot_marks);
+    let folded_aggressions = before.saturating_sub(tape_marks.len());
+
     LiveMarks {
-        aggressions: tier_primitives(
-            marks,
-            timeline,
-            prices,
-            settled.aggression_reference,
-            settled.summary_reference,
-        ),
+        aggressions: tape_marks,
         liquidity_events: event_primitives(events, timeline, prices, settled.effective_grouping),
         dropped_liquidity_events,
+        folded_aggressions,
         live_now_x,
     }
 }
@@ -1108,6 +1152,16 @@ fn cap_events(events: &mut Vec<LiquidityEventPrimitive>, limit: usize) {
     events.truncate(limit);
 }
 
+/// A total order over sides, so a fold can sort and group by one.
+/// `AggressorSide` is a fact about a print, not a rank, so it carries no `Ord`
+/// of its own.
+fn side_key(side: AggressorSide) -> u8 {
+    match side {
+        AggressorSide::Buy => 0,
+        AggressorSide::Sell => 1,
+    }
+}
+
 /// Split the frame's bubble budget between the two panes.
 ///
 /// The two panes draw different things out of the same budget: the candles
@@ -1120,48 +1174,53 @@ fn cap_events(events: &mut Vec<LiquidityEventPrimitive>, limit: usize) {
 /// The split is the tape's own width share ([`LiveLaneStyle::width_share`]),
 /// not a number of its own: marks need room to be read, so the pane with a
 /// third of the canvas gets a third of the marks, and a trader who drags the
-/// divider moves both together. That also keeps the rule honest under a second
-/// reading — a wider tape is a request for more tape, not just a bigger band.
+/// divider moves both together.
 ///
-/// Both shares are at least two, which is what lets a pane always fit: two
-/// marks is one per side, and a fold never crosses sides. The width share is
-/// already bounded to `[MIN_LIVE_LANE_SHARE, MAX_LIVE_LANE_SHARE]`, so neither
-/// pane can be squeezed out by configuration alone.
-fn pane_budgets(limit: usize, lane_width_share: f32) -> (usize, usize) {
-    let share = if lane_width_share.is_finite() {
-        lane_width_share.clamp(MIN_LIVE_LANE_SHARE, MAX_LIVE_LANE_SHARE)
+/// With the tape switched off there is no second pane, and the candles get the
+/// whole budget — reserving a share for a band nobody is drawing would fold the
+/// candles harder to protect nothing.
+///
+/// Both shares are at least two whenever the tape is on, which is what lets a
+/// pane always fit: two marks is one per side, and a fold never crosses sides.
+fn pane_budgets(limit: usize, lane: &LiveLaneStyle) -> (usize, usize) {
+    if !lane.enabled {
+        return (limit, 0);
+    }
+    let share = if lane.width_share.is_finite() {
+        lane.width_share
+            .clamp(MIN_LIVE_LANE_SHARE, MAX_LIVE_LANE_SHARE)
     } else {
         DEFAULT_LIVE_LANE_SHARE
     };
-    let lane = ((limit as f32) * share).round().max(0.0) as usize;
-    let lane = lane.clamp(2, limit.saturating_sub(2).max(2));
-    (limit.saturating_sub(lane).max(2), lane)
+    let lane_budget = ((limit as f32) * share).round().max(0.0) as usize;
+    let lane_budget = lane_budget.clamp(2, limit.saturating_sub(2).max(2));
+    (limit.saturating_sub(lane_budget).max(2), lane_budget)
 }
 
 /// Fold `other` into `mark`, conserving every exact quantity it carried.
 ///
-/// The merged mark stands where the volume stands: its price bucket is the
-/// heavier contributor's, so the bubble sits on a price something actually
-/// traded at, and its span widens to cover both — a range-drawing consumer
-/// then reports the zone the fold really covers instead of a row it invented.
-/// Position is the quantity-weighted mean of the two, which is the same rule
-/// the regional fold already places its marks by.
-fn merge_marks(mark: &mut AggressionPrimitive, other: AggressionPrimitive, reference: Decimal) {
+/// `mark` is always the group's heaviest member — [`fold_chunk`] puts it there
+/// — so the merged mark keeps the position of the print that actually carries
+/// the volume. A quantity-weighted midpoint would land between the members: a
+/// bubble at a price and an instant where nothing traded at all, and a
+/// fabricated fact is worse than the omission this fold replaced. The regional
+/// fold settled the same question the same way — `finish_regional` refuses the
+/// fold-wide average and anchors at the point of control.
+///
+/// The declared price band, by contrast, covers *every* member: a consumer that
+/// draws the range (the live strip's histogram) has to be told the whole zone
+/// the folded quantity came from, not just the winner's row.
+fn merge_marks(
+    mark: &mut AggressionPrimitive,
+    other: &mut AggressionPrimitive,
+    reference: Decimal,
+) {
+    debug_assert_eq!(mark.live, other.live, "a fold may not cross the panes");
+    debug_assert_eq!(mark.side, other.side, "a fold may not cross sides");
     let total = mark.quantity + other.quantity;
-    let (heavy_bucket, heavy_span) = if other.quantity > mark.quantity {
-        (other.price_bucket, other.price_span)
-    } else {
-        (mark.price_bucket, mark.price_span)
-    };
     let low = mark.price_bucket.min(other.price_bucket);
     let high = (mark.price_bucket + mark.price_span).max(other.price_bucket + other.price_span);
-    let weight =
-        |value: f64, quantity: Decimal| -> f64 { value * quantity.to_f64().unwrap_or(0.0) };
     let total_f64 = total.to_f64().unwrap_or(0.0);
-    if total_f64 > 0.0 {
-        mark.x = (weight(mark.x, mark.quantity) + weight(other.x, other.quantity)) / total_f64;
-        mark.y = (weight(mark.y, mark.quantity) + weight(other.y, other.quantity)) / total_f64;
-    }
     // A fold of folds counts the marks underneath it, not the folds: a virgin
     // mark stands for itself, so it enters the sum as one.
     mark.folded_marks = mark
@@ -1188,30 +1247,67 @@ fn merge_marks(mark: &mut AggressionPrimitive, other: AggressionPrimitive, refer
     } else {
         0.0
     };
-    // Appended, never sorted here. A fold absorbs many marks in a row, and
-    // sorting the growing list once per absorption is quadratic — it was worth
-    // 25x the frame cost on a dense tape. `settle_ids` tidies each finished
-    // fold exactly once instead.
-    mark.agg_ids.extend(other.agg_ids);
+    // Moved, never cloned, and never sorted here: a fold absorbs many marks in
+    // a row, and sorting the growing list once per absorption is quadratic — it
+    // was worth 25x the frame cost on a dense tape. `settle_ids` tidies each
+    // finished fold exactly once instead.
+    mark.agg_ids.append(&mut other.agg_ids);
     mark.agg_id = mark.agg_id.min(other.agg_id);
-    mark.liquidity_event_ids.extend(other.liquidity_event_ids);
+    mark.liquidity_event_ids
+        .append(&mut other.liquidity_event_ids);
     if mark.generation != other.generation {
         mark.generation = None;
     }
-    mark.price_bucket = heavy_bucket;
-    mark.price_span = (high - low).max(heavy_span);
+    mark.price_bucket = low;
+    mark.price_span = (high - low).max(mark.price_span);
     // The fold carries more quantity, so it has to read bigger. Sized against
     // the reference the pane was already drawn on — merging is a drawing
     // decision and must not rescale the marks it left alone.
     mark.size = normalized_area_size(mark.quantity, reference);
 }
 
-/// Put one finished fold's id lists back in order, once.
+/// Ids a single fold keeps, before it stops recording which prints it stands
+/// for and lets [`AggressionPrimitive::trade_count`] speak for them.
+///
+/// A fold is unbounded in principle — a quiet budget on a busy session can put
+/// a whole minute of prints under one mark — and the id lists are cloned into
+/// every published frame. The exact count is never lost, only the roll of
+/// individual ids past this point, and the truncation is declared by
+/// `trade_count` exceeding `agg_ids.len()`.
+const MAX_FOLD_IDS: usize = 256;
+
+/// Put one finished fold's id lists back in order, once, and bound them.
 fn settle_ids(mark: &mut AggressionPrimitive) {
     mark.agg_ids.sort_unstable();
     mark.agg_ids.dedup();
+    mark.agg_ids.truncate(MAX_FOLD_IDS);
     mark.liquidity_event_ids.sort_unstable();
     mark.liquidity_event_ids.dedup();
+    mark.liquidity_event_ids.truncate(MAX_FOLD_IDS);
+}
+
+/// Merge one group of compatible marks into a single mark anchored on the
+/// heaviest of them — the group's point of control.
+fn fold_chunk(mut chunk: Vec<AggressionPrimitive>, reference: Decimal) -> AggressionPrimitive {
+    let heaviest = chunk
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| {
+            a.quantity
+                .cmp(&b.quantity)
+                .then_with(|| b.agg_id.cmp(&a.agg_id))
+        })
+        .map_or(0, |(index, _)| index);
+    chunk.swap(0, heaviest);
+    let mut rest = chunk.split_off(1);
+    let mut merged = chunk.pop().expect("a chunk is never empty");
+    for other in &mut rest {
+        merge_marks(&mut merged, other, reference);
+    }
+    if merged.folded_marks > 0 {
+        settle_ids(&mut merged);
+    }
+    merged
 }
 
 /// Which mark folds first, per pane.
@@ -1234,34 +1330,27 @@ enum FoldOrder {
 /// quantity and truncated, so a print that traded could leave the canvas with
 /// nothing said — and which prints left changed with the zoom, because the
 /// zoom changes how many marks there are to rank. Now the excess is *folded*:
-/// neighbours of the same side merge into one bigger mark carrying the exact
-/// summed quantity and the union of their evidence, and the sum of the ink is
-/// the sum of the tape whatever the budget.
+/// compatible neighbours merge into one bigger mark carrying the exact summed
+/// quantity and the union of their evidence, and the sum of the ink is the sum
+/// of the tape whatever the budget.
 ///
-/// A fold never crosses sides — a buy and a sell are not one pressure — which
-/// is also what bounds the work: with at most two sides, any pane folds down
-/// to two marks, so a budget of two or more always terminates.
-/// A total order over sides, so a fold can sort by one. `AggressorSide` is a
-/// fact about a print, not a rank, so it carries no `Ord` of its own.
-fn side_key(side: AggressorSide) -> u8 {
-    match side {
-        AggressorSide::Buy => 0,
-        AggressorSide::Sell => 1,
-    }
-}
-
+/// The result can sit *above* the budget, deliberately. A fold may not cross a
+/// side, a pane, or a bar, and with more of those groups than the budget has
+/// marks the only way further down is to misattribute volume. The budget is a
+/// performance target; correctness outranks it.
 fn fold_to_budget(
     marks: &mut Vec<AggressionPrimitive>,
     limit: usize,
     order: FoldOrder,
     reference: Decimal,
+    bars: Option<&BarTimeline>,
 ) {
     let limit = limit.max(2);
     if marks.len() <= limit {
         return;
     }
     // Ranked by what the pane is willing to lose resolution on first, across
-    // both sides: the candles rank by size, the tape by age.
+    // every group: the candles rank by size, the tape by age.
     match order {
         FoldOrder::SmallestFirst => marks.sort_by(|a, b| {
             a.quantity
@@ -1284,8 +1373,8 @@ fn fold_to_budget(
     // Only the front of that ranking is touched, and the tail comes through
     // untouched — which is the whole point of ranking. On the candles the big
     // prints a trader is reading stay exactly as they were; on the tape the
-    // newest prints at the right edge stay one per execution, and the pressure
-    // is paid at the left edge where a print was leaving anyway.
+    // newest prints at the right edge stay one mark per execution, and the
+    // pressure is paid at the left edge where a print was leaving anyway.
     let excess = marks.len() - limit;
     let (pool_len, target) = if excess * 2 <= marks.len() {
         // Twice the excess folded two-at-a-time is the smallest pool that fits,
@@ -1298,35 +1387,58 @@ fn fold_to_budget(
 
     let mut ranked = std::mem::take(marks);
     let tail = ranked.split_off(pool_len);
-    // A fold never crosses sides — a buy and a sell are not one pressure — so
-    // each side is chunked on its own. The group size accounts for both,
-    // because two part-full groups (one per side) is two marks, not one, and a
-    // budget that ignored that would be quietly overspent.
-    let (buys, sells): (Vec<_>, Vec<_>) = ranked
-        .into_iter()
-        .partition(|mark| side_key(mark.side) == 0);
+    // What a fold may never mix. Pane, because a tape mark and a candle mark
+    // are clipped, sized and switched on and off separately — merging them
+    // draws one pane's volume inside the other. Side, because a buy and a sell
+    // are not one pressure. Bar, because a mark drawn inside a bar's slot is a
+    // claim that *that* bar took the volume it carries, and merging a
+    // neighbour's prints into it is a fabricated fact about who traded when —
+    // the same reason `regionalize_clusters` keeps `bar_index` in its key. The
+    // tape has no bars to confuse: it is one continuous band, so its marks key
+    // on `None` and the whole pane is one group per side.
+    let mut groups: BTreeMap<(bool, u8, Option<usize>), Vec<AggressionPrimitive>> = BTreeMap::new();
+    for mark in ranked {
+        let bar = if mark.live {
+            None
+        } else {
+            bars.and_then(|timeline| {
+                timeline
+                    .locate(mark.first_timestamp_ms)
+                    .map(|position| position.bar_index)
+            })
+        };
+        groups
+            .entry((mark.live, side_key(mark.side), bar))
+            .or_default()
+            .push(mark);
+    }
+
+    // Enough marks per fold that the pane fits, given how many groups there
+    // are: two part-full groups are two marks, not one, and a budget that
+    // ignored that would be quietly overspent. When the groups alone already
+    // outnumber the target no group size can reach it, so the search stops
+    // rather than walking `group` up to `pool_len` one step at a time.
     let mut group = pool_len.div_ceil(target.max(1)).max(2);
-    while group < pool_len
-        && buys.len().div_ceil(group) + sells.len().div_ceil(group) > target.max(1)
-    {
-        group += 1;
+    if groups.len() <= target.max(1) {
+        let folds_at = |size: usize| -> usize {
+            groups
+                .values()
+                .map(|members| members.len().div_ceil(size))
+                .sum()
+        };
+        while group < pool_len && folds_at(group) > target.max(1) {
+            group += 1;
+        }
     }
 
     let mut folded: Vec<AggressionPrimitive> = Vec::with_capacity(limit + 2);
-    for side_pool in [buys, sells] {
-        for (index, mark) in side_pool.into_iter().enumerate() {
-            if index % group == 0 {
-                if let Some(previous) = folded.last_mut() {
-                    settle_ids(previous);
-                }
-                folded.push(mark);
-            } else if let Some(previous) = folded.last_mut() {
-                merge_marks(previous, mark, reference);
-            }
+    for mut members in groups.into_values() {
+        while members.len() > group {
+            let rest = members.split_off(group);
+            folded.push(fold_chunk(members, reference));
+            members = rest;
         }
-    }
-    if let Some(previous) = folded.last_mut() {
-        settle_ids(previous);
+        folded.push(fold_chunk(members, reference));
     }
     folded.extend(tail);
     *marks = folded;
@@ -1379,11 +1491,18 @@ fn event_primitives(
 /// reason a scalper reads it — so it clusters at capture resolution and stays
 /// the same picture through every zoom of the pane beside it.
 fn lane_grouping(config: &HeatmapConfig) -> EffectiveGrouping {
-    EffectiveGrouping::resolve(
-        DisplayGrouping::Native,
-        config.price_grouping,
-        Decimal::ZERO,
-    )
+    // Only the adaptive mode is overridden. `Adaptive` resolves against the
+    // visible price span, which is how the candles' zoom came to decide which
+    // of the tape's prints fused together — that is the leak. `Multiple(n)` is
+    // the trader saying "give me rows this wide" and has nothing to do with
+    // zoom, so it is obeyed on the tape as it is on the candles; overriding it
+    // would leave an illiquid instrument readable on one pane and not the
+    // other, with no control and no explanation.
+    let display = match config.display_grouping {
+        DisplayGrouping::Adaptive { .. } => DisplayGrouping::Native,
+        chosen => chosen,
+    };
+    EffectiveGrouping::resolve(display, config.price_grouping, Decimal::ZERO)
 }
 
 /// Where one tier is cut out of the retained tape.
@@ -1887,7 +2006,15 @@ mod tests {
             projection.aggressions.iter().any(|mark| !mark.live),
             "and so do the candles"
         );
-        assert!(projection.folded_aggressions > 0, "the budget did bite");
+        // No fold is even possible here, and that is the point: six prints
+        // spread one per bar leave every (pane, side, bar) group holding a
+        // single mark, and a fold may not cross any of those boundaries. The
+        // frame carries more marks than the budget asked for rather than
+        // misattribute volume — and it still carries every contract.
+        assert_eq!(
+            projection.folded_aggressions, 0,
+            "nothing could be folded without crossing a bar, so nothing was"
+        );
     }
 
     /// The regional fold compresses the settled history and never the tape:
@@ -3976,10 +4103,20 @@ mod tests {
         let prices = PriceWindow::new(dec("98"), dec("120")).unwrap();
         let projection = project(&history, &timeline, prices);
 
+        // The budget is a performance target, and correctness outranks it. A
+        // fold may not cross a bar — a mark inside a bar's slot is a claim that
+        // *that* bar took the volume it carries — so with more (side, bar)
+        // groups than the budget has marks, the frame draws the extra marks
+        // rather than misattribute volume. Six bars and two sides is a floor of
+        // twelve, and the fixture sits on it.
         assert!(
-            projection.aggressions.len() <= 6,
-            "the budget is still a budget: {} marks drawn",
+            projection.aggressions.len() <= 12,
+            "folded past the point where a fold would have to cross a bar: {} marks",
             projection.aggressions.len()
+        );
+        assert!(
+            projection.aggressions.len() < 60,
+            "the budget did not bite at all"
         );
         let recorded: Decimal = history.aggressions().map(|trade| trade.quantity).sum();
         let drawn = drawn_quantity(&projection, true) + drawn_quantity(&projection, false);
@@ -4062,6 +4199,49 @@ mod tests {
         );
     }
 
+    /// A fold never carries one bar's volume into another bar's slot.
+    ///
+    /// A bubble drawn inside a bar's slot is a claim about *that* bar. Merging
+    /// a neighbour's prints into it would be a fabricated fact — the same
+    /// reason `regionalize_clusters` keeps `bar_index` in its key — so the
+    /// budget stops folding at that boundary and the frame carries the extra
+    /// marks instead. Correctness outranks the performance target.
+    #[test]
+    fn a_fold_never_moves_volume_into_another_bars_slot() {
+        let history = crowded_history(HeatmapConfig {
+            max_aggression_primitives: 4,
+            ..bubbles_only()
+        });
+        let timeline = crowded_timeline();
+        let projection = project(
+            &history,
+            &timeline,
+            PriceWindow::new(dec("98"), dec("120")).unwrap(),
+        );
+
+        for mark in projection.aggressions.iter().filter(|mark| !mark.live) {
+            let first = timeline
+                .locate(mark.first_timestamp_ms)
+                .map(|position| position.bar_index);
+            let last = timeline
+                .locate(mark.last_timestamp_ms)
+                .map(|position| position.bar_index);
+            assert_eq!(
+                first, last,
+                "a candle mark spans two bars, so its slot claims volume the                  neighbouring bar traded"
+            );
+        }
+        // And the pane really was squeezed past its budget, so the assertion
+        // above was exercised rather than trivially true.
+        assert!(
+            projection
+                .aggressions
+                .iter()
+                .any(|mark| mark.folded_marks > 1),
+            "a budget of four over sixty prints has to have folded something"
+        );
+    }
+
     /// Widening the tape buys it more marks, because marks need room.
     ///
     /// The split is the lane's own width share rather than a constant of its
@@ -4070,8 +4250,13 @@ mod tests {
     /// constant that disagrees with the canvas the moment the divider moves.
     #[test]
     fn the_tape_budget_follows_the_room_the_tape_was_given() {
-        let (narrow_chart, narrow_lane) = pane_budgets(100, MIN_LIVE_LANE_SHARE);
-        let (wide_chart, wide_lane) = pane_budgets(100, MAX_LIVE_LANE_SHARE);
+        let lane_of = |share: f32| LiveLaneStyle {
+            enabled: true,
+            width_share: share,
+            ..LiveLaneStyle::default()
+        };
+        let (narrow_chart, narrow_lane) = pane_budgets(100, &lane_of(MIN_LIVE_LANE_SHARE));
+        let (wide_chart, wide_lane) = pane_budgets(100, &lane_of(MAX_LIVE_LANE_SHARE));
         assert!(
             wide_lane > narrow_lane,
             "a wider tape has room for more marks and did not get them"
@@ -4087,7 +4272,7 @@ mod tests {
             MIN_LIVE_LANE_SHARE,
             MAX_LIVE_LANE_SHARE,
         ] {
-            let (chart, lane) = pane_budgets(100, share);
+            let (chart, lane) = pane_budgets(100, &lane_of(share));
             assert!(chart >= 2 && lane >= 2, "every pane can draw both sides");
             assert!(
                 chart + lane <= 100,
@@ -4095,8 +4280,20 @@ mod tests {
             );
         }
         // A budget too small to split still leaves both panes able to draw.
-        let (chart, lane) = pane_budgets(1, DEFAULT_LIVE_LANE_SHARE);
+        let (chart, lane) = pane_budgets(1, &lane_of(DEFAULT_LIVE_LANE_SHARE));
         assert!(chart >= 2 && lane >= 2);
+
+        // With the tape switched off there is no second pane to protect, and
+        // reserving a share for a band nobody is drawing would fold the candles
+        // harder for nothing.
+        let (all, none) = pane_budgets(
+            100,
+            &LiveLaneStyle {
+                enabled: false,
+                ..LiveLaneStyle::default()
+            },
+        );
+        assert_eq!((all, none), (100, 0), "the candles get the whole budget");
     }
 
     /// The fold is paid where it costs least, and the rest of the pane is
@@ -4110,17 +4307,28 @@ mod tests {
     /// fold and the big ones are left exactly as they were.
     #[test]
     fn the_fold_spares_the_newest_on_the_tape_and_the_biggest_on_the_candles() {
-        let history = crowded_history(HeatmapConfig {
-            max_aggression_primitives: 24,
-            ..bubbles_only()
-        });
+        // Two budgets, because the sparing rule is about a pane that is *over*
+        // its budget rather than swamped: past half over, everything folds and
+        // there is no tail left to spare. This one squeezes the tape.
+        let tape_pressure = project(
+            &crowded_history(HeatmapConfig {
+                max_aggression_primitives: 20,
+                ..bubbles_only()
+            }),
+            &crowded_timeline(),
+            PriceWindow::new(dec("98"), dec("120")).unwrap(),
+        );
+        // And this one squeezes only the candles.
         let projection = project(
-            &history,
+            &crowded_history(HeatmapConfig {
+                max_aggression_primitives: 62,
+                ..bubbles_only()
+            }),
             &crowded_timeline(),
             PriceWindow::new(dec("98"), dec("120")).unwrap(),
         );
 
-        let lane: Vec<_> = projection
+        let lane: Vec<_> = tape_pressure
             .aggressions
             .iter()
             .filter(|mark| mark.live)
