@@ -1,0 +1,84 @@
+{
+  "$defs": {
+    "BearerToken": {
+      "maxLength": 43,
+      "minLength": 43,
+      "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$",
+      "type": "string"
+    },
+    "InstanceId": {
+      "description": "The identity of one running Quantick instance.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "PermissionId": {
+      "description": "A granular authority or data-read grant.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "ProfileId": {
+      "description": "An application-registered authority ceiling.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "bearer_token": {
+      "$ref": "#/$defs/BearerToken"
+    },
+    "client_name": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+      "type": "string"
+    },
+    "client_version": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[\\x20-\\x7e]+$",
+      "type": "string"
+    },
+    "instance_id": {
+      "$ref": "#/$defs/InstanceId"
+    },
+    "protocol_max": {
+      "format": "uint32",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "protocol_min": {
+      "format": "uint32",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "requested_profile": {
+      "$ref": "#/$defs/ProfileId"
+    },
+    "requested_scopes": {
+      "items": {
+        "$ref": "#/$defs/PermissionId"
+      },
+      "type": "array",
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "protocol_min",
+    "protocol_max",
+    "instance_id",
+    "client_name",
+    "client_version",
+    "bearer_token",
+    "requested_profile",
+    "requested_scopes"
+  ],
+  "title": "HandshakeRequest",
+  "type": "object"
+}

@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "InstanceId": {
+      "description": "The identity of one running Quantick instance.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "instance_id": {
+      "$ref": "#/$defs/InstanceId"
+    },
+    "next_sequence": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "instance_id",
+    "next_sequence"
+  ],
+  "title": "EventCursor",
+  "type": "object"
+}

@@ -13,6 +13,7 @@ Real-time alternative bar charts (tick / volume / dollar / imbalance bars) for o
 
 Cargo workspace, crates under `crates/`:
 
+- `control` (package `quantick-control`) — transport-neutral control-plane contracts: validated extensible identifiers, versioned envelopes, schemas, capability policy, bounded framing, cursors, and fake host/client ports. It is cold-path infrastructure with no UI, network, async, or domain-crate dependency.
 - `engine` (package `quantick-engine`) — raw trades in, alternative bars out. Headless and deterministic: no UI, no network, no async. Everything else depends on it; it depends on nothing else in the workspace.
 - `orderbook` (package `quantick-orderbook`) — deterministic local order-book core: validated snapshots, absolute level updates, update-id continuity. A pure domain crate like `engine` (no network, no async, no clock); depends on nothing else in the workspace.
 - `replay` (package `quantick-replay`) — recorded market-replay sessions: the CSV tick-file format (read, write and explain why a file was rejected), the folder scan behind the session browser, and the deterministic playback clock. A pure domain crate like `engine` — no network, no async, and it is *told* how much time passed rather than reading a clock; it depends only on `engine`.

@@ -1,0 +1,163 @@
+{
+  "$defs": {
+    "ConnectionId": {
+      "description": "A server-assigned local connection identity.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "InstanceId": {
+      "description": "The identity of one running Quantick instance.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "PermissionId": {
+      "description": "A granular authority or data-read grant.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "ProcessNonce": {
+      "description": "A nonce distinguishing one application process.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "ProfileId": {
+      "description": "An application-registered authority ceiling.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "ProtocolLimits": {
+      "properties": {
+        "default_page_items": {
+          "format": "uint",
+          "maximum": 2048,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_frame_bytes": {
+          "format": "uint",
+          "maximum": 16777216,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_json_depth": {
+          "format": "uint",
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_page_items": {
+          "format": "uint",
+          "maximum": 2048,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_request_bytes": {
+          "format": "uint",
+          "maximum": 1048576,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_response_bytes": {
+          "format": "uint",
+          "maximum": 8388608,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_string_bytes": {
+          "format": "uint",
+          "maximum": 262144,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "request_timeout_ms": {
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "wait_timeout_max_ms": {
+          "format": "uint64",
+          "maximum": 30000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_frame_bytes",
+        "max_request_bytes",
+        "max_response_bytes",
+        "max_json_depth",
+        "max_string_bytes",
+        "default_page_items",
+        "max_page_items",
+        "request_timeout_ms",
+        "wait_timeout_max_ms"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "application_commit": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[\\x20-\\x7e]+$",
+      "type": "string"
+    },
+    "application_version": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[\\x20-\\x7e]+$",
+      "type": "string"
+    },
+    "connection_id": {
+      "$ref": "#/$defs/ConnectionId"
+    },
+    "effective_limits": {
+      "$ref": "#/$defs/ProtocolLimits"
+    },
+    "effective_profile": {
+      "$ref": "#/$defs/ProfileId"
+    },
+    "effective_scopes": {
+      "items": {
+        "$ref": "#/$defs/PermissionId"
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
+    "instance_id": {
+      "$ref": "#/$defs/InstanceId"
+    },
+    "process_nonce": {
+      "$ref": "#/$defs/ProcessNonce"
+    },
+    "protocol_version": {
+      "format": "uint32",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "protocol_version",
+    "instance_id",
+    "process_nonce",
+    "connection_id",
+    "application_version",
+    "application_commit",
+    "effective_profile",
+    "effective_scopes",
+    "effective_limits"
+  ],
+  "title": "HandshakeResponse",
+  "type": "object"
+}

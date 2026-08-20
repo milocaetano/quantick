@@ -63,6 +63,7 @@ fn feeds_depend_on_the_domain_crates_only() {
 /// appear is `backtest → app`, and this entry is what fails the build if one
 /// is ever added.
 const ALLOWED: &[(&str, &[&str])] = &[
+    ("control", &[]),
     ("engine", &[]),
     ("orderbook", &[]),
     ("replay", &["engine"]),
