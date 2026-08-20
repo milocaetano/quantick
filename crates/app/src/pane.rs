@@ -5146,6 +5146,10 @@ impl ChartPane {
                 half: treatment.content_half_width(cw, half),
                 candle_width: cw,
                 side_inferred: chrome.side_inferred,
+                depth_visible: self
+                    .orderflow
+                    .as_ref()
+                    .is_some_and(OrderflowView::depth_visible),
                 // Field access, not `self.footprint_config(..)`: the method
                 // borrows all of `self` and the draw below needs
                 // `self.footprint_lod` mutably. Same resolution rule.

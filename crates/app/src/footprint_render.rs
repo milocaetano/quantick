@@ -232,9 +232,10 @@ pub struct FootprintLod {
     /// The adaptive imbalance floor and the state it was computed from:
     /// `(closed bar count, capture group)`. See [`Self::adaptive_floor`].
     floor: Option<(usize, Decimal, Decimal)>,
-    /// The heat ramp's cuts and the visible window they describe:
-    /// `(first slot, last slot, closed bar count)`. See [`Self::heat_scale`].
-    heat: Option<(usize, usize, usize, Option<HeatScale>)>,
+    /// The heat ramp's cuts and the state they were computed from:
+    /// `(first slot, last slot, closed bar count, display multiple)`. See
+    /// [`Self::heat_scale`].
+    heat: Option<(usize, usize, usize, i64, Option<HeatScale>)>,
 }
 
 impl FootprintLod {
@@ -320,23 +321,32 @@ impl FootprintLod {
     /// Computing them per frame means allocating and sorting every visible
     /// cell at 60 Hz for an answer that changes when the trader pans, zooms or
     /// a bar closes — the same trade [`Self::adaptive_floor`] makes, and for
-    /// the same reason. The key is what the answer depends on: which slots are
-    /// visible, and whether a bar has closed under them.
+    /// the same reason.
+    ///
+    /// The key is everything the answer depends on, and the fourth part is the
+    /// one that is easy to miss: the cuts are measured on *display* rows, so
+    /// they move when the display multiple does — and that multiple answers to
+    /// the **price** zoom, not the time zoom. Dragging the price gutter
+    /// regroups every row without touching which slots are visible or how many
+    /// bars have closed, so a key made only of those three would hand back
+    /// cuts for a grid that no longer exists.
     fn heat_scale(
         &mut self,
         visible: (usize, usize),
         bars: usize,
+        k: i64,
         compute: impl FnOnce() -> Option<HeatScale>,
     ) -> Option<HeatScale> {
-        if let Some((first, last, cached_bars, scale)) = self.heat
+        if let Some((first, last, cached_bars, cached_k, scale)) = self.heat
             && first == visible.0
             && last == visible.1
             && cached_bars == bars
+            && cached_k == k
         {
             return scale;
         }
         let scale = compute();
-        self.heat = Some((visible.0, visible.1, bars, scale));
+        self.heat = Some((visible.0, visible.1, bars, k, scale));
         scale
     }
 
@@ -589,6 +599,10 @@ pub struct LayerFrame<'a> {
     /// of it). A layer whose entire content is buyer-vs-seller carries the
     /// label itself; the status bar's note is not enough here.
     pub side_inferred: bool,
+    /// Whether the depth map is on underneath. The plate covers it inside the
+    /// bars, and a map with holes in it that nothing explains reads as a map
+    /// that lost data.
+    pub depth_visible: bool,
     /// The signal tunables (ratio, min-qty override, stack length, POC and
     /// badge switches).
     pub config: &'a crate::footprint_config::FootprintConfig,
@@ -707,7 +721,7 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     // compares bars against each other — which is the reading alternative bars
     // exist to give — and only for the one style that draws it.
     let heat = if style == crate::footprint_config::FootprintStyle::Cluster {
-        lod.heat_scale((start, end), frame.footprints.len(), || {
+        lod.heat_scale((start, end), frame.footprints.len(), k, || {
             heat_scale(visible_ladders().map(|(_, fp)| regroup(fp, k)))
         })
     } else {
@@ -2069,6 +2083,14 @@ fn draw_legend(
     if frame.side_inferred {
         text.push_str(" · side inferred");
     }
+    // The plate is opaque by design — that is what gives the digits a floor
+    // they control — so where the map used to show through, it no longer
+    // does. Said out loud for the same reason the effective row size is: a
+    // trader reading the liquidity map must never wonder whether the gaps are
+    // the market or the chart.
+    if frame.depth_visible && style.plate() == StylePlate::Casing {
+        text.push_str(" · map hidden behind the bars");
+    }
     if capped {
         text.push_str(" · capped");
     }
@@ -2886,22 +2908,26 @@ mod tests {
         let mut lod = FootprintLod::default();
         let calls = std::cell::Cell::new(0);
         let cuts: HeatScale = [1.0, 2.0, 3.0, 4.0, 5.0];
-        let scale = |lod: &mut FootprintLod, visible: (usize, usize), bars: usize| {
-            lod.heat_scale(visible, bars, || {
+        let scale = |lod: &mut FootprintLod, visible: (usize, usize), bars: usize, k: i64| {
+            lod.heat_scale(visible, bars, k, || {
                 calls.set(calls.get() + 1);
                 Some(cuts)
             })
         };
-        assert_eq!(scale(&mut lod, (10, 40), 100), Some(cuts));
-        assert_eq!(scale(&mut lod, (10, 40), 100), Some(cuts));
-        assert_eq!(scale(&mut lod, (10, 40), 100), Some(cuts));
+        assert_eq!(scale(&mut lod, (10, 40), 100, 1), Some(cuts));
+        assert_eq!(scale(&mut lod, (10, 40), 100, 1), Some(cuts));
+        assert_eq!(scale(&mut lod, (10, 40), 100, 1), Some(cuts));
         assert_eq!(calls.get(), 1, "frames must not recompute the cuts");
-        scale(&mut lod, (11, 41), 100);
+        scale(&mut lod, (11, 41), 100, 1);
         assert_eq!(calls.get(), 2, "the window panned");
-        scale(&mut lod, (11, 60), 100);
-        assert_eq!(calls.get(), 3, "the window zoomed");
-        scale(&mut lod, (11, 60), 101);
+        scale(&mut lod, (11, 60), 100, 1);
+        assert_eq!(calls.get(), 3, "the window zoomed in time");
+        scale(&mut lod, (11, 60), 101, 1);
         assert_eq!(calls.get(), 4, "a bar closed under it");
+        // The one that is easy to miss: the price zoom regroups the rows the
+        // cuts are measured on without moving a single slot.
+        scale(&mut lod, (11, 60), 101, 5);
+        assert_eq!(calls.get(), 5, "the price zoom regrouped the rows");
     }
 
     /// The bar's delta is the sum of its rows', and a bar balanced at
