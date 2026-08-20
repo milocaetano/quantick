@@ -62,19 +62,28 @@ const MIN_PROJECTION_BARS: f32 = 8.0;
 pub struct Viewport {
     /// Pixels per **bar** — the zoom.
     px_per_bar: f32,
-    /// Fractional bar index at the right edge (used when not following). May
-    /// exceed `total - 1` to show empty space past the newest bar.
-    right_bar: f32,
-    /// Whether the right edge is pinned to the newest bar.
-    follow: bool,
+    /// `Some(index)` when the trader has taken the right edge somewhere;
+    /// `None` pins it to the newest bar and lets new bars carry it along.
+    ///
+    /// A latch, not a threshold — the same shape [`crate::price_view::PriceView`]
+    /// uses for the vertical axis, and for the same reason. Any real drag takes
+    /// it, so there is no distance below which a gesture is discarded: with
+    /// `follow` re-derived from "is the edge near enough to the newest bar"
+    /// instead, every per-frame delta smaller than that distance was thrown
+    /// away on the next read, and a slow drag moved nothing at all. Whichever
+    /// unit that distance was written in, some zoom made it wide enough to eat
+    /// a whole gesture.
+    ///
+    /// The value may exceed `total - 1`: past the newest bar is empty canvas
+    /// to project into, and a deliberate place to be.
+    right_bar: Option<f32>,
 }
 
 impl Default for Viewport {
     fn default() -> Self {
         Self {
             px_per_bar: DEFAULT_PX_PER_BAR,
-            right_bar: 0.0,
-            follow: true,
+            right_bar: None,
         }
     }
 }
@@ -106,7 +115,7 @@ impl Viewport {
     /// Whether the right edge is pinned to the newest bar.
     #[must_use]
     pub fn follows_live(&self) -> bool {
-        self.follow
+        self.right_bar.is_none()
     }
 
     /// Zoom by a multiplicative factor: `> 1` widens the candles (zoom in),
@@ -130,32 +139,34 @@ impl Viewport {
     /// The bar index at the right edge for a series of `total` bars.
     #[must_use]
     pub fn right_edge_bar(&self, total: usize) -> f32 {
-        if self.follow {
-            total.saturating_sub(1) as f32
-        } else {
-            self.right_bar
-        }
+        self.right_bar
+            .unwrap_or_else(|| total.saturating_sub(1) as f32)
     }
 
     /// Pan by `dx` pixels (a drag delta). Positive `dx` (drag right) reveals
     /// older bars — the right edge moves into the past; negative moves toward
-    /// the present. Reaching the newest bar resumes following.
+    /// the present. Coming back *to* the newest bar resumes following.
     ///
     /// The past end stops at the oldest bar loaded; the future end is left
     /// open here and bounded once per frame by [`Self::clamp_to_window`],
     /// which is the only place that knows how wide the window is.
+    ///
+    /// **Every non-zero drag counts.** A drag does not arrive as one delta —
+    /// it arrives as a stream of per-frame deltas of a few pixels each — so a
+    /// rule that discards deltas under some distance discards the whole
+    /// gesture, and any distance is too wide at some zoom. That is why the
+    /// edge is a latch rather than a boolean re-derived from how near the
+    /// newest bar it landed.
     pub fn pan_pixels(&mut self, dx: f32, total: usize) {
-        if total == 0 || self.px_per_bar <= 0.0 || dx == 0.0 {
+        if total == 0 || self.px_per_bar <= 0.0 || dx == 0.0 || !dx.is_finite() {
             return;
         }
         let newest = (total - 1) as f32;
         let current = self.right_edge_bar(total);
-        let next = current - dx / self.px_per_bar;
-        self.right_bar = next.max(0.0);
-        // Follow only when the right edge is essentially *at* the newest bar.
-        // Panning into the empty future keeps that margin instead of snapping
-        // back to live.
-        self.follow = (self.right_bar - newest).abs() <= 0.5;
+        let next = (current - dx / self.px_per_bar).max(0.0);
+        // Walking back to the live edge from the past hands control back;
+        // pushing *past* it is the projection gesture, and keeps its margin.
+        self.right_bar = (dx >= 0.0 || current >= newest || next < newest).then_some(next);
     }
 
     /// How far past the newest bar the right edge may sit, in bar slots, for a
@@ -187,18 +198,19 @@ impl Viewport {
     /// — zooming in while pushed fully left would otherwise multiply the empty
     /// space and walk the candles off the screen.
     pub fn clamp_to_window(&mut self, window_px: f32, total: usize) {
-        if self.follow || total == 0 {
+        let (Some(right_bar), true) = (self.right_bar, total > 0) else {
             return;
-        }
+        };
         let newest = (total - 1) as f32;
         let max_right = newest + self.projection_margin_bars(window_px);
-        self.right_bar = self.right_bar.clamp(0.0, max_right);
-        self.follow = (self.right_bar - newest).abs() <= 0.5;
+        // Clamping never hands control back: a view pushed into the margin and
+        // then squeezed by a narrower window is still a view the trader placed.
+        self.right_bar = Some(right_bar.clamp(0.0, max_right));
     }
 
     /// Pin the right edge back to the newest bar.
     pub fn snap_to_live(&mut self) {
-        self.follow = true;
+        self.right_bar = None;
     }
 
     /// Bring `bar` to the middle of a window `width_px` wide — the object
@@ -211,8 +223,12 @@ impl Viewport {
         }
         let newest = (total - 1) as f32;
         let half_window = 0.5 * width_px / self.px_per_bar;
-        self.right_bar = (bar + half_window).clamp(0.0, newest);
-        self.follow = (self.right_bar - newest).abs() <= 0.5;
+        let placed = (bar + half_window).clamp(0.0, newest);
+        // Centring on something at or past the live edge pins the edge to the
+        // newest bar, and that *is* following — anything short of it is a
+        // place the trader asked to look at, whatever the zoom makes of the
+        // remaining distance.
+        self.right_bar = (placed < newest).then_some(placed);
     }
 
     /// Account for bars appearing at — or leaving — the front of the series:
@@ -227,10 +243,10 @@ impl Viewport {
     /// A no-op while following live — the newest bar, and thus the right edge,
     /// is unchanged whatever happened in front of it.
     pub fn shift_right_edge(&mut self, delta: isize) {
-        if self.follow || delta == 0 {
+        let (Some(right_bar), true) = (self.right_bar, delta != 0) else {
             return;
-        }
-        self.right_bar = (self.right_bar + delta as f32).max(0.0);
+        };
+        self.right_bar = Some((right_bar + delta as f32).max(0.0));
     }
 
     /// Put the right edge back on `bar` of a series that was rebuilt under it.
@@ -251,14 +267,18 @@ impl Viewport {
     /// that one shifts by it; a re-cut series has no such count, so this one
     /// takes the destination outright.
     pub fn reanchor(&mut self, bar: Option<usize>, total: usize) {
-        if self.follow {
+        if self.right_bar.is_none() {
             return;
         }
         match bar {
             Some(index) if total > 0 => {
                 let newest = (total - 1) as f32;
-                self.right_bar = (index as f32).clamp(0.0, newest);
-                self.follow = (self.right_bar - newest).abs() <= 0.5;
+                let anchored = (index as f32).clamp(0.0, newest);
+                // The anchor is an exact bar index, so "is it the newest one"
+                // is an exact question. Answering it with a distance made a
+                // one-bar-old anchor read as live at low zoom, and the view
+                // scrolled away from where the trader had parked it.
+                self.right_bar = (anchored < newest).then_some(anchored);
             }
             _ => self.snap_to_live(),
         }
@@ -398,6 +418,110 @@ mod tests {
         v.pan_pixels(24.0, 10);
         assert!(!v.follows_live());
         assert!((v.right_edge_bar(10) - (9.0 - 3.0)).abs() < 0.001);
+    }
+
+    /// A drag arrives as a stream of small per-frame deltas, and every one of
+    /// them has to count — at every zoom, and at every speed.
+    ///
+    /// This is the defect the latch exists for. While the right edge was a
+    /// float plus a `follow` boolean re-derived from "did it land near the
+    /// newest bar", every per-frame delta smaller than that distance was
+    /// written and then answered over by the newest bar on the next read: the
+    /// gesture could not accumulate and the chart sat welded to the live edge.
+    /// Half a bar slot made it bite past ~30 px per candle — the zoom the
+    /// footprint ladder is read at, which is why it surfaced when that layer
+    /// landed — and a fixed pixel distance merely moved the dead zone to the
+    /// slow drags and the zoomed-out end instead.
+    ///
+    /// So the probes are deliberately hostile: the slowest deliberate drag
+    /// anyone performs (one pixel a frame) at both ends of the zoom range.
+    #[test]
+    fn a_drag_accumulates_at_every_zoom_and_every_speed() {
+        for zoom in [MIN_PX_PER_BAR, DEFAULT_PX_PER_BAR, 68.0, MAX_CANDLE_WIDTH] {
+            for per_frame in [1.0_f32, 1.5, 2.0, 10.0] {
+                // Long enough that the drag never reaches the oldest bar: the
+                // past end stops there by design, and a test that hits the
+                // wall measures the wall instead of the gesture.
+                const TOTAL: usize = 4_000;
+                const FRAMES: usize = 30;
+                let mut v = Viewport::new();
+                v.set_px_per_bar(zoom);
+                let newest = (TOTAL - 1) as f32;
+                for _ in 0..FRAMES {
+                    v.pan_pixels(per_frame, TOTAL);
+                    // The real loop clamps between frames; a test that skips
+                    // it cannot see a regression living in that interaction.
+                    v.clamp_to_window(800.0, TOTAL);
+                }
+                let want = per_frame * FRAMES as f32;
+                let moved = (newest - v.right_edge_bar(TOTAL)) * zoom;
+                assert!(
+                    !v.follows_live(),
+                    "zoom {zoom}, {per_frame} px/frame: the drag left the view following"
+                );
+                assert!(
+                    (moved - want).abs() < 0.5,
+                    "zoom {zoom}, {per_frame} px/frame: wanted {want} px, moved {moved}"
+                );
+            }
+        }
+    }
+
+    /// Coming back to the live edge hands control back; pushing past it into
+    /// the projection margin does not, because that is a place a trader means
+    /// to be.
+    #[test]
+    fn the_live_edge_is_reached_exactly_and_the_margin_is_kept() {
+        for zoom in [MIN_PX_PER_BAR, DEFAULT_PX_PER_BAR, MAX_CANDLE_WIDTH] {
+            const TOTAL: usize = 200;
+            let mut v = Viewport::new();
+            v.set_px_per_bar(zoom);
+            // Out into the past, then back one pixel short of the edge.
+            v.pan_pixels(100.0, TOTAL);
+            assert!(
+                !v.follows_live(),
+                "zoom {zoom}: the drag did not leave live"
+            );
+            v.pan_pixels(-99.0, TOTAL);
+            assert!(
+                !v.follows_live(),
+                "zoom {zoom}: a pixel short of the edge already counted as live"
+            );
+            // Closing that pixel hands control back, at any zoom.
+            v.pan_pixels(-1.0, TOTAL);
+            assert!(
+                v.follows_live(),
+                "zoom {zoom}: back at the edge, not following"
+            );
+            // And pushing on from there keeps the margin instead of snapping.
+            v.pan_pixels(-50.0, TOTAL);
+            assert!(
+                !v.follows_live(),
+                "zoom {zoom}: the projection margin snapped back to live"
+            );
+        }
+    }
+
+    /// Zoom must not discard where the trader put the edge.
+    ///
+    /// With `follow` derived from a pixel distance, a small pan at low zoom
+    /// counted as live, and zooming in then threw a quarter-screen offset away
+    /// in silence — the state was a conclusion about the zoom rather than a
+    /// record of the gesture.
+    #[test]
+    fn the_edge_survives_a_zoom_change() {
+        const TOTAL: usize = 200;
+        let mut v = Viewport::new();
+        v.set_px_per_bar(MIN_PX_PER_BAR);
+        v.pan_pixels(2.0, TOTAL);
+        let parked = v.right_edge_bar(TOTAL);
+        assert!(!v.follows_live(), "a two-pixel drag was discarded");
+        v.set_px_per_bar(MAX_CANDLE_WIDTH);
+        assert!(!v.follows_live(), "zooming in resumed following on its own");
+        assert!(
+            (v.right_edge_bar(TOTAL) - parked).abs() < f32::EPSILON,
+            "zooming moved the edge"
+        );
     }
 
     #[test]
