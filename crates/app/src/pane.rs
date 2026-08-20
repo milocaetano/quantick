@@ -6842,6 +6842,75 @@ mod tests {
         assert_eq!(lane_rungs(off), 0, "and no ladder is walked on its account");
     }
 
+    /// Everything one draw call put on the canvas, as text.
+    fn painted(draw: impl Fn(&egui::Painter)) -> String {
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            draw(&ctx.layer_painter(egui::LayerId::background()));
+        });
+        format!("{:?}", output.shapes)
+    }
+
+    /// The axis under the tape speaks only when the tape has fallen behind,
+    /// and the window label does not move when it does.
+    ///
+    /// The caption is what stops an empty tape from reading as a still market,
+    /// so a regression here is silent by construction: the canvas would look
+    /// exactly like the defect this branch exists to end. The placement is
+    /// pinned for its own reason — a caption sliding under a tape being read
+    /// for flow is a cost the reading pays.
+    #[test]
+    fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
+        let pane = ChartPane::flow(1, BarSpec::Tick(100), "WINV26".to_owned());
+        let strip = egui::Rect::from_min_max(egui::pos2(600.0, 980.0), egui::pos2(920.0, 1000.0));
+        let axis = |age_ms: Option<i64>| {
+            painted(|painter| pane.draw_lane_time_axis(painter, Some(strip), 30_000, age_ms))
+        };
+
+        let current = axis(None);
+        assert!(
+            current.contains("tape") && !current.contains("print"),
+            "a current tape says what it is showing and nothing else"
+        );
+        // Under the threshold: an ordinary lull, and the axis is *identical*
+        // to a tape that never paused. Identical rather than merely similar —
+        // a caption that flickered on every quiet moment is one the trader
+        // learns to stop reading.
+        assert_eq!(axis(Some(3_000)), current);
+
+        let behind = axis(Some(6_000));
+        assert!(
+            behind.contains("last print 6 s back"),
+            "a tape 6 s behind has to say so: {behind}"
+        );
+        assert!(
+            behind.contains("tape"),
+            "and it keeps saying what it is showing: {behind}"
+        );
+        // Past the window nothing is left on the tape to point at, so the
+        // wording stops describing a mark the reader would go looking for.
+        let starved = axis(Some(41_000));
+        assert!(
+            starved.contains("no print for 41 s"),
+            "an empty tape must say why it is empty: {starved}"
+        );
+
+        // A strip too narrow for both keeps the urgent one: the window is a
+        // setting the trader can read from the tape's menu, the age is not.
+        let narrow = egui::Rect::from_min_max(egui::pos2(600.0, 980.0), egui::pos2(680.0, 1000.0));
+        let squeezed = painted(|painter| {
+            pane.draw_lane_time_axis(painter, Some(narrow), 30_000, Some(41_000))
+        });
+        assert!(squeezed.contains("no print for 41 s"), "{squeezed}");
+
+        // No lane, no axis.
+        assert_eq!(
+            painted(|painter| pane.draw_lane_time_axis(painter, None, 30_000, Some(41_000))),
+            painted(|_| {}),
+            "a chart with no tape drew a tape axis"
+        );
+    }
+
     #[test]
     fn the_tape_switch_sits_in_the_canvas_top_right_corner() {
         let chart = egui::Rect::from_min_max(egui::pos2(60.0, 80.0), egui::pos2(1_000.0, 700.0));
