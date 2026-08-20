@@ -12885,13 +12885,27 @@ plot(close)
     /// A switched-off layer really stops painting.
     ///
     /// The switches above only prove the *state* moved; this one draws a real
-    /// chart twice and counts the shapes, so a gate someone forgets to place
+    /// chart and counts the shapes, so a gate someone forgets to place
     /// (or later deletes) shows up as a menu entry that changes nothing.
     #[test]
     fn a_hidden_layer_paints_nothing() {
         let ctx = egui::Context::default();
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
         let (mut app, _commands) = app_with_history(120);
+        let under_test = [
+            ChartLayer::LastPrice,
+            ChartLayer::BackfillDivider,
+            ChartLayer::Crosshair,
+        ];
+
+        // Shape totals may only move because one of the three synchronous
+        // gates under test moved. A flow pane normally asks the order-flow
+        // worker for a projection; that frame can legitimately arrive between
+        // any two draws and add unrelated shapes. Hide every other layer so
+        // this fixture never starts that asynchronous projection pipeline.
+        for layer in ChartLayer::ALL {
+            switch_layer(&mut app, layer, under_test.contains(&layer));
+        }
         // The crosshair is a mode: it paints under a pointer, with its own tool
         // armed. Both are set here so the layer has something to switch off.
         app.toolrail.arm(Tool::Crosshair);
@@ -12915,18 +12929,8 @@ plot(close)
             })
         };
 
-        // Every layer under test on, whatever it opens as: the count below is
-        // the "all on" chart, so an opt-in layer has to be switched on first.
-        let under_test = [
-            ChartLayer::LastPrice,
-            ChartLayer::BackfillDivider,
-            ChartLayer::Crosshair,
-        ];
-        for layer in under_test {
-            switch_layer(&mut app, layer, true);
-        }
-        // One frame to settle: the live lane's divider and the price range are
-        // computed by a draw and read by the next one, so the first frame is
+        // One frame to settle: plot geometry and the price range are computed
+        // by a draw and read by the next one, so the first frame is
         // not yet the chart this test is counting. **Every** measurement gets
         // that frame, not just the baseline — an exact shape count taken one
         // frame after a switch is counting a chart still converging on its
