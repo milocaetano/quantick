@@ -272,10 +272,31 @@ Six quantised steps, never a gradient: rounding a float into a colour every
 frame is how a pixel moves between two identical frames, the depth map already
 owns the continuous-gradient channel on this screen, and steps can be counted.
 
-The denominator is the **95th percentile of per-cell side volume over the
-newest closed bars**, not the bar's own maximum (every bar would then hold a
-top-step cell, and a mark that always appears has stopped being a mark) and
-not the screen's maximum (one exhaustion bar would flatten everything else).
+The ramp measures **rank, not ratio** — where a cell falls in the distribution
+of the ladders currently on screen, cut at fixed percentiles.
+
+That was learned the expensive way, and it is worth writing down because the
+wrong answer is the intuitive one. The first build divided each cell by the
+95th percentile of side volume over the newest closed bars. Two things were
+wrong with it, and a screen capture measured both:
+
+- **The wrong bars.** "Newest closed bars of the series" is not "what is on
+  screen": the colours moved with where the replay's live edge happened to
+  be, not with what the trader was looking at.
+- **The wrong statistic.** Per-cell volume is heavily skewed and the shape of
+  that skew changes with the market, so one denominator cannot serve both a
+  quiet stretch and a busy one. Measured, ratio-to-p95 put **47% of cells in
+  the top step**: the brightest colour on screen was also the most common one,
+  which leaves nothing for it to stand out against. An earlier variant had the
+  mirror defect, with nearly everything on the floor.
+
+Percentile cuts fix both ends by construction — the busiest cells are always
+the top step and the quiet ones always the floor, in any regime — and the cuts
+are deliberately uneven, because most rows are ordinary and the bright steps
+are worth spending on the tail. The test
+`the_heat_ramp_spreads_over_a_skewed_distribution` guards it against a skewed
+fixture, not a uniform one: a ramp that only
+behaves on uniform data proves nothing about a tape.
 
 The step luminances are **not evenly spaced**, and that is the design:
 

@@ -57,6 +57,13 @@ pub const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
 /// the magnet to take the anchor. Generous enough to catch the swing you
 /// aimed at, tight enough to still draw a free diagonal between bars.
 const MAGNET_REACH_PX: f32 = 12.0;
+/// How much of a sidebar candle's lane its *body* takes, as a fraction of the
+/// half-lane.
+///
+/// Seven tenths, so the body reads as a body and the wick still shows either
+/// side of it. Derived from the lane rather than fixed, so widening the lane
+/// widens the candle instead of leaving a wider gap around the same sliver.
+const SIDEBAR_BODY_FRAC: f32 = 0.35;
 /// The candle magnet has no reach: [`drawings::AnchorSnap::NearestOhlc`]
 /// never lets go, however far the pointer floats from the candle.
 const MAGNET_REACH_UNLIMITED_PX: f32 = f32::INFINITY;
@@ -5090,7 +5097,9 @@ impl ChartPane {
             // did, at full body width. One call, two geometries — never a
             // second candle path, which would drift from this one.
             let slot = if candle_lane > 0.0 {
-                let sliver = (candle_lane / 2.0 - 1.0).max(1.0);
+                // A third of the lane each side, so the body is a body and the
+                // wick still has room to show either side of it.
+                let sliver = (candle_lane * SIDEBAR_BODY_FRAC).max(1.0);
                 crate::candle_view::BarSlot {
                     xc: xc - half + sliver + 1.0,
                     half_width: sliver,
@@ -5129,7 +5138,12 @@ impl ChartPane {
                     .filter(|_| partial_visible.is_some()),
                 partial_slot: closed_total,
                 x_center: &|slot| viewport.x_center(slot, right, total),
-                half,
+                // The *content* half-width, which is not always the candle's.
+                // A style that draws inside the candle is bounded by it; one
+                // that draws in a box beside it is bounded only by the slot,
+                // and charging it the candle gap as well spends a quarter of
+                // the row on air twice over.
+                half: treatment.content_half_width(cw, half),
                 candle_width: cw,
                 side_inferred: chrome.side_inferred,
                 // Field access, not `self.footprint_config(..)`: the method

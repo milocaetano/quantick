@@ -80,7 +80,20 @@ pub enum CandleTreatment {
 
 /// Width of the lane a [`CandleTreatment::Sidebar`] candle keeps for itself,
 /// in pixels: body, wick and a hair of air before the box begins.
-pub const CANDLE_LANE_PX: f32 = 7.0;
+///
+/// Wide enough that the candle is a candle. At seven the body was five pixels
+/// and the wick one — four fifths of a bar drawn as a thread — which reads as
+/// a scratch beside the box rather than the instrument the box describes.
+pub const CANDLE_LANE_PX: f32 = 13.0;
+/// Air between one bar's content and the next, in pixels.
+///
+/// A [`CandleTreatment::Sidebar`] style does not use the candle style's body
+/// fraction, and that is the point: that fraction exists to leave a gap
+/// between neighbouring *candle bodies*, and here the candle has moved out of
+/// the box entirely. Charging the box for it too cost a quarter of the
+/// horizontal budget — air the code chose, paid for twice, and taken straight
+/// out of the digits.
+pub const SLOT_GAP_PX: f32 = 5.0;
 
 impl CandleTreatment {
     /// How much of the slot's left side the candle claims before the layer's
@@ -90,6 +103,21 @@ impl CandleTreatment {
         match self {
             Self::Fade => 0.0,
             Self::Sidebar => CANDLE_LANE_PX,
+        }
+    }
+
+    /// Half the width this treatment gives the layer's content, for a slot
+    /// `candle_width` wide.
+    ///
+    /// `Fade` answers with the candle's own body half-width, because the
+    /// content lives *inside* the candle and must not outgrow it. `Sidebar`
+    /// answers with the slot less one gap: nothing is inside anything, so the
+    /// only air needed is between neighbours.
+    #[must_use]
+    pub fn content_half_width(self, candle_width: f32, body_half_width: f32) -> f32 {
+        match self {
+            Self::Fade => body_half_width,
+            Self::Sidebar => ((candle_width - SLOT_GAP_PX) / 2.0).max(body_half_width),
         }
     }
 }

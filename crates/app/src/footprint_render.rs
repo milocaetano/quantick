@@ -24,7 +24,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::chart::PriceScale;
-use crate::footprint_config::StylePlate;
+use crate::footprint_config::{FootprintStyle, StylePlate};
 use crate::theme;
 
 /// How much detail the current zoom supports. Ordered: more detail is greater.
@@ -112,19 +112,37 @@ const IMBALANCE_CELL_ALPHA: f32 = 0.16;
 /// The side is carried by *which* border it is, so the colour is redundancy.
 const IMBALANCE_EDGE_PX: f32 = 2.0;
 
-const DETAILED_MIN_WIDTH: f32 = detailed_min_width(2.0);
+/// The ladder's own Detailed floor. Kept as a named value because the
+/// hysteresis tests and `candle_body_fade` reason about a single reference
+/// width; every *style* asks [`detailed_min_width`] for its own.
+fn ladder_detailed_min_width() -> f32 {
+    detailed_min_width(FootprintStyle::Ladder)
+}
 
-/// The candle width at which `columns` quantities fit across a body, in
-/// pixels — the typographic budget, restated as arithmetic so a retune has to
+/// The candle width at which a style's deepest level fits what it writes, in
+/// pixels — the typographic budget restated as arithmetic, so a retune has to
 /// move a number that means something.
 ///
-/// A style asks for its own count ([`crate::footprint_config::FootprintStyle::
-/// detailed_quantity_columns`]) rather than sharing one constant: the cluster
-/// writes three quantities where the ladder writes two, and one floor for both
-/// would either starve the cluster or make the ladder wait for room it does
-/// not need.
-const fn detailed_min_width(columns: f32) -> f32 {
-    columns * (QUANTITY_PX + CENTER_GUTTER_PX + QUANTITY_PADDING_PX / 2.0) / TYPICAL_BODY_FRAC
+/// Two terms, and the second is the one that bites. The *text* term is how
+/// many quantities the style writes; the *furniture* term is everything the
+/// style puts around them. A floor that counts only the text is a floor that
+/// promises room it does not have — the cluster spends 17 px per bar on its
+/// candle lane, its box padding and its gutters before a digit is drawn, and
+/// with those unbudgeted its columns overlap at exactly the width the floor
+/// declares legible.
+fn detailed_min_width(style: FootprintStyle) -> f32 {
+    let columns = style.detailed_quantity_columns();
+    let text = columns * (QUANTITY_PX + QUANTITY_PADDING_PX / 2.0);
+    let furniture = match style {
+        FootprintStyle::Cluster => {
+            (columns - 1.0) * CLUSTER_GUTTER_PX
+                + 2.0 * CLUSTER_BOX_PAD_PX
+                + style.candle_treatment().content_inset()
+        }
+        // The in-candle styles keep a clearance either side of the axis.
+        _ => columns * CENTER_GUTTER_PX,
+    };
+    (text + furniture) / TYPICAL_BODY_FRAC
 }
 const COMPACT_MIN_WIDTH: f32 = (QUANTITY_PX + QUANTITY_PADDING_PX) / TYPICAL_BODY_FRAC;
 const PROFILE_MIN_WIDTH: f32 = 10.0;
@@ -201,7 +219,7 @@ fn canvas_backdrop() -> egui::Color32 {
 /// by the Detailed floor. Only applied while the layer is on — off, the
 /// candles are untouched at any zoom.
 pub fn candle_body_fade(candle_width: f32) -> f32 {
-    let span = DETAILED_MIN_WIDTH - PROFILE_MIN_WIDTH;
+    let span = ladder_detailed_min_width() - PROFILE_MIN_WIDTH;
     (1.0 - (candle_width - PROFILE_MIN_WIDTH) / span).clamp(0.0, 1.0)
 }
 
@@ -397,6 +415,13 @@ fn fmt_qty(qty: Decimal) -> String {
         format!("{:.1}k", value / 1_000.0)
     } else if magnitude >= 100.0 {
         format!("{value:.0}")
+    } else if value == value.trunc() {
+        // A whole number of contracts is written as one. "92.00" spends two
+        // fifths of a cell on characters that carry nothing, and in a ladder
+        // that width is not free — it is taken out of the font size every
+        // other number is drawn at. Instruments that trade in fractions still
+        // get their decimals below.
+        format!("{value:.0}")
     } else if magnitude >= 1.0 {
         format!("{value:.2}")
     } else {
@@ -564,7 +589,7 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
         scaled_width,
         base_row_px,
         frame.config.profile_row_px,
-        detailed_min_width(requested.detailed_quantity_columns()),
+        detailed_min_width(requested),
     );
     // A style that cannot pay for itself at this zoom hands over to the one it
     // names, rather than drawing a worse version of itself. The legend says
@@ -652,7 +677,7 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     // compares bars against each other — which is the reading alternative bars
     // exist to give — and only for the one style that draws it.
     let heat = (style == crate::footprint_config::FootprintStyle::Cluster)
-        .then(|| heat_reference(frame.footprints.iter().rev().take(ADAPTIVE_FLOOR_BARS)))
+        .then(|| heat_scale(visible_ladders().map(|(_, fp)| fp)))
         .flatten();
 
     let mut cells_left = CELL_BUDGET;
@@ -866,7 +891,7 @@ fn draw_bar(
     xc: f32,
     ratio: Decimal,
     min_qty: Decimal,
-    heat: Option<f64>,
+    heat: Option<HeatScale>,
     cells_left: &mut usize,
 ) {
     let painter = frame.painter;
@@ -1007,7 +1032,9 @@ fn draw_bar(
                     continue;
                 }
                 crate::footprint_config::FootprintStyle::Cluster => {
-                    draw_cluster_row(frame, level, cell, &geometry, xc, heat, row_group);
+                    draw_cluster_row(
+                        frame, level, cell, &geometry, xc, heat, max_volume, row_group,
+                    );
                     continue;
                 }
                 _ => {}
@@ -1373,13 +1400,20 @@ fn draw_poc_line(frame: &LayerFrame<'_>, x_from: f32, x_to: f32, row: i64, row_g
     );
 }
 
-/// The heat ramp's thresholds in `t = volume / reference`, lowest first.
+/// How many steps the heat ramp has.
 ///
-/// Six quantised steps, never a gradient. Three reasons, in order: rounding a
-/// float into a colour every frame is how a pixel moves between two identical
-/// frames; the depth map already owns the "continuous gradient" channel on
-/// this same screen; and steps can be counted, which a gradient cannot.
-const HEAT_STEPS: [f32; 6] = [0.0, 0.08, 0.20, 0.38, 0.60, 0.82];
+/// Quantised, never a gradient. Three reasons, in order: rounding a float into
+/// a colour every frame is how a pixel moves between two identical frames; the
+/// depth map already owns the "continuous gradient" channel on this same
+/// screen; and steps can be counted, which a gradient cannot.
+const HEAT_STEP_COUNT: usize = HEAT_LUMINANCE.len();
+/// The cuts and the colours describe the same ramp from two sides, and only
+/// agree by construction: every cut opens a step, and the floor below the
+/// first cut is free. Adding a colour without a cut leaves one unreachable.
+const _: () = assert!(
+    HEAT_PERCENTILES.len() + 1 == HEAT_STEP_COUNT,
+    "the heat ramp needs exactly one more colour than it has cuts"
+);
 
 /// Target relative luminance per step. Deliberately *not* evenly spaced.
 ///
@@ -1394,16 +1428,14 @@ const HEAT_LUMINANCE: [f32; 6] = [0.010, 0.024, 0.050, 0.100, 0.260, 0.620];
 
 /// The step at and above which the ink turns dark. See [`HEAT_LUMINANCE`].
 const HEAT_INK_FLIP_STEP: usize = 4;
-
-/// The percentile of per-cell volume the ramp measures against.
+/// Below this step the ink is muted rather than primary.
 ///
-/// Not the bar's own maximum: every bar would then hold a top-step cell, and a
-/// mark that always appears has stopped being a mark — the same argument that
-/// suppresses ratio badges under `badge_min_ratio`. Not the screen's maximum
-/// either: one exhaustion bar would flatten every other bar to step zero. A
-/// high percentile of what is actually printing keeps the comparison *between*
-/// bars true, which is the reading alternative bars exist to give.
-const HEAT_REFERENCE_PCT: usize = 95;
+/// The ramp builds a hierarchy and a two-valued ink erases half of it: a cell
+/// on the floor and a cell three steps up read with the same weight of text,
+/// so the eye has to decode the background to know which one matters. Letting
+/// the quiet cells keep quiet numbers means the digits agree with the colour
+/// instead of arguing with it.
+const HEAT_INK_MUTED_BELOW_STEP: usize = 2;
 
 /// How far the cluster's grey silhouette is allowed to lighten its column.
 ///
@@ -1433,14 +1465,34 @@ const BEVEL_PX: f32 = 1.0;
 /// faces plus the row's own inset leave under 4 px of actual cell.
 const BEVEL_MIN_ROW_PX: f32 = 10.0;
 
-/// The heat ramp's denominator: [`HEAT_REFERENCE_PCT`] of per-cell *side*
-/// volume over the newest closed bars.
+/// The heat ramp's scale: where each step's boundary falls, in quantity, for
+/// the ladders currently on screen.
 ///
-/// Per side, not per row, because the ramp colours the bid and ask columns and
-/// a row-total reference would hold every cell in the lower half of the scale.
-/// `None` when there is nothing to measure — a ramp with an invented
-/// denominator is a colour scale that means whatever it likes.
-fn heat_reference<'a>(ladders: impl Iterator<Item = &'a BarFootprint>) -> Option<f64> {
+/// **Ranks, not ratios.** Dividing a cell by a fixed reference sounds right
+/// and is not: per-cell volume is heavily skewed and the shape of that skew
+/// changes with the market, so one denominator paints every cell on the floor
+/// in a quiet stretch and saturates half of them in a busy one. Measured on a
+/// real capture, ratio-to-p95 put **47% of cells in the top step** — the
+/// brightest colour on screen was also the most common one, which leaves
+/// nothing for it to stand out against.
+///
+/// Cutting the visible distribution at fixed *percentiles* fixes both ends by
+/// construction: the busiest cells are always the top step and the quiet ones
+/// always the floor, whatever the regime. The cuts are uneven on purpose —
+/// most rows are ordinary, so the ramp spends its bright steps on the tail
+/// that is worth seeing.
+///
+/// Visible ladders, not the newest N of the series: the denominator has to
+/// describe what the trader is looking at. Reading the series instead made
+/// the colours depend on where the replay's live edge happened to be.
+const HEAT_PERCENTILES: [usize; 5] = [45, 68, 83, 93, 98];
+
+/// One step's lower bound in quantity, ascending.  when there is
+/// nothing on screen to measure — a ramp with an invented scale is a colour
+/// key that means whatever it likes.
+type HeatScale = [f64; 5];
+
+fn heat_scale<'a>(ladders: impl Iterator<Item = &'a BarFootprint>) -> Option<HeatScale> {
     let mut sides: Vec<f64> = ladders
         .flat_map(|fp| fp.levels().values())
         .flat_map(|level| {
@@ -1454,24 +1506,18 @@ fn heat_reference<'a>(ladders: impl Iterator<Item = &'a BarFootprint>) -> Option
     if sides.is_empty() {
         return None;
     }
-    // Only one order statistic is read, so partition around it instead of
-    // sorting — the same trade `adaptive_min_qty` makes for the same reason.
-    let index = (sides.len().saturating_sub(1)) * HEAT_REFERENCE_PCT / 100;
-    let (_, value, _) = sides.select_nth_unstable_by(index, f64::total_cmp);
-    Some(*value)
+    sides.sort_by(f64::total_cmp);
+    let last = sides.len() - 1;
+    Some(HEAT_PERCENTILES.map(|pct| sides[last * pct / 100]))
 }
 
 /// Which heat step a quantity falls in. `reference` absent (no closed bars
 /// yet) puts everything on the floor rather than inventing a scale.
-fn heat_step(qty: Decimal, reference: Option<f64>) -> usize {
-    let Some(reference) = reference.filter(|value| *value > 0.0) else {
-        return 0;
-    };
-    let t = (qty.to_f64().unwrap_or(0.0) / reference).clamp(0.0, 1.0) as f32;
-    HEAT_STEPS
-        .iter()
-        .rposition(|threshold| t >= *threshold)
-        .unwrap_or(0)
+fn heat_step(qty: Decimal, scale: Option<HeatScale>) -> usize {
+    let Some(scale) = scale else { return 0 };
+    let value = qty.to_f64().unwrap_or(0.0);
+    // One past the last boundary it clears: below every cut is the floor.
+    scale.iter().filter(|cut| value >= **cut).count()
 }
 
 /// The fill for a step, resolved from the side's own token toward black or
@@ -1511,6 +1557,8 @@ fn heat_fill(side: Side, step: usize) -> egui::Color32 {
 fn heat_ink(step: usize) -> egui::Color32 {
     if step >= HEAT_INK_FLIP_STEP {
         theme::CHIP_INK
+    } else if step < HEAT_INK_MUTED_BELOW_STEP {
+        theme::TEXT_MUTED
     } else {
         theme::TEXT_PRIMARY
     }
@@ -1573,6 +1621,29 @@ fn paint_bevel(painter: &egui::Painter, rect: egui::Rect, row_height: f32) {
         egui::Rounding::ZERO,
         BEVEL_SHADOW,
     );
+}
+
+/// How wide one cluster column is, given the body width it shares.
+///
+/// The painter and the floor read the *same* function. They used to compute it
+/// apart, which is how the floor came to declare a width legible that the
+/// painter then drew three overlapping numbers into.
+fn cluster_column_px_from(body_width: f32, columns: f32) -> f32 {
+    let inner = body_width
+        - crate::footprint_config::CANDLE_LANE_PX
+        - 2.0 * CLUSTER_BOX_PAD_PX
+        - (columns - 1.0) * CLUSTER_GUTTER_PX;
+    (inner / columns).max(1.0)
+}
+
+/// The same, from a candle width rather than a body width — what the floor's
+/// own test asks.
+#[cfg(test)]
+fn cluster_column_px(candle_width: f32) -> f32 {
+    cluster_column_px_from(
+        candle_width * TYPICAL_BODY_FRAC,
+        FootprintStyle::Cluster.detailed_quantity_columns(),
+    )
 }
 
 /// How many number columns the cluster draws: three with the total, two
@@ -1660,7 +1731,8 @@ fn draw_cluster_row(
     cell: &FootprintLevel,
     geometry: &RowGeometry,
     xc: f32,
-    heat: Option<f64>,
+    heat: Option<HeatScale>,
+    max_volume: f64,
     row_group: f64,
 ) {
     let painter = frame.painter;
@@ -1669,12 +1741,18 @@ fn draw_cluster_row(
     let top = geometry.top + 0.5;
     let bottom = geometry.bottom - 0.5;
     let columns = cluster_columns(frame.config);
-    let inner = 2.0 * reach - inset - 2.0 * CLUSTER_BOX_PAD_PX;
-    let column_width = ((inner - (columns - 1.0) * CLUSTER_GUTTER_PX) / columns).max(1.0);
+    let column_width = cluster_column_px_from(2.0 * reach, columns);
     let bevel = frame.config.cluster_bevel && level == DetailLevel::Detailed;
+    // The width budget is a *font size*, not a width: a five-glyph quantity is
+    // `QUANTITY_GLYPHS * GLYPH_EM` ≈ 3 em of monospace, so the room a column
+    // has buys a third of that in point size. Handing the column's raw width
+    // to the font instead is how three columns of numbers end up written over
+    // each other — which is exactly what the first capture of this style
+    // showed. Same arithmetic the ladder's own budget uses.
+    let width_budget = (column_width - 2.0) / (QUANTITY_GLYPHS * GLYPH_EM);
     let font = egui::FontId::monospace(
         (geometry.row_height - 2.0)
-            .min(column_width - 2.0)
+            .min(width_budget)
             .clamp(LADDER_MIN_FONT_PX, 13.0),
     );
 
@@ -1709,7 +1787,7 @@ fn draw_cluster_row(
                 egui::Stroke::new(1.5_f32, theme::ink(side)),
             );
         }
-        if frame.config.show_numbers {
+        if frame.config.show_numbers && !qty.is_zero() {
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -1728,9 +1806,17 @@ fn draw_cluster_row(
     if columns > 2.0 {
         let rect = column_rect(painter);
         let volume = cell.volume();
-        let frac = heat.map_or(0.0, |reference| {
-            (volume.to_f64().unwrap_or(0.0) / reference).clamp(0.0, 1.0) as f32
-        });
+        // Against the bar's own busiest row, not the screen-wide side scale.
+        // A row total is structurally about twice one side, so measuring it
+        // with a per-side scale pinned nine rows in ten at full width —
+        // wallpaper with a number on it rather than a histogram. Per bar is
+        // also the right question here: "which row of *this* bar held the
+        // volume", which is what the split style's silhouette answers too.
+        let frac = if max_volume > 0.0 {
+            (volume.to_f64().unwrap_or(0.0) / max_volume).clamp(0.0, 1.0) as f32
+        } else {
+            0.0
+        };
         painter.rect_filled(
             egui::Rect::from_min_max(
                 rect.min,
@@ -1915,41 +2001,41 @@ mod tests {
     #[test]
     #[allow(clippy::assertions_on_constants)]
     fn the_zoom_ceiling_reaches_the_detailed_level() {
-        assert!(crate::viewport::MAX_CANDLE_WIDTH >= DETAILED_MIN_WIDTH);
+        assert!(crate::viewport::MAX_CANDLE_WIDTH >= ladder_detailed_min_width());
     }
 
     #[test]
     fn levels_need_both_width_and_a_reachable_row_height() {
         // Wide candle, healthy rows: full detail.
         assert_eq!(
-            level_for(100.0, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
+            level_for(100.0, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
             DetailLevel::Detailed
         );
         // Wide candle, hairline base rows: grouping x100 still reaches 12px.
         assert_eq!(
-            level_for(100.0, 0.2, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
+            level_for(100.0, 0.2, PROFILE_MIN_ROW, ladder_detailed_min_width()),
             DetailLevel::Detailed
         );
         // Wide candle, sub-hairline rows: the extended snap ladder rescues
         // detail far deeper than 100× (an index future on the 0.01 fallback
         // grid), so only truly hopeless rows drop to profile, then marks.
         assert_eq!(
-            level_for(100.0, 0.05, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
+            level_for(100.0, 0.05, PROFILE_MIN_ROW, ladder_detailed_min_width()),
             DetailLevel::Detailed
         );
         assert_eq!(
-            level_for(100.0, 0.0006, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
+            level_for(100.0, 0.0006, PROFILE_MIN_ROW, ladder_detailed_min_width()),
             DetailLevel::Profile
         );
         assert_eq!(
-            level_for(100.0, 0.0003, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
+            level_for(100.0, 0.0003, PROFILE_MIN_ROW, ladder_detailed_min_width()),
             DetailLevel::Marks
         );
         // Width floors gate exactly — stated against the floors themselves, so
         // retuning one moves its own test rather than breaking four others.
         for (width, expected) in [
-            (DETAILED_MIN_WIDTH, DetailLevel::Detailed),
-            (DETAILED_MIN_WIDTH - 1.0, DetailLevel::Compact),
+            (ladder_detailed_min_width(), DetailLevel::Detailed),
+            (ladder_detailed_min_width() - 1.0, DetailLevel::Compact),
             (COMPACT_MIN_WIDTH, DetailLevel::Compact),
             (COMPACT_MIN_WIDTH - 1.0, DetailLevel::Profile),
             (PROFILE_MIN_WIDTH, DetailLevel::Profile),
@@ -1958,7 +2044,7 @@ mod tests {
             (MARKS_MIN_WIDTH - 1.0, DetailLevel::Off),
         ] {
             assert_eq!(
-                level_for(width, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
+                level_for(width, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
                 expected,
                 "at {width} px per candle"
             );
@@ -2045,6 +2131,98 @@ mod tests {
         }
     }
 
+    /// One closed ladder holding `quantities`, one per price level — the
+    /// shape the heat scale reads, built through the engine rather than by
+    /// hand so the test cannot drift from what the app actually folds.
+    fn ladder_of(quantities: &[Decimal]) -> quantick_engine::BarFootprint {
+        let mut builder = FootprintBuilder::new(Decimal::ONE, DEFAULT_LEVEL_CAP);
+        for (i, qty) in quantities.iter().enumerate() {
+            builder.push(&Trade {
+                agg_id: i as u64,
+                timestamp_ms: i as i64,
+                price: Decimal::from(1_000 + i as i64),
+                quantity: *qty,
+                side: Side::Buy,
+            });
+        }
+        builder.close().expect("a closed ladder")
+    }
+
+    /// The ramp spreads its steps over whatever distribution is on screen.
+    ///
+    /// This is the claim ranks buy over ratios, and it is worth an assertion
+    /// because both failure modes shipped once. Measured on a capture, a fixed
+    /// denominator put 47% of cells in the top step — the brightest colour on
+    /// screen was also the most common, so nothing stood out against anything
+    /// — and an earlier reference put nearly all of them on the floor.
+    ///
+    /// Per-cell volume is heavily skewed, so the test feeds a skewed
+    /// distribution rather than a flat one: a ramp that only behaves on
+    /// uniform data would prove nothing about a tape.
+    #[test]
+    fn the_heat_ramp_spreads_over_a_skewed_distribution() {
+        // A long tail: most rows ordinary, a handful enormous.
+        let quantities: Vec<Decimal> = (1..=400)
+            .map(|i| {
+                let skewed = (f64::from(i) / 400.0).powf(4.0) * 5_000.0 + 1.0;
+                Decimal::from_f64(skewed).unwrap_or(Decimal::ONE)
+            })
+            .collect();
+        let ladder = ladder_of(&quantities);
+        let scale = heat_scale(std::iter::once(&ladder)).expect("a scale");
+
+        let mut population = [0_usize; HEAT_STEP_COUNT];
+        for qty in &quantities {
+            population[heat_step(*qty, Some(scale))] += 1;
+        }
+        let total: usize = population.iter().sum();
+        assert_eq!(total, quantities.len());
+
+        // Every step is used, and none of them swallows the screen. The top
+        // step is deliberately the rarest — it is the one that has to mean
+        // something when it appears.
+        for (step, count) in population.iter().enumerate() {
+            assert!(*count > 0, "step {step} is unreachable: {population:?}");
+            let share = 100 * count / total;
+            assert!(
+                share <= 55,
+                "step {step} holds {share}% of the screen: {population:?}"
+            );
+        }
+        assert!(
+            population[HEAT_STEP_COUNT - 1] < population[0],
+            "the brightest step must be rarer than the floor: {population:?}"
+        );
+    }
+
+    /// The cuts rise, so a bigger quantity never lands on a colder colour.
+    #[test]
+    fn the_heat_scale_is_monotonic() {
+        let quantities: Vec<Decimal> = (1..=200).map(Decimal::from).collect();
+        let ladder = ladder_of(&quantities);
+        let scale = heat_scale(std::iter::once(&ladder)).expect("a scale");
+        for pair in scale.windows(2) {
+            assert!(pair[1] >= pair[0], "cuts not ascending: {scale:?}");
+        }
+        let mut previous = 0;
+        for qty in &quantities {
+            let step = heat_step(*qty, Some(scale));
+            assert!(
+                step >= previous,
+                "step fell at {qty}: {step} after {previous}"
+            );
+            previous = step;
+        }
+    }
+
+    /// Nothing on screen means no scale, and no scale means the floor — never
+    /// a colour key invented from an empty set.
+    #[test]
+    fn an_empty_screen_has_no_heat_scale() {
+        assert!(heat_scale(std::iter::empty()).is_none());
+        assert_eq!(heat_step(Decimal::from(1_000), None), 0);
+    }
+
     /// Every step of the heat ramp is readable with the ink that step selects.
     ///
     /// This is the assertion the ramp was *designed backwards from*: the ink
@@ -2052,7 +2230,7 @@ mod tests {
     /// luminance neither can serve.
     #[test]
     fn every_heat_step_is_readable_with_the_ink_it_picks() {
-        for step in 0..HEAT_STEPS.len() {
+        for step in 0..HEAT_STEP_COUNT {
             for side in [Side::Buy, Side::Sell] {
                 let fill = heat_fill(side, step);
                 let ratio = contrast_ratio(heat_ink(step), fill);
@@ -2074,7 +2252,7 @@ mod tests {
     #[test]
     fn no_heat_step_lands_in_the_unreadable_band() {
         let forbidden = 0.115..0.202;
-        for step in 0..HEAT_STEPS.len() {
+        for step in 0..HEAT_STEP_COUNT {
             for side in [Side::Buy, Side::Sell] {
                 let luminance = relative_luminance(heat_fill(side, step));
                 assert!(
@@ -2122,7 +2300,7 @@ mod tests {
     #[test]
     fn the_heat_ramp_is_ordered_and_isoluminant() {
         for side in [Side::Buy, Side::Sell] {
-            for step in 1..HEAT_STEPS.len() {
+            for step in 1..HEAT_STEP_COUNT {
                 let previous = relative_luminance(heat_fill(side, step - 1));
                 let current = relative_luminance(heat_fill(side, step));
                 assert!(
@@ -2132,7 +2310,7 @@ mod tests {
                 );
             }
         }
-        for step in 0..HEAT_STEPS.len() {
+        for step in 0..HEAT_STEP_COUNT {
             let buy = relative_luminance(heat_fill(Side::Buy, step));
             let sell = relative_luminance(heat_fill(Side::Sell, step));
             assert!(
@@ -2157,8 +2335,8 @@ mod tests {
         assert!(FootprintStyle::BidAsk.fallback().is_none());
         // And the cluster's floor is genuinely higher, or the handover never
         // fires and the whole mechanism is decoration.
-        let cluster = detailed_min_width(FootprintStyle::Cluster.detailed_quantity_columns());
-        let ladder = detailed_min_width(FootprintStyle::Ladder.detailed_quantity_columns());
+        let cluster = detailed_min_width(FootprintStyle::Cluster);
+        let ladder = detailed_min_width(FootprintStyle::Ladder);
         assert!(cluster > ladder, "cluster {cluster} vs ladder {ladder}");
     }
 
@@ -2194,7 +2372,8 @@ mod tests {
         // the floor exactly, the digits reached past the body they were drawn
         // in. Modelling the gutter here is what stops the two drifting apart
         // again.
-        let detailed_half = DETAILED_MIN_WIDTH * TYPICAL_BODY_FRAC / 2.0 - CENTER_GUTTER_PX;
+        let detailed_half =
+            ladder_detailed_min_width() * TYPICAL_BODY_FRAC / 2.0 - CENTER_GUTTER_PX;
         assert!(
             detailed_half >= quantity_px,
             "detailed: {detailed_half} px per half (gutter removed) for {quantity_px} px of text"
@@ -2202,14 +2381,14 @@ mod tests {
         // The same arithmetic has to hold for a style that writes three
         // quantities across the row rather than two, which is the whole reason
         // the floor became a function of the column count.
-        let cluster_column = detailed_min_width(3.0) * TYPICAL_BODY_FRAC / 3.0 - CENTER_GUTTER_PX;
+        let cluster_column = cluster_column_px(detailed_min_width(FootprintStyle::Cluster));
         assert!(
             cluster_column >= quantity_px,
             "cluster: {cluster_column} px per column for {quantity_px} px of text"
         );
         // And the ordering that makes them levels at all.
+        assert!(ladder_detailed_min_width() > COMPACT_MIN_WIDTH);
         const {
-            assert!(DETAILED_MIN_WIDTH > COMPACT_MIN_WIDTH);
             assert!(COMPACT_MIN_WIDTH > PROFILE_MIN_WIDTH);
             assert!(PROFILE_MIN_WIDTH > MARKS_MIN_WIDTH);
         }
@@ -2222,7 +2401,7 @@ mod tests {
     fn detail_arrives_earlier_than_the_old_floors_and_scales_as_one() {
         // What each floor was when the ladder's font floor was 8 px.
         for (now, before) in [
-            (DETAILED_MIN_WIDTH, 72.0),
+            (ladder_detailed_min_width(), 72.0),
             (COMPACT_MIN_WIDTH, 40.0),
             (PROFILE_MIN_WIDTH, 18.0),
             (MARKS_MIN_WIDTH, 8.0),
@@ -2234,8 +2413,13 @@ mod tests {
         let tight = *crate::footprint_config::DETAIL_SCALE_RANGE.start();
         assert!(tight < 1.0);
         for width in [6.0_f32, 10.0, 20.0, 35.0, 63.0, 120.0] {
-            let plain = level_for(width, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH);
-            let scaled = level_for(width / tight, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH);
+            let plain = level_for(width, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width());
+            let scaled = level_for(
+                width / tight,
+                12.0,
+                PROFILE_MIN_ROW,
+                ladder_detailed_min_width(),
+            );
             assert!(scaled >= plain, "at {width} px");
         }
     }
@@ -2246,9 +2430,9 @@ mod tests {
     fn candle_body_fade_spans_profile_to_detailed() {
         assert_eq!(candle_body_fade(8.0), 1.0);
         assert_eq!(candle_body_fade(PROFILE_MIN_WIDTH), 1.0);
-        assert_eq!(candle_body_fade(DETAILED_MIN_WIDTH), 0.0);
+        assert_eq!(candle_body_fade(ladder_detailed_min_width()), 0.0);
         assert_eq!(candle_body_fade(160.0), 0.0);
-        let mid = candle_body_fade((PROFILE_MIN_WIDTH + DETAILED_MIN_WIDTH) / 2.0);
+        let mid = candle_body_fade((PROFILE_MIN_WIDTH + ladder_detailed_min_width()) / 2.0);
         assert!(mid > 0.0 && mid < 1.0);
         assert!(candle_body_fade(30.0) > candle_body_fade(50.0));
     }
@@ -2257,39 +2441,64 @@ mod tests {
     fn lod_changes_only_past_the_dead_band_in_both_directions() {
         // Written as multiples of the floor rather than as pixels, so the dead
         // band is tested wherever the floor is tuned to.
-        let floor = DETAILED_MIN_WIDTH;
+        let floor = ladder_detailed_min_width();
         let mut lod = FootprintLod::default();
         // The first frame takes the strict answer.
         assert_eq!(
-            lod.resolve(floor * 1.2, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
+            lod.resolve(
+                floor * 1.2,
+                12.0,
+                PROFILE_MIN_ROW,
+                ladder_detailed_min_width()
+            ),
             DetailLevel::Detailed
         );
         // Just under the floor: inside the 15% band, the level holds.
         assert_eq!(
-            lod.resolve(floor * 0.95, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
+            lod.resolve(
+                floor * 0.95,
+                12.0,
+                PROFILE_MIN_ROW,
+                ladder_detailed_min_width()
+            ),
             DetailLevel::Detailed
         );
         // 15% past the floor: the downgrade happens.
         assert_eq!(
-            lod.resolve(floor * 0.83, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
+            lod.resolve(
+                floor * 0.83,
+                12.0,
+                PROFILE_MIN_ROW,
+                ladder_detailed_min_width()
+            ),
             DetailLevel::Compact
         );
         // Upgrades need the same clearance: over the floor but not 15% over,
         // so the level holds — an instant upgrade against a banded downgrade
         // is a blinker at the boundary.
         assert_eq!(
-            lod.resolve(floor * 1.1, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
+            lod.resolve(
+                floor * 1.1,
+                12.0,
+                PROFILE_MIN_ROW,
+                ladder_detailed_min_width()
+            ),
             DetailLevel::Compact
         );
         assert_eq!(
-            lod.resolve(floor * 1.2, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
+            lod.resolve(
+                floor * 1.2,
+                12.0,
+                PROFILE_MIN_ROW,
+                ladder_detailed_min_width()
+            ),
             DetailLevel::Detailed
         );
         // The blinker scenario itself: oscillating across the floor by a
         // hair must not change the level once settled.
         for width in [floor * 1.02, floor * 0.98, floor * 1.02, floor * 0.98] {
             assert_eq!(
-                lod.resolve(width, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
+                lod.resolve(width, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
                 DetailLevel::Detailed,
                 "width {width} blinked"
             );
@@ -2304,12 +2513,12 @@ mod tests {
         let mut lod = FootprintLod::default();
         // Locked at Marks by a startup-era span (rows unreachable)...
         assert_eq!(
-            lod.resolve(100.0, 0.0001, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
+            lod.resolve(100.0, 0.0001, PROFILE_MIN_ROW, ladder_detailed_min_width()),
             DetailLevel::Marks
         );
         // ...then the real span arrives: two steps away, no band, snap.
         assert_eq!(
-            lod.resolve(100.0, 12.0, PROFILE_MIN_ROW, DETAILED_MIN_WIDTH),
+            lod.resolve(100.0, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
             DetailLevel::Detailed
         );
 
