@@ -2852,7 +2852,7 @@ impl QuantickApp {
         else {
             return;
         };
-        let saved: Option<Vec<quantick_indicators::InputValue>> = match &name {
+        let saved: Option<Vec<Option<quantick_indicators::InputValue>>> = match &name {
             None => Some(Vec::new()),
             Some(name) => {
                 let Some(kind) = self
@@ -2865,27 +2865,21 @@ impl QuantickApp {
                 };
                 self.indicator_presets
                     .get(kind, name)
-                    .map(|inputs| inputs.iter().filter_map(SavedInput::to_value).collect())
+                    // `map`, not `filter_map`: a stored cell that no longer
+                    // reads (a source whose name the dialect dropped, say)
+                    // still has to hold its index. Dropping it from the list
+                    // would slide every value after it one input to the left,
+                    // and same-typed neighbours would take each other's
+                    // settings without a word.
+                    .map(|inputs| inputs.iter().map(SavedInput::to_value).collect())
             }
         };
         let Some(saved) = saved else {
             return;
         };
-        let draft: Vec<quantick_indicators::InputValue> = specs
-            .iter()
-            .enumerate()
-            .map(|(index, spec)| {
-                let default = spec.default_value();
-                match saved.get(index) {
-                    Some(value)
-                        if std::mem::discriminant(value) == std::mem::discriminant(&default) =>
-                    {
-                        value.clone()
-                    }
-                    _ => default,
-                }
-            })
-            .collect();
+        // The same binder the state-file path uses: one rule for what a saved
+        // value means, in one place.
+        let draft = quantick_indicators::bind_by_position(&specs, &saved).values;
         let label = name.unwrap_or_else(|| indicator_panel::DEFAULT_PRESET.to_owned());
         if let Some(dialog) = self.indicator_settings.as_mut() {
             dialog.draft = draft;

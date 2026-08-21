@@ -211,14 +211,15 @@ show_bottom = input.bool(true, "4 Display: mark bottom reversals (buy side)")
 // be turned ON by a preset that never knew it existed. Appending keeps every
 // older index pointing at the input it was saved for; the new ones simply
 // find nothing and take their defaults. A test pins this order.
-// No `maxval`/`step` on purpose. Every other float here is a scale-free
-// multiple over a tight range, and the panel renders a bounded float as a
-// slider quantised to its step — which on this input would mean a WIN floor
-// of ~100 living in the first 0.1% of the track, and a step of 1 that no
-// instrument priced under a unit could ever get below. Bounded on one side
-// only, it is a typed field with a floor of zero, which is what an absolute
-// quantity in the instrument's own units wants to be.
-min_body_points = input.float(0.0, "5 Calibration: min force-bar body (points, 0 = off)", minval=0.0)
+// No `maxval` on purpose. Every other float here is a scale-free multiple
+// over a tight range, and the panel renders a float with BOTH bounds as a
+// slider quantised to its step — which on this input would put the ~100 a WIN
+// contract wants in the first 0.1% of the track. Bounded below only, it is a
+// typed field with a floor of zero, which is what an absolute quantity in the
+// instrument's own units wants to be. `step` is then no longer a quantiser at
+// all, only the drag speed, and 1 point per pixel beats the 0.1 default:
+// dragging to 100 should not take a thousand pixels.
+min_body_points = input.float(0.0, "5 Calibration: min force-bar body (points, 0 = off)", minval=0.0, step=1.0)
 run_body_only = input.bool(false, "5 Calibration: run measures the body, not the range")
 cover_body_only = input.bool(false, "5 Calibration: cover measures the body, not the range")
 paint_force = input.bool(false, "5 Calibration: paint the bars that arm a push")
@@ -385,10 +386,20 @@ plotshape(show_bottom and buy_mark, "Exhaustion reversal: buy", style=shape.tria
 // produced no signal. `na` on every other bar leaves the chart's own candle
 // colours alone — an unpainted bar is this script saying "not a push", which
 // is the answer on the large majority of them.
+//
+// ONE PAINTER WINS PER BAR, AND IT IS THE LAST ONE ADDED. The chart resolves
+// the bar paint channel by walking the indicator stack backwards and taking
+// the first colour it finds (`resolve_bar_paint`), so a script added AFTER
+// this one hides it wherever both paint. force_bar.pine paints every body at
+// or above 1.5x its average — which is nearly every bar this diagnostic is
+// about — so run this one alone while calibrating, or add it last. The two
+// colours here being ones force_bar.pine does not use settles which script a
+// colour came from; it does not make both visible on one bar.
 paint = na
-if paint_force and top_anchor
-    paint := color.orange
-else if paint_force and bottom_anchor
-    paint := color.blue
+if paint_force
+    if top_anchor
+        paint := color.orange
+    else if bottom_anchor
+        paint := color.blue
 
 barcolor(paint)

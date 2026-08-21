@@ -91,6 +91,15 @@ pub(crate) enum IndicatorSource {
     Script { name: String, text: String },
 }
 
+/// Saved values that were all readable, in the cell form
+/// [`quantick_indicators::bind_by_position`] takes. The preset file can yield
+/// a `None` — a stored cell that no longer parses, which must still hold its
+/// index — while these came from a live indicator and cannot. Widening, not a
+/// loss.
+fn to_cells(values: &[InputValue]) -> Vec<Option<InputValue>> {
+    values.iter().cloned().map(Some).collect()
+}
+
 impl IndicatorSource {
     /// Build the indicator, or explain why the script does not load. The
     /// error string is the full human rendering — every problem, each with
@@ -118,72 +127,46 @@ impl IndicatorSource {
             IndicatorSource::NativeCvd => Ok(Box::new(Cvd::new())),
             IndicatorSource::Script { name, text } => match quantick_pine::compile(text, name) {
                 Ok(compiled) => Ok(Box::new(match values {
-                    Some(values) if values.len() == compiled.inputs.len() => {
+                    // A slot whose first compile failed carries no values at
+                    // all (`values: Vec::new()`), and `Reload` builds with
+                    // exactly those. Nothing was ever saved there, so there is
+                    // nothing to bind and nothing to report.
+                    Some(values) if !values.is_empty() => {
+                        // Cell by cell, type-checked, through the one binder
+                        // both persistence paths use — an edited or upgraded
+                        // script keeps every setting whose input is still
+                        // there, at its type, and only the rest fall back.
+                        // Binding the whole vector on an exact count match
+                        // instead would take a stale value whenever a script
+                        // changed an input's TYPE without changing how many it
+                        // has; refusing the whole vector on a count mismatch
+                        // (which this did) meant one added knob reset every
+                        // other one — "I reopened the app and my settings were
+                        // gone".
+                        let bound = quantick_indicators::bind_by_position(
+                            &compiled.inputs,
+                            &to_cells(values),
+                        );
+                        if bound.kept < values.len() {
+                            // A setting the trader chose is not the setting
+                            // that will run. That is theirs to know.
+                            tracing::warn!(
+                                target: "quantick::app",
+                                schema_version = 1_u8,
+                                event_code = "INDICATOR_INPUTS_COUNT_CHANGED",
+                                script = %name,
+                                saved = values.len(),
+                                declared = compiled.inputs.len(),
+                                kept = bound.kept,
+                                action = "kept_what_still_lines_up",
+                                "the script's input list changed since these settings were saved"
+                            );
+                        }
                         quantick_pine::ScriptIndicator::with_inputs(
                             compiled,
                             text.clone(),
-                            values.to_vec(),
+                            bound.values,
                         )
-                    }
-                    // A slot whose first compile failed carries no values
-                    // at all (`values: Vec::new()`), and `Reload` builds with
-                    // exactly those. Nothing was ever saved there, so it is
-                    // not a parameter set being dropped — warning about it
-                    // would fire on every typo-then-fix cycle.
-                    Some(values) if !values.is_empty() => {
-                        // The script declares a different number of inputs
-                        // than these values were saved against — an edited or
-                        // upgraded script. Keep what still lines up instead of
-                        // dropping the lot: a saved value is taken when the
-                        // input now at its index still has its type, and every
-                        // other input takes its declared default. Discarding
-                        // all of them would mean that adding one knob to a
-                        // script came back as a chart with every OTHER knob
-                        // reset — which is exactly how "I reopened the app and
-                        // my settings were gone" happens.
-                        //
-                        // This is the per-cell read the preset path already
-                        // does (`App::load_indicator_preset`), and one rule
-                        // makes both safe: new inputs are APPENDED. An input
-                        // inserted in the middle shifts every later value onto
-                        // the wrong knob, which is why a script's input order
-                        // is pinned by a test.
-                        let bound: Vec<InputValue> = compiled
-                            .inputs
-                            .iter()
-                            .enumerate()
-                            .map(|(index, spec)| {
-                                let default = spec.default_value();
-                                match values.get(index) {
-                                    Some(saved)
-                                        if std::mem::discriminant(saved)
-                                            == std::mem::discriminant(&default) =>
-                                    {
-                                        saved.clone()
-                                    }
-                                    _ => default,
-                                }
-                            })
-                            .collect();
-                        // Which values survived is the one thing the trader
-                        // cannot read off the dialog afterwards.
-                        let kept = bound
-                            .iter()
-                            .zip(values)
-                            .filter(|(bound, saved)| bound == saved)
-                            .count();
-                        tracing::warn!(
-                            target: "quantick::app",
-                            schema_version = 1_u8,
-                            event_code = "INDICATOR_INPUTS_COUNT_CHANGED",
-                            script = %name,
-                            saved = values.len(),
-                            declared = compiled.inputs.len(),
-                            kept,
-                            action = "kept_what_still_lines_up",
-                            "the script's input list changed since these settings were saved"
-                        );
-                        quantick_pine::ScriptIndicator::with_inputs(compiled, text.clone(), bound)
                     }
                     _ => quantick_pine::ScriptIndicator::new(compiled, text.clone()),
                 })),

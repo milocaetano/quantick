@@ -211,7 +211,7 @@ fn none() -> Vec<usize> {
 }
 
 /// `color.orange` and `color.blue` as this dialect folds them: the two paints
-/// the section-1 diagnostic uses. Constants in the script, constants here —
+/// the section-5 diagnostic uses. Constants in the script, constants here —
 /// asserting on the exact colour is what catches the two sides being wired to
 /// the same one, which is a bug the arrows already shipped once.
 const PAINT_TOP: Rgba8 = Rgba8::opaque(0xFF, 0x98, 0x00);
@@ -325,7 +325,7 @@ fn the_inputs_this_script_shipped_with_keep_their_positions() {
     assert_eq!(
         &declared[..SHIPPED_ORDER.len()],
         &SHIPPED_ORDER[..],
-        "the inputs this script shipped with must keep their indices —          append new ones instead of inserting them"
+        "the inputs this script shipped with must keep their indices — append new ones instead of inserting them"
     );
 }
 
@@ -699,6 +699,12 @@ fn the_two_sides_of_the_diagnostic_wear_different_colours() {
     on[PAINT_FORCE] = InputValue::Bool(true);
 
     let tape = buy_tape();
+    assert_eq!(
+        paints(&run(&inputs(), &tape), tape.len()),
+        vec![None; tape.len()],
+        "off is off on this side too — the bottom branch needs its own guard, and a sell tape can never prove it has one"
+    );
+
     let painted = paints(&run(&on, &tape), tape.len());
     assert_eq!(
         painted[5],
@@ -707,6 +713,62 @@ fn the_two_sides_of_the_diagnostic_wear_different_colours() {
     );
     assert_ne!(PAINT_TOP, PAINT_BOTTOM);
     assert_eq!(painted.iter().filter(|p| p.is_some()).count(), 1);
+}
+
+#[test]
+fn the_run_reads_the_body_on_the_buy_side_too() {
+    // The mirror of the test above, and not a formality: the buy side reads
+    // `bottom_run_low` where the sell side reads `top_run_high`, so a min/max
+    // slip in the arming block would leave the sell side correct and this one
+    // measuring the give-back from the wrong end of the force bar.
+    //
+    // Selling push with wicks on both sides: body 94..100 (width 6), full
+    // range 90..104 (width 14). The three-candle run closes at 99 — 64% of
+    // the RANGE handed back (short of 70%) but 83% of the BODY (past it).
+    let mut wicked = context_down();
+    wicked.push((100.0, 104.0, 90.0, 94.0)); // 5  force bar, body 94..100
+    wicked.push((94.0, 96.0, 94.0, 96.0)); //   6  give-back 1 of 3
+    wicked.push((96.0, 98.0, 96.0, 98.0)); //   7  give-back 2 of 3
+    wicked.push((98.0, 99.0, 98.0, 99.0)); //   8  give-back 3 of 3
+
+    assert_eq!(
+        buys(&run(&inputs(), &wicked)),
+        none(),
+        "against the full range this run gives back only 64% of it"
+    );
+
+    let mut body_only = inputs();
+    body_only[RUN_BODY_ONLY] = InputValue::Bool(true);
+    assert_eq!(
+        buys(&run(&body_only, &wicked)),
+        vec![8],
+        "the identical tape marks once the give-back is judged against the body alone"
+    );
+}
+
+#[test]
+fn the_cover_reads_the_body_on_the_buy_side_too() {
+    // Same mirror for the cover, which reads `bottom_cover_high`/`_low`: a
+    // selling push with a 4-wide wick BELOW its body, body 100..110 (width
+    // 10) inside a 96..110 range (width 14). The answering candle's body
+    // covers exactly 70% of the body and only 50% of the range.
+    let mut wicked = context_down();
+    wicked.push((110.0, 110.0, 96.0, 100.0)); // 5  force bar, body 100..110
+    wicked.push((100.0, 107.0, 100.0, 107.0)); // 6  body 100->107
+
+    assert_eq!(
+        buys(&run(&inputs(), &wicked)),
+        none(),
+        "against the full range the overlap is 50%, short of the threshold"
+    );
+
+    let mut body_only = inputs();
+    body_only[COVER_BODY_ONLY] = InputValue::Bool(true);
+    assert_eq!(
+        buys(&run(&body_only, &wicked)),
+        vec![6],
+        "the identical candle marks once the overlap is judged against the body"
+    );
 }
 
 #[test]
