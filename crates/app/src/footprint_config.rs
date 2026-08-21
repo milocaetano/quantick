@@ -64,6 +64,15 @@ pub enum FootprintStyle {
     /// columns per row (`bid | ask | total`), the cell tinted by how much
     /// volume it holds, and the candle beside the box rather than behind it.
     Cluster,
+    /// Not a look of its own: the richest reading the zoom can pay for, picked
+    /// again on every frame.
+    ///
+    /// The layer already changes *how much* it says as the zoom moves — full
+    /// numbers, then one delta, then a textless shape, then marks. This
+    /// changes *which reading* says it, so one wheel walks the whole ladder:
+    /// three columns up close, two below that, and a shape once digits stop
+    /// fitting. Picking a concrete style pins it, exactly as before.
+    Auto,
 }
 
 /// How the candle itself is treated while a style draws inside or beside it.
@@ -136,7 +145,19 @@ pub enum StylePlate {
 impl FootprintStyle {
     /// Every style, in the order the panel offers them: the two that read as
     /// shapes first, then the two that read as numbers.
-    pub const ALL: [Self; 4] = [Self::Split, Self::BidAsk, Self::Ladder, Self::Cluster];
+    pub const ALL: [Self; 5] = [
+        Self::Auto,
+        Self::Split,
+        Self::BidAsk,
+        Self::Ladder,
+        Self::Cluster,
+    ];
+
+    /// The concrete styles `Auto` walks, richest first. Each one is tried
+    /// against the zoom in turn and the first that fits wins, so adding a
+    /// style to the chain is one entry here — the same registry edit adding a
+    /// style anywhere else is.
+    pub const AUTO_CHAIN: [Self; 3] = [Self::Cluster, Self::Ladder, Self::Split];
 
     /// The token stored in files and accepted by `QUANTICK_FOOTPRINT_STYLE`.
     #[must_use]
@@ -146,6 +167,7 @@ impl FootprintStyle {
             Self::Ladder => "ladder",
             Self::BidAsk => "bidask",
             Self::Cluster => "cluster",
+            Self::Auto => "auto",
         }
     }
 
@@ -158,6 +180,7 @@ impl FootprintStyle {
             Self::Ladder => "sell|buy",
             Self::BidAsk => "both sides",
             Self::Cluster => "cluster",
+            Self::Auto => "auto",
         }
     }
 
@@ -179,6 +202,11 @@ impl FootprintStyle {
                 "each bar in its own boxed ladder — bid, ask and the row total, \
                  the cell shaded by how much volume it holds. Needs the deepest \
                  zoom; falls back to \"both sides\" above it"
+            }
+            Self::Auto => {
+                "let the zoom choose: cluster up close, sell|buy below that, \
+                 the profile once digits stop fitting. One wheel walks the \
+                 whole ladder, and the legend always names what it landed on"
             }
         }
     }
@@ -204,6 +232,11 @@ impl FootprintStyle {
             // panel both promised otherwise.
             Self::Cluster if config.cluster_show_total => 3.0,
             Self::Cluster => 2.0,
+            // Never asked at draw time — `Auto` resolves to a concrete style
+            // before anything is measured — but it answers with the cheapest
+            // link in its chain, because that is the floor below which it
+            // still draws *something*.
+            Self::Auto => 2.0,
         }
     }
 
@@ -211,7 +244,7 @@ impl FootprintStyle {
     #[must_use]
     pub fn candle_treatment(self) -> CandleTreatment {
         match self {
-            Self::Split | Self::Ladder | Self::BidAsk => CandleTreatment::Fade,
+            Self::Split | Self::Ladder | Self::BidAsk | Self::Auto => CandleTreatment::Fade,
             Self::Cluster => CandleTreatment::Sidebar,
         }
     }
@@ -222,7 +255,7 @@ impl FootprintStyle {
         match self {
             // Geometry survives any background; a plate would only hide the
             // map for nothing.
-            Self::BidAsk => StylePlate::Backdrop,
+            Self::BidAsk | Self::Auto => StylePlate::Backdrop,
             Self::Split => StylePlate::Backdrop,
             Self::Ladder | Self::Cluster => StylePlate::Casing,
         }
@@ -256,7 +289,26 @@ impl FootprintStyle {
             Self::Ladder => "sell|buy",
             Self::BidAsk => "both sides",
             Self::Cluster => "bid×ask|total",
+            Self::Auto => "auto",
         }
+    }
+
+    /// The richest link in [`Self::AUTO_CHAIN`] that `fits` accepts, or the
+    /// last one when none do — `Auto` always draws something, so the chain
+    /// ends on a style that needs no digits at all.
+    ///
+    /// The caller supplies the test rather than a width, because "does this
+    /// fit" is arithmetic the render module owns and this one should not
+    /// learn: the floors are typography, and typography is pixels.
+    #[must_use]
+    pub fn resolve_auto(self, fits: impl Fn(Self) -> bool) -> Self {
+        if self != Self::Auto {
+            return self;
+        }
+        Self::AUTO_CHAIN
+            .into_iter()
+            .find(|style| fits(*style))
+            .unwrap_or(Self::AUTO_CHAIN[Self::AUTO_CHAIN.len() - 1])
     }
 
     /// Resolve a stored token. Unknown tokens are `None` — a file written by

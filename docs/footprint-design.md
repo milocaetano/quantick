@@ -274,6 +274,28 @@ code dispatches instead of branching. Adding a style is a registry edit.
   `every_style_is_reachable_at_some_zoom_and_every_detail_scale` is what makes
   the next style with a wider floor fail loudly instead of quietly.
 
+### `auto` — the zoom picks the reading
+
+Not a fifth look, a switch. The layer already changed *how much* it says as the
+zoom moves — full numbers, one delta, a textless shape, then marks. `auto`
+changes *which reading* says it, so a single wheel walks the whole ladder:
+three columns up close, two below that, and a shape once digits stop fitting.
+
+It is a chain in the registry (`AUTO_CHAIN`), walked richest-first, and the
+first link the candle can pay for wins. Adding a style to the walk is one entry
+there — the same registry edit adding a style anywhere else already is. The
+chain ends on a style that needs no digits at all, so `auto` never falls
+through: at one pixel a candle it still answers with something.
+
+Two properties are pinned by test, because both are the reason to use it:
+the walk is **monotonic** (zooming in never buys a poorer reading — checked
+across the whole zoom range, a pixel at a time), and it always resolves to a
+concrete style rather than to itself. The legend names what it landed on, so
+"why is my chart different" is answered on the chart.
+
+It is offered, not defaulted. A trader who never opened this window keeps the
+split they have always had.
+
 ### The heat ramp, and the band it steps over
 
 Six quantised steps, never a gradient: rounding a float into a colour every
