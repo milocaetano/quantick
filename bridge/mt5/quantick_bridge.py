@@ -1022,7 +1022,7 @@ class Session:
     def tick_flags(self) -> int:
         """Which ticks this session asks the terminal for.
 
-quantick charts a printing venue from `last` and `volume` and drops
+        quantick charts a printing venue from `last` and `volume` and drops
         every tick without a LAST bit (`crates/feed-mt5/src/map.rs`), so a
         quote-only tick is data the other end deletes on arrival.
 

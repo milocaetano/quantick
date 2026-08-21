@@ -35,6 +35,22 @@ pub struct LiquidityRun {
     pub end_ms: Option<i64>,
 }
 
+/// How old the newest mark on the tape is — or that there is no mark at all.
+///
+/// Two states, kept apart because they are different sentences. "The last
+/// print was six seconds ago" sends the reader looking for a bubble that is
+/// on screen; "nothing has printed in the ninety seconds I have been watching"
+/// tells them there is nothing to find. Collapsing them into one number made
+/// the second case say the first, which is the case a market opened during a
+/// lull actually lands in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TapeAge {
+    /// A print exists, and it sits this far behind the lane's right edge.
+    Behind(i64),
+    /// No print has been recorded at all, over this much observed time.
+    NothingYet(i64),
+}
+
 /// One aggressive execution retained independently from the resting book.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Aggression {
@@ -245,6 +261,11 @@ pub struct LiquidityHistory {
     /// and therefore had no tape, in any configuration. A tape drawn from
     /// prints is anchored by prints.
     latest_print_ms: Option<i64>,
+    /// First instant any stream reached this history — the zero an
+    /// observation window is measured from when the tape has no print of its
+    /// own to be late. Without it a chart opened into a quiet stretch can say
+    /// nothing at all about why its tape is empty.
+    first_stream_ms: Option<i64>,
     archived: VecDeque<LiquidityRun>,
     active: BTreeMap<LevelKey, LiquidityRun>,
     aggressions: VecDeque<Aggression>,
@@ -270,6 +291,7 @@ impl LiquidityHistory {
             last_generation: None,
             latest_book_ms: None,
             latest_print_ms: None,
+            first_stream_ms: None,
             archived: VecDeque::new(),
             active: BTreeMap::new(),
             aggressions: VecDeque::new(),
@@ -408,9 +430,24 @@ impl LiquidityHistory {
     /// question with a different answer (`Tab::tape_age_at`, which is handed
     /// wall clock on purpose).
     #[must_use]
-    pub fn newest_print_age_ms(&self) -> Option<i64> {
-        let (book, print_ms) = (self.latest_book_ms?, self.latest_print_ms?);
-        book.checked_sub(print_ms).filter(|age| *age > 0)
+    pub fn tape_age(&self) -> Option<TapeAge> {
+        let book = self.latest_book_ms?;
+        match self.latest_print_ms {
+            Some(print_ms) => book
+                .checked_sub(print_ms)
+                .filter(|age| *age > 0)
+                .map(TapeAge::Behind),
+            // A book streaming and not one print: the tape is empty and the
+            // only honest measure left is how long it has been watched. This
+            // is not the rare case it looks like — every restart and every
+            // symbol switch enters it, and a chart opened during a lull can
+            // sit here for minutes with an empty tape to explain.
+            None => self
+                .first_stream_ms
+                .and_then(|start| book.checked_sub(start))
+                .filter(|watched| *watched > 0)
+                .map(TapeAge::NothingYet),
+        }
     }
 
     /// Oldest timestamp still renderable under the configured retention
@@ -578,6 +615,7 @@ impl LiquidityHistory {
         self.generation = Some(generation);
         self.last_generation = Some(generation);
         self.latest_book_ms = Some(timestamp_ms);
+        self.first_stream_ms.get_or_insert(timestamp_ms);
         self.complete_pending_gap(timestamp_ms, generation);
         self.coverage.push_back(CoverageSegment {
             generation,
@@ -613,6 +651,7 @@ impl LiquidityHistory {
         };
 
         self.latest_book_ms = Some(timestamp_ms);
+        self.first_stream_ms.get_or_insert(timestamp_ms);
         if matches!(outcome, ApplyOutcome::Stale { .. }) {
             self.counters.deltas_stale += 1;
         } else {
@@ -654,6 +693,7 @@ impl LiquidityHistory {
             self.latest_print_ms
                 .map_or(trade.timestamp_ms, |latest| latest.max(trade.timestamp_ms)),
         );
+        self.first_stream_ms.get_or_insert(trade.timestamp_ms);
         let prune_at = self.latest_book_ms.map_or(trade.timestamp_ms, |book_ms| {
             book_ms.max(trade.timestamp_ms)
         });
@@ -686,6 +726,7 @@ impl LiquidityHistory {
         // The prints go with the runs: a grouping change discards both, so the
         // tape's clock has nothing left to point at either.
         self.latest_print_ms = None;
+        self.first_stream_ms = None;
         self.archived.clear();
         self.active.clear();
         self.aggressions.clear();
@@ -720,6 +761,7 @@ impl LiquidityHistory {
         let from_generation = self.generation.take();
         self.book = OrderBook::new();
         self.latest_book_ms = Some(timestamp_ms);
+        self.first_stream_ms.get_or_insert(timestamp_ms);
         self.gaps.push_back(CoverageGap {
             from_generation,
             to_generation: None,
@@ -1565,17 +1607,28 @@ mod tests {
         };
         let mut history = LiquidityHistory::new(config);
         assert_eq!(
-            history.newest_print_age_ms(),
+            history.tape_age(),
             None,
-            "no clock has moved: there is no gap to report"
+            "no clock has moved: there is nothing to report"
         );
 
         history.install_snapshot(10_000, 1, snapshot(10)).unwrap();
         assert_eq!(
-            history.newest_print_age_ms(),
+            history.tape_age(),
             None,
-            "a book with no tape beside it is not a late tape"
+            "one book instant is the zero, not yet an observation window"
         );
+        // The book carries on with nothing printing: the tape has no mark to
+        // be late, and the only honest measure is how long it has watched.
+        // Every restart and every symbol switch enters this state, so a chart
+        // opened into a lull would otherwise sit empty and say nothing.
+        history
+            .apply_delta(
+                14_000,
+                &BookDelta::new(11, 11, vec![level("100", "7")], vec![]),
+            )
+            .unwrap();
+        assert_eq!(history.tape_age(), Some(TapeAge::NothingYet(4_000)));
 
         // A print from four seconds before the book's instant: the bubble is
         // drawn four seconds left of an edge the book put where it is.
@@ -1586,30 +1639,30 @@ mod tests {
             quantity: Decimal::from(2),
             side: Side::Buy,
         });
-        assert_eq!(history.newest_print_age_ms(), Some(4_000));
+        assert_eq!(history.tape_age(), Some(TapeAge::Behind(8_000)));
 
         // The tape catches up: the two clocks agree and there is nothing to
         // declare. Reported as absent rather than as zero, so a caller cannot
         // print "0 s behind" at a tape that is perfectly current.
         history.record_aggression(&Trade {
             agg_id: 2,
-            timestamp_ms: 10_000,
+            timestamp_ms: 14_000,
             price: Decimal::from(100),
             quantity: Decimal::from(2),
             side: Side::Buy,
         });
-        assert_eq!(history.newest_print_age_ms(), None);
+        assert_eq!(history.tape_age(), None);
 
         // And a tape running ahead of the book is not a late tape either —
         // the lane's edge follows whichever clock is newer, so the newest
         // bubble is sitting on it.
         history.record_aggression(&Trade {
             agg_id: 3,
-            timestamp_ms: 12_000,
+            timestamp_ms: 16_000,
             price: Decimal::from(100),
             quantity: Decimal::from(2),
             side: Side::Buy,
         });
-        assert_eq!(history.newest_print_age_ms(), None);
+        assert_eq!(history.tape_age(), None);
     }
 }

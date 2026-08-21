@@ -4955,7 +4955,13 @@ impl QuantickApp {
             // this machine's. A dead session stops both, so this figure
             // freezes rather than growing — `feed_arrival_ms` above is the one
             // that answers "is anything still arriving".
-            tape_newest_print_age_ms = book.newest_print_age_ms,
+            tape_age_ms = book.tape_age.map(|age| match age {
+                crate::orderflow::TapeAge::Behind(ms) | crate::orderflow::TapeAge::NothingYet(ms) => ms,
+            }),
+            tape_age_kind = book.tape_age.map(|age| match age {
+                crate::orderflow::TapeAge::Behind(_) => "behind",
+                crate::orderflow::TapeAge::NothingYet(_) => "nothing_yet",
+            }),
             book_updates_per_s = book_rate,
             book_updates_total = book.depth_updates,
             book_queue_len,

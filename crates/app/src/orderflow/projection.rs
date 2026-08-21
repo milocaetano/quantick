@@ -3230,7 +3230,10 @@ mod tests {
             &[(1, 16_000, "100", "3", Side::Buy)],
         );
         history.install_snapshot(20_000, 1, snapshot(10)).unwrap();
-        assert_eq!(history.newest_print_age_ms(), Some(4_000));
+        assert_eq!(
+            history.tape_age(),
+            Some(crate::orderflow::TapeAge::Behind(4_000))
+        );
 
         let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
         let window_ms = crate::orderflow::reserved_span_ms(&closed);
@@ -3271,7 +3274,10 @@ mod tests {
                 &BookDelta::new(11, 11, vec![level("100", "7")], vec![]),
             )
             .unwrap();
-        assert_eq!(history.newest_print_age_ms(), Some(16_000));
+        assert_eq!(
+            history.tape_age(),
+            Some(crate::orderflow::TapeAge::Behind(16_000))
+        );
 
         let starved = frame_at(32_000, &history);
         assert!(

@@ -255,10 +255,10 @@ pub struct OrderflowHealth {
     pub last_event_ms: Option<i64>,
     /// Source-to-UI delay observed for the newest accepted timestamped event.
     pub arrival_latency_ms: Option<i64>,
-    /// How far the newest print sits behind the instant the lane calls now —
-    /// the gap the trader reads as bubbles trailing the tape's right edge.
-    /// See [`LiquidityHistory::newest_print_age_ms`].
-    pub newest_print_age_ms: Option<i64>,
+    /// How old the newest mark on the tape is, or that there is none — the
+    /// gap the trader reads as bubbles trailing the tape's right edge.
+    /// See [`LiquidityHistory::tape_age`].
+    pub tape_age: Option<crate::orderflow::TapeAge>,
     pub bid_levels: usize,
     pub ask_levels: usize,
     pub active_levels: usize,
@@ -297,7 +297,7 @@ impl OrderflowHealth {
             last_update_id: None,
             last_event_ms: None,
             arrival_latency_ms: None,
-            newest_print_age_ms: None,
+            tape_age: None,
             bid_levels: 0,
             ask_levels: 0,
             active_levels: 0,
@@ -1181,7 +1181,7 @@ impl BookEngine {
             last_update_id,
             last_event_ms,
             arrival_latency_ms: self.latest_arrival_latency_ms,
-            newest_print_age_ms: self.history.newest_print_age_ms(),
+            tape_age: self.history.tape_age(),
             bid_levels: self.history.book().bid_count(),
             ask_levels: self.history.book().ask_count(),
             active_levels: self.history.active_level_count(),

@@ -547,9 +547,19 @@ impl OrderflowView {
     /// edge, and past the lane's own window none is drawn on the tape at all.
     /// The axis under the tape says so rather than letting an empty tape read
     /// as a market that stopped trading.
+    ///
+    /// `None` also when no pane draws the bubbles: an empty tape the trader
+    /// emptied themselves needs no explanation.
     #[must_use]
-    pub fn newest_print_age_ms(&self) -> Option<i64> {
-        self.published.health.newest_print_age_ms
+    pub fn tape_age(&self) -> Option<crate::orderflow::TapeAge> {
+        // Asked only when a pane still draws the bubbles. The depth map and
+        // the aggression layer switch apart, so a tape showing liquidity with
+        // its bubbles deliberately off has no missing marks to explain —
+        // warning about them there is the caption inventing a problem.
+        if !self.config.aggressions_visible_anywhere() {
+            return None;
+        }
+        self.published.health.tape_age
     }
 
     /// Name of the preset the panel currently wears.
@@ -2763,8 +2773,8 @@ mod tests {
         });
         view.flush_for_test();
         assert_eq!(
-            view.newest_print_age_ms(),
-            Some(14_000),
+            view.tape_age(),
+            Some(crate::orderflow::TapeAge::Behind(14_000)),
             "the chart reports the age it observed: 26 s of book, 12 s of tape"
         );
 
@@ -2780,9 +2790,41 @@ mod tests {
         ordinary.flush_for_test();
         assert_eq!(ordinary.health().aggression_count, 4);
         assert_eq!(
-            ordinary.newest_print_age_ms(),
+            ordinary.tape_age(),
             None,
             "the tape is ahead of the book: nothing to declare"
+        );
+
+        // And with the bubbles switched off on every pane the question is not
+        // asked at all: a tape the trader emptied has no missing marks to
+        // explain, and a warn-coloured caption there invents a problem.
+        let mut depth_only = OrderflowView::new("BTCUSDT");
+        depth_only.set_enabled(true, 10);
+        depth_only.set_bubbles_enabled(true);
+        depth_only.handle_depth_event(snapshot_event(10));
+        print_at(&mut depth_only, 1, 6_000);
+        depth_only.handle_depth_event(DepthEvent::Update {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 10,
+            event_time_ms: 20_000,
+            delta: BookDelta::new(
+                11,
+                11,
+                vec![BookLevel::new(Decimal::from(99), Decimal::from(7)).unwrap()],
+                Vec::new(),
+            ),
+        });
+        depth_only.flush_for_test();
+        assert!(
+            depth_only.tape_age().is_some(),
+            "with the bubbles on the gap is worth declaring"
+        );
+        depth_only.set_bubbles_enabled(false);
+        depth_only.set_lane_bubbles_enabled(false);
+        assert_eq!(
+            depth_only.tape_age(),
+            None,
+            "no pane draws the bubbles, so nothing explains their absence"
         );
     }
 

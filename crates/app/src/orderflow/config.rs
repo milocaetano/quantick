@@ -4,6 +4,8 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive as _;
 use serde::{Deserialize, Serialize};
 
+use super::history::TapeAge;
+
 /// Shortest history window accepted by the UI.
 pub const MIN_RETENTION_MS: i64 = 1_000;
 /// Longest in-memory history window accepted by the UI.
@@ -807,8 +809,23 @@ pub fn format_window_ms(ms: i64) -> String {
 /// trader stops reading before the session that matters.
 const LANE_LAG_LABEL_SHARE: f64 = 1.0 / 6.0;
 
+/// Shortest silence the axis will call a silence, whatever the window.
+///
+/// The share alone collapses at the small end: the tape zooms to
+/// [`MIN_LIVE_LANE_WINDOW_MS`] of 200 ms, where a sixth is 33 ms — under the
+/// interval between two ordinary prints (a WIN recording measures 20 ms at the
+/// median and 285 ms at the worst). The caption would then be lit permanently
+/// on a tape that is perfectly current, which is the cry-wolf failure the
+/// share was chosen to avoid, reached from the other direction. Below a second
+/// there is no delay a person reads as one.
+const MIN_LANE_LAG_MS: i64 = 1_000;
+
 /// What the axis under the tape says about how old its newest mark is, or
 /// `None` while the tape is current enough that saying anything is noise.
+///
+/// The caller decides *whether to ask*: this answers about the aggression
+/// marks, so a pane drawing only the depth map has no missing bubbles to
+/// explain and must not be handed an age at all.
 ///
 /// The lane's right edge is the newer of the book clock and the print clock,
 /// and only prints draw bubbles. So a book running ahead of the tape — a quiet
@@ -819,18 +836,32 @@ const LANE_LAG_LABEL_SHARE: f64 = 1.0 / 6.0;
 /// where that gets said, because it is already the readout for what the lane
 /// is showing.
 #[must_use]
-pub fn lane_lag_label(window_ms: i64, newest_print_age_ms: Option<i64>) -> Option<String> {
-    let age = newest_print_age_ms?;
+pub fn lane_lag_label(window_ms: i64, tape_age: Option<TapeAge>) -> Option<String> {
+    // Nothing has printed since the tape started watching. There is no mark to
+    // be late, so the wording never invites the reader to look for one, and no
+    // window threshold applies — an empty tape with a running book is worth
+    // saying at any zoom.
+    let age = match tape_age? {
+        TapeAge::NothingYet(watched) => {
+            return Some(format!("no print for {}", format_window_ms(watched)));
+        }
+        TapeAge::Behind(age) => age,
+    };
     let window = window_ms.max(1);
     #[allow(clippy::cast_precision_loss)]
-    let floor_ms = (window as f64 * LANE_LAG_LABEL_SHARE) as i64;
-    if age <= floor_ms {
+    let share_floor = (window as f64 * LANE_LAG_LABEL_SHARE) as i64;
+    if age <= share_floor.max(MIN_LANE_LAG_MS) {
         return None;
     }
     // Past the window there is no bubble left on the tape to be late: the
     // wording changes with it, because "last print 40 s ago" beside an empty
     // tape still invites the reader to look for the mark it describes.
-    if age >= window {
+    //
+    // Strictly past. The lane spans `[now - window, now]`, so at exactly the
+    // window the newest mark is still drawn, on the tape's leftmost pixel —
+    // telling the reader there is nothing to look for while it is on screen
+    // is the same lie in the other direction.
+    if age > window {
         return Some(format!("no print for {}", format_window_ms(age)));
     }
     Some(format!("last print {} back", format_window_ms(age)))
@@ -1891,48 +1922,76 @@ mod tests {
     /// the market, which is the expensive kind of wrong.
     #[test]
     fn the_axis_says_how_old_the_newest_mark_is() {
+        let behind = |ms| Some(TapeAge::Behind(ms));
         // Current: nothing to say. Not "0 s behind" — a tape that is on the
         // edge must not carry a caption about being late.
         assert_eq!(lane_lag_label(30_000, None), None);
-        // Under the floor: an ordinary quiet moment on a 30 s tape, which the
-        // eye reads as a tape that is running.
-        assert_eq!(lane_lag_label(30_000, Some(3_000)), None);
+        // Under the threshold: an ordinary lull, and the axis stays quiet.
+        assert_eq!(lane_lag_label(30_000, behind(3_000)), None);
         // Visibly behind, but the newest mark is still on the tape, so the
         // wording points at the mark the reader can find.
         assert_eq!(
-            lane_lag_label(30_000, Some(6_000)),
+            lane_lag_label(30_000, behind(6_000)),
             Some("last print 6 s back".to_owned())
         );
-        // Past the window: no mark left to point at, so the wording stops
-        // describing one.
+        // Exactly one window behind, the mark sits on the tape's leftmost
+        // pixel — still there, so the wording must still point at it. Only
+        // past the window does the tape genuinely hold nothing.
         assert_eq!(
-            lane_lag_label(30_000, Some(41_000)),
-            Some("no print for 41 s".to_owned())
-        );
-        // The floor follows the window, because "behind" is relative to what
-        // the tape is showing: one second is a quarter of a four-second tape
-        // and invisible on a two-minute one.
-        assert_eq!(
-            lane_lag_label(4_000, Some(1_000)),
-            Some("last print 1 s back".to_owned())
-        );
-        assert_eq!(lane_lag_label(120_000, Some(1_000)), None);
-        // And the same seventeen seconds is four whole four-second tapes and
-        // an ordinary quiet stretch of a two-minute one.
-        assert_eq!(
-            lane_lag_label(4_000, Some(17_000)),
-            Some("no print for 17 s".to_owned())
-        );
-        assert_eq!(lane_lag_label(120_000, Some(17_000)), None);
-        assert_eq!(
-            lane_lag_label(120_000, Some(30_000)),
+            lane_lag_label(30_000, behind(30_000)),
             Some("last print 30 s back".to_owned())
         );
+        assert_eq!(
+            lane_lag_label(30_000, behind(30_001)),
+            Some("no print for 30 s".to_owned())
+        );
+
+        // The floor follows the window, because "behind" is relative to what
+        // the tape is showing: four seconds is most of a four-second tape and
+        // invisible on a two-minute one.
+        assert_eq!(
+            lane_lag_label(4_000, behind(4_000)),
+            Some("last print 4 s back".to_owned())
+        );
+        assert_eq!(lane_lag_label(120_000, behind(4_000)), None);
+        assert_eq!(lane_lag_label(120_000, behind(17_000)), None);
+        assert_eq!(
+            lane_lag_label(120_000, behind(30_000)),
+            Some("last print 30 s back".to_owned())
+        );
+
+        // …but never below a second, whatever the share works out to. The
+        // tape zooms to MIN_LIVE_LANE_WINDOW_MS, where a sixth is 33 ms — less
+        // than the gap between two ordinary prints, so a share-only floor
+        // would light the caption permanently on a perfectly current tape.
+        assert_eq!(lane_lag_label(MIN_LIVE_LANE_WINDOW_MS, behind(285)), None);
+        assert_eq!(lane_lag_label(MIN_LIVE_LANE_WINDOW_MS, behind(900)), None);
+        assert_eq!(
+            lane_lag_label(MIN_LIVE_LANE_WINDOW_MS, behind(1_500)),
+            Some("no print for 1 s".to_owned()),
+            "a second and a half of silence on a 200 ms tape is a real hole"
+        );
+
+        // Nothing has printed at all. There is no mark to be late, so no
+        // window threshold applies and the wording never sends the reader
+        // looking for a bubble. This is the state every restart and every
+        // symbol switch during a quiet stretch lands in — the chart opened at
+        // lunch, which is the report this whole branch came from.
+        assert_eq!(
+            lane_lag_label(30_000, Some(TapeAge::NothingYet(4_000))),
+            Some("no print for 4 s".to_owned())
+        );
+        assert_eq!(
+            lane_lag_label(MIN_LIVE_LANE_WINDOW_MS, Some(TapeAge::NothingYet(90_000))),
+            Some("no print for 1 min 30 s".to_owned()),
+            "an empty tape is worth saying at any zoom"
+        );
+
         // A degenerate window must not divide the label by zero or claim a
         // current tape is late.
         assert_eq!(lane_lag_label(0, None), None);
         assert_eq!(
-            lane_lag_label(0, Some(5_000)),
+            lane_lag_label(0, behind(5_000)),
             Some("no print for 5 s".to_owned())
         );
     }

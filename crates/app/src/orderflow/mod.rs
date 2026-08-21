@@ -33,7 +33,7 @@ pub use grouping::{
 #[allow(unused_imports)]
 pub use history::{
     Aggression, AggressorSide, CoverageGap, CoverageSegment, GroupingReset, HistoryCounters,
-    HistoryError, HistoryStatus, LiquidityHistory, LiquidityRun, RestingSide,
+    HistoryError, HistoryStatus, LiquidityHistory, LiquidityRun, RestingSide, TapeAge,
 };
 #[allow(unused_imports)]
 pub use interaction::{

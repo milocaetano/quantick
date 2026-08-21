@@ -5510,7 +5510,7 @@ impl ChartPane {
                 painter,
                 split_time_strip(areas.time_strip, self.last_lane_divider_x).1,
                 orderflow.live_lane_window_ms(closed),
-                orderflow.newest_print_age_ms(),
+                orderflow.tape_age(),
             );
             // The automatic reference this frame, kept for the tape's menu:
             // the entry that says "follows the bars" has to be able to say
@@ -5640,7 +5640,7 @@ impl ChartPane {
         painter: &egui::Painter,
         lane_strip: Option<egui::Rect>,
         window_ms: i64,
-        newest_print_age_ms: Option<i64>,
+        tape_age: Option<crate::orderflow::TapeAge>,
     ) {
         let Some(strip) = lane_strip else {
             return;
@@ -5658,7 +5658,7 @@ impl ChartPane {
         // and ended — a caption sliding under a tape being read for flow. The
         // right end is also where it belongs: directly under the edge the
         // missing marks should have reached.
-        let warning = lane_lag_label(window_ms, newest_print_age_ms)
+        let warning = lane_lag_label(window_ms, tape_age)
             .map(|lag| painter.layout_no_wrap(lag, font.clone(), theme::WARN));
         // Room the warning denies the window label. Doubled, because the window
         // keeps the strip's own centre: a centred label grows by half its
@@ -5691,8 +5691,25 @@ impl ChartPane {
             );
         }
         if let Some(galley) = warning {
-            painter.galley(
+            // Right, under the edge the missing marks should have reached —
+            // unless it does not fit, and then hard left instead.
+            //
+            // The clip decides *which end* gets cut, and for this label that
+            // is the difference between a shortened sentence and a wrong
+            // number. Right-aligned, a 40 px strip cuts the head off
+            // "no print for 1 min 30 s" and leaves "30 s" sitting in warn
+            // colour: a ninety-second hole read as three. Left-aligned the cut
+            // lands on the tail, where a clipped word is visibly a clipped
+            // word. A caption that runs out of room may say less; it may not
+            // say something else.
+            let fits = galley.size().x + 2.0 * LANE_AXIS_GAP_PX <= strip.width();
+            let align = if fits {
                 egui::Align2::RIGHT_CENTER
+            } else {
+                egui::Align2::LEFT_CENTER
+            };
+            painter.galley(
+                align
                     .align_size_within_rect(
                         galley.size(),
                         strip.shrink2(egui::vec2(LANE_AXIS_GAP_PX, 0.0)),
@@ -6892,6 +6909,34 @@ mod tests {
         width
     }
 
+    /// Clip rect of each shape the paint call emitted.
+    ///
+    /// Read off the shapes rather than matched against egui's `Debug` string:
+    /// an upstream bump that renders a `Rect` differently would otherwise turn
+    /// this red on a branch that changed nothing, which is the failure this
+    /// test was already rewritten once to avoid.
+    fn painted_clips(painted: &str) -> Vec<egui::Rect> {
+        painted
+            .split("ClippedShape { clip_rect: [[")
+            .skip(1)
+            .filter_map(|rest| {
+                let head = rest.split("]]").next()?;
+                let numbers: Vec<f32> = head
+                    .replace("] - [", " ")
+                    .split_whitespace()
+                    .filter_map(|value| value.parse().ok())
+                    .collect();
+                match numbers[..] {
+                    [left, top, right, bottom] => Some(egui::Rect::from_min_max(
+                        egui::pos2(left, top),
+                        egui::pos2(right, bottom),
+                    )),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
     /// Left edge of each text shape, from the paint call's own output.
     ///
     /// Anchored on `TextShape` rather than on `pos:` alone: a galley's debug
@@ -6927,10 +6972,11 @@ mod tests {
             egui::pos2(600.0, 980.0),
             egui::pos2(600.0 + roomy_px + 1.0, 1000.0),
         );
-        let axis = |age_ms: Option<i64>| {
-            painted(|painter| pane.draw_lane_time_axis(painter, Some(strip), 30_000, age_ms))
+        let axis = |age: Option<crate::orderflow::TapeAge>| {
+            painted(|painter| pane.draw_lane_time_axis(painter, Some(strip), 30_000, age))
         };
 
+        let late_by = |ms| Some(crate::orderflow::TapeAge::Behind(ms));
         let current = axis(None);
         assert!(
             current.contains("tape") && !current.contains("print"),
@@ -6940,9 +6986,9 @@ mod tests {
         // to a tape that never paused. Identical rather than merely similar —
         // a caption that flickered on every quiet moment is one the trader
         // learns to stop reading.
-        assert_eq!(axis(Some(3_000)), current);
+        assert_eq!(axis(late_by(3_000)), current);
 
-        let behind = axis(Some(6_000));
+        let behind = axis(late_by(6_000));
         assert!(
             behind.contains("last print 6 s back"),
             "a tape 6 s behind has to say so: {behind}"
@@ -6953,7 +6999,7 @@ mod tests {
         );
         // Past the window nothing is left on the tape to point at, so the
         // wording stops describing a mark the reader would go looking for.
-        let starved = axis(Some(41_000));
+        let starved = axis(late_by(41_000));
         assert!(
             starved.contains("no print for 41 s"),
             "an empty tape must say why it is empty: {starved}"
@@ -6984,7 +7030,9 @@ mod tests {
                 egui::pos2(600.0, 980.0),
                 egui::pos2(600.0 + width, 1000.0),
             );
-            painted(|painter| pane.draw_lane_time_axis(painter, Some(strip), 30_000, Some(41_000)))
+            painted(|painter| {
+                pane.draw_lane_time_axis(painter, Some(strip), 30_000, late_by(41_000))
+            })
         };
         for (width, what) in [
             (
@@ -7018,25 +7066,41 @@ mod tests {
             warning_x - (window_x + window_px)
         );
 
-        // Both labels are sized from their own text rather than from the room
-        // they have, so a lane narrower than the warning places it *left* of
-        // the strip — over the candles' own time labels. The tape's axis may
-        // run out of room; it may not spill into the chart beside it.
+        // A lane too narrow for the warning: the label is right-aligned when
+        // it fits and hard left when it does not, because the clip decides
+        // *which end* gets cut and for this label that is the difference
+        // between a shortened sentence and a wrong number. Right-aligned, a
+        // 40 px strip cuts the head off "no print for 1 min 30 s" and leaves
+        // "30 s" in warn colour — ninety seconds of silence read as three.
         let hair = egui::Rect::from_min_max(egui::pos2(600.0, 980.0), egui::pos2(640.0, 1000.0));
-        let spill =
-            painted(|painter| pane.draw_lane_time_axis(painter, Some(hair), 30_000, Some(41_000)));
+        let squeezed = painted(|painter| {
+            pane.draw_lane_time_axis(
+                painter,
+                Some(hair),
+                30_000,
+                Some(crate::orderflow::TapeAge::NothingYet(90_000)),
+            )
+        });
+        for x in painted_positions(&squeezed) {
+            assert!(
+                x >= hair.left(),
+                "the caption starts at {x}, left of a strip beginning at {} —                  clipped there it would read as a smaller number, not as a                  shorter sentence",
+                hair.left()
+            );
+        }
+        // And it is still clipped, because left-aligned it now overflows the
+        // other way: running out of room is allowed, spilling into the pane
+        // next door is not.
+        let clips = painted_clips(&squeezed);
+        assert!(!clips.is_empty(), "nothing was painted at all: {squeezed}");
         assert!(
-            painted_positions(&spill).iter().any(|x| *x < hair.left()),
-            "this is the case worth clipping — the text really does start              outside the strip: {spill}"
-        );
-        assert!(
-            spill.contains("clip_rect: [[600.0 980.0] - [640.0 1000.0]]"),
-            "so the axis must be clipped to its own strip: {spill}"
+            clips.iter().all(|clip| *clip == hair),
+            "every shape must be clipped to the tape's own strip: {clips:?}"
         );
 
         // No lane, no axis.
         assert_eq!(
-            painted(|painter| pane.draw_lane_time_axis(painter, None, 30_000, Some(41_000))),
+            painted(|painter| pane.draw_lane_time_axis(painter, None, 30_000, late_by(41_000))),
             painted(|_| {}),
             "a chart with no tape drew a tape axis"
         );

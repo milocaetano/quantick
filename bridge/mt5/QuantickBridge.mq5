@@ -80,8 +80,13 @@ void LogEvent(const string event_code, const string detail)
 //| SocketSend runs on the terminal's main thread and may write only  |
 //| part of the buffer (send timeout, full OS buffer — quantick not   |
 //| reading). Each attempt is bounded by SocketTimeouts (set at       |
-//| connect); the remainder is retried so a slow read never corrupts  |
-//| line framing, and zero progress means the socket is gone.         |
+//| connect); the remainder is retried while progress continues.      |
+//|                                                                    |
+//| Zero progress means the socket is gone, and the peer may already  |
+//| hold half a line. That is not repaired here — it is repaired by   |
+//| ending the session, which the caller does on false: the decoder   |
+//| discards the fragment with the socket and the reconnect re-sends  |
+//| the backfill. The buffer therefore survives until the write does. |
 //+------------------------------------------------------------------+
 bool FlushOut()
   {
@@ -94,9 +99,18 @@ bool FlushOut()
      }
    uchar bytes[];
    int len = StringToCharArray(g_out, bytes, 0, WHOLE_ARRAY, CP_UTF8) - 1;
-   g_out = "";
+   // A non-empty buffer that will not convert is a broken session, not an
+   // empty write. Returning true here used to throw the batch away and tell
+   // the caller it had been sent: the socket stayed up, quantick got a hole
+   // in its tape with no BRIDGE_DISCONNECTED to explain it, and the chart
+   // showed the exact symptom this whole change exists to remove. One line
+   // was the old risk; a full buffer is now up to sixteen thousand characters
+   // of it.
    if(len <= 0)
-      return(true);
+     {
+      g_out = "";
+      return(false);
+     }
    int sent = 0;
    while(sent < len)
      {
@@ -109,10 +123,21 @@ bool FlushOut()
          ArrayCopy(rest, bytes, 0, sent, len - sent);
          wrote = SocketSend(g_socket, rest, len - sent);
         }
+      // Zero progress after a partial write means the peer has the front half
+      // of a line and will never get the rest. The buffer is dropped and the
+      // session ends, which is what repairs it: the reconnect re-sends the
+      // backfill, and the decoder throws away the fragment with the socket.
+      // Keeping the session alive here is what would leave the framing broken.
       if(wrote <= 0)
+        {
+         g_out = "";
          return(false);
+        }
       sent += wrote;
      }
+   // Cleared only once every byte is out. Anything short of that is a failure
+   // the caller turns into a disconnect, and the disconnect clears it.
+   g_out = "";
    g_sends++;
    return(true);
   }
