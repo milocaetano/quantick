@@ -128,3 +128,37 @@ fn authorized_request_rejects_mismatched_trusted_actor_context() {
     };
     assert!(authorized.validate().is_err());
 }
+
+#[test]
+fn the_streaming_readers_enforce_what_the_frame_decoders_enforce() {
+    // `read_request` and `read_response` are the entry points a transport
+    // actually calls, and they were the only ones with no coverage. A generic
+    // `read::<RequestEnvelope>` used to reach the same type without the
+    // reserved-actor rejection or the envelope's `validate()`; both readers are
+    // now the only public way in, so the guarantees have to hold here.
+    let codec = BoundedCodec::default();
+
+    let mut value = serde_json::to_value(request()).unwrap();
+    value["actor"] = json!({"actor_kind": "agent"});
+    let frame = codec.encode(FrameRole::Request, &value).unwrap();
+    assert_eq!(
+        codec.read_request(&mut frame.as_slice()),
+        Err(CodecError::ReservedActorField)
+    );
+
+    let frame = codec.encode(FrameRole::Request, &request()).unwrap();
+    assert_eq!(
+        codec.read_request(&mut frame.as_slice()).unwrap(),
+        request()
+    );
+
+    // An envelope that parses but fails its own invariants must not survive the
+    // streaming path either: protocol version zero is rejected by validate().
+    let mut invalid = serde_json::to_value(request()).unwrap();
+    invalid["protocol_version"] = json!(0);
+    let frame = codec.encode(FrameRole::Request, &invalid).unwrap();
+    assert!(matches!(
+        codec.read_request(&mut frame.as_slice()),
+        Err(CodecError::Envelope(_))
+    ));
+}

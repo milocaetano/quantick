@@ -114,7 +114,15 @@ impl BoundedCodec {
         Ok(frame)
     }
 
-    pub fn read<T: DeserializeOwned>(
+    /// Private on purpose. A generic decode enforces only the shared byte and
+    /// JSON bounds; the reserved-actor rejection and each envelope's own
+    /// `validate()` live on the typed entry points below. While this was
+    /// public, `read::<RequestEnvelope>` was a validation-free door to the same
+    /// type `read_request` guards, sitting directly above it and looking like
+    /// the general case. The four typed methods are the whole wire surface, so
+    /// nothing is lost by making the bypass unreachable rather than merely
+    /// discouraged.
+    fn read<T: DeserializeOwned>(
         &self,
         role: FrameRole,
         reader: &mut impl Read,
@@ -136,7 +144,9 @@ impl BoundedCodec {
         Ok(response)
     }
 
-    pub fn decode_frame<T: DeserializeOwned>(
+    /// Private for the same reason as [`Self::read`]: use
+    /// [`Self::decode_request_frame`] or [`Self::decode_response_frame`].
+    fn decode_frame<T: DeserializeOwned>(
         &self,
         role: FrameRole,
         frame: &[u8],
