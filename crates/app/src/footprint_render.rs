@@ -346,9 +346,15 @@ impl FootprintLod {
         &self,
         requested: crate::footprint_config::FootprintStyle,
     ) -> crate::footprint_config::FootprintStyle {
+        use crate::footprint_config::FootprintStyle;
         match self.drawn_style {
-            // A handover only ever goes one way, so a remembered style that is
-            // not this one is only meaningful while it is this one's fallback.
+            // `auto` is a question, not a look: whatever concrete style the
+            // last frame answered with is the one the candle must be laid out
+            // for.
+            Some(drawn) if requested == FootprintStyle::Auto => drawn,
+            // A handover from a concrete style only ever goes one way, so a
+            // remembered style that is not this one is meaningful only while
+            // it is this one's fallback.
             Some(drawn) if requested.fallback() == Some(drawn) => drawn,
             _ => requested,
         }
@@ -672,7 +678,14 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     } else {
         frame.candle_width
     };
-    let requested = frame.config.style;
+    // `auto` is answered before anything is measured: it is a question about
+    // the zoom, and every floor below is measured against a concrete style.
+    // The chain is walked richest-first and the first link the candle can pay
+    // for wins, so one wheel walks three columns → two → a shape.
+    let requested = frame
+        .config
+        .style
+        .resolve_auto(|style| scaled_width >= detailed_min_width(style, frame.config));
     let level = lod.resolve(
         scaled_width,
         base_row_px,
@@ -2647,6 +2660,56 @@ mod tests {
                 (buy - sell).abs() < 0.02,
                 "step {step}: buy L={buy:.3} vs sell L={sell:.3} — the sides must weigh the same"
             );
+        }
+    }
+
+    /// `auto` walks the chain richest-first and always lands somewhere.
+    ///
+    /// The point of the style is that one wheel does the whole ladder, so the
+    /// two things worth pinning are that the walk is *monotonic* — zooming in
+    /// never gives a poorer reading — and that it has no floor of its own to
+    /// fall through: at one pixel a candle it still answers with a style that
+    /// needs no digits.
+    #[test]
+    fn auto_walks_the_chain_and_never_falls_through() {
+        use crate::footprint_config::{FootprintConfig, FootprintStyle};
+        let config = FootprintConfig::default();
+        let at = |width: f32| {
+            FootprintStyle::Auto.resolve_auto(|style| width >= detailed_min_width(style, &config))
+        };
+        // Richest first, and each link is reached at its own floor.
+        assert_eq!(
+            at(detailed_min_width(FootprintStyle::Cluster, &config)),
+            FootprintStyle::Cluster
+        );
+        assert_eq!(
+            at(detailed_min_width(FootprintStyle::Ladder, &config)),
+            FootprintStyle::Ladder
+        );
+        // Below every floor it still draws: the chain ends on a shape.
+        let last = at(crate::viewport::MIN_PX_PER_BAR);
+        assert!(
+            !last.draws_own_rows() || last == FootprintStyle::Split,
+            "auto fell through to {last:?}"
+        );
+        assert_ne!(last, FootprintStyle::Auto, "auto resolved to itself");
+
+        // Monotonic: widening the candle never buys a poorer reading. The
+        // chain's own order is the ranking, so a walk up the widths must never
+        // move backwards through it.
+        let rank = |style: FootprintStyle| {
+            FootprintStyle::AUTO_CHAIN
+                .iter()
+                .position(|link| *link == style)
+                .expect("auto resolves inside its own chain")
+        };
+        let mut previous = rank(at(crate::viewport::MIN_PX_PER_BAR));
+        let mut width = crate::viewport::MIN_PX_PER_BAR;
+        while width <= crate::viewport::MAX_CANDLE_WIDTH {
+            let here = rank(at(width));
+            assert!(here <= previous, "the walk went backwards at {width} px");
+            previous = here;
+            width += 1.0;
         }
     }
 

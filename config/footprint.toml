@@ -6,7 +6,16 @@
 # these settings) or the pane's right-click layer menu. Override the file
 # location with QUANTICK_FOOTPRINT=<path>.
 
-# How the ladder is drawn (default "split"). Four readings of the same tape:
+# How the ladder is drawn (default "split"). One switch and four readings of
+# the same tape:
+#
+#   "auto"    — not a look of its own: the richest reading the zoom can pay
+#               for, picked again every frame. Three columns up close, two
+#               below that, a shape once digits stop fitting. The layer already
+#               changed *how much* it says as you zoom; this changes *which
+#               reading* says it, so one wheel walks the whole ladder. The
+#               legend always names what it landed on ("auto → cluster").
+#
 #
 #   "split"   — volume profile on the right, the winning side's delta bar on
 #               the left, yellow POC. The reference look, and the default.
