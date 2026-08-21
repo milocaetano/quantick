@@ -75,6 +75,18 @@
 // that erases most of a large one is exactly the exhaustion this is looking
 // for, whether or not it pokes out the ends.
 //
+// BODY-ONLY REFERENCE: both fractions above are measured, by default, against
+// the force bar's full RANGE (high to low). Each has its own switch in
+// section 5 — "run measures the body, not the range" and its cover
+// counterpart — to measure against the force bar's BODY (open to close)
+// instead, ignoring its wicks. This is the fix for a specific misreading: a
+// force bar with a long wick makes the range wider than the body, so a candle
+// that visibly erases most of the BODY can still fall short of a threshold
+// judged against the whole wick-to-wick range. Switch it on and that same
+// candle is judged only against what it actually erased. The two references
+// can disagree in either direction — body-only is not simply "easier" — the
+// wick shrinks both the numerator and the denominator, not one alone.
+//
 // The force bar's body is judged against the average of the bars BEFORE it
 // (same discipline as force_bar.pine): a huge bar must not be allowed to
 // inflate the very average that is deciding whether it is huge.
@@ -98,6 +110,51 @@
 // finally completes. A mark that jumps when you flip a switch is those two
 // shapes disagreeing about when the push ended, not an inconsistency.
 //
+// AN ELEPHANT HAS A SIZE, NOT ONLY A RATIO. The body test above is a
+// RATIO — this body against the average of the recent ones — and a ratio
+// alone is honest on time candles and promiscuous on activity-cut bars. When
+// the tape goes quiet the average it multiplies collapses, so an unremarkable
+// bar clears 1.5× of almost nothing and arms a push that nobody watching the
+// chart would call one. This is measured, not suspected: on a live WINV26
+// session the same bare band marked 247 of 1 355 volume bars as force bars;
+// an absolute floor of 100 points left 7 (see docs/ux/strategy-anchors.md,
+// which is why the strategy kernel's force ruler carries `min_body`).
+//
+// So section 5 adds a floor in POINTS, `and`ed with the ratio above: a
+// bar must be big relative to its neighbours AND big in the instrument's own
+// units. It ships at 0 — disabled, the ratio alone, exactly what this script
+// did before the floor existed — because the right number is a property of
+// the instrument and nothing else: ~100 points on WIN mini index, a different
+// order of magnitude on BTC. Turn the paint below on and raise the floor
+// until only bars you would call pushes stay coloured.
+//
+// SEEING WHICH BARS ARMED: section 5 carries a diagnostic switch — "paint
+// the bars that arm a push". Off by default. Switch it on and every bar this
+// script accepted as a force bar is painted: ORANGE for a top (sell-side)
+// push, BLUE for a bottom (buy-side) one. Nothing else changes; the paint
+// reports what the state machine already decided, it does not decide it.
+//
+// It is there because the arrows alone cannot answer "is it reading the
+// right bars?". An arrow needs a push that was BOTH armed AND given back, so
+// a force bar nothing faded leaves no trace at all — and neither does a bar
+// that armed when it should not have. Paint them and calibration becomes a
+// visual question: if bars you would never call a push come out coloured,
+// `min body (×average)` is too low for this instrument, the points floor is
+// still at 0, or the extreme window is too short. Worth knowing while you
+// read it: the default 1.5× is the same multiple force_bar.pine calls the
+// FLOOR of its force band, not its exhaustion threshold (2.5×). This section
+// deliberately sets the lower bar, because the give-back is the other half of
+// the test — but on a quiet tape the average it multiplies is small, and 1.5×
+// of small is small.
+//
+// A bar that anchors both sides at once — possible only with the direction
+// filter off — is painted for the top. One bar, one colour, priority fixed
+// rather than left to evaluation order.
+//
+// HONEST ABOUT THE FORMING BAR: paint is drawn from the preview, so the bar
+// being built can take a colour and lose it again before it closes (the same
+// rule force_bar.pine states). A closed bar's colour never changes.
+//
 // Every threshold below is an input: this is a shape, and where the shape
 // begins and ends is a judgement about the instrument in front of you.
 // Defaults are a starting point measured on nothing in particular —
@@ -115,7 +172,7 @@ need_direction = input.bool(true, "1 Force bar: must close in the direction of t
 use_run = input.bool(true, "2 Run: mark a give-back by consecutive candles")
 run_len = input.int(3, "2 Run: opposite candles in a row", minval=1, maxval=20)
 window_len = input.int(5, "2 Run: window after the force bar (bars)", minval=1, maxval=100)
-coverage = input.float(0.7, "2 Run: min give-back of the force bar (fraction of range)", minval=0.05, maxval=3.0, step=0.05)
+coverage = input.float(0.7, "2 Run: min give-back of the force bar", minval=0.05, maxval=3.0, step=0.05)
 
 // 3 — the cover: one opposite candle sitting on top of the force bar.
 // Shorter window than the run by default: a single bar answering a push is an
@@ -123,11 +180,16 @@ coverage = input.float(0.7, "2 Run: min give-back of the force bar (fraction of 
 // a different thing.
 use_cover = input.bool(true, "3 Cover: mark a give-back by one opposite candle")
 cover_window = input.int(3, "3 Cover: window after the force bar (bars)", minval=1, maxval=100)
-cover_fraction = input.float(0.7, "3 Cover: min overlap with the force bar (fraction of range)", minval=0.05, maxval=1.0, step=0.05)
+cover_fraction = input.float(0.7, "3 Cover: min overlap with the force bar", minval=0.05, maxval=1.0, step=0.05)
 
-// 4 — display: which side to mark. These gate the drawing sites only. The
+// 4 — display: which side to mark. These gate the two TRIANGLES only. The
 // state machine below runs whatever they say, so flipping a side back on
 // never changes what the indicator concluded while it was off.
+//
+// They deliberately do NOT gate section 5's paint. The triangles are the
+// reading; the paint is the ruler being checked, and a trader who silenced
+// one side and then went looking for why nothing arms there would be misled
+// by a diagnostic that had silenced itself along with the marks.
 //
 // Colour and width are deliberately NOT inputs: they live on the dialog's
 // Style tab, per plot, which is what the chart actually reads. An
@@ -135,6 +197,31 @@ cover_fraction = input.float(0.7, "3 Cover: min overlap with the force bar (frac
 // silently comes out amber — so a colour slider here would be a dead control.
 show_top = input.bool(true, "4 Display: mark top reversals (sell side)")
 show_bottom = input.bool(true, "4 Display: mark bottom reversals (buy side)")
+
+// 5 — calibration: the rulers this shape is measured with, and the paint that
+// shows what they accepted. Every one of them ships OFF (or at 0), so a fresh
+// load behaves exactly like the first version of this script.
+//
+// THIS SECTION IS LAST FOR A REASON, and new inputs belong at the end of it.
+// A saved preset is a list of values matched to inputs BY POSITION: the app
+// walks the declared inputs and takes the saved value at the same index when
+// its type matches. Insert an input in the middle and every preset saved
+// before it silently shifts — the value a trader stored for "opposite candles
+// in a row" lands on whatever now sits at that index, and a bool switch can
+// be turned ON by a preset that never knew it existed. Appending keeps every
+// older index pointing at the input it was saved for; the new ones simply
+// find nothing and take their defaults. A test pins this order.
+// No `maxval`/`step` on purpose. Every other float here is a scale-free
+// multiple over a tight range, and the panel renders a bounded float as a
+// slider quantised to its step — which on this input would mean a WIN floor
+// of ~100 living in the first 0.1% of the track, and a step of 1 that no
+// instrument priced under a unit could ever get below. Bounded on one side
+// only, it is a typed field with a floor of zero, which is what an absolute
+// quantity in the instrument's own units wants to be.
+min_body_points = input.float(0.0, "5 Calibration: min force-bar body (points, 0 = off)", minval=0.0)
+run_body_only = input.bool(false, "5 Calibration: run measures the body, not the range")
+cover_body_only = input.bool(false, "5 Calibration: cover measures the body, not the range")
+paint_force = input.bool(false, "5 Calibration: paint the bars that arm a push")
 
 // ---------------------------------------------------------------- measures
 
@@ -161,7 +248,11 @@ arm_window = math.max(run_window, cover_window)
 
 // A zero average is warm-up or a dead tape, not a bar that beats it. The
 // `not na` guards are what keep the opening stretch unmarked.
-big_body = not na(avg_body_before) and avg_body_before > 0 and body >= body_factor * avg_body_before
+// The ratio and the floor, in that order: the ratio rejects most bars on its
+// own, so the floor is a comparison the short-circuit rarely reaches. A floor
+// of 0 is `body >= 0`, true for every bar including a doji — the ratio is
+// what still decides, exactly as it did before this input existed.
+big_body = not na(avg_body_before) and avg_body_before > 0 and body >= body_factor * avg_body_before and body >= min_body_points
 new_high = not na(high_before) and high >= high_before
 new_low = not na(low_before) and low <= low_before
 
@@ -179,17 +270,35 @@ bottom_anchor = big_body and new_low and (not need_direction or bear_bar)
 
 // ------------------------------------------------------------------- state
 
-// One armed force bar per side, with its own age and its own range. The two
+// One armed force bar per side, with its own age and its own rulers. The two
 // sides are independent: the bar that gives back a buying push may itself be
 // the selling push that arms the other side.
+//
+// The rulers are RESOLVED WHEN THE BAR ARMS, not read per bar: the two
+// body-only switches pick between the force bar's wick-to-wick extremes and
+// its body, and that choice cannot change while a push is armed — editing any
+// input rebuilds the indicator and replays the whole history, so there is no
+// live tape on which a stored ruler could go stale. Resolving it here keeps
+// eight ternaries and four subtractions off every bar, armed or not, and puts
+// them on the rare bar that actually arms. Each shape stores its own pair
+// because the run and the cover choose independently: a wide-wick push can be
+// judged by its body for one and by its range for the other.
 var bool top_armed = false
 var int top_age = 0
-var float top_high = na
-var float top_low = na
+var float top_run_high = na
+var float top_run_low = na
+var float top_run_range = na
+var float top_cover_high = na
+var float top_cover_low = na
+var float top_cover_range = na
 var bool bottom_armed = false
 var int bottom_age = 0
-var float bottom_high = na
-var float bottom_low = na
+var float bottom_run_high = na
+var float bottom_run_low = na
+var float bottom_run_range = na
+var float bottom_cover_high = na
+var float bottom_cover_low = na
+var float bottom_cover_range = na
 
 // Age first, test second, arm last. Ageing before the test is what makes the
 // bar `run_len` bars after the force bar read as age `run_len`; arming after
@@ -205,27 +314,29 @@ if bottom_armed
 
 // ----------------------------------------------------------------- signals
 
-// Two subtractions, cheap enough to keep in the open for readability; `na`
-// when no push is armed, which makes every `> 0` below false.
-top_range = top_high - top_low
-bottom_range = bottom_high - bottom_low
-
+// Every ruler below was resolved when its push armed, and it KEEPS that value
+// after the push is spent — nothing writes `na` back on disarm or expiry. So
+// `top_armed` / `bottom_armed` is the only thing standing between a stale
+// ruler and this arithmetic, and it is deliberately first in every chain
+// below. The `> 0` tests guard against a zero denominator, not a stale one;
+// reordering the chain so one of them runs first would read a spent push.
+//
 // The divisions and the overlap arithmetic sit BEHIND the guards on purpose.
 // `and` short-circuits, and on the large majority of bars no push is armed —
 // so on those bars this line stops at `top_armed` and the maths never runs.
 // (Measured: ~17% of the script's commit cost, and this runs again for every
 // preview of the forming bar.) Nothing here is a `ta.*` kernel, so unlike the
 // measures above there is no warm-up to protect by hoisting it.
-sell_run = use_run and top_armed and top_age >= run_len and top_age <= run_window and bear_run >= run_len and top_range > 0 and (top_high - close) / top_range >= coverage
-buy_run = use_run and bottom_armed and bottom_age >= run_len and bottom_age <= run_window and bull_run >= run_len and bottom_range > 0 and (close - bottom_low) / bottom_range >= coverage
+sell_run = use_run and top_armed and top_age >= run_len and top_age <= run_window and bear_run >= run_len and top_run_range > 0 and (top_run_high - close) / top_run_range >= coverage
+buy_run = use_run and bottom_armed and bottom_age >= run_len and bottom_age <= run_window and bull_run >= run_len and bottom_run_range > 0 and (close - bottom_run_low) / bottom_run_range >= coverage
 
 // The cover: the overlap of two intervals — this candle's body against the
-// force bar's range — so it is bounded by the force bar and cannot be
-// inflated by a candle that is merely enormous somewhere else. A body that
+// force bar's range (or body) — so it is bounded by the force bar and cannot
+// be inflated by a candle that is merely enormous somewhere else. A body that
 // does not reach the force bar at all makes the overlap negative, which
 // fails on its own.
-sell_cover = use_cover and top_armed and top_age <= cover_window and bear_bar and top_range > 0 and (math.min(open, top_high) - math.max(close, top_low)) / top_range >= cover_fraction
-buy_cover = use_cover and bottom_armed and bottom_age <= cover_window and bull_bar and bottom_range > 0 and (math.min(close, bottom_high) - math.max(open, bottom_low)) / bottom_range >= cover_fraction
+sell_cover = use_cover and top_armed and top_age <= cover_window and bear_bar and top_cover_range > 0 and (math.min(open, top_cover_high) - math.max(close, top_cover_low)) / top_cover_range >= cover_fraction
+buy_cover = use_cover and bottom_armed and bottom_age <= cover_window and bull_bar and bottom_cover_range > 0 and (math.min(close, bottom_cover_high) - math.max(open, bottom_cover_low)) / bottom_cover_range >= cover_fraction
 
 // Either shape marks, and the first one to fire spends the push.
 sell_signal = sell_run or sell_cover
@@ -236,16 +347,27 @@ if sell_signal
 if buy_signal
     bottom_armed := false
 
+// Arming is also where each shape's ruler is measured out, once, from the
+// force bar that is being armed — see the state block above for why storing
+// it is safe and what it saves.
 if top_anchor
     top_armed := true
     top_age := 0
-    top_high := high
-    top_low := low
+    top_run_high := run_body_only ? math.max(open, close) : high
+    top_run_low := run_body_only ? math.min(open, close) : low
+    top_run_range := top_run_high - top_run_low
+    top_cover_high := cover_body_only ? math.max(open, close) : high
+    top_cover_low := cover_body_only ? math.min(open, close) : low
+    top_cover_range := top_cover_high - top_cover_low
 if bottom_anchor
     bottom_armed := true
     bottom_age := 0
-    bottom_high := high
-    bottom_low := low
+    bottom_run_high := run_body_only ? math.max(open, close) : high
+    bottom_run_low := run_body_only ? math.min(open, close) : low
+    bottom_run_range := bottom_run_high - bottom_run_low
+    bottom_cover_high := cover_body_only ? math.max(open, close) : high
+    bottom_cover_low := cover_body_only ? math.min(open, close) : low
+    bottom_cover_range := bottom_cover_high - bottom_cover_low
 
 // ------------------------------------------------------------------- marks
 
@@ -256,3 +378,17 @@ buy_mark = buy_signal and barstate.isconfirmed
 
 plotshape(show_top and sell_mark, "Exhaustion reversal: sell", style=shape.triangledown, location=location.abovebar, color=color.red)
 plotshape(show_bottom and buy_mark, "Exhaustion reversal: buy", style=shape.triangleup, location=location.belowbar, color=color.teal)
+
+// ------------------------------------------------------------------- paint
+
+// The diagnostic, and the only thing in this script that draws on a bar that
+// produced no signal. `na` on every other bar leaves the chart's own candle
+// colours alone — an unpainted bar is this script saying "not a push", which
+// is the answer on the large majority of them.
+paint = na
+if paint_force and top_anchor
+    paint := color.orange
+else if paint_force and bottom_anchor
+    paint := color.blue
+
+barcolor(paint)

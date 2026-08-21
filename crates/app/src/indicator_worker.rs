@@ -125,6 +125,66 @@ impl IndicatorSource {
                             values.to_vec(),
                         )
                     }
+                    // A slot whose first compile failed carries no values
+                    // at all (`values: Vec::new()`), and `Reload` builds with
+                    // exactly those. Nothing was ever saved there, so it is
+                    // not a parameter set being dropped — warning about it
+                    // would fire on every typo-then-fix cycle.
+                    Some(values) if !values.is_empty() => {
+                        // The script declares a different number of inputs
+                        // than these values were saved against — an edited or
+                        // upgraded script. Keep what still lines up instead of
+                        // dropping the lot: a saved value is taken when the
+                        // input now at its index still has its type, and every
+                        // other input takes its declared default. Discarding
+                        // all of them would mean that adding one knob to a
+                        // script came back as a chart with every OTHER knob
+                        // reset — which is exactly how "I reopened the app and
+                        // my settings were gone" happens.
+                        //
+                        // This is the per-cell read the preset path already
+                        // does (`App::load_indicator_preset`), and one rule
+                        // makes both safe: new inputs are APPENDED. An input
+                        // inserted in the middle shifts every later value onto
+                        // the wrong knob, which is why a script's input order
+                        // is pinned by a test.
+                        let bound: Vec<InputValue> = compiled
+                            .inputs
+                            .iter()
+                            .enumerate()
+                            .map(|(index, spec)| {
+                                let default = spec.default_value();
+                                match values.get(index) {
+                                    Some(saved)
+                                        if std::mem::discriminant(saved)
+                                            == std::mem::discriminant(&default) =>
+                                    {
+                                        saved.clone()
+                                    }
+                                    _ => default,
+                                }
+                            })
+                            .collect();
+                        // Which values survived is the one thing the trader
+                        // cannot read off the dialog afterwards.
+                        let kept = bound
+                            .iter()
+                            .zip(values)
+                            .filter(|(bound, saved)| bound == saved)
+                            .count();
+                        tracing::warn!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "INDICATOR_INPUTS_COUNT_CHANGED",
+                            script = %name,
+                            saved = values.len(),
+                            declared = compiled.inputs.len(),
+                            kept,
+                            action = "kept_what_still_lines_up",
+                            "the script's input list changed since these settings were saved"
+                        );
+                        quantick_pine::ScriptIndicator::with_inputs(compiled, text.clone(), bound)
+                    }
                     _ => quantick_pine::ScriptIndicator::new(compiled, text.clone()),
                 })),
                 Err(errors) => Err(errors
@@ -862,6 +922,73 @@ mod tests {
         (bars, builder.partial().cloned())
     }
 
+    /// A script with three inputs, the third of which is imagined to have
+    /// been added after the trader saved their settings for the first two.
+    fn grown_script() -> IndicatorSource {
+        IndicatorSource::Script {
+            name: "grown.pine".to_owned(),
+            text: concat!(
+                "//@version=5\n",
+                "indicator(\"Grown\", overlay=true)\n",
+                "len = input.int(20, \"len\")\n",
+                "factor = input.float(1.5, \"factor\")\n",
+                "added = input.bool(false, \"added\")\n",
+                "plot(close)\n"
+            )
+            .to_owned(),
+        }
+    }
+
+    /// Saved indicator settings are stored positionally, so a script that
+    /// gained an input arrives with fewer saved values than declared inputs.
+    /// Binding only on an exact count match meant the trader lost the
+    /// settings for every input that WAS still there — one added knob, and a
+    /// whole tuned indicator came back at its defaults.
+    #[test]
+    fn a_script_that_gained_an_input_keeps_the_values_saved_for_the_older_ones() {
+        let saved = vec![InputValue::Int(50), InputValue::Float(2.5)];
+        let built = grown_script()
+            .build_with(Some(&saved))
+            .expect("the script compiles");
+        assert_eq!(
+            built.input_values(),
+            vec![
+                InputValue::Int(50),
+                InputValue::Float(2.5),
+                InputValue::Bool(false),
+            ],
+            "the two saved values survive at their own indices and the input added since takes its declared default"
+        );
+    }
+
+    /// The type check is what keeps the per-cell bind honest: a value that no
+    /// longer matches the input at its index is not carried over, it is
+    /// dropped for that input's default — and its neighbours are unaffected.
+    ///
+    /// (Only this path checks types. When the counts DO match, the values go
+    /// through untouched — `with_inputs` guards the count and nothing else —
+    /// so a script that changed an input's type without changing how many it
+    /// has still binds the old value. Pre-existing, and its own fix.)
+    #[test]
+    fn a_saved_value_whose_input_changed_type_falls_back_alone() {
+        let saved = vec![
+            InputValue::Int(50),
+            InputValue::Bool(true), // a float lives at this index now
+        ];
+        let built = grown_script()
+            .build_with(Some(&saved))
+            .expect("the script compiles");
+        assert_eq!(
+            built.input_values(),
+            vec![
+                InputValue::Int(50),
+                InputValue::Float(1.5),
+                InputValue::Bool(false),
+            ],
+            "the mistyped cell falls back alone; the value before it survives"
+        );
+    }
+
     /// A slider drag enqueues one `SetInputs` per UI frame; only the newest
     /// per slot may run, and other slots' requests must survive untouched.
     #[test]
@@ -1394,7 +1521,7 @@ plot(close * k)
         assert_eq!(
             view.input_values[1],
             InputValue::Source(SourceId::Hl2),
-            "the source cell is bound too — applying `Close` to an instance              that already had it proved nothing"
+            "the source cell is bound too — applying `Close` to an instance that already had it proved nothing"
         );
         assert_eq!(
             format!("{:?}", view.columns[0]),
