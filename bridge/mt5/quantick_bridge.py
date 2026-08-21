@@ -497,7 +497,7 @@ class Session:
         """
         now_s = int(time.time() + self.offset_s)
         from_s = now_s - self.args.backfill_minutes * 60
-        ticks = mt5.copy_ticks_range(self.symbol, from_s, now_s, mt5.COPY_TICKS_ALL)
+        ticks = mt5.copy_ticks_range(self.symbol, from_s, now_s, self.tick_flags())
         available = 0 if ticks is None else len(ticks)
         if ticks is None:
             log("BRIDGE_BACKFILL_FAILED", mt5_error=str(mt5.last_error()))
@@ -665,14 +665,7 @@ class Session:
         window forever; paging from this always advances.
         """
         floor_ms = self.earliest_tick_ms()
-        # An exchange tape's quote updates outnumber its prints, and quantick
-        # discards every tick without a LAST bit. Asking for trades only makes
-        # the page size mean what its label says ("trades per load") instead of
-        # delivering a fraction of it. A broker-quoted symbol prints nothing, so
-        # there the quotes *are* the data and all ticks are wanted.
-        flags = (
-            mt5.COPY_TICKS_TRADE if self.tape == "trades" else mt5.COPY_TICKS_ALL
-        )
+        flags = self.tick_flags()
         pages: list = []
         held = 0
         cursor_ms = before_ms
@@ -1026,12 +1019,30 @@ class Session:
 
     # -- pumps ------------------------------------------------------------
 
+    def tick_flags(self) -> int:
+        """Which ticks this session asks the terminal for.
+
+        quantick charts a printing venue from `last` and `volume` and drops
+        every tick without a LAST bit (`crates/feed-mt5/src/map.rs`), so a
+        quote-only tick is data the other end deletes on arrival.
+
+        How much that saves depends on the broker. On the one measured here it
+        saves nothing: the committed WIN$N recording (1500 live ticks, pulled
+        with COPY_TICKS_ALL) is 100% flags=1080 — every tick carries LAST.
+        It is still the right request, and the same reasoning the load-older
+        path below already runs on: free where there is nothing to filter, and
+        a bound on the wire where the broker does quote separately. A
+        broker-quoted symbol prints nothing at all, so there the quotes *are*
+        the data and every tick is wanted.
+        """
+        return mt5.COPY_TICKS_TRADE if self.tape == "trades" else mt5.COPY_TICKS_ALL
+
     def pump_ticks(self) -> None:
         """Forward every tick newer than the cursor, exactly once."""
         # The request floor is whole seconds; the (msc, count-at-msc) cursor
         # below is what actually guarantees no tick is sent twice.
         ticks = mt5.copy_ticks_from(
-            self.symbol, self.cursor_msc // 1000, 4096, mt5.COPY_TICKS_ALL
+            self.symbol, self.cursor_msc // 1000, 4096, self.tick_flags()
         )
         if ticks is None or not len(ticks):
             return

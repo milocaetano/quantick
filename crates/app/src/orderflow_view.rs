@@ -114,6 +114,13 @@ pub struct OrderflowView {
     preset_name_draft: String,
     /// Last preset action (or failure), shown verbatim in the panel.
     preset_status: Option<String>,
+    /// Scripted tape starvation: prints stop reaching the tape this many
+    /// milliseconds after the first one, while the book keeps arriving.
+    /// `None` — always, outside a capture run — feeds the tape every print.
+    starve_tape_after_ms: Option<i64>,
+    /// Instant of the first print this view ever saw, the starvation clock's
+    /// zero. Read only when the hook above is set.
+    first_print_ms: Option<i64>,
 }
 
 impl OrderflowView {
@@ -162,6 +169,8 @@ impl OrderflowView {
             presets_source,
             preset_name_draft,
             preset_status,
+            starve_tape_after_ms: None,
+            first_print_ms: None,
         }
     }
 
@@ -528,6 +537,31 @@ impl OrderflowView {
         self.config.live_lane.window_ms(reserved_span_ms(closed))
     }
 
+    /// How old the newest aggression on the tape is, against the instant the
+    /// lane's right edge stands for.
+    ///
+    /// The lane's edge follows the newer of the book clock and the print
+    /// clock, and only the print clock places bubbles. When the book runs
+    /// ahead — a quiet stretch with a busy book, or prints held up between the
+    /// venue and this process — every bubble is drawn this far left of the
+    /// edge, and past the lane's own window none is drawn on the tape at all.
+    /// The axis under the tape says so rather than letting an empty tape read
+    /// as a market that stopped trading.
+    ///
+    /// `None` also when no pane draws the bubbles: an empty tape the trader
+    /// emptied themselves needs no explanation.
+    #[must_use]
+    pub fn tape_age(&self) -> Option<crate::orderflow::TapeAge> {
+        // Asked only when a pane still draws the bubbles. The depth map and
+        // the aggression layer switch apart, so a tape showing liquidity with
+        // its bubbles deliberately off has no missing marks to explain —
+        // warning about them there is the caption inventing a problem.
+        if !self.config.aggressions_visible_anywhere() {
+            return None;
+        }
+        self.published.health.tape_age
+    }
+
     /// Name of the preset the panel currently wears.
     #[cfg(test)]
     pub(crate) fn active_preset_for_test(&self) -> &str {
@@ -571,6 +605,11 @@ impl OrderflowView {
         self.config.enabled = false;
         self.pending_capture_grouping_previous = None;
         self.published = BookPublished::initial();
+        // The starvation clock is per market, like the history it starves.
+        // Carrying the old symbol's zero across would open the new one on a
+        // tape that is already dead — the capture hook would be photographing
+        // its own leftovers instead of the state it was asked for.
+        self.first_print_ms = None;
         self.worker
             .send(BookCommand::ResetForSymbol(self.symbol.clone()));
     }
@@ -639,9 +678,40 @@ impl OrderflowView {
 
     /// Record a factual aggregate trade for the aggression overlay.
     pub fn record_trade(&mut self, trade: &Trade) {
-        if self.config.any_layer_enabled() {
-            self.worker.send(BookCommand::Trade(trade.clone()));
+        if !self.config.any_layer_enabled() || self.starved_at(trade.timestamp_ms) {
+            return;
         }
+        self.worker.send(BookCommand::Trade(trade.clone()));
+    }
+
+    /// Whether the scripted starvation hook is holding this print back.
+    ///
+    /// Off by default and free when off: the option is `None` outside a
+    /// capture run, so a live tape pays one `is_some` per print.
+    fn starved_at(&mut self, timestamp_ms: i64) -> bool {
+        let Some(after_ms) = self.starve_tape_after_ms else {
+            return false;
+        };
+        let first = *self.first_print_ms.get_or_insert(timestamp_ms);
+        timestamp_ms.saturating_sub(first) > after_ms
+    }
+
+    /// Stop feeding the tape once the session is `after_ms` old, leaving the
+    /// book running.
+    ///
+    /// The scripted way to reach a starved tape. A tape whose newest mark has
+    /// drifted off the lane is a *market* state — a book that keeps changing
+    /// while nothing prints — so no setting produces it and no capture can
+    /// wait for one to happen. This withholds prints from the tape through the
+    /// same call the feed uses, rather than forging a number into the caption:
+    /// the axis then reports the age it genuinely observes, and a screenshot
+    /// shows what the trader's own chart would show.
+    ///
+    /// The bars, the indicators and the simulator are untouched — they are fed
+    /// upstream of here — which is exactly right: the candles keep their
+    /// prints, the tape loses them, and that contrast is the thing under test.
+    pub fn set_starve_tape_after_ms(&mut self, after_ms: i64) {
+        self.starve_tape_after_ms = Some(after_ms.max(0));
     }
 
     /// Forward one feed event and its UI observation time to the book thread.
@@ -2648,6 +2718,152 @@ mod tests {
         view.flush_for_test();
         let live = paint(&mut view);
         assert!(!live.shapes.is_empty());
+    }
+
+    /// The scripted starved tape produces the real thing, not a caption.
+    ///
+    /// The state this hook exists for — bubbles trailing the lane's right edge
+    /// and, past its window, gone from it — is a market condition: a book that
+    /// keeps changing while nothing prints. A capture cannot wait for one, and
+    /// forging the number into the axis would photograph a claim rather than a
+    /// chart. So the hook withholds prints from the tape through the feed's
+    /// own call, and the age the chart reports is one it genuinely observed.
+    #[test]
+    fn the_scripted_starved_tape_ages_for_real() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.set_enabled(true, 10);
+        view.set_bubbles_enabled(true);
+        view.handle_depth_event(snapshot_event(10));
+        // Prints stop reaching the tape two seconds after the first one.
+        view.set_starve_tape_after_ms(2_000);
+
+        let print_at = |view: &mut OrderflowView, agg_id: u64, timestamp_ms: i64| {
+            view.record_trade(&Trade {
+                agg_id,
+                timestamp_ms,
+                price: Decimal::from(100),
+                quantity: Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            });
+        };
+        print_at(&mut view, 1, 10_000);
+        print_at(&mut view, 2, 12_000);
+        // Past the window: withheld, exactly as a market that stopped printing
+        // would have withheld it.
+        print_at(&mut view, 3, 14_000);
+        print_at(&mut view, 4, 20_000);
+        view.flush_for_test();
+        assert_eq!(
+            view.health().aggression_count,
+            2,
+            "the tape keeps what arrived before the hook's cutoff"
+        );
+
+        // The book carries on, which is the half that makes the gap visible.
+        view.handle_depth_event(DepthEvent::Update {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 10,
+            event_time_ms: 26_000,
+            delta: BookDelta::new(
+                11,
+                11,
+                vec![BookLevel::new(Decimal::from(99), Decimal::from(7)).unwrap()],
+                Vec::new(),
+            ),
+        });
+        view.flush_for_test();
+        assert_eq!(
+            view.tape_age(),
+            Some(crate::orderflow::TapeAge::Behind(14_000)),
+            "the chart reports the age it observed: 26 s of book, 12 s of tape"
+        );
+
+        // And with the hook unset the same view feeds every print, so nothing
+        // a capture run does can leak into an ordinary session.
+        let mut ordinary = OrderflowView::new("BTCUSDT");
+        ordinary.set_enabled(true, 10);
+        ordinary.set_bubbles_enabled(true);
+        ordinary.handle_depth_event(snapshot_event(10));
+        for (agg_id, timestamp_ms) in [(1, 10_000), (2, 12_000), (3, 14_000), (4, 20_000)] {
+            print_at(&mut ordinary, agg_id, timestamp_ms);
+        }
+        ordinary.flush_for_test();
+        assert_eq!(ordinary.health().aggression_count, 4);
+        assert_eq!(
+            ordinary.tape_age(),
+            None,
+            "the tape is ahead of the book: nothing to declare"
+        );
+
+        // And with the bubbles switched off on every pane the question is not
+        // asked at all: a tape the trader emptied has no missing marks to
+        // explain, and a warn-coloured caption there invents a problem.
+        let mut depth_only = OrderflowView::new("BTCUSDT");
+        depth_only.set_enabled(true, 10);
+        depth_only.set_bubbles_enabled(true);
+        depth_only.handle_depth_event(snapshot_event(10));
+        print_at(&mut depth_only, 1, 6_000);
+        depth_only.handle_depth_event(DepthEvent::Update {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 10,
+            event_time_ms: 20_000,
+            delta: BookDelta::new(
+                11,
+                11,
+                vec![BookLevel::new(Decimal::from(99), Decimal::from(7)).unwrap()],
+                Vec::new(),
+            ),
+        });
+        depth_only.flush_for_test();
+        assert!(
+            depth_only.tape_age().is_some(),
+            "with the bubbles on the gap is worth declaring"
+        );
+        depth_only.set_bubbles_enabled(false);
+        depth_only.set_lane_bubbles_enabled(false);
+        assert_eq!(
+            depth_only.tape_age(),
+            None,
+            "no pane draws the bubbles, so nothing explains their absence"
+        );
+    }
+
+    /// The starvation clock belongs to the market it is starving.
+    ///
+    /// A capture run that switches symbol would otherwise open the new one on
+    /// a tape that is already dead — the hook photographing the leftovers of
+    /// the market before it rather than the state it was asked for.
+    #[test]
+    fn switching_symbol_restarts_the_scripted_starvation() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.set_bubbles_enabled(true);
+        view.set_starve_tape_after_ms(2_000);
+        let print_at = |view: &mut OrderflowView, agg_id: u64, timestamp_ms: i64| {
+            view.record_trade(&Trade {
+                agg_id,
+                timestamp_ms,
+                price: Decimal::from(100),
+                quantity: Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            });
+        };
+        print_at(&mut view, 1, 10_000);
+        print_at(&mut view, 2, 20_000);
+        view.flush_for_test();
+        assert_eq!(view.health().aggression_count, 1, "the cutoff bit");
+
+        view.reset_for_symbol("WINV26");
+        view.set_bubbles_enabled(true);
+        // The same instants that were past the old cutoff are the new tape's
+        // first seconds, and they arrive.
+        print_at(&mut view, 3, 20_000);
+        print_at(&mut view, 4, 21_500);
+        view.flush_for_test();
+        assert_eq!(
+            view.health().aggression_count,
+            2,
+            "the new market's tape opened starved"
+        );
     }
 
     #[test]

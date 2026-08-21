@@ -35,10 +35,14 @@ input int    InpBookMinIntervalMs= 20;          // Min ms between book images (0
 
 #define SCHEMA_VERSION 1
 #define BRIDGE_NAME    "quantick-mt5-bridge"
-#define BRIDGE_VERSION "0.2.0"
+#define BRIDGE_VERSION "0.3.0"
 // How far back to look for one executed trade before declaring a symbol
 // tape-less. See DetectTape() for why this errs long.
 #define TAPE_PROBE_DAYS 30
+// Flush the outgoing buffer once it reaches this many characters. Big enough
+// that a busy second costs a handful of syscalls instead of thousands, small
+// enough that a burst never grows an unbounded string on the terminal's heap.
+#define OUT_BUFFER_FLUSH_CHARS 16384
 
 int      g_socket           = INVALID_HANDLE;
 ulong    g_seq              = 0; // per-session tick sequence, from 1
@@ -47,6 +51,12 @@ long     g_last_msc         = 0; // cursor: newest tick time already pumped
 int      g_sent_at_last_msc = 0; // ticks already sent sharing g_last_msc
 datetime g_last_heartbeat   = 0;
 datetime g_next_retry       = 0;
+string   g_out              = ""; // queued lines, written by FlushOut
+ulong    g_sends            = 0;  // SocketSend batches this session
+// Whether this symbol prints executed trades (DetectTape). It decides what
+// CopyTicks is asked for: on a printing venue quantick reads `last`/`volume`
+// and discards every quote-only tick, so sending them is pure delay.
+bool     g_tape_trades      = false;
 
 bool     g_book_subscribed  = false; // MarketBookAdd succeeded
 ulong    g_book_seq         = 0;     // per-session book image number, from 1
@@ -65,23 +75,42 @@ void LogEvent(const string event_code, const string detail)
   }
 
 //+------------------------------------------------------------------+
-//| Send one NDJSON line. False = socket is broken.                   |
+//| Write everything buffered so far. False = socket is broken.       |
 //|                                                                   |
 //| SocketSend runs on the terminal's main thread and may write only  |
 //| part of the buffer (send timeout, full OS buffer — quantick not   |
 //| reading). Each attempt is bounded by SocketTimeouts (set at       |
-//| connect); the remainder is retried so a slow read never corrupts  |
-//| line framing, and zero progress means the socket is gone.         |
+//| connect); the remainder is retried while progress continues.      |
+//|                                                                    |
+//| Zero progress means the socket is gone, and the peer may already  |
+//| hold half a line. That is not repaired here — it is repaired by   |
+//| ending the session, which the caller does on false: the decoder   |
+//| discards the fragment with the socket and the reconnect re-sends  |
+//| the backfill. The buffer therefore survives until the write does. |
 //+------------------------------------------------------------------+
-bool SendLine(string payload)
+bool FlushOut()
   {
-   if(g_socket == INVALID_HANDLE)
-      return(false);
-   payload += "\n";
-   uchar bytes[];
-   int len = StringToCharArray(payload, bytes, 0, WHOLE_ARRAY, CP_UTF8) - 1;
-   if(len <= 0)
+   if(StringLen(g_out) <= 0)
       return(true);
+   if(g_socket == INVALID_HANDLE)
+     {
+      g_out = "";
+      return(false);
+     }
+   uchar bytes[];
+   int len = StringToCharArray(g_out, bytes, 0, WHOLE_ARRAY, CP_UTF8) - 1;
+   // A non-empty buffer that will not convert is a broken session, not an
+   // empty write. Returning true here used to throw the batch away and tell
+   // the caller it had been sent: the socket stayed up, quantick got a hole
+   // in its tape with no BRIDGE_DISCONNECTED to explain it, and the chart
+   // showed the exact symptom this whole change exists to remove. One line
+   // was the old risk; a full buffer is now up to sixteen thousand characters
+   // of it.
+   if(len <= 0)
+     {
+      g_out = "";
+      return(false);
+     }
    int sent = 0;
    while(sent < len)
      {
@@ -94,11 +123,53 @@ bool SendLine(string payload)
          ArrayCopy(rest, bytes, 0, sent, len - sent);
          wrote = SocketSend(g_socket, rest, len - sent);
         }
+      // Zero progress after a partial write means the peer has the front half
+      // of a line and will never get the rest. The buffer is dropped and the
+      // session ends, which is what repairs it: the reconnect re-sends the
+      // backfill, and the decoder throws away the fragment with the socket.
+      // Keeping the session alive here is what would leave the framing broken.
       if(wrote <= 0)
+        {
+         g_out = "";
          return(false);
+        }
       sent += wrote;
      }
+   // Cleared only once every byte is out. Anything short of that is a failure
+   // the caller turns into a disconnect, and the disconnect clears it.
+   g_out = "";
+   g_sends++;
    return(true);
+  }
+
+//+------------------------------------------------------------------+
+//| Queue one NDJSON line. False = socket is broken.                  |
+//|                                                                   |
+//| Queued rather than written, because SocketSend is a syscall on    |
+//| the terminal's *main thread*, and every millisecond spent there   |
+//| is a millisecond it is not reading new ticks. Each pass still     |
+//| flushes what it queued, so a pass carrying one tick still costs   |
+//| one write: the saving is a burst's, not a quiet tape's, and a     |
+//| burst is the only time the cost was worth paying attention to.    |
+//| The backlog that builds shows up on the chart as a tape running   |
+//| behind its own book — the book restamps itself on the way out     |
+//| (see SendBook), so only the prints carry the delay, and they      |
+//| drift left until they fall out of the lane entirely.              |
+//|                                                                   |
+//| Framing is unchanged: the buffer is a concatenation of complete   |
+//| newline-terminated lines, so a flush lands on a line boundary     |
+//| whatever the OS accepted. It is capped so one burst cannot grow   |
+//| an unbounded string inside the terminal.                          |
+//+------------------------------------------------------------------+
+bool SendLine(string payload)
+  {
+   if(g_socket == INVALID_HANDLE)
+      return(false);
+   StringAdd(g_out, payload);
+   StringAdd(g_out, "\n");
+   if(StringLen(g_out) < OUT_BUFFER_FLUSH_CHARS)
+      return(true);
+   return(FlushOut());
   }
 
 //+------------------------------------------------------------------+
@@ -120,6 +191,10 @@ void Disconnect(const string why)
       SocketClose(g_socket);
       g_socket = INVALID_HANDLE;
      }
+   // Whatever was queued belongs to the session that just ended. Carrying it
+   // into the next one would put half a dead session's lines in front of the
+   // new hello, which the decoder reads as a protocol violation.
+   g_out = "";
    g_next_retry = TimeLocal() + InpRetrySeconds;
    LogEvent("BRIDGE_DISCONNECTED",
             StringFormat("\"reason\":\"%s\",\"retry_in_s\":%d", why, InpRetrySeconds));
@@ -256,13 +331,41 @@ string DetectTape()
    MqlTick probe[];
    ulong from_msc = (ulong)(TimeTradeServer() - TAPE_PROBE_DAYS * 24 * 60 * 60) * 1000;
    int   found    = CopyTicks(_Symbol, probe, COPY_TICKS_TRADE, from_msc, 1);
-   string tape    = (found > 0) ? "trades" : "quotes";
+   g_tape_trades  = (found > 0);
+   string tape    = g_tape_trades ? "trades" : "quotes";
    LogEvent("BRIDGE_TAPE_DETECTED",
             StringFormat("\"tape\":\"%s\",\"probe_days\":%d,\"trade_ticks_found\":%d,"
                          "\"note\":\"quotes = the broker prices this symbol but "
                          "prints no trades\"",
                          tape, TAPE_PROBE_DAYS, (found > 0) ? found : 0));
    return(tape);
+  }
+
+//+------------------------------------------------------------------+
+//| Which ticks this session streams.                                 |
+//|                                                                   |
+//| A printing venue is charted from `last` and `volume` alone: the   |
+//| feed's mapper turns every tick without the LAST flag into a       |
+//| QuoteOnly and drops it (crates/feed-mt5/src/map.rs), so asking    |
+//| the terminal for one is asking it to fill a socket with data the  |
+//| other end deletes on arrival.                                     |
+//|                                                                    |
+//| How much that saves is per broker, and on the one measured here   |
+//| it saves nothing: the committed WIN$N recording (1500 live ticks, |
+//| pulled with COPY_TICKS_ALL) is 100% flags=1080 — every tick        |
+//| carries LAST and there are no quote-only ticks to drop. This is   |
+//| still the right request: it is what the same bridge's load-older  |
+//| path already asks for, it costs nothing where there is nothing to |
+//| filter, and it bounds the wire on a broker that does quote        |
+//| separately. A quote-only symbol is charted from the quotes        |
+//| themselves, so there they are the whole tape and stay.            |
+//+------------------------------------------------------------------+
+uint TickFlagsWanted()
+  {
+   // Cast explicitly: COPY_TICKS_ALL is -1 and the parameter is a uint, so
+   // leaving the conversion implicit is a compiler warning about the very
+   // value that means "everything".
+   return(g_tape_trades ? (uint)COPY_TICKS_TRADE : (uint)COPY_TICKS_ALL);
   }
 
 //+------------------------------------------------------------------+
@@ -273,6 +376,10 @@ bool StartSession()
    g_seq              = 0;
    g_ticks_sent       = 0;
    g_sent_at_last_msc = 0;
+   // Reset beside the counter it is read against: BRIDGE_TAPE_STATS diagnoses
+   // by comparing socket_writes to ticks_sent, and a writes count that
+   // survived a reconnect while the ticks count restarted inverts the reading.
+   g_sends            = 0;
    g_book_seq         = 0;
    g_book_sent        = 0;
    g_book_skipped     = 0;
@@ -302,7 +409,13 @@ bool StartSession()
       "\"tape\":\"%s\"%s}",
       SCHEMA_VERSION, BRIDGE_NAME, BRIDGE_VERSION,
       _Symbol, basis, _Digits, ServerUtcOffsetSeconds(), DetectTape(), depth);
-   if(!SendLine(hello))
+   // Written, not merely queued: the feed's contract is that a bridge says
+   // hello *the moment it connects* (crates/feed-mt5/src/stream.rs), and it
+   // gives the greeting ten seconds before dropping the connection. The next
+   // statement is a CopyTicksRange that blocks while a cold terminal syncs
+   // tick history from the trade server — exactly the kind of wait that would
+   // spend that budget with the hello still sitting in a buffer.
+   if(!SendLine(hello) || !FlushOut())
       return(false);
 
    // Backfill: recent ticks so the chart opens populated. An empty block is
@@ -310,7 +423,7 @@ bool StartSession()
    long now_msc  = (long)TimeTradeServer() * 1000;
    long from_msc = now_msc - (long)InpBackfillMinutes * 60 * 1000;
    MqlTick history[];
-   int fetched = CopyTicksRange(_Symbol, history, COPY_TICKS_ALL, from_msc, now_msc);
+   int fetched = CopyTicksRange(_Symbol, history, TickFlagsWanted(), from_msc, now_msc);
    if(fetched < 0)
      {
       LogEvent("BRIDGE_BACKFILL_FAILED",
@@ -322,7 +435,7 @@ bool StartSession()
    for(int i = 0; i < fetched; i++)
       if(!SendTick(history[i]))
          return(false);
-   if(!SendLine("{\"type\":\"backfill_end\"}"))
+   if(!SendLine("{\"type\":\"backfill_end\"}") || !FlushOut())
       return(false);
 
    // Position the live cursor after the last history tick.
@@ -386,7 +499,7 @@ void Pump()
    if(g_socket == INVALID_HANDLE)
       return;
    MqlTick ticks[];
-   int n = CopyTicks(_Symbol, ticks, COPY_TICKS_ALL, (ulong)g_last_msc, 4096);
+   int n = CopyTicks(_Symbol, ticks, TickFlagsWanted(), (ulong)g_last_msc, 4096);
    if(n <= 0)
       return;
    int at_cursor_seen = 0;
@@ -418,6 +531,11 @@ void Pump()
          at_cursor_seen = 0;
         }
      }
+   // Whatever this pass queued goes out now, in one write. Leaving it for the
+   // next event would trade syscalls for exactly the latency this buffer
+   // exists to remove.
+   if(!FlushOut())
+      Disconnect("send failed");
   }
 
 //+------------------------------------------------------------------+
@@ -443,6 +561,25 @@ void MaybeHeartbeat()
       LogEvent("BRIDGE_BOOK_STATS",
                StringFormat("\"images_sent\":%I64u,\"images_skipped\":%I64u",
                             g_book_sent, g_book_skipped));
+   // What the tape cost the terminal's main thread. `socket_writes` well
+   // below `ticks_sent` is the batching working; the two converging again
+   // means the flush threshold is being reached every pass, which is the
+   // shape a genuinely overloaded tape has.
+   // Millisecond clock first. TimeTradeServer() is whole seconds, so
+   // subtracting a millisecond cursor from it reports up to 999 ms of lag
+   // that does not exist — and reads negative on a tape that is current.
+   // SYMBOL_TIME_MSC is the same instant at the cursor's own resolution; the
+   // coarse clock only stands in when a quiet book has stalled it, which is
+   // the fallback SendBook makes for the same reason.
+   long now_msc = (long)SymbolInfoInteger(_Symbol, SYMBOL_TIME_MSC);
+   long coarse_msc = (long)TimeTradeServer() * 1000;
+   if(coarse_msc > now_msc)
+      now_msc = coarse_msc;
+   LogEvent("BRIDGE_TAPE_STATS",
+            StringFormat("\"tape\":\"%s\",\"ticks_sent\":%I64u,\"socket_writes\":%I64u,"
+                         "\"tick_lag_ms\":%I64d",
+                         (g_tape_trades ? "trades" : "quotes"), g_ticks_sent, g_sends,
+                         now_msc - g_last_msc));
   }
 
 //+------------------------------------------------------------------+
@@ -478,6 +615,7 @@ void OnDeinit(const int reason)
    if(g_socket != INVALID_HANDLE)
      {
       SendLine("{\"type\":\"bye\",\"reason\":\"deinit\"}");
+      FlushOut();
       SocketClose(g_socket);
       g_socket = INVALID_HANDLE;
      }
@@ -503,7 +641,7 @@ void OnBookEvent(const string &symbol)
   {
    if(symbol != _Symbol)
       return;
-   if(!SendBook())
+   if(!SendBook() || !FlushOut())
       Disconnect("book send failed");
   }
 
@@ -518,5 +656,7 @@ void OnTimer()
      }
    Pump();
    MaybeHeartbeat();
+   if(!FlushOut())
+      Disconnect("send failed");
   }
 //+------------------------------------------------------------------+

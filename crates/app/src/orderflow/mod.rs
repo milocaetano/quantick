@@ -23,7 +23,7 @@ pub use config::{
     MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE,
     MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
     MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms,
-    lane_window_label, same_lane_window,
+    lane_lag_label, lane_window_label, same_lane_window,
 };
 #[allow(unused_imports)]
 pub use grouping::{
@@ -33,7 +33,7 @@ pub use grouping::{
 #[allow(unused_imports)]
 pub use history::{
     Aggression, AggressorSide, CoverageGap, CoverageSegment, GroupingReset, HistoryCounters,
-    HistoryError, HistoryStatus, LiquidityHistory, LiquidityRun, RestingSide,
+    HistoryError, HistoryStatus, LiquidityHistory, LiquidityRun, RestingSide, TapeAge,
 };
 #[allow(unused_imports)]
 pub use interaction::{

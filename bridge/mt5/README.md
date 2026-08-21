@@ -76,6 +76,13 @@ event-accurate book updates.
 
 ## Install the EA (once)
 
+> **Already running an older EA?** Recompile and re-drag it. From **0.3.0** the
+> bridge asks a printing venue for executed trades only and writes them in
+> batches instead of one socket call per tick. Both cut delay that used to show
+> up on the chart as aggression bubbles trailing the tape's right edge — see
+> *What the tape costs the terminal* below. quantick reports the version it is
+> talking to in `MT5_HELLO_OK` (`bridge_version`).
+
 1. **Compile** (either way):
    - MetaEditor: open `QuantickBridge.mq5`, press F7; or
    - CLI: `MetaEditor64.exe /compile:"<repo>\bridge\mt5\QuantickBridge.mq5"`
@@ -102,6 +109,38 @@ event-accurate book updates.
    what that session has.
 3. The Experts tab prints `BRIDGE_SESSION_STARTED` with the backfill count;
    quantick logs `MT5_HELLO_OK` and the chart populates.
+
+## What the tape costs the terminal
+
+`SocketSend` runs on the terminal's *main thread* — the same thread that picks
+up new ticks. Two things used to make a busy tape expensive there, and both
+showed up on the chart the same way: the bubbles falling behind the tape's
+right edge, and past the lane's window disappearing from it altogether.
+
+- **Quote updates travelled too.** quantick charts a printing venue from `last`
+  and `volume` and discards every tick without a LAST bit, so a quote-only tick
+  is data the other end deletes on arrival. The EA now asks for
+  `COPY_TICKS_TRADE` whenever `DetectTape` says the symbol prints. **How much
+  this saves is per broker, and on the one measured here it saves nothing**:
+  the committed WIN$N recording is 100% `flags=1080`, every tick carrying LAST.
+  It is kept because it is free where there is nothing to filter and a bound on
+  the wire where a broker does quote separately. A broker-quoted symbol is
+  unchanged: there the quotes are the whole tape.
+- **One syscall per tick.** Lines are queued and written in batches now, capped
+  so a burst never grows an unbounded string, and flushed at the end of every
+  pass so batching never becomes latency of its own. **The flush-per-pass is
+  the point and also the limit**: when the terminal hands over one tick per
+  `OnTick`, one line is queued and one write goes out, exactly as before. The
+  saving is real only when a pass carries several ticks — a burst, an opening
+  auction, or the 200 ms `OnTimer` sweeping up what `OnTick` did not. At the 33
+  ticks/s the WIN$N recording averages there is little to batch, and little
+  being delayed either.
+
+`BRIDGE_TAPE_STATS` reports it every heartbeat: `ticks_sent` against
+`socket_writes` (well apart is the batching working), plus `tick_lag_ms` — how
+far the tick cursor sits behind the server clock. On the quantick side the same
+distance appears as `tape_newest_print_age_ms` in `APP_HEALTH_SUMMARY`, and on
+the chart as the caption under the tape.
 
 ## Depth of Market (book heatmap)
 

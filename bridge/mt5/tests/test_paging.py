@@ -48,6 +48,8 @@ class FakeTerminal:
         self.ticks: list[dict] = []
         # Every (from_s, to_s, flags) the walk asked for.
         self.tick_calls: list[tuple[int, int, int]] = []
+        # Every (from_s, count, flags) the live pump asked for.
+        self.from_calls: list[tuple[int, int, int]] = []
         # Ranges answered with a failure, by 1-based call index.
         self.tick_fail_on: set[int] = set()
 
@@ -65,11 +67,17 @@ class FakeTerminal:
             and (flags != COPY_TICKS_TRADE or tick.get("is_trade", True))
         ]
 
-    def copy_ticks_from(self, _symbol, from_s, count, _flags):
-        """Only ever called as `(symbol, 0, 1, ...)` — the oldest tick held."""
+    def copy_ticks_from(self, _symbol, from_s, count, flags):
+        """The oldest tick held, and the live pump's own request."""
         self.error = (0, "ok")
+        self.from_calls.append((int(from_s), int(count), int(flags)))
         lo = int(from_s) * 1000
-        return [tick for tick in self.ticks if tick["time_msc"] >= lo][: int(count)]
+        return [
+            tick
+            for tick in self.ticks
+            if tick["time_msc"] >= lo
+            and (flags != COPY_TICKS_TRADE or tick.get("is_trade", True))
+        ][: int(count)]
 
     def copy_rates_from(self, _symbol, _timeframe, anchor, count):
         self.calls.append((int(anchor), int(count)))
@@ -141,6 +149,7 @@ def session_for(bridge, terminal, **args):
     session.inbox = b""
     session.last_heartbeat = 0.0
     session.cursor_msc = 0
+    session.sent_at_cursor = 0
     session.maybe_heartbeat = lambda: None
     return session
 
@@ -507,6 +516,58 @@ def test_an_endless_line_does_not_grow_the_buffer_without_bound():
         "the buffer is bounded",
         len(session.inbox) <= bridge.MAX_COMMAND_LINE_BYTES,
         len(session.inbox),
+    )
+
+
+def test_the_live_pump_asks_only_for_prints():
+    """The tape's own latency, decided one line earlier than anyone looks.
+
+    quantick charts a printing venue from `last` and `volume` and throws away
+    every tick without a LAST bit (crates/feed-mt5/src/map.rs). Asking the
+    terminal for those quotes anyway put them on the same socket as the prints,
+    ahead of the prints queued behind them — and on WIN they outnumber the
+    prints several times over. The delay that builds is invisible in the book,
+    which restamps itself on the way out, and fully visible in the bubbles,
+    which carry the instant they traded: they drift left of the tape's edge
+    until they fall off it.
+    """
+    term = FakeTerminal(0, NOW)
+    bridge = load_bridge(term)
+    session = session_for(bridge, term)
+    term.ticks = [
+        tick_at(1_000, is_trade=False),
+        tick_at(1_100, last=100.5),
+        tick_at(1_200, is_trade=False),
+        tick_at(1_300, is_trade=False),
+        tick_at(1_400, last=100.5),
+    ]
+    session.pump_ticks()
+    check(
+        "a printing venue asks for prints only",
+        [flags for _, _, flags in term.from_calls] == [COPY_TICKS_TRADE],
+        term.from_calls,
+    )
+    check("only the prints are forwarded", len(session.sent) == 2, len(session.sent))
+    check(
+        "and they are the prints, in order",
+        [msg["time_ms"] for msg in session.sent] == [1_100, 1_400],
+        session.sent,
+    )
+
+    # A broker-quoted symbol prints nothing at all, so there the quotes *are*
+    # the tape and every tick is still wanted.
+    quoting = session_for(bridge, term)
+    quoting.tape = "quotes"
+    quoting.pump_ticks()
+    check(
+        "a quote-only venue still asks for everything",
+        term.from_calls[-1][2] == COPY_TICKS_ALL,
+        term.from_calls[-1],
+    )
+    check(
+        "and gets every tick",
+        len(quoting.sent) == len(term.ticks),
+        len(quoting.sent),
     )
 
 

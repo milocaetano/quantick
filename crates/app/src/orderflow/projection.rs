@@ -3204,6 +3204,103 @@ mod tests {
         }
     }
 
+    /// The gap between the newest bubble and the tape's right edge is exactly
+    /// the distance between the chart's two clocks — and past the lane's own
+    /// window it swallows the tape whole.
+    ///
+    /// The lane ends at `max(book clock, print clock)` and bubbles are placed
+    /// by the print clock alone, so a book running ahead of the tape puts the
+    /// newest mark that far left of the edge. The depth map, drawn out to the
+    /// book clock, still reaches the edge — which is why one frame ends in two
+    /// different places and nothing on the canvas says by how much.
+    ///
+    /// This pins the arithmetic so a future change cannot quietly turn a
+    /// delivery delay into a bigger or smaller lie, and pins the part that
+    /// matters most: the prints are *still on the chart*, in their bar's slot.
+    /// An empty tape never means nothing traded.
+    #[test]
+    fn the_newest_bubble_trails_the_edge_by_the_distance_between_the_clocks() {
+        let closed = [bar(0, 10_000), bar(10_000, 20_000)];
+        // One print, four seconds before the book's instant.
+        let mut history = tape(
+            HeatmapConfig {
+                enabled: true,
+                ..bubbles_only()
+            },
+            &[(1, 16_000, "100", "3", Side::Buy)],
+        );
+        history.install_snapshot(20_000, 1, snapshot(10)).unwrap();
+        assert_eq!(
+            history.tape_age(),
+            Some(crate::orderflow::TapeAge::Behind(4_000))
+        );
+
+        let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+        let window_ms = crate::orderflow::reserved_span_ms(&closed);
+        assert_eq!(window_ms, 10_000, "the lane shows one bar's worth of flow");
+
+        let frame_at = |now_ms: i64, history: &LiquidityHistory| {
+            let timeline = BarTimeline::from_bars(0, &closed, None, live(now_ms, &closed));
+            project(history, &timeline, prices)
+        };
+
+        let projected = frame_at(20_000, &history);
+        let edge = projected
+            .live_now_x
+            .expect("the lane ends at the live edge");
+        let tape_marks: Vec<_> = projected
+            .aggressions
+            .iter()
+            .filter(|mark| mark.live)
+            .collect();
+        assert_eq!(tape_marks.len(), 1, "the print is on the tape");
+
+        // The lane is the last of three equal regions, so one region is a
+        // third of the axis and four seconds of a ten-second window is 40% of
+        // it: the mark sits 0.4/3 left of the edge.
+        let regions = f64::from(u32::try_from(closed.len() + 1).unwrap());
+        let expected = edge - (4_000.0 / f64::from(u32::try_from(window_ms).unwrap())) / regions;
+        assert!(
+            (tape_marks[0].x - expected).abs() < 1e-9,
+            "the newest mark should trail the edge by the clocks' distance:              got {}, expected {expected}",
+            tape_marks[0].x
+        );
+
+        // Twelve more seconds of book with not one print: the gap is now wider
+        // than the whole lane.
+        history
+            .apply_delta(
+                32_000,
+                &BookDelta::new(11, 11, vec![level("100", "7")], vec![]),
+            )
+            .unwrap();
+        assert_eq!(
+            history.tape_age(),
+            Some(crate::orderflow::TapeAge::Behind(16_000))
+        );
+
+        let starved = frame_at(32_000, &history);
+        assert!(
+            !starved.aggressions.iter().any(|mark| mark.live),
+            "past the window there is no bubble left on the tape"
+        );
+        // And this is the half that must never be misread: the print did not
+        // vanish from the chart, it went back to the slot of the bar it
+        // happened in. The tape is empty; the market was not.
+        let in_slots: Decimal = starved
+            .aggressions
+            .iter()
+            .filter(|mark| !mark.live)
+            .map(|mark| mark.quantity)
+            .sum();
+        assert_eq!(in_slots, dec("3"), "the print is still on the chart");
+        // The depth map, meanwhile, reaches the edge the bubbles could not.
+        assert!(
+            !starved.cells.is_empty(),
+            "the book is drawn out to its own clock"
+        );
+    }
+
     /// Zooming changes what is on screen, never what a quantity means: the
     /// same print maps to the same normalized size through every price window,
     /// in every reference mode — the automatic ones included. Only a change in
@@ -4731,5 +4828,82 @@ mod tests {
         }
         let per_run = started.elapsed().as_secs_f64() * 1000.0 / f64::from(runs);
         eprintln!("BENCH projection_ms_per_frame={per_run:.3} marks={marks}");
+    }
+
+    /// What one frame of the tape actually costs, under the shipped preset the
+    /// trader reported it lagging on.
+    ///
+    /// The bench above times a whole projection; the app never pays that per
+    /// frame. It keeps the finished half cached and rebuilds only the moving
+    /// one, so `project_live` is the figure that decides whether the drawing
+    /// can keep up with the prints. Separated because the two answer different
+    /// questions and mixing them hides the one that matters at 60 Hz.
+    ///
+    /// Ignored by default: a measurement, not an assertion.
+    #[test]
+    #[ignore]
+    fn bench_the_live_half_under_the_live_lane_pie_preset() {
+        // `live lane pie`, from crates/app/config/bubbles.toml: the candle
+        // summary on, half-second clustering on the candles and a tenth on the
+        // tape, dust merged over a second and a half.
+        let config = HeatmapConfig {
+            enabled: true,
+            show_aggressions: true,
+            price_grouping: Decimal::ONE,
+            display_grouping: DisplayGrouping::Adaptive { target_rows: 128 },
+            bubble_candle_summary: true,
+            bubble_cluster_ms: 500,
+            bubble_dust_merge_ms: 1_500,
+            live_lane: LiveLaneStyle {
+                enabled: true,
+                cluster_ms: Some(100),
+                ..LiveLaneStyle::default()
+            },
+            ..HeatmapConfig::default()
+        };
+        let mut history = LiquidityHistory::new(config);
+        // 40 000 prints over 200 bars — a full retention window of a busy WIN
+        // session, which is the load the tape has to draw at 60 Hz.
+        for i in 0..40_000_u64 {
+            history.record_aggression(&Trade {
+                agg_id: i + 1,
+                timestamp_ms: 100 + i as i64 * 25,
+                price: dec("100") + Decimal::from(i % 400),
+                quantity: Decimal::from(i % 23 + 1),
+                side: if i % 2 == 0 { Side::Buy } else { Side::Sell },
+            });
+        }
+        let closed: Vec<Bar> = (0..200)
+            .map(|i| bar(i * 5_000, i * 5_000 + 4_999))
+            .collect();
+        let partial = bar(1_000_000, 1_005_000);
+        let timeline = BarTimeline::from_bars(
+            0,
+            &closed,
+            Some(&partial),
+            Some(crate::orderflow::LiveEdge {
+                now_ms: 1_000_100,
+                window_ms: 5_000,
+                reference_ms: 5_000,
+                on_newest_bar: true,
+            }),
+        );
+        let prices = PriceWindow::new(dec("90"), dec("520")).unwrap();
+
+        // The half the app keeps: built once here, exactly as the cache does.
+        let settled = project_settled(&history, &timeline, prices);
+        for _ in 0..3 {
+            let _ = project_live(&history, &timeline, prices, &settled);
+        }
+        let runs = 60;
+        let started = std::time::Instant::now();
+        let mut marks = 0;
+        for _ in 0..runs {
+            marks = project_live(&history, &timeline, prices, &settled)
+                .aggressions
+                .len();
+        }
+        let per_run = started.elapsed().as_secs_f64() * 1000.0 / f64::from(runs);
+        eprintln!("BENCH live_ms_per_frame={per_run:.3} marks={marks}");
     }
 }
