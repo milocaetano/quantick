@@ -805,7 +805,7 @@ pub fn format_window_ms(ms: i64) -> String {
 /// tighter threshold would light it up every time an ordinary market went
 /// quiet for a moment, and a warning that cries wolf during lunch is one the
 /// trader stops reading before the session that matters.
-const LANE_LAG_LABEL_SHARE: f64 = 0.15;
+const LANE_LAG_LABEL_SHARE: f64 = 1.0 / 6.0;
 
 /// What the axis under the tape says about how old its newest mark is, or
 /// `None` while the tape is current enough that saying anything is noise.
@@ -1910,8 +1910,8 @@ mod tests {
             Some("no print for 41 s".to_owned())
         );
         // The floor follows the window, because "behind" is relative to what
-        // the tape is showing: one second is a fifth of a four-second tape and
-        // invisible on a two-minute one.
+        // the tape is showing: one second is a quarter of a four-second tape
+        // and invisible on a two-minute one.
         assert_eq!(
             lane_lag_label(4_000, Some(1_000)),
             Some("last print 1 s back".to_owned())

@@ -4950,6 +4950,11 @@ impl QuantickApp {
             // now. It is the pixel gap between the last bubble and the tape's
             // right edge, in milliseconds: a number, so "the bubbles are
             // trailing" can be measured rather than argued about.
+            //
+            // A distance between two *venue* clocks, not staleness against
+            // this machine's. A dead session stops both, so this figure
+            // freezes rather than growing — `feed_arrival_ms` above is the one
+            // that answers "is anything still arriving".
             tape_newest_print_age_ms = book.newest_print_age_ms,
             book_updates_per_s = book_rate,
             book_updates_total = book.depth_updates,

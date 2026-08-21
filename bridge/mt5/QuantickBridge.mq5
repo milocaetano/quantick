@@ -52,8 +52,7 @@ int      g_sent_at_last_msc = 0; // ticks already sent sharing g_last_msc
 datetime g_last_heartbeat   = 0;
 datetime g_next_retry       = 0;
 string   g_out              = ""; // queued lines, written by FlushOut
-ulong    g_sends            = 0;  // SocketSend batches, like g_ticks_sent
-                                  // counted since the EA was attached
+ulong    g_sends            = 0;  // SocketSend batches this session
 // Whether this symbol prints executed trades (DetectTape). It decides what
 // CopyTicks is asked for: on a printing venue quantick reads `last`/`volume`
 // and discards every quote-only tick, so sending them is pure delay.
@@ -122,9 +121,11 @@ bool FlushOut()
 //| Queue one NDJSON line. False = socket is broken.                  |
 //|                                                                   |
 //| Queued rather than written, because SocketSend is a syscall on    |
-//| the terminal's *main thread*: one per print meant a busy tape     |
-//| paid thousands of them a second, and every millisecond spent      |
-//| there is a millisecond the terminal is not reading new ticks.     |
+//| the terminal's *main thread*, and every millisecond spent there   |
+//| is a millisecond it is not reading new ticks. Each pass still     |
+//| flushes what it queued, so a pass carrying one tick still costs   |
+//| one write: the saving is a burst's, not a quiet tape's, and a     |
+//| burst is the only time the cost was worth paying attention to.    |
 //| The backlog that builds shows up on the chart as a tape running   |
 //| behind its own book — the book restamps itself on the way out     |
 //| (see SendBook), so only the prints carry the delay, and they      |
@@ -350,6 +351,10 @@ bool StartSession()
    g_seq              = 0;
    g_ticks_sent       = 0;
    g_sent_at_last_msc = 0;
+   // Reset beside the counter it is read against: BRIDGE_TAPE_STATS diagnoses
+   // by comparing socket_writes to ticks_sent, and a writes count that
+   // survived a reconnect while the ticks count restarted inverts the reading.
+   g_sends            = 0;
    g_book_seq         = 0;
    g_book_sent        = 0;
    g_book_skipped     = 0;
@@ -379,7 +384,13 @@ bool StartSession()
       "\"tape\":\"%s\"%s}",
       SCHEMA_VERSION, BRIDGE_NAME, BRIDGE_VERSION,
       _Symbol, basis, _Digits, ServerUtcOffsetSeconds(), DetectTape(), depth);
-   if(!SendLine(hello))
+   // Written, not merely queued: the feed's contract is that a bridge says
+   // hello *the moment it connects* (crates/feed-mt5/src/stream.rs), and it
+   // gives the greeting ten seconds before dropping the connection. The next
+   // statement is a CopyTicksRange that blocks while a cold terminal syncs
+   // tick history from the trade server — exactly the kind of wait that would
+   // spend that budget with the hello still sitting in a buffer.
+   if(!SendLine(hello) || !FlushOut())
       return(false);
 
    // Backfill: recent ticks so the chart opens populated. An empty block is
@@ -529,11 +540,21 @@ void MaybeHeartbeat()
    // below `ticks_sent` is the batching working; the two converging again
    // means the flush threshold is being reached every pass, which is the
    // shape a genuinely overloaded tape has.
+   // Millisecond clock first. TimeTradeServer() is whole seconds, so
+   // subtracting a millisecond cursor from it reports up to 999 ms of lag
+   // that does not exist — and reads negative on a tape that is current.
+   // SYMBOL_TIME_MSC is the same instant at the cursor's own resolution; the
+   // coarse clock only stands in when a quiet book has stalled it, which is
+   // the fallback SendBook makes for the same reason.
+   long now_msc = (long)SymbolInfoInteger(_Symbol, SYMBOL_TIME_MSC);
+   long coarse_msc = (long)TimeTradeServer() * 1000;
+   if(coarse_msc > now_msc)
+      now_msc = coarse_msc;
    LogEvent("BRIDGE_TAPE_STATS",
             StringFormat("\"tape\":\"%s\",\"ticks_sent\":%I64u,\"socket_writes\":%I64u,"
                          "\"tick_lag_ms\":%I64d",
                          (g_tape_trades ? "trades" : "quotes"), g_ticks_sent, g_sends,
-                         (long)TimeTradeServer() * 1000 - g_last_msc));
+                         now_msc - g_last_msc));
   }
 
 //+------------------------------------------------------------------+

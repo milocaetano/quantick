@@ -128,10 +128,13 @@ right edge, and past the lane's window disappearing from it altogether.
   unchanged: there the quotes are the whole tape.
 - **One syscall per tick.** Lines are queued and written in batches now, capped
   so a burst never grows an unbounded string, and flushed at the end of every
-  pass so batching never becomes latency of its own. Same caveat: at the 33
-  ticks/s the WIN$N recording averages this is not what delays a tape, but it
-  is what keeps a burst — an opening auction, a limit sequence — from being
-  paid one syscall at a time on the terminal's main thread.
+  pass so batching never becomes latency of its own. **The flush-per-pass is
+  the point and also the limit**: when the terminal hands over one tick per
+  `OnTick`, one line is queued and one write goes out, exactly as before. The
+  saving is real only when a pass carries several ticks — a burst, an opening
+  auction, or the 200 ms `OnTimer` sweeping up what `OnTick` did not. At the 33
+  ticks/s the WIN$N recording averages there is little to batch, and little
+  being delayed either.
 
 `BRIDGE_TAPE_STATS` reports it every heartbeat: `ticks_sent` against
 `socket_writes` (well apart is the batching working), plus `tick_lag_ms` — how

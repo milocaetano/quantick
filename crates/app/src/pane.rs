@@ -5660,20 +5660,27 @@ impl ChartPane {
         // missing marks should have reached.
         let warning = lane_lag_label(window_ms, newest_print_age_ms)
             .map(|lag| painter.layout_no_wrap(lag, font.clone(), theme::WARN));
-        // Room the warning denies the window label — *doubled*, because the
-        // window keeps the strip's own centre. A centred label grows by half
-        // its width towards each end, so it reaches the warning after only
-        // half the distance: subtracting the warning once would let a
+        // Room the warning denies the window label. Doubled, because the window
+        // keeps the strip's own centre: a centred label grows by half its
+        // width towards each end, so it reaches the warning after only half
+        // the distance, and subtracting the warning once would let a
         // mid-width lane pass this check and draw the two on top of each
-        // other.
-        let taken = warning
-            .as_ref()
-            .map_or(0.0, |galley| 2.0 * (galley.size().x + LANE_AXIS_GAP_PX));
+        // other. Two gaps rather than one for the same reason — one holds the
+        // warning off the strip's edge, and the other is the space between
+        // the two labels, which is what the constant is for. Reserving a
+        // single gap left them legal at zero pixels apart.
+        let taken = warning.as_ref().map_or(0.0, |galley| {
+            2.0 * (galley.size().x + 2.0 * LANE_AXIS_GAP_PX)
+        });
         let window_label = format!("tape · {}", format_window_ms(window_ms));
         let window_galley = painter.layout_no_wrap(window_label, font, theme::TEXT_MUTED);
-        // A strip too narrow for both keeps the urgent one. The window is a
-        // setting the trader chose and can read from the tape's own menu; how
-        // old the newest mark is exists nowhere else.
+        // A strip too narrow keeps the urgent label and drops this one. The
+        // window is a setting the trader chose and can read from the tape's
+        // own menu; how old the newest mark is exists nowhere else.
+        //
+        // It applies with no warning up too, so a lane narrower than this
+        // label draws no axis at all rather than a clipped one. Half a word
+        // under a tape is not a shorter way of saying the same thing.
         if window_galley.size().x + taken <= strip.width() {
             painter.galley(
                 egui::Align2::CENTER_CENTER
@@ -6863,6 +6870,42 @@ mod tests {
         format!("{:?}", output.shapes)
     }
 
+    /// Width one of the axis labels takes, measured the way the axis measures
+    /// it. The collision cases below are derived from these rather than from
+    /// literals: a font bump would move every number, and a test that failed
+    /// for that reason would read as a geometry regression on a branch that
+    /// changed nothing.
+    fn axis_label_width(text: &str) -> f32 {
+        let ctx = egui::Context::default();
+        let mut width = 0.0;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            width = ctx
+                .layer_painter(egui::LayerId::background())
+                .layout_no_wrap(
+                    text.to_owned(),
+                    egui::FontId::monospace(LANE_AXIS_FONT_PX),
+                    theme::TEXT_MUTED,
+                )
+                .size()
+                .x;
+        });
+        width
+    }
+
+    /// Left edge of each text shape, from the paint call's own output.
+    ///
+    /// Anchored on `TextShape` rather than on `pos:` alone: a galley's debug
+    /// output carries a `pos` for every glyph inside it, so the looser split
+    /// returns dozens of offsets relative to the text instead of the handful
+    /// of placements on the canvas.
+    fn painted_positions(painted: &str) -> Vec<f32> {
+        painted
+            .split("TextShape { pos: [")
+            .skip(1)
+            .filter_map(|rest| rest.split_whitespace().next()?.parse().ok())
+            .collect()
+    }
+
     /// The axis under the tape speaks only when the tape has fallen behind,
     /// and the window label does not move when it does.
     ///
@@ -6874,7 +6917,16 @@ mod tests {
     #[test]
     fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
         let pane = ChartPane::flow(1, BarSpec::Tick(100), "WINV26".to_owned());
-        let strip = egui::Rect::from_min_max(egui::pos2(600.0, 980.0), egui::pos2(920.0, 1000.0));
+        // Wide enough for the longest pair, derived rather than guessed: the
+        // fit rule reserves the warning twice over plus two gaps on each side,
+        // so a strip picked by eye lands inside the yield band and the test
+        // starts asserting on the wrong branch.
+        let widest = axis_label_width("last print 6 s back");
+        let roomy_px = axis_label_width("tape · 30 s") + 2.0 * widest + 4.0 * LANE_AXIS_GAP_PX;
+        let strip = egui::Rect::from_min_max(
+            egui::pos2(600.0, 980.0),
+            egui::pos2(600.0 + roomy_px + 1.0, 1000.0),
+        );
         let axis = |age_ms: Option<i64>| {
             painted(|painter| pane.draw_lane_time_axis(painter, Some(strip), 30_000, age_ms))
         };
@@ -6907,52 +6959,79 @@ mod tests {
             "an empty tape must say why it is empty: {starved}"
         );
 
-        // A strip too narrow for both keeps the urgent one: the window is a
-        // setting the trader can read from the tape's menu, the age is not.
-        let narrow = egui::Rect::from_min_max(egui::pos2(600.0, 980.0), egui::pos2(680.0, 1000.0));
-        let squeezed = painted(|painter| {
-            pane.draw_lane_time_axis(painter, Some(narrow), 30_000, Some(41_000))
-        });
-        assert!(squeezed.contains("no print for 41 s"), "{squeezed}");
-        assert!(!squeezed.contains("tape ·"), "{squeezed}");
-
-        // The mid-width band is where "does it fit" is easy to get wrong. The
-        // window keeps the *centre*, so it grows by half its width towards the
-        // warning and meets it after only half the room: at this type size
-        // "no print for 41 s" is 102 px and "tape · 30 s" is 66 px, so the two
-        // clear each other from 286 px of strip, not from 176. Every width in
-        // between drew them on top of each other.
-        let mid = egui::Rect::from_min_max(egui::pos2(600.0, 980.0), egui::pos2(840.0, 1000.0));
-        let colliding =
-            painted(|painter| pane.draw_lane_time_axis(painter, Some(mid), 30_000, Some(41_000)));
-        assert!(colliding.contains("no print for 41 s"), "{colliding}");
+        // Three widths, each naming a way the fit rule can be wrong, all
+        // derived from the labels' real widths so a font bump recalibrates
+        // them instead of turning this red.
+        //
+        // The window keeps the *centre*, so it grows by half its width towards
+        // the warning and meets it after only half the room. Subtracting the
+        // warning once (`naive`) overlaps them outright; subtracting it twice
+        // but counting the edge inset as the only gap (`touching`) leaves them
+        // legal at zero pixels apart. Both are wrong, and neither shows up at
+        // a comfortable window size.
+        let warning_px = axis_label_width("no print for 41 s");
+        let window_px = axis_label_width("tape · 30 s");
+        let naive = window_px + warning_px + LANE_AXIS_GAP_PX;
+        let touching = window_px + 2.0 * warning_px + 2.0 * LANE_AXIS_GAP_PX;
+        let honest = window_px + 2.0 * warning_px + 4.0 * LANE_AXIS_GAP_PX;
         assert!(
-            !colliding.contains("tape ·"),
-            "240 px is inside the band where the two labels collide, so the              window label has to yield: {colliding}"
+            naive < touching && touching < honest,
+            "the bands must exist"
         );
-        // Past the band both are drawn, because both now genuinely fit.
-        let roomy = egui::Rect::from_min_max(egui::pos2(600.0, 980.0), egui::pos2(900.0, 1000.0));
-        let both =
-            painted(|painter| pane.draw_lane_time_axis(painter, Some(roomy), 30_000, Some(41_000)));
+
+        let axis_at = |width: f32| {
+            let strip = egui::Rect::from_min_max(
+                egui::pos2(600.0, 980.0),
+                egui::pos2(600.0 + width, 1000.0),
+            );
+            painted(|painter| pane.draw_lane_time_axis(painter, Some(strip), 30_000, Some(41_000)))
+        };
+        for (width, what) in [
+            (
+                (naive + touching) / 2.0,
+                "the labels would overlap outright",
+            ),
+            (
+                (touching + honest) / 2.0,
+                "the labels would touch with no gap",
+            ),
+        ] {
+            let colliding = axis_at(width);
+            assert!(colliding.contains("no print for 41 s"), "{colliding}");
+            assert!(
+                !colliding.contains("tape ·"),
+                "at {width} px {what}, so the window label has to yield: {colliding}"
+            );
+        }
+
+        // Past the last band both are drawn, with the gap the constant exists
+        // to provide genuinely between them.
+        let both = axis_at(honest + 1.0);
         assert!(both.contains("no print for 41 s"), "{both}");
         assert!(both.contains("tape ·"), "{both}");
+        let placed = painted_positions(&both);
+        assert_eq!(placed.len(), 2, "two labels, two placements: {both}");
+        let (window_x, warning_x) = (placed[0], placed[1]);
+        assert!(
+            warning_x - (window_x + window_px) >= LANE_AXIS_GAP_PX,
+            "the two labels are {} px apart, closer than the gap they reserve",
+            warning_x - (window_x + window_px)
+        );
 
         // Both labels are sized from their own text rather than from the room
-        // they have, so a lane narrow enough to make one wider than its strip
-        // places it *left* of the strip — over the candles' own time labels.
-        // Real numbers: a 40 px strip starting at x=600 puts the warning's
-        // origin at x=530, seventy pixels into the pane next door. The tape's
-        // axis may run out of room; it may not spill into the chart beside it.
+        // they have, so a lane narrower than the warning places it *left* of
+        // the strip — over the candles' own time labels. The tape's axis may
+        // run out of room; it may not spill into the chart beside it.
         let hair = egui::Rect::from_min_max(egui::pos2(600.0, 980.0), egui::pos2(640.0, 1000.0));
         let spill =
             painted(|painter| pane.draw_lane_time_axis(painter, Some(hair), 30_000, Some(41_000)));
         assert!(
-            spill.contains("clip_rect: [[600.0 980.0] - [640.0 1000.0]]"),
-            "the axis must be clipped to its own strip: {spill}"
+            painted_positions(&spill).iter().any(|x| *x < hair.left()),
+            "this is the case worth clipping — the text really does start              outside the strip: {spill}"
         );
         assert!(
-            spill.contains("pos: [530.0"),
-            "this is the case worth clipping — the text really does start              outside the strip: {spill}"
+            spill.contains("clip_rect: [[600.0 980.0] - [640.0 1000.0]]"),
+            "so the axis must be clipped to its own strip: {spill}"
         );
 
         // No lane, no axis.

@@ -400,6 +400,13 @@ impl LiquidityHistory {
     /// reading marks that are this old, so the number is reported rather than
     /// smoothed away. `None` when the two clocks agree or one of them has yet
     /// to move.
+    ///
+    /// It is a distance between two *venue* clocks, never staleness against
+    /// this machine's. A session that dies stops both, so this figure freezes
+    /// where it was instead of growing — which is right for the lane's
+    /// geometry, and is why "is anything still arriving" is a different
+    /// question with a different answer (`Tab::tape_age_at`, which is handed
+    /// wall clock on purpose).
     #[must_use]
     pub fn newest_print_age_ms(&self) -> Option<i64> {
         let (book, print_ms) = (self.latest_book_ms?, self.latest_print_ms?);
