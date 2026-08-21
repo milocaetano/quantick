@@ -21,6 +21,7 @@ pub fn validate_schema(schema: &Value) -> Result<(), SchemaError> {
         return Err(SchemaError::UnsupportedDialect(dialect.to_owned()));
     }
     reject_external_references(schema)?;
+    reject_backtracking_patterns(schema)?;
     jsonschema::draft202012::meta::validate(schema)
         .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
     jsonschema::draft202012::options()
@@ -29,8 +30,16 @@ pub fn validate_schema(schema: &Value) -> Result<(), SchemaError> {
     Ok(())
 }
 
+/// Check one instance against a schema that has already passed
+/// [`validate_schema`].
+///
+/// The schema is deliberately not re-validated here. Registration is the door:
+/// [`crate::registry::ControlRegistry`] validates every descriptor schema once,
+/// which is also where the pattern and reference guards belong. Repeating that
+/// per instance meta-validated and compiled the same schema twice more on every
+/// request, and a malformed schema still fails below when the validator refuses
+/// to build.
 pub fn validate_instance(schema: &Value, instance: &Value) -> Result<(), SchemaError> {
-    validate_schema(schema)?;
     let validator = jsonschema::draft202012::options()
         .build(schema)
         .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
@@ -41,6 +50,50 @@ pub fn validate_instance(schema: &Value, instance: &Value) -> Result<(), SchemaE
             error.kind().keyword()
         ))
     })
+}
+
+/// Refuse any `pattern` a linear-time engine cannot run.
+///
+/// `jsonschema` compiles patterns with the `regex` crate where it can and falls
+/// back to `fancy-regex` where it cannot — for lookaround and backreferences,
+/// which are exactly the constructs that make matching exponential. A module
+/// registering a capability chooses those patterns, and the host then runs them
+/// against attacker-supplied payloads, so `^(?=(a+)+b)` in a descriptor well
+/// under the descriptor size cap is an unbounded CPU stall with no timeout
+/// around it.
+///
+/// The test is the engine itself rather than a blacklist of constructs: if the
+/// linear-time engine can compile the pattern, matching it is bounded by input
+/// length, whatever the pattern looks like.
+fn reject_backtracking_patterns(value: &Value) -> Result<(), SchemaError> {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                reject_backtracking_patterns(value)?;
+            }
+        }
+        Value::Object(values) => {
+            if let Some(pattern) = values.get("pattern").and_then(Value::as_str) {
+                require_linear_time_pattern(pattern)?;
+            }
+            if let Some(properties) = values.get("patternProperties").and_then(Value::as_object) {
+                for pattern in properties.keys() {
+                    require_linear_time_pattern(pattern)?;
+                }
+            }
+            for value in values.values() {
+                reject_backtracking_patterns(value)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn require_linear_time_pattern(pattern: &str) -> Result<(), SchemaError> {
+    regex::Regex::new(pattern)
+        .map(|_| ())
+        .map_err(|_| SchemaError::BacktrackingPattern(pattern.to_owned()))
 }
 
 fn reject_external_references(value: &Value) -> Result<(), SchemaError> {
@@ -423,6 +476,7 @@ fn string_set(value: Option<&Value>) -> BTreeSet<String> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SchemaError {
     ExternalReference(String),
+    BacktrackingPattern(String),
     UnsupportedDialect(String),
     InvalidSchema(String),
     InvalidInstance(String),
@@ -437,6 +491,13 @@ impl fmt::Display for SchemaError {
                 write!(
                     formatter,
                     "external schema reference is forbidden: {reference}"
+                )
+            }
+            Self::BacktrackingPattern(pattern) => {
+                write!(
+                    formatter,
+                    "schema pattern needs a backtracking regex engine, which has no bounded \
+                     running time: {pattern}"
                 )
             }
             Self::UnsupportedDialect(dialect) => {
@@ -489,6 +550,48 @@ mod tests {
         assert!(compare_schemas(&previous, &required).is_breaking());
         assert!(require_compatible_version(1, &previous, 1, &required).is_err());
         assert!(require_compatible_version(1, &previous, 2, &required).is_ok());
+    }
+
+    #[test]
+    fn patterns_that_need_a_backtracking_engine_are_refused_at_the_door() {
+        // The classic catastrophic case: matching `^(?=(a+)+b)` against a
+        // string of 'a's is exponential. `jsonschema` hands lookaround and
+        // backreferences to `fancy-regex`, then runs the result against every
+        // request payload with no timeout around it, so a module could stall
+        // the host with a descriptor well under the size cap.
+        assert!(matches!(
+            validate_schema(&json!({"type": "string", "pattern": "^(?=(a+)+b)"})),
+            Err(SchemaError::BacktrackingPattern(_))
+        ));
+
+        // Nested and `patternProperties` keys are patterns too.
+        assert!(matches!(
+            validate_schema(&json!({
+                "type": "object",
+                "properties": {"inner": {"type": "string", "pattern": r"(\w)\1"}}
+            })),
+            Err(SchemaError::BacktrackingPattern(_))
+        ));
+        assert!(matches!(
+            validate_schema(&json!({
+                "type": "object",
+                "patternProperties": {"^(?!x)": {"type": "string"}}
+            })),
+            Err(SchemaError::BacktrackingPattern(_))
+        ));
+
+        // The guard asks the linear-time engine, not a blacklist of characters,
+        // so a busy-looking pattern it can run stays allowed. Nested alternation
+        // and repetition are linear there, and the shipped identifier patterns
+        // have to keep passing.
+        assert!(validate_schema(&json!({"type": "string", "pattern": "(a|a)*$"})).is_ok());
+        assert!(
+            validate_schema(&json!({
+                "type": "string",
+                "pattern": r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,7}$"
+            }))
+            .is_ok()
+        );
     }
 
     #[test]
