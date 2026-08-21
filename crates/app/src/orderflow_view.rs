@@ -595,6 +595,11 @@ impl OrderflowView {
         self.config.enabled = false;
         self.pending_capture_grouping_previous = None;
         self.published = BookPublished::initial();
+        // The starvation clock is per market, like the history it starves.
+        // Carrying the old symbol's zero across would open the new one on a
+        // tape that is already dead — the capture hook would be photographing
+        // its own leftovers instead of the state it was asked for.
+        self.first_print_ms = None;
         self.worker
             .send(BookCommand::ResetForSymbol(self.symbol.clone()));
     }
@@ -2778,6 +2783,44 @@ mod tests {
             ordinary.newest_print_age_ms(),
             None,
             "the tape is ahead of the book: nothing to declare"
+        );
+    }
+
+    /// The starvation clock belongs to the market it is starving.
+    ///
+    /// A capture run that switches symbol would otherwise open the new one on
+    /// a tape that is already dead — the hook photographing the leftovers of
+    /// the market before it rather than the state it was asked for.
+    #[test]
+    fn switching_symbol_restarts_the_scripted_starvation() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.set_bubbles_enabled(true);
+        view.set_starve_tape_after_ms(2_000);
+        let print_at = |view: &mut OrderflowView, agg_id: u64, timestamp_ms: i64| {
+            view.record_trade(&Trade {
+                agg_id,
+                timestamp_ms,
+                price: Decimal::from(100),
+                quantity: Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            });
+        };
+        print_at(&mut view, 1, 10_000);
+        print_at(&mut view, 2, 20_000);
+        view.flush_for_test();
+        assert_eq!(view.health().aggression_count, 1, "the cutoff bit");
+
+        view.reset_for_symbol("WINV26");
+        view.set_bubbles_enabled(true);
+        // The same instants that were past the old cutoff are the new tape's
+        // first seconds, and they arrive.
+        print_at(&mut view, 3, 20_000);
+        print_at(&mut view, 4, 21_500);
+        view.flush_for_test();
+        assert_eq!(
+            view.health().aggression_count,
+            2,
+            "the new market's tape opened starved"
         );
     }
 
