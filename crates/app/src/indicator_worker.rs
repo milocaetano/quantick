@@ -127,10 +127,12 @@ impl IndicatorSource {
             IndicatorSource::NativeCvd => Ok(Box::new(Cvd::new())),
             IndicatorSource::Script { name, text } => match quantick_pine::compile(text, name) {
                 Ok(compiled) => Ok(Box::new(match values {
-                    // A slot whose first compile failed carries no values at
-                    // all (`values: Vec::new()`), and `Reload` builds with
-                    // exactly those. Nothing was ever saved there, so there is
-                    // nothing to bind and nothing to report.
+                    // An empty set is a slot that has never been given one:
+                    // a brand-new indicator, or one whose first compile failed
+                    // before any `SetInputs` reached it. Nothing to bind and
+                    // nothing to report — and note this is now genuinely rare,
+                    // because `SetInputs` keeps the values even when it has no
+                    // instance to apply them to.
                     Some(values) if !values.is_empty() => {
                         // Cell by cell, type-checked, through the one binder
                         // both persistence paths use — an edited or upgraded
@@ -147,19 +149,27 @@ impl IndicatorSource {
                             &compiled.inputs,
                             &to_cells(values),
                         );
-                        if bound.kept < values.len() {
-                            // A setting the trader chose is not the setting
-                            // that will run. That is theirs to know.
+                        // Two reasons to speak, and the count is only one of
+                        // them: a cell can be refused at an unchanged count
+                        // when an input changed type. The other is louder than
+                        // it looks — when the list grew or shrank, EVERY value
+                        // after the edit may now sit on a different knob, and
+                        // that binds silently whenever the types happen to
+                        // line up. A count change is therefore worth a line
+                        // even when nothing was refused.
+                        let count_changed = values.len() != compiled.inputs.len();
+                        if count_changed || bound.kept < values.len() {
                             tracing::warn!(
                                 target: "quantick::app",
                                 schema_version = 1_u8,
-                                event_code = "INDICATOR_INPUTS_COUNT_CHANGED",
+                                event_code = "INDICATOR_INPUTS_REBOUND",
                                 script = %name,
                                 saved = values.len(),
                                 declared = compiled.inputs.len(),
                                 kept = bound.kept,
-                                action = "kept_what_still_lines_up",
-                                "the script's input list changed since these settings were saved"
+                                count_changed,
+                                action = "bound_by_position",
+                                "saved settings were rebound to a changed input list"
                             );
                         }
                         quantick_pine::ScriptIndicator::with_inputs(
@@ -630,9 +640,20 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                     if last_set_inputs.get(&slot) != Some(&index) {
                         continue;
                     }
-                    if let Some(mirror) = slots.get_mut(&slot)
-                        && let Some(host_id) = mirror.host_id
-                    {
+                    if let Some(mirror) = slots.get_mut(&slot) {
+                        let Some(host_id) = mirror.host_id else {
+                            // No instance to rebuild: this slot's first
+                            // compile failed. The values are still the
+                            // trader's, though, and `Reload` builds from this
+                            // mirror — so keep them. Dropping them here is
+                            // what made repairing a broken script cost every
+                            // setting it had: the fixed script loaded at its
+                            // declared defaults, the slot's error cleared,
+                            // and the next state save wrote those defaults
+                            // over the tuned ones on disk.
+                            mirror.values = values;
+                            continue;
+                        };
                         match mirror.source.build_with(Some(&values)) {
                             Ok(indicator) => {
                                 // Mirror what the instance bound, not what
@@ -948,10 +969,10 @@ mod tests {
     /// longer matches the input at its index is not carried over, it is
     /// dropped for that input's default — and its neighbours are unaffected.
     ///
-    /// (Only this path checks types. When the counts DO match, the values go
-    /// through untouched — `with_inputs` guards the count and nothing else —
-    /// so a script that changed an input's type without changing how many it
-    /// has still binds the old value. Pre-existing, and its own fix.)
+    /// It applies at every count, including a matching one: there is no
+    /// longer a fast path that hands the vector over unchecked, so a script
+    /// that changed an input's TYPE without changing how many it has no
+    /// longer binds the stale value.
     #[test]
     fn a_saved_value_whose_input_changed_type_falls_back_alone() {
         let saved = vec![
@@ -969,6 +990,30 @@ mod tests {
                 InputValue::Bool(false),
             ],
             "the mistyped cell falls back alone; the value before it survives"
+        );
+    }
+
+    /// The count-matched case, which used to skip type checks entirely: a
+    /// script that swapped an input's type while keeping the same number of
+    /// them bound the stale value straight through.
+    #[test]
+    fn a_type_change_at_an_unchanged_count_no_longer_binds_the_stale_value() {
+        let saved = vec![
+            InputValue::Int(50),
+            InputValue::Bool(true), // the float's index
+            InputValue::Bool(true),
+        ];
+        let built = grown_script()
+            .build_with(Some(&saved))
+            .expect("the script compiles");
+        assert_eq!(
+            built.input_values(),
+            vec![
+                InputValue::Int(50),
+                InputValue::Float(1.5),
+                InputValue::Bool(true),
+            ],
+            "three saved, three declared, and the mistyped one still falls back alone"
         );
     }
 

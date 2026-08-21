@@ -218,7 +218,11 @@ show_bottom = input.bool(true, "4 Display: mark bottom reversals (buy side)")
 // typed field with a floor of zero, which is what an absolute quantity in the
 // instrument's own units wants to be. `step` is then no longer a quantiser at
 // all, only the drag speed, and 1 point per pixel beats the 0.1 default:
-// dragging to 100 should not take a thousand pixels.
+// dragging to 100 should not take a thousand pixels. That speed is chosen for
+// an index future, where a point is the unit the floor is thought in; on an
+// instrument priced in fractions a drag of 1 per pixel is far too coarse and
+// the number is typed instead. A script cannot ask what a tick is worth here,
+// so one of the two has to be the dragged case.
 min_body_points = input.float(0.0, "5 Calibration: min force-bar body (points, 0 = off)", minval=0.0, step=1.0)
 run_body_only = input.bool(false, "5 Calibration: run measures the body, not the range")
 cover_body_only = input.bool(false, "5 Calibration: cover measures the body, not the range")
@@ -281,7 +285,13 @@ bottom_anchor = big_body and new_low and (not need_direction or bear_bar)
 // input rebuilds the indicator and replays the whole history, so there is no
 // live tape on which a stored ruler could go stale. Resolving it here keeps
 // eight ternaries and four subtractions off every bar, armed or not, and puts
-// them on the rare bar that actually arms. Each shape stores its own pair
+// them on the rare bar that actually arms. Measured on the commit path (the
+// 100k-bar interpreter bench): the version that read the switches per bar
+// cost about 20% more per bar, this one about 5%. What that bench does NOT
+// cover is the preview path, which runs per print rather than per bar and
+// clones every global slot — and this shape holds six more of them than the
+// per-bar one did. The trade is a win on the measured path and unmeasured on
+// the other; that is the honest statement of it. Each shape stores its own pair
 // because the run and the cover choose independently: a wide-wick push can be
 // judged by its body for one and by its range for the other.
 var bool top_armed = false

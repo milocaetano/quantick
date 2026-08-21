@@ -270,11 +270,15 @@ fn the_declared_marks_are_the_ones_the_renderer_draws() {
     );
 }
 
-/// The thirteen inputs the indicator shipped with in #212, in order. This is
-/// not documentation — it is the binding contract for every preset a trader
-/// has already saved. Titles rather than the derived `name()`, because they
-/// are what a reader can check against the script in one glance; `name()` is
-/// a slug of the title, so pinning one pins the other.
+/// The thirteen inputs the indicator shipped with in #212, at the indices it
+/// shipped them. This is not documentation — it is the binding contract for
+/// every value a trader has already saved, which is matched by POSITION.
+///
+/// The titles are the current ones, not #212's: two of them lost "(fraction
+/// of range)" when the fraction became readable against the body. What is
+/// pinned here is the ORDER; the titles are how a reader checks it against
+/// the script in one glance, and a rename trips the test on purpose because
+/// `name()` is a slug of the title and is documented as a persistence key.
 const SHIPPED_ORDER: [&str; 13] = [
     "1 Force bar: body average window (bars)",
     "1 Force bar: min body (×average)",
@@ -768,6 +772,47 @@ fn the_cover_reads_the_body_on_the_buy_side_too() {
         buys(&run(&body_only, &wicked)),
         vec![6],
         "the identical candle marks once the overlap is judged against the body"
+    );
+}
+
+#[test]
+fn the_display_toggles_silence_the_triangle_and_leave_the_paint_alone() {
+    // The script states this as a contract, and it is the reason the
+    // diagnostic is trustworthy: a trader who silenced one side and then went
+    // looking for why nothing arms there must not be answered by a diagnostic
+    // that silenced itself along with the marks.
+    let mut top_off = inputs();
+    top_off[SHOW_TOP] = InputValue::Bool(false);
+    top_off[PAINT_FORCE] = InputValue::Bool(true);
+
+    let tape = sell_tape();
+    let hit = run(&top_off, &tape);
+    assert_eq!(sells(&hit), none(), "the triangle is silenced");
+    assert_eq!(
+        paints(&hit, tape.len())[5],
+        Some(PAINT_TOP),
+        "the force bar is still painted: the toggle governs the marks, not the ruler"
+    );
+}
+
+#[test]
+fn a_bar_that_anchors_both_sides_is_painted_for_the_top() {
+    // Reachable only with the direction filter off, which is exactly why it
+    // is worth pinning: an outside bar with a body big enough to arm makes a
+    // new high AND a new low, both anchors fire on the same bar, and the
+    // script promises a fixed priority rather than whatever the evaluation
+    // order happens to be.
+    let mut both = inputs();
+    both[NEED_DIRECTION] = InputValue::Bool(false);
+    both[PAINT_FORCE] = InputValue::Bool(true);
+
+    let mut tape = context_up();
+    tape.push((100.0, 115.0, 90.0, 110.0)); // 5  outside bar: new high and new low
+
+    assert_eq!(
+        paints(&run(&both, &tape), tape.len())[5],
+        Some(PAINT_TOP),
+        "one bar, one colour, and the top wins by rule"
     );
 }
 
