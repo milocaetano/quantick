@@ -114,7 +114,9 @@ pub(crate) struct EventPage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dropped_before: Option<EventCursor>,
     pub has_more: bool,
-    /// Set by `wait_for_change` when its timeout elapsed with nothing new.
+    /// Set by `wait_for_change` when its timeout elapsed and the page is
+    /// empty; a change that landed between the deadline and the read is
+    /// reported as a change.
     pub timed_out: bool,
 }
 

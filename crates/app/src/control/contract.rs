@@ -6,6 +6,7 @@ use std::{
 };
 
 use quantick_control::{
+    cursor::EventCursor,
     error::{ControlError, codes},
     handshake::{CURRENT_PROTOCOL_VERSION, ProtocolLimits},
     id::{
@@ -36,7 +37,7 @@ use super::{
     events::{
         EVENTS_MODULE_ID, EVENTS_PERMISSION_ID, EventsReadInput, EventsWaitInput,
         READ_CAPABILITY_ID as EVENTS_READ_CAPABILITY_ID,
-        WAIT_CAPABILITY_ID as EVENTS_WAIT_CAPABILITY_ID, read_page,
+        WAIT_CAPABILITY_ID as EVENTS_WAIT_CAPABILITY_ID, complete_wait_page, read_page,
     },
     journal::{EventJournal, EventPage},
     registry::{ProjectionRegistry, SerializedSnapshotCapture, SnapshotCapture},
@@ -380,6 +381,10 @@ impl DeferredUiRead for ChartWindowPage {
 pub(crate) struct EventsReadInvocation {
     pub input: EventsReadInput,
     pub timed_out: bool,
+    /// What the gateway-side resolve learned before a wait parked: the
+    /// requested position had already been evicted. The read starts at the
+    /// clamped cursor and would not know on its own.
+    pub dropped_before: Option<EventCursor>,
 }
 
 impl PreparedUiRead for EventsReadInvocation {
@@ -398,7 +403,10 @@ impl PreparedUiRead for EventsReadInvocation {
             self.input.limit,
             self.timed_out,
         )?;
-        Ok(Box::new(page))
+        Ok(Box::new(complete_wait_page(
+            page,
+            self.dropped_before.clone(),
+        )))
     }
 }
 
@@ -965,6 +973,7 @@ fn prepare_events_read(
         dispatch: PreparedDispatch::Ui(Box::new(EventsReadInvocation {
             input,
             timed_out: false,
+            dropped_before: None,
         })),
         dynamic_permissions: BTreeSet::new(),
     })

@@ -136,7 +136,7 @@
       "description": "One past the last returned event, or the resolved start when empty."
     },
     "timed_out": {
-      "description": "Set by `wait_for_change` when its timeout elapsed with nothing new.",
+      "description": "Set by `wait_for_change` when its timeout elapsed and the page is\nempty; a change that landed between the deadline and the read is\nreported as a change.",
       "type": "boolean"
     }
   },

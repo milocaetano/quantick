@@ -578,6 +578,7 @@ a hard limit requires a reviewed contract change and threat-model check.
 | `CONTROL_MAX_CONNECTIONS` | 8 | default | Bound local clients per instance |
 | `CONTROL_MAX_IN_FLIGHT_PER_CONNECTION` | 8 | hard | Prevent one client from owning the queue |
 | `CONTROL_MAX_PARKED_WAITERS` | 16 | hard | Bound `wait_for_change` registrations |
+| `CONTROL_MAX_PARKED_WAITERS_PER_CONNECTION` | 4 | hard | Bound one connection's share of them; a closed connection releases its waits |
 | `CONTROL_HANDSHAKE_TIMEOUT_MS` | 2,000 | default | Drop unauthenticated sockets quickly |
 | `CONTROL_REQUEST_TIMEOUT_MS` | 5,000 | default | Bound ordinary calls |
 | `CONTROL_WAIT_TIMEOUT_MAX_MS` | 30,000 | hard | Bound one long poll |

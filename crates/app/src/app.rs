@@ -8845,15 +8845,17 @@ impl QuantickApp {
                 access.enable(ctx);
             }
         }
-        if let Some(note) = self.pending_control_mark.take() {
-            let note = (!note.is_empty()).then_some(note);
-            self.take_mark(note);
-        }
         // Replay determinism: a session with a control trace beside it
         // re-injects its actions at their logical time, connected or not.
+        // Before the hook's mark, so a loaded sidecar has seeded the trace
+        // sequence the mark will take.
         if let Some(mut access) = self.control_access.take() {
             access.service_replay_trace(self);
             self.control_access = Some(access);
+        }
+        if let Some(note) = self.pending_control_mark.take() {
+            let note = (!note.is_empty()).then_some(note);
+            self.take_mark(note);
         }
         if self
             .control_access
@@ -25773,7 +25775,7 @@ plot(close)
             .expect("the mark is in the page");
         assert_eq!(mark["actor"]["kind"], "human_ui");
         assert_eq!(mark["payload"]["note"], "this absorption is what I mean");
-        assert_eq!(mark["payload"]["target_source"], "supplied");
+        assert_eq!(mark["payload"]["target_source"], "pointer");
         assert_eq!(mark["payload"]["target"]["pointer"]["bar"]["slot"], "20");
         assert_eq!(mark["payload"]["target"]["pointer"]["symbol"], "TESTUSDT");
 
@@ -25783,7 +25785,10 @@ plot(close)
 
     #[test]
     fn gateway_wait_for_change_times_out_cleanly_and_parked_slots_are_bounded() {
-        use quantick_control::{error::codes, limits::CONTROL_MAX_PARKED_WAITERS};
+        use quantick_control::{
+            error::codes,
+            limits::{CONTROL_MAX_PARKED_WAITERS, CONTROL_MAX_PARKED_WAITERS_PER_CONNECTION},
+        };
 
         let ctx = egui::Context::default();
         let (mut app, _commands) = app_with_history(2);
@@ -25817,10 +25822,11 @@ plot(close)
         assert!(page["events"].as_array().unwrap().is_empty());
         assert!(page["next_cursor"]["next_sequence"].is_string());
 
-        // More parked waits than the reviewed slots: the overflow is refused
-        // with backpressure, at once, while the others stay parked.
+        // One connection holds at most its share of the parked slots: the
+        // overflow is refused with backpressure, at once, while the others
+        // stay parked.
         let mut ids = Vec::new();
-        for _ in 0..(CONTROL_MAX_PARKED_WAITERS + 1) {
+        for _ in 0..(CONTROL_MAX_PARKED_WAITERS_PER_CONNECTION + 1) {
             ids.push(
                 client
                     .send(
@@ -25831,9 +25837,148 @@ plot(close)
             );
         }
         let refused = client.read().unwrap();
-        assert_eq!(refused.request_id, ids[CONTROL_MAX_PARKED_WAITERS]);
+        assert_eq!(
+            refused.request_id,
+            ids[CONTROL_MAX_PARKED_WAITERS_PER_CONNECTION]
+        );
         assert_eq!(response_error(&refused).code.as_str(), codes::BACKPRESSURE);
         assert!(response_error(&refused).retryable);
+
+        // Other connections fill the rest of the global slots; the first wait
+        // past them is refused too, whoever sends it.
+        let mut others = Vec::new();
+        for _ in 1..(CONTROL_MAX_PARKED_WAITERS / CONTROL_MAX_PARKED_WAITERS_PER_CONNECTION) {
+            let mut other =
+                quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                    .unwrap()
+                    .select(None)
+                    .unwrap();
+            for _ in 0..CONTROL_MAX_PARKED_WAITERS_PER_CONNECTION {
+                other
+                    .send(
+                        "events.wait",
+                        serde_json::json!({ "start": "latest", "timeout_ms": 30000 }),
+                    )
+                    .unwrap();
+            }
+            others.push(other);
+        }
+        let mut late =
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+        late.send(
+            "events.wait",
+            serde_json::json!({ "start": "latest", "timeout_ms": 30000 }),
+        )
+        .unwrap();
+        let refused = late.read().unwrap();
+        assert_eq!(response_error(&refused).code.as_str(), codes::BACKPRESSURE);
+
+        // A client that goes away releases its parked slots at the manager's
+        // next pass instead of holding them to the deadline: the late client's
+        // wait now parks, and times out into a page.
+        drop(client);
+        let mut outcome = None;
+        for _ in 0..40 {
+            let late_id = late
+                .send(
+                    "events.wait",
+                    serde_json::json!({ "start": "latest", "timeout_ms": 100 }),
+                )
+                .unwrap();
+            let mut reply = None;
+            for _ in 0..400 {
+                run_frame(&mut app, &ctx);
+                if late.reply_pending(std::time::Duration::from_millis(5)) {
+                    reply = Some(late.read().unwrap());
+                    break;
+                }
+            }
+            let reply = reply.expect("the late wait was answered one way or the other");
+            assert_eq!(reply.request_id, late_id);
+            match &reply.outcome {
+                quantick_control::wire::ResponseOutcome::Success { .. } => {
+                    outcome = Some(reply);
+                    break;
+                }
+                quantick_control::wire::ResponseOutcome::Failure { .. } => {
+                    assert_eq!(response_error(&reply).code.as_str(), codes::BACKPRESSURE);
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+        }
+        let page = success_result(&outcome.expect("the released slots admitted the late wait"));
+        assert_eq!(page["timed_out"], true);
+
+        drop(others);
+        drop(late);
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn gateway_rejects_a_duplicate_request_id_while_a_wait_is_parked() {
+        use quantick_control::error::codes;
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(2);
+        let directory = gateway_test_directory("wait-duplicate-id");
+        enable_test_gateway(&mut app, &ctx, &directory, 8);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+        let request_id = quantick_control::id::RequestId::new("parked-1").unwrap();
+        client
+            .send_with_request_id(
+                request_id.clone(),
+                "events.wait",
+                1,
+                serde_json::json!({ "start": "latest", "timeout_ms": 300 }),
+            )
+            .unwrap();
+        // The same ID while the wait is parked: refused, never answered twice.
+        client
+            .send_with_request_id(
+                request_id.clone(),
+                crate::control::DESCRIBE_CAPABILITY_ID,
+                1,
+                serde_json::json!({}),
+            )
+            .unwrap();
+        let refused = client.read().unwrap();
+        assert_eq!(refused.request_id, request_id);
+        assert_eq!(
+            response_error(&refused).code.as_str(),
+            codes::INVALID_REQUEST
+        );
+        // The wait itself completes as usual, and the ID is free again.
+        let mut reply = None;
+        for _ in 0..400 {
+            run_frame(&mut app, &ctx);
+            if client.reply_pending(std::time::Duration::from_millis(5)) {
+                reply = Some(client.read().unwrap());
+                break;
+            }
+        }
+        let page = reply.expect("the parked wait was answered");
+        assert_eq!(page.request_id, request_id);
+        assert_eq!(success_result(&page)["timed_out"], true);
+        client
+            .send_with_request_id(
+                request_id.clone(),
+                crate::control::DESCRIBE_CAPABILITY_ID,
+                1,
+                serde_json::json!({}),
+            )
+            .unwrap();
+        assert!(matches!(
+            client.read().unwrap().outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ));
 
         disable_test_gateway(&mut app, &ctx);
         std::fs::remove_dir_all(directory).unwrap();
@@ -25997,7 +26142,7 @@ plot(close)
             .find(|event| event.kind.as_str() == "attention.mark.created")
             .expect("the traced mark was re-injected");
         assert_eq!(replayed.payload["note"], "traced");
-        assert_eq!(replayed.payload["target_source"], "supplied");
+        assert_eq!(replayed.payload["target_source"], "replayed");
         assert_eq!(
             replayed.payload["target"]["pointer"]["bar"]["slot"],
             original.payload["target"]["pointer"]["bar"]["slot"],
@@ -26016,6 +26161,47 @@ plot(close)
             .filter(|line| !line.trim().is_empty())
             .count();
         assert_eq!(lines, 2, "a replayed action is not recorded again");
+
+        // Switching away and back neither repeats nor skips the injection.
+        let replayed_marks = |app: &QuantickApp| {
+            app.control_access
+                .as_ref()
+                .unwrap()
+                .journal()
+                .read(1, 64, 1 << 20)
+                .events
+                .iter()
+                .filter(|event| event.kind.as_str() == "attention.mark.created")
+                .count()
+        };
+        let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
+        run_frame(&mut app, &ctx);
+        app.active_tab = 0;
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(replayed_marks(&app), 1, "a tab switch does not re-inject");
+
+        // The playhead moves on, then restarts: the rerun injects the mark
+        // again, at its logical time, and the sidecar still does not grow.
+        let status = std::sync::Arc::clone(&app.tabs[0].replay.as_ref().unwrap().status);
+        status.set_position_ms_for_test(status.start_ms() + 5_000);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            replayed_marks(&app),
+            1,
+            "moving forward injects nothing new"
+        );
+        status.set_position_ms_for_test(status.start_ms());
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(replayed_marks(&app), 2, "a restart replays the mark");
+        let lines = std::fs::read_to_string(&trace_path)
+            .unwrap()
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count();
+        assert_eq!(lines, 2, "re-injection never writes the sidecar");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

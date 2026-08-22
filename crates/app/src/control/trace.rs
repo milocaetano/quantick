@@ -133,9 +133,12 @@ impl ControlTrace for ReplayTraceFile {
     }
 }
 
-/// The entries of a sidecar, read back for re-injection. Intents and results
-/// are paired by sequence; an intent without a result makes the trace
-/// incomplete, which the caller must treat as fixture-ineligible.
+/// The entries of a sidecar, read back for re-injection. A result pairs with
+/// the latest unmatched intent of its sequence — intent-first append order
+/// guarantees a result follows its own intent, and an older unfinished
+/// intent that happens to share the sequence (a run that died between its
+/// intent and its result) stays unfinished. An intent without a result makes
+/// the trace incomplete, which the caller must treat as fixture-ineligible.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct TraceReplay {
     /// Completed actions in replay-time order: the intent, carrying the
@@ -143,6 +146,9 @@ pub(crate) struct TraceReplay {
     pub completed: Vec<TraceEntry>,
     /// Sequences whose intent was written but whose result never was.
     pub incomplete: Vec<u64>,
+    /// The highest sequence in the file, so a later run appending to it
+    /// continues the numbering instead of reusing one.
+    pub max_sequence: u64,
 }
 
 impl TraceReplay {
@@ -159,6 +165,7 @@ impl TraceReplay {
         };
         let mut intents: Vec<TraceEntry> = Vec::new();
         let mut completed = Vec::new();
+        let mut max_sequence = 0u64;
         for (index, line) in BufReader::new(file).lines().enumerate() {
             let line =
                 line.map_err(|error| TraceError::Io(format!("read control trace: {error}")))?;
@@ -175,10 +182,11 @@ impl TraceReplay {
                     entry.trace_version
                 )));
             }
+            max_sequence = max_sequence.max(entry.sequence.get());
             if entry.result_code.is_some() {
                 if let Some(position) = intents
                     .iter()
-                    .position(|intent| intent.sequence == entry.sequence)
+                    .rposition(|intent| intent.sequence == entry.sequence)
                 {
                     intents.remove(position);
                     completed.push(entry);
@@ -191,6 +199,7 @@ impl TraceReplay {
         Ok(Self {
             completed,
             incomplete: intents.into_iter().map(|e| e.sequence.get()).collect(),
+            max_sequence,
         })
     }
 
@@ -290,5 +299,42 @@ mod tests {
         let mut none = NoTrace;
         none.append_intent(&entry(1, 0)).unwrap();
         none.append_result(&entry(1, 0)).unwrap();
+    }
+
+    #[test]
+    fn a_result_pairs_with_the_latest_intent_of_its_sequence() {
+        let directory = std::env::temp_dir().join(format!(
+            "quantick-control-trace-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let session = directory.join("WINJ26-2026-03-17.csv");
+        std::fs::write(&session, "# not read by the trace\n").unwrap();
+
+        // Run 1 died between its intent and its result; run 2, numbering
+        // from 2 again, took a different mark and finished it.
+        let mut trace = ReplayTraceFile::open(&session).unwrap();
+        let mut abandoned = entry(2, 1_000);
+        abandoned.canonical_input = json!({ "note": "A" });
+        trace.append_intent(&abandoned).unwrap();
+        let mut finished = entry(2, 4_000);
+        finished.canonical_input = json!({ "note": "B" });
+        trace.append_intent(&finished).unwrap();
+        let mut result = finished.clone();
+        result.result_code = Some(ErrorCode::new("control.ok").unwrap());
+        trace.append_result(&result).unwrap();
+
+        let replay = TraceReplay::load(&session).unwrap();
+        assert_eq!(replay.completed.len(), 1);
+        assert_eq!(replay.completed[0].canonical_input, json!({ "note": "B" }));
+        assert_eq!(replay.completed[0].replay_elapsed_ms, 4_000);
+        assert_eq!(
+            replay.incomplete,
+            vec![2],
+            "run 1's intent stays unfinished"
+        );
+        assert_eq!(replay.max_sequence, 2);
+        std::fs::remove_dir_all(&directory).unwrap();
     }
 }

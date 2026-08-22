@@ -21,7 +21,7 @@ use quantick_control::{
         RegistryError, RevisionPolicy,
     },
     schema::{CompiledSchema, generated_schema},
-    wire::{ActorContext, WireU64},
+    wire::{ActorContext, ActorKind, WireU64},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -168,15 +168,17 @@ pub(crate) struct MarkInput {
 }
 
 /// What a mark returns: where it landed in the journal and exactly what was
-/// pointed at when it was taken.
+/// pointed at when it was taken. The journal event at `sequence` carries the
+/// wall-clock time; the result does not repeat it, so the trace's result
+/// digest depends on what was marked, not on when.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct MarkResult {
     pub sequence: WireU64,
-    #[schemars(extend("x-unit" = "unix_milliseconds"))]
-    pub recorded_at_unix_ms: i64,
     pub target: CursorSnapshot,
-    /// `supplied` when the caller passed the target, `resolved` when the
-    /// pointer was read at the moment of the call.
+    /// Who resolved the target: `pointer` — the human's pointer, at the
+    /// gesture (the hotkey and the hook pass it) or at the call (a caller
+    /// that passed none); `supplied` — an agent passed a target it read from
+    /// a snapshot; `replayed` — a control trace re-injected a recorded mark.
     pub target_source: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -247,9 +249,11 @@ fn create_mark(
             "a mark note is at most {CONTROL_REASON_MAX_BYTES} bytes"
         )));
     }
-    let (target, target_source) = match input.target {
-        Some(target) => (target, "supplied"),
-        None => (cursor_snapshot(app), "resolved"),
+    let (target, target_source) = match (actor.actor_kind, input.target) {
+        (ActorKind::Automation, Some(target)) => (target, "replayed"),
+        (ActorKind::Agent, Some(target)) => (target, "supplied"),
+        (ActorKind::HumanUi, Some(target)) => (target, "pointer"),
+        (_, None) => (cursor_snapshot(app), "pointer"),
     };
     let event_actor = EventActor {
         kind: actor.actor_kind,
@@ -273,7 +277,6 @@ fn create_mark(
     );
     let result = MarkResult {
         sequence,
-        recorded_at_unix_ms,
         target,
         target_source: target_source.to_owned(),
         note: input.note,

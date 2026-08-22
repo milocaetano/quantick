@@ -86,6 +86,23 @@ pub(crate) fn read_page(
     })
 }
 
+/// Finish the page a `wait_for_change` returns. A retention gap the gateway
+/// saw while resolving the wait is reported even though the read itself
+/// started at the clamped position, and `timed_out` is honest: a change that
+/// landed between the deadline and the read is a change, not a timeout.
+pub(crate) fn complete_wait_page(
+    mut page: EventPage,
+    dropped_before: Option<EventCursor>,
+) -> EventPage {
+    if page.dropped_before.is_none() {
+        page.dropped_before = dropped_before;
+    }
+    if page.timed_out && !page.events.is_empty() {
+        page.timed_out = false;
+    }
+    page
+}
+
 #[cfg(test)]
 mod tests {
     use quantick_control::{
@@ -182,5 +199,37 @@ mod tests {
         let error =
             read_page(&journal, &instance(), Some(&foreign), None, None, false).unwrap_err();
         assert_eq!(error.code.as_str(), codes::CURSOR_INVALID);
+    }
+
+    #[test]
+    fn a_wait_page_keeps_the_gap_the_gateway_saw_and_is_no_timeout_once_events_landed() {
+        let (mut journal, _ticks) = EventJournal::with_bounds(4, 1 << 20);
+        for index in 0..8 {
+            record(&mut journal, index);
+        }
+        let bounds = journal.bounds();
+        // The gateway resolved a cursor from behind retention to the oldest
+        // retained event before parking; the read starts there and, alone,
+        // sees no gap.
+        let evicted = EventCursor {
+            instance_id: instance(),
+            next_sequence: bounds.oldest_sequence,
+        };
+        let page = read_page(&journal, &instance(), Some(&evicted), None, None, true).unwrap();
+        assert!(page.dropped_before.is_none());
+        assert!(page.timed_out);
+        let completed = complete_wait_page(page, Some(evicted.clone()));
+        assert_eq!(completed.dropped_before, Some(evicted));
+        assert!(
+            !completed.timed_out,
+            "events that landed between the deadline and the read are a change"
+        );
+        // An empty page past the deadline stays a timeout.
+        let latest = EventCursor {
+            instance_id: instance(),
+            next_sequence: bounds.next_sequence,
+        };
+        let empty = read_page(&journal, &instance(), Some(&latest), None, None, true).unwrap();
+        assert!(complete_wait_page(empty, None).timed_out);
     }
 }

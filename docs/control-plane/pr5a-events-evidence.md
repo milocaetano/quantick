@@ -27,7 +27,7 @@ logical replay time on the next run of that recording.
 | --- | --- | --- |
 | `EventJournal` | `crates/app/src/control/journal.rs` | Ring bounded by `CONTROL_EVENT_JOURNAL_CAPACITY` entries and `CONTROL_EVENT_JOURNAL_MAX_BYTES`; events above `CONTROL_EVENT_MAX_BYTES` keep a bounded summary; `JournalSignal` publishes `next_sequence`/`oldest_sequence` atomically and ticks a bounded(1) channel — the application thread stores two atomics and tries one send, and acquires no lock |
 | `events.read`, `events.wait` | `crates/app/src/control/events.rs`, `contract.rs` | Capabilities under `observe` + `observe.events` (now in the safe default grant); a first read names `oldest` or `latest`, later reads carry the cursor; `dropped_before` reports retention loss |
-| Parked waits | `gateway.rs` (`waiter_manager`, `dispatch_parked_wait`) | One manager thread per gateway run owns the parked waiters, listens to the journal tick and deadlines, wakes each waiter; the woken waiter runs the bounded read through the ordinary UI path; slots bounded by `CONTROL_MAX_PARKED_WAITERS`, overflow is `control.backpressure` |
+| Parked waits | `gateway.rs` (`waiter_manager`, `dispatch_parked_wait`) | One manager thread per gateway run owns the parked waiters, listens to the journal tick and deadlines, wakes each waiter; the woken waiter runs the bounded read through the ordinary UI path; slots bounded by `CONTROL_MAX_PARKED_WAITERS` globally and `CONTROL_MAX_PARKED_WAITERS_PER_CONNECTION` per connection, overflow is `control.backpressure`; a parked wait holds its request ID (a duplicate is refused), a closed connection releases its waits at the manager's next pass, a retention gap seen at park time is reported on the page, and `timed_out` is false once events landed |
 | Frame emitter | `gateway.rs` (`emit_semantic_changes`) | While enabled: `workspace.tab.activated/opened/closed`, `workspace.focus.changed`, `interaction.selection.changed`, `feed.market.changed`, `feed.connection.changed`, `replay.state.changed`; the first enabled frame sets the baseline and records nothing |
 | Action registry | `crates/app/src/control/actions.rs` | `ActionRegistry` (descriptor + handler + compiled schemas); `attention.mark.create` with effect `annotate`, permissions `annotate` + `annotate.attention`, module `attention`; the descriptor is registered in the same `ControlRegistry` the reads use, so `describe` and search list it; no read handler, so a remote call that had the permission would still fail closed before dispatch |
 | Local invocation | `gateway.rs` (`invoke_local_action`), `app.rs` (`control_action`, `take_mark`) | One path for the hotkey, the hook, tests and a replayed trace entry: validate input, build the trusted actor (`human_ui` from this window, `automation` for a replayed entry), append the trace intent, run, validate output, append the trace result |
@@ -39,10 +39,15 @@ logical replay time on the next run of that recording.
 
 `MarkInput { note?, target? }`. The hotkey resolves the pointer at the moment
 of the gesture and supplies the target; the handler resolves the pointer only
-when none was supplied (`target_source: supplied | resolved`). The input alone
-therefore determines the event, which is what lets the control trace replay a
-mark identically without a human present, and what lets a later agent mark a
-target it read from a snapshot rather than the pointer it does not hold.
+when none was supplied. The input alone therefore determines the event, which
+is what lets the control trace replay a mark identically without a human
+present, and what lets a later agent mark a target it read from a snapshot
+rather than the pointer it does not hold. `target_source` names who resolved
+it: `pointer` (the human's pointer — hotkey, hook, or a caller that passed
+none), `supplied` (an agent passed a target it read), `replayed` (a control
+trace re-injected it). The result carries no wall-clock time — the journal
+event does — so the trace's result digest depends on what was marked, not on
+when.
 
 ## Acceptance against the plan (PR 5a)
 

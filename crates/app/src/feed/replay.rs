@@ -195,6 +195,12 @@ impl ReplayStatus {
         self.position_ms().saturating_sub(self.start_ms())
     }
 
+    /// Move the published playhead, as a worker's restart or seek would.
+    #[cfg(test)]
+    pub(crate) fn set_position_ms_for_test(&self, position_ms: i64) {
+        self.position_ms.store(position_ms, Ordering::Relaxed);
+    }
+
     /// How far through the session playback is, `0.0`..=`1.0`.
     #[must_use]
     pub fn progress(&self) -> f32 {
