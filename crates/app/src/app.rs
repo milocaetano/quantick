@@ -25861,6 +25861,19 @@ plot(close)
                     )
                     .unwrap();
             }
+            // Its own overflow is refused at once by the per-connection cap,
+            // which also proves the four before it are parked before the
+            // next connection sends — the reader handles a connection's
+            // requests in order.
+            let overflow = other
+                .send(
+                    "events.wait",
+                    serde_json::json!({ "start": "latest", "timeout_ms": 30000 }),
+                )
+                .unwrap();
+            let refused = other.read().unwrap();
+            assert_eq!(refused.request_id, overflow);
+            assert_eq!(response_error(&refused).code.as_str(), codes::BACKPRESSURE);
             others.push(other);
         }
         let mut late =
