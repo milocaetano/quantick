@@ -222,20 +222,32 @@ request and response.
 ## Focused verification
 
 ```text
-cargo check -p quantick-app --all-targets
-  PASS
+cargo test -p quantick-app gateway -- --test-threads=1
+  PASS: 22 passed, 0 failed
+    (the original fifteen, plus: a request before the handshake is rejected
+     and the connection closes; the descriptor names the literal loopback
+     endpoint; exit shutdown removes discovery; per-client revocation; a client
+     that never reads does not stall another; a half-written frame does not
+     hold the connection; observer reads leave every module revision unchanged;
+     the elapsed-time budget ends a drain on its own)
 
-cargo test -p quantick-app gateway -- --nocapture --test-threads=1
-  PASS: 15 passed, 0 failed
+cargo test -p quantick-control-local
+  PASS: 10 passed, 0 failed
+    (descriptor privacy, ordering and bounds; the client against a fake
+     loopback gateway: accepted and rejected handshakes, a reply for another
+     process, a closed port, selection among zero/one/many, an empty directory
+     neither created nor published into)
 
-cargo test -p quantick-app observer_ -- --nocapture --test-threads=1
-  PASS: 11 passed, 0 failed
-  CONTROL_CORE_CAPTURE {"capture_p99_us":22,"capture_worst_us":24,"captures":500}
-  CONTROL_MAX_CHART_WINDOW_CAPTURE {"capture_p99_us":99,"capture_worst_us":100,"captures":100,"bars":32}
+cargo test -p quantick-app observer_ -- --test-threads=1
+  PASS: 8 passed, 1 ignored
+  CONTROL_CORE_CAPTURE {"capture_median_us":~20,"capture_p99_us":22-28,"captures":500}
+  CONTROL_MAX_CHART_WINDOW_CAPTURE {"capture_median_us":93-97,"capture_p99_us":96-128,"captures":100,"bars":32}
+    (the median of the best of three batches is the always-on guard; the strict
+     p99 readings come from the ignored siblings on a quiet machine)
 ```
 
-The full workspace format, lint, build, and test gates are recorded after the
-architecture review, immediately before the PR 3 commit.
+The four workspace checks are recorded in the pull request for the exact
+head it ships.
 
 ## Deferred surface
 
