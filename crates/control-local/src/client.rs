@@ -249,11 +249,50 @@ impl LocalClient {
         Ok(request_id)
     }
 
+    /// Whether a reply is waiting to be read, without blocking longer than
+    /// `patience`. For a caller that cannot block for the negotiated timeout —
+    /// a test driving the instance's own frame loop, or a client polling
+    /// several connections — this is how it asks before it reads. A closed
+    /// connection also reports `true`, so the read that follows says so.
+    pub fn reply_pending(&mut self, patience: Duration) -> bool {
+        let previous = self.stream.read_timeout().ok().flatten();
+        if self.stream.set_read_timeout(Some(patience)).is_err() {
+            return false;
+        }
+        let mut byte = [0u8; 1];
+        let pending = match self.stream.peek(&mut byte) {
+            Ok(_) => true,
+            Err(error) => !matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+        };
+        let _ = self.stream.set_read_timeout(previous);
+        pending
+    }
+
     /// Read the next reply on the connection, whichever request it answers.
     pub fn read(&mut self) -> Result<ResponseEnvelope, ControlError> {
         self.codec
             .read_response(&mut self.stream)
             .map_err(|_| instance_gone_error())
+    }
+
+    /// [`Self::read`] for a reply the gateway may legitimately take longer to
+    /// send than the negotiated request timeout — a parked wait — by the
+    /// extra milliseconds given. The ordinary timeout is restored afterwards.
+    pub fn read_with_extra_patience(
+        &mut self,
+        extra_ms: u64,
+    ) -> Result<ResponseEnvelope, ControlError> {
+        let previous = self.stream.read_timeout().ok().flatten();
+        let extended = previous
+            .unwrap_or(Duration::from_millis(CONTROL_HANDSHAKE_TIMEOUT_MS))
+            .saturating_add(Duration::from_millis(extra_ms));
+        let _ = self.stream.set_read_timeout(Some(extended));
+        let outcome = self.read();
+        let _ = self.stream.set_read_timeout(previous);
+        outcome
     }
 
     /// Send one request and wait for its own reply. Use this when nothing

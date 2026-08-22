@@ -869,6 +869,9 @@ pub struct QuantickApp {
     /// The `QUANTICK_CONTROL_ACCESS` hook: enable observer access on the
     /// first frame, through the panel button's own `enable`.
     pending_control_access_enable: bool,
+    /// The `QUANTICK_CONTROL_MARK` hook: take a mark on the first frame,
+    /// through the hotkey's own action, with the note the hook carried.
+    pending_control_mark: Option<String>,
     /// The note being typed on the chart — the on-chart editor's whole
     /// state. See [`InlineTextEdit`].
     inline_text_edit: Option<InlineTextEdit>,
@@ -1295,6 +1298,7 @@ impl QuantickApp {
             pending_text_edit: false,
             pending_text_note: false,
             pending_control_access_enable: false,
+            pending_control_mark: None,
             inline_text_edit: None,
             inspector_moved: false,
             inspector_last_selection: None,
@@ -1422,6 +1426,12 @@ impl QuantickApp {
         }
         app.pending_control_access_enable =
             std::env::var("QUANTICK_CONTROL_ACCESS").is_ok_and(|value| value == "1");
+        // A mark from a launch: `1` marks with no note, anything else is the
+        // note. It goes through the same action the hotkey calls.
+        app.pending_control_mark = std::env::var("QUANTICK_CONTROL_MARK")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| if value == "1" { String::new() } else { value });
         // Drawing-toolbar hooks, so a validation run reaches every new
         // surface without a click (`.claude/skills/ui-harness`).
         if let Ok(id) = std::env::var("QUANTICK_DRAWING_TOOL")
@@ -2157,6 +2167,59 @@ impl QuantickApp {
 
     pub(crate) fn control_workspace_flags(&self) -> (bool, bool, bool) {
         (self.save_on_exit, self.show_perf, self.progressive_history)
+    }
+
+    /// Invoke one registered control action from inside the application,
+    /// attributed to the human at this window (or to automation when a
+    /// control trace replays it). The hotkey, the `QUANTICK_CONTROL_MARK`
+    /// hook and the tests all arrive here; there is no second path.
+    pub(crate) fn control_action(
+        &mut self,
+        capability_id: &str,
+        origin: crate::control::ActionOrigin,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, quantick_control::error::ControlError> {
+        let Some(mut access) = self.control_access.take() else {
+            return Err(quantick_control::error::ControlError::invalid_request(
+                "control access is not installed",
+            ));
+        };
+        let outcome = access.invoke_local_action(self, capability_id, input, origin);
+        self.control_access = Some(access);
+        outcome
+    }
+
+    /// The mark hotkey's body: `attention.mark.create` with the resolved
+    /// cursor target, attributed to the human.
+    pub(crate) fn take_mark(&mut self, note: Option<String>) {
+        let mut input = serde_json::Map::new();
+        if let Some(note) = note {
+            input.insert("note".to_owned(), serde_json::Value::String(note));
+        }
+        // The pointer is resolved here, at the moment of the gesture, and
+        // travels as input: the input alone then determines the mark, which
+        // is what lets a control trace replay it identically.
+        if let Ok(target) = serde_json::to_value(crate::control::cursor_snapshot(self)) {
+            input.insert("target".to_owned(), target);
+        }
+        match self.control_action(
+            crate::control::MARK_CAPABILITY_ID,
+            crate::control::ActionOrigin::Human,
+            serde_json::Value::Object(input),
+        ) {
+            Ok(result) => tracing::info!(
+                target: "quantick::control",
+                event_code = "CONTROL_MARK_TAKEN",
+                sequence = %result["sequence"],
+                "mark taken"
+            ),
+            Err(error) => tracing::warn!(
+                target: "quantick::control",
+                event_code = "CONTROL_MARK_REFUSED",
+                code = %error.code,
+                "mark refused"
+            ),
+        }
     }
 
     pub(crate) fn control_frame_metrics(&self) -> ControlFrameMetrics {
@@ -5273,6 +5336,9 @@ impl QuantickApp {
         if ctx.input_mut(|i| i.consume_shortcut(&LEGEND_SHORTCUT)) {
             let collapsed = self.focused_legend_collapsed();
             self.set_focused_legend_collapsed(!collapsed);
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&crate::control::MARK_SHORTCUT)) {
+            self.take_mark(None);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&SAVE_WORKSPACE_SHORTCUT)) {
             self.save_workspace("shortcut");
@@ -8778,6 +8844,16 @@ impl QuantickApp {
             if let Some(access) = self.control_access.as_mut() {
                 access.enable(ctx);
             }
+        }
+        if let Some(note) = self.pending_control_mark.take() {
+            let note = (!note.is_empty()).then_some(note);
+            self.take_mark(note);
+        }
+        // Replay determinism: a session with a control trace beside it
+        // re-injects its actions at their logical time, connected or not.
+        if let Some(mut access) = self.control_access.take() {
+            access.service_replay_trace(self);
+            self.control_access = Some(access);
         }
         if self
             .control_access
@@ -24439,6 +24515,7 @@ plot(close)
             "observe.replay",
             "observe.health",
             "observe.attention",
+            "observe.events",
         ]
         .into_iter()
         .map(|id| quantick_control::id::PermissionId::new(id).unwrap())
@@ -25584,6 +25661,364 @@ plot(close)
         best
     }
 
+    /// Put the pointer over `slot` of the flow pane, the way the cursor tests
+    /// do, so a mark has a bar to resolve.
+    fn hover_bar(app: &mut QuantickApp, ctx: &egui::Context, slot: usize) {
+        run_frame(app, ctx);
+        let position = {
+            let pane = &app.active_tab().flow_pane;
+            let chart = pane.last_chart_area.expect("the pane reported its rect");
+            let right = pane.last_lane_divider_x.unwrap_or_else(|| chart.right());
+            egui::pos2(
+                pane.viewport.x_center(slot, right, pane.slots()),
+                chart.center().y,
+            )
+        };
+        run_frame_with_events(app, ctx, vec![egui::Event::PointerMoved(position)]);
+    }
+
+    fn success_result(response: &quantick_control::wire::ResponseEnvelope) -> serde_json::Value {
+        match &response.outcome {
+            quantick_control::wire::ResponseOutcome::Success { result } => result.clone(),
+            quantick_control::wire::ResponseOutcome::Failure { error } => {
+                panic!("expected a success: {error:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn gateway_wait_for_change_sees_a_human_mark_and_does_not_delay_a_concurrent_read() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(40);
+        let directory = gateway_test_directory("wait-mark");
+        enable_test_gateway(&mut app, &ctx, &directory, 8);
+        run_frame(&mut app, &ctx);
+        let mut waiter =
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+        let mut reader =
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+
+        // The waiter parks on the gateway side, from the journal's current end.
+        let wait_id = waiter
+            .send(
+                "events.wait",
+                serde_json::json!({ "start": "latest", "timeout_ms": 5000 }),
+            )
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(
+            app.control_access
+                .as_ref()
+                .expect("control access is installed")
+                .queued_requests_for_test(),
+            0,
+            "a parked wait holds no UI request slot"
+        );
+
+        // A concurrent read on another connection is answered at once —
+        // the worker-side describe without the frame loop, the UI-side
+        // snapshot within one frame.
+        assert!(matches!(
+            reader
+                .invoke(
+                    crate::control::DESCRIBE_CAPABILITY_ID,
+                    serde_json::json!({})
+                )
+                .unwrap()
+                .outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ));
+        let snapshot_id = reader
+            .send(
+                crate::control::SNAPSHOT_CAPABILITY_ID,
+                serde_json::json!({ "scopes": ["system.info"] }),
+            )
+            .unwrap();
+        wait_for_queued_gateway_requests(&app, 1);
+        run_frame(&mut app, &ctx);
+        let snapshot = reader.read().unwrap();
+        assert_eq!(snapshot.request_id, snapshot_id);
+        assert!(matches!(
+            snapshot.outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ));
+
+        // The human points at bar 20 and takes a mark with a note. The waiter
+        // wakes and its page names the bar, the note and the human.
+        hover_bar(&mut app, &ctx, 20);
+        app.take_mark(Some("this absorption is what I mean".to_owned()));
+        let mut reply = None;
+        for _ in 0..400 {
+            // The woken waiter enqueues its bounded read; frames serve it.
+            run_frame(&mut app, &ctx);
+            if waiter.reply_pending(std::time::Duration::from_millis(5)) {
+                reply = Some(waiter.read().unwrap());
+                break;
+            }
+        }
+        let page = reply.expect("the parked wait was answered");
+        assert_eq!(page.request_id, wait_id);
+        let result = success_result(&page);
+        assert_eq!(result["timed_out"], false);
+        let events = result["events"].as_array().expect("a page of events");
+        let mark = events
+            .iter()
+            .find(|event| event["kind"] == "attention.mark.created")
+            .expect("the mark is in the page");
+        assert_eq!(mark["actor"]["kind"], "human_ui");
+        assert_eq!(mark["payload"]["note"], "this absorption is what I mean");
+        assert_eq!(mark["payload"]["target_source"], "supplied");
+        assert_eq!(mark["payload"]["target"]["pointer"]["bar"]["slot"], "20");
+        assert_eq!(mark["payload"]["target"]["pointer"]["symbol"], "TESTUSDT");
+
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn gateway_wait_for_change_times_out_cleanly_and_parked_slots_are_bounded() {
+        use quantick_control::{error::codes, limits::CONTROL_MAX_PARKED_WAITERS};
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(2);
+        let directory = gateway_test_directory("wait-timeout");
+        enable_test_gateway(&mut app, &ctx, &directory, 8);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+        let wait_id = client
+            .send(
+                "events.wait",
+                serde_json::json!({ "start": "latest", "timeout_ms": 100 }),
+            )
+            .unwrap();
+        // Nothing happens; the waiter times out, then its bounded read enters
+        // the queue and a frame serves it.
+        let mut reply = None;
+        for _ in 0..400 {
+            run_frame(&mut app, &ctx);
+            if client.reply_pending(std::time::Duration::from_millis(5)) {
+                reply = Some(client.read().unwrap());
+                break;
+            }
+        }
+        let reply = reply.expect("the timed-out wait was answered");
+        assert_eq!(reply.request_id, wait_id);
+        let page = success_result(&reply);
+        assert_eq!(page["timed_out"], true);
+        assert!(page["events"].as_array().unwrap().is_empty());
+        assert!(page["next_cursor"]["next_sequence"].is_string());
+
+        // More parked waits than the reviewed slots: the overflow is refused
+        // with backpressure, at once, while the others stay parked.
+        let mut ids = Vec::new();
+        for _ in 0..(CONTROL_MAX_PARKED_WAITERS + 1) {
+            ids.push(
+                client
+                    .send(
+                        "events.wait",
+                        serde_json::json!({ "start": "latest", "timeout_ms": 30000 }),
+                    )
+                    .unwrap(),
+            );
+        }
+        let refused = client.read().unwrap();
+        assert_eq!(refused.request_id, ids[CONTROL_MAX_PARKED_WAITERS]);
+        assert_eq!(response_error(&refused).code.as_str(), codes::BACKPRESSURE);
+        assert!(response_error(&refused).retryable);
+
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn gateway_observer_cannot_create_a_mark_remotely_but_reads_the_registered_action() {
+        use quantick_control::error::codes;
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(2);
+        let directory = gateway_test_directory("remote-mark");
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+        let refused = client
+            .invoke(crate::control::MARK_CAPABILITY_ID, serde_json::json!({}))
+            .unwrap();
+        assert_eq!(
+            response_error(&refused).code.as_str(),
+            codes::PERMISSION_DENIED
+        );
+
+        let described = success_result(
+            &client
+                .invoke(
+                    crate::control::DESCRIBE_CAPABILITY_ID,
+                    serde_json::json!({}),
+                )
+                .unwrap(),
+        );
+        let capabilities = described["capabilities"].as_array().unwrap();
+        let mark = capabilities
+            .iter()
+            .find(|capability| capability["id"] == crate::control::MARK_CAPABILITY_ID)
+            .expect("the action is discoverable");
+        assert_eq!(mark["effect"], "annotate");
+        assert_eq!(mark["read_only"], false);
+        assert!(
+            capabilities
+                .iter()
+                .any(|capability| capability["id"] == "events.read")
+        );
+        assert!(
+            capabilities
+                .iter()
+                .any(|capability| capability["id"] == "events.wait")
+        );
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn gateway_journals_a_focus_change_the_human_made() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 40);
+        let directory = gateway_test_directory("focus-event");
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        // Baseline frame, then the human focuses the other pane.
+        run_frame(&mut app, &ctx);
+        let before = app.active_tab().focused_side();
+        let other = match before {
+            PaneSide::Time => PaneSide::Flow,
+            PaneSide::Flow => PaneSide::Time,
+        };
+        let other_point = pane_point(&app, other);
+        click_chart(&mut app, &ctx, other_point);
+        assert_eq!(app.active_tab().focused_side(), other);
+        run_frame(&mut app, &ctx);
+
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+        let read_id = client
+            .send("events.read", serde_json::json!({ "start": "oldest" }))
+            .unwrap();
+        wait_for_queued_gateway_requests(&app, 1);
+        run_frame(&mut app, &ctx);
+        let page = client.read().unwrap();
+        assert_eq!(page.request_id, read_id);
+        let result = success_result(&page);
+        let kinds = result["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| event["kind"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert!(
+            kinds.iter().any(|kind| kind == "workspace.focus.changed"),
+            "the focus change is in the journal: {kinds:?}"
+        );
+        assert!(
+            kinds
+                .iter()
+                .any(|kind| kind == "interaction.selection.changed"),
+            "the selection scope changed with the focus: {kinds:?}"
+        );
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
+        let ctx = egui::Context::default();
+        let dir = std::env::temp_dir().join(format!(
+            "quantick-control-trace-replay-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let session = recording_at(&dir);
+        let trace_path = dir.join("20260316.csv.control-trace.jsonl");
+
+        // First run: a human takes a mark while the session is linked.
+        let (mut app, _commands) = app_with_history(12);
+        app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(session));
+        hover_bar(&mut app, &ctx, 6);
+        app.take_mark(Some("traced".to_owned()));
+        assert!(
+            trace_path.exists(),
+            "the mark was recorded beside the recording"
+        );
+        let first_events = app
+            .control_access
+            .as_ref()
+            .unwrap()
+            .journal()
+            .read(1, 16, 1 << 20)
+            .events;
+        let original = first_events
+            .iter()
+            .find(|event| event.kind.as_str() == "attention.mark.created")
+            .expect("the human mark is journaled");
+        assert_eq!(original.payload["note"], "traced");
+        assert_eq!(
+            original.actor.as_ref().unwrap().kind,
+            quantick_control::wire::ActorKind::HumanUi
+        );
+        drop(app);
+
+        // Second run: the same recording with its sidecar. The frame loop
+        // re-injects the mark at its logical time with no human present, and
+        // the replayed mark names the same bar.
+        let (mut app, _commands) = app_with_history(12);
+        app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        let replayed_events = app
+            .control_access
+            .as_ref()
+            .unwrap()
+            .journal()
+            .read(1, 16, 1 << 20)
+            .events;
+        let replayed = replayed_events
+            .iter()
+            .find(|event| event.kind.as_str() == "attention.mark.created")
+            .expect("the traced mark was re-injected");
+        assert_eq!(replayed.payload["note"], "traced");
+        assert_eq!(replayed.payload["target_source"], "supplied");
+        assert_eq!(
+            replayed.payload["target"]["pointer"]["bar"]["slot"],
+            original.payload["target"]["pointer"]["bar"]["slot"],
+            "the replayed mark points at the same bar"
+        );
+        assert_eq!(
+            replayed.actor.as_ref().unwrap().kind,
+            quantick_control::wire::ActorKind::Automation,
+            "a replayed mark is attributed to automation, not to a human"
+        );
+        // Re-injection did not grow the trace: the sidecar still holds one
+        // intent and one result.
+        let lines = std::fs::read_to_string(&trace_path)
+            .unwrap()
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count();
+        assert_eq!(lines, 2, "a replayed action is not recorded again");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn observer_max_chart_window_capture_stays_within_the_ui_budget() {
         // The always-on guard judges the median of the best batch: a typical
@@ -25834,7 +26269,7 @@ plot(close)
     #[test]
     fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
         let documents = crate::control::schema_catalog::documents();
-        assert_eq!(documents.len(), 15);
+        assert_eq!(documents.len(), 20);
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("schemas/control");
@@ -25879,14 +26314,18 @@ plot(close)
         let catalog = crate::control::schema_catalog::capability_catalog();
         assert_eq!(catalog["catalog_version"], 1);
         assert_eq!(catalog["profile_id"], "observer");
-        assert_eq!(catalog["capabilities"].as_array().unwrap().len(), 4);
-        assert!(
-            catalog["capabilities"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|capability| capability["read_only"] == true)
-        );
+        let capabilities = catalog["capabilities"].as_array().unwrap();
+        assert_eq!(capabilities.len(), 7);
+        // Every observe-effect capability is read-only; the one annotate
+        // action is the registered mark, discoverable but not an observer read.
+        for capability in capabilities {
+            if capability["effect"] == "observe" {
+                assert_eq!(capability["read_only"], true, "{}", capability["id"]);
+            } else {
+                assert_eq!(capability["effect"], "annotate");
+                assert_eq!(capability["id"], crate::control::MARK_CAPABILITY_ID);
+            }
+        }
 
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")

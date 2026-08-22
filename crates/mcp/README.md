@@ -17,6 +17,8 @@ none and says what to do next.
 | `quantick_get_snapshot` | `snapshot.read` | One coherent capture of the requested scopes with a capture revision. |
 | `quantick_get_chart_window` | `chart.window.read` | A paginated, append-only page of closed bars for one pane. |
 | `quantick_get_diagnostics` | `health.diagnostics.read` | The bounded health view. |
+| `quantick_read_events` | `events.read` | A page of the semantic event journal after a cursor or from `oldest`/`latest`, with `dropped_before` when retention passed the cursor. |
+| `quantick_wait_for_change` | `events.wait` | Parks (≤ 30 s) until the journal moves past the cursor, then the page that completes the call. |
 | `quantick_search_capabilities` | `control.describe`, filtered | Capabilities and scopes by substring or module, with availability. |
 | `quantick_invoke` | any registered capability | The long tail, under the same authority checks as the named tools. |
 

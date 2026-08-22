@@ -5,23 +5,28 @@
 //! application-thread port; authentication, framing, and socket I/O stay in
 //! the local gateway workers.
 
+mod actions;
 pub(crate) mod chart;
 mod contract;
+mod events;
 mod feed;
 mod gateway;
 mod health;
 mod interaction;
-pub(crate) use interaction::drawing_band_name;
+mod journal;
+pub(crate) use interaction::{cursor_snapshot, drawing_band_name};
 mod registry;
 #[cfg(test)]
 pub(crate) mod schema_catalog;
 mod system;
+mod trace;
 mod types;
 mod workspace;
 
+pub(crate) use actions::MARK_CAPABILITY_ID;
 #[cfg(test)]
 pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID};
-pub(crate) use gateway::ControlAccess;
+pub(crate) use gateway::{ActionOrigin, ControlAccess, MARK_SHORTCUT};
 
 use registry::{ProjectionRegistry, ProjectionRegistryError};
 

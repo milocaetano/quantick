@@ -28,7 +28,17 @@ use serde_json::{Value, json};
 use crate::app::QuantickApp;
 
 use super::{
+    actions::{
+        ANNOTATE_ATTENTION_PERMISSION_ID, ANNOTATE_EFFECT_ID, ANNOTATE_PERMISSION_ID,
+        ANNOTATOR_PROFILE_ID, ATTENTION_MODULE_ID, ActionRegistry,
+    },
     chart::{ChartWindowPage, ChartWindowQuery, chart_window_prevalidated},
+    events::{
+        EVENTS_MODULE_ID, EVENTS_PERMISSION_ID, EventsReadInput, EventsWaitInput,
+        READ_CAPABILITY_ID as EVENTS_READ_CAPABILITY_ID,
+        WAIT_CAPABILITY_ID as EVENTS_WAIT_CAPABILITY_ID, read_page,
+    },
+    journal::{EventJournal, EventPage},
     registry::{ProjectionRegistry, SerializedSnapshotCapture, SnapshotCapture},
 };
 
@@ -55,6 +65,7 @@ pub(crate) const SAFE_DEFAULT_SCOPE_IDS: &[&str] = &[
     "observe.replay",
     "observe.health",
     "observe.attention",
+    "observe.events",
 ];
 
 const OBSERVER_SCOPE_IDS: &[(&str, &str, bool)] = &[
@@ -169,6 +180,16 @@ pub(crate) struct SnapshotScopeDescriptor {
 pub(crate) enum PreparedDispatch {
     Worker(Box<dyn PreparedWorkerRead>),
     Ui(Box<dyn PreparedUiRead>),
+    /// `events.wait`: park on the gateway side until the journal moves past
+    /// the resolved position or the timeout elapses, then run the bounded
+    /// read through the UI queue.
+    Parked(ParkedWait),
+}
+
+/// A `wait_for_change` that has been validated and is about to park.
+#[derive(Clone, Debug)]
+pub(crate) struct ParkedWait {
+    pub input: EventsWaitInput,
 }
 
 impl fmt::Debug for PreparedDispatch {
@@ -176,6 +197,7 @@ impl fmt::Debug for PreparedDispatch {
         formatter.write_str(match self {
             Self::Worker(_) => "PreparedDispatch::Worker(<registered>)",
             Self::Ui(_) => "PreparedDispatch::Ui(<registered>)",
+            Self::Parked(_) => "PreparedDispatch::Parked(<events.wait>)",
         })
     }
 }
@@ -206,6 +228,7 @@ pub(crate) trait PreparedUiRead: Send {
     fn execute(
         &self,
         projections: &mut ProjectionRegistry,
+        journal: &EventJournal,
         app: &QuantickApp,
         instance_id: &InstanceId,
     ) -> Result<UiReadExecution, ControlError>;
@@ -233,23 +256,24 @@ impl PreparedDispatch {
             Self::Worker(invocation) => {
                 Some(invocation.execute(contract, instance_id, effective_scopes, effective_limits))
             }
-            Self::Ui(_) => None,
+            Self::Ui(_) | Self::Parked(_) => None,
         }
     }
 
     pub fn execute_ui(
         &self,
         projections: &mut ProjectionRegistry,
+        journal: &EventJournal,
         app: &QuantickApp,
         instance_id: &InstanceId,
     ) -> Result<UiReadExecution, ControlError> {
         match self {
-            Self::Worker(_) => Err(known_error(
+            Self::Worker(_) | Self::Parked(_) => Err(known_error(
                 codes::CAPABILITY_UNAVAILABLE,
-                "worker-only request entered the UI queue",
+                "a request that does not execute on the application thread entered the UI queue",
                 false,
             )),
-            Self::Ui(invocation) => invocation.execute(projections, app, instance_id),
+            Self::Ui(invocation) => invocation.execute(projections, journal, app, instance_id),
         }
     }
 }
@@ -287,6 +311,7 @@ impl PreparedUiRead for SnapshotInvocation {
     fn execute(
         &self,
         projections: &mut ProjectionRegistry,
+        _journal: &EventJournal,
         app: &QuantickApp,
         instance_id: &InstanceId,
     ) -> Result<UiReadExecution, ControlError> {
@@ -320,6 +345,7 @@ impl PreparedUiRead for ChartWindowInvocation {
     fn execute(
         &self,
         _projections: &mut ProjectionRegistry,
+        _journal: &EventJournal,
         app: &QuantickApp,
         instance_id: &InstanceId,
     ) -> Result<UiReadExecution, ControlError> {
@@ -349,6 +375,44 @@ impl DeferredUiRead for ChartWindowPage {
     }
 }
 
+/// `events.read`, and the read that completes `events.wait`: a bounded page
+/// of the journal, taken on the application thread like every capture.
+pub(crate) struct EventsReadInvocation {
+    pub input: EventsReadInput,
+    pub timed_out: bool,
+}
+
+impl PreparedUiRead for EventsReadInvocation {
+    fn execute(
+        &self,
+        _projections: &mut ProjectionRegistry,
+        journal: &EventJournal,
+        _app: &QuantickApp,
+        instance_id: &InstanceId,
+    ) -> Result<UiReadExecution, ControlError> {
+        let page = read_page(
+            journal,
+            instance_id,
+            self.input.cursor.as_ref(),
+            self.input.start,
+            self.input.limit,
+            self.timed_out,
+        )?;
+        Ok(Box::new(page))
+    }
+}
+
+impl DeferredUiRead for EventPage {
+    fn into_serialized(self: Box<Self>) -> Result<SerializedUiRead, DeferredSerializationError> {
+        let result = serde_json::to_value(&*self).map_err(|_| DeferredSerializationError)?;
+        Ok(SerializedUiRead {
+            capture_revision: None,
+            module_revisions: Vec::new(),
+            result,
+        })
+    }
+}
+
 struct PreparedCapability {
     dispatch: PreparedDispatch,
     dynamic_permissions: BTreeSet<PermissionId>,
@@ -369,16 +433,42 @@ pub(crate) struct ObserverContract {
 }
 
 impl ObserverContract {
-    pub fn new(projections: &ProjectionRegistry) -> Result<Self, RegistryError> {
+    pub fn new(
+        projections: &ProjectionRegistry,
+        actions: &ActionRegistry,
+    ) -> Result<Self, RegistryError> {
         let observer = profile(OBSERVER_PROFILE_ID);
-        let mut permissions = vec![PermissionDescriptor {
-            id: permission(OBSERVE_PERMISSION_ID),
-            label: "Observe".to_owned(),
-            description: "Invoke read-only observer capabilities.".to_owned(),
-            sensitive: false,
-            default_grant: DefaultGrant::Granted,
-            profile_ceilings: BTreeSet::from([observer.clone()]),
-        }];
+        let annotator = profile(ANNOTATOR_PROFILE_ID);
+        let mut permissions = vec![
+            PermissionDescriptor {
+                id: permission(OBSERVE_PERMISSION_ID),
+                label: "Observe".to_owned(),
+                description: "Invoke read-only observer capabilities.".to_owned(),
+                sensitive: false,
+                default_grant: DefaultGrant::Granted,
+                profile_ceilings: BTreeSet::from([observer.clone()]),
+            },
+            // The annotate tier's permissions are declared here so the actions
+            // that need them can be registered and discovered; no profile the
+            // gateway grants in this release carries them, so a remote caller
+            // is refused before dispatch (contract §7.1).
+            PermissionDescriptor {
+                id: permission(ANNOTATE_PERMISSION_ID),
+                label: "Annotate".to_owned(),
+                description: "Add reversible state or bounded notifications; never remove existing work or affect a position.".to_owned(),
+                sensitive: false,
+                default_grant: DefaultGrant::Prompt,
+                profile_ceilings: BTreeSet::from([annotator.clone()]),
+            },
+            PermissionDescriptor {
+                id: permission(ANNOTATE_ATTENTION_PERMISSION_ID),
+                label: "Create marks".to_owned(),
+                description: "Append marks carrying the resolved cursor target to the event journal.".to_owned(),
+                sensitive: false,
+                default_grant: DefaultGrant::Prompt,
+                profile_ceilings: BTreeSet::from([annotator.clone()]),
+            },
+        ];
         permissions.extend(
             OBSERVER_SCOPE_IDS
                 .iter()
@@ -397,15 +487,25 @@ impl ObserverContract {
         );
         permissions.sort_by(|left, right| left.id.cmp(&right.id));
 
-        let profiles = vec![ProfileDescriptor {
-            id: observer.clone(),
-            label: "Observer".to_owned(),
-            inherits: BTreeSet::new(),
-            permissions: BTreeSet::new(),
-        }];
+        let profiles = vec![
+            ProfileDescriptor {
+                id: observer.clone(),
+                label: "Observer".to_owned(),
+                inherits: BTreeSet::new(),
+                permissions: BTreeSet::new(),
+            },
+            ProfileDescriptor {
+                id: annotator.clone(),
+                label: "Annotator".to_owned(),
+                inherits: BTreeSet::from([observer.clone()]),
+                permissions: BTreeSet::new(),
+            },
+        ];
 
         let mut registry = ControlRegistry::new();
-        registry.register_profile(profiles[0].clone())?;
+        for descriptor in &profiles {
+            registry.register_profile(descriptor.clone())?;
+        }
         for descriptor in &permissions {
             registry.register_permission(descriptor.clone())?;
         }
@@ -421,10 +521,41 @@ impl ObserverContract {
             title: "Snapshot".to_owned(),
             description: "Coherent multi-module semantic captures.".to_owned(),
         })?;
+        registry.register_module(ModuleDescriptor {
+            id: module(EVENTS_MODULE_ID),
+            title: "Events".to_owned(),
+            description: "The bounded semantic event journal and its cursor.".to_owned(),
+        })?;
+        registry.register_module(ModuleDescriptor {
+            id: module(ATTENTION_MODULE_ID),
+            title: "Attention".to_owned(),
+            description: "Human marks: what the user pointed at, as a durable referent.".to_owned(),
+        })?;
         for descriptor in projections.module_descriptors() {
             registry.register_module(descriptor.clone())?;
         }
 
+        registry.register_effect(EffectPolicy {
+            id: effect(ANNOTATE_EFFECT_ID),
+            permission_floor: permission(ANNOTATE_PERMISSION_ID),
+            profile_ceilings: BTreeSet::from([annotator.clone()]),
+            confirmation_class: confirmation(NO_CONFIRMATION_ID),
+            risk_reducing_confirmation_class: None,
+            mcp_hint_floor: McpHintFloor {
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+            required_risk_flags: BTreeSet::new(),
+            constraints: EffectConstraints {
+                required_read_only: Some(false),
+                allows_destructive: false,
+                durable_requires_reversible: true,
+                irreversible_transient_risk: None,
+                allows_risk_reducing: false,
+            },
+        })?;
         registry.register_effect(EffectPolicy {
             id: effect(OBSERVE_EFFECT_ID),
             permission_floor: permission(OBSERVE_PERMISSION_ID),
@@ -540,6 +671,42 @@ impl ObserverContract {
             ),
             prepare_diagnostics,
         )?;
+        register_capability(
+            &mut registry,
+            &mut handlers,
+            &mut input_validators,
+            &mut output_validators,
+            read_capability::<EventsReadInput, EventPage, _>(
+                EVENTS_READ_CAPABILITY_ID,
+                EVENTS_MODULE_ID,
+                "Read events",
+                "Reads a bounded page of the semantic event journal after a cursor or from an explicit start, and says when older events were dropped.",
+                [OBSERVE_PERMISSION_ID, EVENTS_PERMISSION_ID],
+                None,
+            ),
+            prepare_events_read,
+        )?;
+        register_capability(
+            &mut registry,
+            &mut handlers,
+            &mut input_validators,
+            &mut output_validators,
+            read_capability::<EventsWaitInput, EventPage, _>(
+                EVENTS_WAIT_CAPABILITY_ID,
+                EVENTS_MODULE_ID,
+                "Wait for change",
+                "Parks off the application thread until the journal moves past the cursor or the timeout elapses, then reads the bounded page that completes the call.",
+                [OBSERVE_PERMISSION_ID, EVENTS_PERMISSION_ID],
+                None,
+            ),
+            prepare_events_wait,
+        )?;
+        // Actions are discoverable through the same registry as the reads;
+        // they have no prepare handler here, so a remote request for one that
+        // passes the permission check still fails closed before dispatch.
+        for descriptor in actions.descriptors() {
+            registry.register_capability(descriptor.clone())?;
+        }
 
         Ok(Self {
             registry,
@@ -782,6 +949,53 @@ fn prepare_chart_window(
     })
 }
 
+fn prepare_events_read(
+    _contract: &ObserverContract,
+    payload: &Value,
+) -> Result<PreparedCapability, ControlError> {
+    let input: EventsReadInput = decode_payload(payload)?;
+    if input.cursor.is_some() == input.start.is_some() {
+        return Err(known_error(
+            codes::CURSOR_INVALID,
+            "event read must supply either one cursor or one explicit start",
+            false,
+        ));
+    }
+    Ok(PreparedCapability {
+        dispatch: PreparedDispatch::Ui(Box::new(EventsReadInvocation {
+            input,
+            timed_out: false,
+        })),
+        dynamic_permissions: BTreeSet::new(),
+    })
+}
+
+fn prepare_events_wait(
+    _contract: &ObserverContract,
+    payload: &Value,
+) -> Result<PreparedCapability, ControlError> {
+    let input: EventsWaitInput = decode_payload(payload)?;
+    if input.cursor.is_some() == input.start.is_some() {
+        return Err(known_error(
+            codes::CURSOR_INVALID,
+            "event wait must supply either one cursor or one explicit start",
+            false,
+        ));
+    }
+    if input.timeout_ms == 0
+        || input.timeout_ms > quantick_control::limits::CONTROL_WAIT_TIMEOUT_MAX_MS
+    {
+        return Err(ControlError::invalid_request(format!(
+            "wait timeout must be in 1..={} ms",
+            quantick_control::limits::CONTROL_WAIT_TIMEOUT_MAX_MS
+        )));
+    }
+    Ok(PreparedCapability {
+        dispatch: PreparedDispatch::Parked(ParkedWait { input }),
+        dynamic_permissions: BTreeSet::new(),
+    })
+}
+
 fn prepare_diagnostics(
     _contract: &ObserverContract,
     payload: &Value,
@@ -876,10 +1090,15 @@ fn confirmation(id: &str) -> ConfirmationClassId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quantick_control::handshake::ProfileAuthority as _;
     use quantick_control::{id::RequestId, wire::RequestEnvelope};
 
     fn contract() -> ObserverContract {
-        ObserverContract::new(&super::super::standard_registry().unwrap()).unwrap()
+        ObserverContract::new(
+            &super::super::standard_registry().unwrap(),
+            &super::super::actions::standard_actions().unwrap(),
+        )
+        .unwrap()
     }
 
     fn request(capability: &str, payload: Value) -> RequestEnvelope {
@@ -940,15 +1159,31 @@ mod tests {
 
     #[test]
     fn observer_registry_contains_only_read_capabilities() {
+        // Six reads with handlers, plus the registered actions, which have
+        // no read handler here and sit behind permissions the observer
+        // ceiling does not hold: discoverable, never remotely reachable.
         let contract = contract();
         let capabilities = contract.registry.capabilities().collect::<Vec<_>>();
-        assert_eq!(capabilities.len(), 4);
-        assert_eq!(contract.handlers.len(), capabilities.len());
-        assert!(capabilities.iter().all(|capability| capability.read_only));
+        assert_eq!(capabilities.len(), 7);
+        assert_eq!(contract.handlers.len(), 6);
+        let observer_ceiling = contract
+            .registry
+            .permission_ceiling(&profile(OBSERVER_PROFILE_ID))
+            .expect("the observer profile has a ceiling");
+        for capability in &capabilities {
+            let reachable = capability.required_permissions.is_subset(&observer_ceiling);
+            assert_eq!(
+                reachable, capability.read_only,
+                "{}: only read-only capabilities sit inside the observer ceiling",
+                capability.id
+            );
+            assert!(!capability.destructive);
+        }
         assert!(
             capabilities
                 .iter()
-                .all(|capability| !capability.destructive)
+                .any(|capability| capability.id.as_str()
+                    == super::super::actions::MARK_CAPABILITY_ID)
         );
     }
 

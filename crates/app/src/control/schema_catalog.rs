@@ -4,14 +4,17 @@ use quantick_control::schema::generated_schema;
 use serde_json::{Value, json};
 
 use super::{
+    actions::{MarkInput, MarkResult},
     chart::{ChartSnapshot, ChartWindowPage, ChartWindowQuery},
     contract::{
         ChartWindowInput, DescribeResult, EmptyInput, ObserverContract, SnapshotReadInput,
         SnapshotScopeDescriptor,
     },
+    events::{EventsReadInput, EventsWaitInput},
     feed::FeedSnapshot,
     health::HealthSnapshot,
     interaction::{CursorSnapshot, SelectionSnapshot},
+    journal::EventPage,
     registry::SerializedSnapshotCapture,
     system::SystemSnapshot,
     workspace::WorkspaceSnapshot,
@@ -39,12 +42,19 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<SelectionSnapshot>("observer-selection-v1.schema.json"),
         document::<ChartWindowQuery>("observer-chart-window-query-v1.schema.json"),
         document::<ChartWindowPage>("observer-chart-window-page-v1.schema.json"),
+        document::<EventsReadInput>("observer-events-read-input-v1.schema.json"),
+        document::<EventsWaitInput>("observer-events-wait-input-v1.schema.json"),
+        document::<EventPage>("observer-event-page-v1.schema.json"),
+        document::<MarkInput>("attention-mark-input-v1.schema.json"),
+        document::<MarkResult>("attention-mark-result-v1.schema.json"),
     ]
 }
 
 pub(crate) fn capability_catalog() -> Value {
     let projections = super::standard_registry().expect("built-in projection registry is valid");
-    let contract = ObserverContract::new(&projections).expect("observer contract is valid");
+    let actions = super::actions::standard_actions().expect("action registry is valid");
+    let contract =
+        ObserverContract::new(&projections, &actions).expect("observer contract is valid");
     let default_scopes = contract.default_grant();
     let description = contract.describe(
         quantick_control::id::InstanceId::from_bytes([0; 16]),

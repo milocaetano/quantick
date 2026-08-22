@@ -26,6 +26,8 @@ pub const DESCRIBE: &str = "quantick_describe";
 pub const GET_SNAPSHOT: &str = "quantick_get_snapshot";
 pub const GET_CHART_WINDOW: &str = "quantick_get_chart_window";
 pub const GET_DIAGNOSTICS: &str = "quantick_get_diagnostics";
+pub const READ_EVENTS: &str = "quantick_read_events";
+pub const WAIT_FOR_CHANGE: &str = "quantick_wait_for_change";
 pub const SEARCH_CAPABILITIES: &str = "quantick_search_capabilities";
 pub const INVOKE: &str = "quantick_invoke";
 
@@ -36,6 +38,8 @@ pub const DESCRIBE_CAPABILITY: &str = "control.describe";
 pub const SNAPSHOT_CAPABILITY: &str = "snapshot.read";
 pub const CHART_WINDOW_CAPABILITY: &str = "chart.window.read";
 pub const DIAGNOSTICS_CAPABILITY: &str = "health.diagnostics.read";
+pub const EVENTS_READ_CAPABILITY: &str = "events.read";
+pub const EVENTS_WAIT_CAPABILITY: &str = "events.wait";
 
 /// Every first-generation observer capability is registered at version 1.
 const FIRST_CAPABILITY_VERSION: u32 = 1;
@@ -63,6 +67,12 @@ const CHART_WINDOW_PAGE_SCHEMA: &str =
 /// `structuredContent` whenever it is present, error or not.
 const CONTROL_ERROR_SCHEMA: &str =
     include_str!("../../../schemas/control/control-error-v1.schema.json");
+const EVENTS_READ_INPUT_SCHEMA: &str =
+    include_str!("../../../schemas/control/observer-events-read-input-v1.schema.json");
+const EVENTS_WAIT_INPUT_SCHEMA: &str =
+    include_str!("../../../schemas/control/observer-events-wait-input-v1.schema.json");
+const EVENT_PAGE_SCHEMA: &str =
+    include_str!("../../../schemas/control/observer-event-page-v1.schema.json");
 
 /// The tool list for one profile ceiling. The named reads are read-only
 /// whatever the ceiling; `quantick_invoke` takes the conservative hints of
@@ -124,6 +134,22 @@ pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
             input_schema: instance_only_schema(),
             output_schema: Some(capability_output_schema(parse_schema(SNAPSHOT_CAPTURE_SCHEMA))),
             annotations: ToolAnnotations::observer_read("Diagnostics"),
+        },
+        Tool {
+            name: READ_EVENTS.to_owned(),
+            title: "Read the semantic event journal".to_owned(),
+            description: "A page of the bounded semantic event journal — tab, focus and selection changes, feed connection and market changes, replay state, human marks — after a cursor or from an explicit start (oldest or latest). Each page returns the next cursor and says when older events were dropped. Marks carry the fully resolved target the user pointed at.".to_owned(),
+            input_schema: with_instance_routing(parse_schema(EVENTS_READ_INPUT_SCHEMA)),
+            output_schema: Some(capability_output_schema(parse_schema(EVENT_PAGE_SCHEMA))),
+            annotations: ToolAnnotations::observer_read("Read events"),
+        },
+        Tool {
+            name: WAIT_FOR_CHANGE.to_owned(),
+            title: "Wait for the journal to move".to_owned(),
+            description: "Parks until the event journal moves past the cursor or timeout_ms elapses (at most 30 s), then returns the page that completes the call; timed_out says which. This is how a client watches the user point in real time instead of polling: wait, read the mark, answer about that bar and no other.".to_owned(),
+            input_schema: with_instance_routing(parse_schema(EVENTS_WAIT_INPUT_SCHEMA)),
+            output_schema: Some(capability_output_schema(parse_schema(EVENT_PAGE_SCHEMA))),
+            annotations: ToolAnnotations::observer_read("Wait for change"),
         },
         Tool {
             name: SEARCH_CAPABILITIES.to_owned(),
@@ -190,6 +216,18 @@ pub fn call(
             link,
             instance.as_ref(),
             DIAGNOSTICS_CAPABILITY,
+            Value::Object(arguments),
+        ),
+        READ_EVENTS => forward(
+            link,
+            instance.as_ref(),
+            EVENTS_READ_CAPABILITY,
+            Value::Object(arguments),
+        ),
+        WAIT_FOR_CHANGE => forward(
+            link,
+            instance.as_ref(),
+            EVENTS_WAIT_CAPABILITY,
             Value::Object(arguments),
         ),
         SEARCH_CAPABILITIES => search(link, instance.as_ref(), &arguments),
@@ -742,6 +780,8 @@ mod tests {
                 GET_SNAPSHOT,
                 GET_CHART_WINDOW,
                 GET_DIAGNOSTICS,
+                READ_EVENTS,
+                WAIT_FOR_CHANGE,
                 SEARCH_CAPABILITIES,
                 INVOKE
             ]

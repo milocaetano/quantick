@@ -187,6 +187,14 @@ impl ReplayStatus {
         self.finished.load(Ordering::Relaxed)
     }
 
+    /// Logical replay time: milliseconds of session time since the first
+    /// trade, in the recording's own clock. This is the control trace's time
+    /// axis (contract §11); wall-clock time never enters it.
+    #[must_use]
+    pub fn elapsed_ms(&self) -> i64 {
+        self.position_ms().saturating_sub(self.start_ms())
+    }
+
     /// How far through the session playback is, `0.0`..=`1.0`.
     #[must_use]
     pub fn progress(&self) -> f32 {

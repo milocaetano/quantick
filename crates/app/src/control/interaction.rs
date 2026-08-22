@@ -195,7 +195,7 @@ fn project_selection(app: &QuantickApp, _context: CaptureContext) -> SelectionSn
     selection_snapshot(app)
 }
 
-fn cursor_snapshot(app: &QuantickApp) -> CursorSnapshot {
+pub(crate) fn cursor_snapshot(app: &QuantickApp) -> CursorSnapshot {
     let tab = active_tab(app);
     let focused_side = tab.focused_side();
     let focused_pane = tab.pane(focused_side);
@@ -267,7 +267,7 @@ fn pointer_snapshot(
     }
 }
 
-fn selection_snapshot(app: &QuantickApp) -> SelectionSnapshot {
+pub(crate) fn selection_snapshot(app: &QuantickApp) -> SelectionSnapshot {
     let tab = active_tab(app);
     let focused_side = tab.focused_side();
     let focused_pane = tab.pane(focused_side);
