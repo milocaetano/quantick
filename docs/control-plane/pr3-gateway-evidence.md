@@ -61,6 +61,28 @@ operations and does not acquire the socket writer mutex.
 - Sensitive paper, evidence, user-text, diagnostic-log, and screenshot scopes
   are not part of the default grant.
 
+## Shared local transport crate
+
+The descriptor directory (publication and discovery, with the platform
+ownership and ACL checks) and the blocking loopback client live in
+`quantick-control-local`, a crate that depends only on `quantick-control`.
+The application uses its publication half; the MCP adapter — which never
+depends on the application — and a later CLI use its discovery and client
+halves, so the security-critical file checks exist once. The application's
+gateway tests drive the same `LocalClient` the adapter will use, and the crate
+proves that client against a fake loopback gateway of its own: accepted and
+rejected handshakes, a reply for another process, a closed port, selection
+among zero, one and many instances, and an empty directory that is neither
+created nor published into.
+
+## Reachable without a click
+
+`QUANTICK_CONTROL_PANEL=1` opens the Local agent access window through the
+Tools menu entry's own function, and `QUANTICK_CONTROL_ACCESS=1` enables
+observer access on the first frame through the panel button's own function.
+There is one path to an enabled gateway for the human, the hook and any later
+operator; both hooks are registered in the `ui-harness` table.
+
 ## Bounds and stable failures
 
 The reviewed production defaults remain centralized in

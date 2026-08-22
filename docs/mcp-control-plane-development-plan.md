@@ -268,8 +268,11 @@ Codex / Claude / future clients
 
 ```text
 app ----------> control
+app ----------> control-local
 mcp ----------> control
+mcp ----------> control-local
 
+control-local -> control
 control ------> no workspace crate
 mcp ----------> never depends on app
 ```
@@ -291,6 +294,19 @@ A new crate for control contracts and transport-neutral infrastructure:
 It must not depend on `app`, egui, or private rendering types. Wire types are
 explicit DTOs. Domain models should not gain `Serialize` merely to expose their
 internals.
+
+#### `quantick-control-local`
+
+Added by PR 3 when the gateway landed, because two processes need the same
+implementation of two things: the private instance-descriptor directory (ADR
+0001 §4 — the running instance publishes there, a client discovers there, and
+the ownership and permission checks on a file that holds a bearer token must
+not exist twice), and the blocking loopback client that authenticates against
+one gateway and exchanges framed envelopes. `quantick-control` stays free of
+filesystem and socket I/O; `quantick-control-local` depends only on it, never
+starts the application and never binds a listener. The app uses its
+publication half; `quantick-mcp` and a later CLI use its discovery and client
+halves.
 
 #### `app::control`
 
