@@ -89,6 +89,7 @@
       "items": {
         "$ref": "#/$defs/ModuleRevision"
       },
+      "maxItems": 32,
       "type": "array"
     },
     "omitted_scopes": {

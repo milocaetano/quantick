@@ -307,6 +307,42 @@
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
             "type": "string"
           },
+          "ChartBarPage": {
+            "properties": {
+              "has_more": {
+                "type": "boolean"
+              },
+              "item_count": {
+                "format": "uint",
+                "maximum": 32,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "items": {
+                "items": {
+                  "$ref": "#/$defs/BarSnapshot"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "next_cursor": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PageCursor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "items",
+              "item_count",
+              "has_more"
+            ],
+            "type": "object"
+          },
           "DecimalRange": {
             "properties": {
               "high": {
@@ -335,42 +371,6 @@
             "minLength": 1,
             "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
             "type": "string"
-          },
-          "Page": {
-            "properties": {
-              "has_more": {
-                "type": "boolean"
-              },
-              "item_count": {
-                "format": "uint",
-                "maximum": 2048,
-                "minimum": 0,
-                "type": "integer"
-              },
-              "items": {
-                "items": {
-                  "$ref": "#/$defs/BarSnapshot"
-                },
-                "maxItems": 2048,
-                "type": "array"
-              },
-              "next_cursor": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/PageCursor"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
-            },
-            "required": [
-              "items",
-              "item_count",
-              "has_more"
-            ],
-            "type": "object"
           },
           "PageCursor": {
             "properties": {
@@ -527,7 +527,7 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "bars": {
-            "$ref": "#/$defs/Page"
+            "$ref": "#/$defs/ChartBarPage"
           },
           "captured_at_unix_ms": {
             "format": "int64",
@@ -1378,6 +1378,7 @@
             "items": {
               "$ref": "#/$defs/ModuleRevision"
             },
+            "maxItems": 32,
             "type": "array"
           },
           "omitted_scopes": {
@@ -1562,6 +1563,7 @@
             "items": {
               "$ref": "#/$defs/ModuleRevision"
             },
+            "maxItems": 32,
             "type": "array"
           },
           "omitted_scopes": {
@@ -2451,9 +2453,6 @@
               "depth_updates_since_summary": {
                 "$ref": "#/$defs/WireU64"
               },
-              "dropped_aggressions": {
-                "$ref": "#/$defs/WireU64"
-              },
               "dropped_cells": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -2470,6 +2469,14 @@
               },
               "enabled": {
                 "type": "boolean"
+              },
+              "floored_quantity": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Exact quantity the trader's own display floor kept off the canvas."
+              },
+              "folded_aggressions": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Aggressions the projection budget folded into a neighbour instead of\ndrawing alone. Folded, not dropped: the quantity is still on the canvas."
               },
               "gaps": {
                 "$ref": "#/$defs/WireU64"
@@ -2571,7 +2578,8 @@
               "projection_aggressions",
               "projection_liquidity_events",
               "dropped_cells",
-              "dropped_aggressions",
+              "folded_aggressions",
+              "floored_quantity",
               "dropped_liquidity_events",
               "effective_price_grouping",
               "effective_grouping_multiple",

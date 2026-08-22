@@ -1510,7 +1510,6 @@ fn activity_status_high_watermark(max_connections: usize) -> usize {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn dispatch_prepared(
     prepared: PreparedRequest,
     connection_id: &ConnectionId,
