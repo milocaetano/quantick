@@ -438,14 +438,15 @@ impl ControlAccess {
         let can_edit = matches!(self.state, AccessState::Disabled);
         for descriptor in self.contract.selectable_permissions() {
             let mut selected = self.configured_scopes.contains(&descriptor.id);
+            // The description is the label — a first-week user reads "Chart
+            // framing, viewport, and bars", not `observe.chart` — and the ID
+            // stays beside it because it is what a client asks for by name.
             let label = if descriptor.sensitive {
-                format!("{} (sensitive)", descriptor.id)
+                format!("{} · {} (sensitive)", descriptor.description, descriptor.id)
             } else {
-                descriptor.id.to_string()
+                format!("{} · {}", descriptor.description, descriptor.id)
             };
-            let response =
-                ui.add_enabled(can_edit, eframe::egui::Checkbox::new(&mut selected, label));
-            response.on_hover_text(&descriptor.description);
+            ui.add_enabled(can_edit, eframe::egui::Checkbox::new(&mut selected, label));
             if can_edit {
                 if selected {
                     self.configured_scopes.insert(descriptor.id.clone());
