@@ -2865,6 +2865,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantick-mcp"
+version = "0.1.0"
+dependencies = [
+ "quantick-control",
+ "quantick-control-local",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "quantick-orderbook"
 version = "0.1.0"
 dependencies = [
