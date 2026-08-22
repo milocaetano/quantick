@@ -1,4 +1,10 @@
 //! Private descriptor publication and deterministic running-instance discovery.
+//!
+//! Both halves of ADR 0001's descriptor directory live here so the running
+//! application (which publishes) and a client such as the MCP adapter (which
+//! discovers) verify ownership and permissions with one implementation. The
+//! directory is private to the current user on every platform; a descriptor
+//! that fails that check is an issue, never a candidate.
 
 use std::{
     fmt,
@@ -9,17 +15,15 @@ use std::{
 
 use quantick_control::{descriptor::InstanceDescriptor, limits::CONTROL_DESCRIPTOR_MAX_BYTES};
 
-#[cfg(test)]
 use quantick_control::limits::CONTROL_DISCOVERY_MAX_ENTRIES;
 
-#[cfg(test)]
 const NO_INSTANCE_NEXT_STEP: &str =
     "Start Quantick, open Tools > Local agent access, and enable observer access.";
 #[cfg(windows)]
 const WINDOWS_MIN_SID_BYTES: usize = 8;
 
 #[derive(Debug)]
-pub(crate) struct PublishedDescriptor {
+pub struct PublishedDescriptor {
     path: Option<PathBuf>,
 }
 
@@ -47,28 +51,24 @@ impl Drop for PublishedDescriptor {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone, Debug)]
-pub(crate) struct DescriptorCandidate {
+pub struct DescriptorCandidate {
     pub descriptor: InstanceDescriptor,
 }
 
-#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct DiscoveryIssue {
+pub struct DiscoveryIssue {
     pub file_name: String,
     pub message: String,
 }
 
-#[cfg(test)]
 #[derive(Clone, Debug)]
-pub(crate) struct DescriptorDiscovery {
+pub struct DescriptorDiscovery {
     pub candidates: Vec<DescriptorCandidate>,
     pub issues: Vec<DiscoveryIssue>,
     pub next_steps: Vec<String>,
 }
 
-#[cfg(test)]
 impl DescriptorDiscovery {
     fn finish(mut self) -> Self {
         self.candidates.sort_by(|left, right| {
@@ -88,7 +88,11 @@ impl DescriptorDiscovery {
     }
 }
 
-pub(crate) fn runtime_instances_dir() -> Result<PathBuf, DiscoveryError> {
+/// The platform base directory and the components beneath it that hold the
+/// instance descriptors (ADR 0001 §4). Linux fails closed without an owned
+/// `XDG_RUNTIME_DIR`: a shared temporary directory is no place for a bearer
+/// token.
+fn platform_runtime_base() -> Result<(PathBuf, &'static [&'static str]), DiscoveryError> {
     #[cfg(target_os = "linux")]
     {
         let base = std::env::var_os("XDG_RUNTIME_DIR")
@@ -100,7 +104,7 @@ pub(crate) fn runtime_instances_dir() -> Result<PathBuf, DiscoveryError> {
                 )
             })?;
         verify_unix_owner(&base)?;
-        return ensure_private_chain(&base, &["quantick", "control", "instances"]);
+        return Ok((base, &["quantick", "control", "instances"]));
     }
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -108,7 +112,7 @@ pub(crate) fn runtime_instances_dir() -> Result<PathBuf, DiscoveryError> {
         let base = dirs::data_local_dir().ok_or_else(|| {
             DiscoveryError::new("the operating system did not provide a local data directory")
         })?;
-        return ensure_private_chain(&base, &["Quantick", "control", "instances"]);
+        return Ok((base, &["Quantick", "control", "instances"]));
     }
 
     #[allow(unreachable_code)]
@@ -117,14 +121,36 @@ pub(crate) fn runtime_instances_dir() -> Result<PathBuf, DiscoveryError> {
     ))
 }
 
-pub(crate) fn publish_descriptor(
+/// The private runtime directory, created and verified private on the way.
+/// This is the publisher's entry point.
+pub fn runtime_instances_dir() -> Result<PathBuf, DiscoveryError> {
+    let (base, components) = platform_runtime_base()?;
+    ensure_private_chain(&base, components)
+}
+
+/// The private runtime directory only if it already exists. Discovery uses
+/// this so that looking for an instance never creates a directory a later
+/// publisher would then find and trust.
+pub fn runtime_instances_dir_if_present() -> Result<Option<PathBuf>, DiscoveryError> {
+    let (base, components) = platform_runtime_base()?;
+    let mut directory = base;
+    for component in components {
+        directory.push(component);
+    }
+    if !directory.exists() {
+        return Ok(None);
+    }
+    Ok(Some(directory))
+}
+
+pub fn publish_descriptor(
     descriptor: &InstanceDescriptor,
 ) -> Result<PublishedDescriptor, DiscoveryError> {
     let directory = runtime_instances_dir()?;
     publish_descriptor_in(&directory, descriptor)
 }
 
-pub(crate) fn publish_descriptor_in(
+pub fn publish_descriptor_in(
     directory: &Path,
     descriptor: &InstanceDescriptor,
 ) -> Result<PublishedDescriptor, DiscoveryError> {
@@ -193,10 +219,25 @@ pub(crate) fn publish_descriptor_in(
     Ok(PublishedDescriptor { path: Some(target) })
 }
 
-#[cfg(test)]
-pub(crate) fn discover_descriptors_in(
-    directory: &Path,
-) -> Result<DescriptorDiscovery, DiscoveryError> {
+/// Discover descriptors in the platform's private runtime directory.
+///
+/// Creates nothing: a missing directory is an empty report with a next step,
+/// never a reason to publish or to start the application (ADR 0001 §1).
+pub fn discover_descriptors() -> Result<DescriptorDiscovery, DiscoveryError> {
+    let directory = match runtime_instances_dir_if_present()? {
+        Some(directory) => directory,
+        None => {
+            return Ok(DescriptorDiscovery {
+                candidates: Vec::new(),
+                issues: Vec::new(),
+                next_steps: vec![NO_INSTANCE_NEXT_STEP.to_owned()],
+            });
+        }
+    };
+    discover_descriptors_in(&directory)
+}
+
+pub fn discover_descriptors_in(directory: &Path) -> Result<DescriptorDiscovery, DiscoveryError> {
     if !directory.exists() {
         return Ok(DescriptorDiscovery {
             candidates: Vec::new(),
@@ -348,7 +389,6 @@ fn ensure_explicit_private_directory(directory: &Path) -> Result<(), DiscoveryEr
     set_and_verify_private_directory(directory)
 }
 
-#[cfg(test)]
 fn verify_explicit_private_directory(directory: &Path) -> Result<(), DiscoveryError> {
     reject_redirect(directory)?;
     if !directory.is_dir() {
@@ -425,12 +465,12 @@ fn set_and_verify_private_directory(path: &Path) -> Result<(), DiscoveryError> {
     verify_windows_acl(path)
 }
 
-#[cfg(all(test, windows))]
+#[cfg(windows)]
 fn verify_private_directory(path: &Path) -> Result<(), DiscoveryError> {
     verify_windows_acl(path)
 }
 
-#[cfg(all(test, unix))]
+#[cfg(unix)]
 fn verify_private_directory(path: &Path) -> Result<(), DiscoveryError> {
     use std::os::unix::fs::MetadataExt as _;
     let metadata = fs::metadata(path)
@@ -868,7 +908,7 @@ fn well_known_sid(kind: i32) -> Result<Vec<u8>, DiscoveryError> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct DiscoveryError(String);
+pub struct DiscoveryError(String);
 
 impl DiscoveryError {
     fn new(message: &'static str) -> Self {
@@ -969,7 +1009,12 @@ mod tests {
             ]
         );
         drop(published);
-        assert!(discover_descriptors_in(&directory).unwrap().candidates.is_empty());
+        assert!(
+            discover_descriptors_in(&directory)
+                .unwrap()
+                .candidates
+                .is_empty()
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 

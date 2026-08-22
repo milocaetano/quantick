@@ -7,6 +7,9 @@ license.workspace = true
 
 [dependencies]
 quantick-control = { path = "../control" }
+# Private descriptor publication for the local gateway (ADR 0001). The
+# discovery and client halves of the same crate are what the MCP adapter uses.
+quantick-control-local = { path = "../control-local" }
 quantick-engine = { path = "../engine" }
 quantick-indicators = { path = "../indicators" }
 quantick-pine = { path = "../pine" }
@@ -47,21 +50,6 @@ eframe = { version = "0.29", default-features = false, features = [
     "default_fonts",
 ] }
 egui-phosphor = "0.7"
-
-[target.'cfg(unix)'.dependencies]
-# Verify descriptor ownership against the effective user on Unix platforms.
-libc = "0.2"
-
-[target.'cfg(windows)'.dependencies]
-# Verify descriptor ownership, ACLs, and reparse-point safety on Windows.
-windows-sys = { version = "0.61", features = [
-    "Win32_Foundation",
-    "Win32_Security",
-    "Win32_Security_Authorization",
-    "Win32_Storage_FileSystem",
-    "Win32_System_SystemServices",
-    "Win32_System_Threading",
-] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

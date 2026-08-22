@@ -866,6 +866,9 @@ pub struct QuantickApp {
     /// The `QUANTICK_TEXT_NOTE` hook: place a note and open its editor on the
     /// first drawn frame. See [`Self::apply_text_note_hook`].
     pending_text_note: bool,
+    /// The `QUANTICK_CONTROL_ACCESS` hook: enable observer access on the
+    /// first frame, through the panel button's own `enable`.
+    pending_control_access_enable: bool,
     /// The note being typed on the chart — the on-chart editor's whole
     /// state. See [`InlineTextEdit`].
     inline_text_edit: Option<InlineTextEdit>,
@@ -1291,6 +1294,7 @@ impl QuantickApp {
             pending_open_settings: false,
             pending_text_edit: false,
             pending_text_note: false,
+            pending_control_access_enable: false,
             inline_text_edit: None,
             inspector_moved: false,
             inspector_last_selection: None,
@@ -1406,6 +1410,18 @@ impl QuantickApp {
         if std::env::var("QUANTICK_LIVE_STRIP_AUTOSTART").is_ok_and(|value| value == "1") {
             app.active_tab_mut().flow_pane.live_strip_visible = true;
         }
+        // Local agent access, reachable without a click: the panel through the
+        // Tools menu entry's own function, and the enable action through the
+        // panel button's own function on the first frame — one path for the
+        // human, the hook and any later operator. Enabling publishes a real
+        // descriptor in the private runtime directory, removed on a clean exit.
+        if std::env::var("QUANTICK_CONTROL_PANEL").is_ok_and(|value| value == "1")
+            && let Some(access) = app.control_access.as_mut()
+        {
+            access.open_panel();
+        }
+        app.pending_control_access_enable =
+            std::env::var("QUANTICK_CONTROL_ACCESS").is_ok_and(|value| value == "1");
         // Drawing-toolbar hooks, so a validation run reaches every new
         // surface without a click (`.claude/skills/ui-harness`).
         if let Ok(id) = std::env::var("QUANTICK_DRAWING_TOOL")
@@ -8757,6 +8773,12 @@ impl QuantickApp {
         self.last_frame = Some(now);
 
         self.drain_tabs();
+        if self.pending_control_access_enable {
+            self.pending_control_access_enable = false;
+            if let Some(access) = self.control_access.as_mut() {
+                access.enable(ctx);
+            }
+        }
         if self
             .control_access
             .as_ref()
@@ -24423,6 +24445,14 @@ plot(close)
         .collect()
     }
 
+    fn gateway_test_options() -> quantick_control_local::client::ConnectOptions {
+        quantick_control_local::client::ConnectOptions::observer(
+            "quantick integration test",
+            env!("CARGO_PKG_VERSION"),
+            gateway_test_scopes(),
+        )
+    }
+
     fn gateway_test_directory(name: &str) -> std::path::PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
@@ -24545,7 +24575,8 @@ plot(close)
         let directory = gateway_test_directory("read");
         let _descriptor_path = enable_test_gateway(&mut app, &ctx, &directory, 8);
         let discovery =
-            crate::control::GatewayTestClient::discover(&directory, gateway_test_scopes()).unwrap();
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap();
         assert!(discovery.issues.is_empty());
         let mut client = discovery.select(None).unwrap();
         assert!(
@@ -24557,30 +24588,38 @@ plot(close)
         let descriptor = client.descriptor().clone();
         let mut wrong_token = descriptor.clone();
         wrong_token.bearer_token = BearerToken::from_bytes([0xEE; 32]);
-        let error = crate::control::GatewayTestClient::connect(wrong_token, gateway_test_scopes())
-            .unwrap_err();
+        let error = quantick_control_local::client::LocalClient::connect(
+            wrong_token,
+            &gateway_test_options(),
+        )
+        .unwrap_err();
         assert_eq!(error.code.as_str(), codes::AUTH_FAILED);
 
         let mut wrong_instance = descriptor.clone();
         wrong_instance.instance_id = InstanceId::from_bytes([0xDD; 16]);
-        let error =
-            crate::control::GatewayTestClient::connect(wrong_instance, gateway_test_scopes())
-                .unwrap_err();
+        let error = quantick_control_local::client::LocalClient::connect(
+            wrong_instance,
+            &gateway_test_options(),
+        )
+        .unwrap_err();
         assert_eq!(error.code.as_str(), codes::AUTH_FAILED);
 
         let mut wrong_nonce = descriptor.clone();
         wrong_nonce.process_nonce = ProcessNonce::from_bytes([0xCC; 16]);
-        let error = crate::control::GatewayTestClient::connect(wrong_nonce, gateway_test_scopes())
-            .unwrap_err();
+        let error = quantick_control_local::client::LocalClient::connect(
+            wrong_nonce,
+            &gateway_test_options(),
+        )
+        .unwrap_err();
         assert_eq!(error.code.as_str(), codes::AUTH_FAILED);
 
         let mut non_overlapping_version = descriptor;
         non_overlapping_version.protocol_versions =
             ProtocolVersionRange::new(CURRENT_PROTOCOL_VERSION + 1, CURRENT_PROTOCOL_VERSION + 1)
                 .unwrap();
-        let error = crate::control::GatewayTestClient::connect(
+        let error = quantick_control_local::client::LocalClient::connect(
             non_overlapping_version,
-            gateway_test_scopes(),
+            &gateway_test_options(),
         )
         .unwrap_err();
         assert_eq!(error.code.as_str(), codes::VERSION_UNSUPPORTED);
@@ -24633,7 +24672,7 @@ plot(close)
         let directory = gateway_test_directory("backpressure");
         enable_test_gateway(&mut app, &ctx, &directory, 1);
         let mut client =
-            crate::control::GatewayTestClient::discover(&directory, gateway_test_scopes())
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
                 .unwrap()
                 .select(None)
                 .unwrap();
@@ -24683,7 +24722,7 @@ plot(close)
             quantick_control::limits::CONTROL_MAX_CONNECTIONS,
         );
         let mut client =
-            crate::control::GatewayTestClient::discover(&directory, gateway_test_scopes())
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
                 .unwrap()
                 .select(None)
                 .unwrap();
@@ -24727,14 +24766,16 @@ plot(close)
             1,
         );
         let mut client =
-            crate::control::GatewayTestClient::discover(&directory, gateway_test_scopes())
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
                 .unwrap()
                 .select(None)
                 .unwrap();
         let descriptor = client.descriptor().clone();
-        let connection_error =
-            crate::control::GatewayTestClient::connect(descriptor, gateway_test_scopes())
-                .unwrap_err();
+        let connection_error = quantick_control_local::client::LocalClient::connect(
+            descriptor,
+            &gateway_test_options(),
+        )
+        .unwrap_err();
         assert_eq!(connection_error.code.as_str(), codes::BACKPRESSURE);
 
         let request_count = usize::try_from(CONTROL_CLIENT_BURST).unwrap() * 2;
@@ -24796,12 +24837,12 @@ plot(close)
         let directory = gateway_test_directory("frame-budget");
         enable_test_gateway(&mut app, &ctx, &directory, 16);
         let mut first =
-            crate::control::GatewayTestClient::discover(&directory, gateway_test_scopes())
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
                 .unwrap()
                 .select(None)
                 .unwrap();
         let mut second =
-            crate::control::GatewayTestClient::discover(&directory, gateway_test_scopes())
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
                 .unwrap()
                 .select(None)
                 .unwrap();
@@ -24869,15 +24910,18 @@ plot(close)
         let directory = gateway_test_directory("shutdown");
         let descriptor_path = enable_test_gateway(&mut app, &ctx, &directory, 4);
         let discovery =
-            crate::control::GatewayTestClient::discover(&directory, gateway_test_scopes()).unwrap();
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap();
         let stale_descriptor = discovery.clients[0].descriptor().clone();
         let mut client = discovery.select(None).unwrap();
 
         disable_test_gateway(&mut app, &ctx);
         assert!(!descriptor_path.exists());
-        let stale =
-            crate::control::GatewayTestClient::connect(stale_descriptor, gateway_test_scopes())
-                .unwrap_err();
+        let stale = quantick_control_local::client::LocalClient::connect(
+            stale_descriptor,
+            &gateway_test_options(),
+        )
+        .unwrap_err();
         assert_eq!(stale.code.as_str(), codes::INSTANCE_GONE);
         let closed = client
             .invoke(
@@ -24901,7 +24945,8 @@ plot(close)
         enable_test_gateway(&mut second_app, &ctx, &directory, 4);
 
         let discovery =
-            crate::control::GatewayTestClient::discover(&directory, gateway_test_scopes()).unwrap();
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap();
         assert_eq!(discovery.clients.len(), 2);
         assert!(discovery.issues.is_empty());
         let first_id = discovery.clients[0].descriptor().instance_id.clone();
@@ -24916,7 +24961,7 @@ plot(close)
         );
 
         let selected =
-            crate::control::GatewayTestClient::discover(&directory, gateway_test_scopes())
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
                 .unwrap()
                 .select(Some(&first_id))
                 .unwrap();

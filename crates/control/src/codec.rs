@@ -6,7 +6,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 use crate::{
-    handshake::ProtocolLimits,
+    handshake::{HandshakeReply, HandshakeRequest, ProtocolLimits},
     limits::{
         CONTROL_HANDSHAKE_MAX_BYTES, CONTROL_MAX_JSON_DEPTH, CONTROL_MAX_REQUEST_BYTES,
         CONTROL_MAX_RESPONSE_BYTES, CONTROL_MAX_STRING_BYTES, CONTROL_PROTOCOL_MAX_FRAME_BYTES,
@@ -133,6 +133,25 @@ impl BoundedCodec {
     ) -> Result<T, CodecError> {
         let payload = self.read_payload(role, reader)?;
         self.decode_payload(&payload)
+    }
+
+    /// First client frame on a connection: the handshake, read under the
+    /// pre-authentication ceiling of [`Self::handshake`]. Typed on purpose, like
+    /// [`Self::read_request`]: the generic decoder is not a public door.
+    pub fn read_handshake_request(
+        &self,
+        reader: &mut impl Read,
+    ) -> Result<HandshakeRequest, CodecError> {
+        self.read(FrameRole::Request, reader)
+    }
+
+    /// First server frame on a connection: the accepted handshake, or the
+    /// redacted error the gateway sends before closing.
+    pub fn read_handshake_reply(
+        &self,
+        reader: &mut impl Read,
+    ) -> Result<HandshakeReply, CodecError> {
+        self.read(FrameRole::Response, reader)
     }
 
     pub fn read_request(&self, reader: &mut impl Read) -> Result<RequestEnvelope, CodecError> {

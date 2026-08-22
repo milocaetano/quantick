@@ -7,7 +7,6 @@
 
 pub(crate) mod chart;
 mod contract;
-mod discovery;
 mod feed;
 mod gateway;
 mod health;
@@ -23,8 +22,6 @@ mod workspace;
 #[cfg(test)]
 pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID};
 pub(crate) use gateway::ControlAccess;
-#[cfg(test)]
-pub(crate) use gateway::GatewayTestClient;
 
 use registry::{ProjectionRegistry, ProjectionRegistryError};
 

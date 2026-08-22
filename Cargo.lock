@@ -2740,8 +2740,8 @@ dependencies = [
  "eframe",
  "egui-phosphor",
  "getrandom 0.3.4",
- "libc",
  "quantick-control",
+ "quantick-control-local",
  "quantick-engine",
  "quantick-feed-binance",
  "quantick-feed-hyperliquid",
@@ -2762,7 +2762,6 @@ dependencies = [
  "toml 0.8.20",
  "tracing",
  "tracing-subscriber",
- "windows-sys 0.61.2",
  "winresource",
 ]
 
@@ -2791,6 +2790,17 @@ dependencies = [
  "sha2",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "quantick-control-local"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "libc",
+ "quantick-control",
+ "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

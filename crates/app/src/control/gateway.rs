@@ -22,8 +22,8 @@ use quantick_control::{
     },
     error::{ControlError, codes},
     handshake::{
-        BearerToken, CURRENT_PROTOCOL_VERSION, HandshakeGrant, HandshakeReply, HandshakeRequest,
-        ProtocolLimits, ProtocolVersionRange, accept_handshake,
+        BearerToken, CURRENT_PROTOCOL_VERSION, HandshakeGrant, HandshakeReply, ProtocolLimits,
+        ProtocolVersionRange, accept_handshake,
     },
     id::{ConnectionId, InstanceId, PermissionId, PrincipalId, ProcessNonce, ProfileId},
     limits::{
@@ -40,12 +40,12 @@ use crate::{app::QuantickApp, metrics};
 
 use super::{
     contract::{OBSERVER_PROFILE_ID, ObserverContract, PreparedRequest, UiReadExecution},
-    discovery::publish_descriptor,
     registry::ProjectionRegistry,
 };
 
+use quantick_control_local::discovery::publish_descriptor;
 #[cfg(test)]
-use super::discovery::publish_descriptor_in;
+use quantick_control_local::discovery::publish_descriptor_in;
 
 const GATEWAY_COMMAND_CAPACITY: usize = 64;
 const GATEWAY_STATUS_CAPACITY: usize = 256;
@@ -468,7 +468,7 @@ impl ControlAccess {
                     )
                     .clicked()
                 {
-                    self.request_enable(ui.ctx(), GatewayOptions::default());
+                    self.enable(ui.ctx());
                 }
             }
             AccessState::Enabling => {
@@ -545,6 +545,13 @@ impl ControlAccess {
             projection.worst_capture_us,
             projection.budget_violations
         ));
+    }
+
+    /// Enable observer access with the reviewed defaults. The panel button, the
+    /// `QUANTICK_CONTROL_ACCESS` hook and tests all arrive here; there is no
+    /// second path to an enabled gateway.
+    pub fn enable(&mut self, ctx: &eframe::egui::Context) {
+        self.request_enable(ctx, GatewayOptions::default());
     }
 
     fn request_enable(&mut self, ctx: &eframe::egui::Context, options: GatewayOptions) {
@@ -1217,7 +1224,7 @@ fn connection_session(
         .set_write_timeout(Some(authority.options.handshake_timeout))
         .map_err(|_| codes::AUTH_FAILED)?;
     let handshake_codec = BoundedCodec::handshake();
-    let handshake: HandshakeRequest = match handshake_codec.read(FrameRole::Request, stream) {
+    let handshake = match handshake_codec.read_handshake_request(stream) {
         Ok(request) => request,
         Err(_) => {
             send_handshake_rejection(
@@ -1733,234 +1740,6 @@ fn random_bytes<const N: usize>() -> Result<[u8; N], String> {
 }
 
 #[cfg(test)]
-#[derive(Debug)]
-pub(crate) struct GatewayTestClient {
-    descriptor: InstanceDescriptor,
-    handshake: quantick_control::handshake::HandshakeResponse,
-    stream: TcpStream,
-    codec: BoundedCodec,
-    next_request: u64,
-}
-
-#[cfg(test)]
-impl GatewayTestClient {
-    pub(crate) fn connect(
-        descriptor: InstanceDescriptor,
-        requested_scopes: BTreeSet<PermissionId>,
-    ) -> Result<Self, ControlError> {
-        let address = std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, descriptor.port);
-        let timeout = Duration::from_millis(CONTROL_HANDSHAKE_TIMEOUT_MS);
-        let mut stream = TcpStream::connect_timeout(&address.into(), timeout)
-            .map_err(|_| instance_gone_error())?;
-        stream
-            .set_read_timeout(Some(timeout))
-            .map_err(|_| instance_gone_error())?;
-        stream
-            .set_write_timeout(Some(timeout))
-            .map_err(|_| instance_gone_error())?;
-        let handshake_codec = BoundedCodec::handshake();
-        let request = HandshakeRequest {
-            protocol_versions: descriptor.protocol_versions,
-            instance_id: descriptor.instance_id.clone(),
-            client_name: "quantick integration client".to_owned(),
-            client_version: env!("CARGO_PKG_VERSION").to_owned(),
-            bearer_token: descriptor.bearer_token.clone(),
-            requested_profile: ProfileId::new(OBSERVER_PROFILE_ID)
-                .expect("static observer profile is valid"),
-            requested_scopes,
-        };
-        let frame = handshake_codec
-            .encode(FrameRole::Request, &request)
-            .map_err(|_| ControlError::invalid_request("handshake request encoding failed"))?;
-        stream
-            .write_all(&frame)
-            .map_err(|_| instance_gone_error())?;
-        let reply: HandshakeReply = handshake_codec
-            .read(FrameRole::Response, &mut stream)
-            .map_err(|_| instance_gone_error())?;
-        let handshake = reply.into_accepted()?;
-        handshake.validate_for(&request, &descriptor.process_nonce)?;
-        stream
-            .set_read_timeout(Some(Duration::from_millis(CONTROL_REQUEST_TIMEOUT_MS)))
-            .map_err(|_| instance_gone_error())?;
-        stream
-            .set_write_timeout(Some(Duration::from_millis(CONTROL_REQUEST_TIMEOUT_MS)))
-            .map_err(|_| instance_gone_error())?;
-        Ok(Self {
-            descriptor,
-            handshake,
-            stream,
-            codec: BoundedCodec::default(),
-            next_request: 1,
-        })
-    }
-
-    pub(crate) fn discover(
-        directory: &std::path::Path,
-        requested_scopes: BTreeSet<PermissionId>,
-    ) -> Result<GatewayTestDiscovery, super::discovery::DiscoveryError> {
-        let report = super::discovery::discover_descriptors_in(directory)?;
-        let mut clients = Vec::new();
-        let mut issues = report
-            .issues
-            .into_iter()
-            .map(|issue| {
-                ControlError::invalid_request(format!(
-                    "descriptor {} was rejected: {}",
-                    issue.file_name, issue.message
-                ))
-            })
-            .collect::<Vec<_>>();
-        for candidate in report.candidates {
-            match Self::connect(candidate.descriptor, requested_scopes.clone()) {
-                Ok(client) => clients.push(client),
-                Err(error) => issues.push(error),
-            }
-        }
-        clients.sort_by(|left, right| {
-            (
-                left.descriptor.published_at_unix_ms,
-                &left.descriptor.instance_id,
-            )
-                .cmp(&(
-                    right.descriptor.published_at_unix_ms,
-                    &right.descriptor.instance_id,
-                ))
-        });
-        Ok(GatewayTestDiscovery {
-            clients,
-            issues,
-            next_steps: report.next_steps,
-        })
-    }
-
-    pub(crate) fn descriptor(&self) -> &InstanceDescriptor {
-        &self.descriptor
-    }
-
-    pub(crate) fn effective_scopes(&self) -> &BTreeSet<PermissionId> {
-        &self.handshake.effective_scopes
-    }
-
-    pub(crate) fn send(
-        &mut self,
-        capability_id: &str,
-        payload: serde_json::Value,
-    ) -> Result<quantick_control::id::RequestId, ControlError> {
-        let request_id = quantick_control::id::RequestId::new(format!(
-            "integration-request-{}",
-            self.next_request
-        ))
-        .expect("generated request ID is valid");
-        self.next_request = self.next_request.saturating_add(1);
-        let request = RequestEnvelope {
-            protocol_version: self.handshake.protocol_version,
-            request_id: request_id.clone(),
-            instance_id: self.descriptor.instance_id.clone(),
-            capability_id: quantick_control::id::CapabilityId::new(capability_id)
-                .map_err(|error| ControlError::invalid_request(error.to_string()))?,
-            capability_version: 1,
-            expected_revisions: Vec::new(),
-            idempotency_key: None,
-            dry_run: false,
-            reason: None,
-            payload,
-        };
-        let frame = self
-            .codec
-            .encode(FrameRole::Request, &request)
-            .map_err(|_| ControlError::invalid_request("request encoding failed"))?;
-        self.stream
-            .write_all(&frame)
-            .map_err(|_| instance_gone_error())?;
-        Ok(request_id)
-    }
-
-    pub(crate) fn read(&mut self) -> Result<ResponseEnvelope, ControlError> {
-        self.codec
-            .read_response(&mut self.stream)
-            .map_err(|_| instance_gone_error())
-    }
-
-    pub(crate) fn invoke(
-        &mut self,
-        capability_id: &str,
-        payload: serde_json::Value,
-    ) -> Result<ResponseEnvelope, ControlError> {
-        let request_id = self.send(capability_id, payload)?;
-        let response = self.read()?;
-        if response.request_id != request_id {
-            return Err(ControlError::invalid_request(
-                "multiplexed response correlated to a different request",
-            ));
-        }
-        Ok(response)
-    }
-}
-
-#[cfg(test)]
-pub(crate) struct GatewayTestDiscovery {
-    pub(crate) clients: Vec<GatewayTestClient>,
-    pub(crate) issues: Vec<ControlError>,
-    pub(crate) next_steps: Vec<String>,
-}
-
-#[cfg(test)]
-impl GatewayTestDiscovery {
-    pub(crate) fn select(
-        mut self,
-        instance_id: Option<&InstanceId>,
-    ) -> Result<GatewayTestClient, ControlError> {
-        if let Some(instance_id) = instance_id {
-            let position = self
-                .clients
-                .iter()
-                .position(|client| &client.descriptor.instance_id == instance_id)
-                .ok_or_else(instance_gone_error)?;
-            return Ok(self.clients.remove(position));
-        }
-        match self.clients.len() {
-            0 => {
-                let mut error = instance_gone_error();
-                error.context.next_steps = self.next_steps;
-                Err(error)
-            }
-            1 => Ok(self.clients.remove(0)),
-            _ => {
-                let choices = self
-                    .clients
-                    .iter()
-                    .map(|client| client.descriptor.instance_id.to_string())
-                    .collect::<Vec<_>>();
-                let mut error = known_error(
-                    codes::INSTANCE_AMBIGUOUS,
-                    "more than one live Quantick instance is available",
-                    false,
-                );
-                error.context.details = Some(serde_json::json!({ "instance_ids": choices }));
-                error.context.next_steps =
-                    vec!["Choose one instance_id explicitly and retry discovery.".to_owned()];
-                Err(error)
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-fn instance_gone_error() -> ControlError {
-    let mut error = known_error(
-        codes::INSTANCE_GONE,
-        "the advertised Quantick instance is no longer reachable",
-        true,
-    );
-    error.context.next_steps = vec![
-        "Verify that Quantick is open and local agent access is enabled, then rediscover instances."
-            .to_owned(),
-    ];
-    error
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1978,7 +1757,15 @@ mod tests {
         let directory = unique_test_directory("empty-discovery");
         assert!(!directory.exists());
 
-        let discovery = GatewayTestClient::discover(&directory, BTreeSet::new()).unwrap();
+        let discovery = quantick_control_local::client::discover_in(
+            &directory,
+            &quantick_control_local::client::ConnectOptions::observer(
+                "gateway unit test",
+                "0.0.0",
+                BTreeSet::new(),
+            ),
+        )
+        .unwrap();
         assert!(discovery.clients.is_empty());
         assert!(discovery.issues.is_empty());
         assert!(!discovery.next_steps.is_empty());
