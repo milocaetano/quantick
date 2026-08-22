@@ -19,7 +19,7 @@
 //! never reads a wall clock — this module measures the time and tells it.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
@@ -110,11 +110,19 @@ pub struct ReplayStatus {
     speed_bits: AtomicU32,
     playing: AtomicBool,
     finished: AtomicBool,
+    /// How many restarts and seeks the worker applied, and where the last
+    /// one landed: a reader that samples the position once per frame can
+    /// tell a rerun that already advanced past its last sample from plain
+    /// forward play, and knows where the rerun began.
+    rewinds: AtomicU64,
+    rewind_target_ms: AtomicI64,
 }
 
 impl ReplayStatus {
     fn new(playhead: &Playhead) -> Self {
         let status = Self {
+            rewinds: AtomicU64::new(0),
+            rewind_target_ms: AtomicI64::new(playhead.position_ms()),
             position_ms: AtomicI64::new(playhead.position_ms()),
             start_ms: AtomicI64::new(playhead.start_ms()),
             end_ms: AtomicI64::new(playhead.end_ms()),
@@ -195,7 +203,28 @@ impl ReplayStatus {
         self.position_ms().saturating_sub(self.start_ms())
     }
 
-    /// Move the published playhead, as a worker's restart or seek would.
+    /// Restarts and seeks applied so far; changes when the playhead jumped.
+    #[must_use]
+    pub fn rewinds(&self) -> u64 {
+        self.rewinds.load(Ordering::Relaxed)
+    }
+
+    /// Where the last restart or seek landed, as session-elapsed
+    /// milliseconds — the position the rerun started from.
+    #[must_use]
+    pub fn rewind_target_elapsed_ms(&self) -> i64 {
+        self.rewind_target_ms
+            .load(Ordering::Relaxed)
+            .saturating_sub(self.start_ms())
+    }
+
+    /// The worker applied a restart or a seek that landed at `target_ms`.
+    pub(crate) fn note_rewind(&self, target_ms: i64) {
+        self.rewind_target_ms.store(target_ms, Ordering::Relaxed);
+        self.rewinds.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Move the published playhead, as a worker's forward play would.
     #[cfg(test)]
     pub(crate) fn set_position_ms_for_test(&self, position_ms: i64) {
         self.position_ms.store(position_ms, Ordering::Relaxed);
@@ -500,10 +529,14 @@ fn play(
                     return; // UI gone
                 }
             }
-            if let Some(control) = position
-                && !apply(control, &mut playhead, trades, &tx, &session)
-            {
-                return;
+            if let Some(control) = position {
+                if !apply(control, &mut playhead, trades, &tx, &session) {
+                    return;
+                }
+                // A restart or a seek: readers that sample once per frame
+                // learn of it even when the rerun has already advanced past
+                // their last sample, and where it began.
+                status.note_rewind(playhead.position_ms());
             }
             reported_finished = false;
             last = Instant::now();

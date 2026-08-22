@@ -48,6 +48,8 @@ pub(crate) const ANNOTATE_EFFECT_ID: &str = "annotate";
 pub(crate) const ANNOTATOR_PROFILE_ID: &str = "annotator";
 
 const CAPABILITY_VERSION: u32 = 1;
+/// The version of `attention.mark.create` the hotkey and the hook invoke.
+pub(crate) const MARK_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
 const NO_CONFIRMATION_ID: &str = "none";
 const UI_BOUNDED_COST_ID: &str = "ui_bounded";
 
@@ -156,7 +158,9 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
 /// target itself. The hotkey resolves the pointer and supplies the target, so
 /// the input alone determines the mark and a control trace can replay it
 /// identically; a caller that supplies none gets what is under the pointer
-/// at that moment.
+/// at that moment — and a replayed entry without one is refused rather than
+/// resolved against the rerun's pointer, which is not the one that was
+/// marked.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MarkInput {
@@ -170,7 +174,8 @@ pub(crate) struct MarkInput {
 /// What a mark returns: where it landed in the journal and exactly what was
 /// pointed at when it was taken. The journal event at `sequence` carries the
 /// wall-clock time; the result does not repeat it, so the trace's result
-/// digest depends on what was marked, not on when.
+/// digest depends on what was marked and on its place in the journal, never
+/// on the clock.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct MarkResult {
     pub sequence: WireU64,
@@ -251,9 +256,14 @@ fn create_mark(
     }
     let (target, target_source) = match (actor.actor_kind, input.target) {
         (ActorKind::Automation, Some(target)) => (target, "replayed"),
+        (ActorKind::Automation, None) => {
+            return Err(ControlError::invalid_request(
+                "a replayed mark must carry the target that was recorded; the rerun's pointer is not the one that was marked",
+            ));
+        }
         (ActorKind::Agent, Some(target)) => (target, "supplied"),
         (ActorKind::HumanUi, Some(target)) => (target, "pointer"),
-        (_, None) => (cursor_snapshot(app), "pointer"),
+        (ActorKind::Agent | ActorKind::HumanUi, None) => (cursor_snapshot(app), "pointer"),
     };
     let event_actor = EventActor {
         kind: actor.actor_kind,

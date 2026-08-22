@@ -23,7 +23,7 @@ mod trace;
 mod types;
 mod workspace;
 
-pub(crate) use actions::MARK_CAPABILITY_ID;
+pub(crate) use actions::{MARK_CAPABILITY_ID, MARK_CAPABILITY_VERSION};
 #[cfg(test)]
 pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID};
 pub(crate) use gateway::{ActionOrigin, ControlAccess, MARK_SHORTCUT};

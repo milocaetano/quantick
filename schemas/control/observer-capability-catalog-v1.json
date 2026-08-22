@@ -407,7 +407,7 @@
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
-        "description": "What a mark takes: an optional note the human typed, and optionally the\ntarget itself. The hotkey resolves the pointer and supplies the target, so\nthe input alone determines the mark and a control trace can replay it\nidentically; a caller that supplies none gets what is under the pointer\nat that moment.",
+        "description": "What a mark takes: an optional note the human typed, and optionally the\ntarget itself. The hotkey resolves the pointer and supplies the target, so\nthe input alone determines the mark and a control trace can replay it\nidentically; a caller that supplies none gets what is under the pointer\nat that moment — and a replayed entry without one is refused rather than\nresolved against the rerun's pointer, which is not the one that was\nmarked.",
         "properties": {
           "note": {
             "maxLength": 1024,
@@ -845,7 +845,7 @@
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "What a mark returns: where it landed in the journal and exactly what was\npointed at when it was taken. The journal event at `sequence` carries the\nwall-clock time; the result does not repeat it, so the trace's result\ndigest depends on what was marked, not on when.",
+        "description": "What a mark returns: where it landed in the journal and exactly what was\npointed at when it was taken. The journal event at `sequence` carries the\nwall-clock time; the result does not repeat it, so the trace's result\ndigest depends on what was marked and on its place in the journal, never\non the clock.",
         "properties": {
           "actor": {
             "$ref": "#/$defs/EventActor"

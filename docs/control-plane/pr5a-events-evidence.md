@@ -31,7 +31,7 @@ logical replay time on the next run of that recording.
 | Frame emitter | `gateway.rs` (`emit_semantic_changes`) | While enabled: `workspace.tab.activated/opened/closed`, `workspace.focus.changed`, `interaction.selection.changed`, `feed.market.changed`, `feed.connection.changed`, `replay.state.changed`; the first enabled frame sets the baseline and records nothing |
 | Action registry | `crates/app/src/control/actions.rs` | `ActionRegistry` (descriptor + handler + compiled schemas); `attention.mark.create` with effect `annotate`, permissions `annotate` + `annotate.attention`, module `attention`; the descriptor is registered in the same `ControlRegistry` the reads use, so `describe` and search list it; no read handler, so a remote call that had the permission would still fail closed before dispatch |
 | Local invocation | `gateway.rs` (`invoke_local_action`), `app.rs` (`control_action`, `take_mark`) | One path for the hotkey, the hook, tests and a replayed trace entry: validate input, build the trusted actor (`human_ui` from this window, `automation` for a replayed entry), append the trace intent, run, validate output, append the trace result |
-| Control trace | `crates/app/src/control/trace.rs` | `ControlTrace` port; `ReplayTraceFile` = `<session>.control-trace.jsonl` beside the recording, intent line then result line; `NoTrace` for a live tab; `TraceReplay::load` pairs intents with results and names unfinished intents (a run with one is not a fixture); `service_replay_trace` re-injects due entries each frame, connected or not |
+| Control trace | `crates/app/src/control/trace.rs` | `ControlTrace` port; `ReplayTraceFile` = `<session>.control-trace.jsonl` beside the recording, intent line then result line; `NoTrace` for a live tab; `TraceReplay::load` pairs intents with results and names unfinished intents (a run with one is not a fixture); `service_replay_trace` re-injects due entries each frame, connected or not — one walk per recording (two tabs on the same file share it), loaded once, rewound by the worker's restart/seek count and target, and extended by the actions this run records so an in-session restart replays what a fresh process would; entries replay at their recorded capability version |
 | MCP tools | `crates/mcp` | `quantick_read_events`, `quantick_wait_for_change`; the adapter extends its read patience by the wait's own timeout |
 | Schemas | `schemas/control/observer-events-read-input-v1`, `observer-events-wait-input-v1`, `observer-event-page-v1`, `attention-mark-input-v1`, `attention-mark-result-v1`; catalog regenerated | Committed, snapshot-tested |
 
@@ -46,8 +46,9 @@ rather than the pointer it does not hold. `target_source` names who resolved
 it: `pointer` (the human's pointer — hotkey, hook, or a caller that passed
 none), `supplied` (an agent passed a target it read), `replayed` (a control
 trace re-injected it). The result carries no wall-clock time — the journal
-event does — so the trace's result digest depends on what was marked, not on
-when.
+event does — so the trace's result digest depends on what was marked and on
+its place in the journal, never on the clock. A replayed entry without its
+recorded target is refused rather than resolved against the rerun's pointer.
 
 ## Acceptance against the plan (PR 5a)
 

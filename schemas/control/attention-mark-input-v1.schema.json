@@ -389,7 +389,7 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "What a mark takes: an optional note the human typed, and optionally the\ntarget itself. The hotkey resolves the pointer and supplies the target, so\nthe input alone determines the mark and a control trace can replay it\nidentically; a caller that supplies none gets what is under the pointer\nat that moment.",
+  "description": "What a mark takes: an optional note the human typed, and optionally the\ntarget itself. The hotkey resolves the pointer and supplies the target, so\nthe input alone determines the mark and a control trace can replay it\nidentically; a caller that supplies none gets what is under the pointer\nat that moment — and a replayed entry without one is refused rather than\nresolved against the rerun's pointer, which is not the one that was\nmarked.",
   "properties": {
     "note": {
       "maxLength": 1024,

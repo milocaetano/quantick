@@ -2176,6 +2176,7 @@ impl QuantickApp {
     pub(crate) fn control_action(
         &mut self,
         capability_id: &str,
+        capability_version: u32,
         origin: crate::control::ActionOrigin,
         input: serde_json::Value,
     ) -> Result<serde_json::Value, quantick_control::error::ControlError> {
@@ -2184,7 +2185,8 @@ impl QuantickApp {
                 "control access is not installed",
             ));
         };
-        let outcome = access.invoke_local_action(self, capability_id, input, origin);
+        let outcome =
+            access.invoke_local_action(self, capability_id, capability_version, input, origin);
         self.control_access = Some(access);
         outcome
     }
@@ -2204,6 +2206,7 @@ impl QuantickApp {
         }
         match self.control_action(
             crate::control::MARK_CAPABILITY_ID,
+            crate::control::MARK_CAPABILITY_VERSION,
             crate::control::ActionOrigin::Human,
             serde_json::Value::Object(input),
         ) {
@@ -26215,7 +26218,114 @@ plot(close)
             .filter(|line| !line.trim().is_empty())
             .count();
         assert_eq!(lines, 2, "re-injection never writes the sidecar");
+
+        // A mark the human takes during this run joins the walk: it is not
+        // injected back on the spot, and the next rerun replays it beside
+        // the recorded one — exactly what a fresh process would do.
+        status.set_position_ms_for_test(status.start_ms() + 7_000);
+        run_frame(&mut app, &ctx);
+        hover_bar(&mut app, &ctx, 9);
+        app.take_mark(Some("this run".to_owned()));
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            replayed_marks(&app),
+            3,
+            "the human's own mark is journaled once and not replayed back at once"
+        );
+        // A restart whose rerun has already advanced past the last sampled
+        // position is still a rewind — the worker counts it and says where
+        // it began — and the rerun replays both marks at their times.
+        status.note_rewind(status.start_ms());
+        status.set_position_ms_for_test(status.start_ms() + 7_500);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            replayed_marks(&app),
+            5,
+            "the rerun replays the recorded mark and this run's mark"
+        );
+        let lines = std::fs::read_to_string(&trace_path)
+            .unwrap()
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count();
+        assert_eq!(
+            lines, 4,
+            "this run's mark was recorded once; re-injection never writes the sidecar"
+        );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn two_tabs_on_the_same_recording_share_one_trace_walk() {
+        let ctx = egui::Context::default();
+        let dir = std::env::temp_dir().join(format!(
+            "quantick-control-trace-two-tabs-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (mut app, _commands) = app_with_history(12);
+        app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+        hover_bar(&mut app, &ctx, 6);
+        app.take_mark(Some("once".to_owned()));
+        drop(app);
+
+        let (mut app, _commands) = app_with_history(12);
+        app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+        let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
+        app.tabs[1].replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+        app.active_tab = 0;
+        for _ in 0..3 {
+            run_frame(&mut app, &ctx);
+        }
+        let replayed = app
+            .control_access
+            .as_ref()
+            .unwrap()
+            .journal()
+            .read(1, 64, 1 << 20)
+            .events
+            .iter()
+            .filter(|event| event.kind.as_str() == "attention.mark.created")
+            .count();
+        assert_eq!(replayed, 1, "one walk per recording, not one per tab");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_replayed_mark_without_its_target_is_refused_and_an_unknown_version_is_named() {
+        use quantick_control::error::codes;
+
+        let (mut app, _commands) = app_with_history(4);
+        let refused = app
+            .control_action(
+                crate::control::MARK_CAPABILITY_ID,
+                crate::control::MARK_CAPABILITY_VERSION,
+                crate::control::ActionOrigin::TraceReplay,
+                serde_json::json!({ "note": "no recorded target" }),
+            )
+            .unwrap_err();
+        assert_eq!(refused.code.as_str(), codes::INVALID_REQUEST);
+        let unknown = app
+            .control_action(
+                crate::control::MARK_CAPABILITY_ID,
+                crate::control::MARK_CAPABILITY_VERSION + 1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({}),
+            )
+            .unwrap_err();
+        assert_eq!(unknown.code.as_str(), codes::CAPABILITY_UNKNOWN);
+        assert!(
+            app.control_access
+                .as_ref()
+                .unwrap()
+                .journal()
+                .read(1, 16, 1 << 20)
+                .events
+                .is_empty(),
+            "a refused mark leaves no event"
+        );
     }
 
     #[test]
