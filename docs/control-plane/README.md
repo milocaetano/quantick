@@ -16,6 +16,8 @@ testable.
   local transport and running-instance discovery mechanism.
 - [Observer threat model](observer-threat-model.md) defines the assets, trust
   boundaries, threats, and required controls for the first profile.
+- [PR 2 performance evidence](pr2-performance.md) records the shared-host idle
+  frame comparison and the calibrated on-demand capture budget.
 
 ## Precedence
 

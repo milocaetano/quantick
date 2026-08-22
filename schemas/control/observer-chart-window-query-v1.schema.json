@@ -1,0 +1,70 @@
+{
+  "$defs": {
+    "ChartWindowRange": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "visible",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "end_slot_exclusive": {
+              "$ref": "#/$defs/WireU64"
+            },
+            "kind": {
+              "const": "slots",
+              "type": "string"
+            },
+            "start_slot": {
+              "$ref": "#/$defs/WireU64"
+            }
+          },
+          "required": [
+            "kind",
+            "start_slot",
+            "end_slot_exclusive"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "page_size": {
+      "format": "uint",
+      "maximum": 2048,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "range": {
+      "$ref": "#/$defs/ChartWindowRange"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "range",
+    "page_size"
+  ],
+  "title": "ChartWindowQuery",
+  "type": "object"
+}

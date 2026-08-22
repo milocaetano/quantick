@@ -12,7 +12,7 @@ use std::sync::Arc;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::{Bar, Trade};
-use quantick_orderbook::{BookLevel, DepthEvent};
+use quantick_orderbook::{BookLevel, BookSide, DepthEvent};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
@@ -91,6 +91,23 @@ pub struct LiveLane {
     pub width_px: f32,
     /// Exchange timestamp at the band's right edge: the live edge.
     pub end_ms: i64,
+}
+
+/// A displayed resting-liquidity cell resolved under the pointer.
+///
+/// This is an application-internal semantic result. The control module maps
+/// it into its owned wire DTO, so no renderer or `egui` type crosses the
+/// control boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FlowCellHit {
+    pub generation: u64,
+    pub side: BookSide,
+    pub price_bucket: Decimal,
+    pub price_span: Decimal,
+    pub quantity: Decimal,
+    pub start_slot: usize,
+    pub end_slot_exclusive: usize,
+    pub live_lane: bool,
 }
 
 /// Stateful UI/controller facade for the optional heatmap.
@@ -172,6 +189,97 @@ impl OrderflowView {
             starve_tape_after_ms: None,
             first_print_ms: None,
         }
+    }
+
+    /// The health mirror already used by the last application frame.
+    ///
+    /// Unlike [`Self::health`], this does not synchronize with the worker. A
+    /// coherent control capture reads the same published frame the user saw,
+    /// without letting one requested scope advance another scope underneath
+    /// the capture.
+    #[must_use]
+    pub(crate) fn cached_health(&self) -> &OrderflowHealth {
+        &self.published.health
+    }
+
+    /// Resolve the topmost displayed L2 heat cell under `position` from the
+    /// frame the chart most recently painted.
+    ///
+    /// Projection and hit testing share [`ProjectedLayout`]. The lookup is
+    /// O(visible cells), runs only for an explicit cursor snapshot, and never
+    /// participates in painting or ingestion.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn control_flow_cell_at(
+        &self,
+        chart_rect: egui::Rect,
+        viewport: &Viewport,
+        total_bars: usize,
+        lane_width_px: f32,
+        inverted: bool,
+        position: egui::Pos2,
+    ) -> Option<FlowCellHit> {
+        let frame = self.published.frame.as_deref()?;
+        let layout = ProjectedLayout::new(
+            chart_rect,
+            viewport,
+            total_bars,
+            frame.first_bar_index,
+            frame.slot_count,
+            lane_width_px,
+        )
+        .with_inverted(inverted);
+        let in_lane = layout
+            .lane_left_x()
+            .is_some_and(|divider| position.x >= divider);
+        let layer_visible = if in_lane {
+            self.config.lane_depth_drawn()
+        } else {
+            self.config.depth_visible()
+        };
+        if !layer_visible || !chart_rect.contains(position) {
+            return None;
+        }
+
+        let style = OrderflowRenderStyle::from_config(&self.config, egui::Color32::TRANSPARENT);
+        let cell = frame.projection.cells.iter().rev().find(|cell| {
+            layout
+                .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)
+                .contains(position)
+        })?;
+
+        let regions = frame.slot_count.max(1);
+        let has_lane = frame.projection.live_now_x.is_some();
+        let bar_regions = regions.saturating_sub(usize::from(has_lane));
+        if bar_regions == 0 {
+            return None;
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let first_region = (cell.x0.clamp(0.0, 1.0) * regions as f64).floor() as usize;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let after_region = (cell.x1.clamp(0.0, 1.0) * regions as f64).ceil() as usize;
+        let touches_lane = has_lane && after_region > bar_regions;
+        // A cell that lies wholly in the live lane has no closed bar under it;
+        // an empty range at the lane boundary says so, instead of borrowing
+        // the last bar's slot and calling it the cell's.
+        let (first_bar_region, after_bar_region) = if first_region >= bar_regions {
+            (bar_regions, bar_regions)
+        } else {
+            (
+                first_region,
+                after_region.max(first_region + 1).min(bar_regions),
+            )
+        };
+
+        Some(FlowCellHit {
+            generation: cell.generation,
+            side: cell.side,
+            price_bucket: cell.price_bucket,
+            price_span: frame.projection.effective_grouping.bucket_width,
+            quantity: cell.quantity,
+            start_slot: frame.first_bar_index + first_bar_region,
+            end_slot_exclusive: frame.first_bar_index + after_bar_region,
+            live_lane: touches_lane,
+        })
     }
 
     /// Pull the newest worker snapshot into this frame's mirror. Cheap: one
@@ -2587,6 +2695,56 @@ mod tests {
             .expect("published frame");
         assert!(frame.projection.enabled);
         assert!(!frame.projection.cells.is_empty());
+    }
+
+    #[test]
+    fn semantic_pointer_resolves_the_same_heat_cell_the_renderer_projects() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.set_enabled(true, 10);
+        view.handle_depth_event(snapshot_event(10));
+        view.handle_depth_event(DepthEvent::Update {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 10,
+            event_time_ms: 1_050,
+            delta: BookDelta::new(
+                11,
+                11,
+                vec![BookLevel::new(Decimal::from(99), Decimal::from(7)).unwrap()],
+                Vec::new(),
+            ),
+        });
+        let bars = [bar(900, 1_100)];
+        view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
+        view.flush_for_test();
+        view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
+
+        let frame = view.published.frame.as_deref().expect("published frame");
+        let cell = frame.projection.cells.last().expect("one displayed cell");
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1_000.0, 600.0));
+        let viewport = Viewport::new();
+        let layout = ProjectedLayout::new(
+            chart,
+            &viewport,
+            1,
+            frame.first_bar_index,
+            frame.slot_count,
+            0.0,
+        );
+        let style = OrderflowRenderStyle::from_config(&view.config, egui::Color32::TRANSPARENT);
+        let position = layout
+            .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)
+            .center();
+
+        let hit = view
+            .control_flow_cell_at(chart, &viewport, 1, 0.0, false, position)
+            .expect("the painted cell is semantically resolved");
+        assert_eq!(hit.generation, cell.generation);
+        assert_eq!(hit.side, cell.side);
+        assert_eq!(hit.price_bucket, cell.price_bucket);
+        assert_eq!(hit.quantity, cell.quantity);
+        assert_eq!(hit.start_slot, 0);
+        assert_eq!(hit.end_slot_exclusive, 1);
+        assert!(!hit.live_lane);
     }
 
     /// Dragging the divider is the width slider by another route, and it stops

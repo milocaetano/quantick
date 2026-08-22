@@ -252,7 +252,7 @@ fn validate_context_shape(context: &PageContext<'_>) -> Result<(), ControlError>
 }
 
 fn page_stale(message: &str) -> ControlError {
-    ControlError::known(codes::PAGE_STALE, message, true)
+    ControlError::page_stale(message)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

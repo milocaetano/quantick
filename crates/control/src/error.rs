@@ -120,4 +120,10 @@ impl ControlError {
             false,
         )
     }
+
+    /// An append-only or revision-locked page can no longer be continued
+    /// against the source it was opened on.
+    pub fn page_stale(message: impl Into<String>) -> Self {
+        Self::known(codes::PAGE_STALE, message, true)
+    }
 }

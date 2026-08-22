@@ -777,9 +777,10 @@ rejected before capture, as section 6.2 requires. An unexpected single-capture
 overrun is recorded as a budget violation and fails the performance test rather
 than returning a mixed-revision result.
 
-The proposed opening budget is 1 ms at p99 with a hard stop well under a 16 ms
-frame. The number is calibrated in PR 2 against a measured baseline, but a
-number is stated so that "as fast as possible" is never the specification.
+PR 2 calibrated the budget to 250 microseconds per frame against the measured
+core-scope p99 and shared-host baseline, with a hard stop well under a 16 ms
+frame. A number is stated so that "as fast as possible" is never the
+specification; later modules must remain inside it or paginate their work.
 
 ### 10.3 Performance evidence
 

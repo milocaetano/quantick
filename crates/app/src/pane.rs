@@ -717,6 +717,36 @@ pub struct SharedPick {
     pub locked: bool,
 }
 
+/// One drawing resolved under the pointer for an on-demand control capture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ControlDrawingHit {
+    pub id: drawings::DrawingId,
+    pub tool_id: &'static str,
+    pub label: String,
+    pub user_label_present: bool,
+    pub handle_index: Option<usize>,
+    pub selected: bool,
+    pub locked: bool,
+}
+
+/// Semantic meaning of the pointer over one chart pane.
+///
+/// Coordinates are kept internal here. `app::control` owns the transport DTO
+/// and converts every float into a canonical decimal string, preventing UI
+/// types and non-canonical JSON numbers from leaking onto the wire.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ControlPointerHit {
+    pub screen_x_px: f32,
+    pub screen_y_px: f32,
+    pub band: String,
+    pub axis_value: Option<f64>,
+    pub axis_unit: String,
+    pub slot: Option<usize>,
+    pub bar: Option<quantick_engine::Bar>,
+    pub flow_cell: Option<crate::orderflow_view::FlowCellHit>,
+    pub drawing: Option<ControlDrawingHit>,
+}
+
 /// What a pane did to another pane's marks in one frame.
 ///
 /// The gesture flags bracket the edits so a whole drag lands on the owning
@@ -870,6 +900,14 @@ pub struct ChartPane {
     /// would share a drag.
     pub id: u64,
     pub state: ChartState,
+    /// Identity of the closed-bar prefix used by append-only control-plane
+    /// pagination.
+    ///
+    /// A live bar closing appends beyond an existing page's high-water mark
+    /// and deliberately leaves this unchanged. Anything that can rewrite,
+    /// prepend, remove, or re-cut a closed bar advances it, so a cursor can
+    /// reject a mixed view instead of silently continuing over changed data.
+    pagination_revision: u64,
     /// The tape, and everything read off it: the live lane, the heatmap, the
     /// bubbles, the live strip.
     ///
@@ -1192,6 +1230,7 @@ impl ChartPane {
             id,
             kind: spec.kind(),
             state: ChartState::new(spec),
+            pagination_revision: 0,
             orderflow,
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
@@ -1302,6 +1341,7 @@ impl ChartPane {
     /// disagreed with it, and the trader's first touch of the parameter would
     /// snap the chart back to a rule they never chose.
     pub fn set_spec(&mut self, spec: BarSpec) {
+        let changed = self.state.spec() != &spec;
         self.kind = spec.kind();
         match &spec {
             BarSpec::Tick(n) => self.tick_n = *n,
@@ -1318,6 +1358,20 @@ impl ChartPane {
             }
         }
         self.state.set_spec(spec);
+        if changed {
+            self.bump_pagination_revision();
+        }
+    }
+
+    /// Revision protecting the closed-bar prefix exposed through paginated
+    /// chart-window reads. Live appends do not advance it; rewrites do.
+    #[must_use]
+    pub fn pagination_revision(&self) -> u64 {
+        self.pagination_revision
+    }
+
+    fn bump_pagination_revision(&mut self) {
+        self.pagination_revision = self.pagination_revision.saturating_add(1);
     }
 
     #[cfg(test)]
@@ -2554,6 +2608,7 @@ impl ChartPane {
         }
         let before = self.history_prefix.len();
         self.history_prefix = bars;
+        self.bump_pagination_revision();
         // The prefix moves under a chart the user is already reading, so
         // everything anchored to a bar index moves with it — in either
         // direction. It grows when history lands; it shrinks when a coarser
@@ -2584,6 +2639,9 @@ impl ChartPane {
     /// Take a backfill batch into the series and hand the indicators the bars
     /// it produced.
     pub fn ingest_backfill(&mut self, trades: &[quantick_engine::Trade]) {
+        if !trades.is_empty() {
+            self.bump_pagination_revision();
+        }
         self.state.ingest_backfill(trades);
         self.indicator_worker
             .send(IndicatorCommand::Backfilled(self.closed_bars()));
@@ -2594,6 +2652,9 @@ impl ChartPane {
     /// Prepend older trades and shift everything anchored to a bar index by the
     /// number of bars they added, which is what this returns.
     pub fn prepend_history(&mut self, trades: &[quantick_engine::Trade]) -> usize {
+        if !trades.is_empty() {
+            self.bump_pagination_revision();
+        }
         // Older bars shift every index up; keep the view steady.
         let added = self.state.prepend_history(trades);
         self.viewport.shift_right_edge(added as isize);
@@ -2730,6 +2791,7 @@ impl ChartPane {
         // never has one today; the invariant must not depend on that.
         self.history_prefix.clear();
         self.state = ChartState::new(self.current_spec());
+        self.bump_pagination_revision();
         self.viewport = Viewport::new();
         // Framing dies with the series; orientation is the trader's standing
         // choice about the view, not about these bars — it survives the way
@@ -2749,6 +2811,9 @@ impl ChartPane {
     /// a trade that was streamed live must not become "history" just because
     /// this view was opened late.
     pub fn seed_from(&mut self, trades: &[quantick_engine::Trade], backfill_count: usize) {
+        if !trades.is_empty() {
+            self.bump_pagination_revision();
+        }
         let split = backfill_count.min(trades.len());
         self.state.ingest_backfill(&trades[..split]);
         for trade in &trades[split..] {
@@ -6010,6 +6075,82 @@ impl ChartPane {
         );
         let history_right = self.last_lane_divider_x.unwrap_or(chart.right());
         Some((self.drawing_area(chart), history_right, self.slots(), scale))
+    }
+
+    /// Resolve the pointer against the exact geometry the last frame painted.
+    ///
+    /// This is deliberately a pull operation. The normal frame loop only
+    /// records the position it already needs for the crosshair; bar, price,
+    /// L2 cell, and drawing hit-testing happen here only when a control client
+    /// requests the cursor scope.
+    #[must_use]
+    pub(crate) fn control_pointer_hit(&self) -> Option<ControlPointerHit> {
+        let position = self.hover_pos?;
+        let chart = self.last_chart_area?;
+        if !chart.contains(position) {
+            return None;
+        }
+        let band = bands::band_at(&self.last_bands, position)?;
+        let history_right = self.last_lane_divider_x.unwrap_or_else(|| chart.right());
+        let total = self.slots();
+
+        let slot = (total > 0 && position.x <= history_right)
+            .then(|| self.viewport.bar_at_x(position.x, history_right, total))
+            .filter(|bar| bar.is_finite() && *bar >= 0.0)
+            .map(|bar| bar.floor() as usize)
+            .filter(|slot| *slot < total);
+        let axis_value = band.scale.as_ref().map(|scale| scale.price_at(position.y));
+        // What the pointer's y means on this band. A time-only band has no
+        // value axis of its own, so y is read on the pane's price axis, which
+        // is what `axis_value` below is computed from.
+        let axis_unit = match &band.key {
+            DrawingBand::Price | DrawingBand::AllBands => "price".to_owned(),
+            DrawingBand::Indicator(_) => "indicator_value".to_owned(),
+        };
+
+        let drawing_pick = self
+            .drawing_handle_at(position, band, history_right, total)
+            .map(|(index, handle)| (index, Some(handle)))
+            .or_else(|| {
+                self.drawing_at(position, band, history_right, total)
+                    .map(|index| (index, None))
+            });
+        let drawing = drawing_pick.and_then(|(index, handle_index)| {
+            let drawing = self.drawings.items().get(index)?;
+            Some(ControlDrawingHit {
+                id: drawing.id,
+                tool_id: drawing.tool.id(),
+                label: format!("{} {}", drawing.tool.name(), index + 1),
+                user_label_present: drawing.name.is_some(),
+                handle_index,
+                selected: self.drawings.selected() == Some(index),
+                locked: drawing.locked,
+            })
+        });
+
+        let lane_width_px = (chart.right() - history_right).max(0.0);
+        let flow_cell = self.orderflow.as_ref().and_then(|orderflow| {
+            orderflow.control_flow_cell_at(
+                chart,
+                &self.viewport,
+                total,
+                lane_width_px,
+                self.price_view.is_inverted(),
+                position,
+            )
+        });
+        let band_name = crate::control::drawing_band_name(&band.key);
+        Some(ControlPointerHit {
+            screen_x_px: position.x,
+            screen_y_px: position.y,
+            band: band_name.to_owned(),
+            axis_value,
+            axis_unit,
+            slot,
+            bar: slot.and_then(|slot| self.candle_at_slot(slot).cloned()),
+            flow_cell,
+            drawing,
+        })
     }
 
     /// Which overlay indicator's plotted line a pointer at `pos` is sitting

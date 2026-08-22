@@ -1,0 +1,390 @@
+{
+  "$defs": {
+    "AvailabilitySnapshot": {
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "available"
+      ],
+      "type": "object"
+    },
+    "BarProvenance": {
+      "properties": {
+        "aggressor_side": {
+          "type": "string"
+        },
+        "completeness": {
+          "type": "string"
+        },
+        "price": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "trade_count": {
+          "type": "string"
+        },
+        "volume": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "completeness",
+        "price",
+        "volume",
+        "aggressor_side",
+        "trade_count"
+      ],
+      "type": "object"
+    },
+    "BarSnapshot": {
+      "properties": {
+        "buy_volume": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "close": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "close_time_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "delta": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "high": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "low": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "open": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "open_time_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "provenance": {
+          "$ref": "#/$defs/BarProvenance"
+        },
+        "sell_volume": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "slot": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "state": {
+          "$ref": "#/$defs/BarStateDto"
+        },
+        "trade_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "volume": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        }
+      },
+      "required": [
+        "slot",
+        "state",
+        "open_time_unix_ms",
+        "close_time_unix_ms",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "buy_volume",
+        "sell_volume",
+        "delta",
+        "trade_count",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "BarStateDto": {
+      "enum": [
+        "closed",
+        "in_progress"
+      ],
+      "type": "string"
+    },
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "DrawingHitSnapshot": {
+      "properties": {
+        "drawing_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "handle_index": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "locked": {
+          "type": "boolean"
+        },
+        "mirrored": {
+          "type": "boolean"
+        },
+        "owner_pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "owner_pane_side": {
+          "$ref": "#/$defs/PaneSideDto"
+        },
+        "selected": {
+          "type": "boolean"
+        },
+        "tool_id": {
+          "type": "string"
+        },
+        "user_label_present": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "owner_pane_id",
+        "owner_pane_side",
+        "mirrored",
+        "drawing_id",
+        "tool_id",
+        "label",
+        "user_label_present",
+        "selected",
+        "locked"
+      ],
+      "type": "object"
+    },
+    "FlowCellSnapshot": {
+      "properties": {
+        "end_slot_exclusive": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "generation": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "live_lane": {
+          "type": "boolean"
+        },
+        "price_bucket": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "price_span": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "quantity": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "side": {
+          "type": "string"
+        },
+        "start_slot": {
+          "$ref": "#/$defs/WireU64",
+          "description": "The closed-bar slots under the cell. A cell that lies wholly in the\nlive lane has none: both bounds then equal the lane boundary, and\n`live_lane` says where it is."
+        }
+      },
+      "required": [
+        "generation",
+        "side",
+        "price_bucket",
+        "price_span",
+        "quantity",
+        "start_slot",
+        "end_slot_exclusive",
+        "live_lane"
+      ],
+      "type": "object"
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "PointerSnapshot": {
+      "properties": {
+        "axis_unit": {
+          "type": "string"
+        },
+        "axis_value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "band": {
+          "type": "string"
+        },
+        "bar": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BarSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "control_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "control_id_availability": {
+          "$ref": "#/$defs/AvailabilitySnapshot"
+        },
+        "drawing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DrawingHitSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "feed_id": {
+          "type": "string"
+        },
+        "flow_cell": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FlowCellSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pane_focused": {
+          "type": "boolean"
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "pane_side": {
+          "$ref": "#/$defs/PaneSideDto"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "screen_x_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels"
+        },
+        "screen_y_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels"
+        },
+        "slot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "tab_id",
+        "pane_id",
+        "pane_side",
+        "pane_focused",
+        "feed_id",
+        "symbol",
+        "screen_x_px",
+        "screen_y_px",
+        "band",
+        "axis_unit",
+        "control_id_availability"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "active_tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "focused_pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "focused_pane_side": {
+      "$ref": "#/$defs/PaneSideDto"
+    },
+    "pointer": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PointerSnapshot"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pointer_availability": {
+      "$ref": "#/$defs/AvailabilitySnapshot"
+    },
+    "semantic_scene": {
+      "$ref": "#/$defs/AvailabilitySnapshot"
+    }
+  },
+  "required": [
+    "active_tab_id",
+    "focused_pane_id",
+    "focused_pane_side",
+    "pointer_availability",
+    "semantic_scene"
+  ],
+  "title": "CursorSnapshot",
+  "type": "object"
+}
