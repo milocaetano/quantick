@@ -857,6 +857,12 @@ impl ControlAccess {
             ui.strong("Status:");
             ui.label(status);
         });
+        // The one trader gesture this surface owns, said where the trader
+        // configures it: a newcomer finds it here, not in a manual.
+        ui.small(format!(
+            "{} marks what is under the pointer; clients read marks through events.",
+            ui.ctx().format_shortcut(&MARK_SHORTCUT)
+        ));
 
         if let Some(error) = &self.initialization_error {
             ui.colored_label(eframe::egui::Color32::LIGHT_RED, error);
