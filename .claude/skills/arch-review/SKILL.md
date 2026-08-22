@@ -457,7 +457,12 @@ text is the data being handled:
   MetaTrader terminal's error string, a venue's localised reject reason. Copying
   it verbatim is the data-honesty rule; translating it would make the fixture
   describe a system that does not exist.
-- A quotation in a doc, marked as a quotation and attributed.
+- A quotation, marked as a quotation and attributed. The repo already leans on
+  this one: `crates/app/src/drawings/fib.rs:196` and
+  `crates/app/src/app.rs:16253` carry the trader's own bug reports verbatim
+  inside English doc comments. Translating a report puts words in the
+  reporter's mouth and loses the detail that made it worth writing down —
+  quote it, then explain it in English around the quote.
 
 In every one of those cases the code around it, the comment explaining why the
 foreign text is there, and the test's own name stay English. "It is a fixture"
