@@ -1,6 +1,6 @@
 ---
 name: arch-review
-description: The full pre-PR review for quantick — runs the bundled code-review for bugs first, then checks that a change docks as a module, declares its performance impact, proves itself with tests, stays drivable by an operator without a mouse, and hides nothing behind a magic number. Use when the user types /arch-review, asks for a code review or a bug pass before shipping, or asks whether a change in hand is modular, extensible, fast enough, or drivable without a mouse. Not for designing the assistant itself — this reviews a diff.
+description: The full pre-PR review for quantick — runs the bundled code-review for bugs first, then checks that a change docks as a module, declares its performance impact, proves itself with tests that stay out of the shipped binary, stays drivable by an operator without a mouse, hides nothing behind a magic number, and is written in English throughout. Use when the user types /arch-review, asks for a code review or a bug pass before shipping, or asks whether a change in hand is modular, extensible, fast enough, drivable without a mouse, free of hardcoded values, or correctly separated between test and production code. Not for designing the assistant itself — this reviews a diff.
 ---
 
 # Architecture-first code review
@@ -9,8 +9,9 @@ A new feature should dock like a spacecraft to the ISS: a standard port, no
 modification to the station. Review every change against that bar.
 
 This skill reviews *shape* — modularity, performance, extensibility, tests,
-operability, naming. Bug hunting belongs to the bundled `code-review` skill,
-which this one runs for you first: see step 0.
+operability, naming, hardcoded values and the language the repo is written in.
+Bug hunting belongs to the bundled `code-review` skill, which this one runs for
+you first: see step 0.
 
 ## Step 0 — the native code review runs first, always
 
@@ -90,7 +91,8 @@ State the order explicitly in the review when a trade-off is at stake.
    operator*). Its authority half sits at 0, not here.
 3. **Tests that prove the behaviour**, so the next feature cannot break it
    silently.
-4. **Standardisation.** One way to do a thing, repo-wide.
+4. **Standardisation.** One way to do a thing, and one language to say it in,
+   repo-wide.
 5. **Human-friendliness.** Mandatory wherever it is free at runtime — better
    names, honest units, a comment explaining a dense algorithm. Never a reason
    to accept a slower path.
@@ -120,7 +122,7 @@ Read the neighbouring code before judging any of it. The repo's existing
 pattern is the standard; a change that invents a second way to do something
 already solved is a finding, even when the new way is prettier in isolation.
 
-## The seven dimensions
+## The eight dimensions
 
 ### 1. The docking test — modularity and extensibility
 
@@ -194,22 +196,57 @@ Rules for reporting performance:
 
 ### 3. Nothing hardcoded
 
-Every number that a human might one day want different lives in a named
-constant or in config — never inline at the point of use.
+Every number, string, path or threshold a human might one day want different
+lives in a named constant or in config — never inline at the point of use. The
+literal in the expression is the finding on its own; that it is "obviously"
+2.0, or used exactly once, is not a defence. Read the diff for literals first
+and *then* judge them, because the ones that survive review are the ones nobody
+looked at twice.
 
-- **Named constants** at module top, `SCREAMING_SNAKE_CASE`, unit in the name
-  (`_MS`, `_PX`, `_TICKS`, `_BYTES`). `const` and `static` cost nothing.
-- **Config** for anything a user tunes: feeds and symbols in
+Three tiers. Every finding names which one the value belongs in, because
+"extract a constant" is the wrong fix for a value the trader was supposed to
+edit:
+
+- **A config file — anything a *user* tunes.** Feeds and symbols in
   `crates/app/config/feeds.toml`, bubble looks in `config/bubbles.toml`,
-  overridable by env var. Symbols, endpoints, tick sizes and thresholds are
-  never literals in code.
-- A magic number in a renderer or a threshold buried in a condition is a
-  finding every time, including when it is "obviously" 2.0.
+  footprint styling in `config/footprint.toml`, strategy presets in
+  `quantick-strategies.toml`, each overridable by env var. Symbols, endpoints,
+  tick sizes, colours and user-facing thresholds are never literals in code. A
+  Rust `const` may hold the *default*, but the knob itself lives in the file: a
+  `const` still costs a rebuild, and a rebuild is the one thing the trader
+  cannot do. This is dimension 7's *what the trader authors is data* rule seen
+  from the constants side.
+- **A shared module — a value two or more places must agree on.** A bridge
+  port, a protocol magic, a frame bound, a file-format version, a directory
+  name written by one crate and scanned by another. Duplicating it at both ends
+  is a bug with a delay fuse: it ships green and breaks the day one side
+  changes. One owner, imported by the rest — and the finding is the *second*
+  copy, wherever it sits. Where the value crosses a language boundary the repo
+  cannot type-check (the MQL5 bridge, the Python exporter), it cannot be
+  imported, so the finding is instead the missing test or doc comment pinning
+  the two sides together.
+- **Module top — a value one module owns.** `SCREAMING_SNAKE_CASE`, unit in
+  the name (`_MS`, `_PX`, `_TICKS`, `_BYTES`), and a doc comment saying *why
+  this number* rather than restating it. `const` and `static` cost nothing at
+  runtime, so there is never a performance argument for leaving the literal
+  inline. This is the tier the repo already uses well — compare against the
+  constant blocks at the top of `crates/app/src/app.rs` before proposing
+  anything else.
+
+Also:
+
+- A magic number in a renderer, a threshold buried in a condition, a sleep or
+  timeout duration, a retry count, a capacity handed to `with_capacity`, a
+  buffer size, a hardcoded `C:\...` or `/tmp` path, a bare URL or port — each
+  is a finding every time.
+- Exempt, and say so rather than filing them: `0`, `1` and `-1` as identity or
+  step; indices into a shape the code itself fixes (`rgba[3]`); and a literal
+  a doc comment right there derives from a named constant.
 - Config round-trips must survive a save: a writer that drops comments or
   re-emits `0.78` as `0.7799999713897705` destroys the reason the file is
   tracked in git. Check the write path, not just the read path.
 
-### 4. Tests that prove the change
+### 4. Tests that prove the change — and stay out of the product
 
 - Every new behaviour has a test that **fails without the change**. If you
   cannot name that test, the behaviour is unproven — a blocker.
@@ -225,6 +262,55 @@ constant or in config — never inline at the point of use.
 - Edge cases the domain actually produces: empty book, one-tick spread, zero
   quantity, gap in update ids, overflow on feed arithmetic (saturate, never
   panic), a session that ends mid-bar.
+
+**Where a test lives.** Rust reaches the same discipline C# gets from a
+separate test project, but by a different mechanism, and importing the C#
+layout here would itself be the finding — there is no test project, and a
+`src/` module full of `pub` helpers written for the suite is the anti-pattern,
+not the goal. What the review checks is the mechanism Rust actually uses:
+
+- **Unit tests** live in a `#[cfg(test)] mod tests` child of the module under
+  test — inline at the bottom of the file, or, once that module outgrows the
+  file it is buried in, in a sibling `tests.rs` pulled in with
+  `#[cfg(test)] mod tests;`. The attribute is the whole point: it keeps the
+  tests out of `cargo build` and out of the shipped binary, and it is what buys
+  access to private items with no `[InternalsVisibleTo]` equivalent needed. A
+  test module without `#[cfg(test)]` is a finding on its own.
+- **Integration tests** live in `crates/<crate>/tests/*.rs` — a separate crate
+  that links the library from outside and therefore can only reach the public
+  API, which is precisely what makes it a contract test. That is where this
+  repo already proves its contracts: `engine/tests/golden_*.rs`,
+  `control/tests/*_contract.rs`, `pine/tests/*_semantics.rs`,
+  `indicators/tests/fmath_guard.rs`. An integration test that needs a private
+  item is either a unit test filed in the wrong folder, or the signal that the
+  port under review was never made public — say which.
+- **Shared test helpers** live in `tests/common/mod.rs`, never in a top-level
+  `tests/common.rs`: cargo builds every top-level file in `tests/` as its own
+  test binary, so the flat version compiles as a test target with no tests in
+  it. A helper that both unit and integration tests need cannot be
+  `#[cfg(test)]` at all — put it behind a `test-util` cargo feature rather than
+  making it unconditionally public.
+
+The findings this separation exists to catch, in order of how much damage they
+do:
+
+- **`#[cfg(test)]` that changes behaviour instead of only adding tests** — a
+  branch, a shortened timeout, a stubbed clock or a skipped validation inside
+  production logic. Then the thing under test is not the thing that ships and
+  the suite proves nothing about the binary; a **Blocker**, and it collides
+  with priority 0 besides. The fix is a seam, not a flag: pass the clock in,
+  take the trait, hand the value to the constructor — the pattern `replay`
+  already follows by being *told* how much time passed rather than reading a
+  clock.
+- **A `pub` item on a production type whose only callers are tests.** Either
+  gate it `#[cfg(test)]`, move it inside the test module, or accept that it is
+  public API and document it as such. An accessor that exists "so the test can
+  see it" widens the surface every future change has to keep working.
+- **Fixtures, builders and mock feeds sitting ungated in `src/`**, dragging
+  test data into the release binary and into every consumer's compile.
+- **A test asserting on a private detail from the outside**, reached by
+  loosening visibility for the test's benefit. The visibility change is the
+  finding, not the assertion.
 
 ### 5. Standardisation
 
@@ -340,6 +426,58 @@ usually satisfies both — the hook and the agent call the same named function.
 Naming note: the repo's `copilot.pine` is an indicator, not this assistant. Do
 not reuse the name for the agent surface.
 
+### 8. One language — the repo is written in English
+
+Everything this repository carries is written in English. Identifiers, comments
+and doc comments, log lines, error and panic messages, UI strings, test names
+and assertion text, `.pine` scripts and their headers, comments inside `.toml`
+config, markdown under `docs/`, commit messages, branch names, and the title and
+body of the PR. A single line in Portuguese, Spanish or any other language is a
+finding, and one anywhere in the diff is a **Blocker**.
+
+Not because the line is wrong — usually it is the clearest sentence in the file.
+Because the moment two languages are tolerated, the boundary between them is
+never drawn again: the next reader is locked out of half the codebase, every
+grep and every review has to be run twice, and a contributor who reads neither
+language has no way in. One language is the only version of this rule that is
+stable, and English is the one the toolchain, the venue APIs and the dependency
+docs already speak.
+
+**This governs artifacts, not conversation.** The trader here works in
+Portuguese and these sessions are conducted in Portuguese; that is correct and
+this dimension does not touch it. The rule begins exactly where something lands
+in the repository — the moment it is written to a tracked file, a commit message
+or a PR.
+
+The single exception is content whose *subject* is a language, where the foreign
+text is the data being handled:
+
+- Localisation and translation resources, and any string table keyed by locale.
+- A fixture or golden file reproducing text a real system emits — a pt-BR
+  MetaTrader terminal's error string, a venue's localised reject reason. Copying
+  it verbatim is the data-honesty rule; translating it would make the fixture
+  describe a system that does not exist.
+- A quotation in a doc, marked as a quotation and attributed.
+
+In every one of those cases the code around it, the comment explaining why the
+foreign text is there, and the test's own name stay English. "It is a fixture"
+excuses the string inside the fixture, never the comment above it.
+
+Check it mechanically before reading — a language finding is the one kind this
+review can miss by simply not noticing, because a Portuguese comment reads
+perfectly well to whoever wrote it:
+
+```sh
+# Word-boundary match (-w), so `para` does not fire inside `separator`.
+git diff origin/main...HEAD -U0 -- . ':!*.lock' | grep '^+' |
+  grep -iwE 'não|nao|para|porque|então|também|isso|aqui|quando|onde|preço|barra|tela|arquivo|pasta|erro|senha|usuário|pero|donde|entonces'
+```
+
+Treat a hit as a prompt to read the line, never as the verdict: it fires on a
+legitimate localised fixture, and it misses a foreign sentence built entirely
+from words it does not list. Read the prose in the diff yourself — the grep
+only catches what a tired reviewer skims past.
+
 ## Verify before reporting
 
 Reviews are judged on precision, not volume.
@@ -369,14 +507,21 @@ A clean change gets a short review saying it is clean and why. Never pad.
   edge; forked aggregator logic; determinism broken; hot-path regression; new
   behaviour with no test; a feature that activates itself; a market or safety
   action a non-human operator can reach by a shorter path than the trader's,
-  or one that leaves no record of who acted.
-- **Should fix** — hardcoded value; extension point that forces edits to
-  existing code; missing regression cover; unexplained complex algorithm;
-  misleading name or missing unit; a second way to do a solved thing; a
-  capability reachable only from a click handler; state that exists only as
-  pixels; a capability that registers itself nowhere, or a list kept by hand
-  beside the registry; something the trader was meant to vary shipped as a
-  compiled variant.
+  or one that leaves no record of who acted; `#[cfg(test)]` that changes
+  production behaviour rather than only adding tests; **any line of the diff
+  written in a language other than English**, outside dimension 8's stated
+  exception.
+- **Should fix** — hardcoded value, and the tier it belongs in named (config,
+  shared module, module top); a user-tunable value shipped as a `const` that
+  needs a rebuild to change; the same constant duplicated at both ends of a
+  boundary; extension point that forces edits to existing code; missing
+  regression cover; a test module without `#[cfg(test)]`; a `pub` item whose
+  only callers are tests; a fixture or mock sitting ungated in `src/`;
+  unexplained complex algorithm; misleading name or missing unit; a second way
+  to do a solved thing; a capability reachable only from a click handler; state
+  that exists only as pixels; a capability that registers itself nowhere, or a
+  list kept by hand beside the registry; something the trader was meant to vary
+  shipped as a compiled variant.
 - **Consider** — clarity and structure improvements with no correctness,
   performance or extensibility consequence.
 
@@ -393,14 +538,14 @@ requires there. Chat scrolls away; the PR is where the next reader looks.
 Report findings with the `ReportFindings` tool when it is available, ranked
 most severe first, using categories `correctness` (step 0's, promoted here),
 `modularity`, `performance`, `hardcoded-values`, `test-coverage`,
-`standardisation`, `agent-surface`, `readability`. Without that tool, write the
-same list as markdown grouped by severity.
+`test-layout`, `standardisation`, `agent-surface`, `language`, `readability`.
+Without that tool, write the same list as markdown grouped by severity.
 
 Each finding: `file:line`, what is wrong, why it matters *in this order of
 priorities*, and the concrete fix — the trait to extract, the constant to
 name, the test to add. Never a vague "consider refactoring".
 
-Close with a verdict in five lines:
+Close with a verdict in six lines:
 
 - **Correctness** — what the step 0 code review returned, and whether anything
   from it is still open.
@@ -409,4 +554,9 @@ Close with a verdict in five lines:
 - **Operability** — could a script or the future assistant trigger this, read
   the result and discover it exists? Say "no surface" when the change adds no
   user-facing capability; never drop the line.
-- **Proof** — which test would fail if this change regressed.
+- **Proof** — which test would fail if this change regressed, and whether it
+  is a unit test (`#[cfg(test)]`, private access) or an integration test
+  (`tests/`, public API only).
+- **Language** — English throughout, or the `file:line` of every line that is
+  not. Say "English throughout" rather than dropping the line: a silent
+  language verdict is indistinguishable from one nobody checked.
