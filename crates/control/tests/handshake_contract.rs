@@ -111,6 +111,17 @@ fn handshake_fails_closed_for_nonoverlap_and_unknown_permissions() {
     );
 
     request.protocol_versions = ProtocolVersionRange::new(2, 2).unwrap();
+    request.requested_scopes = (0..=quantick_control::limits::CONTROL_HANDSHAKE_MAX_SCOPES)
+        .map(|index| PermissionId::new(format!("plugin.scope_{index}")).unwrap())
+        .collect();
+    assert_eq!(
+        accept_handshake(&request, &grant, &registry)
+            .unwrap_err()
+            .code
+            .as_str(),
+        codes::INVALID_REQUEST
+    );
+
     request.requested_scopes = BTreeSet::from([PermissionId::new("plugin.undeclared").unwrap()]);
     assert_eq!(
         accept_handshake(&request, &grant, &registry)

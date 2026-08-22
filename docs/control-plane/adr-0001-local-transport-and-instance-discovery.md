@@ -262,6 +262,9 @@ results, cannot explain availability, and make evidence depend on pixels.
 ## Consequences
 
 - The app gains a small cold-path gateway host but no MCP dependency.
+- The descriptor directory and the loopback client live in one shared crate,
+  `quantick-control-local`, used by the publisher and by every adapter, so the
+  ownership and permission checks exist once.
 - `quantick-mcp` remains a leaf adapter and may restart independently.
 - A private descriptor contains a bearer secret, so permissions and stale-file
   handling are security-critical and require platform tests.

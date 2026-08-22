@@ -139,6 +139,12 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         SCHEMA_VERSION,
         "Health summary",
         "Reports frame timing, active work, indicator failures, and the last published order-flow health.",
+        &[
+            "observe",
+            "observe.health",
+            "observe.indicators",
+            "observe.orderflow",
+        ],
         project,
     )
 }

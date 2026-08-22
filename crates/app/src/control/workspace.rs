@@ -70,6 +70,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         SCHEMA_VERSION,
         "Workspace summary",
         "Reports every tab and pane with stable IDs, visibility, and focus.",
+        &["observe", "observe.workspace", "observe.market"],
         project,
     )
 }

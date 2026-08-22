@@ -7,6 +7,9 @@ license.workspace = true
 
 [dependencies]
 quantick-control = { path = "../control" }
+# Private descriptor publication for the local gateway (ADR 0001). The
+# discovery and client halves of the same crate are what the MCP adapter uses.
+quantick-control-local = { path = "../control-local" }
 quantick-engine = { path = "../engine" }
 quantick-indicators = { path = "../indicators" }
 quantick-pine = { path = "../pine" }
@@ -23,6 +26,10 @@ schemars = { version = "=1.2.2", features = ["derive"] }
 # the paper-trading journal's durable default home. Path lookup only; no
 # path is ever invented when the platform reports none.
 dirs = "6"
+# Bounded non-blocking queues between gateway workers and the application thread.
+crossbeam-channel = "0.5"
+# Operating-system entropy for per-process IDs, nonces, and ephemeral bearer tokens.
+getrandom = "0.3"
 # Native folder picker for Market Replay. Runs off the UI thread, so the OS
 # dialog never blocks a frame.
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }

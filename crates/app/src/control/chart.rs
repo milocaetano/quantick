@@ -1,13 +1,14 @@
 //! Chart summary and append-only paginated bar-window projections.
 
 use quantick_control::{
-    cursor::{Page, PageContext, PageCursor, PaginationConsistency},
+    cursor::{PageContext, PageCursor, PaginationConsistency},
     error::ControlError,
     id::{InstanceId, ModuleId, SnapshotScopeId},
-    limits::{CONTROL_DEFAULT_PAGE_ITEMS, CONTROL_MAX_PAGE_ITEMS},
+    limits::CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS,
     registry::ModuleDescriptor,
     wire::{CanonicalDecimal, WireU64},
 };
+
 use quantick_engine::Bar;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -129,17 +130,18 @@ pub(crate) struct ChartWindowQuery {
     pub tab_id: WireU64,
     pub pane_id: WireU64,
     pub range: ChartWindowRange,
-    #[schemars(range(min = 1, max = CONTROL_MAX_PAGE_ITEMS))]
+    #[schemars(range(min = 1, max = CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS))]
     pub page_size: usize,
 }
 
 impl ChartWindowQuery {
+    #[cfg(test)]
     pub fn visible(tab_id: u64, pane_id: u64) -> Self {
         Self {
             tab_id: WireU64::new(tab_id),
             pane_id: WireU64::new(pane_id),
             range: ChartWindowRange::Visible,
-            page_size: CONTROL_DEFAULT_PAGE_ITEMS,
+            page_size: CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS,
         }
     }
 }
@@ -166,9 +168,37 @@ pub(crate) struct ChartWindowPage {
     pub consistency_revision: WireU64,
     pub high_water_slot_exclusive: WireU64,
     pub viewport: ViewportSnapshot,
-    pub bars: Page<BarSnapshot>,
+    pub bars: ChartBarPage,
     pub in_progress_bar: Option<BarSnapshot>,
     pub omitted_modules: Vec<ModuleId>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct ChartBarPage {
+    #[schemars(length(max = CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS))]
+    pub items: Vec<BarSnapshot>,
+    #[schemars(range(max = CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS))]
+    pub item_count: usize,
+    pub has_more: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<PageCursor>,
+}
+
+impl ChartBarPage {
+    fn new(items: Vec<BarSnapshot>, next_cursor: Option<PageCursor>) -> Result<Self, ControlError> {
+        if items.len() > CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS {
+            return Err(ControlError::invalid_request(
+                "chart page exceeds its application-thread item limit",
+            ));
+        }
+        let item_count = items.len();
+        Ok(Self {
+            items,
+            item_count,
+            has_more: next_cursor.is_some(),
+            next_cursor,
+        })
+    }
 }
 
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
@@ -187,6 +217,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         SCHEMA_VERSION,
         "Chart summary",
         "Reports every pane's bar rule, revisions, viewport, price range, and coverage.",
+        &["observe", "observe.market", "observe.chart"],
         project,
     )
 }
@@ -415,15 +446,30 @@ fn bar_snapshot_with(
 /// Read one append-only page of closed chart bars. A live append is allowed;
 /// a prefix install, backfill, reset, or bar-spec rebuild advances the pane's
 /// pagination revision and returns `control.page_stale`.
+#[cfg(test)]
 pub(crate) fn chart_window(
     app: &QuantickApp,
     instance_id: &InstanceId,
     query: &ChartWindowQuery,
     cursor: Option<&PageCursor>,
 ) -> Result<ChartWindowPage, ControlError> {
-    if query.page_size == 0 || query.page_size > CONTROL_MAX_PAGE_ITEMS {
+    let canonical_query = serde_json::to_value(query)
+        .map_err(|error| ControlError::invalid_request(format!("invalid chart query: {error}")))?;
+    chart_window_prevalidated(app, instance_id, query, &canonical_query, cursor)
+}
+
+/// Gateway path for a query parsed, schema-checked, and canonicalized away
+/// from the application thread.
+pub(crate) fn chart_window_prevalidated(
+    app: &QuantickApp,
+    instance_id: &InstanceId,
+    query: &ChartWindowQuery,
+    canonical_query: &serde_json::Value,
+    cursor: Option<&PageCursor>,
+) -> Result<ChartWindowPage, ControlError> {
+    if query.page_size == 0 || query.page_size > CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS {
         return Err(ControlError::invalid_request(format!(
-            "chart page size must be in 1..={CONTROL_MAX_PAGE_ITEMS}"
+            "chart page size must be in 1..={CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS}"
         )));
     }
     let tab = app
@@ -445,8 +491,6 @@ pub(crate) fn chart_window(
         ));
     };
     let closed = pane.closed_slots();
-    let query_value = serde_json::to_value(query)
-        .map_err(|error| ControlError::invalid_request(format!("invalid chart query: {error}")))?;
     let scope_id = SnapshotScopeId::new(WINDOW_SCOPE_ID).expect("static scope ID is valid");
     let consistency_revision = WireU64::new(pane.pagination_revision());
 
@@ -457,7 +501,7 @@ pub(crate) fn chart_window(
         let context = PageContext {
             instance_id,
             scope_id: &scope_id,
-            query: &query_value,
+            query: canonical_query,
             consistency_mode: PaginationConsistency::AppendOnly,
             consistency_revision,
             high_water_position: Some(high_water),
@@ -513,7 +557,7 @@ pub(crate) fn chart_window(
         let context = PageContext {
             instance_id,
             scope_id: &scope_id,
-            query: &query_value,
+            query: canonical_query,
             consistency_mode: PaginationConsistency::AppendOnly,
             consistency_revision,
             high_water_position: Some(high_water),
@@ -556,7 +600,7 @@ pub(crate) fn chart_window(
     } else {
         None
     };
-    let bars = Page::new(items, next_cursor)?;
+    let bars = ChartBarPage::new(items, next_cursor)?;
     let partial_slot = pane.closed_slots();
     let in_progress_bar = pane.state.partial().map(|bar| {
         bar_snapshot_with(

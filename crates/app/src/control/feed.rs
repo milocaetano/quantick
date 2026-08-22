@@ -88,6 +88,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         SCHEMA_VERSION,
         "Feed status",
         "Reports the selected and active markets, source health, capabilities, and provenance.",
+        &["observe", "observe.market"],
         project,
     )
 }

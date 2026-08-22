@@ -65,6 +65,7 @@
       "items": {
         "$ref": "#/$defs/PermissionId"
       },
+      "maxItems": 32,
       "type": "array",
       "uniqueItems": true
     }

@@ -4,9 +4,10 @@ use serde_json::Value;
 
 use crate::{
     cursor::{EventCursor, PageCursor},
+    descriptor::InstanceDescriptor,
     error::ControlError,
     fake::reference_registry,
-    handshake::{HandshakeRequest, HandshakeResponse},
+    handshake::{HandshakeReply, HandshakeRequest, HandshakeResponse},
     registry::CapabilityDescriptor,
     schema::generated_schema,
     wire::{RequestEnvelope, ResponseEnvelope},
@@ -31,7 +32,9 @@ pub fn public_schema_documents() -> Vec<PublicSchemaDocument> {
         document::<ControlError>("control-error-v1.schema.json"),
         document::<EventCursor>("event-cursor-v1.schema.json"),
         document::<HandshakeRequest>("handshake-request-v1.schema.json"),
+        document::<HandshakeReply>("handshake-reply-v1.schema.json"),
         document::<HandshakeResponse>("handshake-response-v1.schema.json"),
+        document::<InstanceDescriptor>("instance-descriptor-v1.schema.json"),
         document::<PageCursor>("page-cursor-v1.schema.json"),
         document::<RequestEnvelope>("request-envelope-v1.schema.json"),
         document::<ResponseEnvelope>("response-envelope-v1.schema.json"),
