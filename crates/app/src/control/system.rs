@@ -50,6 +50,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         SCHEMA_VERSION,
         "System information",
         "Reports the Quantick build, target, protocol, and capture budget.",
+        &["observe", "observe.system"],
         project,
     )
 }

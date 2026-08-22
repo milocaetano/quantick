@@ -8,8 +8,8 @@ use serde_json::Value;
 use crate::{
     handshake::ProtocolLimits,
     limits::{
-        CONTROL_MAX_JSON_DEPTH, CONTROL_MAX_REQUEST_BYTES, CONTROL_MAX_RESPONSE_BYTES,
-        CONTROL_MAX_STRING_BYTES, CONTROL_PROTOCOL_MAX_FRAME_BYTES,
+        CONTROL_HANDSHAKE_MAX_BYTES, CONTROL_MAX_JSON_DEPTH, CONTROL_MAX_REQUEST_BYTES,
+        CONTROL_MAX_RESPONSE_BYTES, CONTROL_MAX_STRING_BYTES, CONTROL_PROTOCOL_MAX_FRAME_BYTES,
     },
     wire::{RequestEnvelope, ResponseEnvelope},
 };
@@ -53,6 +53,18 @@ impl Default for BoundedCodec {
 }
 
 impl BoundedCodec {
+    /// Pre-authentication codec with a smaller allocation and parsing ceiling.
+    #[must_use]
+    pub const fn handshake() -> Self {
+        Self {
+            max_frame_bytes: CONTROL_HANDSHAKE_MAX_BYTES,
+            max_request_bytes: CONTROL_HANDSHAKE_MAX_BYTES,
+            max_response_bytes: CONTROL_HANDSHAKE_MAX_BYTES,
+            max_json_depth: CONTROL_MAX_JSON_DEPTH,
+            max_string_bytes: CONTROL_HANDSHAKE_MAX_BYTES,
+        }
+    }
+
     pub fn with_limits(
         max_frame_bytes: usize,
         max_request_bytes: usize,
@@ -517,6 +529,24 @@ mod tests {
             Err(CodecError::PayloadTooLarge {
                 declared: 17,
                 limit: 16
+            })
+        );
+        assert!(!reader.payload_read_attempted);
+    }
+
+    #[test]
+    fn pre_authentication_codec_uses_the_smaller_handshake_ceiling() {
+        let codec = BoundedCodec::handshake();
+        let declared = u32::try_from(CONTROL_HANDSHAKE_MAX_BYTES + 1).unwrap();
+        let mut reader = HeaderThenPanic {
+            header: io::Cursor::new(declared.to_be_bytes()),
+            payload_read_attempted: false,
+        };
+        assert_eq!(
+            codec.read::<Value>(FrameRole::Request, &mut reader),
+            Err(CodecError::PayloadTooLarge {
+                declared: CONTROL_HANDSHAKE_MAX_BYTES + 1,
+                limit: CONTROL_HANDSHAKE_MAX_BYTES,
             })
         );
         assert!(!reader.payload_read_attempted);

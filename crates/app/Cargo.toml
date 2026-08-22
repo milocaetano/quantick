@@ -23,6 +23,10 @@ schemars = { version = "=1.2.2", features = ["derive"] }
 # the paper-trading journal's durable default home. Path lookup only; no
 # path is ever invented when the platform reports none.
 dirs = "6"
+# Bounded non-blocking queues between gateway workers and the application thread.
+crossbeam-channel = "0.5"
+# Operating-system entropy for per-process IDs, nonces, and ephemeral bearer tokens.
+getrandom = "0.3"
 # Native folder picker for Market Replay. Runs off the UI thread, so the OS
 # dialog never blocks a frame.
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
@@ -43,6 +47,21 @@ eframe = { version = "0.29", default-features = false, features = [
     "default_fonts",
 ] }
 egui-phosphor = "0.7"
+
+[target.'cfg(unix)'.dependencies]
+# Verify descriptor ownership against the effective user on Unix platforms.
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# Verify descriptor ownership, ACLs, and reparse-point safety on Windows.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

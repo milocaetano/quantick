@@ -1,6 +1,7 @@
 # Quantick control plane and MCP development plan
 
-**Status:** Accepted for phased implementation; PR 0 contract in review
+**Status:** Accepted for phased implementation; PR 0 and PR 1 merged, PR 2 in
+review, and PR 3 implemented pending architecture review
 
 **Date:** 2026-08-19
 

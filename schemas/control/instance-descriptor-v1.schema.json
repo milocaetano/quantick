@@ -1,0 +1,113 @@
+{
+  "$defs": {
+    "BearerToken": {
+      "maxLength": 43,
+      "minLength": 43,
+      "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$",
+      "type": "string"
+    },
+    "InstanceId": {
+      "description": "The identity of one running Quantick instance.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "ProcessNonce": {
+      "description": "A nonce distinguishing one application process.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The private rendezvous record published only while local access is enabled.\n\nThis type deliberately contains no URL or command string. Consumers must\nvalidate it before opening a socket and must never log or return the bearer\ntoken to an external caller.",
+  "properties": {
+    "application_commit": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[\\x20-\\x7e]+$",
+      "type": "string"
+    },
+    "application_version": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[\\x20-\\x7e]+$",
+      "type": "string"
+    },
+    "bearer_token": {
+      "$ref": "#/$defs/BearerToken"
+    },
+    "descriptor_version": {
+      "format": "uint32",
+      "maximum": 1,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "host": {
+      "pattern": "^127\\.0\\.0\\.1$",
+      "type": "string"
+    },
+    "instance_id": {
+      "$ref": "#/$defs/InstanceId"
+    },
+    "port": {
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "process_id": {
+      "format": "uint32",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "process_nonce": {
+      "$ref": "#/$defs/ProcessNonce"
+    },
+    "process_started_at_unix_ms": {
+      "format": "int64",
+      "type": "integer",
+      "x-unit": "unix_milliseconds"
+    },
+    "protocol_max": {
+      "format": "uint32",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "protocol_min": {
+      "format": "uint32",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "published_at_unix_ms": {
+      "format": "int64",
+      "type": "integer",
+      "x-unit": "unix_milliseconds"
+    },
+    "transport": {
+      "pattern": "^tcp$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "descriptor_version",
+    "instance_id",
+    "process_nonce",
+    "process_id",
+    "process_started_at_unix_ms",
+    "application_version",
+    "application_commit",
+    "protocol_min",
+    "protocol_max",
+    "transport",
+    "host",
+    "port",
+    "bearer_token",
+    "published_at_unix_ms"
+  ],
+  "title": "InstanceDescriptor",
+  "type": "object"
+}

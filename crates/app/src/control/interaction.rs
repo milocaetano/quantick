@@ -154,6 +154,14 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         SCHEMA_VERSION,
         "Semantic cursor",
         "Resolves the last painted pointer position to pane, axis, bar, flow cell, and drawing meaning.",
+        &[
+            "observe",
+            "observe.attention",
+            "observe.market",
+            "observe.chart",
+            "observe.drawings",
+            "observe.orderflow",
+        ],
         project_cursor,
     )?;
     registry.register_scope(
@@ -162,6 +170,12 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         SCHEMA_VERSION,
         "Current selection",
         "Reports the selected drawing and paper-trade row, with unsupported selections stated explicitly.",
+        &[
+            "observe",
+            "observe.attention",
+            "observe.drawings",
+            "observe.paper",
+        ],
         project_selection,
     )
 }

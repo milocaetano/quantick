@@ -19,10 +19,6 @@ mod candle_view;
 mod chart;
 mod chart_layers;
 mod config;
-// The projection port is intentionally dormant until the local gateway lands
-// in PR 3. Keeping it disconnected here proves that an idle control plane adds
-// no frame-loop work; its public surface is exercised headlessly in tests.
-#[allow(dead_code)]
 mod control;
 mod dock;
 mod drawings;
