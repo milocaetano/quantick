@@ -1,0 +1,74 @@
+//@version=5
+indicator("Barras de Forca e Exaustao (Milo)", overlay=true)
+
+// Barra de forca
+groupForce = "Barra de Forca"
+showForce = input.bool(true, "Marcar barra de forca", group=groupForce)
+forceLength = input.int(20, "Periodo da media", minval=1, group=groupForce)
+forceMinFactor = input.float(1.5, "Multiplicador minimo", minval=0.1, step=0.1, group=groupForce)
+forceMaxFactor = input.float(2.5, "Multiplicador maximo", minval=0.1, step=0.1, group=groupForce)
+forceBullishColor = input.color(color.lime, "Cor Bullish", inline="forceColors", group=groupForce)
+forceBearishColor = input.color(color.red, "Cor Bearish", inline="forceColors", group=groupForce)
+
+// Barra de exaustao
+groupExhaustion = "Barra de Exaustao"
+showExhaustion = input.bool(true, "Marcar barra de exaustao", group=groupExhaustion)
+exhaustionLength = input.int(20, "Periodo da media", minval=1, group=groupExhaustion)
+exhaustionFactor = input.float(2.5, "Multiplicador minimo", minval=0.1, step=0.1, group=groupExhaustion)
+exhaustionBullishColor = input.color(color.aqua, "Cor Bullish", inline="exhaustionColors", group=groupExhaustion)
+exhaustionBearishColor = input.color(color.fuchsia, "Cor Bearish", inline="exhaustionColors", group=groupExhaustion)
+
+// Maior barra da janela
+groupLargest = "Maior Barra"
+showLargest = input.bool(true, "Marcar maior barra", group=groupLargest)
+largestLength = input.int(20, "Quantidade de barras", minval=2, group=groupLargest)
+largestBullishColor = input.color(color.yellow, "Cor Bullish", inline="largestColors", group=groupLargest)
+largestBearishColor = input.color(color.orange, "Cor Bearish", inline="largestColors", group=groupLargest)
+
+// Calculos
+bodySize = math.abs(close - open)
+candleSize = high - low
+
+avgForceBody = ta.sma(bodySize, forceLength)
+// Compara a barra atual com a media das barras anteriores, sem inclui-la na referencia.
+avgExhaustionBody = ta.sma(bodySize[1], exhaustionLength)
+
+forceLowerFactor = math.min(forceMinFactor, forceMaxFactor)
+forceUpperFactor = math.max(forceMinFactor, forceMaxFactor)
+
+forceRatio = avgForceBody > 0 ? bodySize / avgForceBody : na
+exhaustionRatio = avgExhaustionBody > 0 ? bodySize / avgExhaustionBody : na
+
+largestRange = ta.highest(candleSize, largestLength)
+hasLargestHistory = bar_index >= largestLength - 1
+
+// Classificacoes
+isForce = showForce and not na(forceRatio) and forceRatio >= forceLowerFactor and forceRatio <= forceUpperFactor
+isExhaustion = showExhaustion and not na(exhaustionRatio) and exhaustionRatio > exhaustionFactor
+isLargest = showLargest and hasLargestHistory and candleSize >= largestRange
+
+// Prioridade visual: maior barra, exaustao, forca
+color selectedColor = na
+isBullish = close >= open
+
+if isLargest
+    selectedColor := isBullish ? largestBullishColor : largestBearishColor
+else if isExhaustion
+    selectedColor := isBullish ? exhaustionBullishColor : exhaustionBearishColor
+else if isForce
+    selectedColor := isBullish ? forceBullishColor : forceBearishColor
+
+barcolor(selectedColor)
+
+// Alertas
+alertcondition(isForce and not isExhaustion and not isLargest, "Barra de Forca", "Barra de forca detectada!")
+alertcondition(isExhaustion and not isLargest, "Barra de Exaustao", "Barra de exaustao detectada!")
+alertcondition(isLargest, "Maior Barra", "Maior barra da janela detectada!")
+
+if barstate.isconfirmed
+    if isLargest
+        alert("Maior barra da janela detectada!", alert.freq_once_per_bar_close)
+    else if isExhaustion
+        alert("Barra de exaustao detectada!", alert.freq_once_per_bar_close)
+    else if isForce
+        alert("Barra de forca detectada!", alert.freq_once_per_bar_close)

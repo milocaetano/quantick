@@ -1,0 +1,41 @@
+﻿- [Diagnóstico de conflito de porta MT5](mt5-port-conflict-diagnosis.md) — "connecting..." eterno = porta 9100 tomada, não o terminal
+- [Estrela de favorito à direita da linha](flyout-star-right-aligned.md) — ações secundárias nunca sobre o ícone
+- [Merge é de outro agente](merge-por-outro-agente.md) — nunca rodar gh pr merge; aguardar aviso do Camilo
+- [Não abrir instâncias do app](no-agent-app-launches.md) — validação visual só com autorização; senão, BLOCKED
+- [Sessão bloqueada = sem screenshots](locked-session-screenshots.md) — fps=19 preso é lock screen; medir por frame_cpu_ms e provar render off-screen
+- [Cluster trailing sumido no rail horizontal](rail-horizontal-trailing-cluster-clipped.md) — bug pré-existente, magnet/repeat/eye/lock/Objects inacessíveis em dock top/bottom
+- [Operacional Mark I](operacional-mark-i.md) — célula micro-range, módulos range+tendência num artifact; BEI é o elefante canônico; delta é tick rule → gatilhos lado-agnósticos; corretagem zero
+- [Roadmap das ferramentas](roadmap-ferramentas.md) — 14 pacotes em .claude/roadmap/; Onda 0 mede edge e gateia o resto; despachar um por worktree
+- [Pasta de dados de replay](pasta-de-dados-de-replay.md) — C:\Users\Camillo\Quantick\replay, por símbolo; validar em scratchpad, não no acervo
+- [Bench headless via backtest](bench-headless-via-backtest.md) — prints_per_second do BACKTEST_DONE; main e branch na mesma janela de condições, senão os números dobram
+- [bid/ask da XP são limites de banda](xp-bid-ask-sao-limites-de-banda.md) — book invertido nos ticks; spread_side responderia "B" para tudo
+- [Desktop ocupado bloqueia captura](desktop-ocupado-bloqueia-captura.md) — fps=19 sem LogonUI e idle≈1s = Camilo trabalhando; parar de capturar, não insistir
+- [Captura off-screen sem roubar foco](captura-offscreen-sem-roubar-foco.md) — SetWindowPos para -2200 com SWP_NOACTIVATE; DWM ainda compõe, PrintWindow entrega frame real
+- [Targets dos worktrees enchem o disco](worktree-targets-enchem-o-disco.md) — C: em 0 bytes aparece como git commit falhando; limpar target/ de branches já mergeadas
+- [cargo test concorrente quebra o MT5](cargo-test-concorrente-quebra-mt5.md) — dois testes de porta falham; é o comando, não o código
+- [Camada provada não prova a irmã](camada-provada-nao-prova-a-irma.md) — bolhas e L2 nascem em caminhos diferentes; rastrear cada uma até a produção do dado
+- [Goal arquivado não é entregue](goal-arquivado-nao-e-entregue.md) — feature "sumida" = branch pronta sem PR; checar `gh pr list --head` antes de suspeitar de bug
+- [Zoom não altera a vela do operacional](zoom-nunca-altera-a-vela-do-operacional.md) — agregação só abaixo do range que o chart já tinha; ele entra na barra de elefante
+- [Target de imbalance não é linear](imbalance-target-nao-e-linear.md) — dial calibrado (1,3-1,7× equilibrado, 0,6× real); medir com imbalance_audit --tick-rule antes de suspeitar de bug
+- [Pane de fluxo fica abaixo dos limiares](pane-de-fluxo-fica-abaixo-dos-limiares.md) — split 1901px dá chart de ~1080px; validar largura contra isso, não contra a janela
+- [IA embutida vai operar o app](ia-embutida-opera-o-app.md) — act/read/discover em toda capacidade; conteúdo em script, não em enum; virou dimensão 7 do arch-review
+- [Duas popups do desenho](duas-popups-do-desenho.md) — "a popup" pode ser a context bar ou o inspector; checar as duas antes de mexer
+- [Duplo-clique headless vira triplo](duplo-clique-headless-vira-triplo.md) — double_clicked() só dispara depois de 0,6 s sem cliques; derivar a espera das constantes do egui
+- [Rodar o app não é QA](rodar-app-nao-e-qa.md) — stores no scratchpad só em validação; em uso real o app sobe na casa de Documents/Quantick
+- [Aba órfã some no save_on_exit](aba-orfa-some-no-save-on-exit.md) — UI_STATE_RESTORED_PARTIAL no log = aba com feed/símbolo morto; backup antes de fechar
+- [Demo de desenhos exige backfill](demo-de-desenhos-exige-backfill.md) — QUANTICK_DRAWINGS_DEMO precisa de ~192 barras; sem QUANTICK_BACKFILL alto a captura sai vazia e sem aviso
+- [Flake dos testes que contam shapes](flake-hidden-layer-paints-nothing.md) — contagem SOBE ao desligar camada = flake do worker; rerun antes de investigar
+- [CI de 6h é o mirror do apt](ci-6h-e-mirror-do-apt.md) — duração ~6h00m = teto do Actions, não falha de teste; rerun --failed
+- [Validar com o MT5 real](validar-mt5-real.md) — aba MT5 corrigida para WINV26 em 19/08; conferir contrato vs quantick-symbols.toml quando rolar
+- [input.color não chega ao plot](pine-input-color-nao-chega-ao-plot.md) — sai âmbar sem warning; cor de plot é a aba Style
+- [Teste de plot pina cor/shape/location](teste-de-plot-precisa-pinar-cor-shape-location.md) — ler linhas não-NaN não pega abovebar trocado por belowbar
+- [Captura pega a janela errada](captura-pega-janela-errada-do-app.md) — o app tem 3 janelas; capturar a maior visível do PID
+- [Gap da fita são dois relógios](gap-da-fita-sao-dois-relogios.md) — distância bolha↔borda = latest_book_ms − latest_print_ms; fita vazia ≠ mercado parado
+- [WIN não tem tick de cotação](win-nao-tem-tick-de-cotacao.md) — 100% flags=1080, 33 ticks/s; COPY_TICKS_TRADE é neutro lá
+- [Preset de indicador casa por posição](preset-de-indicador-casa-por-posicao.md) — input novo no meio desloca presets antigos e liga switch sozinho; anexe no fim
+- [Posts do LinkedIn do Quantick](posts-linkedin-quantick.md) — fórmula dos ganchos que engajaram; teto de 3000 chars
+- [Continuação de string vira espaços após o fmt](continuacao-de-string-vira-espacos-apos-fmt.md) — `\` no fim da linha em mensagem Rust; checar com grep DEPOIS do cargo fmt
+- [code-review concorrente perde os finders](code-review-concorrente-perde-finders.md) — duas invocações em paralelo colidem no nome; serializar e reativar com SendMessage
+- [Pilha de PRs: rebase --onto](pilha-de-prs-rebase-onto.md) — depois de reescrever a base, reempilhar o filho com `--onto <nova-base> <head-antiga>`
+- [pr-gate: marker e gh pr create em chamadas separadas](pr-gate-marker-chamada-separada.md) — o hook avalia antes do comando; regravar o marker após cada commit novo
+- [Teste multi-conexão do gateway ordena lendo resposta](teste-gateway-multiconexao-ordena-lendo-resposta.md) — `send` volta antes do reader; ler o overflow por conexão prova a ordem; Linux CI expõe a corrida
