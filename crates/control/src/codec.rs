@@ -235,14 +235,30 @@ impl BoundedCodec {
     }
 
     fn read_payload(&self, role: FrameRole, reader: &mut impl Read) -> Result<Vec<u8>, CodecError> {
+        // The header is read byte-wise rather than with `read_exact` so a
+        // read timeout can be told apart by *when* it fired: before any byte
+        // of the next frame it is an idle connection, which a host keeps;
+        // after the first byte it is a frame that stalled half-way, which a
+        // host must not let hold a connection thread open.
         let mut header = [0u8; FRAME_HEADER_BYTES];
-        reader.read_exact(&mut header).map_err(|error| {
-            if error.kind() == io::ErrorKind::UnexpectedEof {
-                CodecError::TruncatedHeader
-            } else {
-                CodecError::Io(error.to_string())
+        let mut filled = 0usize;
+        while filled < FRAME_HEADER_BYTES {
+            match reader.read(&mut header[filled..]) {
+                Ok(0) => return Err(CodecError::TruncatedHeader),
+                Ok(read) => filled += read,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error)
+                    if filled == 0
+                        && matches!(
+                            error.kind(),
+                            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                        ) =>
+                {
+                    return Err(CodecError::IdleTimeout);
+                }
+                Err(error) => return Err(CodecError::Io(error.to_string())),
             }
-        })?;
+        }
         let declared = u32::from_be_bytes(header) as usize;
 
         // This check intentionally precedes Vec allocation and every payload read.
@@ -460,12 +476,28 @@ impl Write for LimitedWriter {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CodecError {
     InvalidLimits,
+    /// The reader's timeout elapsed before any byte of the next frame arrived:
+    /// an idle peer, not a broken frame. Only a reader with a timeout set can
+    /// observe this.
+    IdleTimeout,
     TruncatedHeader,
-    PayloadTooLarge { declared: usize, limit: usize },
-    TruncatedPayload { declared: usize, available: usize },
+    PayloadTooLarge {
+        declared: usize,
+        limit: usize,
+    },
+    TruncatedPayload {
+        declared: usize,
+        available: usize,
+    },
     TrailingBytes(usize),
-    JsonTooDeep { depth: usize, max_depth: usize },
-    StringTooLarge { bytes: usize, limit: usize },
+    JsonTooDeep {
+        depth: usize,
+        max_depth: usize,
+    },
+    StringTooLarge {
+        bytes: usize,
+        limit: usize,
+    },
     FloatingPointNumber,
     ReservedActorField,
     Json(String),
@@ -476,6 +508,7 @@ pub enum CodecError {
 impl fmt::Display for CodecError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::IdleTimeout => formatter.write_str("no frame arrived before the read timeout"),
             Self::InvalidLimits => {
                 formatter.write_str("codec limits exceed the reviewed control contract")
             }

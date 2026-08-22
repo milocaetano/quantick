@@ -125,6 +125,90 @@ ceiling of 32 bars measured a 99 microsecond p99 and a 100 microsecond worst
 capture over 100 captures. The core observer snapshot measured a 22 microsecond
 p99 and a 24 microsecond worst capture over 500 captures.
 
+## Idle-frame evidence against the base branch
+
+Method of `pr2-performance.md`: the ignored `control_idle_dense_replay_benchmark`
+built from identical source into the base (PR 2 head, `feat/control-observer`)
+and the candidate (this branch), `CARGO_INCREMENTAL=0`, 600 measured frames
+with 64 live trades per frame, run as alternating pairs on one host (Windows 10
+x86-64, this review's machine). No gateway is enabled in the benchmark, which
+is the production default: `needs_frame_service()` is false and the frame
+loop never enters the control module.
+
+Five pairs base-first, then three pairs candidate-first to rule out order
+bias. `frame_cpu_ms` per run:
+
+| Pair | Base | Candidate |
+| --- | ---: | ---: |
+| 1 | 0.926 | 0.883 |
+| 2 | 0.982 | 0.868 |
+| 3 | 0.938 | 0.873 |
+| 4 | 0.926 | 0.873 |
+| 5 | 0.975 | 0.874 |
+| 6 (candidate first) | 0.917 | 0.887 |
+| 7 (candidate first) | 0.972 | 0.914 |
+| 8 (candidate first) | 0.943 | 0.900 |
+
+Median `frame_cpu_ms`: base 0.941 ms, candidate 0.878 ms. Median frame p99:
+base 1.34 ms, candidate 1.19 ms. The candidate is never slower in any pair;
+the small consistent advantage is within what code layout alone produces
+between two binaries and is not claimed as an improvement. The conclusion is
+the one the plan asks for: no measurable idle-frame regression when no
+request is pending. The raw lines are reproduced with the commands below.
+
+```powershell
+$env:CARGO_INCREMENTAL = '0'
+cargo test -p quantick-app --no-run          # in each worktree
+<test binary> app::tests::control_idle_dense_replay_benchmark --ignored --exact --nocapture --test-threads=1
+```
+
+## Audit against the plan, ADR 0001 and the threat model
+
+Before this branch was reviewed, every PR 3 deliverable and acceptance
+criterion, every ADR 0001 required test, every normative statement in ADR
+sections 2–6 and every observer threat-model control was checked against the
+code. What the audit found missing was added here:
+
+- a post-authentication read timeout, so a frame that starts and never
+  finishes closes its connection instead of holding a connection thread until
+  shutdown (the codec now tells an idle timeout from a mid-frame stall);
+- duplicate `request_id` rejection while the first request is in flight
+  (contract §5.2);
+- the advertised `request_timeout_ms` is the one the gateway applies;
+- discovery of a directory with more than the reviewed number of entries
+  reports the overflow as an issue instead of failing outright;
+- a unit test that proves the elapsed-time budget on its own, independent of
+  the per-frame request count;
+- tests for: a request sent before the handshake (rejected, connection
+  closed, nothing executed), the descriptor's literal loopback endpoint,
+  `shutdown_for_exit` removing discovery, per-client revocation, a client that
+  never reads its replies not stalling another client's UI-side read, a
+  half-written frame not holding the connection, and observer reads leaving
+  every module revision unchanged.
+
+Deferred, and why:
+
+- Stale-descriptor cleanup by a client (ADR §5: owner plus a process-identity
+  proof) and the PID-reuse / suspended-process cases. The ADR permits rather
+  than requires cleanup; discovery already reports a dead descriptor as an
+  issue, not an instance. This lands with the adapter, which is the client
+  that would clean up.
+- Actor context and audit records for reads. Observer reads have no audit
+  record by contract §6; the authorized-request type lands with the first
+  registered action (PR 5a).
+- The per-frame request count (`CONTROL_UI_MAX_REQUESTS_PER_FRAME`) stays as
+  a deterministic second guard beside the authoritative elapsed-time budget;
+  the plan's objection is to a count *instead of* time, and the new unit test
+  pins that the time guard stands alone.
+- The global in-flight ceiling reuses the buffered-response slot count, which
+  is stricter than the contract's byte budget requires; it is the
+  conservative reading until a capability declares its own response bound.
+- Scopes the panel lists but no registered capability consumes yet
+  (`observe.events`, `observe.evidence`, `observe.diagnostic_logs`,
+  `observe.screenshot`) are the declared permissions of later modules; the
+  panel is generated from the registry on purpose, and hiding them would be a
+  second list.
+
 ## Versioned contract artifacts
 
 The committed schema catalog now includes the strict instance descriptor,

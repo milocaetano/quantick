@@ -24644,6 +24644,7 @@ plot(close)
         );
         let response = client.read().unwrap();
         assert_eq!(response.request_id, request_id);
+        let first_revisions = response.module_revisions.clone();
         let result = match response.outcome {
             quantick_control::wire::ResponseOutcome::Success { result } => result,
             quantick_control::wire::ResponseOutcome::Failure { error } => {
@@ -24657,6 +24658,25 @@ plot(close)
         assert_eq!(
             result["scopes"]["workspace.summary"]["value"]["tabs"][0]["symbol"],
             "TESTUSDT"
+        );
+
+        // An observer read changes nothing: the same scopes read again report
+        // the same module revisions (threat model O-08).
+        let again = client
+            .send(
+                crate::control::SNAPSHOT_CAPABILITY_ID,
+                serde_json::json!({
+                    "scopes": ["system.info", "workspace.summary", "chart.summary"]
+                }),
+            )
+            .unwrap();
+        wait_for_queued_gateway_requests(&app, 1);
+        run_frame(&mut app, &ctx);
+        let repeated = client.read().unwrap();
+        assert_eq!(repeated.request_id, again);
+        assert_eq!(
+            repeated.module_revisions, first_revisions,
+            "observer reads leave every module revision where it was"
         );
 
         disable_test_gateway(&mut app, &ctx);
@@ -25142,6 +25162,374 @@ plot(close)
             "core capture p99 {p99_us} us (median {median_us} us, worst {worst_us} us) exceeds the {} us UI budget",
             quantick_control::limits::CONTROL_UI_BUDGET_US
         );
+    }
+
+    #[test]
+    fn gateway_refuses_a_request_before_the_handshake_and_closes() {
+        use std::io::{Read as _, Write as _};
+
+        use quantick_control::{
+            codec::{BoundedCodec, FrameRole},
+            error::codes,
+            id::{CapabilityId, RequestId},
+            wire::RequestEnvelope,
+        };
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(1);
+        let directory = gateway_test_directory("first-frame");
+        let descriptor_path = enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let descriptor: quantick_control::descriptor::InstanceDescriptor =
+            serde_json::from_slice(&std::fs::read(&descriptor_path).unwrap()).unwrap();
+        // ADR 0001 §2: literal IPv4 loopback on an OS-assigned port, and the
+        // descriptor says exactly that.
+        assert_eq!(descriptor.host, "127.0.0.1");
+        assert_ne!(descriptor.port, 0);
+
+        let mut socket =
+            std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, descriptor.port)).unwrap();
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let request = RequestEnvelope {
+            protocol_version: quantick_control::handshake::CURRENT_PROTOCOL_VERSION,
+            request_id: RequestId::new("before-handshake").unwrap(),
+            instance_id: descriptor.instance_id.clone(),
+            capability_id: CapabilityId::new(crate::control::DESCRIBE_CAPABILITY_ID).unwrap(),
+            capability_version: 1,
+            expected_revisions: Vec::new(),
+            idempotency_key: None,
+            dry_run: false,
+            reason: None,
+            payload: serde_json::json!({}),
+        };
+        let frame = BoundedCodec::default()
+            .encode(FrameRole::Request, &request)
+            .unwrap();
+        socket.write_all(&frame).unwrap();
+        let reply = BoundedCodec::handshake()
+            .read_handshake_reply(&mut socket)
+            .unwrap();
+        let error = reply.into_accepted().unwrap_err();
+        assert_eq!(error.code.as_str(), codes::INVALID_REQUEST);
+        let mut byte = [0u8; 1];
+        assert!(
+            matches!(socket.read(&mut byte), Ok(0) | Err(_)),
+            "the connection must close after a rejected first frame"
+        );
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.control_access
+                .as_ref()
+                .expect("control access is installed")
+                .queued_requests_for_test(),
+            0,
+            "no capability ran"
+        );
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn gateway_exit_shutdown_removes_discovery() {
+        use quantick_control::error::codes;
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(1);
+        let directory = gateway_test_directory("exit");
+        let descriptor_path = enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let descriptor: quantick_control::descriptor::InstanceDescriptor =
+            serde_json::from_slice(&std::fs::read(&descriptor_path).unwrap()).unwrap();
+
+        app.control_access
+            .as_mut()
+            .expect("control access is installed")
+            .shutdown_for_exit();
+        assert!(!descriptor_path.exists(), "exit removes discovery");
+        assert!(
+            app.control_access
+                .as_ref()
+                .expect("control access is installed")
+                .is_disabled_for_test()
+        );
+        let error = quantick_control_local::client::LocalClient::connect(
+            descriptor,
+            &gateway_test_options(),
+        )
+        .unwrap_err();
+        assert_eq!(error.code.as_str(), codes::INSTANCE_GONE);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn gateway_revoking_one_client_closes_it_and_keeps_serving_others() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(1);
+        let directory = gateway_test_directory("revoke");
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+        let mut ids = Vec::new();
+        for _ in 0..400 {
+            run_frame(&mut app, &ctx);
+            ids = app
+                .control_access
+                .as_ref()
+                .expect("control access is installed")
+                .connection_ids_for_test();
+            if !ids.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(ids.len(), 1, "the connected client is listed");
+
+        app.control_access
+            .as_mut()
+            .expect("control access is installed")
+            .revoke(ids[0].clone());
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.control_access
+                .as_ref()
+                .expect("control access is installed")
+                .connection_ids_for_test()
+                .is_empty()
+        );
+        // The accept loop closes the socket off the UI thread; a revoked
+        // client cannot complete another read.
+        let mut revoked = false;
+        for _ in 0..100 {
+            if client
+                .invoke(
+                    crate::control::DESCRIBE_CAPABILITY_ID,
+                    serde_json::json!({}),
+                )
+                .is_err()
+            {
+                revoked = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(revoked, "a revoked client loses its connection");
+
+        let mut fresh =
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+        assert!(matches!(
+            fresh
+                .invoke(
+                    crate::control::DESCRIBE_CAPABILITY_ID,
+                    serde_json::json!({})
+                )
+                .unwrap()
+                .outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ));
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn gateway_a_client_that_never_reads_does_not_stall_another() {
+        use quantick_control::limits::CONTROL_MAX_IN_FLIGHT_PER_CONNECTION;
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(2);
+        let directory = gateway_test_directory("stalled-reader");
+        enable_test_gateway(&mut app, &ctx, &directory, 16);
+        let mut stalled =
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+        let mut live =
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+        for _ in 0..CONTROL_MAX_IN_FLIGHT_PER_CONNECTION {
+            stalled
+                .send(
+                    crate::control::SNAPSHOT_CAPABILITY_ID,
+                    serde_json::json!({ "scopes": ["system.info"] }),
+                )
+                .unwrap();
+        }
+        // A worker-side read is answered without the frame loop and without
+        // the stalled client's replies ever being read.
+        assert!(matches!(
+            live.invoke(
+                crate::control::DESCRIBE_CAPABILITY_ID,
+                serde_json::json!({})
+            )
+            .unwrap()
+            .outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ));
+        // A UI-side read completes while the stalled client's replies sit
+        // unread in its socket.
+        let request_id = live
+            .send(
+                crate::control::SNAPSHOT_CAPABILITY_ID,
+                serde_json::json!({ "scopes": ["system.info"] }),
+            )
+            .unwrap();
+        for iteration in 0..400 {
+            run_frame(&mut app, &ctx);
+            let queued = app
+                .control_access
+                .as_ref()
+                .expect("control access is installed")
+                .queued_requests_for_test();
+            if iteration >= 10 && queued == 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let response = live.read().unwrap();
+        assert_eq!(response.request_id, request_id);
+        assert!(matches!(
+            response.outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ));
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn gateway_a_half_written_frame_does_not_hold_the_connection() {
+        use std::io::{Read as _, Write as _};
+
+        use quantick_control::{
+            codec::{BoundedCodec, FrameRole},
+            handshake::HandshakeRequest,
+            id::ProfileId,
+        };
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(1);
+        let directory = gateway_test_directory("half-frame");
+        let descriptor_path = enable_test_gateway_with_limits(
+            &mut app,
+            &ctx,
+            &directory,
+            4,
+            std::time::Duration::from_millis(50),
+            quantick_control::limits::CONTROL_MAX_CONNECTIONS,
+        );
+        let descriptor: quantick_control::descriptor::InstanceDescriptor =
+            serde_json::from_slice(&std::fs::read(&descriptor_path).unwrap()).unwrap();
+        let mut socket =
+            std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, descriptor.port)).unwrap();
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let codec = BoundedCodec::handshake();
+        let request = HandshakeRequest {
+            protocol_versions: descriptor.protocol_versions,
+            instance_id: descriptor.instance_id.clone(),
+            client_name: "half writer".to_owned(),
+            client_version: "0".to_owned(),
+            bearer_token: descriptor.bearer_token.clone(),
+            requested_profile: ProfileId::new("observer").unwrap(),
+            requested_scopes: gateway_test_scopes(),
+        };
+        socket
+            .write_all(&codec.encode(FrameRole::Request, &request).unwrap())
+            .unwrap();
+        codec
+            .read_handshake_reply(&mut socket)
+            .unwrap()
+            .into_accepted()
+            .unwrap();
+
+        // A header promising 64 bytes, then silence.
+        socket.write_all(&64u32.to_be_bytes()).unwrap();
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_millis(100)))
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut closed = false;
+        let mut byte = [0u8; 1];
+        while std::time::Instant::now() < deadline {
+            match socket.read(&mut byte) {
+                Ok(0) => {
+                    closed = true;
+                    break;
+                }
+                Ok(_) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(_) => {
+                    closed = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            closed,
+            "a frame that never completes must not hold the connection open"
+        );
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn gateway_rejects_a_duplicate_request_id_while_the_first_is_in_flight() {
+        use quantick_control::{error::codes, id::RequestId};
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(1);
+        let directory = gateway_test_directory("duplicate-id");
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+        let first = client
+            .send_with_request_id(
+                RequestId::new("twice").unwrap(),
+                crate::control::SNAPSHOT_CAPABILITY_ID,
+                1,
+                serde_json::json!({ "scopes": ["system.info"] }),
+            )
+            .unwrap();
+        wait_for_queued_gateway_requests(&app, 1);
+        client
+            .send_with_request_id(
+                RequestId::new("twice").unwrap(),
+                crate::control::SNAPSHOT_CAPABILITY_ID,
+                1,
+                serde_json::json!({ "scopes": ["system.info"] }),
+            )
+            .unwrap();
+        // The duplicate is refused at once, before the first has been served.
+        let rejected = client.read().unwrap();
+        assert_eq!(rejected.request_id, first);
+        assert_eq!(
+            response_error(&rejected).code.as_str(),
+            codes::INVALID_REQUEST
+        );
+        run_frame(&mut app, &ctx);
+        let served = client.read().unwrap();
+        assert_eq!(served.request_id, first);
+        assert!(matches!(
+            served.outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ));
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

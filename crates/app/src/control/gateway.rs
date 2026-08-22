@@ -611,7 +611,10 @@ impl ControlAccess {
         };
     }
 
-    fn revoke(&mut self, connection_id: ConnectionId) {
+    /// Revoke one authenticated client: its queued work is refused before
+    /// dispatch and its socket is closed. The panel's per-client button and
+    /// tests arrive here.
+    pub(crate) fn revoke(&mut self, connection_id: ConnectionId) {
         self.revoked_connections.insert(connection_id.clone());
         if let AccessState::Enabled(runtime) = &self.state {
             runtime.revoke(connection_id.clone());
@@ -809,6 +812,11 @@ impl ControlAccess {
     #[cfg(test)]
     pub(crate) fn is_disabled_for_test(&self) -> bool {
         matches!(self.state, AccessState::Disabled)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn connection_ids_for_test(&self) -> Vec<ConnectionId> {
+        self.connections.keys().cloned().collect()
     }
 }
 
@@ -1259,7 +1267,13 @@ fn connection_session(
         profile_ceiling: ProfileId::new(OBSERVER_PROFILE_ID)
             .expect("static observer profile is valid"),
         granted_scopes: authority.granted_scopes.clone(),
-        limits: ProtocolLimits::default(),
+        // Advertise the timeout this gateway actually applies, so a client's
+        // own patience is derived from the truth rather than the default.
+        limits: ProtocolLimits {
+            request_timeout_ms: u64::try_from(authority.options.request_timeout.as_millis())
+                .unwrap_or(CONTROL_REQUEST_TIMEOUT_MS),
+            ..ProtocolLimits::default()
+        },
     };
     let accepted = match accept_handshake(&handshake, &grant, authority.contract.registry()) {
         Ok(response) => response,
@@ -1287,8 +1301,11 @@ fn connection_session(
         )
         .map_err(|_| codes::AUTH_FAILED)?;
     stream.write_all(&frame).map_err(|_| codes::INSTANCE_GONE)?;
+    // One request timeout bounds how long a frame may take to arrive once it
+    // has started; a timeout with nothing received is an idle client and is
+    // not an error (see the read loop below).
     stream
-        .set_read_timeout(None)
+        .set_read_timeout(Some(authority.options.request_timeout))
         .map_err(|_| codes::INSTANCE_GONE)?;
     stream
         .set_write_timeout(Some(authority.options.request_timeout))
@@ -1298,6 +1315,12 @@ fn connection_session(
     let writer = Arc::new(Mutex::new(writer_stream));
     let codec = BoundedCodec::default();
     let in_flight = Arc::new(AtomicUsize::new(0));
+    // Request IDs in flight on this connection (contract §5.2: a duplicate is
+    // rejected while the first is still executing). Only requests that leave
+    // for the application thread are in flight from the reader's point of
+    // view; a worker-side read is answered before the next frame is read.
+    let in_flight_ids: Arc<Mutex<BTreeSet<quantick_control::id::RequestId>>> =
+        Arc::new(Mutex::new(BTreeSet::new()));
     let connected_at_unix_ms = metrics::wall_clock_ms();
     let client = ConnectedClient {
         connection_id: connection_id.clone(),
@@ -1340,6 +1363,18 @@ fn connection_session(
     loop {
         let request = match codec.read_request(stream) {
             Ok(request) => request,
+            // Nothing arrived within one request timeout: an idle client, not
+            // a stalled frame. The connection stays unless the gateway is
+            // going away.
+            Err(CodecError::IdleTimeout) => {
+                if authority.cancellation.load(Ordering::Acquire) {
+                    break;
+                }
+                continue;
+            }
+            // A frame that started and never finished inside the timeout, a
+            // malformed frame, or a closed socket all end the connection: a
+            // half-written frame must not hold a connection thread open.
             Err(_) => break,
         };
         if !rate_limiter.allow(Instant::now()) {
@@ -1360,6 +1395,25 @@ fn connection_session(
                 event_code = "CONTROL_CLIENT_RATE_LIMITED",
                 connection_id = %connection_id,
                 "local control client exceeded its request rate"
+            );
+            continue;
+        }
+        if in_flight_ids
+            .lock()
+            .map(|ids| ids.contains(&request.request_id))
+            .unwrap_or(true)
+        {
+            send_response(
+                &writer,
+                &codec,
+                failure_response(
+                    &request,
+                    known_error(
+                        codes::INVALID_REQUEST,
+                        "request_id is already in flight on this connection",
+                        false,
+                    ),
+                ),
             );
             continue;
         }
@@ -1422,6 +1476,7 @@ fn connection_session(
             &codec,
             &writer,
             &in_flight,
+            &in_flight_ids,
             authority,
         );
     }
@@ -1455,6 +1510,7 @@ fn activity_status_high_watermark(max_connections: usize) -> usize {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn dispatch_prepared(
     prepared: PreparedRequest,
     connection_id: &ConnectionId,
@@ -1462,6 +1518,7 @@ fn dispatch_prepared(
     codec: &BoundedCodec,
     writer: &Arc<Mutex<TcpStream>>,
     in_flight: &Arc<AtomicUsize>,
+    in_flight_ids: &Arc<Mutex<BTreeSet<quantick_control::id::RequestId>>>,
     authority: &Arc<ConnectionAuthority>,
 ) {
     if !try_reserve_in_flight(
@@ -1511,11 +1568,15 @@ fn dispatch_prepared(
     }
 
     let envelope = prepared.envelope.clone();
+    if let Ok(mut ids) = in_flight_ids.lock() {
+        ids.insert(envelope.request_id.clone());
+    }
     let (response_tx, response_rx) = bounded(1);
     let deadline = Instant::now() + authority.options.request_timeout;
     let response_writer = Arc::clone(writer);
     let response_codec = codec.clone();
     let response_in_flight = Arc::clone(in_flight);
+    let response_in_flight_ids = Arc::clone(in_flight_ids);
     let response_global_in_flight = Arc::clone(&authority.global_in_flight);
     let contract = Arc::clone(&authority.contract);
     let wait_envelope = envelope.clone();
@@ -1543,10 +1604,16 @@ fn dispatch_prepared(
                 ),
             };
             send_response(&response_writer, &response_codec, response);
+            if let Ok(mut ids) = response_in_flight_ids.lock() {
+                ids.remove(&wait_envelope.request_id);
+            }
             response_in_flight.fetch_sub(1, Ordering::AcqRel);
             response_global_in_flight.fetch_sub(1, Ordering::AcqRel);
         });
     if spawn.is_err() {
+        if let Ok(mut ids) = in_flight_ids.lock() {
+            ids.remove(&envelope.request_id);
+        }
         in_flight.fetch_sub(1, Ordering::AcqRel);
         authority.global_in_flight.fetch_sub(1, Ordering::AcqRel);
         send_response(
@@ -1788,6 +1855,35 @@ mod tests {
         assert_eq!(handled.len(), CONTROL_UI_MAX_REQUESTS_PER_FRAME);
         assert_eq!(receiver.len(), 2);
         assert!(observation.queue_has_more);
+    }
+
+    #[test]
+    fn a_capture_that_exhausts_the_budget_ends_the_frame_drain() {
+        // The count ceiling is the deterministic guard; the elapsed-time
+        // budget is the authoritative one (plan §10.2). Prove the latter on
+        // its own: captures that each cost the whole budget must not run two
+        // to a frame, although the count ceiling alone would allow four.
+        let (sender, receiver) = bounded(4);
+        for value in 0..4 {
+            sender.send(value).unwrap();
+        }
+        let budget = Duration::from_micros(CONTROL_UI_BUDGET_US);
+        let mut handled = 0usize;
+        let observation = drain_bounded_since(&receiver, Instant::now(), |_| {
+            handled += 1;
+            let until = Instant::now() + budget;
+            while Instant::now() < until {
+                std::hint::spin_loop();
+            }
+        });
+        assert_eq!(
+            handled, 1,
+            "the second capture must wait for the next frame"
+        );
+        assert_eq!(observation.processed, 1);
+        assert!(observation.budget_exceeded);
+        assert!(observation.queue_has_more);
+        assert_eq!(receiver.len(), 3);
     }
 
     #[test]

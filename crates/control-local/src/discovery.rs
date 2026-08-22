@@ -255,9 +255,17 @@ pub fn discover_descriptors_in(directory: &Path) -> Result<DescriptorDiscovery, 
         .map_err(|error| DiscoveryError::io("read private instance directory", error))?;
     for (index, entry) in entries.enumerate() {
         if index >= CONTROL_DISCOVERY_MAX_ENTRIES {
-            return Err(DiscoveryError::new(
-                "instance discovery directory exceeds its reviewed entry limit",
-            ));
+            // A polluted directory must not make every instance undiscoverable:
+            // the bounded prefix is examined and the overflow is an issue the
+            // client can show, not an error that hides the live instances.
+            report.issues.push(DiscoveryIssue {
+                file_name: "<directory>".to_owned(),
+                message: format!(
+                    "more than {CONTROL_DISCOVERY_MAX_ENTRIES} entries; only the first \
+                     {CONTROL_DISCOVERY_MAX_ENTRIES} were examined"
+                ),
+            });
+            break;
         }
         let entry = match entry {
             Ok(entry) => entry,
@@ -1044,8 +1052,15 @@ mod tests {
             fs::write(directory.join(format!("noise-{index}")), b"noise").unwrap();
         }
 
-        let error = discover_descriptors_in(&directory).unwrap_err();
-        assert!(error.to_string().contains("reviewed entry limit"));
+        let report = discover_descriptors_in(&directory).unwrap();
+        assert!(report.candidates.is_empty());
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.message.contains("only the first")),
+            "the overflow is reported as an issue, not hidden and not fatal"
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 }

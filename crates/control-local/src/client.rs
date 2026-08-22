@@ -187,6 +187,20 @@ impl LocalClient {
         let request_id = RequestId::new(raw)
             .map_err(|error| ControlError::invalid_request(error.to_string()))?;
         self.next_request = self.next_request.saturating_add(1);
+        self.send_with_request_id(request_id, capability_id, capability_version, payload)
+    }
+
+    /// Send one request under a correlation ID the caller chose. The ID is
+    /// opaque to the gateway, but it must be unique while in flight on this
+    /// connection: the gateway refuses a duplicate with
+    /// `control.invalid_request` until the first reply has been sent.
+    pub fn send_with_request_id(
+        &mut self,
+        request_id: RequestId,
+        capability_id: &str,
+        capability_version: u32,
+        payload: Value,
+    ) -> Result<RequestId, ControlError> {
         let request = RequestEnvelope {
             protocol_version: self.handshake.protocol_version,
             request_id: request_id.clone(),
