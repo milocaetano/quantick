@@ -100,7 +100,11 @@ pub(crate) struct OrderflowHealthSnapshot {
     pub projection_aggressions: WireU64,
     pub projection_liquidity_events: WireU64,
     pub dropped_cells: WireU64,
-    pub dropped_aggressions: WireU64,
+    /// Aggressions the projection budget folded into a neighbour instead of
+    /// drawing alone. Folded, not dropped: the quantity is still on the canvas.
+    pub folded_aggressions: WireU64,
+    /// Exact quantity the trader's own display floor kept off the canvas.
+    pub floored_quantity: CanonicalDecimal,
     pub dropped_liquidity_events: WireU64,
     pub effective_price_grouping: CanonicalDecimal,
     pub effective_grouping_multiple: u32,
@@ -266,7 +270,8 @@ fn orderflow_health(health: &OrderflowHealth) -> OrderflowHealthSnapshot {
         projection_aggressions: wire_usize(health.projection_aggressions),
         projection_liquidity_events: wire_usize(health.projection_liquidity_events),
         dropped_cells: wire_usize(health.dropped_cells),
-        dropped_aggressions: wire_usize(health.dropped_aggressions),
+        folded_aggressions: wire_usize(health.folded_aggressions),
+        floored_quantity: canonical_decimal(health.floored_quantity),
         dropped_liquidity_events: wire_usize(health.dropped_liquidity_events),
         effective_price_grouping: canonical_decimal(health.effective_grouping),
         effective_grouping_multiple: health.effective_grouping_multiple,

@@ -2705,9 +2705,9 @@ mod tests {
             ),
         });
         let bars = [bar(900, 1_100)];
-        view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
+        view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
         view.flush_for_test();
-        view.project_visible(visible_timeline(&bars), true, true, (98.0, 102.0));
+        view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
 
         let frame = view.published.frame.as_deref().expect("published frame");
         let cell = frame.projection.cells.last().expect("one displayed cell");

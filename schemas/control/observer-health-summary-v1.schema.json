@@ -150,9 +150,6 @@
         "depth_updates_since_summary": {
           "$ref": "#/$defs/WireU64"
         },
-        "dropped_aggressions": {
-          "$ref": "#/$defs/WireU64"
-        },
         "dropped_cells": {
           "$ref": "#/$defs/WireU64"
         },
@@ -169,6 +166,14 @@
         },
         "enabled": {
           "type": "boolean"
+        },
+        "floored_quantity": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Exact quantity the trader's own display floor kept off the canvas."
+        },
+        "folded_aggressions": {
+          "$ref": "#/$defs/WireU64",
+          "description": "Aggressions the projection budget folded into a neighbour instead of\ndrawing alone. Folded, not dropped: the quantity is still on the canvas."
         },
         "gaps": {
           "$ref": "#/$defs/WireU64"
@@ -270,7 +275,8 @@
         "projection_aggressions",
         "projection_liquidity_events",
         "dropped_cells",
-        "dropped_aggressions",
+        "folded_aggressions",
+        "floored_quantity",
         "dropped_liquidity_events",
         "effective_price_grouping",
         "effective_grouping_multiple",
