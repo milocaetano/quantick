@@ -111,7 +111,9 @@ impl GatewayOptions {
             || self.max_in_flight_per_connection > CONTROL_MAX_IN_FLIGHT_PER_CONNECTION
             || self.handshake_timeout.is_zero()
             || self.handshake_timeout > handshake_timeout_limit
-            || self.request_timeout.is_zero()
+            // Sub-millisecond is zero once advertised in milliseconds, and the
+            // handshake would refuse the grant's limits.
+            || self.request_timeout.as_millis() == 0
             || self.request_timeout > request_timeout_limit
         {
             return Err("Local gateway limits are invalid; access remains off.");
@@ -261,6 +263,10 @@ struct UiRequest {
 struct DrainObservation {
     processed: usize,
     elapsed_us: u64,
+    /// The drain stopped because the frame budget was spent — before any
+    /// request ran (`processed == 0`: statuses and lifecycle ate it) or by
+    /// the last capture. Not set when it stopped on the count ceiling or on
+    /// an empty queue.
     budget_exceeded: bool,
     queue_has_more: bool,
 }
@@ -532,10 +538,10 @@ impl ControlAccess {
             self.last_drain.processed,
             self.last_drain.elapsed_us,
             CONTROL_UI_BUDGET_US,
-            if self.last_drain.budget_exceeded {
-                " (budget exceeded by one non-preemptible capture)"
-            } else {
-                ""
+            match (self.last_drain.budget_exceeded, self.last_drain.processed) {
+                (true, 0) => " (budget spent before any request ran)",
+                (true, _) => " (budget exceeded by one non-preemptible capture)",
+                (false, _) => "",
             }
         ));
         let projection = self.projections.performance();
@@ -731,7 +737,10 @@ impl ControlAccess {
         match &self.state {
             AccessState::Enabled(runtime) => runtime.request_shutdown(),
             AccessState::Disabling(Some(runtime)) => runtime.request_shutdown(),
-            AccessState::Disabled | AccessState::Enabling | AccessState::Disabling(None) => {}
+            // Nothing runs and nothing will report: the default state, and
+            // exit must cost it nothing.
+            AccessState::Disabled => return,
+            AccessState::Enabling | AccessState::Disabling(None) => {}
         }
         let deadline = Instant::now() + Duration::from_millis(EXIT_SHUTDOWN_TIMEOUT_MS);
         while Instant::now() < deadline {
@@ -834,20 +843,25 @@ impl Drop for ControlAccess {
     }
 }
 
-#[cfg(test)]
-fn drain_bounded<T>(receiver: &Receiver<T>, handle: impl FnMut(T)) -> DrainObservation {
-    drain_bounded_since(receiver, Instant::now(), handle)
-}
-
 fn drain_bounded_since<T>(
     receiver: &Receiver<T>,
     started: Instant,
     mut handle: impl FnMut(T),
 ) -> DrainObservation {
     let mut processed = 0usize;
-    while processed < CONTROL_UI_MAX_REQUESTS_PER_FRAME
-        && u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX) < CONTROL_UI_BUDGET_US
-    {
+    // Why the drain stopped is recorded where it stops, not re-derived from
+    // a later clock reading: the count ceiling, the budget, or an empty queue
+    // are three different diagnoses.
+    let mut stopped_on_budget = false;
+    loop {
+        if processed >= CONTROL_UI_MAX_REQUESTS_PER_FRAME {
+            break;
+        }
+        if u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX) >= CONTROL_UI_BUDGET_US
+        {
+            stopped_on_budget = true;
+            break;
+        }
         match receiver.try_recv() {
             Ok(request) => {
                 handle(request);
@@ -860,10 +874,7 @@ fn drain_bounded_since<T>(
     DrainObservation {
         processed,
         elapsed_us,
-        // The same comparison that ends the loop above, so a drain that
-        // stopped on the budget always says so — `as_micros` truncates, and
-        // a capture that cost the whole budget lands exactly on it.
-        budget_exceeded: elapsed_us >= CONTROL_UI_BUDGET_US,
+        budget_exceeded: stopped_on_budget,
         queue_has_more: !receiver.is_empty(),
     }
 }
@@ -1130,7 +1141,13 @@ fn accept_loop(
                         continue;
                     }
                     if sockets.len() >= authority.options.max_connections {
-                        reject_connection_capacity(stream, &authority.options);
+                        // Off the accept thread: the rejection reads the
+                        // client's handshake first (see the function), which
+                        // may wait up to the handshake timeout.
+                        let options = authority.options.clone();
+                        let _ = thread::Builder::new()
+                            .name("quantick-control-reject".to_owned())
+                            .spawn(move || reject_connection_capacity(stream, &options));
                         continue;
                     }
                     let Some(next_socket_key_value) = next_socket_key.checked_add(1) else {
@@ -1170,6 +1187,25 @@ fn accept_loop(
                     }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                // A peer that reset or aborted before accept, or a signal, is
+                // that connection's failure, not the listener's: the gateway
+                // stays up for everyone else.
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    tracing::debug!(
+                        target: "quantick::control",
+                        event_code = "CONTROL_GATEWAY_ACCEPT_TRANSIENT",
+                        error = %error,
+                        "loopback gateway accept hit a transient error; continuing"
+                    );
+                    continue;
+                }
                 Err(error) => {
                     tracing::warn!(
                         target: "quantick::control",
@@ -1193,7 +1229,14 @@ fn accept_loop(
 }
 
 fn reject_connection_capacity(mut stream: TcpStream, options: &GatewayOptions) {
+    let _ = stream.set_read_timeout(Some(options.handshake_timeout));
     let _ = stream.set_write_timeout(Some(options.handshake_timeout));
+    let codec = BoundedCodec::handshake();
+    // Read the client's handshake before answering: closing a socket with
+    // unread data resets it, and a reset can discard the rejection before
+    // the client has read it. A frame that never comes or is malformed
+    // changes nothing — the answer is the same.
+    let _ = codec.read_handshake_request(&mut stream);
     let reply = HandshakeReply::Rejected {
         error: known_error(
             codes::BACKPRESSURE,
@@ -1201,7 +1244,6 @@ fn reject_connection_capacity(mut stream: TcpStream, options: &GatewayOptions) {
             true,
         ),
     };
-    let codec = BoundedCodec::handshake();
     if let Ok(frame) = codec.encode(FrameRole::Response, &reply) {
         let _ = stream.write_all(&frame);
     }
@@ -1298,13 +1340,60 @@ fn connection_session(
             return Err(code);
         }
     };
+    // Admission before acceptance: a client told "accepted" and then dropped
+    // for a saturated channel would learn of it only on its first request,
+    // as `control.instance_gone`. Refused here, it hears backpressure.
+    let connected_at_unix_ms = metrics::wall_clock_ms();
+    let client = ConnectedClient {
+        connection_id: connection_id.clone(),
+        client_name: handshake.client_name.clone(),
+        connected_at_unix_ms,
+        requested_profile: handshake.requested_profile.clone(),
+        effective_profile: accepted.effective_profile.clone(),
+        effective_scopes: accepted.effective_scopes.clone(),
+        last_request_at_unix_ms: None,
+    };
+    let saturated = || {
+        known_error(
+            codes::BACKPRESSURE,
+            "local gateway is saturated; retry shortly",
+            true,
+        )
+    };
+    if authority
+        .commands
+        .try_send(GatewayCommand::Identified {
+            socket_key,
+            connection_id: connection_id.clone(),
+        })
+        .is_err()
+    {
+        send_handshake_rejection(stream, &handshake_codec, saturated());
+        return Err(codes::BACKPRESSURE);
+    }
+    if authority.statuses.len() >= activity_status_high_watermark(authority.options.max_connections)
+        || authority
+            .statuses
+            .try_send(ConnectionStatus::Connected(client))
+            .is_err()
+    {
+        send_handshake_rejection(stream, &handshake_codec, saturated());
+        return Err(codes::BACKPRESSURE);
+    }
     let frame = handshake_codec
         .encode(
             FrameRole::Response,
             &HandshakeReply::Accepted(accepted.clone()),
         )
         .map_err(|_| codes::AUTH_FAILED)?;
-    stream.write_all(&frame).map_err(|_| codes::INSTANCE_GONE)?;
+    if stream.write_all(&frame).is_err() {
+        // The application already heard "connected": tell it the truth.
+        let _ = authority
+            .statuses
+            .try_send(ConnectionStatus::Disconnected(connection_id.clone()));
+        (authority.wake)();
+        return Err(codes::INSTANCE_GONE);
+    }
     // One request timeout bounds how long a frame may take to arrive once it
     // has started; a timeout with nothing received is an idle client and is
     // not an error (see the read loop below).
@@ -1325,34 +1414,6 @@ fn connection_session(
     // view; a worker-side read is answered before the next frame is read.
     let in_flight_ids: Arc<Mutex<BTreeSet<quantick_control::id::RequestId>>> =
         Arc::new(Mutex::new(BTreeSet::new()));
-    let connected_at_unix_ms = metrics::wall_clock_ms();
-    let client = ConnectedClient {
-        connection_id: connection_id.clone(),
-        client_name: handshake.client_name.clone(),
-        connected_at_unix_ms,
-        requested_profile: handshake.requested_profile.clone(),
-        effective_profile: accepted.effective_profile.clone(),
-        effective_scopes: accepted.effective_scopes.clone(),
-        last_request_at_unix_ms: None,
-    };
-    if authority
-        .commands
-        .try_send(GatewayCommand::Identified {
-            socket_key,
-            connection_id: connection_id.clone(),
-        })
-        .is_err()
-    {
-        return Err(codes::BACKPRESSURE);
-    }
-    if authority.statuses.len() >= activity_status_high_watermark(authority.options.max_connections)
-        || authority
-            .statuses
-            .try_send(ConnectionStatus::Connected(client))
-            .is_err()
-    {
-        return Err(codes::BACKPRESSURE);
-    }
     (authority.wake)();
     tracing::info!(
         target: "quantick::control",
@@ -1854,10 +1915,21 @@ mod tests {
             sender.send(value).unwrap();
         }
         let mut handled = Vec::new();
-        let observation = drain_bounded(&receiver, |value| handled.push(value));
+        // A start in the future reads as zero elapsed: the budget cannot
+        // interfere, so this proves the count ceiling alone, whatever the
+        // scheduler does to the test thread.
+        let observation = drain_bounded_since(
+            &receiver,
+            Instant::now() + Duration::from_secs(60),
+            |value| handled.push(value),
+        );
         assert_eq!(handled.len(), CONTROL_UI_MAX_REQUESTS_PER_FRAME);
         assert_eq!(receiver.len(), 2);
         assert!(observation.queue_has_more);
+        assert!(
+            !observation.budget_exceeded,
+            "stopping on the count ceiling is not a budget stop"
+        );
     }
 
     #[test]
@@ -1865,20 +1937,31 @@ mod tests {
         // The count ceiling is the deterministic guard; the elapsed-time
         // budget is the authoritative one (plan §10.2). Prove the latter on
         // its own: captures that each cost the whole budget must not run two
-        // to a frame, although the count ceiling alone would allow four.
-        let (sender, receiver) = bounded(4);
-        for value in 0..4 {
-            sender.send(value).unwrap();
-        }
+        // to a frame, although the count ceiling alone would allow four. A
+        // scheduler that preempts the thread for longer than the budget
+        // before the first check makes the drain run nothing, which proves
+        // nothing either way — try again, a few times.
         let budget = Duration::from_micros(CONTROL_UI_BUDGET_US);
-        let mut handled = 0usize;
-        let observation = drain_bounded_since(&receiver, Instant::now(), |_| {
-            handled += 1;
-            let until = Instant::now() + budget;
-            while Instant::now() < until {
-                std::hint::spin_loop();
+        let mut last = None;
+        for _ in 0..5 {
+            let (sender, receiver) = bounded(4);
+            for value in 0..4 {
+                sender.send(value).unwrap();
             }
-        });
+            let mut handled = 0usize;
+            let observation = drain_bounded_since(&receiver, Instant::now(), |_| {
+                handled += 1;
+                let until = Instant::now() + budget;
+                while Instant::now() < until {
+                    std::hint::spin_loop();
+                }
+            });
+            last = Some((handled, observation, receiver.len()));
+            if handled == 1 {
+                break;
+            }
+        }
+        let (handled, observation, remaining) = last.expect("at least one attempt ran");
         assert_eq!(
             handled, 1,
             "the second capture must wait for the next frame"
@@ -1886,7 +1969,20 @@ mod tests {
         assert_eq!(observation.processed, 1);
         assert!(observation.budget_exceeded);
         assert!(observation.queue_has_more);
-        assert_eq!(receiver.len(), 3);
+        assert_eq!(remaining, 3);
+    }
+
+    #[test]
+    fn exit_with_access_disabled_costs_nothing() {
+        // The default state: no gateway thread exists, none will report, and
+        // the application's exit must not wait for one.
+        let mut access = ControlAccess::new();
+        let started = Instant::now();
+        access.shutdown_for_exit();
+        assert!(
+            started.elapsed() < Duration::from_millis(EXIT_SHUTDOWN_TIMEOUT_MS / 4),
+            "a disabled gateway returned at once, not after the exit timeout"
+        );
     }
 
     #[test]

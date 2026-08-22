@@ -567,7 +567,18 @@ fn verify_windows_owner(path: &Path) -> Result<(), DiscoveryError> {
             ));
         }
         let current_user = current_windows_user_sid()?;
-        if unsafe { EqualSid(owner_sid, current_user.as_ptr().cast_mut().cast()) } == 0 {
+        // SAFETY: both SIDs were validated; `EqualSid` only reads them.
+        let owned_by_user =
+            unsafe { EqualSid(owner_sid, current_user.as_ptr().cast_mut().cast()) } != 0;
+        // An elevated process creates objects owned by its token's default
+        // owner (BUILTIN\Administrators), not by the user SID; either is
+        // this process's own ownership. A token whose default owner cannot
+        // be read falls back to the user SID alone.
+        let owned_by_token_owner = current_windows_token_owner_sid().is_ok_and(|default_owner| {
+            // SAFETY: as above.
+            (unsafe { EqualSid(owner_sid, default_owner.as_ptr().cast_mut().cast()) }) != 0
+        });
+        if !owned_by_user && !owned_by_token_owner {
             return Err(DiscoveryError::new(
                 "descriptor path is not owned by the current Windows user",
             ));
@@ -880,6 +891,82 @@ fn current_windows_user_sid() -> Result<Vec<u8>, DiscoveryError> {
         // readable byte length of the SID stored in the live token buffer.
         let sid_length = unsafe { GetLengthSid(user.User.Sid) } as usize;
         let sid = unsafe { slice::from_raw_parts(user.User.Sid.cast::<u8>(), sid_length) };
+        Ok(sid.to_vec())
+    })();
+    // SAFETY: `token` is a real handle returned by `OpenProcessToken`.
+    unsafe {
+        CloseHandle(token);
+    }
+    result
+}
+
+/// The SID this process's token assigns as owner to the objects it creates
+/// (`TokenOwner`): the user for an ordinary process, `BUILTIN\Administrators`
+/// for an elevated one.
+#[cfg(windows)]
+fn current_windows_token_owner_sid() -> Result<Vec<u8>, DiscoveryError> {
+    use std::{ffi::c_void, mem, ptr, slice};
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        Security::{
+            GetLengthSid, GetTokenInformation, IsValidSid, TOKEN_OWNER, TOKEN_QUERY, TokenOwner,
+        },
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+
+    let mut token = ptr::null_mut();
+    // SAFETY: `GetCurrentProcess` returns a process pseudo-handle and `token`
+    // is a valid output pointer. A successful token handle is closed below.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return Err(DiscoveryError::io(
+            "open current Windows process token",
+            std::io::Error::last_os_error(),
+        ));
+    }
+    let result = (|| {
+        let mut required = 0u32;
+        // SAFETY: a null first buffer is the documented size query.
+        unsafe {
+            GetTokenInformation(token, TokenOwner, ptr::null_mut(), 0, &mut required);
+        }
+        if required < u32::try_from(mem::size_of::<TOKEN_OWNER>()).unwrap_or(u32::MAX) {
+            return Err(DiscoveryError::new(
+                "current Windows token did not report a valid owner SID size",
+            ));
+        }
+        let word_bytes = mem::size_of::<usize>();
+        let words = (required as usize).div_ceil(word_bytes);
+        let mut buffer = vec![0usize; words];
+        let mut written = required;
+        // SAFETY: the word buffer is aligned for `TOKEN_OWNER` and contains
+        // at least `required` writable bytes; `written` is a valid output.
+        if unsafe {
+            GetTokenInformation(
+                token,
+                TokenOwner,
+                buffer.as_mut_ptr().cast::<c_void>(),
+                required,
+                &mut written,
+            )
+        } == 0
+        {
+            return Err(DiscoveryError::io(
+                "read current Windows token owner SID",
+                std::io::Error::last_os_error(),
+            ));
+        }
+        // SAFETY: the successful call initialized a `TOKEN_OWNER` at the
+        // start of the aligned buffer and keeps its SID live in `buffer`.
+        let owner = unsafe { &*buffer.as_ptr().cast::<TOKEN_OWNER>() };
+        if owner.Owner.is_null() || unsafe { IsValidSid(owner.Owner) } == 0 {
+            return Err(DiscoveryError::new(
+                "current Windows process token contains an invalid owner SID",
+            ));
+        }
+        // SAFETY: `IsValidSid` succeeded and `GetLengthSid` reports the exact
+        // readable byte length of the SID stored in the live token buffer.
+        let sid_length = unsafe { GetLengthSid(owner.Owner) } as usize;
+        let sid = unsafe { slice::from_raw_parts(owner.Owner.cast::<u8>(), sid_length) };
         Ok(sid.to_vec())
     })();
     // SAFETY: `token` is a real handle returned by `OpenProcessToken`.

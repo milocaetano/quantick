@@ -20,7 +20,9 @@ use quantick_control::{
     codec::{BoundedCodec, FrameRole},
     descriptor::InstanceDescriptor,
     error::{ControlError, codes},
-    handshake::{HandshakeRequest, HandshakeResponse},
+    handshake::{
+        CURRENT_PROTOCOL_VERSION, HandshakeRequest, HandshakeResponse, ProtocolVersionRange,
+    },
     id::{CapabilityId, ErrorCode, InstanceId, PermissionId, ProfileId, RequestId},
     limits::{CONTROL_HANDSHAKE_TIMEOUT_MS, CONTROL_REQUEST_ID_MAX_BYTES},
     wire::{RequestEnvelope, ResponseEnvelope},
@@ -104,8 +106,27 @@ impl LocalClient {
             .map_err(|_| instance_gone_error())?;
 
         let handshake_codec = BoundedCodec::handshake();
+        // The range this client implements — not the one the instance
+        // advertises, or negotiation could pick a version this build does
+        // not speak and the range check would be vacuous. An instance that
+        // advertises no common version is refused before the handshake, with
+        // the same code the gateway would answer.
+        let own_versions =
+            ProtocolVersionRange::new(CURRENT_PROTOCOL_VERSION, CURRENT_PROTOCOL_VERSION)
+                .expect("the current protocol range is valid");
+        if descriptor
+            .protocol_versions
+            .negotiate(own_versions)
+            .is_none()
+        {
+            return Err(known_error(
+                codes::VERSION_UNSUPPORTED,
+                "the instance advertises protocol versions this client does not implement",
+                false,
+            ));
+        }
         let request = HandshakeRequest {
-            protocol_versions: descriptor.protocol_versions,
+            protocol_versions: own_versions,
             instance_id: descriptor.instance_id.clone(),
             client_name: options.client_name.clone(),
             client_version: options.client_version.clone(),
@@ -214,6 +235,10 @@ impl LocalClient {
             reason: None,
             payload,
         };
+        // A malformed envelope closes the connection on the gateway's side
+        // (a framed request that fails validation is not a request); refuse
+        // it here, structured, before it leaves.
+        request.validate()?;
         let frame = self
             .codec
             .encode(FrameRole::Request, &request)
