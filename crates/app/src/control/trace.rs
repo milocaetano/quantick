@@ -76,6 +76,7 @@ impl ControlTrace for NoTrace {
 
 /// The sidecar beside a recording, opened for append.
 pub(crate) struct ReplayTraceFile {
+    #[cfg(test)]
     path: PathBuf,
     file: File,
 }
@@ -99,7 +100,11 @@ impl ReplayTraceFile {
             .append(true)
             .open(&path)
             .map_err(|error| TraceError::Io(format!("open control trace: {error}")))?;
-        Ok(Self { path, file })
+        Ok(Self {
+            #[cfg(test)]
+            path,
+            file,
+        })
     }
 
     #[cfg(test)]
