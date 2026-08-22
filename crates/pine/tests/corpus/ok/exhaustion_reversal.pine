@@ -179,7 +179,7 @@ coverage = input.float(0.7, "2 Run: min give-back of the force bar", minval=0.05
 // immediate response, and five bars later it is a different bar reacting to
 // a different thing.
 use_cover = input.bool(true, "3 Cover: mark a give-back by one opposite candle")
-cover_window = input.int(3, "3 Cover: window after the force bar (bars)", minval=1, maxval=100)
+cover_window = input.int(5, "3 Cover: window after the force bar (bars)", minval=1, maxval=100)
 cover_fraction = input.float(0.7, "3 Cover: min overlap with the force bar", minval=0.05, maxval=1.0, step=0.05)
 
 // 4 — display: which side to mark. These gate the two TRIANGLES only. The
@@ -224,9 +224,26 @@ show_bottom = input.bool(true, "4 Display: mark bottom reversals (buy side)")
 // the number is typed instead. A script cannot ask what a tick is worth here,
 // so one of the two has to be the dragged case.
 min_body_points = input.float(0.0, "5 Calibration: min force-bar body (points, 0 = off)", minval=0.0, step=1.0)
-run_body_only = input.bool(false, "5 Calibration: run measures the body, not the range")
-cover_body_only = input.bool(false, "5 Calibration: cover measures the body, not the range")
+run_body_only = input.bool(true, "5 Calibration: run measures the body, not the range")
+cover_body_only = input.bool(true, "5 Calibration: cover measures the body, not the range")
 paint_force = input.bool(false, "5 Calibration: paint the bars that arm a push")
+
+// 6 — invalidation: when the give-back went too far to be a give-back.
+//
+// A candle that closes BEYOND the far end of the force bar — below its low on
+// a top, above its high on a bottom — has not faded the push, it has replaced
+// it. That candle is itself a force bar candidate in the other direction, and
+// what comes next is the exhaustion of the exhaustion. The trade this
+// indicator is about is fading the green bar, not chasing the red one that
+// buried it.
+//
+// It kills the setup on the spot, whichever shape was about to mark and
+// whenever inside the window it happens: a candle that covers 70% AND closes
+// past the far end is not a mark, and the push does not get a second chance
+// from a later bar either. The far end is the force bar's own extreme, wick
+// included — what the eye reads off the chart — not the body, even when the
+// two shapes above are measuring against the body.
+invalidate_beyond = input.bool(true, "6 Invalidation: a close past the force bar's far end kills the setup")
 
 // ---------------------------------------------------------------- measures
 
@@ -302,6 +319,7 @@ var float top_run_range = na
 var float top_cover_high = na
 var float top_cover_low = na
 var float top_cover_range = na
+var float top_bar_low = na
 var bool bottom_armed = false
 var int bottom_age = 0
 var float bottom_run_high = na
@@ -310,6 +328,7 @@ var float bottom_run_range = na
 var float bottom_cover_high = na
 var float bottom_cover_low = na
 var float bottom_cover_range = na
+var float bottom_bar_high = na
 
 // Age first, test second, arm last. Ageing before the test is what makes the
 // bar `run_len` bars after the force bar read as age `run_len`; arming after
@@ -324,6 +343,13 @@ if bottom_armed
         bottom_armed := false
 
 // ----------------------------------------------------------------- signals
+
+// Invalidation first, because it outranks both shapes: a bar that closes past
+// the force bar's far end kills the setup even when that same bar would have
+// marked. `top_armed` short-circuits it away on the bars where nothing is
+// armed, which is most of them.
+top_killed = invalidate_beyond and top_armed and close < top_bar_low
+bottom_killed = invalidate_beyond and bottom_armed and close > bottom_bar_high
 
 // Every ruler below was resolved when its push armed, and it KEEPS that value
 // after the push is spent — nothing writes `na` back on disarm or expiry. So
@@ -349,13 +375,15 @@ buy_run = use_run and bottom_armed and bottom_age >= run_len and bottom_age <= r
 sell_cover = use_cover and top_armed and top_age <= cover_window and bear_bar and top_cover_range > 0 and (math.min(open, top_cover_high) - math.max(close, top_cover_low)) / top_cover_range >= cover_fraction
 buy_cover = use_cover and bottom_armed and bottom_age <= cover_window and bull_bar and bottom_cover_range > 0 and (math.min(close, bottom_cover_high) - math.max(open, bottom_cover_low)) / bottom_cover_range >= cover_fraction
 
-// Either shape marks, and the first one to fire spends the push.
-sell_signal = sell_run or sell_cover
-buy_signal = buy_run or buy_cover
+// Either shape marks, unless the setup was killed on this very bar.
+sell_signal = (sell_run or sell_cover) and not top_killed
+buy_signal = (buy_run or buy_cover) and not bottom_killed
 
-if sell_signal
+// A push is spent by the signal it produced OR by the close that invalidated
+// it — a killed push gets no second chance from a later bar in the window.
+if sell_signal or top_killed
     top_armed := false
-if buy_signal
+if buy_signal or bottom_killed
     bottom_armed := false
 
 // Arming is also where each shape's ruler is measured out, once, from the
@@ -370,6 +398,7 @@ if top_anchor
     top_cover_high := cover_body_only ? math.max(open, close) : high
     top_cover_low := cover_body_only ? math.min(open, close) : low
     top_cover_range := top_cover_high - top_cover_low
+    top_bar_low := low
 if bottom_anchor
     bottom_armed := true
     bottom_age := 0
@@ -379,6 +408,7 @@ if bottom_anchor
     bottom_cover_high := cover_body_only ? math.max(open, close) : high
     bottom_cover_low := cover_body_only ? math.min(open, close) : low
     bottom_cover_range := bottom_cover_high - bottom_cover_low
+    bottom_bar_high := high
 
 // ------------------------------------------------------------------- marks
 
