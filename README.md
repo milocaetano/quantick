@@ -323,7 +323,7 @@ The project is a Cargo workspace of small, one-way-dependent crates (`app` → `
 - **Market replay** — ✅ recorded sessions played back through the live feed channel, at 1×–50× (`crates/replay`)
 - **Desktop app** — ✅ native chart (egui) showing bars form in real time, with a Bookmap-inspired L2 liquidity heatmap (`crates/app`)
 - **Indicators & scripting** — ✅ an indicator runtime with incremental `ta.*` kernels, and "Quantick Pine", a Pine v5 subset compiled and run in-process, plotted on the chart and readable headlessly by a backtest or bot (`crates/indicators`, `crates/pine`)
-- **Backtest runner** — ⏳ next up: a headless strategy runner over recorded sessions, consuming the exact engine and indicator path the chart draws
+- **Backtest runner** — ✅ headless harness + CLI (`cargo run -p quantick-backtest`) replaying recorded sessions through the exact engine/indicator path the chart uses, executing strategies against the tape via the conservative `sim` fill model, with per-session and aggregate reports (`crates/backtest`)
 - **Bindings** — ⏳ Python bindings and a C API are planned, so the engine plugs into existing backtest stacks and bots in any language
 
 ## Design principles
@@ -345,7 +345,7 @@ The project is a Cargo workspace of small, one-way-dependent crates (`app` → `
 - [x] Market replay of recorded sessions (trades only; depth is the open item below)
 - [x] CVD & delta visuals (native EMA/CVD indicators, delta histograms, order-flow series in scripts)
 - [x] Scriptable indicators — "Quantick Pine", a Pine v5 subset with order-flow builtins (`delta`, `cvd`, `buy_volume`, …), drawing objects, hot reload and a persisted indicator set; see [docs/pine-dialect.md](docs/pine-dialect.md)
-- [ ] **Next up: backtest runner** — a headless crate + CLI that replays a recorded session through the exact bar/indicator path the chart uses and executes a strategy's orders against the tape, with a disclosed, conservative fill model; strategies read indicator plot columns, and the order/fill/position core is designed to be shared with a future paper-trading simulator
+- [x] Backtest runner — a headless crate + CLI (`quantick-backtest`) that replays recorded sessions through the exact bar/indicator path the chart uses and executes a strategy's orders against the tape, with a disclosed, conservative fill model shared with the paper-trading simulator (`quantick-sim`); human report on stdout, NDJSON diagnostics on stderr
 - [ ] Depth replay — record L2 depth alongside a session's trades, so the liquidity heatmap works in market replay and the book pipeline gets deterministic fixtures
 - [ ] Python bindings, once the backtest runner has exercised the engine API from outside the chart
 - [ ] C API, so bots in C++ (or any language) can consume the engine
