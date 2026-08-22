@@ -4,19 +4,46 @@ use quantick_control::{
 };
 use serde_json::Value;
 
+/// Where the committed contracts live, resolved from the crate this test is
+/// compiled in so the regeneration path below writes to the real files.
+const SCHEMA_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/control");
+
 #[test]
 fn generated_public_contracts_match_committed_files() {
+    // `QUANTICK_UPDATE_SCHEMAS=1 cargo test -p quantick-control --test
+    // schema_snapshots` rewrites the committed files from the generated
+    // documents. Regenerating by hand is how a schema and its validator drift
+    // apart: the diff is what gets reviewed, and it still has to be reviewed,
+    // but producing it should not be transcription work.
+    let update = std::env::var_os("QUANTICK_UPDATE_SCHEMAS").is_some();
+    let mut rewritten = Vec::new();
+
     for document in public_contract_documents() {
         if document.is_json_schema {
             validate_schema(&document.document).unwrap();
         }
         let committed: Value = serde_json::from_str(committed_schema(&document)).unwrap();
+        if update {
+            if document.document != committed {
+                let path = std::path::Path::new(SCHEMA_DIR).join(document.file_name);
+                let mut rendered = serde_json::to_string_pretty(&document.document).unwrap();
+                rendered.push('\n');
+                std::fs::write(&path, rendered).unwrap();
+                rewritten.push(document.file_name);
+            }
+            continue;
+        }
         assert_eq!(
             document.document, committed,
-            "regenerate and review {}",
+            "{} is stale — regenerate with QUANTICK_UPDATE_SCHEMAS=1 and review the diff",
             document.file_name
         );
     }
+
+    assert!(
+        !update,
+        "rewrote {rewritten:?}; rerun without QUANTICK_UPDATE_SCHEMAS to confirm and review the diff"
+    );
 }
 
 fn committed_schema(document: &PublicContractDocument) -> &'static str {

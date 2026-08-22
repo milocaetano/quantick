@@ -4,8 +4,8 @@ use quantick_control::{
     id::{CapabilityId, ConnectionId, InstanceId, PrincipalId, RequestId},
     schema::{generated_schema, validate_instance},
     wire::{
-        ActorContext, ActorKind, AuthorizedRequest, RequestEnvelope, ResponseEnvelope,
-        ResponseOutcome,
+        ActorContext, ActorKind, AuthorizedRequest, RESERVED_ACTOR_FIELDS, RequestEnvelope,
+        ResponseEnvelope, ResponseOutcome,
     },
 };
 use serde_json::json;
@@ -161,4 +161,51 @@ fn the_streaming_readers_enforce_what_the_frame_decoders_enforce() {
         codec.read_request(&mut frame.as_slice()),
         Err(CodecError::Envelope(_))
     ));
+}
+
+#[test]
+fn the_published_request_schema_refuses_what_the_codec_refuses() {
+    // The snapshot test compares the generated document against the committed
+    // file, which catches drift between those two and nothing else. It cannot
+    // see the case that actually breaks a client: a published contract that
+    // sanctions an input the host rejects. A generated client would build the
+    // request, validate it locally, send it, and be refused.
+    let codec = BoundedCodec::default();
+    let schema = generated_schema::<RequestEnvelope>();
+
+    for reserved in RESERVED_ACTOR_FIELDS {
+        let mut value = serde_json::to_value(request()).unwrap();
+        value[*reserved] = json!("supplied by the client");
+
+        let frame = codec.encode(FrameRole::Request, &value).unwrap();
+        assert_eq!(
+            codec.decode_request_frame(&frame),
+            Err(CodecError::ReservedActorField),
+            "the codec must refuse `{reserved}`"
+        );
+        assert!(
+            validate_instance(&schema, &value).is_err(),
+            "the published schema must refuse `{reserved}` too, not merely allow it"
+        );
+    }
+
+    // The refusal is for the reserved names alone. Both sides stay tolerant
+    // readers of an additive field a newer client may send, as the contract
+    // requires of every wire DTO: closing the envelope entirely would have
+    // broken the first client built from a later schema.
+    let mut additive = serde_json::to_value(request()).unwrap();
+    additive["trace_hint"] = json!("a field this host does not know");
+    let frame = codec.encode(FrameRole::Request, &additive).unwrap();
+    assert_eq!(codec.decode_request_frame(&frame).unwrap(), request());
+    validate_instance(&schema, &additive).unwrap();
+
+    // And the agreement holds the other way: a well-formed request both sides
+    // accept, so the schema is not simply refusing everything.
+    let valid = serde_json::to_value(request()).unwrap();
+    assert!(
+        codec
+            .decode_request_frame(&codec.encode(FrameRole::Request, &valid).unwrap())
+            .is_ok()
+    );
+    validate_instance(&schema, &valid).unwrap();
 }

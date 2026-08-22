@@ -11,19 +11,10 @@ use crate::{
         CONTROL_MAX_JSON_DEPTH, CONTROL_MAX_REQUEST_BYTES, CONTROL_MAX_RESPONSE_BYTES,
         CONTROL_MAX_STRING_BYTES, CONTROL_PROTOCOL_MAX_FRAME_BYTES,
     },
-    wire::{RequestEnvelope, ResponseEnvelope},
+    wire::{RESERVED_ACTOR_FIELDS, RequestEnvelope, ResponseEnvelope},
 };
 
 const FRAME_HEADER_BYTES: usize = size_of::<u32>();
-const RESERVED_ACTOR_FIELDS: &[&str] = &[
-    "actor",
-    "actor_context",
-    "actor_kind",
-    "client_name",
-    "connection_id",
-    "principal_id",
-    "requested_at_unix_ms",
-];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FrameRole {
