@@ -34,6 +34,9 @@ pub const CONTROL_REQUEST_QUEUE_CAPACITY: usize = 64;
 pub const CONTROL_MAX_CONNECTIONS: usize = 8;
 pub const CONTROL_MAX_IN_FLIGHT_PER_CONNECTION: usize = 8;
 pub const CONTROL_MAX_PARKED_WAITERS: usize = 16;
+/// Parked `wait_for_change` registrations one connection may hold at once,
+/// so a single client cannot take every slot from the others.
+pub const CONTROL_MAX_PARKED_WAITERS_PER_CONNECTION: usize = 4;
 pub const CONTROL_HANDSHAKE_TIMEOUT_MS: u64 = 2_000;
 pub const CONTROL_REQUEST_TIMEOUT_MS: u64 = 5_000;
 pub const CONTROL_WAIT_TIMEOUT_MAX_MS: u64 = 30_000;

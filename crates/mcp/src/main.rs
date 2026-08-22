@@ -36,6 +36,7 @@ const OBSERVER_SCOPES: &[&str] = &[
     "observe.replay",
     "observe.health",
     "observe.attention",
+    "observe.events",
 ];
 
 const USAGE: &str = "usage:

@@ -16,6 +16,7 @@ use std::{
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use quantick_control::{
     codec::{BoundedCodec, CodecError, FrameRole},
+    cursor::{EventCursor, resolve_event_read},
     descriptor::{
         INSTANCE_DESCRIPTOR_HOST, INSTANCE_DESCRIPTOR_TRANSPORT, INSTANCE_DESCRIPTOR_VERSION,
         InstanceDescriptor,
@@ -25,22 +26,42 @@ use quantick_control::{
         BearerToken, CURRENT_PROTOCOL_VERSION, HandshakeGrant, HandshakeReply, ProtocolLimits,
         ProtocolVersionRange, accept_handshake,
     },
-    id::{ConnectionId, InstanceId, PermissionId, PrincipalId, ProcessNonce, ProfileId},
+    id::{
+        ConnectionId, EventKind, InstanceId, ModuleId, PermissionId, PrincipalId, ProcessNonce,
+        ProfileId, RequestId,
+    },
     limits::{
         CONTROL_CLIENT_BURST, CONTROL_CLIENT_RATE_PER_SECOND, CONTROL_HANDSHAKE_TIMEOUT_MS,
         CONTROL_MAX_BUFFERED_RESPONSE_SLOTS, CONTROL_MAX_CONNECTIONS,
-        CONTROL_MAX_IN_FLIGHT_PER_CONNECTION, CONTROL_REQUEST_QUEUE_CAPACITY,
+        CONTROL_MAX_IN_FLIGHT_PER_CONNECTION, CONTROL_MAX_PARKED_WAITERS,
+        CONTROL_MAX_PARKED_WAITERS_PER_CONNECTION, CONTROL_REQUEST_QUEUE_CAPACITY,
         CONTROL_REQUEST_TIMEOUT_MS, CONTROL_RUNTIME_ID_BYTES, CONTROL_TOKEN_BYTES,
         CONTROL_UI_BUDGET_US, CONTROL_UI_MAX_REQUESTS_PER_FRAME,
     },
-    wire::{ModuleRevision, RequestEnvelope, ResponseEnvelope, ResponseOutcome, WireU64},
+    wire::{
+        ActorContext, ActorKind, ModuleRevision, RequestEnvelope, ResponseEnvelope,
+        ResponseOutcome, WireU64,
+    },
 };
+use serde_json::{Value, json};
 
 use crate::{app::QuantickApp, metrics};
 
 use super::{
-    contract::{OBSERVER_PROFILE_ID, ObserverContract, PreparedRequest, UiReadExecution},
+    actions::{ActionRegistry, standard_actions},
+    contract::{
+        EventsReadInvocation, OBSERVER_PROFILE_ID, ObserverContract, ParkedWait, PreparedDispatch,
+        PreparedRequest, UiReadExecution,
+    },
+    events::EventsReadInput,
+    feed::connection_state,
+    interaction::{SelectionIdentity, selection_identity, selection_snapshot},
+    journal::{EventJournal, JournalSignal, NewEvent},
     registry::ProjectionRegistry,
+    trace::{
+        ControlTrace, NoTrace, ReplayTraceFile, TRACE_VERSION, TraceEntry, TraceReplay,
+        result_digest,
+    },
 };
 
 use quantick_control_local::discovery::publish_descriptor;
@@ -55,18 +76,171 @@ const CONTROL_UI_MAX_STATUS_UPDATES_PER_FRAME: usize = 32;
 const CONTROL_PANEL_DEFAULT_WIDTH_PX: f32 = 520.0;
 const CONTROL_PANEL_SECTION_SPACING_PX: f32 = 6.0;
 const ACCEPT_POLL_MS: u64 = 5;
+/// How often the waiter manager re-checks deadlines and the cancellation
+/// flag when no tick arrives; a parked wait never waits longer than this past
+/// its own timeout.
+const WAITER_POLL_MS: u64 = 250;
+/// What the journal records as the author of a human action taken in this
+/// window. Self-declared like every client name, and honest.
+const UI_ACTOR_CLIENT_NAME: &str = "quantick-ui";
+/// Take a mark of what is under the pointer (`attention.mark.create`).
+pub(crate) const MARK_SHORTCUT: eframe::egui::KeyboardShortcut =
+    eframe::egui::KeyboardShortcut::new(eframe::egui::Modifiers::CTRL, eframe::egui::Key::M);
 const EXIT_SHUTDOWN_TIMEOUT_MS: u64 = 2_000;
+
+/// The identity a human action in this window is attributed with. One
+/// principal and one "connection" per process, generated with the instance
+/// identity; it is how the journal tells the human from a remote client.
+#[derive(Clone)]
+struct UiActorIdentity {
+    principal_id: PrincipalId,
+    connection_id: ConnectionId,
+}
+
+/// Where a local action came from: the human at this window, whose action
+/// during a replay is recorded in the control trace, or the control trace
+/// itself replaying that action, which must not be recorded again.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ActionOrigin {
+    Human,
+    TraceReplay,
+}
+
+/// A replay session whose control trace is being re-injected: the entries
+/// still due, in replay-time order.
+/// One recording's control trace, loaded once and walked by logical replay
+/// time. Keyed by the session path: two tabs on the same recording share one
+/// walk, driven by the tab that loaded it.
+struct TraceReinjection {
+    /// The tab whose playhead drives the walk.
+    owner_tab_id: u64,
+    /// Completed entries in `(replay_elapsed_ms, sequence)` order — the
+    /// sidecar's at load time plus the actions this run recorded since, so
+    /// an in-session restart replays exactly what a fresh process would.
+    entries: Vec<TraceEntry>,
+    /// The first entry not yet injected on this pass over the session.
+    next_index: usize,
+    /// Where the playhead was last frame; a smaller value now means it moved
+    /// backwards and the walk rewinds.
+    last_elapsed_ms: i64,
+    /// The worker's rewind count last frame; a different value now means a
+    /// restart or seek happened, even if the rerun already advanced past
+    /// `last_elapsed_ms`.
+    last_rewinds: u64,
+    /// Sequences of the actions this run took during the current pass: they
+    /// joined `entries` for the next rerun and are not injected back on the
+    /// spot. Cleared by a rewind.
+    executed_this_pass: Vec<u64>,
+}
+
+/// What the replay link publishes that the walk reads once per frame.
+#[derive(Clone, Copy)]
+struct ReplayPosition {
+    elapsed_ms: i64,
+    rewinds: u64,
+    rewind_target_elapsed_ms: i64,
+}
+
+impl ReplayPosition {
+    fn of(status: &crate::feed::replay::ReplayStatus) -> Self {
+        Self {
+            elapsed_ms: status.elapsed_ms(),
+            rewinds: status.rewinds(),
+            rewind_target_elapsed_ms: status.rewind_target_elapsed_ms(),
+        }
+    }
+}
+
+impl TraceReinjection {
+    /// Move the entries due at the position into `due`, exactly once per
+    /// pass over the session. A rewind — the worker counted a restart or a
+    /// seek, or the playhead is behind last frame's sample — moves the walk
+    /// back to the first entry at or after where the rerun began, so the
+    /// rerun injects the same actions again.
+    fn collect_due(&mut self, position: ReplayPosition, due: &mut Vec<TraceEntry>) {
+        let rewound_to = if position.rewinds != self.last_rewinds {
+            Some(position.rewind_target_elapsed_ms)
+        } else if position.elapsed_ms < self.last_elapsed_ms {
+            Some(position.elapsed_ms)
+        } else {
+            None
+        };
+        if let Some(start_elapsed_ms) = rewound_to {
+            self.next_index = self
+                .entries
+                .partition_point(|entry| entry.replay_elapsed_ms < start_elapsed_ms);
+            self.executed_this_pass.clear();
+        }
+        self.last_rewinds = position.rewinds;
+        self.last_elapsed_ms = position.elapsed_ms;
+        while let Some(entry) = self.entries.get(self.next_index)
+            && entry.replay_elapsed_ms <= position.elapsed_ms
+        {
+            if !self.executed_this_pass.contains(&entry.sequence.get()) {
+                due.push(entry.clone());
+            }
+            self.next_index += 1;
+        }
+    }
+
+    /// An action this run just recorded to the sidecar joins the walk in
+    /// replay-time order, marked as executed on this pass: the next rerun
+    /// replays it, this one does not inject it back.
+    fn record_this_pass(&mut self, entry: TraceEntry) {
+        let key = (entry.replay_elapsed_ms, entry.sequence.get());
+        let position = self
+            .entries
+            .partition_point(|other| (other.replay_elapsed_ms, other.sequence.get()) < key);
+        if position < self.next_index {
+            self.next_index += 1;
+        }
+        self.executed_this_pass.push(entry.sequence.get());
+        self.entries.insert(position, entry);
+    }
+}
+
+/// Read a session's sidecar for re-injection, naming an unreadable or an
+/// unfinished trace in the log: either way that run is not a fixture.
+fn load_trace_for_reinjection(session_path: &std::path::Path) -> TraceReplay {
+    let loaded = match TraceReplay::load(session_path) {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            tracing::warn!(
+                target: "quantick::control",
+                event_code = "CONTROL_TRACE_UNREADABLE",
+                error = %error,
+                "the replay's control trace could not be read; the run is not a fixture"
+            );
+            TraceReplay::default()
+        }
+    };
+    if !loaded.is_complete() {
+        tracing::warn!(
+            target: "quantick::control",
+            event_code = "CONTROL_TRACE_INCOMPLETE",
+            incomplete = ?loaded.incomplete,
+            "the replay's control trace has unfinished intents; the run is not a fixture"
+        );
+    }
+    loaded
+}
 
 #[derive(Clone)]
 struct ProcessIdentity {
     instance_id: InstanceId,
     process_nonce: ProcessNonce,
     process_started_at_unix_ms: i64,
+    ui_actor: UiActorIdentity,
 }
 
 impl ProcessIdentity {
     fn generate() -> Result<Self, String> {
+        let ui_actor = UiActorIdentity {
+            principal_id: PrincipalId::from_bytes(random_bytes::<CONTROL_RUNTIME_ID_BYTES>()?),
+            connection_id: ConnectionId::from_bytes(random_bytes::<CONTROL_RUNTIME_ID_BYTES>()?),
+        };
         Ok(Self {
+            ui_actor,
             instance_id: InstanceId::from_bytes(random_bytes::<CONTROL_RUNTIME_ID_BYTES>()?),
             process_nonce: ProcessNonce::from_bytes(random_bytes::<CONTROL_RUNTIME_ID_BYTES>()?),
             process_started_at_unix_ms: metrics::wall_clock_ms(),
@@ -129,6 +303,8 @@ struct GatewayStart {
     grant_generation: u64,
     options: GatewayOptions,
     cancellation: Arc<AtomicBool>,
+    journal_signal: Arc<JournalSignal>,
+    journal_ticks: Receiver<()>,
 }
 
 struct GatewayRuntime {
@@ -288,16 +464,33 @@ pub(crate) struct ControlAccess {
     show_panel: bool,
     notice: Option<String>,
     last_drain: DrainObservation,
+    /// The semantic event journal. Written only on the application thread;
+    /// read through the UI queue; signalled to parked waiters without a lock.
+    journal: EventJournal,
+    journal_ticks: Receiver<()>,
+    actions: ActionRegistry,
+    /// What the frame emitter last saw; `None` until access is enabled, so a
+    /// disabled gateway costs the frame nothing and an enabled one records
+    /// changes, not the state it found.
+    semantic_baseline: Option<SemanticBaseline>,
+    next_ui_request: u64,
+    next_trace_sequence: u64,
+    /// The control trace of every replaying recording, keyed by session
+    /// path, loaded once and walked by logical replay time; a tab without a
+    /// replay costs the frame one comparison.
+    trace_reinjection: BTreeMap<PathBuf, TraceReinjection>,
 }
 
 impl ControlAccess {
     pub fn new() -> Self {
         let projections = super::standard_registry()
             .expect("built-in semantic projection registry must be valid");
+        let actions = standard_actions().expect("built-in action registry must be valid");
         let contract = Arc::new(
-            ObserverContract::new(&projections)
+            ObserverContract::new(&projections, &actions)
                 .expect("built-in observer capability registry must be valid"),
         );
+        let (journal, journal_ticks) = EventJournal::new();
         let (identity, initialization_error) = match ProcessIdentity::generate() {
             Ok(identity) => (Some(identity), None),
             Err(error) => (
@@ -325,7 +518,271 @@ impl ControlAccess {
             show_panel: false,
             notice: None,
             last_drain: DrainObservation::default(),
+            journal,
+            journal_ticks,
+            actions,
+            semantic_baseline: None,
+            next_ui_request: 1,
+            next_trace_sequence: 1,
+            trace_reinjection: BTreeMap::new(),
         }
+    }
+
+    /// Each frame: every recording a tab is playing with a control trace
+    /// beside it re-injects the recorded actions at their logical replay
+    /// time (contract §11). The trace is loaded once per recording and walked
+    /// forward by the tab that loaded it; a restart or seek rewinds the walk
+    /// so the rerun injects the same actions again, switching tabs neither
+    /// repeats nor skips an injection, and a second tab on the same
+    /// recording adds nothing. A live tab costs one comparison. Runs whether
+    /// or not local access is enabled: replay determinism does not depend on
+    /// a client being connected.
+    pub(crate) fn service_replay_trace(&mut self, app: &mut QuantickApp) {
+        // The entries that came due this frame. The Vec allocates only when
+        // one did, a human gesture's worth of times per session.
+        let mut due: Vec<TraceEntry> = Vec::new();
+        {
+            let tabs = app.control_tabs();
+            if !self.trace_reinjection.is_empty() {
+                self.trace_reinjection.retain(|path, _| {
+                    tabs.iter().any(|tab| {
+                        tab.replay
+                            .as_ref()
+                            .is_some_and(|link| link.session.path == *path)
+                    })
+                });
+            }
+            for tab in tabs {
+                let Some(link) = tab.replay.as_ref() else {
+                    continue;
+                };
+                let position = ReplayPosition::of(&link.status);
+                let path = &link.session.path;
+                match self.trace_reinjection.get_mut(path) {
+                    Some(state) if state.owner_tab_id == tab.id => {
+                        state.collect_due(position, &mut due);
+                    }
+                    // One walk per recording: the tab that loaded it drives.
+                    // Another tab on the same file adopts the walk only once
+                    // the owner let go of the session.
+                    Some(state) => {
+                        let owner_still_plays_it = tabs.iter().any(|other| {
+                            other.id == state.owner_tab_id
+                                && other
+                                    .replay
+                                    .as_ref()
+                                    .is_some_and(|link| link.session.path == *path)
+                        });
+                        if !owner_still_plays_it {
+                            state.owner_tab_id = tab.id;
+                            state.collect_due(position, &mut due);
+                        }
+                    }
+                    None => {
+                        let loaded = load_trace_for_reinjection(path);
+                        // Trace sequences continue where the sidecar left
+                        // off, so a later run appending to the same file
+                        // never reuses one.
+                        self.next_trace_sequence = self
+                            .next_trace_sequence
+                            .max(loaded.max_sequence.saturating_add(1));
+                        let mut state = TraceReinjection {
+                            owner_tab_id: tab.id,
+                            entries: loaded.completed,
+                            next_index: 0,
+                            last_elapsed_ms: i64::MIN,
+                            last_rewinds: position.rewinds,
+                            executed_this_pass: Vec::new(),
+                        };
+                        state.collect_due(position, &mut due);
+                        self.trace_reinjection.insert(path.clone(), state);
+                    }
+                }
+            }
+        }
+        for entry in due {
+            if let Err(error) = self.invoke_local_action(
+                app,
+                entry.capability_id.as_str(),
+                entry.capability_version,
+                entry.canonical_input,
+                ActionOrigin::TraceReplay,
+            ) {
+                tracing::warn!(
+                    target: "quantick::control",
+                    event_code = "CONTROL_TRACE_REPLAY_REFUSED",
+                    capability = %entry.capability_id,
+                    version = entry.capability_version,
+                    code = %error.code,
+                    "a traced action was refused on replay"
+                );
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub fn journal(&self) -> &EventJournal {
+        &self.journal
+    }
+
+    pub fn journal_mut(&mut self) -> &mut EventJournal {
+        &mut self.journal
+    }
+
+    /// The trusted actor context for an action taken in this window by the
+    /// human (`HumanUi`) or replayed from a control trace (`Automation`).
+    fn local_actor(&mut self, actor_kind: ActorKind, reason: Option<String>) -> ActorContext {
+        let identity = self
+            .identity
+            .as_ref()
+            .expect("local actions need the process identity");
+        let request_id = RequestId::new(format!("ui-{}", self.next_ui_request))
+            .expect("generated request ID is valid");
+        self.next_ui_request = self.next_ui_request.saturating_add(1);
+        ActorContext {
+            actor_kind,
+            principal_id: identity.ui_actor.principal_id.clone(),
+            client_name: UI_ACTOR_CLIENT_NAME.to_owned(),
+            connection_id: identity.ui_actor.connection_id.clone(),
+            request_id,
+            reason,
+            requested_at_unix_ms: metrics::wall_clock_ms(),
+        }
+    }
+
+    /// Invoke one registered action from inside the application — the hotkey,
+    /// the `QUANTICK_CONTROL_MARK` hook, a test, or a replayed trace entry.
+    /// Validates the input and the result against the action's schemas, and
+    /// during a replay appends the intent and the result to the session's
+    /// control trace before and after the handler runs (contract §11).
+    pub(crate) fn invoke_local_action(
+        &mut self,
+        app: &mut QuantickApp,
+        capability_id: &str,
+        capability_version: u32,
+        input: Value,
+        origin: ActionOrigin,
+    ) -> Result<Value, ControlError> {
+        let actor_kind = match origin {
+            ActionOrigin::Human => ActorKind::HumanUi,
+            ActionOrigin::TraceReplay => ActorKind::Automation,
+        };
+        if self.identity.is_none() {
+            return Err(known_error(
+                codes::CAPABILITY_UNAVAILABLE,
+                "local actions need a process identity, which failed to generate",
+                false,
+            ));
+        }
+        let (descriptor, handler) = {
+            let (descriptor, handler, input_schema, _) = self
+                .actions
+                .lookup(capability_id, capability_version)
+                .ok_or_else(|| {
+                    known_error(
+                        codes::CAPABILITY_UNKNOWN,
+                        "capability ID or version is not a registered action",
+                        false,
+                    )
+                })?;
+            input_schema
+                .validate(&input)
+                .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+            (descriptor.clone(), handler)
+        };
+        let actor = self.local_actor(
+            actor_kind,
+            (origin == ActionOrigin::TraceReplay)
+                .then(|| "replayed from the control trace".to_owned()),
+        );
+
+        // The trace: a replaying tab records the action at its logical time;
+        // a live tab has nothing to record. Opening the sidecar is rare and
+        // off the hot path (an action is a human gesture).
+        let replaying = {
+            let tabs = app.control_tabs();
+            let active = &tabs[app
+                .control_active_tab_index()
+                .min(tabs.len().saturating_sub(1))];
+            active
+                .replay
+                .as_ref()
+                .map(|link| (link.session.path.clone(), link.status.elapsed_ms()))
+        };
+        // A replayed entry is the trace speaking; recording it again would
+        // double the sidecar on every run.
+        let mut trace: Box<dyn ControlTrace> = match &replaying {
+            Some(_) if origin == ActionOrigin::TraceReplay => Box::new(NoTrace),
+            Some((session_path, _)) => {
+                Box::new(ReplayTraceFile::open(session_path).map_err(|error| {
+                    known_error(
+                        codes::CAPABILITY_UNAVAILABLE,
+                        &format!("the replay's control trace cannot be written: {error}"),
+                        true,
+                    )
+                })?)
+            }
+            None => Box::new(NoTrace),
+        };
+        let replay_elapsed_ms = replaying.as_ref().map_or(0, |(_, elapsed)| *elapsed);
+        let trace_sequence = WireU64::new(self.next_trace_sequence);
+        self.next_trace_sequence = self.next_trace_sequence.saturating_add(1);
+        let mut entry = TraceEntry {
+            trace_version: TRACE_VERSION,
+            replay_elapsed_ms,
+            sequence: trace_sequence,
+            actor_kind,
+            client_name: actor.client_name.clone(),
+            capability_id: descriptor.id.clone(),
+            capability_version: descriptor.version,
+            canonical_input: input.clone(),
+            expected_revisions: Vec::new(),
+            result_code: None,
+            result_digest: None,
+        };
+        trace.append_intent(&entry).map_err(|error| {
+            known_error(
+                codes::CAPABILITY_UNAVAILABLE,
+                &format!("the action could not be recorded before it ran: {error}"),
+                true,
+            )
+        })?;
+
+        let outcome = handler(app, self, &actor, &input).and_then(|result| {
+            let (_, _, _, output_schema) = self
+                .actions
+                .lookup(capability_id, capability_version)
+                .expect("the action was looked up a moment ago");
+            output_schema
+                .validate(&result)
+                .map(|()| result)
+                .map_err(|error| ControlError::invalid_request(error.to_string()))
+        });
+        entry.result_code = Some(match &outcome {
+            Ok(_) => quantick_control::id::ErrorCode::new("control.ok")
+                .expect("static result code is valid"),
+            Err(error) => error.code.clone(),
+        });
+        entry.result_digest = outcome.as_ref().ok().and_then(result_digest);
+        match trace.append_result(&entry) {
+            Err(error) => tracing::warn!(
+                target: "quantick::control",
+                event_code = "CONTROL_TRACE_RESULT_FAILED",
+                error = %error,
+                "the control trace did not record an action's result"
+            ),
+            // Recorded: the walk of this recording learns the action now, so
+            // an in-session restart replays it like a fresh process would.
+            Ok(()) => {
+                if let Some((session_path, _)) = &replaying
+                    && origin == ActionOrigin::Human
+                    && let Some(state) = self.trace_reinjection.get_mut(session_path)
+                {
+                    state.record_this_pass(entry);
+                }
+            }
+        }
+        outcome
     }
 
     pub fn begin_frame(&mut self, app: &QuantickApp, ctx: &eframe::egui::Context) {
@@ -346,6 +803,8 @@ impl ControlAccess {
             return;
         };
 
+        self.emit_semantic_changes(app);
+
         let configured_scopes = &self.configured_scopes;
         let revoked = &self.revoked_connections;
         let identity = self
@@ -353,9 +812,11 @@ impl ControlAccess {
             .as_ref()
             .expect("an enabled gateway always has a process identity");
         let projections = &mut self.projections;
+        let journal = &self.journal;
         self.last_drain = drain_bounded_since(&requests, frame_started, |request| {
             let result = execute_on_ui(
                 projections,
+                journal,
                 app,
                 identity,
                 generation,
@@ -368,6 +829,149 @@ impl ControlAccess {
         if statuses_have_more || self.last_drain.queue_has_more {
             ctx.request_repaint();
         }
+    }
+
+    /// Record the semantic changes since the last frame: tab, focus,
+    /// selection, feed connection and market, replay state. The baseline is
+    /// compared in place — a handful of integer and string comparisons — and
+    /// refreshed only where something changed, so a quiet frame allocates
+    /// nothing; with access disabled nothing runs at all, the journal starts
+    /// when the human opens the door and records changes, not the state it
+    /// found.
+    fn emit_semantic_changes(&mut self, app: &QuantickApp) {
+        let tabs = app.control_tabs();
+        let active = &tabs[app
+            .control_active_tab_index()
+            .min(tabs.len().saturating_sub(1))];
+        let active_tab_id = active.id;
+        let focused_pane_id = active.pane(active.focused_side()).id;
+        let selection = selection_identity(app);
+        let Some(mut baseline) = self.semantic_baseline.take() else {
+            self.semantic_baseline = Some(SemanticBaseline {
+                active_tab_id,
+                focused_pane_id,
+                selection,
+                tabs: tabs.iter().map(tab_key).collect(),
+            });
+            return;
+        };
+        let now = metrics::wall_clock_ms();
+        if baseline.active_tab_id != active_tab_id {
+            baseline.active_tab_id = active_tab_id;
+            self.record_observed(
+                "workspace",
+                "workspace.tab.activated",
+                json!({ "tab_id": active_tab_id.to_string() }),
+                now,
+            );
+        }
+        if baseline.focused_pane_id != focused_pane_id {
+            baseline.focused_pane_id = focused_pane_id;
+            self.record_observed(
+                "workspace",
+                "workspace.focus.changed",
+                json!({
+                    "tab_id": active_tab_id.to_string(),
+                    "pane_id": focused_pane_id.to_string(),
+                }),
+                now,
+            );
+        }
+        if baseline.selection != selection {
+            baseline.selection = selection;
+            // The owned snapshot is built only now, for the event: it is the
+            // same projection the selection scope publishes, so "changed"
+            // means the same thing to the journal and to a capture.
+            self.record_observed(
+                "interaction",
+                "interaction.selection.changed",
+                json!({ "selection": selection_snapshot(app) }),
+                now,
+            );
+        }
+        for tab in tabs {
+            match baseline.tabs.iter_mut().find(|old| old.tab_id == tab.id) {
+                None => {
+                    let key = tab_key(tab);
+                    self.record_observed(
+                        "workspace",
+                        "workspace.tab.opened",
+                        json!({ "tab_id": key.tab_id.to_string(), "feed_id": key.feed_id, "symbol": key.symbol }),
+                        now,
+                    );
+                    baseline.tabs.push(key);
+                }
+                Some(old) => {
+                    if old.feed_id != tab.active.0 || old.symbol != tab.active.1 {
+                        old.feed_id.clone_from(&tab.active.0);
+                        old.symbol.clone_from(&tab.active.1);
+                        self.record_observed(
+                            "feed",
+                            "feed.market.changed",
+                            json!({ "tab_id": tab.id.to_string(), "feed_id": old.feed_id, "symbol": old.symbol }),
+                            now,
+                        );
+                    }
+                    let connection = connection_state(tab.feed_connection);
+                    if old.connection != connection {
+                        old.connection = connection;
+                        self.record_observed(
+                            "feed",
+                            "feed.connection.changed",
+                            json!({ "tab_id": tab.id.to_string(), "state": connection }),
+                            now,
+                        );
+                    }
+                    let replay = replay_key(tab);
+                    if old.replay != replay {
+                        old.replay = replay;
+                        self.record_observed(
+                            "replay",
+                            "replay.state.changed",
+                            json!({
+                                "tab_id": tab.id.to_string(),
+                                "active": replay.is_some(),
+                                "playing": replay.map(|(playing, _)| playing),
+                                "finished": replay.map(|(_, finished)| finished),
+                            }),
+                            now,
+                        );
+                    }
+                }
+            }
+        }
+        if baseline.tabs.len() != tabs.len()
+            || baseline
+                .tabs
+                .iter()
+                .any(|old| !tabs.iter().any(|tab| tab.id == old.tab_id))
+        {
+            baseline.tabs.retain(|old| {
+                let open = tabs.iter().any(|tab| tab.id == old.tab_id);
+                if !open {
+                    self.record_observed(
+                        "workspace",
+                        "workspace.tab.closed",
+                        json!({ "tab_id": old.tab_id.to_string() }),
+                        now,
+                    );
+                }
+                open
+            });
+        }
+        self.semantic_baseline = Some(baseline);
+    }
+
+    fn record_observed(&mut self, module: &str, kind: &str, payload: Value, now: i64) {
+        self.journal.record(
+            NewEvent {
+                module_id: ModuleId::new(module).expect("static module ID is valid"),
+                kind: EventKind::new(kind).expect("static event kind is valid"),
+                actor: None,
+                payload,
+            },
+            now,
+        );
     }
 
     pub fn needs_frame_service(&self) -> bool {
@@ -420,6 +1024,12 @@ impl ControlAccess {
             ui.strong("Status:");
             ui.label(status);
         });
+        // The one trader gesture this surface owns, said where the trader
+        // configures it: a newcomer finds it here, not in a manual.
+        ui.small(format!(
+            "{} marks what is under the pointer; clients read marks through events.",
+            ui.ctx().format_shortcut(&MARK_SHORTCUT)
+        ));
 
         if let Some(error) = &self.initialization_error {
             ui.colored_label(eframe::egui::Color32::LIGHT_RED, error);
@@ -576,6 +1186,8 @@ impl ControlAccess {
             grant_generation: self.grant_generation,
             options,
             cancellation: Arc::clone(&cancellation),
+            journal_signal: self.journal.signal(),
+            journal_ticks: self.journal_ticks.clone(),
         };
         let lifecycle = self.lifecycle_tx.clone();
         let contract = Arc::clone(&self.contract);
@@ -601,6 +1213,7 @@ impl ControlAccess {
         if let Some(cancellation) = &self.active_cancellation {
             cancellation.store(true, Ordering::Release);
         }
+        self.semantic_baseline = None;
         let previous = std::mem::replace(&mut self.state, AccessState::Disabled);
         self.grant_generation = self.grant_generation.saturating_add(1).max(1);
         self.revoked_connections
@@ -843,6 +1456,42 @@ impl Drop for ControlAccess {
     }
 }
 
+/// What the frame emitter remembers between frames: owned copies of the
+/// values that name a change, refreshed only where one happened, so a quiet
+/// frame compares in place and allocates nothing.
+struct SemanticBaseline {
+    active_tab_id: u64,
+    focused_pane_id: u64,
+    selection: SelectionIdentity,
+    tabs: Vec<TabKey>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TabKey {
+    tab_id: u64,
+    feed_id: String,
+    symbol: String,
+    connection: &'static str,
+    /// `(playing, finished)` while a replay is linked.
+    replay: Option<(bool, bool)>,
+}
+
+fn tab_key(tab: &crate::tab::Tab) -> TabKey {
+    TabKey {
+        tab_id: tab.id,
+        feed_id: tab.active.0.clone(),
+        symbol: tab.active.1.clone(),
+        connection: connection_state(tab.feed_connection),
+        replay: replay_key(tab),
+    }
+}
+
+fn replay_key(tab: &crate::tab::Tab) -> Option<(bool, bool)> {
+    tab.replay
+        .as_ref()
+        .map(|link| (link.status.is_playing(), link.status.is_finished()))
+}
+
 fn drain_bounded_since<T>(
     receiver: &Receiver<T>,
     started: Instant,
@@ -879,8 +1528,10 @@ fn drain_bounded_since<T>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_on_ui(
     projections: &mut ProjectionRegistry,
+    journal: &EventJournal,
     app: &QuantickApp,
     identity: &ProcessIdentity,
     current_generation: u64,
@@ -926,7 +1577,7 @@ fn execute_on_ui(
     request
         .prepared
         .dispatch
-        .execute_ui(projections, app, &identity.instance_id)
+        .execute_ui(projections, journal, app, &identity.instance_id)
 }
 
 fn gateway_main(
@@ -1031,6 +1682,21 @@ fn gateway_run(
         "local observer gateway enabled"
     );
 
+    let (park_tx, park_rx) = bounded(CONTROL_MAX_PARKED_WAITERS);
+    {
+        let ticks = start.journal_ticks.clone();
+        let signal = Arc::clone(&start.journal_signal);
+        let cancellation = Arc::clone(&start.cancellation);
+        if thread::Builder::new()
+            .name("quantick-control-waiters".to_owned())
+            .spawn(move || waiter_manager(ticks, park_rx, signal, cancellation))
+            .is_err()
+        {
+            return Err(
+                "Could not start the gateway's waiter manager; access remains off.".to_owned(),
+            );
+        }
+    }
     let authority = Arc::new(ConnectionAuthority {
         identity: start.identity.clone(),
         bearer_token: token,
@@ -1044,6 +1710,9 @@ fn gateway_run(
         global_in_flight: Arc::new(AtomicUsize::new(0)),
         cancellation: Arc::clone(&start.cancellation),
         wake: Arc::clone(&wake),
+        journal_signal: Arc::clone(&start.journal_signal),
+        park: park_tx,
+        parked_waiters: Arc::new(AtomicUsize::new(0)),
     });
     accept_loop(listener, command_rx, Arc::clone(&authority));
 
@@ -1068,6 +1737,122 @@ fn gateway_run(
     Ok(())
 }
 
+/// A `wait_for_change` registered with the waiter manager: wake it when the
+/// journal passes `target_sequence`, or at `deadline`.
+struct ParkedWaiter {
+    target_sequence: u64,
+    deadline: Instant,
+    wake: Sender<WakeReason>,
+    /// The connection that parked it: a closed one releases the wait at the
+    /// manager's next pass instead of holding its slots to the deadline.
+    connection: Arc<ConnectionSlots>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WakeReason {
+    Woken,
+    TimedOut,
+    Shutdown,
+    Disconnected,
+}
+
+/// What one connection's reader and its response threads share: the
+/// in-flight count and request IDs (contract §5.2), the parked waits it
+/// holds, and whether its socket is still open.
+struct ConnectionSlots {
+    in_flight: AtomicUsize,
+    in_flight_ids: Mutex<BTreeSet<quantick_control::id::RequestId>>,
+    parked: AtomicUsize,
+    closed: AtomicBool,
+}
+
+impl ConnectionSlots {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            in_flight: AtomicUsize::new(0),
+            in_flight_ids: Mutex::new(BTreeSet::new()),
+            parked: AtomicUsize::new(0),
+            closed: AtomicBool::new(false),
+        })
+    }
+
+    /// A poisoned lock reads as "in flight": refusing a request is the safe
+    /// side of a broken invariant.
+    fn is_in_flight(&self, request_id: &quantick_control::id::RequestId) -> bool {
+        self.in_flight_ids
+            .lock()
+            .map(|ids| ids.contains(request_id))
+            .unwrap_or(true)
+    }
+
+    fn track(&self, request_id: &quantick_control::id::RequestId) {
+        if let Ok(mut ids) = self.in_flight_ids.lock() {
+            ids.insert(request_id.clone());
+        }
+    }
+
+    fn forget(&self, request_id: &quantick_control::id::RequestId) {
+        if let Ok(mut ids) = self.in_flight_ids.lock() {
+            ids.remove(request_id);
+        }
+    }
+}
+
+/// The waiter manager: one thread per gateway run that owns the parked
+/// waiters, listens to the journal's tick, and wakes each waiter when its
+/// position is behind the journal or its deadline passed. The application
+/// thread never sees it: it only stores an atomic and tries one send.
+fn waiter_manager(
+    ticks: Receiver<()>,
+    park: Receiver<ParkedWaiter>,
+    signal: Arc<JournalSignal>,
+    cancellation: Arc<AtomicBool>,
+) {
+    let mut waiters: Vec<ParkedWaiter> = Vec::new();
+    loop {
+        let now = Instant::now();
+        let poll = waiters
+            .iter()
+            .map(|waiter| waiter.deadline.saturating_duration_since(now))
+            .min()
+            .unwrap_or(Duration::from_millis(WAITER_POLL_MS))
+            .min(Duration::from_millis(WAITER_POLL_MS));
+        crossbeam_channel::select! {
+            recv(ticks) -> _ => {}
+            recv(park) -> waiter => match waiter {
+                Ok(waiter) => waiters.push(waiter),
+                Err(_) => break,
+            },
+            default(poll) => {}
+        }
+        if cancellation.load(Ordering::Acquire) {
+            for waiter in waiters.drain(..) {
+                let _ = waiter.wake.send(WakeReason::Shutdown);
+            }
+            break;
+        }
+        let next = signal.next_sequence();
+        let now = Instant::now();
+        waiters.retain(|waiter| {
+            if waiter.connection.closed.load(Ordering::Acquire) {
+                let _ = waiter.wake.send(WakeReason::Disconnected);
+                false
+            } else if next > waiter.target_sequence {
+                let _ = waiter.wake.send(WakeReason::Woken);
+                false
+            } else if now >= waiter.deadline {
+                let _ = waiter.wake.send(WakeReason::TimedOut);
+                false
+            } else {
+                true
+            }
+        });
+    }
+    for waiter in waiters.drain(..) {
+        let _ = waiter.wake.send(WakeReason::Shutdown);
+    }
+}
+
 struct ConnectionAuthority {
     identity: ProcessIdentity,
     bearer_token: BearerToken,
@@ -1081,6 +1866,9 @@ struct ConnectionAuthority {
     global_in_flight: Arc<AtomicUsize>,
     cancellation: Arc<AtomicBool>,
     wake: Arc<dyn Fn() + Send + Sync>,
+    journal_signal: Arc<JournalSignal>,
+    park: Sender<ParkedWaiter>,
+    parked_waiters: Arc<AtomicUsize>,
 }
 
 fn accept_loop(
@@ -1407,13 +2195,12 @@ fn connection_session(
     let writer_stream = stream.try_clone().map_err(|_| codes::INSTANCE_GONE)?;
     let writer = Arc::new(Mutex::new(writer_stream));
     let codec = BoundedCodec::default();
-    let in_flight = Arc::new(AtomicUsize::new(0));
     // Request IDs in flight on this connection (contract §5.2: a duplicate is
-    // rejected while the first is still executing). Only requests that leave
-    // for the application thread are in flight from the reader's point of
-    // view; a worker-side read is answered before the next frame is read.
-    let in_flight_ids: Arc<Mutex<BTreeSet<quantick_control::id::RequestId>>> =
-        Arc::new(Mutex::new(BTreeSet::new()));
+    // rejected while the first is still executing). Requests that leave for
+    // the application thread and parked waits are in flight from the
+    // reader's point of view; a worker-side read is answered before the next
+    // frame is read.
+    let slots = ConnectionSlots::new();
     (authority.wake)();
     tracing::info!(
         target: "quantick::control",
@@ -1463,11 +2250,7 @@ fn connection_session(
             );
             continue;
         }
-        if in_flight_ids
-            .lock()
-            .map(|ids| ids.contains(&request.request_id))
-            .unwrap_or(true)
-        {
+        if slots.is_in_flight(&request.request_id) {
             send_response(
                 &writer,
                 &codec,
@@ -1540,11 +2323,13 @@ fn connection_session(
             &accepted,
             &codec,
             &writer,
-            &in_flight,
-            &in_flight_ids,
+            &slots,
             authority,
         );
     }
+    // The socket is gone: this connection's parked waits release their slots
+    // at the manager's next pass instead of holding them to the deadline.
+    slots.closed.store(true, Ordering::Release);
 
     if authority
         .statuses
@@ -1581,10 +2366,25 @@ fn dispatch_prepared(
     handshake: &quantick_control::handshake::HandshakeResponse,
     codec: &BoundedCodec,
     writer: &Arc<Mutex<TcpStream>>,
-    in_flight: &Arc<AtomicUsize>,
-    in_flight_ids: &Arc<Mutex<BTreeSet<quantick_control::id::RequestId>>>,
+    slots: &Arc<ConnectionSlots>,
     authority: &Arc<ConnectionAuthority>,
 ) {
+    if let PreparedDispatch::Parked(wait) = &prepared.dispatch {
+        let wait = wait.clone();
+        dispatch_parked_wait(
+            prepared,
+            wait,
+            connection_id,
+            handshake,
+            codec,
+            writer,
+            slots,
+            authority,
+        );
+        return;
+    }
+    // Every terminal path below forgets the request ID: a wait that parked
+    // under this ID is in flight until its read is answered or refused.
     if !try_reserve_in_flight(
         &authority.global_in_flight,
         CONTROL_MAX_BUFFERED_RESPONSE_SLOTS,
@@ -1601,6 +2401,7 @@ fn dispatch_prepared(
                 ),
             ),
         );
+        slots.forget(&prepared.envelope.request_id);
         return;
     }
     if let Some(result) = prepared.dispatch.execute_worker(
@@ -1612,9 +2413,13 @@ fn dispatch_prepared(
         let response = serialize_worker_result(&authority.contract, &prepared.envelope, result);
         send_response(writer, codec, response);
         authority.global_in_flight.fetch_sub(1, Ordering::AcqRel);
+        slots.forget(&prepared.envelope.request_id);
         return;
     }
-    if !try_reserve_in_flight(in_flight, authority.options.max_in_flight_per_connection) {
+    if !try_reserve_in_flight(
+        &slots.in_flight,
+        authority.options.max_in_flight_per_connection,
+    ) {
         authority.global_in_flight.fetch_sub(1, Ordering::AcqRel);
         send_response(
             writer,
@@ -1628,19 +2433,17 @@ fn dispatch_prepared(
                 ),
             ),
         );
+        slots.forget(&prepared.envelope.request_id);
         return;
     }
 
     let envelope = prepared.envelope.clone();
-    if let Ok(mut ids) = in_flight_ids.lock() {
-        ids.insert(envelope.request_id.clone());
-    }
+    slots.track(&envelope.request_id);
     let (response_tx, response_rx) = bounded(1);
     let deadline = Instant::now() + authority.options.request_timeout;
     let response_writer = Arc::clone(writer);
     let response_codec = codec.clone();
-    let response_in_flight = Arc::clone(in_flight);
-    let response_in_flight_ids = Arc::clone(in_flight_ids);
+    let response_slots = Arc::clone(slots);
     let response_global_in_flight = Arc::clone(&authority.global_in_flight);
     let contract = Arc::clone(&authority.contract);
     let wait_envelope = envelope.clone();
@@ -1668,17 +2471,13 @@ fn dispatch_prepared(
                 ),
             };
             send_response(&response_writer, &response_codec, response);
-            if let Ok(mut ids) = response_in_flight_ids.lock() {
-                ids.remove(&wait_envelope.request_id);
-            }
-            response_in_flight.fetch_sub(1, Ordering::AcqRel);
+            response_slots.forget(&wait_envelope.request_id);
+            response_slots.in_flight.fetch_sub(1, Ordering::AcqRel);
             response_global_in_flight.fetch_sub(1, Ordering::AcqRel);
         });
     if spawn.is_err() {
-        if let Ok(mut ids) = in_flight_ids.lock() {
-            ids.remove(&envelope.request_id);
-        }
-        in_flight.fetch_sub(1, Ordering::AcqRel);
+        slots.forget(&envelope.request_id);
+        slots.in_flight.fetch_sub(1, Ordering::AcqRel);
         authority.global_in_flight.fetch_sub(1, Ordering::AcqRel);
         send_response(
             writer,
@@ -1720,6 +2519,196 @@ fn dispatch_prepared(
                 true,
             )));
         }
+    }
+}
+
+/// `events.wait`: resolve the position against the journal's published
+/// bounds, answer at once if it is already behind, otherwise park on the
+/// waiter manager — holding one global and one per-connection parked slot
+/// and its request ID, nothing else — and run the bounded read through the
+/// ordinary UI path when woken or timed out.
+#[allow(clippy::too_many_arguments)]
+fn dispatch_parked_wait(
+    prepared: PreparedRequest,
+    wait: ParkedWait,
+    connection_id: &ConnectionId,
+    handshake: &quantick_control::handshake::HandshakeResponse,
+    codec: &BoundedCodec,
+    writer: &Arc<Mutex<TcpStream>>,
+    slots: &Arc<ConnectionSlots>,
+    authority: &Arc<ConnectionAuthority>,
+) {
+    let instance_id = authority.identity.instance_id.clone();
+    let position = match resolve_event_read(
+        &instance_id,
+        wait.input.cursor.as_ref(),
+        wait.input.start,
+        authority.journal_signal.bounds(),
+    ) {
+        Ok(position) => position,
+        Err(error) => {
+            send_response(writer, codec, failure_response(&prepared.envelope, error));
+            return;
+        }
+    };
+    let target = position.next_sequence.get();
+    let dropped_before = position.dropped_before;
+    let read_input = EventsReadInput {
+        cursor: Some(EventCursor {
+            instance_id: instance_id.clone(),
+            next_sequence: WireU64::new(target),
+        }),
+        start: None,
+        limit: wait.input.limit,
+    };
+    let envelope = prepared.envelope.clone();
+    let to_read = move |timed_out: bool| PreparedRequest {
+        envelope: prepared.envelope,
+        required_permissions: prepared.required_permissions,
+        dispatch: PreparedDispatch::Ui(Box::new(EventsReadInvocation {
+            input: read_input,
+            timed_out,
+            dropped_before,
+        })),
+    };
+    if authority.journal_signal.next_sequence() > target {
+        // Already behind the journal: no parking, just the read.
+        dispatch_prepared(
+            to_read(false),
+            connection_id,
+            handshake,
+            codec,
+            writer,
+            slots,
+            authority,
+        );
+        return;
+    }
+    if !try_reserve_in_flight(&slots.parked, CONTROL_MAX_PARKED_WAITERS_PER_CONNECTION) {
+        send_response(
+            writer,
+            codec,
+            failure_response(
+                &envelope,
+                known_error(
+                    codes::BACKPRESSURE,
+                    "this connection's parked waiter capacity is full",
+                    true,
+                ),
+            ),
+        );
+        return;
+    }
+    if !try_reserve_in_flight(&authority.parked_waiters, CONTROL_MAX_PARKED_WAITERS) {
+        slots.parked.fetch_sub(1, Ordering::AcqRel);
+        send_response(
+            writer,
+            codec,
+            failure_response(
+                &envelope,
+                known_error(codes::BACKPRESSURE, "parked waiter capacity is full", true),
+            ),
+        );
+        return;
+    }
+    let (wake_tx, wake_rx) = bounded(1);
+    let deadline = Instant::now() + Duration::from_millis(wait.input.timeout_ms);
+    if authority
+        .park
+        .try_send(ParkedWaiter {
+            target_sequence: target,
+            deadline,
+            wake: wake_tx,
+            connection: Arc::clone(slots),
+        })
+        .is_err()
+    {
+        authority.parked_waiters.fetch_sub(1, Ordering::AcqRel);
+        slots.parked.fetch_sub(1, Ordering::AcqRel);
+        send_response(
+            writer,
+            codec,
+            failure_response(
+                &envelope,
+                known_error(codes::BACKPRESSURE, "parked waiter capacity is full", true),
+            ),
+        );
+        return;
+    }
+    // Parked: the ID is in flight until the read is answered (contract §5.2).
+    slots.track(&envelope.request_id);
+    let thread_authority = Arc::clone(authority);
+    let thread_connection_id = connection_id.clone();
+    let thread_handshake = handshake.clone();
+    let thread_codec = codec.clone();
+    let thread_writer = Arc::clone(writer);
+    let thread_slots = Arc::clone(slots);
+    let thread_envelope = envelope.clone();
+    let spawned = thread::Builder::new()
+        .name("quantick-control-wait".to_owned())
+        .spawn(move || {
+            let reason = wake_rx.recv().unwrap_or(WakeReason::Shutdown);
+            thread_authority
+                .parked_waiters
+                .fetch_sub(1, Ordering::AcqRel);
+            thread_slots.parked.fetch_sub(1, Ordering::AcqRel);
+            match reason {
+                // Nobody is listening: release the ID and write nothing.
+                WakeReason::Disconnected => thread_slots.forget(&thread_envelope.request_id),
+                _ if thread_slots.closed.load(Ordering::Acquire) => {
+                    thread_slots.forget(&thread_envelope.request_id);
+                }
+                WakeReason::Shutdown => {
+                    send_response(
+                        &thread_writer,
+                        &thread_codec,
+                        failure_response(
+                            &thread_envelope,
+                            known_error(
+                                codes::INSTANCE_GONE,
+                                "local access was disabled while the wait was parked",
+                                true,
+                            ),
+                        ),
+                    );
+                    thread_slots.forget(&thread_envelope.request_id);
+                }
+                WakeReason::Woken | WakeReason::TimedOut => dispatch_prepared(
+                    to_read(reason == WakeReason::TimedOut),
+                    &thread_connection_id,
+                    &thread_handshake,
+                    &thread_codec,
+                    &thread_writer,
+                    &thread_slots,
+                    &thread_authority,
+                ),
+            }
+        });
+    if spawned.is_err() {
+        // The closure and its wake receiver are gone, so the manager's wake
+        // will fail harmlessly; the slots and the ID are released here and
+        // the client hears the refusal instead of waiting for a reply nobody
+        // would write.
+        authority.parked_waiters.fetch_sub(1, Ordering::AcqRel);
+        slots.parked.fetch_sub(1, Ordering::AcqRel);
+        slots.forget(&envelope.request_id);
+        tracing::warn!(
+            target: "quantick::control",
+            event_code = "CONTROL_WAIT_THREAD_FAILED",
+            "could not create a parked-wait thread"
+        );
+        send_response(
+            writer,
+            codec,
+            failure_response(
+                &envelope,
+                known_error(
+                    codes::BACKPRESSURE,
+                    "parked-wait worker could not be created",
+                    true,
+                ),
+            ),
+        );
     }
 }
 

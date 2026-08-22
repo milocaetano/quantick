@@ -195,7 +195,7 @@ fn project_selection(app: &QuantickApp, _context: CaptureContext) -> SelectionSn
     selection_snapshot(app)
 }
 
-fn cursor_snapshot(app: &QuantickApp) -> CursorSnapshot {
+pub(crate) fn cursor_snapshot(app: &QuantickApp) -> CursorSnapshot {
     let tab = active_tab(app);
     let focused_side = tab.focused_side();
     let focused_pane = tab.pane(focused_side);
@@ -267,7 +267,37 @@ fn pointer_snapshot(
     }
 }
 
-fn selection_snapshot(app: &QuantickApp) -> SelectionSnapshot {
+/// The zero-allocation identity of the selection, compared by the frame
+/// emitter every frame; [`selection_snapshot`] is the owned projection an
+/// event or a capture carries, built only when this changed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SelectionIdentity {
+    pub active_tab_id: u64,
+    pub focused_pane_id: u64,
+    pub focused_pane_side: PaneSide,
+    /// `(pane_id, drawing_id)` of the selected drawing, if any.
+    pub drawing: Option<(u64, u64)>,
+    pub paper_trade_row: Option<usize>,
+}
+
+pub(crate) fn selection_identity(app: &QuantickApp) -> SelectionIdentity {
+    let tab = active_tab(app);
+    let focused_side = tab.focused_side();
+    let drawing_pane = tab.pane(tab.drawing_side());
+    SelectionIdentity {
+        active_tab_id: tab.id,
+        focused_pane_id: tab.pane(focused_side).id,
+        focused_pane_side: focused_side,
+        drawing: drawing_pane
+            .drawings
+            .selected()
+            .and_then(|index| drawing_pane.drawings.items().get(index))
+            .map(|drawing| (drawing_pane.id, drawing.id.0)),
+        paper_trade_row: tab.paper.selected_trade_index(),
+    }
+}
+
+pub(crate) fn selection_snapshot(app: &QuantickApp) -> SelectionSnapshot {
     let tab = active_tab(app);
     let focused_side = tab.focused_side();
     let focused_pane = tab.pane(focused_side);

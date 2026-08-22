@@ -202,10 +202,20 @@ impl ControlLink for LocalLink {
             .clients
             .get_mut(&id)
             .expect("a connection was just selected or cached");
+        // A parked wait answers only when the journal moves or its timeout
+        // elapses, which is longer than an ordinary request's patience; the
+        // client waits for the wait's own timeout plus the request timeout,
+        // so the gateway's structured reply is received rather than raced.
+        let patience = (capability_id == crate::tools::EVENTS_WAIT_CAPABILITY)
+            .then(|| payload.get("timeout_ms").and_then(Value::as_u64))
+            .flatten();
         let outcome: Result<ResponseEnvelope, ControlError> = (|| {
             let request_id = client.send_versioned(capability_id, capability_version, payload)?;
             loop {
-                let response = client.read()?;
+                let response = match patience {
+                    Some(timeout_ms) => client.read_with_extra_patience(timeout_ms)?,
+                    None => client.read()?,
+                };
                 if response.request_id == request_id {
                     return Ok(response);
                 }
