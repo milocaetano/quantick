@@ -7,6 +7,8 @@
 
 use std::io::{self, BufRead, Write};
 
+use quantick_control::limits::CONTROL_MAX_REQUEST_BYTES;
+
 use serde_json::{Map, Value, json};
 
 use crate::{
@@ -80,17 +82,38 @@ impl McpServer {
 
     /// Run until the input closes. Every outbound frame is one line; the
     /// writer is flushed after each so a client waiting on a reply never
-    /// waits on a buffer.
-    pub fn serve(&mut self, input: impl BufRead, mut output: impl Write) -> io::Result<()> {
-        for line in input.lines() {
-            let line = line?;
-            if let Some(frame) = self.handle_line(&line) {
+    /// waits on a buffer. A line is read into a bounded buffer: one that
+    /// overflows the request limit, or is not UTF-8, is answered with a parse
+    /// error and skipped — it never ends the session and never allocates
+    /// without bound, the same discipline as the control plane's framing.
+    pub fn serve(&mut self, mut input: impl BufRead, mut output: impl Write) -> io::Result<()> {
+        let mut buffer = Vec::with_capacity(4096);
+        loop {
+            buffer.clear();
+            let read = read_bounded_line(&mut input, &mut buffer, CONTROL_MAX_REQUEST_BYTES)?;
+            let frame = match read {
+                LineRead::Closed => return Ok(()),
+                LineRead::TooLong => Some(jsonrpc::failure(
+                    None,
+                    &RpcError::new(
+                        jsonrpc::PARSE_ERROR,
+                        format!("line exceeds {CONTROL_MAX_REQUEST_BYTES} bytes"),
+                    ),
+                )),
+                LineRead::Line => match std::str::from_utf8(&buffer) {
+                    Ok(line) => self.handle_line(line),
+                    Err(_) => Some(jsonrpc::failure(
+                        None,
+                        &RpcError::new(jsonrpc::PARSE_ERROR, "line is not UTF-8"),
+                    )),
+                },
+            };
+            if let Some(frame) = frame {
                 serde_json::to_writer(&mut output, &frame)?;
                 output.write_all(b"\n")?;
                 output.flush()?;
             }
         }
-        Ok(())
     }
 
     fn on_notification(&mut self, method: &str) {
@@ -152,6 +175,56 @@ impl McpServer {
                 METHOD_NOT_FOUND,
                 format!("method not found: {method}"),
             )),
+        }
+    }
+}
+
+enum LineRead {
+    Line,
+    TooLong,
+    Closed,
+}
+
+/// Read one `\n`-terminated line into `buffer`, at most `limit` bytes. A
+/// longer line is consumed to its end and reported as too long, so the next
+/// line starts clean; end of input with nothing read is `Closed`.
+fn read_bounded_line(
+    input: &mut impl BufRead,
+    buffer: &mut Vec<u8>,
+    limit: usize,
+) -> io::Result<LineRead> {
+    let mut too_long = false;
+    loop {
+        let available = input.fill_buf()?;
+        if available.is_empty() {
+            return Ok(if buffer.is_empty() && !too_long {
+                LineRead::Closed
+            } else if too_long {
+                LineRead::TooLong
+            } else {
+                LineRead::Line
+            });
+        }
+        let (chunk, done) = match available.iter().position(|byte| *byte == b'\n') {
+            Some(newline) => (&available[..newline], true),
+            None => (available, false),
+        };
+        let consumed = chunk.len() + usize::from(done);
+        if !too_long {
+            if buffer.len() + chunk.len() > limit {
+                too_long = true;
+                buffer.clear();
+            } else {
+                buffer.extend_from_slice(chunk);
+            }
+        }
+        input.consume(consumed);
+        if done {
+            return Ok(if too_long {
+                LineRead::TooLong
+            } else {
+                LineRead::Line
+            });
         }
     }
 }
@@ -404,6 +477,44 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(all["result"]["structuredContent"]["capability_count"], 2);
+    }
+
+    #[test]
+    fn an_overlong_or_non_utf8_line_is_answered_not_fatal() {
+        let mut server = server_over(FakeLink::default());
+        let mut input = Vec::new();
+        input.extend_from_slice(
+            request(1, "initialize", json!({"protocolVersion": "2025-06-18"})).as_bytes(),
+        );
+        input.push(b'\n');
+        // A line longer than the request limit, then a valid ping, then a
+        // line with a stray non-UTF-8 byte, then another ping.
+        input.extend(std::iter::repeat_n(b'x', CONTROL_MAX_REQUEST_BYTES + 10));
+        input.push(b'\n');
+        input.extend_from_slice(request(2, "ping", json!({})).as_bytes());
+        input.push(b'\n');
+        input.extend_from_slice(
+            b"{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\",\"x\":\"\xff\"}\n",
+        );
+        input.extend_from_slice(request(4, "ping", json!({})).as_bytes());
+        input.push(b'\n');
+        let mut output = Vec::new();
+        server.serve(input.as_slice(), &mut output).unwrap();
+        let frames = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            frames.len(),
+            5,
+            "initialize, too-long error, ping, utf-8 error, ping"
+        );
+        assert_eq!(frames[1]["error"]["code"], jsonrpc::PARSE_ERROR);
+        assert!(frames[1]["id"].is_null());
+        assert_eq!(frames[2]["id"], 2);
+        assert_eq!(frames[3]["error"]["code"], jsonrpc::PARSE_ERROR);
+        assert_eq!(frames[4]["id"], 4);
     }
 
     #[test]

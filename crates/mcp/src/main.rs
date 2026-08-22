@@ -110,6 +110,16 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
             other => return Err(format!("unknown argument `{other}`")),
         }
     }
+    // A flag of the other mode is a mistake worth naming, not ignoring.
+    match mode {
+        "setup" if instance.is_some() || instances_dir.is_some() => {
+            return Err("setup takes --client and --profile only".to_owned());
+        }
+        "serve" if client.is_some() => {
+            return Err("--client belongs to `setup`".to_owned());
+        }
+        _ => {}
+    }
     if !AVAILABLE_PROFILES.contains(&profile.as_str()) {
         return Err(format!(
             "profile `{profile}` is not available in this release; available: {}",

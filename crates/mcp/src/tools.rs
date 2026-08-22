@@ -41,7 +41,8 @@ pub const DIAGNOSTICS_CAPABILITY: &str = "health.diagnostics.read";
 const FIRST_CAPABILITY_VERSION: u32 = 1;
 
 const INSTANCE_ID_PROPERTY: &str = "instance_id";
-const SEARCH_QUERY_MAX_BYTES: usize = 128;
+/// Counted in characters, as JSON Schema's `maxLength` is.
+const SEARCH_QUERY_MAX_CHARS: usize = 128;
 
 /// The committed contract documents these tools embed, so the tool list
 /// describes exactly what the application validates. Regenerated and
@@ -56,6 +57,12 @@ const SNAPSHOT_CAPTURE_SCHEMA: &str =
     include_str!("../../../schemas/control/observer-snapshot-capture-v1.schema.json");
 const CHART_WINDOW_PAGE_SCHEMA: &str =
     include_str!("../../../schemas/control/observer-chart-window-page-v1.schema.json");
+/// The contract's error document: every tool with an output schema admits
+/// it as the error branch, so a tool execution error's structured content
+/// validates against the declared schema. MCP clients validate
+/// `structuredContent` whenever it is present, error or not.
+const CONTROL_ERROR_SCHEMA: &str =
+    include_str!("../../../schemas/control/control-error-v1.schema.json");
 
 /// The tool list for one profile ceiling. The named reads are read-only
 /// whatever the ceiling; `quantick_invoke` takes the conservative hints of
@@ -105,7 +112,7 @@ pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
         Tool {
             name: GET_CHART_WINDOW.to_owned(),
             title: "Read a page of closed bars from one chart pane".to_owned(),
-            description: "A paginated, append-only read of closed bars for one tab and pane: OHLC, volume, delta, trade count and timestamps as exact decimal strings. The first call sends a query; later pages send the cursor it returned. The in-progress bar belongs to the snapshot's chart.summary scope, not to this series.".to_owned(),
+            description: "A paginated, append-only read of closed bars for one tab and pane: OHLC, volume, delta, trade count and timestamps as exact decimal strings. The first call sends a query; later pages send the same query plus the cursor it returned. The in-progress bar belongs to the snapshot's chart.summary scope, not to this series.".to_owned(),
             input_schema: with_instance_routing(parse_schema(CHART_WINDOW_INPUT_SCHEMA)),
             output_schema: Some(capability_output_schema(parse_schema(CHART_WINDOW_PAGE_SCHEMA))),
             annotations: ToolAnnotations::observer_read("Chart window"),
@@ -362,10 +369,12 @@ fn search(
 fn optional_string(arguments: &Map<String, Value>, key: &str) -> Result<Option<String>, RpcError> {
     match arguments.get(key) {
         None | Some(Value::Null) => Ok(None),
-        Some(Value::String(text)) if text.len() <= SEARCH_QUERY_MAX_BYTES => Ok(Some(text.clone())),
+        Some(Value::String(text)) if text.chars().count() <= SEARCH_QUERY_MAX_CHARS => {
+            Ok(Some(text.clone()))
+        }
         Some(Value::String(_)) => Err(RpcError::new(
             INVALID_PARAMS,
-            format!("{key} is at most {SEARCH_QUERY_MAX_BYTES} bytes"),
+            format!("{key} is at most {SEARCH_QUERY_MAX_CHARS} characters"),
         )),
         Some(_) => Err(RpcError::new(INVALID_PARAMS, format!("{key} is a string"))),
     }
@@ -420,12 +429,12 @@ fn search_schema() -> Value {
             INSTANCE_ID_PROPERTY: instance_id_schema(),
             "query": {
                 "type": "string",
-                "maxLength": SEARCH_QUERY_MAX_BYTES,
+                "maxLength": SEARCH_QUERY_MAX_CHARS,
                 "description": "Case-insensitive substring matched against capability and scope IDs, titles, descriptions and modules. Omit to list everything."
             },
             "module": {
                 "type": "string",
-                "maxLength": SEARCH_QUERY_MAX_BYTES,
+                "maxLength": SEARCH_QUERY_MAX_CHARS,
                 "description": "Restrict to one owning module ID, such as chart or health."
             }
         },
@@ -494,20 +503,21 @@ fn describe_output_schema() -> Value {
         }),
     );
     definitions.insert("DescribeResult".to_owned(), described);
+    // The capability response wraps the describe result like every other
+    // forwarded capability result does; the error branch is the same.
+    definitions.insert(
+        "CapabilityResponse".to_owned(),
+        response_wrapper_schema(json!({ "$ref": "#/$defs/DescribeResult" })),
+    );
+    add_error_branch(&mut definitions);
     json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$defs": definitions,
         "oneOf": [
             { "$ref": "#/$defs/InstanceList" },
-            { "$ref": "#/$defs/CapabilityResponse" }
+            { "$ref": "#/$defs/CapabilityResponse" },
+            { "$ref": "#/$defs/ErrorResponse" }
         ]
-    })
-    .pipe(|mut schema| {
-        // The capability response wraps the describe result like every other
-        // forwarded capability result does.
-        let wrapper = response_wrapper_schema(json!({ "$ref": "#/$defs/DescribeResult" }));
-        schema["$defs"]["CapabilityResponse"] = wrapper;
-        schema
     })
 }
 
@@ -521,10 +531,45 @@ fn capability_output_schema(capability_result: Value) -> Value {
         object.remove("$schema");
     }
     definitions.insert("CapabilityResult".to_owned(), result);
-    let mut schema = response_wrapper_schema(json!({ "$ref": "#/$defs/CapabilityResult" }));
-    schema["$schema"] = json!("https://json-schema.org/draft/2020-12/schema");
-    schema["$defs"] = Value::Object(definitions.into_iter().collect());
-    schema
+    definitions.insert(
+        "CapabilityResponse".to_owned(),
+        response_wrapper_schema(json!({ "$ref": "#/$defs/CapabilityResult" })),
+    );
+    add_error_branch(&mut definitions);
+    json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": definitions,
+        "oneOf": [
+            { "$ref": "#/$defs/CapabilityResponse" },
+            { "$ref": "#/$defs/ErrorResponse" }
+        ]
+    })
+}
+
+/// The error branch of every output schema: `{ "error": <control error> }`,
+/// the shape [`ToolResult::control_error`] produces. The control error's own
+/// definitions are hoisted beside the capability's; the names do not collide
+/// because both come from the same contract generator.
+fn add_error_branch(definitions: &mut BTreeMap<String, Value>) {
+    let error = parse_schema(CONTROL_ERROR_SCHEMA);
+    for (name, schema) in definitions_of(&error) {
+        definitions.entry(name).or_insert(schema);
+    }
+    let mut error_body = error;
+    if let Some(object) = error_body.as_object_mut() {
+        object.remove("$defs");
+        object.remove("$schema");
+    }
+    definitions.insert("ControlError".to_owned(), error_body);
+    definitions.insert(
+        "ErrorResponse".to_owned(),
+        json!({
+            "type": "object",
+            "properties": { "error": { "$ref": "#/$defs/ControlError" } },
+            "required": ["error"],
+            "additionalProperties": false
+        }),
+    );
 }
 
 fn response_wrapper_schema(result: Value) -> Value {
@@ -567,14 +612,6 @@ fn definitions_of(document: &Value) -> BTreeMap<String, Value> {
         .unwrap_or_default()
 }
 
-trait Pipe: Sized {
-    fn pipe<T>(self, apply: impl FnOnce(Self) -> T) -> T {
-        apply(self)
-    }
-}
-
-impl Pipe for Value {}
-
 #[cfg(test)]
 mod tests {
     use quantick_control::schema::validate_schema;
@@ -596,6 +633,22 @@ mod tests {
             if let Some(output) = &tool.output_schema {
                 validate_schema(output).unwrap_or_else(|error| {
                     panic!("{} output schema is invalid: {error}", tool.name)
+                });
+                // A tool execution error carries structured content too, and
+                // clients validate it against the same schema: the error
+                // branch must admit it.
+                let error = ToolResult::control_error(
+                    &quantick_control::error::ControlError::invalid_request("nope"),
+                );
+                quantick_control::schema::validate_instance(
+                    output,
+                    error.structured_content.as_ref().unwrap(),
+                )
+                .unwrap_or_else(|problem| {
+                    panic!(
+                        "{} output schema refuses its error branch: {problem}",
+                        tool.name
+                    )
                 });
             }
         }

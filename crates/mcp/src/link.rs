@@ -20,7 +20,7 @@ use quantick_control::{
 };
 use quantick_control_local::{
     client::{ConnectOptions, LiveInstances, LocalClient, discover, discover_in},
-    discovery::DiscoveryError,
+    discovery::{DiscoveryError, discover_descriptors, discover_descriptors_in},
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -116,13 +116,37 @@ impl LocalLink {
             return Ok(id.clone());
         }
         // Without a named instance the contract's "exactly one live instance"
-        // rule is about liveness now, so every such call discovers again; a
-        // cached connection could hide a second window opened since.
+        // rule is about liveness now: a cached connection could hide a second
+        // window opened since. Re-reading the descriptors is cheap and tells
+        // whether the world still holds exactly the instance the cache holds;
+        // only when it does not is the full discovery — connect and handshake
+        // against every candidate — worth its cost.
+        if wanted.is_none()
+            && let Some(only) = self.sole_advertised_instance()
+            && self.clients.contains_key(&only)
+        {
+            return Ok(only);
+        }
         let live = self.discover()?;
         let client = live.select(wanted.as_ref())?;
         let id = client.descriptor().instance_id.clone();
         self.clients.insert(id.clone(), client);
         Ok(id)
+    }
+
+    /// The instance ID of the one advertised descriptor, when exactly one is
+    /// advertised and readable; `None` otherwise (including when discovery
+    /// itself fails, which the full path then reports properly).
+    fn sole_advertised_instance(&self) -> Option<InstanceId> {
+        let report = match &self.directory {
+            Some(directory) => discover_descriptors_in(directory),
+            None => discover_descriptors(),
+        }
+        .ok()?;
+        match report.candidates.as_slice() {
+            [only] => Some(only.descriptor.instance_id.clone()),
+            _ => None,
+        }
     }
 }
 

@@ -82,12 +82,18 @@ pub fn parse(line: &str) -> Result<Message, RpcError> {
         Some(method) => {
             let params = object.get("params").cloned();
             match id {
-                Some(id) if !id.is_null() => Ok(Message::Request {
+                // MCP forbids a null id; answering such a request as a
+                // notification would leave the client waiting forever.
+                Some(Value::Null) => Err(RpcError::new(
+                    INVALID_REQUEST,
+                    "a request id must not be null",
+                )),
+                Some(id) => Ok(Message::Request {
                     id,
                     method: method.to_owned(),
                     params,
                 }),
-                _ => Ok(Message::Notification {
+                None => Ok(Message::Notification {
                     method: method.to_owned(),
                     params,
                 }),
@@ -162,6 +168,12 @@ mod tests {
         );
         assert_eq!(
             parse(r#"{"jsonrpc":"2.0"}"#).unwrap_err().code,
+            INVALID_REQUEST
+        );
+        assert_eq!(
+            parse(r#"{"jsonrpc":"2.0","id":null,"method":"ping"}"#)
+                .unwrap_err()
+                .code,
             INVALID_REQUEST
         );
     }
