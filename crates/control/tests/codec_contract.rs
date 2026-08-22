@@ -209,3 +209,50 @@ fn the_published_request_schema_refuses_what_the_codec_refuses() {
     );
     validate_instance(&schema, &valid).unwrap();
 }
+
+#[test]
+fn the_handshake_frames_have_typed_doors_of_their_own() {
+    // The generic decoder went private with the bypass it was; the first
+    // frames of a connection still need a way in, and it is typed like the
+    // envelopes' so nothing reaches a handshake type unread by its own door.
+    use quantick_control::handshake::{
+        BearerToken, HandshakeRequest, HandshakeResponse, ProtocolLimits, ProtocolVersionRange,
+    };
+    use quantick_control::id::{InstanceId, PermissionId, ProcessNonce, ProfileId};
+    use std::collections::BTreeSet;
+
+    let codec = BoundedCodec::default();
+    let request = HandshakeRequest {
+        protocol_versions: ProtocolVersionRange::new(1, 1).unwrap(),
+        instance_id: InstanceId::from_bytes([1; 16]),
+        client_name: "typed door".to_owned(),
+        client_version: "1.0.0".to_owned(),
+        bearer_token: BearerToken::from_bytes([7; 32]),
+        requested_profile: ProfileId::new("observer").unwrap(),
+        requested_scopes: BTreeSet::from([PermissionId::new("observe").unwrap()]),
+    };
+    let frame = codec.encode(FrameRole::Request, &request).unwrap();
+    assert_eq!(
+        codec.read_handshake_request(&mut frame.as_slice()).unwrap(),
+        request
+    );
+
+    let response = HandshakeResponse {
+        protocol_version: 1,
+        instance_id: InstanceId::from_bytes([1; 16]),
+        process_nonce: ProcessNonce::from_bytes([2; 16]),
+        connection_id: ConnectionId::from_bytes([3; 16]),
+        application_version: "0.1.0".to_owned(),
+        application_commit: "abc123".to_owned(),
+        effective_profile: ProfileId::new("observer").unwrap(),
+        effective_scopes: BTreeSet::from([PermissionId::new("observe").unwrap()]),
+        effective_limits: ProtocolLimits::default(),
+    };
+    let frame = codec.encode(FrameRole::Response, &response).unwrap();
+    assert_eq!(
+        codec
+            .read_handshake_response(&mut frame.as_slice())
+            .unwrap(),
+        response
+    );
+}

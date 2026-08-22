@@ -20,6 +20,10 @@ use crate::{
 };
 
 const TOKEN_BASE64URL_LENGTH: usize = 43;
+/// Room for `decode_slice`: the engine's length estimate rounds a partial
+/// quad up to three bytes, so the buffer must exceed the token by that much;
+/// the decoded length is checked exactly afterwards.
+const TOKEN_DECODE_BUFFER_BYTES: usize = CONTROL_TOKEN_BYTES + 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ProtocolVersionRange {
@@ -90,18 +94,20 @@ impl BearerToken {
         if encoded.len() != TOKEN_BASE64URL_LENGTH {
             return Err(BearerTokenError);
         }
-        // Every intermediate copy of the secret is wrapped, because `Drop` on
-        // the token itself only clears the copy the token owns. The decoded
-        // `Vec` and the re-encoded comparison string are both full plaintext
-        // copies, and both used to be dropped in the clear.
-        let bytes = Zeroizing::new(
-            URL_SAFE_NO_PAD
-                .decode(encoded)
-                .map_err(|_| BearerTokenError)?,
-        );
-        let bytes: [u8; CONTROL_TOKEN_BYTES] =
-            bytes.as_slice().try_into().map_err(|_| BearerTokenError)?;
-        let token = Self(bytes);
+        // Every copy of the secret lives in a zeroizing owner: the decode
+        // buffer below and the token itself. Decoding into a `Vec` and moving
+        // through an intermediate array would each leave a plaintext copy to
+        // be dropped in the clear; decoding straight into a wrapped buffer and
+        // copying once into the token leaves none.
+        let mut decoded = Zeroizing::new([0u8; TOKEN_DECODE_BUFFER_BYTES]);
+        let written = URL_SAFE_NO_PAD
+            .decode_slice(encoded, &mut decoded[..])
+            .map_err(|_| BearerTokenError)?;
+        if written != CONTROL_TOKEN_BYTES {
+            return Err(BearerTokenError);
+        }
+        let mut token = Self([0u8; CONTROL_TOKEN_BYTES]);
+        token.0.copy_from_slice(&decoded[..CONTROL_TOKEN_BYTES]);
         // Reject a non-canonical encoding that decodes to the same bytes. The
         // comparison runs over the wrapped re-encoding so the check costs no
         // lingering copy of its own.

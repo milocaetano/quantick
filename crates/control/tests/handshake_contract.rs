@@ -33,6 +33,8 @@ impl ProfileAuthority for OverlappingProfiles {
                 Self::permission("read"),
                 Self::permission("trade"),
             ])),
+            // Nested inside `trader`: the ordinary least-privilege request.
+            "reader" => Some(BTreeSet::from([Self::permission("read")])),
             _ => None,
         }
     }
@@ -93,14 +95,15 @@ fn overlapping_profile_ceilings_never_grant_what_the_requested_profile_forbids()
 #[test]
 fn a_narrower_requested_profile_still_downscopes_a_broader_grant() {
     // The nested case has to keep working: asking for less than the grant
-    // allows is the ordinary least-privilege path, not the awkward one.
+    // allows is the ordinary least-privilege path, not the awkward one, and
+    // the connection is reported under the narrower profile it asked for.
     let (mut request, mut grant) = overlapping_pair();
-    request.requested_profile = ProfileId::new("trader").unwrap();
+    request.requested_profile = ProfileId::new("reader").unwrap();
     grant.profile_ceiling = ProfileId::new("trader").unwrap();
     request.requested_scopes = BTreeSet::from([PermissionId::new("read").unwrap()]);
 
     let response = accept_handshake(&request, &grant, &OverlappingProfiles).unwrap();
-    assert_eq!(response.effective_profile.as_str(), "trader");
+    assert_eq!(response.effective_profile.as_str(), "reader");
     assert_eq!(
         response.effective_scopes,
         BTreeSet::from([PermissionId::new("read").unwrap()])

@@ -6,7 +6,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 use crate::{
-    handshake::ProtocolLimits,
+    handshake::{HandshakeRequest, HandshakeResponse, ProtocolLimits},
     limits::{
         CONTROL_MAX_JSON_DEPTH, CONTROL_MAX_REQUEST_BYTES, CONTROL_MAX_RESPONSE_BYTES,
         CONTROL_MAX_STRING_BYTES, CONTROL_PROTOCOL_MAX_FRAME_BYTES,
@@ -110,7 +110,8 @@ impl BoundedCodec {
     /// `validate()` live on the typed entry points below. While this was
     /// public, `read::<RequestEnvelope>` was a validation-free door to the same
     /// type `read_request` guards, sitting directly above it and looking like
-    /// the general case. The four typed methods are the whole wire surface, so
+    /// the general case. The typed entry points — the envelope readers and
+    /// decoders, and the handshake readers — are the whole wire surface, so
     /// nothing is lost by making the bypass unreachable rather than merely
     /// discouraged.
     fn read<T: DeserializeOwned>(
@@ -120,6 +121,26 @@ impl BoundedCodec {
     ) -> Result<T, CodecError> {
         let payload = self.read_payload(role, reader)?;
         self.decode_payload(&payload)
+    }
+
+    /// First client frame on a connection: the handshake request, read under
+    /// whatever ceiling this codec was built with (a host reads it with a
+    /// pre-authentication codec bounded tighter than the envelope codec).
+    pub fn read_handshake_request(
+        &self,
+        reader: &mut impl Read,
+    ) -> Result<HandshakeRequest, CodecError> {
+        self.read(FrameRole::Request, reader)
+    }
+
+    /// First server frame on an accepted connection: the handshake response.
+    /// The caller checks it against its own request with
+    /// [`HandshakeResponse::validate_for`].
+    pub fn read_handshake_response(
+        &self,
+        reader: &mut impl Read,
+    ) -> Result<HandshakeResponse, CodecError> {
+        self.read(FrameRole::Response, reader)
     }
 
     pub fn read_request(&self, reader: &mut impl Read) -> Result<RequestEnvelope, CodecError> {

@@ -21,13 +21,27 @@ pub fn validate_schema(schema: &Value) -> Result<(), SchemaError> {
         return Err(SchemaError::UnsupportedDialect(dialect.to_owned()));
     }
     reject_external_references(schema)?;
-    reject_backtracking_patterns(schema)?;
     jsonschema::draft202012::meta::validate(schema)
         .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
-    jsonschema::draft202012::options()
-        .build(schema)
-        .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
+    compile(schema)?;
     Ok(())
+}
+
+/// Compile one schema with the options every control-plane validator uses.
+///
+/// Patterns run under the linear-time `regex` engine only. Left to its default,
+/// `jsonschema` hands lookaround and backreferences to a backtracking engine and
+/// then runs them against attacker-supplied payloads; a module registering a
+/// capability chooses its patterns, and the host pays for them. Selecting the
+/// linear engine here makes `build` refuse such a pattern at the door — on the
+/// pattern the validator actually runs, after the crate's own ECMA-to-Rust
+/// translation — so the guard cannot drift from the engine, and a plain regex
+/// syntax error is reported as the invalid schema it is.
+fn compile(schema: &Value) -> Result<jsonschema::Validator, SchemaError> {
+    jsonschema::draft202012::options()
+        .with_pattern_options(jsonschema::PatternOptions::regex())
+        .build(schema)
+        .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))
 }
 
 /// Check one instance against a schema that has already passed
@@ -40,9 +54,7 @@ pub fn validate_schema(schema: &Value) -> Result<(), SchemaError> {
 /// request, and a malformed schema still fails below when the validator refuses
 /// to build.
 pub fn validate_instance(schema: &Value, instance: &Value) -> Result<(), SchemaError> {
-    let validator = jsonschema::draft202012::options()
-        .build(schema)
-        .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
+    let validator = compile(schema)?;
     validator.validate(instance).map_err(|error| {
         SchemaError::InvalidInstance(format!(
             "instance at {} does not satisfy schema keyword {}",
@@ -50,50 +62,6 @@ pub fn validate_instance(schema: &Value, instance: &Value) -> Result<(), SchemaE
             error.kind().keyword()
         ))
     })
-}
-
-/// Refuse any `pattern` a linear-time engine cannot run.
-///
-/// `jsonschema` compiles patterns with the `regex` crate where it can and falls
-/// back to `fancy-regex` where it cannot — for lookaround and backreferences,
-/// which are exactly the constructs that make matching exponential. A module
-/// registering a capability chooses those patterns, and the host then runs them
-/// against attacker-supplied payloads, so `^(?=(a+)+b)` in a descriptor well
-/// under the descriptor size cap is an unbounded CPU stall with no timeout
-/// around it.
-///
-/// The test is the engine itself rather than a blacklist of constructs: if the
-/// linear-time engine can compile the pattern, matching it is bounded by input
-/// length, whatever the pattern looks like.
-fn reject_backtracking_patterns(value: &Value) -> Result<(), SchemaError> {
-    match value {
-        Value::Array(values) => {
-            for value in values {
-                reject_backtracking_patterns(value)?;
-            }
-        }
-        Value::Object(values) => {
-            if let Some(pattern) = values.get("pattern").and_then(Value::as_str) {
-                require_linear_time_pattern(pattern)?;
-            }
-            if let Some(properties) = values.get("patternProperties").and_then(Value::as_object) {
-                for pattern in properties.keys() {
-                    require_linear_time_pattern(pattern)?;
-                }
-            }
-            for value in values.values() {
-                reject_backtracking_patterns(value)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn require_linear_time_pattern(pattern: &str) -> Result<(), SchemaError> {
-    regex::Regex::new(pattern)
-        .map(|_| ())
-        .map_err(|_| SchemaError::BacktrackingPattern(pattern.to_owned()))
 }
 
 fn reject_external_references(value: &Value) -> Result<(), SchemaError> {
@@ -476,7 +444,6 @@ fn string_set(value: Option<&Value>) -> BTreeSet<String> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SchemaError {
     ExternalReference(String),
-    BacktrackingPattern(String),
     UnsupportedDialect(String),
     InvalidSchema(String),
     InvalidInstance(String),
@@ -491,13 +458,6 @@ impl fmt::Display for SchemaError {
                 write!(
                     formatter,
                     "external schema reference is forbidden: {reference}"
-                )
-            }
-            Self::BacktrackingPattern(pattern) => {
-                write!(
-                    formatter,
-                    "schema pattern needs a backtracking regex engine, which has no bounded \
-                     running time: {pattern}"
                 )
             }
             Self::UnsupportedDialect(dialect) => {
@@ -555,13 +515,14 @@ mod tests {
     #[test]
     fn patterns_that_need_a_backtracking_engine_are_refused_at_the_door() {
         // The classic catastrophic case: matching `^(?=(a+)+b)` against a
-        // string of 'a's is exponential. `jsonschema` hands lookaround and
-        // backreferences to `fancy-regex`, then runs the result against every
-        // request payload with no timeout around it, so a module could stall
-        // the host with a descriptor well under the size cap.
+        // string of 'a's is exponential. Left to its default engine
+        // `jsonschema` would compile it and run it against every request
+        // payload, so a module could stall the host with a descriptor well
+        // under the size cap. With the linear-time engine selected, `build`
+        // refuses it as an invalid schema.
         assert!(matches!(
             validate_schema(&json!({"type": "string", "pattern": "^(?=(a+)+b)"})),
-            Err(SchemaError::BacktrackingPattern(_))
+            Err(SchemaError::InvalidSchema(_))
         ));
 
         // Nested and `patternProperties` keys are patterns too.
@@ -570,15 +531,26 @@ mod tests {
                 "type": "object",
                 "properties": {"inner": {"type": "string", "pattern": r"(\w)\1"}}
             })),
-            Err(SchemaError::BacktrackingPattern(_))
+            Err(SchemaError::InvalidSchema(_))
         ));
         assert!(matches!(
             validate_schema(&json!({
                 "type": "object",
                 "patternProperties": {"^(?!x)": {"type": "string"}}
             })),
-            Err(SchemaError::BacktrackingPattern(_))
+            Err(SchemaError::InvalidSchema(_))
         ));
+
+        // A pattern in a data position is data, not a pattern: the engine, not
+        // a shape-based walk, decides what is refused.
+        assert!(
+            validate_schema(&json!({
+                "type": "object",
+                "examples": [{"pattern": "(?=x)"}],
+                "default": {"pattern": "(a+)+\\1"}
+            }))
+            .is_ok()
+        );
 
         // The guard asks the linear-time engine, not a blacklist of characters,
         // so a busy-looking pattern it can run stays allowed. Nested alternation

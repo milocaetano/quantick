@@ -453,32 +453,38 @@ pub struct FakeHost {
 }
 
 impl FakeHost {
-    /// Make room for one more idempotency record.
+    /// Drop idempotency records older than the retention window, measured on
+    /// the host's own timeline rather than a wall clock, so the store stays as
+    /// deterministic and replayable as the rest of the crate.
     ///
-    /// Two bounds apply together, and neither is sufficient alone. Records
-    /// older than the retention window are dropped, because a replay that
-    /// arrives a day late is not the retry the guarantee exists for. Capacity
-    /// is then enforced by dropping the oldest surviving records, because a
-    /// busy session reaches the entry cap long before anything ages out.
-    ///
-    /// The honest consequence, which a real host has to state too: the
-    /// guarantee covers the most recent [`CONTROL_IDEMPOTENCY_MAX_ENTRIES`]
-    /// keys within [`CONTROL_IDEMPOTENCY_RETENTION_MS`]. A retry outside that
-    /// window re-executes rather than replaying. The previous behaviour of
-    /// refusing every new key once full is worse in both directions: it never
-    /// recovered, and it reported the refusal as retryable.
-    fn reclaim_idempotency(&mut self, now_unix_ms: i64) {
+    /// This runs before the replay lookup, so an expired key re-executes
+    /// instead of replaying a stale outcome: a retry that arrives a day late
+    /// is not the retry the guarantee exists for. The honest consequence,
+    /// which a real host has to state too: the guarantee covers the most
+    /// recent [`CONTROL_IDEMPOTENCY_MAX_ENTRIES`] keys within
+    /// [`CONTROL_IDEMPOTENCY_RETENTION_MS`].
+    fn expire_idempotency(&mut self, now_unix_ms: i64) {
         self.idempotency.retain(|_, record| {
             // A record stamped in the future reads as age zero rather than as
             // expired, so a clock that steps backwards cannot flush the store.
             let age_ms = now_unix_ms.saturating_sub(record.stored_at_unix_ms).max(0);
             u64::try_from(age_ms).unwrap_or(u64::MAX) < CONTROL_IDEMPOTENCY_RETENTION_MS
         });
+    }
+
+    /// Make room for one more idempotency record by evicting the oldest
+    /// survivors, because a busy session reaches the entry cap long before
+    /// anything ages out. Called only when a record is about to be inserted,
+    /// so a reply that is then refused never costs an older key its guarantee.
+    /// The previous behaviour of refusing every new key once full was worse in
+    /// both directions: it never recovered, and it reported the refusal as
+    /// retryable.
+    fn make_room_for_idempotency_record(&mut self) {
         while self.idempotency.len() >= CONTROL_IDEMPOTENCY_MAX_ENTRIES {
             let Some(oldest) = self
                 .idempotency
                 .iter()
-                .min_by_key(|(scope, record)| (record.stored_at_unix_ms, (*scope).clone()))
+                .min_by_key(|(scope, record)| (record.stored_at_unix_ms, *scope))
                 .map(|(scope, _)| scope.clone())
             else {
                 break;
@@ -640,6 +646,9 @@ impl FakeHost {
             Ok(context) => context,
             Err(error) => return failure(error),
         };
+        if idempotency.is_some() {
+            self.expire_idempotency(request_at_unix_ms);
+        }
         if let Some((scope, input_digest)) = &idempotency
             && let Some(record) = self.idempotency.get(scope)
         {
@@ -655,9 +664,6 @@ impl FakeHost {
                     ResponseOutcome::Failure { error } => Err(error.clone()),
                 },
             );
-        }
-        if idempotency.is_some() {
-            self.reclaim_idempotency(request_at_unix_ms);
         }
 
         let state_before = (self.counter, self.fake_revision);
@@ -698,6 +704,7 @@ impl FakeHost {
                     false,
                 ));
             }
+            self.make_room_for_idempotency_record();
             self.idempotency.insert(
                 scope,
                 IdempotencyRecord {

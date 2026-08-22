@@ -15,7 +15,7 @@ fn generated_public_contracts_match_committed_files() {
     // documents. Regenerating by hand is how a schema and its validator drift
     // apart: the diff is what gets reviewed, and it still has to be reviewed,
     // but producing it should not be transcription work.
-    let update = std::env::var_os("QUANTICK_UPDATE_SCHEMAS").is_some();
+    let update = std::env::var_os("QUANTICK_UPDATE_SCHEMAS").is_some_and(|value| value == "1");
     let mut rewritten = Vec::new();
 
     for document in public_contract_documents() {
