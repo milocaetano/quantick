@@ -20,6 +20,10 @@ use crate::{
 };
 
 const TOKEN_BASE64URL_LENGTH: usize = 43;
+/// Room for `decode_slice`: the engine's length estimate rounds a partial
+/// quad up to three bytes, so the buffer must exceed the token by that much;
+/// the decoded length is checked exactly afterwards.
+const TOKEN_DECODE_BUFFER_BYTES: usize = CONTROL_TOKEN_BYTES + 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ProtocolVersionRange {
@@ -90,18 +94,33 @@ impl BearerToken {
         if encoded.len() != TOKEN_BASE64URL_LENGTH {
             return Err(BearerTokenError);
         }
-        let bytes = URL_SAFE_NO_PAD
-            .decode(encoded)
+        // Every copy of the secret lives in a zeroizing owner: the decode
+        // buffer below and the token itself. Decoding into a `Vec` and moving
+        // through an intermediate array would each leave a plaintext copy to
+        // be dropped in the clear; decoding straight into a wrapped buffer and
+        // copying once into the token leaves none.
+        let mut decoded = Zeroizing::new([0u8; TOKEN_DECODE_BUFFER_BYTES]);
+        let written = URL_SAFE_NO_PAD
+            .decode_slice(encoded, &mut decoded[..])
             .map_err(|_| BearerTokenError)?;
-        let bytes: [u8; CONTROL_TOKEN_BYTES] = bytes.try_into().map_err(|_| BearerTokenError)?;
-        if URL_SAFE_NO_PAD.encode(bytes) != encoded {
+        if written != CONTROL_TOKEN_BYTES {
             return Err(BearerTokenError);
         }
-        Ok(Self(bytes))
+        let mut token = Self([0u8; CONTROL_TOKEN_BYTES]);
+        token.0.copy_from_slice(&decoded[..CONTROL_TOKEN_BYTES]);
+        // Reject a non-canonical encoding that decodes to the same bytes. The
+        // comparison runs over the wrapped re-encoding so the check costs no
+        // lingering copy of its own.
+        if *token.to_base64url() != *encoded {
+            return Err(BearerTokenError);
+        }
+        Ok(token)
     }
 
-    pub fn to_base64url(&self) -> String {
-        URL_SAFE_NO_PAD.encode(self.0)
+    /// The canonical encoding, wrapped so the caller cannot accidentally keep
+    /// a plaintext copy of the secret alive.
+    pub fn to_base64url(&self) -> Zeroizing<String> {
+        Zeroizing::new(URL_SAFE_NO_PAD.encode(self.0))
     }
 
     fn constant_time_eq(&self, other: &Self) -> bool {
@@ -134,7 +153,7 @@ impl Serialize for BearerToken {
     where
         S: Serializer,
     {
-        let encoded = Zeroizing::new(self.to_base64url());
+        let encoded = self.to_base64url();
         serializer.serialize_str(encoded.as_str())
     }
 }
@@ -176,7 +195,7 @@ pub struct ProtocolLimits {
     pub default_page_items: usize,
     #[schemars(range(min = 1, max = CONTROL_MAX_PAGE_ITEMS))]
     pub max_page_items: usize,
-    #[schemars(range(min = 1))]
+    #[schemars(range(min = 1, max = CONTROL_REQUEST_TIMEOUT_MS))]
     pub request_timeout_ms: u64,
     #[schemars(range(min = 1, max = CONTROL_WAIT_TIMEOUT_MAX_MS))]
     pub wait_timeout_max_ms: u64,
@@ -216,6 +235,7 @@ impl ProtocolLimits {
             && self.default_page_items <= self.max_page_items
             && self.max_page_items <= CONTROL_MAX_PAGE_ITEMS
             && self.request_timeout_ms > 0
+            && self.request_timeout_ms <= CONTROL_REQUEST_TIMEOUT_MS
             && self.wait_timeout_max_ms > 0
             && self.wait_timeout_max_ms <= CONTROL_WAIT_TIMEOUT_MAX_MS;
         if !valid {
@@ -384,10 +404,30 @@ pub fn accept_handshake(
         ));
     }
 
-    let (effective_profile, effective_ceiling) = if requested_ceiling.is_subset(&grant_ceiling) {
-        (request.requested_profile.clone(), requested_ceiling)
+    // Neither side may widen the other. Taking one ceiling wholesale hands the
+    // client a permission the discarded ceiling forbids: a client asking to be
+    // capped at a profile without `trade`, against a grant that has it, would
+    // be handed `trade` precisely because the two only overlap. The
+    // intersection is the only combination that honours both caps.
+    let effective_ceiling: BTreeSet<PermissionId> = requested_ceiling
+        .intersection(&grant_ceiling)
+        .cloned()
+        .collect();
+    // The reported profile has to name the authority the connection actually
+    // holds, because it is what the connected-clients panel shows a human.
+    // Profiles are built nested, so one of the two always equals the
+    // intersection; an incomparable pair is a configuration error rather than
+    // something to resolve silently under a label that overstates it.
+    let effective_profile = if requested_ceiling == effective_ceiling {
+        request.requested_profile.clone()
+    } else if grant_ceiling == effective_ceiling {
+        grant.profile_ceiling.clone()
     } else {
-        (grant.profile_ceiling.clone(), grant_ceiling)
+        return Err(ControlError::known(
+            codes::PERMISSION_DENIED,
+            "requested and granted profiles are incomparable, so no profile names the effective authority",
+            false,
+        ));
     };
     let effective_scopes = request
         .requested_scopes

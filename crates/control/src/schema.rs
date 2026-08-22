@@ -23,17 +23,38 @@ pub fn validate_schema(schema: &Value) -> Result<(), SchemaError> {
     reject_external_references(schema)?;
     jsonschema::draft202012::meta::validate(schema)
         .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
-    jsonschema::draft202012::options()
-        .build(schema)
-        .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
+    compile(schema)?;
     Ok(())
 }
 
-pub fn validate_instance(schema: &Value, instance: &Value) -> Result<(), SchemaError> {
-    validate_schema(schema)?;
-    let validator = jsonschema::draft202012::options()
+/// Compile one schema with the options every control-plane validator uses.
+///
+/// Patterns run under the linear-time `regex` engine only. Left to its default,
+/// `jsonschema` hands lookaround and backreferences to a backtracking engine and
+/// then runs them against attacker-supplied payloads; a module registering a
+/// capability chooses its patterns, and the host pays for them. Selecting the
+/// linear engine here makes `build` refuse such a pattern at the door — on the
+/// pattern the validator actually runs, after the crate's own ECMA-to-Rust
+/// translation — so the guard cannot drift from the engine, and a plain regex
+/// syntax error is reported as the invalid schema it is.
+fn compile(schema: &Value) -> Result<jsonschema::Validator, SchemaError> {
+    jsonschema::draft202012::options()
+        .with_pattern_options(jsonschema::PatternOptions::regex())
         .build(schema)
-        .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
+        .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))
+}
+
+/// Check one instance against a schema that has already passed
+/// [`validate_schema`].
+///
+/// The schema is deliberately not re-validated here. Registration is the door:
+/// [`crate::registry::ControlRegistry`] validates every descriptor schema once,
+/// which is also where the pattern and reference guards belong. Repeating that
+/// per instance meta-validated and compiled the same schema twice more on every
+/// request, and a malformed schema still fails below when the validator refuses
+/// to build.
+pub fn validate_instance(schema: &Value, instance: &Value) -> Result<(), SchemaError> {
+    let validator = compile(schema)?;
     validator.validate(instance).map_err(|error| {
         SchemaError::InvalidInstance(format!(
             "instance at {} does not satisfy schema keyword {}",
@@ -489,6 +510,60 @@ mod tests {
         assert!(compare_schemas(&previous, &required).is_breaking());
         assert!(require_compatible_version(1, &previous, 1, &required).is_err());
         assert!(require_compatible_version(1, &previous, 2, &required).is_ok());
+    }
+
+    #[test]
+    fn patterns_that_need_a_backtracking_engine_are_refused_at_the_door() {
+        // The classic catastrophic case: matching `^(?=(a+)+b)` against a
+        // string of 'a's is exponential. Left to its default engine
+        // `jsonschema` would compile it and run it against every request
+        // payload, so a module could stall the host with a descriptor well
+        // under the size cap. With the linear-time engine selected, `build`
+        // refuses it as an invalid schema.
+        assert!(matches!(
+            validate_schema(&json!({"type": "string", "pattern": "^(?=(a+)+b)"})),
+            Err(SchemaError::InvalidSchema(_))
+        ));
+
+        // Nested and `patternProperties` keys are patterns too.
+        assert!(matches!(
+            validate_schema(&json!({
+                "type": "object",
+                "properties": {"inner": {"type": "string", "pattern": r"(\w)\1"}}
+            })),
+            Err(SchemaError::InvalidSchema(_))
+        ));
+        assert!(matches!(
+            validate_schema(&json!({
+                "type": "object",
+                "patternProperties": {"^(?!x)": {"type": "string"}}
+            })),
+            Err(SchemaError::InvalidSchema(_))
+        ));
+
+        // A pattern in a data position is data, not a pattern: the engine, not
+        // a shape-based walk, decides what is refused.
+        assert!(
+            validate_schema(&json!({
+                "type": "object",
+                "examples": [{"pattern": "(?=x)"}],
+                "default": {"pattern": "(a+)+\\1"}
+            }))
+            .is_ok()
+        );
+
+        // The guard asks the linear-time engine, not a blacklist of characters,
+        // so a busy-looking pattern it can run stays allowed. Nested alternation
+        // and repetition are linear there, and the shipped identifier patterns
+        // have to keep passing.
+        assert!(validate_schema(&json!({"type": "string", "pattern": "(a|a)*$"})).is_ok());
+        assert!(
+            validate_schema(&json!({
+                "type": "string",
+                "pattern": r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,7}$"
+            }))
+            .is_ok()
+        );
     }
 
     #[test]

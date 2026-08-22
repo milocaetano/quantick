@@ -12,7 +12,10 @@ use crate::{
         IdempotencyKey, InstanceId, ModuleId, PermissionId, PreconditionId, PrincipalId, ProfileId,
         RequestId, RiskFlagId,
     },
-    limits::{CONTROL_IDEMPOTENCY_MAX_ENTRIES, CONTROL_IDEMPOTENCY_RECORD_MAX_BYTES},
+    limits::{
+        CONTROL_IDEMPOTENCY_MAX_ENTRIES, CONTROL_IDEMPOTENCY_RECORD_MAX_BYTES,
+        CONTROL_IDEMPOTENCY_RETENTION_MS,
+    },
     registry::{
         Availability, AvailabilityStatus, CapabilityDescriptor, CapabilityExample, ControlModule,
         ControlRegistry, DefaultGrant, EffectConstraints, EffectPersistence, EffectPolicy,
@@ -433,6 +436,10 @@ struct IdempotencyRecord {
     input_digest: Sha256Digest,
     outcome: ResponseOutcome,
     module_revisions: Vec<ModuleRevision>,
+    /// When the record was written, on the host's own timeline. Retention is
+    /// measured against this rather than a wall clock, so the store stays as
+    /// deterministic and replayable as the rest of the crate.
+    stored_at_unix_ms: i64,
 }
 
 pub struct FakeHost {
@@ -446,6 +453,46 @@ pub struct FakeHost {
 }
 
 impl FakeHost {
+    /// Drop idempotency records older than the retention window, measured on
+    /// the host's own timeline rather than a wall clock, so the store stays as
+    /// deterministic and replayable as the rest of the crate.
+    ///
+    /// This runs before the replay lookup, so an expired key re-executes
+    /// instead of replaying a stale outcome: a retry that arrives a day late
+    /// is not the retry the guarantee exists for. The honest consequence,
+    /// which a real host has to state too: the guarantee covers the most
+    /// recent [`CONTROL_IDEMPOTENCY_MAX_ENTRIES`] keys within
+    /// [`CONTROL_IDEMPOTENCY_RETENTION_MS`].
+    fn expire_idempotency(&mut self, now_unix_ms: i64) {
+        self.idempotency.retain(|_, record| {
+            // A record stamped in the future reads as age zero rather than as
+            // expired, so a clock that steps backwards cannot flush the store.
+            let age_ms = now_unix_ms.saturating_sub(record.stored_at_unix_ms).max(0);
+            u64::try_from(age_ms).unwrap_or(u64::MAX) < CONTROL_IDEMPOTENCY_RETENTION_MS
+        });
+    }
+
+    /// Make room for one more idempotency record by evicting the oldest
+    /// survivors, because a busy session reaches the entry cap long before
+    /// anything ages out. Called only when a record is about to be inserted,
+    /// so a reply that is then refused never costs an older key its guarantee.
+    /// The previous behaviour of refusing every new key once full was worse in
+    /// both directions: it never recovered, and it reported the refusal as
+    /// retryable.
+    fn make_room_for_idempotency_record(&mut self) {
+        while self.idempotency.len() >= CONTROL_IDEMPOTENCY_MAX_ENTRIES {
+            let Some(oldest) = self
+                .idempotency
+                .iter()
+                .min_by_key(|(scope, record)| (record.stored_at_unix_ms, *scope))
+                .map(|(scope, _)| scope.clone())
+            else {
+                break;
+            };
+            self.idempotency.remove(&oldest);
+        }
+    }
+
     pub fn new(instance_id: InstanceId) -> Result<Self, RegistryError> {
         Ok(Self {
             instance_id,
@@ -585,6 +632,7 @@ impl FakeHost {
             reason: request.reason.clone(),
             requested_at_unix_ms: self.requested_at_unix_ms,
         };
+        let request_at_unix_ms = actor.requested_at_unix_ms;
         self.requested_at_unix_ms = self.requested_at_unix_ms.saturating_add(1);
         let authorized = AuthorizedRequest {
             envelope: request.clone(),
@@ -598,6 +646,9 @@ impl FakeHost {
             Ok(context) => context,
             Err(error) => return failure(error),
         };
+        if idempotency.is_some() {
+            self.expire_idempotency(request_at_unix_ms);
+        }
         if let Some((scope, input_digest)) = &idempotency
             && let Some(record) = self.idempotency.get(scope)
         {
@@ -614,15 +665,9 @@ impl FakeHost {
                 },
             );
         }
-        if idempotency.is_some() && self.idempotency.len() >= CONTROL_IDEMPOTENCY_MAX_ENTRIES {
-            return failure(ControlError::known(
-                codes::BACKPRESSURE,
-                "idempotency store is at capacity",
-                true,
-            ));
-        }
 
         let state_before = (self.counter, self.fake_revision);
+        let capture_revision_before = self.capture_revision;
         let result = self.dispatch(&descriptor, &authorized);
         if result.is_err() {
             (self.counter, self.fake_revision) = state_before;
@@ -652,18 +697,21 @@ impl FakeHost {
                 .unwrap_or(usize::MAX);
             if record_bytes > CONTROL_IDEMPOTENCY_RECORD_MAX_BYTES {
                 (self.counter, self.fake_revision) = state_before;
+                self.capture_revision = capture_revision_before;
                 return failure(ControlError::known(
                     codes::BACKPRESSURE,
                     "terminal result is too large for safe idempotency retention",
                     false,
                 ));
             }
+            self.make_room_for_idempotency_record();
             self.idempotency.insert(
                 scope,
                 IdempotencyRecord {
                     input_digest,
                     outcome: reply.outcome.clone(),
                     module_revisions: revisions_after,
+                    stored_at_unix_ms: request_at_unix_ms,
                 },
             );
         }
