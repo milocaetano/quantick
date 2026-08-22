@@ -143,8 +143,12 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
     )
 }
 
-fn revision(app: &QuantickApp) -> HealthSnapshot {
-    snapshot(app)
+/// The module's revision key: the per-tab subsystem state, without the
+/// frame averages. Those move on every painted frame, and a revision that
+/// advanced on every capture would mark nothing; what the key tracks is a
+/// change in what the tabs report about their feed, book and engines.
+fn revision(app: &QuantickApp) -> Vec<TabHealthSnapshot> {
+    snapshot(app).tabs
 }
 
 fn project(app: &QuantickApp, _context: CaptureContext) -> HealthSnapshot {

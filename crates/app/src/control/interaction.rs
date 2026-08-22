@@ -344,12 +344,18 @@ fn flow_cell_snapshot(cell: FlowCellHit) -> FlowCellSnapshot {
     }
 }
 
-fn drawing_band(band: &DrawingBand) -> String {
+/// The one wire name of a drawing band, used by the pointer hit in the pane
+/// and by the selection scope alike.
+pub(crate) fn drawing_band_name(band: &DrawingBand) -> &'static str {
     match band {
-        DrawingBand::Price => "price".to_owned(),
-        DrawingBand::Indicator(_) => "indicator_value".to_owned(),
-        DrawingBand::AllBands => "all_bands".to_owned(),
+        DrawingBand::Price => "price",
+        DrawingBand::Indicator(_) => "indicator_value",
+        DrawingBand::AllBands => "all_bands",
     }
+}
+
+fn drawing_band(band: &DrawingBand) -> String {
+    drawing_band_name(band).to_owned()
 }
 
 fn visible_panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {

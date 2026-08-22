@@ -100,6 +100,42 @@ fn project(app: &QuantickApp, context: CaptureContext) -> FeedSnapshot {
     snapshot(app, Some(context.captured_at_unix_ms))
 }
 
+/// Where a tab's prices, volumes and aggressor sides come from, in the one
+/// vocabulary every scope uses. The feed scope reports it per tab and the
+/// chart scope stamps it on every bar; both call this, so the two can never
+/// disagree about the same tab.
+pub(crate) fn market_data_provenance(
+    tab: &crate::tab::Tab,
+    config: &crate::config::AppConfig,
+) -> MarketDataProvenance {
+    let capabilities = tab.capabilities(config);
+    let replay = tab.replay.is_some();
+    MarketDataProvenance {
+        price: if replay {
+            "recorded_trade".to_owned()
+        } else {
+            "venue_or_broker_trade".to_owned()
+        },
+        volume: if capabilities.traded_volume {
+            if replay {
+                "recorded".to_owned()
+            } else {
+                "venue_reported".to_owned()
+            }
+        } else {
+            "synthetic_unit_per_quote".to_owned()
+        },
+        aggressor_side: if replay {
+            "recording_declared".to_owned()
+        } else if tab.side_note(config).is_some() {
+            "inferred_or_derived".to_owned()
+        } else {
+            "venue_reported".to_owned()
+        },
+        replay,
+    }
+}
+
 fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
     let config = app.control_config();
     FeedSnapshot {
@@ -126,30 +162,7 @@ fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
                         venue_ohlcv_history: capabilities.ohlcv_history,
                         venue_ohlcv_generation: WireU64::new(capabilities.ohlcv_generation),
                     },
-                    provenance: MarketDataProvenance {
-                        price: if replay {
-                            "recorded_trade".to_owned()
-                        } else {
-                            "venue_or_broker_trade".to_owned()
-                        },
-                        volume: if capabilities.traded_volume {
-                            if replay {
-                                "recorded".to_owned()
-                            } else {
-                                "venue_reported".to_owned()
-                            }
-                        } else {
-                            "synthetic_unit_per_quote".to_owned()
-                        },
-                        aggressor_side: if replay {
-                            "recording_declared".to_owned()
-                        } else if tab.side_note(config).is_some() {
-                            "inferred_or_derived".to_owned()
-                        } else {
-                            "venue_reported".to_owned()
-                        },
-                        replay,
-                    },
+                    provenance: market_data_provenance(tab, config),
                     history_trade_count: WireU64::new(
                         u64::try_from(tab.history_trades).unwrap_or(u64::MAX),
                     ),

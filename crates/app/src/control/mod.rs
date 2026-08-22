@@ -9,6 +9,7 @@ pub(crate) mod chart;
 mod feed;
 mod health;
 mod interaction;
+pub(crate) use interaction::drawing_band_name;
 mod registry;
 pub(crate) mod schema_catalog;
 mod system;

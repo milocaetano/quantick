@@ -6100,10 +6100,12 @@ impl ChartPane {
             .map(|bar| bar.floor() as usize)
             .filter(|slot| *slot < total);
         let axis_value = band.scale.as_ref().map(|scale| scale.price_at(position.y));
+        // What the pointer's y means on this band. A time-only band has no
+        // value axis of its own, so y is read on the pane's price axis, which
+        // is what `axis_value` below is computed from.
         let axis_unit = match &band.key {
-            DrawingBand::Price => "price".to_owned(),
+            DrawingBand::Price | DrawingBand::AllBands => "price".to_owned(),
             DrawingBand::Indicator(_) => "indicator_value".to_owned(),
-            DrawingBand::AllBands => "time".to_owned(),
         };
 
         let drawing_pick = self
@@ -6137,11 +6139,7 @@ impl ChartPane {
                 position,
             )
         });
-        let band_name = match &band.key {
-            DrawingBand::Price => "price",
-            DrawingBand::Indicator(_) => "indicator_value",
-            DrawingBand::AllBands => "all_bands",
-        };
+        let band_name = crate::control::drawing_band_name(&band.key);
         Some(ControlPointerHit {
             screen_x_px: position.x,
             screen_y_px: position.y,

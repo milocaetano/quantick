@@ -323,29 +323,13 @@ struct ProvenanceContext {
 }
 
 fn provenance_context(tab: &Tab, config: &AppConfig) -> ProvenanceContext {
-    let capabilities = tab.capabilities(config);
+    // One vocabulary with the feed scope: the same tab must never be
+    // described two ways.
+    let provenance = super::feed::market_data_provenance(tab, config);
     ProvenanceContext {
-        engine_price: if tab.replay.is_some() {
-            "recorded_trade".to_owned()
-        } else {
-            "venue_or_broker_trade".to_owned()
-        },
-        engine_volume: if capabilities.traded_volume {
-            if tab.replay.is_some() {
-                "recorded".to_owned()
-            } else {
-                "venue_reported".to_owned()
-            }
-        } else {
-            "synthetic_unit_per_quote".to_owned()
-        },
-        engine_side: if tab.replay.is_some() {
-            "recording_declared".to_owned()
-        } else if tab.side_note(config).is_some() {
-            "inferred_or_derived".to_owned()
-        } else {
-            "venue_reported".to_owned()
-        },
+        engine_price: provenance.price,
+        engine_volume: provenance.volume,
+        engine_side: provenance.aggressor_side,
     }
 }
 
@@ -492,9 +476,22 @@ pub(crate) fn chart_window(
         let (start, requested_end) = match &query.range {
             ChartWindowRange::Visible => {
                 if pane.last_chart_area.is_none() {
-                    return Err(ControlError::invalid_request(
+                    // A well-formed query the pane cannot answer yet: say so
+                    // with a retryable code and a next step, not as a malformed
+                    // request the client would have to guess about.
+                    let mut error = ControlError::new(
+                        quantick_control::id::ErrorCode::new(
+                            quantick_control::error::codes::CAPABILITY_UNAVAILABLE,
+                        )
+                        .expect("static error code is valid"),
                         "visible chart range is unavailable before the pane has painted",
-                    ));
+                        true,
+                    );
+                    error.context.next_steps = vec![
+                        "Retry after the pane's first frame, or ask for an explicit slot range."
+                            .to_owned(),
+                    ];
+                    return Err(error);
                 }
                 let (start, end) = visible_slots(pane);
                 (start.min(closed), end.min(closed))
