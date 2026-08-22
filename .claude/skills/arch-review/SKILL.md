@@ -196,12 +196,16 @@ Rules for reporting performance:
 
 ### 3. Nothing hardcoded
 
-Every number, string, path or threshold a human might one day want different
-lives in a named constant or in config — never inline at the point of use. The
-literal in the expression is the finding on its own; that it is "obviously"
-2.0, or used exactly once, is not a defence. Read the diff for literals first
-and *then* judge them, because the ones that survive review are the ones nobody
-looked at twice.
+Every literal that *configures behaviour* — a number, a threshold, a path, an
+endpoint — lives in a named constant or in config, never inline at the point of
+use. That it is "obviously" 2.0, or used exactly once, is not a defence: the
+magic numbers that survive review are the ones nobody looked at twice.
+
+**Scope this before hunting.** The rule is about values that tune what the code
+*does*, not about every literal in the diff. Message text is not a
+configuration value: `log::info!("…")`, `anyhow!("…")` and assertion strings
+stay where they are read. Filing those turns a review into a wall of noise and
+costs it the precision *Verify before reporting* demands.
 
 Three tiers. Every finding names which one the value belongs in, because
 "extract a constant" is the wrong fix for a value the trader was supposed to
@@ -236,12 +240,15 @@ edit:
 Also:
 
 - A magic number in a renderer, a threshold buried in a condition, a sleep or
-  timeout duration, a retry count, a capacity handed to `with_capacity`, a
-  buffer size, a hardcoded `C:\...` or `/tmp` path, a bare URL or port — each
-  is a finding every time.
+  timeout duration, a retry count, a hardcoded `C:\...` or `/tmp` path, a bare
+  URL or port — each is a finding every time.
+- A capacity or buffer size is a finding when the number *means* something a
+  human would tune — a queue bound, a frame limit, a page size. An arbitrary
+  `with_capacity` hint that only avoids a realloc is not; say so and move on.
 - Exempt, and say so rather than filing them: `0`, `1` and `-1` as identity or
-  step; indices into a shape the code itself fixes (`rgba[3]`); and a literal
-  a doc comment right there derives from a named constant.
+  step; indices into a shape the code itself fixes (`rgba[3]`); message and
+  assertion text; and a literal a doc comment right there derives from a named
+  constant.
 - Config round-trips must survive a save: a writer that drops comments or
   re-emits `0.78` as `0.7799999713897705` destroys the reason the file is
   tracked in git. Check the write path, not just the read path.
@@ -284,15 +291,22 @@ not the goal. What the review checks is the mechanism Rust actually uses:
   `indicators/tests/fmath_guard.rs`. An integration test that needs a private
   item is either a unit test filed in the wrong folder, or the signal that the
   port under review was never made public — say which.
-- **Shared test helpers** live in `tests/common/mod.rs`, never in a top-level
-  `tests/common.rs`: cargo builds every top-level file in `tests/` as its own
-  test binary, so the flat version compiles as a test target with no tests in
-  it. A helper that both unit and integration tests need cannot be
-  `#[cfg(test)]` at all — put it behind a `test-util` cargo feature rather than
-  making it unconditionally public.
+- **Test support an integration test needs** cannot be `#[cfg(test)]` — that
+  attribute is false when the separate test crate compiles, so the helper would
+  vanish exactly where it is wanted. Other Rust projects reach for a
+  `test-util` cargo feature; **this repo does not, and proposing one is the
+  finding, not the fix** — no crate here has a `[features]` section at all.
+  The repo's answer is a *deliberately published* module, documented as part of
+  what the crate is: `engine::fixture` and `engine::golden`, and
+  `control::fake`, whose fake host/client ports `CLAUDE.md` names in the
+  crate's own description. Per-file helpers used by one integration test go in
+  `tests/common/mod.rs`, never a top-level `tests/common.rs` — cargo builds
+  every top-level file in `tests/` as its own test binary, so the flat version
+  compiles as a test target containing no tests.
 
-The findings this separation exists to catch, in order of how much damage they
-do:
+So the line this dimension draws is not "test code in `src/` is bad". It is
+**deliberate and documented, or accidental and leaking**. The findings, in
+order of how much damage they do:
 
 - **`#[cfg(test)]` that changes behaviour instead of only adding tests** — a
   branch, a shortened timeout, a stubbed clock or a skipped validation inside
@@ -302,15 +316,19 @@ do:
   take the trait, hand the value to the constructor — the pattern `replay`
   already follows by being *told* how much time passed rather than reading a
   clock.
-- **A `pub` item on a production type whose only callers are tests.** Either
-  gate it `#[cfg(test)]`, move it inside the test module, or accept that it is
-  public API and document it as such. An accessor that exists "so the test can
-  see it" widens the surface every future change has to keep working.
-- **Fixtures, builders and mock feeds sitting ungated in `src/`**, dragging
-  test data into the release binary and into every consumer's compile.
+- **A `pub` item on a production type whose only callers are tests**, added for
+  one test's convenience and documented nowhere. Either gate it `#[cfg(test)]`,
+  move it inside the test module, or publish it deliberately the way
+  `engine::fixture` is published — with a doc comment saying it is test support
+  and who is meant to call it. The finding is the undeclared widening, not the
+  existence of test support.
 - **A test asserting on a private detail from the outside**, reached by
   loosening visibility for the test's benefit. The visibility change is the
   finding, not the assertion.
+
+Before filing any of these, check the crate's `lib.rs` and `CLAUDE.md`: a
+module the architecture names on purpose is not a leak, and calling one a leak
+is the review inventing a second way to do a solved thing.
 
 ### 5. Standardisation
 
@@ -428,60 +446,53 @@ not reuse the name for the agent surface.
 
 ### 8. One language — the repo is written in English
 
-Everything this repository carries is written in English. Identifiers, comments
-and doc comments, log lines, error and panic messages, UI strings, test names
-and assertion text, `.pine` scripts and their headers, comments inside `.toml`
-config, markdown under `docs/`, commit messages, branch names, and the title and
-body of the PR. A single line in Portuguese, Spanish or any other language is a
-finding, and one anywhere in the diff is a **Blocker**.
+**`CLAUDE.md` owns this rule** — what is in scope, and the three exemptions
+where the foreign text *is* the data. Read it there; this dimension does not
+restate it, because a scope list kept in two places is dimension 3's own
+"second copy is the finding" applied to prose, and it drifts on the first edit.
+What lives here is how to grade it.
 
-Not because the line is wrong — usually it is the clearest sentence in the file.
-Because the moment two languages are tolerated, the boundary between them is
-never drawn again: the next reader is locked out of half the codebase, every
-grep and every review has to be run twice, and a contributor who reads neither
-language has no way in. One language is the only version of this rule that is
-stable, and English is the one the toolchain, the venue APIs and the dependency
-docs already speak.
+Grade only what the diff **authors**. Lines that predate the rule are
+grandfathered, and a diff that relocates, reindents or deletes one is not
+writing it — a cleanup that translates an old comment must not earn a finding
+for the Portuguese it is removing. The known pre-existing debt, so nobody
+re-litigates it: `docs/ux/drawing-tools-ux-spec.html` (a full spec, ~46 lines),
+`heatmap-design-ref/`, the tracked `.claude/GOAL-archive-*.md`, and two doc
+comments in `app.rs` / `fib.rs` that quote the trader and are exempt anyway.
+Translating any of them is welcome as its own change; this rule never demands
+it.
 
-**This governs artifacts, not conversation.** The trader here works in
-Portuguese and these sessions are conducted in Portuguese; that is correct and
-this dimension does not touch it. The rule begins exactly where something lands
-in the repository — the moment it is written to a tracked file, a commit message
-or a PR.
+Severity: a line the diff authors in another language is a **Blocker**. Not
+because the line is wrong — usually it is the clearest sentence in the file.
+Because the moment two languages are tolerated the boundary is never drawn
+again: the next reader is locked out of half the codebase, every grep runs
+twice, and a contributor who reads neither language has no way in.
 
-The single exception is content whose *subject* is a language, where the foreign
-text is the data being handled:
+**The mechanical half is a test, not a paste.**
+`crates/app/tests/language_guard.rs` runs in `cargo test --workspace` and in
+CI, holds the allowlist for the debt above, and fails on a new accented run or
+Portuguese keyword in `.rs`, `.pine` and `docs/`. That is the repo's own
+pattern for a rule the compiler cannot see (`source_encoding_guard.rs`,
+`fmath_guard.rs`), and it is why this dimension does not ship a grep recipe:
+one was drafted, and it silently missed every accented uppercase word (GNU
+grep's `-i` does not case-fold multi-byte characters here) and every
+identifier (`_` is a word character, so a snake_case hump offers `-w` no
+boundary). A check that comes back clean for the wrong reason is worse than
+no check at all.
 
-- Localisation and translation resources, and any string table keyed by locale.
-- A fixture or golden file reproducing text a real system emits — a pt-BR
-  MetaTrader terminal's error string, a venue's localised reject reason. Copying
-  it verbatim is the data-honesty rule; translating it would make the fixture
-  describe a system that does not exist.
-- A quotation, marked as a quotation and attributed. The repo already leans on
-  this one: `crates/app/src/drawings/fib.rs:196` and
-  `crates/app/src/app.rs:16253` carry the trader's own bug reports verbatim
-  inside English doc comments. Translating a report puts words in the
-  reporter's mouth and loses the detail that made it worth writing down —
-  quote it, then explain it in English around the quote.
+So the reviewer's job in this dimension is the part the guard cannot do:
 
-In every one of those cases the code around it, the comment explaining why the
-foreign text is there, and the test's own name stay English. "It is a fixture"
-excuses the string inside the fixture, never the comment above it.
+- What the guard does not scan — the **branch name, the commit messages and
+  the PR title and body**, none of which appear in a file. Read them:
+  `git log --format='%s%n%b' origin/main..HEAD` and
+  `git rev-parse --abbrev-ref HEAD`.
+- Foreign prose the guard's keyword list does not contain — a sentence built
+  entirely from words it never learned, or a language it was never taught.
+- Whether an exemption is honestly claimed: the string inside a fixture may be
+  foreign, the comment above it may not.
 
-Check it mechanically before reading — a language finding is the one kind this
-review can miss by simply not noticing, because a Portuguese comment reads
-perfectly well to whoever wrote it:
-
-```sh
-# Word-boundary match (-w), so `para` does not fire inside `separator`.
-git diff origin/main...HEAD -U0 -- . ':!*.lock' | grep '^+' |
-  grep -iwE 'não|nao|para|porque|então|também|isso|aqui|quando|onde|preço|barra|tela|arquivo|pasta|erro|senha|usuário|pero|donde|entonces'
-```
-
-Treat a hit as a prompt to read the line, never as the verdict: it fires on a
-legitimate localised fixture, and it misses a foreign sentence built entirely
-from words it does not list. Read the prose in the diff yourself — the grep
-only catches what a tired reviewer skims past.
+Report the guard's verdict and your own separately. "`language_guard` passes"
+is not the same claim as "I read the prose".
 
 ## Verify before reporting
 
@@ -501,7 +512,7 @@ Reviews are judged on precision, not volume.
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace
+cargo test --workspace          # includes language_guard, dimension 8's half
 ```
 
 A clean change gets a short review saying it is clean and why. Never pad.
@@ -513,15 +524,15 @@ A clean change gets a short review saying it is clean and why. Never pad.
   behaviour with no test; a feature that activates itself; a market or safety
   action a non-human operator can reach by a shorter path than the trader's,
   or one that leaves no record of who acted; `#[cfg(test)]` that changes
-  production behaviour rather than only adding tests; **any line of the diff
-  written in a language other than English**, outside dimension 8's stated
-  exception.
+  production behaviour rather than only adding tests; **any line the diff
+  *authors* in a language other than English** — never one it relocates or
+  deletes, and never a pre-existing line, per dimension 8.
 - **Should fix** — hardcoded value, and the tier it belongs in named (config,
   shared module, module top); a user-tunable value shipped as a `const` that
   needs a rebuild to change; the same constant duplicated at both ends of a
   boundary; extension point that forces edits to existing code; missing
-  regression cover; a test module without `#[cfg(test)]`; a `pub` item whose
-  only callers are tests; a fixture or mock sitting ungated in `src/`;
+  regression cover; a test module without `#[cfg(test)]`; an undocumented `pub`
+  item whose only callers are tests;
   unexplained complex algorithm; misleading name or missing unit; a second way
   to do a solved thing; a capability reachable only from a click handler; state
   that exists only as pixels; a capability that registers itself nowhere, or a
@@ -562,6 +573,7 @@ Close with a verdict in six lines:
 - **Proof** — which test would fail if this change regressed, and whether it
   is a unit test (`#[cfg(test)]`, private access) or an integration test
   (`tests/`, public API only).
-- **Language** — English throughout, or the `file:line` of every line that is
-  not. Say "English throughout" rather than dropping the line: a silent
-  language verdict is indistinguishable from one nobody checked.
+- **Language** — two claims, not one: whether `language_guard` passed, and
+  whether you read the prose, the branch name and the commit messages yourself.
+  Say both rather than dropping the line — a silent language verdict is
+  indistinguishable from one nobody checked.

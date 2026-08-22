@@ -23,17 +23,16 @@ before it. Step 7 hands over the line to paste.
 1. **Capture the mission**: restate the objective in one sentence **written in
    English**, and confirm it with the user only if it is genuinely ambiguous.
    That sentence is not a note to self — it becomes `.claude/GOAL.md`, the
-   branch name and the first line of the PR body, all of which are repository
-   artifacts and therefore English (see the first row of step 2). Saying it
-   back to the trader in their own language as well is welcome; the version
-   that gets written down is the English one.
+   branch name and the first line of the PR body, every one of them a
+   repository artifact. Saying it back to the trader in their own language too
+   is welcome; the version written down is the English one.
 
 2. **Classify it and inject the standard gates.** Derive 3–7 verifiable
    criteria specific to the objective, then add the gates for its kind:
 
    | The mission… | Injected acceptance criteria |
    | --- | --- |
-   | Any mission at all | **every artifact in English** — identifiers, comments and doc comments, log/error/panic messages, UI strings, test names and assertion text, `.pine` scripts, comments in `.toml` config, markdown under `docs/`, the branch name, every commit message, `.claude/GOAL.md`, and the PR title and body. The conversation with the trader runs in whatever language they speak and that does not change; the rule starts where something lands in the repository. The only exemption is content whose *subject* is a language — a localisation resource, a fixture reproducing a system's own localised string, a marked quotation — and even there the surrounding code, comment and test name stay English. `arch-review` dimension 8 grades this and a violation is a Blocker, so catching it here costs one edit instead of a review round |
+   | Any mission at all | **every artifact in English** — the rule, its scope and its three exemptions live in `CLAUDE.md`, which is already loaded; do not restate them here. Graded by `arch-review` dimension 8, enforced by `crates/app/tests/language_guard.rs`. It costs one edit now and a review round later |
    | Any code change | four checks green after rebasing on latest `main`; **performance impact declared** — classify every touched path by rate (per-trade / per-depth / per-frame / rare, the `arch-review` table) as part of the plan, not the review; `arch-review` run with every Blocker/Should-fix resolved or deferred in the PR body; **PR opened** — the mission is not done before the PR exists, and merging is never part of it |
    | Touches a hot path (per-trade, per-depth, per-frame) | evidence that performance is flat or better, not a belief: `APP_HEALTH_SUMMARY` fps/frame_avg under a dense tape vs. a `main` control run, or a bench over a fixture — measured before the PR, numbers in its body |
    | Touches anything user-visible | follow `ui-harness`: every new/changed surface reachable by env hook (hook added in the same change); `visual-qa` pass with all surfaces PASS or defects explicitly accepted; `trader-ux-review` with no unresolved Blocker |
