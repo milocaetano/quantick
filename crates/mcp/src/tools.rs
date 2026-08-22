@@ -352,8 +352,26 @@ fn search(
         .map(|scopes| {
             scopes
                 .iter()
-                .filter(|scope| matches(scope, &["scope_id", "title", "description", "module_id"]))
-                .cloned()
+                .filter(|scope| matches(scope, &["id", "title", "description", "module_id"]))
+                .map(|scope| {
+                    // The describe document carries each scope's whole
+                    // schema; the search names the scope and leaves the
+                    // document to `quantick_describe`.
+                    let mut summary = Map::new();
+                    for field in [
+                        "id",
+                        "module_id",
+                        "title",
+                        "description",
+                        "schema_version",
+                        "required_permissions",
+                    ] {
+                        if let Some(value) = scope.get(field) {
+                            summary.insert(field.to_owned(), value.clone());
+                        }
+                    }
+                    Value::Object(summary)
+                })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -651,6 +669,36 @@ mod tests {
                     )
                 });
             }
+        }
+    }
+
+    #[test]
+    fn the_fake_describe_document_keeps_the_contracts_scope_shape() {
+        // The search reads the scope's `id`; a fake that drifted to another
+        // field name would make the search pass in tests and fail against
+        // a running instance. Pin the fakes to the committed document.
+        let describe = parse_schema(DESCRIBE_RESULT_SCHEMA);
+        let scope_schema = json!({
+            "$schema": describe["$schema"],
+            "$ref": "#/$defs/SnapshotScopeDescriptor",
+            "$defs": describe["$defs"],
+        });
+        let mut link = crate::fake::FakeLink::default();
+        let id = InstanceId::from_bytes([9; 16]);
+        link.add_instance(id.clone());
+        let response = link
+            .invoke(Some(&id), DESCRIBE_CAPABILITY, 1, json!({}))
+            .unwrap();
+        let quantick_control::wire::ResponseOutcome::Success { result, .. } = response.outcome
+        else {
+            panic!("the fake describes itself");
+        };
+        let scopes = result["snapshot_scopes"].as_array().expect("scopes");
+        assert!(!scopes.is_empty());
+        for scope in scopes {
+            quantick_control::schema::validate_instance(&scope_schema, scope).unwrap_or_else(
+                |problem| panic!("fake scope {scope} drifted from the contract: {problem}"),
+            );
         }
     }
 

@@ -140,7 +140,15 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // `args()` panics on a non-Unicode argument; a bad path is a usage error.
+    let args: Result<Vec<String>, _> = std::env::args_os()
+        .skip(1)
+        .map(std::ffi::OsString::into_string)
+        .collect();
+    let Ok(args) = args else {
+        eprintln!("quantick-mcp: an argument is not valid Unicode\n{USAGE}");
+        return ExitCode::from(2);
+    };
     let command = match parse_args(&args) {
         Ok(command) => command,
         Err(message) => {

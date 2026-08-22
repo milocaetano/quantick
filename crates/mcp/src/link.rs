@@ -159,18 +159,29 @@ impl ControlLink for LocalLink {
             .map(|issue| format!("{}: {}", issue.code, issue.message))
             .collect();
         let next_steps = live.next_steps.clone();
-        let mut instances = Vec::with_capacity(live.clients.len());
-        for client in live.clients {
+        // Instances that are gone leave the cache with their sockets; a live
+        // one keeps the connection it already has.
+        let live_ids = live.instance_ids();
+        self.clients.retain(|id, _| live_ids.contains(id));
+        // The pin applies to the listing as to every call (contract §8): a
+        // pinned adapter lists its instance, and fails when it is gone.
+        let clients = match &self.pinned {
+            Some(pinned) => vec![live.select(Some(pinned))?],
+            None => live.clients,
+        };
+        let mut instances = Vec::with_capacity(clients.len());
+        for client in clients {
             let descriptor = client.descriptor();
+            let id = descriptor.instance_id.clone();
             instances.push(InstanceSummary {
-                instance_id: descriptor.instance_id.clone(),
+                instance_id: id.clone(),
                 application_version: descriptor.application_version.clone(),
                 application_commit: descriptor.application_commit.clone(),
                 process_id: descriptor.process_id,
                 published_at_unix_ms: descriptor.published_at_unix_ms,
             });
             // Keep the authenticated connection for the calls that follow.
-            self.clients.insert(descriptor.instance_id.clone(), client);
+            self.clients.entry(id).or_insert(client);
         }
         Ok(Instances {
             instances,

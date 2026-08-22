@@ -191,8 +191,8 @@ fn describe_document(instance_id: &InstanceId) -> Value {
             }
         ],
         "snapshot_scopes": [
-            { "scope_id": "system.info", "module_id": "system", "title": "System", "description": "Build identity" },
-            { "scope_id": "chart.summary", "module_id": "chart", "title": "Chart summary", "description": "Panes and bars" }
+            { "id": "system.info", "module_id": "system", "title": "System", "description": "Build identity", "schema_version": 1, "required_permissions": ["observe"], "schema": { "type": "object" } },
+            { "id": "chart.summary", "module_id": "chart", "title": "Chart summary", "description": "Panes and bars", "schema_version": 1, "required_permissions": ["observe", "observe.chart"], "schema": { "type": "object" } }
         ]
     })
 }

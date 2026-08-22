@@ -71,6 +71,10 @@ impl McpServer {
                 None
             }
             Ok(Message::Response { .. }) => None,
+            Ok(Message::Malformed { id, reason }) => Some(jsonrpc::failure(
+                Some(&id),
+                &RpcError::new(jsonrpc::INVALID_REQUEST, reason),
+            )),
             Ok(Message::Request { id, method, params }) => {
                 Some(match self.on_request(&method, params) {
                     Ok(result) => jsonrpc::success(&id, result),
@@ -90,14 +94,14 @@ impl McpServer {
         let mut buffer = Vec::with_capacity(4096);
         loop {
             buffer.clear();
-            let read = read_bounded_line(&mut input, &mut buffer, CONTROL_MAX_REQUEST_BYTES)?;
+            let read = read_bounded_line(&mut input, &mut buffer, MCP_FRAME_MAX_BYTES)?;
             let frame = match read {
                 LineRead::Closed => return Ok(()),
                 LineRead::TooLong => Some(jsonrpc::failure(
                     None,
                     &RpcError::new(
                         jsonrpc::PARSE_ERROR,
-                        format!("line exceeds {CONTROL_MAX_REQUEST_BYTES} bytes"),
+                        format!("line exceeds {MCP_FRAME_MAX_BYTES} bytes"),
                     ),
                 )),
                 LineRead::Line => match std::str::from_utf8(&buffer) {
@@ -185,6 +189,15 @@ enum LineRead {
     Closed,
 }
 
+/// The JSON-RPC envelope around a control payload — `jsonrpc`, `id`,
+/// `method`, `params.name`, `params.arguments` and the routing property — so
+/// a payload the gateway itself accepts is never refused here for its
+/// wrapping.
+const MCP_FRAME_WRAPPER_SLACK_BYTES: usize = 4096;
+/// One standard-input line at most: the control request bound plus the
+/// wrapper.
+const MCP_FRAME_MAX_BYTES: usize = CONTROL_MAX_REQUEST_BYTES + MCP_FRAME_WRAPPER_SLACK_BYTES;
+
 /// Read one `\n`-terminated line into `buffer`, at most `limit` bytes. A
 /// longer line is consumed to its end and reported as too long, so the next
 /// line starts clean; end of input with nothing read is `Closed`.
@@ -195,7 +208,13 @@ fn read_bounded_line(
 ) -> io::Result<LineRead> {
     let mut too_long = false;
     loop {
-        let available = input.fill_buf()?;
+        let available = match input.fill_buf() {
+            Ok(available) => available,
+            // A signal during the blocking read does not end the session;
+            // std's own line readers retry it too.
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
         if available.is_empty() {
             return Ok(if buffer.is_empty() && !too_long {
                 LineRead::Closed
@@ -468,7 +487,28 @@ mod tests {
             found["capabilities"][0]["id"],
             tools::CHART_WINDOW_CAPABILITY
         );
-        assert_eq!(found["snapshot_scopes"][0]["scope_id"], "chart.summary");
+        assert_eq!(found["snapshot_scopes"][0]["id"], "chart.summary");
+        assert!(
+            found["snapshot_scopes"][0].get("schema").is_none(),
+            "the search names a scope; describe carries its schema"
+        );
+        // A scope is found by its own ID — the field the contract's describe
+        // document actually carries.
+        let by_id = server
+            .handle_line(&request(
+                4,
+                "tools/call",
+                json!({"name": tools::SEARCH_CAPABILITIES, "arguments": {"query": "system.info"}}),
+            ))
+            .unwrap();
+        assert_eq!(
+            by_id["result"]["structuredContent"]["snapshot_scope_count"],
+            1
+        );
+        assert_eq!(
+            by_id["result"]["structuredContent"]["snapshot_scopes"][0]["id"],
+            "system.info"
+        );
         let all = server
             .handle_line(&request(
                 3,
@@ -477,6 +517,27 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(all["result"]["structuredContent"]["capability_count"], 2);
+    }
+
+    #[test]
+    fn a_frame_with_an_id_but_no_method_result_or_error_is_answered_not_dropped() {
+        let mut server = initialized(server_over(FakeLink::default()));
+        let reply = server
+            .handle_line(r#"{"jsonrpc":"2.0","id":7,"params":{}}"#)
+            .expect("a malformed request with an id is answered");
+        assert_eq!(reply["id"], 7);
+        assert_eq!(reply["error"]["code"], jsonrpc::INVALID_REQUEST);
+        let reply = server
+            .handle_line(r#"{"jsonrpc":"2.0","id":"m","method":5}"#)
+            .expect("a non-string method with an id is answered");
+        assert_eq!(reply["id"], "m");
+        assert_eq!(reply["error"]["code"], jsonrpc::INVALID_REQUEST);
+        // A real response to nothing this server sent is still dropped.
+        assert!(
+            server
+                .handle_line(r#"{"jsonrpc":"2.0","id":"x","result":{}}"#)
+                .is_none()
+        );
     }
 
     #[test]
@@ -489,7 +550,7 @@ mod tests {
         input.push(b'\n');
         // A line longer than the request limit, then a valid ping, then a
         // line with a stray non-UTF-8 byte, then another ping.
-        input.extend(std::iter::repeat_n(b'x', CONTROL_MAX_REQUEST_BYTES + 10));
+        input.extend(std::iter::repeat_n(b'x', MCP_FRAME_MAX_BYTES + 10));
         input.push(b'\n');
         input.extend_from_slice(request(2, "ping", json!({})).as_bytes());
         input.push(b'\n');

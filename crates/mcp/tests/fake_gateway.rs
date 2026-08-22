@@ -186,7 +186,7 @@ fn answer(instance_id: &InstanceId, request: &RequestEnvelope) -> ResponseOutcom
                     { "id": tools::SNAPSHOT_CAPABILITY, "version": 1, "title": "Snapshot", "description": "Coherent capture", "module": "snapshot", "read_only": true, "availability": {"status": "available"} }
                 ],
                 "snapshot_scopes": [
-                    { "scope_id": "system.info", "module_id": "system", "title": "System", "description": "Build identity" }
+                    { "id": "system.info", "module_id": "system", "title": "System", "description": "Build identity", "schema_version": 1, "required_permissions": ["observe"], "schema": { "type": "object" } }
                 ]
             }),
         },
@@ -373,6 +373,49 @@ fn two_live_instances_are_listed_in_order_and_never_chosen_silently() {
 
     drop(later);
     drop(earlier);
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
+fn a_pinned_adapter_lists_only_its_instance_and_fails_when_it_is_gone() {
+    let directory = scratch_directory("pinned-listing");
+    let first = FakeGateway::start(&directory, 0x44, 1_700_000_000_000);
+    let options = ConnectOptions::observer(
+        "quantick-mcp test",
+        "0",
+        BTreeSet::from([PermissionId::new("observe").unwrap()]),
+    );
+    let link = LocalLink::new(
+        options,
+        Some(directory.clone()),
+        Some(first.instance_id.clone()),
+    );
+    let mut server = McpServer::new(Box::new(link), "observer");
+    server
+        .handle_line(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}).to_string())
+        .unwrap();
+    // A second instance appears: the pinned listing still names one.
+    let second = FakeGateway::start(&directory, 0x66, 1_700_000_000_001);
+    let listed = call(&mut server, 2, tools::DESCRIBE, json!({}));
+    assert_eq!(listed["isError"], false);
+    let instances = listed["structuredContent"]["instances"]
+        .as_array()
+        .expect("a listing");
+    assert_eq!(instances.len(), 1);
+    assert_eq!(
+        instances[0]["instance_id"],
+        first.instance_id.to_string(),
+        "the pin applies to the listing too"
+    );
+    // The pinned instance goes away: the listing fails like every other call.
+    drop(first);
+    let gone = call(&mut server, 3, tools::DESCRIBE, json!({}));
+    assert_eq!(gone["isError"], true);
+    assert_eq!(
+        gone["structuredContent"]["error"]["code"],
+        "control.instance_gone"
+    );
+    drop(second);
     let _ = std::fs::remove_dir_all(&directory);
 }
 

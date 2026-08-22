@@ -28,6 +28,11 @@ pub enum Message {
     /// A response to something the server sent. This server sends no
     /// requests, so a response is read and dropped.
     Response { id: Value },
+    /// A frame with an id that is neither a request (no string `method`) nor
+    /// a response (no `result`, no `error`). Answered `INVALID_REQUEST` with
+    /// the id echoed, never dropped: a dropped frame is a client waiting
+    /// forever.
+    Malformed { id: Value, reason: &'static str },
 }
 
 /// A JSON-RPC error object.
@@ -99,15 +104,27 @@ pub fn parse(line: &str) -> Result<Message, RpcError> {
                 }),
             }
         }
-        None => match id {
-            Some(id) => Ok(Message::Response { id }),
-            None => Err(RpcError::new(
-                INVALID_REQUEST,
-                "a JSON-RPC message carries a method or an id",
-            )),
-        },
+        None => {
+            let answers_something = object.contains_key("result") || object.contains_key("error");
+            match id {
+                Some(id) if answers_something => Ok(Message::Response { id }),
+                Some(id) => Ok(Message::Malformed {
+                    id,
+                    reason: MALFORMED_WITH_ID,
+                }),
+                None => Err(RpcError::new(
+                    INVALID_REQUEST,
+                    "a JSON-RPC message carries a method or an id",
+                )),
+            }
+        }
     }
 }
+
+/// Why a frame with an id but no string `method`, `result` or `error` is
+/// refused.
+pub const MALFORMED_WITH_ID: &str =
+    "a message with an id carries a string method, a result or an error";
 
 /// A successful response frame.
 pub fn success(id: &Value, result: Value) -> Value {
@@ -152,6 +169,22 @@ mod tests {
         assert_eq!(
             parse(r#"{"jsonrpc":"2.0","id":"x","result":{}}"#).unwrap(),
             Message::Response { id: json!("x") }
+        );
+        // An id with a non-string method, or with neither result nor error,
+        // is not a response to drop: it is a malformed request to answer.
+        assert_eq!(
+            parse(r#"{"jsonrpc":"2.0","id":7,"method":5}"#).unwrap(),
+            Message::Malformed {
+                id: json!(7),
+                reason: MALFORMED_WITH_ID
+            }
+        );
+        assert_eq!(
+            parse(r#"{"jsonrpc":"2.0","id":8,"params":{}}"#).unwrap(),
+            Message::Malformed {
+                id: json!(8),
+                reason: MALFORMED_WITH_ID
+            }
         );
     }
 
