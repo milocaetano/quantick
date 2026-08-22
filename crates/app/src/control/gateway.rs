@@ -860,7 +860,10 @@ fn drain_bounded_since<T>(
     DrainObservation {
         processed,
         elapsed_us,
-        budget_exceeded: elapsed_us > CONTROL_UI_BUDGET_US,
+        // The same comparison that ends the loop above, so a drain that
+        // stopped on the budget always says so — `as_micros` truncates, and
+        // a capture that cost the whole budget lands exactly on it.
+        budget_exceeded: elapsed_us >= CONTROL_UI_BUDGET_US,
         queue_has_more: !receiver.is_empty(),
     }
 }
