@@ -28,7 +28,7 @@ description: Deliver the current branch - run the full verification loop, commit
 
 4. **Push**: `git push -u origin <branch>`.
 
-5. **Open the PR** following the repo template (`.github/PULL_REQUEST_TEMPLATE.md`): summary of what and why, `Closes #<N>`, the four verification-loop boxes checked (they just ran), notes for the reviewer. Use `gh pr create --body-file -` with a heredoc.
+5. **Open the PR** following the repo template (`.github/PULL_REQUEST_TEMPLATE.md`): summary of what and why, `Closes #<N>`, the four verification-loop boxes checked (they just ran), notes for the reviewer. Use `gh pr create --body-file -` with a heredoc. Title and body are English, like the branch name and the commits — `CLAUDE.md`'s language rule covers them, and they are the one part of it no test can see: `language_guard` reads files, and a PR body is not a file.
 
 6. **Watch CI**: `gh pr checks <pr> --watch`. If checks have not registered yet, find the run with `gh run list --branch <branch>` and use `gh run watch <id> --exit-status`. Red → read the failing log, fix, push, repeat.
 
