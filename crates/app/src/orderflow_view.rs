@@ -258,8 +258,17 @@ impl OrderflowView {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let after_region = (cell.x1.clamp(0.0, 1.0) * regions as f64).ceil() as usize;
         let touches_lane = has_lane && after_region > bar_regions;
-        let first_bar_region = first_region.min(bar_regions - 1);
-        let after_bar_region = after_region.max(first_bar_region + 1).min(bar_regions);
+        // A cell that lies wholly in the live lane has no closed bar under it;
+        // an empty range at the lane boundary says so, instead of borrowing
+        // the last bar's slot and calling it the cell's.
+        let (first_bar_region, after_bar_region) = if first_region >= bar_regions {
+            (bar_regions, bar_regions)
+        } else {
+            (
+                first_region,
+                after_region.max(first_region + 1).min(bar_regions),
+            )
+        };
 
         Some(FlowCellHit {
             generation: cell.generation,

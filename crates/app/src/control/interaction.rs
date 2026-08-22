@@ -71,6 +71,9 @@ pub(crate) struct FlowCellSnapshot {
     pub price_bucket: CanonicalDecimal,
     pub price_span: CanonicalDecimal,
     pub quantity: CanonicalDecimal,
+    /// The closed-bar slots under the cell. A cell that lies wholly in the
+    /// live lane has none: both bounds then equal the lane boundary, and
+    /// `live_lane` says where it is.
     pub start_slot: WireU64,
     pub end_slot_exclusive: WireU64,
     pub live_lane: bool,

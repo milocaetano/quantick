@@ -203,7 +203,8 @@
           "type": "string"
         },
         "start_slot": {
-          "$ref": "#/$defs/WireU64"
+          "$ref": "#/$defs/WireU64",
+          "description": "The closed-bar slots under the cell. A cell that lies wholly in the\nlive lane has none: both bounds then equal the lane boundary, and\n`live_lane` says where it is."
         }
       },
       "required": [

@@ -61,6 +61,9 @@ pub(crate) struct ChartPaneSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct ViewportSnapshot {
     pub geometry_available: bool,
+    /// The slots the viewport asks the renderer to paint: generous by one bar
+    /// at each edge, so a bar partly off screen is drawn rather than clipped.
+    /// This is the pane's own notion of "visible", not the exact pixel set.
     pub visible_start_slot: WireU64,
     pub visible_end_slot_exclusive: WireU64,
     #[schemars(extend("x-unit" = "pixels_per_bar"))]

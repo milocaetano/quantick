@@ -306,7 +306,8 @@
           "$ref": "#/$defs/WireU64"
         },
         "visible_start_slot": {
-          "$ref": "#/$defs/WireU64"
+          "$ref": "#/$defs/WireU64",
+          "description": "The slots the viewport asks the renderer to paint: generous by one bar\nat each edge, so a bar partly off screen is drawn rather than clipped.\nThis is the pane's own notion of \"visible\", not the exact pixel set."
         }
       },
       "required": [

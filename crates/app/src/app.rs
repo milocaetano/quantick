@@ -733,12 +733,6 @@ enum VenueHistoryDemo {
     Partial,
 }
 
-/// The quantick chart window.
-///
-/// One workspace: N open markets ([`Tab`]) and the chrome around them. The
-/// chrome is what is single-instance by nature — one menu bar, one toolbox,
-/// one dock, one appearance, one status line — plus the indicator persistence
-/// layer, which describes a workspace rather than a market.
 /// Read-only frame observations exposed to on-demand semantic projections.
 pub(crate) struct ControlFrameMetrics {
     pub wall_average_ms: Option<f32>,
@@ -748,6 +742,12 @@ pub(crate) struct ControlFrameMetrics {
     pub cpu_worst_ms: Option<f32>,
 }
 
+/// The quantick chart window.
+///
+/// One workspace: N open markets ([`Tab`]) and the chrome around them. The
+/// chrome is what is single-instance by nature — one menu bar, one toolbox,
+/// one dock, one appearance, one status line — plus the indicator persistence
+/// layer, which describes a workspace rather than a market.
 pub struct QuantickApp {
     /// The open markets, left to right as the strip shows them (§11).
     ///
