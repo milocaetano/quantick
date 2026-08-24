@@ -1530,6 +1530,15 @@ impl ChartPane {
                 .then_some("this source quotes prices but prints no traded volume"),
             ChartLayer::Heatmap | ChartLayer::DepthGaps => (!capabilities.book_capture)
                 .then_some("order-book capture is not available for this source"),
+            // The strip draws the book and the aggressions landing into it, so
+            // it takes either one and is empty only without both. Disabled
+            // with the reason rather than offered as a switch that would
+            // reserve width for a blank band.
+            ChartLayer::LiveStrip => (!capabilities.book_capture && !capabilities.traded_volume)
+                .then_some(
+                    "this source publishes neither an order book nor traded volume, \
+                     so the strip would have nothing to draw",
+                ),
             // The badge reports on the book feed, so a source with no book has
             // nothing for it to say — and it is drawn with the map, so while
             // the map is hidden the switch would tick a box that draws
@@ -2511,8 +2520,20 @@ impl ChartPane {
     /// source provides (replay included), and without book data the strip
     /// honestly degrades to that histogram alone. A pane with no tape has no
     /// strip at all (§11).
-    pub fn live_strip_width(&self) -> f32 {
-        if self.live_strip_visible && self.orderflow.is_some() {
+    pub fn live_strip_width(&self, capabilities: FeedCapabilities) -> f32 {
+        // Both halves of the strip come from the source: resting depth and the
+        // aggressions landing into it. A source that produces neither fills
+        // none of it, so the band would be an empty rect permanently narrowing
+        // the candles — which is what the shipped default made reachable, the
+        // layer having opened off until now. The claim that these pixels were
+        // capability-gated predates the gate by some months; this is it.
+        //
+        // Passed in rather than cached on the pane for the reason
+        // `layer_blocked` states: the running feed is resolved once per frame
+        // by the caller, and a copy kept here would be one more thing to keep
+        // in step when MetaTrader narrows its capabilities mid-session.
+        let source_fills_it = capabilities.book_capture || capabilities.traded_volume;
+        if self.live_strip_visible && self.orderflow.is_some() && source_fills_it {
             crate::live_strip::LIVE_STRIP_WIDTH_PX
         } else {
             0.0
@@ -2521,11 +2542,11 @@ impl ChartPane {
 
     /// This pane's regions inside `area`, carved once so the input handler and
     /// the renderer can never disagree about a boundary.
-    fn plot_areas(&self, area: egui::Rect) -> PlotAreas {
+    fn plot_areas(&self, area: egui::Rect, capabilities: FeedCapabilities) -> PlotAreas {
         let mut sizing = [PaneSizing::Auto; crate::indicators::MAX_PANES];
         plot_split(
             area,
-            self.live_strip_width(),
+            self.live_strip_width(capabilities),
             self.indicators.pane_sizing(&mut sizing),
         )
     }
@@ -3835,7 +3856,7 @@ impl ChartPane {
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
         self.last_plot_area = Some(area);
-        let areas = self.plot_areas(area);
+        let areas = self.plot_areas(area, chrome.capabilities);
         self.last_chart_area = Some(areas.chart);
         // One carve, consumed by placement, hit-testing, dragging and — after
         // the panes have drawn — painting.
@@ -4815,7 +4836,7 @@ impl ChartPane {
                 }
             }
         }
-        let areas = self.plot_areas(area);
+        let areas = self.plot_areas(area, chrome.capabilities);
         // Indicator panes claimed the bottom band inside `plot_split`, so the
         // rect the candles scale to is the same one the input handler uses.
         let chart_rect = areas.chart;
@@ -7537,7 +7558,7 @@ mod tests {
     }
 
     fn test_areas(pane: &ChartPane, rect: egui::Rect) -> PlotAreas {
-        pane.plot_areas(rect)
+        pane.plot_areas(rect, crate::config::FeedCapabilities::none())
     }
 
     const TEST_PLOT: egui::Rect = egui::Rect {

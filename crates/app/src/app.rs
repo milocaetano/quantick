@@ -9431,7 +9431,7 @@ mod tests {
         let pane = &app.active_tab().flow_pane;
         let areas = plot_split(
             pane.last_plot_area.expect("a frame has been drawn"),
-            pane.live_strip_width(),
+            pane.live_strip_width(app.active_tab().capabilities(&app.config)),
             pane.indicators.pane_sizing(
                 &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
             ),
@@ -9445,7 +9445,7 @@ mod tests {
         let pane = &app.active_tab().flow_pane;
         let areas = plot_split(
             pane.last_plot_area.expect("a frame has been drawn"),
-            pane.live_strip_width(),
+            pane.live_strip_width(app.active_tab().capabilities(&app.config)),
             pane.indicators.pane_sizing(
                 &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
             ),
@@ -9465,7 +9465,7 @@ mod tests {
         let pane = &app.active_tab().flow_pane;
         plot_split(
             pane.last_plot_area.expect("a frame has been drawn"),
-            pane.live_strip_width(),
+            pane.live_strip_width(app.active_tab().capabilities(&app.config)),
             pane.indicators.pane_sizing(
                 &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
             ),
@@ -9856,7 +9856,7 @@ mod tests {
             let pane = &app.active_tab().flow_pane;
             plot_split(
                 pane.last_plot_area.expect("a frame has been drawn"),
-                pane.live_strip_width(),
+                pane.live_strip_width(app.active_tab().capabilities(&app.config)),
                 pane.indicators.pane_sizing(
                     &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
                 ),
@@ -11506,6 +11506,36 @@ plot(close)
             pane.layer_states(&app.style).get(&ChartLayer::TapeHeatmap),
             Some(&true),
             "the tape's depth layer answers to the same rule"
+        );
+    }
+
+    /// A band nothing can fill never takes width from the candles.
+    ///
+    /// The strip draws resting depth and the aggressions landing into it. A
+    /// source with neither fills none of it, and the shipped default is what
+    /// made that reachable — the layer opened off until now, so the missing
+    /// capability gate never showed. Permanently narrowing the candles for a
+    /// blank rect is the one way this branch could make a chart worse.
+    #[test]
+    fn a_source_that_fills_neither_half_gets_no_live_strip() {
+        let (app, _commands) = app_without_depth();
+        let pane = &app.active_tab().flow_pane;
+        assert!(
+            pane.live_strip_visible,
+            "the shipped config switched it on, which is what makes the gate matter"
+        );
+        assert_eq!(
+            pane.live_strip_width(crate::config::FeedCapabilities::none()),
+            0.0,
+            "no book and no traded volume: the band would draw nothing"
+        );
+        assert!(
+            pane.layer_blocked(
+                ChartLayer::LiveStrip,
+                crate::config::FeedCapabilities::none()
+            )
+            .is_some(),
+            "and the menu says why instead of offering a switch that does nothing"
         );
     }
 
@@ -21795,7 +21825,7 @@ plot(close)
             "no tape means no book worker behind it"
         );
         assert_eq!(
-            time.live_strip_width(),
+            time.live_strip_width(app.active_tab().capabilities(&app.config)),
             0.0,
             "the strip is a flow layer and claims no pixels here"
         );
