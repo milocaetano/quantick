@@ -11480,6 +11480,35 @@ plot(close)
         (app, cmd_rx)
     }
 
+    /// A source with no book must never write the trader's answer for them.
+    ///
+    /// The saved file outranks the shipped default from the next launch on, so
+    /// a `heatmap = false` banked during a session on a book-less source — a
+    /// recording, a CFD bridge — would follow the trader onto every market
+    /// they open afterwards, including the ones that do have a book. Nobody
+    /// chose that: the source did. And the write is not hypothetical, because
+    /// `maintain_chart_layers` persists the whole map on any mask change, so
+    /// one unrelated click anywhere in the layer menu is enough to bank it.
+    #[test]
+    fn a_source_with_no_book_never_banks_the_heatmap_as_switched_off() {
+        let (app, _commands) = app_without_depth();
+        let pane = &app.active_tab().flow_pane;
+        assert!(
+            !pane.layer_visible(ChartLayer::Heatmap, &app.style),
+            "with no book there is nothing to draw, which is the renderer's answer"
+        );
+        assert_eq!(
+            pane.layer_states(&app.style).get(&ChartLayer::Heatmap),
+            Some(&true),
+            "but the file records the switch, which the shipped config left on"
+        );
+        assert_eq!(
+            pane.layer_states(&app.style).get(&ChartLayer::TapeHeatmap),
+            Some(&true),
+            "the tape's depth layer answers to the same rule"
+        );
+    }
+
     /// An app whose source quotes prices and nothing else: no book, no traded
     /// volume — what a live CFD bridge publishes.
     fn app_without_depth() -> (QuantickApp, mpsc::Receiver<FeedCommand>) {

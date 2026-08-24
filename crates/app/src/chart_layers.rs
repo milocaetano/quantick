@@ -403,9 +403,11 @@ pub(crate) fn validate(text: &str) -> Result<(), String> {
     }
 }
 
-/// Load the stored visibility; empty (change nothing) when the file is
-/// missing, unreadable or from an unknown version. Unknown ids are dropped one
-/// by one — a file from a newer build still restores the layers this one has.
+/// Load the stored visibility, falling back to [`shipped_default`] when the
+/// file is missing, unreadable or from an unknown version — all three mean
+/// "we do not know what this trader chose", which is the question a first
+/// launch asks. Unknown ids are dropped one by one, so a file from a newer
+/// build still restores the layers this one has.
 #[must_use]
 pub(crate) fn load(path: &Path) -> BTreeMap<ChartLayer, bool> {
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -540,7 +542,7 @@ mod tests {
         assert_eq!(
             fresh,
             shipped_default(),
-            "a fresh install opens on the config, not on whatever a struct              initialiser happened to say"
+            "a fresh install opens on the config, not on a struct initialiser"
         );
         assert!(!fresh.is_empty(), "the shipped file has to reach the app");
     }

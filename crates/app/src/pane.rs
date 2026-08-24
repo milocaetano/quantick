@@ -893,8 +893,10 @@ pub struct ChartPane {
     /// Whether the user wants the live strip shown. The pixels it actually
     /// gets are still capability-gated — see [`Self::live_strip_width`].
     pub live_strip_visible: bool,
-    /// Whether the candle footprint layer is on. Off by default: today's
-    /// rendering is pixel-identical until the user asks for the ladder.
+    /// Whether the candle footprint layer is on. What a fresh launch opens
+    /// with is `config/chart-layers.toml`, not this initialiser — see
+    /// [`crate::chart_layers`]; the ladder still follows the zoom's LOD, so it
+    /// draws nothing where the candle is too narrow to read.
     pub footprint_visible: bool,
     /// This chart's own footprint setup, once it has been configured here.
     ///
@@ -1552,7 +1554,27 @@ impl ChartPane {
         }
     }
 
-    /// Every layer this pane persists, and whether it is on.
+    /// The same layers as [`Self::layer_visible`], reporting the *switch*
+    /// rather than what the source lets through it.
+    ///
+    /// Only the two depth layers differ, and only because their "is it drawn"
+    /// answer folds in book capture: on a source with no book they read
+    /// undrawn however the switch stands. That is the right answer for a
+    /// renderer and the wrong one for a file — persisting it would record a
+    /// capability as the trader's choice, and their file outranks the shipped
+    /// default on every market from then on, including the ones that do have a
+    /// book. The setters already compare against the switch for this exact
+    /// reason (`OrderflowView::set_depth_visible`); this is the reading half.
+    pub fn layer_switched_on(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
+        let tape = self.orderflow.as_ref();
+        match layer {
+            ChartLayer::Heatmap => tape.is_some_and(OrderflowView::depth_switched_on),
+            ChartLayer::TapeHeatmap => tape.is_some_and(OrderflowView::lane_depth_switched_on),
+            other => self.layer_visible(other, style),
+        }
+    }
+
+    /// Every layer this pane persists, and whether it is switched on.
     ///
     /// `style` comes from the window for the same reason it does in
     /// [`Self::layer_visible`].
@@ -1560,7 +1582,7 @@ impl ChartPane {
         ChartLayer::ALL
             .into_iter()
             .filter(|layer| layer.persisted())
-            .map(|layer| (layer, self.layer_visible(layer, style)))
+            .map(|layer| (layer, self.layer_switched_on(layer, style)))
             .collect()
     }
 
@@ -1576,7 +1598,7 @@ impl ChartPane {
         ChartLayer::ALL
             .into_iter()
             .enumerate()
-            .filter(|(_, layer)| layer.persisted() && self.layer_visible(*layer, style))
+            .filter(|(_, layer)| layer.persisted() && self.layer_switched_on(*layer, style))
             .fold(0_u32, |mask, (bit, _)| mask | (1 << bit))
     }
 
