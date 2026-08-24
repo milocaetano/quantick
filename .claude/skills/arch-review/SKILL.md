@@ -205,6 +205,15 @@ constant or in config — never inline at the point of use.
   never literals in code.
 - A magic number in a renderer or a threshold buried in a condition is a
   finding every time, including when it is "obviously" 2.0.
+- **Opening state is config, not a literal.** Which layers, panels and
+  surfaces a fresh launch draws is a product decision someone may want
+  different, so it belongs in the shipped TOML under `crates/app/config/`,
+  compiled in with `include_str!` the way `feeds.toml`, `bubbles.toml` and
+  `chart-layers.toml` are. A `Default` impl deciding what the first frame
+  shows, or a `set_*(false)` at startup, is a finding — it puts a product
+  decision where nobody can change it without a build, and it splits the
+  answer across a struct and a file the moment a state file exists. The test
+  is not "is it a number", it is "would a human ever want this different".
 - Config round-trips must survive a save: a writer that drops comments or
   re-emits `0.78` as `0.7799999713897705` destroys the reason the file is
   tracked in git. Check the write path, not just the read path.

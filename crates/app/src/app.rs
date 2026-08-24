@@ -1369,9 +1369,12 @@ impl QuantickApp {
         // Same for a declared opening layout: a feed the user reads by
         // timeframe can open straight on the timeframe chart.
         app.active_tab_mut().apply_feed_declared_layout(&config);
-        // The map itself stays hidden until asked for — a layer nobody
-        // requested must cost no projection. Capture is already running either
-        // way, so this is a display choice and nothing else.
+        // The code's own baseline, and nothing more: what a launch actually
+        // opens with is `config/chart-layers.toml`, applied by
+        // `restore_chart_layers` immediately below and shipping the map on.
+        // This line is what remains if that config is ever unreadable — a
+        // layer nobody requested costing no projection. Capture is already
+        // running either way, so it is a display choice and nothing else.
         app.active_tab_mut().tape_mut().set_depth_visible(false);
         // What the user last had on the canvas, applied over those defaults and
         // under the autostart hooks below: an env var is an explicit request
@@ -11458,6 +11461,15 @@ plot(close)
     /// bar per trade, the finest series a spec change can coarsen.
     fn app_with_history(count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
         let (mut app, evt_tx, cmd_rx, _book_tx) = test_app();
+        // A bare canvas, the one every caller here was written against: the
+        // strip stands beside the price axis and takes width from the candles,
+        // so leaving it on moves every hard-coded pointer coordinate in the
+        // drawing and inspector tests onto it — a collision about layout,
+        // never about what those tests assert. Which layers a launch opens
+        // with is a different question, and `test_app` keeps the shipped
+        // answer intact for the test that reads it
+        // (`each_layer_switch_moves_exactly_one_owner`).
+        app.active_tab_mut().flow_pane.live_strip_visible = false;
         app.active_tab_mut().flow_pane.tick_n = 1;
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
@@ -11570,15 +11582,15 @@ plot(close)
     #[test]
     fn each_layer_switch_moves_exactly_one_owner() {
         let (mut app, _events, _commands, _book) = test_app();
-        // What the chart opens with: the market layers are opt-in, the chart's
-        // own chrome is on. This is the state the file's absence must preserve.
+        // What the chart opens with, and where that is decided: with no file
+        // of the trader's own, `config/chart-layers.toml` is what reaches the
+        // panes. The flow layers are on there — they are what the chart is
+        // for — and only the backfill divider is held back.
         for (layer, expected) in [
-            (ChartLayer::Heatmap, false),
-            (ChartLayer::Bubbles, false),
-            // The footprint is opt-in like every market layer: the chart must
-            // open pixel-identical to the day before the layer existed.
-            (ChartLayer::Footprint, false),
-            (ChartLayer::LiveStrip, false),
+            (ChartLayer::Heatmap, true),
+            (ChartLayer::Bubbles, true),
+            (ChartLayer::Footprint, true),
+            (ChartLayer::LiveStrip, true),
             (ChartLayer::LaneMarks, true),
             (ChartLayer::DepthGaps, true),
             (ChartLayer::Grid, true),
@@ -19654,7 +19666,17 @@ plot(close)
     fn bubble_toggle_needs_no_feed_command_and_leaves_capture_alone() {
         let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
         take_capture_start(&mut cmd_rx);
+        // The shipped config opens the layer, so the round trip is off and
+        // back on — both directions have to leave the feed alone, not just
+        // whichever one happens to be the opening state.
+        assert!(app.active_tab().tape().bubbles_enabled());
+
+        app.active_tab_mut().tape_mut().set_bubbles_enabled(false);
         assert!(!app.active_tab().tape().bubbles_enabled());
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "hiding the bubbles is a display choice; no feed command is needed"
+        );
 
         app.active_tab_mut().tape_mut().set_bubbles_enabled(true);
         assert!(app.active_tab().tape().bubbles_enabled());
