@@ -545,6 +545,37 @@ mod tests {
         assert!(!fresh.is_empty(), "the shipped file has to reach the app");
     }
 
+    /// The promise the shipped default is only acceptable because of: it
+    /// decides for someone who has never touched a switch, and stops deciding
+    /// the moment they do. A trader who switched the heatmap off and found it
+    /// back on next launch would have lost the setting to a default, which is
+    /// worse than the bare chart this whole change is about.
+    #[test]
+    fn the_traders_own_choice_outranks_the_shipped_default() {
+        let path = temp_dir().join("trader-choice.toml");
+        assert_eq!(
+            shipped_default().get(&ChartLayer::Heatmap),
+            Some(&true),
+            "the layer has to be one the shipped file opens, or this proves nothing"
+        );
+        // A file with one switch in it, the way it lands after one click.
+        std::fs::write(&path, "version = 1\n[layers]\nheatmap = false\n").unwrap();
+        let loaded = load(&path);
+        assert_eq!(
+            loaded.get(&ChartLayer::Heatmap),
+            Some(&false),
+            "an explicit no stays a no"
+        );
+        // And the shipped answer does not leak in beside it: a layer the
+        // trader's file never mentions is the app's to decide, exactly as it
+        // was before this file existed.
+        assert!(
+            !loaded.contains_key(&ChartLayer::Bubbles),
+            "an absent layer keeps meaning \"whatever the app decided\""
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
     /// The file is tracked and compiled in, so anything wrong with it is a
     /// build-time mistake — and one that would otherwise degrade silently into
     /// "the code decides", which is the state this file exists to end.
