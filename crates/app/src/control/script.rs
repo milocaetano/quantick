@@ -25,6 +25,7 @@ use quantick_control::{
     schema::generated_schema,
     wire::{ActorContext, WireU64},
 };
+use quantick_pine::Span;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -263,7 +264,7 @@ fn compile_error(errors: &[quantick_pine::PineError], source: &str) -> ControlEr
     let diagnostics = errors
         .iter()
         .map(|error| {
-            let (line, column) = line_and_column(source, error.span.start);
+            let (line, column) = line_and_column(source, error.span);
             ScriptDiagnostic {
                 code: error.code.as_str().to_owned(),
                 start: u32::try_from(error.span.start).unwrap_or(u32::MAX),
@@ -282,18 +283,17 @@ fn compile_error(errors: &[quantick_pine::PineError], source: &str) -> ControlEr
     control_error
 }
 
-/// 1-based line and column of a byte offset, counting characters rather than
-/// bytes in the column so a note over accented text points where it looks.
-fn line_and_column(source: &str, offset: usize) -> (u32, u32) {
-    let offset = offset.min(source.len());
-    let before = &source[..offset];
-    let line = before.matches('\n').count() + 1;
-    let column = before
-        .rsplit_once('\n')
-        .map_or(before, |(_, tail)| tail)
-        .chars()
-        .count()
-        + 1;
+/// 1-based line and column of a span, counting characters rather than bytes in
+/// the column so a note over accented text points where it looks.
+///
+/// The arithmetic belongs to `quantick_pine`, not here: a span can land *inside*
+/// a multi-byte character — the lexer end-of-line span is `pos - 1`, and `pos`
+/// counts bytes — so the offset has to be floored to a character boundary before
+/// the source is sliced. [`Span::line_col`] already does that, and re-deriving it
+/// here once cost the application thread a panic on any script ending in an
+/// accented character without a trailing newline.
+fn line_and_column(source: &str, span: Span) -> (u32, u32) {
+    let (line, column) = span.line_col(source);
     (
         u32::try_from(line).unwrap_or(u32::MAX),
         u32::try_from(column).unwrap_or(u32::MAX),
@@ -322,4 +322,22 @@ fn journal_script<T: Serialize>(
         metrics::wall_clock_ms(),
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A script whose last character is multi-byte and which does not end in a
+    /// newline puts the lexer's end-of-line span *inside* that character:
+    /// `end_logical_line` emits it at `pos - 1`, and `pos` is the length in
+    /// bytes. Reporting that position must answer with a diagnostic, not take
+    /// the application thread down with it.
+    #[test]
+    fn a_span_inside_a_character_reports_a_position() {
+        let source = "x = // ré";
+        let offset = source.len() - 1;
+        assert!(!source.is_char_boundary(offset), "the case under test");
+        assert_eq!(line_and_column(source, Span::at(offset)), (1, 9));
+    }
 }
