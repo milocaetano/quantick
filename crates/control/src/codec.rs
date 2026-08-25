@@ -150,7 +150,8 @@ impl BoundedCodec {
     /// `read_handshake_response`: a client that only knows how to read an
     /// acceptance cannot tell a refusal from a truncated frame, and the caller
     /// checks the acceptance against its own request with
-    /// [`HandshakeResponse::validate_for`] after [`HandshakeReply::into_accepted`].
+    /// [`crate::handshake::HandshakeResponse::validate_for`] after
+    /// [`HandshakeReply::into_accepted`].
     pub fn read_handshake_reply(
         &self,
         reader: &mut impl Read,
