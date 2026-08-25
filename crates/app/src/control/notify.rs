@@ -138,7 +138,9 @@ pub(crate) struct NotificationLimiter {
 
 impl NotificationLimiter {
     const ONE_TOKEN_NANOS: u128 = 1_000_000_000;
-    const NANOS_PER_MINUTE: u128 = 60;
+    /// The budget is stated per minute and the clock ticks in nanoseconds,
+    /// so every refill divides by the seconds in a minute.
+    const SECONDS_PER_MINUTE: u128 = 60;
 
     pub fn new() -> Self {
         Self {
@@ -155,7 +157,7 @@ impl NotificationLimiter {
         let refill = elapsed
             .as_nanos()
             .saturating_mul(u128::from(CONTROL_NOTIFICATION_RATE_PER_MINUTE))
-            / Self::NANOS_PER_MINUTE;
+            / Self::SECONDS_PER_MINUTE;
         self.available_token_nanos = self
             .available_token_nanos
             .saturating_add(refill)
@@ -173,7 +175,7 @@ impl NotificationLimiter {
             return Duration::ZERO;
         }
         let missing = Self::ONE_TOKEN_NANOS - self.available_token_nanos;
-        let nanos = missing.saturating_mul(Self::NANOS_PER_MINUTE)
+        let nanos = missing.saturating_mul(Self::SECONDS_PER_MINUTE)
             / u128::from(CONTROL_NOTIFICATION_RATE_PER_MINUTE).max(1);
         Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
     }

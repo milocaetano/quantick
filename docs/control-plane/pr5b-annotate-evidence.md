@@ -88,6 +88,37 @@ the trader drew.
   `crates/app/src/drawings/{mod,context_bar}.rs` (the author field and its
   chip).
 
+## What the review closed
+
+`arch-review`'s step 0 (`code-review` at `xhigh`) ran over the branch and
+returned fifteen findings. Two were Blockers, both now closed with a test:
+
+- **An operator could detach the trader's own indicator.** `detach_script_indicator`
+  matched any slot id in `slot_kinds`. The app now records which slots an
+  *operator* attached, and the detach refuses anything else with
+  `control.permission_denied` — `an_operator_cannot_detach_the_traders_own_indicator`.
+- **An annotation could land inside a drawing the trader was still making.**
+  `Drawings::place_with` appends to a live draft of the same tool and replaces
+  one of another tool, so an agent's anchor could merge into, or discard, work
+  in progress. An annotation now refuses a pane with a draft on it, retryable
+  and with the reason — `an_annotation_refuses_to_land_in_a_drawing_the_trader_is_still_making`.
+
+The rest, all fixed here: a removed annotation now sweeps strategy orphans
+like every other removal path; a replayed action is attributed to the operator
+the trace recorded rather than to the automation replaying it; a remote
+operator's action during a replay joins this run's re-injection walk, so an
+in-session restart matches a fresh process; the MCP instructions state the
+authority the connection actually holds instead of claiming read-only beside
+five write tools; the sweep gesture covers every pane an assistant can reach;
+a launch hook without a process identity reports instead of panicking; the
+`observe` floor is named rather than taken from the front of a sorted set; the
+gateway removes its descriptor (and its bearer token) when the waiter manager
+cannot start; a tool's bare-key shortcut no longer fires under Ctrl, Cmd or
+Alt, so Ctrl+M marks without also arming the ruler; and the misplaced doc
+blocks, the stale "no profile carries these permissions" comment, the
+`annotate` / `annotate-tier` contradiction, the misnamed `NANOS_PER_MINUTE`
+and CLAUDE.md's tool list are corrected.
+
 ## Deferred, with the reason
 
 - **Reading an attached script back through an `indicators` snapshot scope.**

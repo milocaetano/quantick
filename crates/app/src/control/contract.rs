@@ -54,7 +54,7 @@ pub(crate) const SNAPSHOT_CAPABILITY_ID: &str = "snapshot.read";
 pub(crate) const CHART_WINDOW_CAPABILITY_ID: &str = "chart.window.read";
 pub(crate) const DIAGNOSTICS_CAPABILITY_ID: &str = "health.diagnostics.read";
 
-const OBSERVE_PERMISSION_ID: &str = "observe";
+pub(crate) const OBSERVE_PERMISSION_ID: &str = "observe";
 const OBSERVE_EFFECT_ID: &str = "observe";
 const NO_CONFIRMATION_ID: &str = "none";
 const UI_BOUNDED_COST_ID: &str = "ui_bounded";
@@ -504,10 +504,10 @@ impl ObserverContract {
                 default_grant: DefaultGrant::Granted,
                 profile_ceilings: BTreeSet::from([observer.clone()]),
             },
-            // The annotate tier's permissions are declared here so the actions
-            // that need them can be registered and discovered; no profile the
-            // gateway grants in this release carries them, so a remote caller
-            // is refused before dispatch (contract §7.1).
+            // The annotate tier's floor. Every scope below it is off by
+            // default and reaches a client only when the trader ticks it in
+            // the access panel, which is also what raises the connection's
+            // ceiling to the `annotator` profile (contract §7.1).
             PermissionDescriptor {
                 id: permission(ANNOTATE_PERMISSION_ID),
                 label: "Annotate".to_owned(),

@@ -345,10 +345,20 @@ fn place(
     // trader's own hand, which is what every surface reads to decide whether
     // to say anything at all: an object the trader placed through this very
     // action — the hotkey path, a test — is theirs, not an assistant's.
-    let author = (actor.actor_kind != ActorKind::HumanUi).then(|| DrawingAuthor {
-        actor_kind: actor_kind_name(actor.actor_kind).to_owned(),
-        client_name: actor.client_name.clone(),
-    });
+    //
+    // A replay attributes to whoever the recorded run named, so a rerun of a
+    // session reproduces its authorship instead of stamping everything as the
+    // automation that is replaying it.
+    let author = match access.recorded_author() {
+        Some(recorded) => (recorded.actor_kind != ActorKind::HumanUi).then(|| DrawingAuthor {
+            actor_kind: actor_kind_name(recorded.actor_kind).to_owned(),
+            client_name: recorded.client_name.clone(),
+        }),
+        None => (actor.actor_kind != ActorKind::HumanUi).then(|| DrawingAuthor {
+            actor_kind: actor_kind_name(actor.actor_kind).to_owned(),
+            client_name: actor.client_name.clone(),
+        }),
+    };
     // The look a fresh object opens with is read before the pane is borrowed
     // mutably, through the app's own door: an annotation looks like what the
     // trader would have drawn.
@@ -357,6 +367,16 @@ fn place(
         .collect();
     let pane = control_pane_mut(app, tab_id, pane_side)?;
     let pane_id = pane.id;
+    // The trader is mid-gesture: `place_with` would push this call's anchor
+    // onto *their* draft (same tool) or replace it outright (different tool),
+    // which is exactly the "discards work done by hand" this tier may not do.
+    // Refused, retryable, with the reason — the assistant tries again when
+    // the hand has finished.
+    if pane.drawings.draft().is_some() {
+        return Err(capability_unavailable(
+            "the trader is drawing on that pane right now; an annotation would land in their unfinished object",
+        ));
+    }
 
     let mut resolved = Vec::with_capacity(input.anchors.len());
     let mut points = Vec::with_capacity(input.anchors.len());
@@ -466,6 +486,10 @@ fn remove_annotation(
         let pane_id = pane.id;
         let id = pane.drawings.items()[index].id;
         pane.drawings.remove_by_id(id);
+        // An annotation can be the region a strategy is armed on, like any
+        // other object: the same sweep every removal path in the interface
+        // does, so no resting simulated order outlives the mark it names.
+        pane.sweep_strategy_orphans();
         found = Some((tab_index, side, pane_id));
         break;
     }
@@ -534,6 +558,9 @@ fn resolve_target(
     target: Option<&AnnotationTarget>,
 ) -> Result<(u64, crate::pane::PaneSide), ControlError> {
     let tabs = app.control_tabs();
+    if tabs.is_empty() {
+        return Err(capability_unavailable("this window has no chart open"));
+    }
     let active = app.control_active_tab_index().min(tabs.len() - 1);
     let tab_index = match target.and_then(|target| target.tab_id) {
         None => active,

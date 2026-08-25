@@ -50,8 +50,8 @@ use crate::{app::QuantickApp, metrics};
 use super::{
     actions::{ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, ActionRegistry, standard_actions},
     contract::{
-        DeferredActionResult, EventsReadInvocation, OBSERVER_PROFILE_ID, ObserverContract,
-        ParkedWait, PreparedDispatch, PreparedRequest, UiReadExecution,
+        DeferredActionResult, EventsReadInvocation, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID,
+        ObserverContract, ParkedWait, PreparedDispatch, PreparedRequest, UiReadExecution,
     },
     events::EventsReadInput,
     feed::connection_state,
@@ -110,21 +110,34 @@ struct UiActorIdentity {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ActionOrigin {
     Human,
-    TraceReplay,
+    /// The trace speaking, carrying the operator the recorded run attributed
+    /// the action to. Automation is what *acts* now — that is what a mark
+    /// reports as its target source — but what the action produces belongs to
+    /// whoever produced it the first time, or to nobody when that was the
+    /// trader's own hand. A rerun that stamped every object "automation"
+    /// would not be the session it claims to reproduce.
+    TraceReplay(Box<RecordedActor>),
     Remote(Box<ActorContext>),
+}
+
+/// Who a recorded action belonged to, as its trace line says.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RecordedActor {
+    pub actor_kind: ActorKind,
+    pub client_name: String,
 }
 
 impl ActionOrigin {
     fn actor_kind(&self) -> ActorKind {
         match self {
             Self::Human => ActorKind::HumanUi,
-            Self::TraceReplay => ActorKind::Automation,
+            Self::TraceReplay(_) => ActorKind::Automation,
             Self::Remote(actor) => actor.actor_kind,
         }
     }
 
     fn is_trace_replay(&self) -> bool {
-        matches!(self, Self::TraceReplay)
+        matches!(self, Self::TraceReplay(_))
     }
 }
 
@@ -455,8 +468,13 @@ impl ClientRateLimiter {
 /// Whether a permission belongs to the annotate tier — the `annotate` floor
 /// itself or one of its scopes.
 fn is_annotate_permission(permission: &PermissionId) -> bool {
-    let id = permission.as_str();
-    id == ANNOTATE_PERMISSION_ID || id.starts_with(concat!("annotate", "."))
+    permission.as_str() == ANNOTATE_PERMISSION_ID || is_annotate_scope(permission)
+}
+
+/// A scope *of* the annotate tier — the ones that actually open a capability,
+/// as opposed to the `annotate` floor they all stand on.
+fn is_annotate_scope(permission: &PermissionId) -> bool {
+    permission.as_str().starts_with(concat!("annotate", "."))
 }
 
 /// Who a connection is, as the handshake proved it. Every action that
@@ -535,6 +553,9 @@ pub(crate) struct ControlAccess {
     /// One notification budget per connected client, dropped when the client
     /// disconnects so a long session cannot accumulate them.
     notification_limits: BTreeMap<ConnectionId, NotificationLimiter>,
+    /// Set for the duration of one replayed action: who the recorded run
+    /// attributed it to.
+    replayed_author: Option<RecordedActor>,
     next_trace_sequence: u64,
     /// The control trace of every replaying recording, keyed by session
     /// path, loaded once and walked by logical replay time; a tab without a
@@ -585,6 +606,7 @@ impl ControlAccess {
             semantic_baseline: None,
             next_ui_request: 1,
             notification_limits: BTreeMap::new(),
+            replayed_author: None,
             next_trace_sequence: 1,
             trace_reinjection: BTreeMap::new(),
         }
@@ -668,7 +690,10 @@ impl ControlAccess {
                 entry.capability_id.as_str(),
                 entry.capability_version,
                 entry.canonical_input,
-                ActionOrigin::TraceReplay,
+                ActionOrigin::TraceReplay(Box::new(RecordedActor {
+                    actor_kind: entry.actor_kind,
+                    client_name: entry.client_name.clone(),
+                })),
             ) {
                 tracing::warn!(
                     target: "quantick::control",
@@ -687,20 +712,28 @@ impl ControlAccess {
         &self.journal
     }
 
+    /// Whom an object this call produces belongs to, when the call is a
+    /// trace replaying a recorded action. `None` on every ordinary call: the
+    /// acting actor is the author.
+    pub(crate) fn recorded_author(&self) -> Option<&RecordedActor> {
+        self.replayed_author.as_ref()
+    }
+
+    /// The actor a launch hook acts as: an agent, named for what it is, so
+    /// nothing it places can pass for the trader's own hand and a screenshot
+    /// shows exactly what a connected assistant would have produced.
+    pub(crate) fn hook_agent_actor(&mut self) -> Option<ActorContext> {
+        self.identity.as_ref()?;
+        let mut actor = self.local_actor(ActorKind::Agent, Some("launch hook".to_owned()));
+        actor.client_name = HOOK_ACTOR_CLIENT_NAME.to_owned();
+        Some(actor)
+    }
+
     /// Whether this actor may interrupt the trader once more.
     ///
     /// Budgeted per connection, not per capability: three toasts and three
     /// popups from one client are six interruptions to the person reading the
     /// chart. The trader's own gestures never pass through here.
-    /// The actor a launch hook acts as: an agent, named for what it is, so
-    /// nothing it places can pass for the trader's own hand and a screenshot
-    /// shows exactly what a connected assistant would have produced.
-    pub(crate) fn hook_agent_actor(&mut self) -> ActorContext {
-        let mut actor = self.local_actor(ActorKind::Agent, Some("launch hook".to_owned()));
-        actor.client_name = HOOK_ACTOR_CLIENT_NAME.to_owned();
-        actor
-    }
-
     pub(crate) fn allow_notification(
         &mut self,
         actor: &ActorContext,
@@ -777,10 +810,17 @@ impl ControlAccess {
             // handshake, so an agent cannot sign an action as the trader.
             ActionOrigin::Remote(actor) => (**actor).clone(),
             ActionOrigin::Human => self.local_actor(actor_kind, None),
-            ActionOrigin::TraceReplay => self.local_actor(
+            ActionOrigin::TraceReplay(_) => self.local_actor(
                 actor_kind,
                 Some("replayed from the control trace".to_owned()),
             ),
+        };
+        // A rerun attributes what it produces to the operator the recorded
+        // run named, so a replayed session carries the same authorship the
+        // original did. Cleared below, whatever the handler does.
+        self.replayed_author = match &origin {
+            ActionOrigin::TraceReplay(recorded) => Some((**recorded).clone()),
+            ActionOrigin::Human | ActionOrigin::Remote(_) => None,
         };
         // What the caller asked becomes what will happen, before the intent
         // line is written: a trace entry names the bar that was marked, not
@@ -867,6 +907,7 @@ impl ControlAccess {
                 .map(|()| result)
                 .map_err(|error| ControlError::invalid_request(error.to_string()))
         });
+        self.replayed_author = None;
         entry.result_code = Some(match &outcome {
             Ok(_) => quantick_control::id::ErrorCode::new("control.ok")
                 .expect("static result code is valid"),
@@ -883,8 +924,12 @@ impl ControlAccess {
             // Recorded: the walk of this recording learns the action now, so
             // an in-session restart replays it like a fresh process would.
             Ok(()) => {
+                // Whoever acted, the entry is on disk and belongs to this
+                // pass: an in-session restart must replay exactly what a
+                // fresh process would. Only the trace's own re-injection is
+                // excluded, and it never reaches here.
                 if let Some((session_path, _)) = &replaying
-                    && origin == ActionOrigin::Human
+                    && !origin.is_trace_replay()
                     && let Some(state) = self.trace_reinjection.get_mut(session_path)
                 {
                     state.record_this_pass(entry);
@@ -1163,12 +1208,16 @@ impl ControlAccess {
     ///
     /// The panel's checkboxes write the same set; this is the named call
     /// behind them, so a scripted run, a test and a later operator reach the
-    /// grant without a mouse. `annotate` alone is shorthand for the whole
-    /// annotate tier, because a trader who says "let it answer on the chart"
-    /// means the tier, not a list of IDs; `annotate` on its own is the floor
-    /// permission it names and nothing more. `all-reads` is the safe default
-    /// grant. Unknown IDs are refused loudly rather than silently dropped:
-    /// a typo that quietly grants less is a debugging afternoon.
+    /// grant without a mouse.
+    ///
+    /// Two shorthands, and nothing else is special: `all-reads` is the safe
+    /// default grant, and `annotate-tier` is every scope of the annotate
+    /// tier, because a trader who says "let it answer on the chart" means the
+    /// tier rather than a list of IDs. Every other token is a registered
+    /// permission ID granting exactly itself — `annotate` included, which is
+    /// the tier's floor and opens nothing on its own. An unknown ID is refused
+    /// loudly rather than silently dropped: a typo that quietly grants less is
+    /// a debugging afternoon.
     pub(crate) fn configure_scopes(&mut self, scopes: &str) -> Result<(), String> {
         if !matches!(self.state, AccessState::Disabled) {
             return Err("scopes change only while access is off".to_owned());
@@ -1196,9 +1245,12 @@ impl ControlAccess {
                 },
             }
         }
-        // The floor every profile stands on: a grant of scopes with no
-        // `observe` reaches nothing at all, which is never what was meant.
-        granted.extend(self.contract.default_grant().iter().take(1).cloned());
+        // The floor every profile stands on, named rather than taken from the
+        // front of a sorted set: a grant of scopes with no `observe` reaches
+        // nothing at all, which is never what was meant.
+        granted.insert(
+            PermissionId::new(OBSERVE_PERMISSION_ID).expect("static permission ID is valid"),
+        );
         self.configured_scopes = granted;
         Ok(())
     }
@@ -1210,7 +1262,9 @@ impl ControlAccess {
     /// Whether any annotate scope is granted for the next connection — the
     /// one question that decides whether a client may answer on the chart.
     pub(crate) fn grants_annotate(&self) -> bool {
-        self.configured_scopes.iter().any(is_annotate_permission)
+        // The floor on its own opens nothing, so it never makes the status
+        // line claim the window can be answered on.
+        self.configured_scopes.iter().any(is_annotate_scope)
     }
 
     /// The ceiling every connection of the next run is capped at. It follows
@@ -1918,6 +1972,10 @@ fn gateway_run(
             .spawn(move || waiter_manager(ticks, park_rx, signal, cancellation))
             .is_err()
         {
+            // The descriptor is already on disk with this run's bearer token
+            // and port. Leaving it there would advertise a token for a port
+            // the operating system is about to hand to somebody else.
+            let _ = published.remove();
             return Err(
                 "Could not start the gateway's waiter manager; access remains off.".to_owned(),
             );

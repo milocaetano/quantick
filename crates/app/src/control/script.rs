@@ -213,7 +213,11 @@ fn attach_script(
         .iter()
         .map(|spec| spec.name().to_owned())
         .collect::<Vec<_>>();
-    let (tab_id, pane_side, slot) = app.attach_script_indicator(input.name.clone(), input.source);
+    // Attached *by an operator* when it was not the trader's own hand, which
+    // is what the detach then checks before it removes anything.
+    let by_operator = actor.actor_kind != quantick_control::wire::ActorKind::HumanUi;
+    let (tab_id, pane_side, slot) =
+        app.attach_script_indicator(input.name.clone(), input.source, by_operator);
     let result = AttachResult {
         slot_id: WireU64::new(slot.0),
         tab_id: WireU64::new(tab_id),
@@ -234,7 +238,15 @@ fn detach_script(
 ) -> Result<Value, ControlError> {
     let input: DetachInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let detached = app.detach_script_indicator(input.slot_id.get());
+    let detached = app
+        .detach_script_indicator(input.slot_id.get())
+        .map_err(|()| {
+            known_error(
+                codes::PERMISSION_DENIED,
+                "that indicator is the trader's own; this tier detaches only what an operator attached",
+                false,
+            )
+        })?;
     let result = DetachResult {
         slot_id: input.slot_id,
         detached,

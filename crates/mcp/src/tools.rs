@@ -59,7 +59,9 @@ pub const ATTACH_SCRIPT_CAPABILITY: &str = "indicator.script.attach";
 pub const DETACH_SCRIPT_CAPABILITY: &str = "indicator.script.detach";
 
 /// The profile whose ceiling admits the annotate tier.
-const ANNOTATOR_PROFILE: &str = "annotator";
+pub const ANNOTATOR_PROFILE: &str = "annotator";
+/// The read-only floor every other ceiling is treated as.
+pub const OBSERVER_PROFILE: &str = "observer";
 /// The routing property that picks which object an annotation places, and
 /// which channel a notification arrives on. Removed before the payload is
 /// validated, exactly as `instance_id` is.
@@ -207,7 +209,7 @@ pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
         Tool {
             name: INVOKE.to_owned(),
             title: "Invoke a registered capability by ID".to_owned(),
-            description: "Execute one registered capability by ID and version with its declared input. Availability, permission, revision and idempotency rules are enforced by the instance exactly as for the named tools; under the observer profile only read capabilities exist and any write ID is refused.".to_owned(),
+            description: "Execute one registered capability by ID and version with its declared input. Availability, permission, revision and idempotency rules are enforced by the instance exactly as for the named tools, whatever this connection's ceiling: a capability ID the trader did not grant is refused with control.permission_denied. Use quantick_describe or quantick_search_capabilities to learn which IDs this instance registers.".to_owned(),
             input_schema: invoke_schema(),
             output_schema: None,
             annotations: invoke_annotations,

@@ -15,14 +15,27 @@ use crate::{
     jsonrpc::{self, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, Message, RpcError},
     link::ControlLink,
     protocol::{LATEST_PROTOCOL_VERSION, SERVER_NAME, SERVER_TITLE, Tool, negotiate},
-    tools,
+    tools::{self, ANNOTATOR_PROFILE, OBSERVER_PROFILE},
 };
 
 /// The instructions a client shows its model. ADR 0001 §7: the connection
 /// rule, the read-before-act rule, the instance-selection rule and the
 /// authority boundary all sit inside the first 512 characters, because that
 /// is what a client is sure to surface.
-pub const INSTRUCTIONS: &str = "Quantick observer. Connects to a Quantick desktop instance that is ALREADY running with Local agent access enabled; it never starts Quantick. Read before you act: call quantick_describe first. Instances: with one live instance every tool targets it; with several, pass instance_id (quantick_describe without it lists them) - nothing is chosen silently. Authority: the observer profile is read-only; no tool changes the chart, orders or settings, and write capability IDs are refused. Values are exact decimal strings; timestamps name their unit (_unix_ms). Errors carry a stable control.* code and next steps: branch on the code.";
+/// What the client tells the model about this server. It states the
+/// connection's *own* authority, because a fixed sentence claiming read-only
+/// beside a tool list that writes is a guardrail pointing the wrong way.
+#[must_use]
+pub fn instructions(profile_ceiling: &str) -> String {
+    let authority = if profile_ceiling == ANNOTATOR_PROFILE {
+        "Authority: this connection holds the annotator profile - it reads, and it may add labels, arrows and zones to the chart, raise a notification, and attach a compiled indicator. Everything it adds is visibly attributed to this client and removable in one action by the trader; nothing can delete the trader's own work, change the layout, or touch an order. The window grants each scope: a capability the trader did not grant is refused."
+    } else {
+        "Authority: the observer profile is read-only; no tool changes the chart, orders or settings, and write capability IDs are refused."
+    };
+    format!(
+        "Quantick observer. Connects to a Quantick desktop instance that is ALREADY running with Local agent access enabled; it never starts Quantick. Read before you act: call quantick_describe first. Instances: with one live instance every tool targets it; with several, pass instance_id (quantick_describe without it lists them) - nothing is chosen silently. {authority} Values are exact decimal strings; timestamps name their unit (_unix_ms). Errors carry a stable control.* code and next steps: branch on the code."
+    )
+}
 
 /// How many leading characters of [`INSTRUCTIONS`] must already state the
 /// four rules; pinned by a test.
@@ -30,6 +43,9 @@ pub const INSTRUCTIONS_LEAD_CHARS: usize = 512;
 
 pub struct McpServer {
     link: Box<dyn ControlLink>,
+    /// The ceiling this connection asked for, which decides both the tool
+    /// list and what the instructions claim about its authority.
+    profile_ceiling: &'static str,
     tools: Vec<Tool>,
     protocol_version: Option<&'static str>,
     initialized: bool,
@@ -41,6 +57,14 @@ impl McpServer {
     pub fn new(link: Box<dyn ControlLink>, profile_ceiling: &str) -> Self {
         Self {
             link,
+            // The ceiling decides what the client is offered and what it is
+            // told; only the two the adapter can request are meaningful, and
+            // anything else is treated as the read-only floor.
+            profile_ceiling: if profile_ceiling == ANNOTATOR_PROFILE {
+                ANNOTATOR_PROFILE
+            } else {
+                OBSERVER_PROFILE
+            },
             tools: tools::tools(profile_ceiling),
             protocol_version: None,
             initialized: false,
@@ -146,7 +170,7 @@ impl McpServer {
                         "title": SERVER_TITLE,
                         "version": env!("CARGO_PKG_VERSION"),
                     },
-                    "instructions": INSTRUCTIONS,
+                    "instructions": instructions(self.profile_ceiling),
                 }))
             }
             "ping" => Ok(json!({})),
@@ -279,7 +303,8 @@ mod tests {
 
     #[test]
     fn the_instructions_lead_with_the_four_rules() {
-        let lead: String = INSTRUCTIONS.chars().take(INSTRUCTIONS_LEAD_CHARS).collect();
+        let observer = instructions("observer");
+        let lead: String = observer.chars().take(INSTRUCTIONS_LEAD_CHARS).collect();
         for rule in [
             "ALREADY running",
             "never starts Quantick",
@@ -293,6 +318,30 @@ mod tests {
                 "the first 512 characters must state: {rule}"
             );
         }
+    }
+
+    /// The guardrail the client surfaces has to describe the tools it is
+    /// surfaced beside: an annotator connection is told it can write, and
+    /// told exactly how far that goes.
+    #[test]
+    fn the_instructions_state_the_authority_the_connection_actually_holds() {
+        let annotator = instructions("annotator");
+        assert!(
+            !annotator.contains("read-only"),
+            "a connection that lists five write tools is not read-only: {annotator}"
+        );
+        for promise in [
+            "annotator profile",
+            "visibly attributed",
+            "removable in one action",
+            "nothing can delete the trader's own work",
+        ] {
+            assert!(
+                annotator.contains(promise),
+                "the annotator instructions must state: {promise}"
+            );
+        }
+        assert!(instructions("observer").contains("read-only"));
     }
 
     #[test]

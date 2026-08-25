@@ -881,6 +881,9 @@ pub struct QuantickApp {
     /// The `QUANTICK_CONTROL_ACCESS` hook: enable observer access on the
     /// first frame, through the panel button's own `enable`.
     pending_control_access_enable: bool,
+    /// The indicator slots an operator other than the trader attached — the
+    /// only ones the annotate tier may take back off the chart.
+    operator_slots: std::collections::BTreeSet<u64>,
     /// The `QUANTICK_CONTROL_ANNOTATE` hook: an agent-authored label on the
     /// first frame, so every attribution surface can be photographed.
     pending_control_annotation: Option<String>,
@@ -1316,6 +1319,7 @@ impl QuantickApp {
             pending_text_edit: false,
             pending_text_note: false,
             pending_control_access_enable: false,
+            operator_slots: std::collections::BTreeSet::new(),
             pending_control_annotation: None,
             pending_control_notification: None,
             pending_control_mark: None,
@@ -2252,6 +2256,7 @@ impl QuantickApp {
         &mut self,
         name: String,
         text: String,
+        by_operator: bool,
     ) -> (u64, crate::control::PaneSideDto, SlotId) {
         let slot = self
             .focused_pane_mut()
@@ -2261,24 +2266,36 @@ impl QuantickApp {
             });
         let owner = self.target_slot(slot);
         self.slot_kinds.push((owner, SavedKind::Script { name }));
+        // Whose slot this is decides who may take it away again: the annotate
+        // tier removes what it attached, never what the trader put there.
+        if by_operator {
+            self.operator_slots.insert(slot.0);
+        }
         self.mark_indicator_state_dirty();
         (owner.tab, owner.side.into(), slot)
     }
 
-    /// Take one attached slot off the chart, wherever it lives, through the
-    /// same removal the indicator legend's own button uses. Reports whether
-    /// there was anything there.
-    pub(crate) fn detach_script_indicator(&mut self, slot: u64) -> bool {
+    /// Take one slot **an operator attached** off the chart, through the same
+    /// removal the indicator legend's own button uses.
+    ///
+    /// `Err` when the slot is one the trader put there: this tier adds and
+    /// takes back its own, and never removes work done by hand (plan §2.6).
+    /// `Ok(false)` when there is no such slot at all.
+    pub(crate) fn detach_script_indicator(&mut self, slot: u64) -> Result<bool, ()> {
         let Some(target) = self
             .slot_kinds
             .iter()
             .map(|(owner, _)| *owner)
             .find(|owner| owner.slot.0 == slot)
         else {
-            return false;
+            return Ok(false);
         };
+        if !self.operator_slots.contains(&slot) {
+            return Err(());
+        }
         self.remove_indicator_at(target);
-        true
+        self.operator_slots.remove(&slot);
+        Ok(true)
     }
 
     /// Open the assistant's popup. One at a time: a second message replaces
@@ -2355,6 +2372,44 @@ impl QuantickApp {
         outcome
     }
 
+    /// How many objects an operator other than the trader placed, across
+    /// every pane one can reach — an assistant may annotate any open tab, so
+    /// counting the active pane alone would offer to take back a subset and
+    /// call it all of them.
+    fn authored_object_count(&self) -> usize {
+        self.tabs
+            .iter()
+            .map(|tab| {
+                tab.flow_pane.drawings.authored_count()
+                    + tab
+                        .time_pane
+                        .as_ref()
+                        .map_or(0, |pane| pane.drawings.authored_count())
+            })
+            .sum()
+    }
+
+    /// Take back every object an operator placed, wherever it is. One undo
+    /// entry per pane, and the resting orders of any armed strategy go with
+    /// the objects they were anchored to.
+    fn remove_every_authored_object(&mut self) -> usize {
+        let mut removed = 0;
+        for tab in &mut self.tabs {
+            for side in [crate::pane::PaneSide::Flow, crate::pane::PaneSide::Time] {
+                if side == crate::pane::PaneSide::Time && tab.time_pane.is_none() {
+                    continue;
+                }
+                let pane = tab.pane_mut(side);
+                let taken = pane.drawings.remove_authored();
+                if taken > 0 {
+                    pane.sweep_strategy_orphans();
+                    removed += taken;
+                }
+            }
+        }
+        removed
+    }
+
     /// The annotate tier's launch hooks: one agent-authored label, one
     /// notification. Both go through the registered action with an agent
     /// actor — the same path the gateway takes for a remote client — so what
@@ -2381,7 +2436,7 @@ impl QuantickApp {
             };
             if let Some(anchor) = anchor {
                 self.pending_control_annotation = None;
-                self.run_agent_action(
+                self.run_hook_action(
                     "annotate.label.create",
                     serde_json::json!({ "anchors": [anchor], "text": text }),
                 );
@@ -2406,7 +2461,7 @@ impl QuantickApp {
                 }
             };
             if let Some(capability) = capability {
-                self.run_agent_action(
+                self.run_hook_action(
                     capability,
                     serde_json::json!({ "message": message, "title": "From your assistant" }),
                 );
@@ -2417,11 +2472,24 @@ impl QuantickApp {
     /// Invoke one registered action as an *agent* would, from inside this
     /// window. The hooks use it so a screenshot shows a real assistant's
     /// object, attribution and all, without a client on the socket.
-    fn run_agent_action(&mut self, capability_id: &str, input: serde_json::Value) {
+    fn run_agent_action(
+        &mut self,
+        capability_id: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, quantick_control::error::ControlError> {
         let Some(mut access) = self.control_access.take() else {
-            return;
+            return Err(quantick_control::error::ControlError::invalid_request(
+                "control access is not installed",
+            ));
         };
-        let actor = access.hook_agent_actor();
+        // No identity, no actor to sign with: the same structured refusal an
+        // action gets, rather than a panic on the first frame.
+        let Some(actor) = access.hook_agent_actor() else {
+            self.control_access = Some(access);
+            return Err(quantick_control::error::ControlError::invalid_request(
+                "this window has no control identity to act with",
+            ));
+        };
         let outcome = access.invoke_local_action(
             self,
             capability_id,
@@ -2430,7 +2498,13 @@ impl QuantickApp {
             crate::control::ActionOrigin::Remote(Box::new(actor)),
         );
         self.control_access = Some(access);
-        if let Err(error) = outcome {
+        outcome
+    }
+
+    /// A launch hook's action, with its failure reported where a scripted run
+    /// will see it: the hook is fire-and-forget, so nothing else would.
+    fn run_hook_action(&mut self, capability_id: &str, input: serde_json::Value) {
+        if let Err(error) = self.run_agent_action(capability_id, input) {
             tracing::warn!(
                 target: "quantick::control",
                 event_code = "CONTROL_HOOK_ACTION_FAILED",
@@ -3475,7 +3549,7 @@ impl QuantickApp {
         let name = entry.name.clone();
         match self.script_library.read(index) {
             Some(Ok(text)) => {
-                let (_, _, slot) = self.attach_script_indicator(name, text);
+                let (_, _, slot) = self.attach_script_indicator(name, text, false);
                 let owner = self.target_slot(slot);
                 // Watch the file so a save reloads it. Registered here, with
                 // the add, so the two cannot drift apart.
@@ -7691,7 +7765,7 @@ impl QuantickApp {
             // One gesture back from an assistant that drew too much. It
             // appears only when there is something to take back, names the
             // number, and is a single undo entry.
-            let authored = self.drawing_pane().drawings.authored_count();
+            let authored = self.authored_object_count();
             if authored > 0 {
                 if ui
                     .button(format!("Remove {authored} object(s) placed for you"))
@@ -7859,12 +7933,7 @@ impl QuantickApp {
         });
         self.drawing_manager_open = open;
         if sweep_authored {
-            let pane = self.drawing_pane_mut();
-            let removed = pane.drawings.remove_authored();
-            // An assistant's object can be a strategy's region like any
-            // other; the same sweep the delete-all path does keeps no
-            // resting order behind a mark that is gone.
-            pane.sweep_strategy_orphans();
+            let removed = self.remove_every_authored_object();
             if removed > 0 {
                 self.toast = Some(Toast {
                     message: format!("{removed} object(s) placed for you removed.").into(),
@@ -26623,6 +26692,96 @@ plot(close)
         assert_eq!(result["removed"], true);
     }
 
+    /// The tier's floor, again, on the surface the review found open: an
+    /// operator detaches what an operator attached, and the trader's own
+    /// indicator stays on the chart whatever slot id is named.
+    #[test]
+    fn an_operator_cannot_detach_the_traders_own_indicator() {
+        use quantick_control::error::codes;
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(4);
+        run_frame(&mut app, &ctx);
+        // The trader's own, through the library's door.
+        let (_, _, mine) = app.attach_script_indicator(
+            "the trader's".to_owned(),
+            "//@version=5
+indicator(\"mine\")
+plot(close)
+"
+            .to_owned(),
+            false,
+        );
+        for _ in 0..200 {
+            run_frame(&mut app, &ctx);
+            if !indicator_kinds(&app).is_empty() {
+                break;
+            }
+        }
+        let refused = app
+            .control_action(
+                "indicator.script.detach",
+                1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({ "slot_id": mine.0.to_string() }),
+            )
+            .expect_err("the trader's own indicator is not this tier's to remove");
+        assert_eq!(refused.code.as_str(), codes::PERMISSION_DENIED);
+        assert_eq!(
+            indicator_kinds(&app).len(),
+            1,
+            "and it is still on the pane"
+        );
+    }
+
+    /// An annotation never lands inside a drawing the trader is still making:
+    /// `place_with` would have pushed the call's anchor onto their draft.
+    #[test]
+    fn an_annotation_refuses_to_land_in_a_drawing_the_trader_is_still_making() {
+        use quantick_control::error::codes;
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(8);
+        run_frame(&mut app, &ctx);
+        // The trader drops the first corner of a rectangle and stops there.
+        let anchor = newest_anchor(&app);
+        let point = {
+            let pane = app.active_tab().drawing_pane();
+            let slot = pane.slots().saturating_sub(1);
+            drawings::ChartPoint::at_time(slot as f32 + 0.5, 1.0, pane.slot_open_time(slot))
+        };
+        let rectangle = drawings::DrawingTool::by_id("rectangle").unwrap();
+        let fresh = app.control_new_drawing(rectangle);
+        app.active_tab_mut().drawing_pane_mut().drawings.place_with(
+            rectangle,
+            &drawings::DrawingBand::Price,
+            point,
+            |_| fresh,
+        );
+        assert!(
+            app.active_tab().drawing_pane().drawings.draft().is_some(),
+            "the trader is mid-gesture"
+        );
+
+        let refused = app
+            .control_action(
+                "annotate.zone.create",
+                1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({ "anchors": [anchor.clone(), anchor] }),
+            )
+            .expect_err("an annotation waits for the hand to finish");
+        assert_eq!(refused.code.as_str(), codes::CAPABILITY_UNAVAILABLE);
+        assert!(refused.retryable, "the trader will finish; try again");
+        let pane = app.active_tab().drawing_pane();
+        assert_eq!(
+            pane.drawings.draft().map(|draft| draft.points.len()),
+            Some(1),
+            "their unfinished object is untouched"
+        );
+        assert_eq!(pane.drawings.items().len(), 0, "and nothing was committed");
+    }
+
     /// Criterion 3: a script that does not compile comes back as spans and
     /// codes, never as a rendered paragraph an agent has to parse.
     #[test]
@@ -26669,10 +26828,8 @@ plot(close)
         let before = indicator_kinds(&app);
 
         let attached = app
-            .control_action(
+            .run_agent_action(
                 "indicator.script.attach",
-                1,
-                crate::control::ActionOrigin::Human,
                 serde_json::json!({
                     "name": "agent ema",
                     "source": "//@version=5\nindicator(\"agent ema\")\nplot(close)\n",
@@ -26695,13 +26852,11 @@ plot(close)
         );
 
         let detached = app
-            .control_action(
+            .run_agent_action(
                 "indicator.script.detach",
-                1,
-                crate::control::ActionOrigin::Human,
                 serde_json::json!({ "slot_id": slot_id }),
             )
-            .expect("detaching answers");
+            .expect("what an operator attached, an operator detaches");
         assert_eq!(detached["detached"], true);
         for _ in 0..200 {
             run_frame(&mut app, &ctx);
@@ -27210,7 +27365,12 @@ plot(close)
             .control_action(
                 crate::control::MARK_CAPABILITY_ID,
                 crate::control::MARK_CAPABILITY_VERSION,
-                crate::control::ActionOrigin::TraceReplay,
+                crate::control::ActionOrigin::TraceReplay(Box::new(
+                    crate::control::RecordedActor {
+                        actor_kind: quantick_control::wire::ActorKind::HumanUi,
+                        client_name: "quantick-ui".to_owned(),
+                    },
+                )),
                 serde_json::json!({ "note": "no recorded target" }),
             )
             .unwrap_err();

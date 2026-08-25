@@ -29,6 +29,8 @@ mod workspace;
 pub(crate) use actions::{MARK_CAPABILITY_ID, MARK_CAPABILITY_VERSION};
 #[cfg(test)]
 pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID};
+#[cfg(test)]
+pub(crate) use gateway::RecordedActor;
 pub(crate) use gateway::{ActionOrigin, ControlAccess, MARK_SHORTCUT};
 pub(crate) use notify::AgentPopup;
 pub(crate) use types::PaneSideDto;
