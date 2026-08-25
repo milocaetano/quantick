@@ -140,7 +140,43 @@ pub struct ModuleRevision {
     pub revision: WireU64,
 }
 
+/// Field names a client may never supply on a request: the actor context is
+/// assigned by the gateway after authentication, never accepted from the wire.
+/// The codec refuses a request carrying any of them, and the published schema
+/// forbids the same names (see [`reject_reserved_actor_fields`]), so a client
+/// generated from the contract cannot build a request the host will refuse.
+pub const RESERVED_ACTOR_FIELDS: &[&str] = &[
+    "actor",
+    "actor_context",
+    "actor_kind",
+    "client_name",
+    "connection_id",
+    "principal_id",
+    "requested_at_unix_ms",
+];
+
+/// Make the generated request schema refuse exactly what the codec refuses.
+///
+/// Denying every unknown field would be the shorter spelling, and it was the
+/// first one tried. The contract rules it out: reserved actor fields are
+/// rejected, and *other* additive fields follow the compatibility rule, so a
+/// host must stay a tolerant reader of an envelope a newer client may extend.
+/// A `not`/`anyOf`/`required` clause forbids the reserved names alone and
+/// leaves the envelope open to additive evolution.
+fn reject_reserved_actor_fields(schema: &mut schemars::Schema) {
+    let forbidden = RESERVED_ACTOR_FIELDS
+        .iter()
+        .map(|field| serde_json::json!({ "required": [field] }))
+        .collect::<Vec<_>>();
+    schema.insert("not".to_owned(), serde_json::json!({ "anyOf": forbidden }));
+}
+
+/// A request as it arrives from a client.
+///
+/// Unknown fields other than the reserved actor names are ignored, as the
+/// contract's tolerant-reader rule requires of every wire DTO.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[schemars(transform = reject_reserved_actor_fields)]
 pub struct RequestEnvelope {
     #[schemars(range(min = 1))]
     pub protocol_version: u32,
@@ -158,6 +194,10 @@ pub struct RequestEnvelope {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(length(max = CONTROL_REASON_MAX_BYTES))]
     pub reason: Option<String>,
+    /// Capability input. Floating-point numbers are rejected: exact decimals
+    /// cross this boundary as strings, so a price never arrives as an f64.
+    /// JSON Schema cannot express that over arbitrary nesting, so the schema
+    /// states it and `canonical::validate_control_value` enforces it.
     pub payload: Value,
 }
 
