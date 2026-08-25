@@ -25,7 +25,7 @@ a popup stealing focus, a confirm dialog on a flatten, a layout jump on bar
 close — is money lost. Judges every control by "can I hit it without
 looking?" and every piece of information by "is it true *now*?".
 
-**Marina — swing/context trader (BTC + índice, multiple timeframes).**
+**Marina — swing/context trader (BTC + index futures, multiple timeframes).**
 Works across tabs and split panes; compares, measures, draws. Cares about
 consistency (the same gesture must mean the same thing in every pane),
 persistence (her drawings, presets and layouts must survive a restart), and
