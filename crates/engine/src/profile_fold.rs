@@ -10,10 +10,10 @@
 //!   volume spread evenly over its high–low. Written out, one candle is up to
 //!   `level_cap` map entries; twenty-five thousand of them is tens of millions
 //!   of entries built only to be summed and thrown away. Read as an
-//!   [`ApproxSpread`] instead, one candle is a *range add*: six numbers, three
+//!   `ApproxSpread` instead, one candle is a *range add*: six numbers, three
 //!   map touches, whatever the candle's width. The profile is identical
 //!   because the spread is the same data — `BarFootprint::approximated` is
-//!   written on top of the same [`ApproxSpread::of`].
+//!   written on top of the same `ApproxSpread::of`.
 //! - **The caller may not have a frame to spare.** [`ProfileFold`] takes its
 //!   inputs one at a time and can be read at any point, so a consumer with a
 //!   deadline folds what it can afford, paints what it has, and comes back —
@@ -34,8 +34,9 @@ use std::collections::BTreeMap;
 
 use rust_decimal::Decimal;
 
+use crate::footprint::{ApproxSpread, halved};
 use crate::profile::fold_bucket;
-use crate::{ApproxSpread, Bar, BarFootprint, FootprintLevel, VolumeProfile};
+use crate::{Bar, BarFootprint, FootprintLevel, VolumeProfile};
 
 /// A signed running delta over one bucket. The fold builds a *difference map*
 /// (a delta at each boundary, values recovered by running sum), which is what
@@ -67,10 +68,6 @@ pub struct ProfileFold {
     /// Number of inputs that contributed — an empty fold has no profile, the
     /// same answer `merge` gives an empty iterator.
     inputs: usize,
-    /// A ladder disagreed with this fold's base grouping. Such ladders never
-    /// shared bucket boundaries, so there is no honest profile over them:
-    /// `merge` returns `None` and so does this.
-    refused: bool,
 }
 
 impl ProfileFold {
@@ -108,18 +105,23 @@ impl ProfileFold {
             levels: BTreeMap::new(),
             pending: Vec::new(),
             inputs: 0,
-            refused: false,
         }
     }
 
     /// Add one bar's real ladder. Costs one map touch per row it holds.
     ///
-    /// Returns `false` — and poisons the fold — when `ladder` was built on a
+    /// Returns `false`, having added **nothing**, when `ladder` was built on a
     /// different base grouping: its buckets never aligned with this fold's,
     /// and folding them would invent rows rather than sum them.
+    ///
+    /// The refusal is reported, not remembered. What a mismatch means is the
+    /// caller's to decide — [`VolumeProfile::merge`] has no honest answer over
+    /// a set that disagrees and returns `None`, while a chart holding one
+    /// stale snapshot beside a refolded group would rather fold the bars that
+    /// do align and say how many it left out. A fold that poisoned itself
+    /// would take the second caller's whole range down with one bar.
     pub fn push_ladder(&mut self, ladder: &BarFootprint) -> bool {
         if ladder.base_group() != self.base_group {
-            self.refused = true;
             return false;
         }
         self.raise_to(ladder.doublings());
@@ -168,13 +170,13 @@ impl ProfileFold {
     }
 
     /// The profile of everything folded so far, or `None` when nothing
-    /// contributed (or a ladder was refused). Costs a fold of the pending
+    /// contributed. Costs a fold of the pending
     /// spreads and a clone of the accumulated rows; it does not consume or
     /// mutate the fold, so a consumer may read a partial answer as often as it
     /// likes and keep folding.
     #[must_use]
     pub fn profile(&self) -> Option<VolumeProfile> {
-        if self.refused || self.inputs == 0 {
+        if self.inputs == 0 {
             return None;
         }
         let mut doublings = self.doublings;
@@ -184,14 +186,14 @@ impl ProfileFold {
                 fold_spreads(&self.pending, doublings, self.level_cap);
             if spread_doublings > doublings {
                 for _ in doublings..spread_doublings {
-                    levels = coarsened(levels);
+                    levels = halved(levels);
                 }
                 doublings = spread_doublings;
             }
             merge_into(&mut levels, spread_rows);
         }
         while levels.len() > self.level_cap {
-            levels = coarsened(levels);
+            levels = halved(levels);
             doublings += 1;
         }
         let mut group = self.base_group;
@@ -199,6 +201,19 @@ impl ProfileFold {
             group = group.saturating_mul(Decimal::TWO);
         }
         Some(VolumeProfile::from_parts(levels, group, doublings > 0))
+    }
+
+    /// Fold every pending spread in, so later reads cost a clone of the rows
+    /// and nothing else.
+    ///
+    /// [`profile`](Self::profile) takes `&self`, so it folds the pending
+    /// spreads on *every* call — right for a fold still running, waste for one
+    /// that is finished and read again and again (a chart re-reads a completed
+    /// fold whenever its forming bar moves). A consumer that knows it has
+    /// pushed its last input calls this once. Nothing else changes:
+    /// collapsing early and collapsing late reach the same rows.
+    pub fn seal(&mut self) {
+        self.collapse_pending();
     }
 
     /// Fold the pending spreads into the accumulated rows.
@@ -218,7 +233,7 @@ impl ProfileFold {
     /// late reach the same rows.
     fn raise_to(&mut self, doublings: u32) {
         while self.doublings < doublings {
-            self.levels = coarsened(std::mem::take(&mut self.levels));
+            self.levels = halved(std::mem::take(&mut self.levels));
             self.doublings += 1;
         }
     }
@@ -228,7 +243,7 @@ impl ProfileFold {
     /// merge would also have coarsened.
     fn cap_rows(&mut self) {
         while self.levels.len() > self.level_cap {
-            self.levels = coarsened(std::mem::take(&mut self.levels));
+            self.levels = halved(std::mem::take(&mut self.levels));
             self.doublings += 1;
         }
     }
@@ -242,19 +257,6 @@ fn merge_into(levels: &mut BTreeMap<i64, FootprintLevel>, rows: BTreeMap<i64, Fo
         target.sell = target.sell.saturating_add(level.sell);
         target.trade_count = target.trade_count.saturating_add(level.trade_count);
     }
-}
-
-/// Double the grouping: merge bucket pairs by integer halving, the same exact
-/// identity the footprint and the profile coarsen by.
-fn coarsened(levels: BTreeMap<i64, FootprintLevel>) -> BTreeMap<i64, FootprintLevel> {
-    let mut merged: BTreeMap<i64, FootprintLevel> = BTreeMap::new();
-    for (bucket, level) in levels {
-        let target = merged.entry(bucket.div_euclid(2)).or_default();
-        target.buy = target.buy.saturating_add(level.buy);
-        target.sell = target.sell.saturating_add(level.sell);
-        target.trade_count = target.trade_count.saturating_add(level.trade_count);
-    }
-    merged
 }
 
 /// Print `spreads` as rows, at `floor` doublings or coarser.
@@ -362,16 +364,22 @@ fn delta_at(diff: &mut BTreeMap<i64, Delta>, bucket: i64) -> &mut Delta {
 }
 
 impl Delta {
+    /// Every field, coverage included. It carried three of the four once and
+    /// the callers made up the difference by hand — a method named `add` that
+    /// quietly skips a field prints the wrong rows the first time someone
+    /// trusts its name, and prints them without failing anything.
     fn add(&mut self, other: &Delta) {
         self.buy = self.buy.saturating_add(other.buy);
         self.sell = self.sell.saturating_add(other.sell);
         self.count += other.count;
+        self.cover += other.cover;
     }
 
     fn sub(&mut self, other: &Delta) {
         self.buy = self.buy.saturating_sub(other.buy);
         self.sell = self.sell.saturating_sub(other.sell);
         self.count -= other.count;
+        self.cover -= other.cover;
     }
 }
 
@@ -412,7 +420,6 @@ fn print_rows(diff: &BTreeMap<i64, Delta>) -> BTreeMap<i64, FootprintLevel> {
             }
         }
         running.add(delta);
-        running.cover += delta.cover;
         previous = Some(bucket);
     }
     rows

@@ -86,12 +86,19 @@ impl VolumeProfile {
         assert!(level_cap > 0, "profile level cap must be positive");
         let mut ladders = ladders.into_iter();
         let first = ladders.next()?;
+        // The first ladder's own grouping becomes the fold's, so it can never
+        // be the one refused; and a ladder's base group is positive by
+        // `FootprintBuilder`'s construction, so the fold's assertion on that
+        // cannot fire from here.
         let mut fold = crate::ProfileFold::new(first.base_group(), level_cap);
         fold.push_ladder(first);
         for ladder in ladders {
-            // A ladder on another base grouping poisons the fold, which is how
-            // the refusal below reaches the caller as `None`.
-            fold.push_ladder(ladder);
+            // One ladder on another base grouping and there is no honest
+            // profile over the set — answered the moment it is seen, rather
+            // than after folding the rest of a range nobody will read.
+            if !fold.push_ladder(ladder) {
+                return None;
+            }
         }
         fold.profile()
     }

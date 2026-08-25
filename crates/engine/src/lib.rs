@@ -39,7 +39,7 @@ pub use bar::Bar;
 pub use builder::{BarBuilder, BarProgress};
 pub use dollar::{DollarBarBuilder, DollarMeasure};
 pub use footprint::{
-    ApproxSpread, BarFootprint, DEFAULT_LEVEL_CAP, Extreme, FootprintBuilder, FootprintLevel,
+    BarFootprint, DEFAULT_LEVEL_CAP, Extreme, FootprintBuilder, FootprintLevel,
     Imbalance, StackedZone,
 };
 pub use imbalance::{ImbalanceBarBuilder, ImbalanceUnit};

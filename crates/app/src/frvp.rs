@@ -48,18 +48,20 @@ pub const TOOL_ID: &str = "fixed-range-profile";
 /// nothing, forever.
 pub const DEFAULT_FOLD_BUDGET: usize = 1_500;
 
-/// The budget this process folds at: [`DEFAULT_FOLD_BUDGET`], or whatever
-/// `QUANTICK_FRVP_FOLD_BUDGET` names.
+/// The budget the *process* was launched with: [`DEFAULT_FOLD_BUDGET`], or
+/// whatever `QUANTICK_FRVP_FOLD_BUDGET` names.
 ///
 /// The override is not a preference knob, it is the door onto a *state*. At a
 /// budget of one bar a fold advances one bar per frame, so the filling
 /// profile and its progress line stay on screen as long as an operator — or a
-/// capture run — needs to look at them; without it that state lasts a fifth of
+/// capture run — needs to look at them; without it that state lasts a third of
 /// a second and no screenshot can be aimed at it. A non-positive or
 /// unparseable value is refused rather than guessed, and the default stands.
 ///
-/// Read once per process, so the fold never touches the environment on a
-/// frame.
+/// Read once per process by the pane, which then hands the number to every
+/// refresh ([`RefreshInputs::budget`]) — so the fold never touches the
+/// environment on a frame, and a test states the budget it means instead of
+/// inheriting whatever the shell exported.
 #[must_use]
 pub fn fold_budget() -> usize {
     static BUDGET: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
@@ -110,6 +112,11 @@ impl FoldJob {
 /// the snapshot cadence, never per paint.
 pub struct RefreshInputs<'a> {
     pub state: &'a ChartState,
+    /// How much folding one pass may do — [`fold_budget`], read once by the
+    /// pane. Injected rather than read here so a test can state the budget it
+    /// is asserting against, and so an operator exporting the env var cannot
+    /// change what the suite means.
+    pub budget: usize,
     /// The venue-history candles behind the tape — one entry per prefix slot,
     /// oldest first. With the payload's `approximate_history` on each joins
     /// the fold as its own approximated spread, labeled; otherwise a range
@@ -262,8 +269,8 @@ fn refresh_one(
         start_slot,
         end_slot,
         group: inputs.state.footprint_group(),
-        timeline_revision: inputs.state.timeline_revision(),
-        closed_len,
+        series_revision: inputs.state.series_revision(),
+
         include_partial,
         partial_snapshot: if include_partial {
             inputs.partial_version
@@ -363,14 +370,21 @@ fn advance(cache: &mut FrvpCache, value_area_pct: u8, inputs: &RefreshInputs<'_>
     let ladders = inputs.state.bar_footprints();
     let approximate = cache.key.approximate;
 
+    // With approximation off, no prefix slot can contribute anything: walking
+    // them one budget at a time would spend seventeen passes counting out
+    // `loading N of 25003` over bars that were never going to join.
+    if !approximate && job.next < prefix_len {
+        cache.bars_folded += prefix_len - job.next;
+        job.next = prefix_len;
+    }
+
     let mut spent = 0usize;
-    let budget = fold_budget();
-    while spent < budget && job.next <= job.end {
+    while spent < inputs.budget && job.next <= job.end {
         let slot = job.next;
         if slot < prefix_len {
             // A venue candle joins as a range, not as a ladder: one bar's
             // worth of work whatever its price width.
-            if approximate && job.fold.push_candle(&inputs.prefix[slot]) {
+            if job.fold.push_candle(&inputs.prefix[slot]) {
                 cache.bars_approximated += 1;
             }
             spent += 1;
@@ -380,15 +394,24 @@ fn advance(cache: &mut FrvpCache, value_area_pct: u8, inputs: &RefreshInputs<'_>
         {
             // A bar whose ladder printed nothing contributes nothing; it
             // still counts as covered — the tape answered "no trades", which
-            // is data, not absence of data.
-            job.fold.push_ladder(ladder);
-            cache.closed_covered += 1;
+            // is data, not absence of data. A ladder the fold *refuses* is
+            // another matter: its buckets never aligned, so it is not in the
+            // profile and must not be counted as if it were.
+            if job.fold.push_ladder(ladder) {
+                cache.closed_covered += 1;
+            }
             spent += ladder.levels().len().max(1);
         }
         job.next += 1;
         cache.bars_folded += 1;
     }
     cache.folding = job.next <= job.end;
+    if !cache.folding {
+        // Last input in: fold the pending spreads once, so the re-reads the
+        // live edge triggers from here on cost a clone of the rows and no
+        // spread folding at all.
+        job.fold.seal();
+    }
     derive(cache, value_area_pct, inputs);
 }
 
@@ -407,15 +430,22 @@ fn derive(cache: &mut FrvpCache, value_area_pct: u8, inputs: &RefreshInputs<'_>)
         .include_partial
         .then_some(inputs.partial_ladder)
         .flatten();
+    // A forming-bar snapshot taken before a group refold carries the previous
+    // base grouping, and its buckets never aligned with this fold's. It is
+    // refused rather than folded, and — this is the honesty half — it is not
+    // counted as covered either, so the status line says "profile from N of M
+    // bars" for the frame or two until the next snapshot lands, instead of
+    // claiming a bar that is not in the histogram.
+    let mut joined_partial = false;
     let profile = match partial {
         Some(partial) => {
             let mut with_partial = job.fold.clone();
-            with_partial.push_ladder(partial);
+            joined_partial = with_partial.push_ladder(partial);
             with_partial.profile()
         }
         None => job.fold.profile(),
     };
-    cache.bars_covered = cache.closed_covered + usize::from(partial.is_some());
+    cache.bars_covered = cache.closed_covered + usize::from(joined_partial);
     let fraction = Decimal::from(value_area_pct) / Decimal::ONE_HUNDRED;
     cache.profile = profile.map(|profile: VolumeProfile| {
         let value_area: Option<ValueArea> = profile.value_area(fraction);
@@ -499,6 +529,7 @@ mod tests {
     fn inputs<'a>(state: &'a ChartState, blocked: bool) -> RefreshInputs<'a> {
         RefreshInputs {
             state,
+            budget: DEFAULT_FOLD_BUDGET,
             prefix: &[],
             partial_ladder: None,
             partial_version: 0,
@@ -772,26 +803,38 @@ mod tests {
 
     /// A live tape must not keep a long fold from finishing.
     ///
-    /// The forming bar's ladder is re-snapshotted several times a second. If
-    /// that restarted the fold, a range this long would fill part-way, throw
-    /// away what it had and start again — forever, and burning a budget's
-    /// worth of work every frame to do it. The forming bar is not part of the
-    /// fold at all, so a new snapshot must cost nothing but a re-read.
+    /// This is the bug the trader saw as flicker: prints kept landing, every
+    /// one of them moved something the fold's key looked at, and the range
+    /// restarted before it could finish — filling part-way, dropping what it
+    /// had, beginning again, forever, and burning a budget of folding every
+    /// frame to do it. So the tape here does what a tape does: a new print on
+    /// every pass, and a new forming-bar snapshot with it. Neither touches the
+    /// *closed* bars this fold is over, so neither may cost it its progress.
     #[test]
-    fn a_long_fold_converges_while_the_forming_bar_keeps_moving() {
-        let state = state_with_tape();
-        let partial = state.partial_footprint().expect("forming bar").clone();
+    fn a_long_fold_converges_while_the_tape_keeps_printing() {
+        let mut state = state_with_tape();
         let prefix: Vec<quantick_engine::Bar> = (0..25_000).map(venue_candle).collect();
         let mut drawings = Drawings::default();
         place_frvp(&mut drawings, 0.0, 25_004.0);
 
         let mut passes = 0u64;
         loop {
-            // A fresh snapshot on *every* pass — worse than the pane's real
-            // throttle, so a fold that survives this survives any tape.
+            // One print per pass — the forming bar grows and its snapshot is
+            // re-taken, which is worse than the pane's real throttle.
+            state.ingest_live(&trade(
+                100 + passes,
+                "101",
+                "0.5",
+                if passes.is_multiple_of(2) {
+                    Side::Buy
+                } else {
+                    Side::Sell
+                },
+            ));
+            let partial = state.partial_footprint().cloned();
             let moving = RefreshInputs {
                 prefix: &prefix,
-                partial_ladder: Some(&partial),
+                partial_ladder: partial.as_ref(),
                 partial_version: passes + 1,
                 ..inputs(&state, false)
             };
@@ -810,13 +853,17 @@ mod tests {
 
         let cache = cache_of(&drawings);
         assert_eq!(cache.bars_approximated, 25_000, "every candle joined once");
-        assert_eq!(
-            cache.bars_covered, 4,
-            "three closed tape bars and the forming one"
+        // The tape kept printing, so bars kept closing and the range's right
+        // edge followed them: the three it started with, the forming one, and
+        // whatever closed along the way.
+        assert!(
+            cache.bars_covered >= 4,
+            "the tape bars joined too, not just the candles: {}",
+            cache.bars_covered
         );
-        assert_eq!(
-            cache.profile.expect("folded").0.total_volume(),
-            dec("100007")
+        assert!(
+            cache.profile.expect("folded").0.total_volume() > dec("100006"),
+            "every candle's volume, and the tape's on top of it"
         );
     }
 

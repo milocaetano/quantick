@@ -5137,6 +5137,7 @@ impl ChartPane {
             &mut self.drawings,
             &crate::frvp::RefreshInputs {
                 state: &self.state,
+                budget: crate::frvp::fold_budget(),
                 prefix,
                 partial_ladder: self.footprint_live.as_ref().map(|(_, _, ladder)| ladder),
                 partial_version: self.footprint_live_version,

@@ -2,7 +2,7 @@
 //!
 //! [`ProfileFold`] exists because materialising one approximated ladder per
 //! venue candle costs more than a chart has to spend: read as an
-//! [`ApproxSpread`](quantick_engine::ApproxSpread), a candle is three map
+//! `ApproxSpread`, a candle is three map
 //! touches instead of up to two thousand rows. Speed bought with a different
 //! answer is not speed, so this file pins the two readings together — same
 //! grouping, same rows, same POC and value area — over the cases that make
@@ -251,20 +251,30 @@ fn an_empty_fold_has_no_profile_either_way() {
     );
 }
 
+/// A ladder on a foreign grouping never aligned with the fold's buckets, so
+/// it is refused — and the refusal is *reported*, not remembered. The merge
+/// has no honest answer over a set that disagrees and says `None`; a fold
+/// keeps the bars that do align, because the caller who can say "profile from
+/// N of M bars" is better served by N than by nothing.
 #[test]
-fn a_ladder_on_a_foreign_grouping_is_refused_by_both() {
+fn a_ladder_on_a_foreign_grouping_is_refused_and_adds_nothing() {
     let foreign = ladder(dec("2"), &[("100", "1", Side::Buy)]);
     let native = ladder(dec("1"), &[("100", "1", Side::Buy)]);
-    // The merge refuses a set whose base groupings disagree.
     assert!(VolumeProfile::merge([&native, &foreign], DEFAULT_LEVEL_CAP).is_none());
+    // Refused first or last, the answer is the same.
+    assert!(VolumeProfile::merge([&foreign, &native], DEFAULT_LEVEL_CAP).is_none());
 
     let mut fold = ProfileFold::new(dec("1"), DEFAULT_LEVEL_CAP);
     assert!(fold.push_ladder(&native));
+    let after_native = fold.profile().expect("the native ladder folded");
     assert!(!fold.push_ladder(&foreign), "the foreign ladder is refused");
-    assert!(
-        fold.profile().is_none(),
-        "a refused ladder poisons the fold rather than dropping a bar silently"
+    let after_refusal = fold.profile().expect("the fold survives a refusal");
+    assert_eq!(
+        after_native.levels(),
+        after_refusal.levels(),
+        "a refused ladder leaves not one row behind"
     );
+    assert_eq!(fold.inputs(), 1, "and is not counted as an input");
 }
 
 #[test]

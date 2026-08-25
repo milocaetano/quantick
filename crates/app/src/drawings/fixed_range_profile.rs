@@ -126,16 +126,25 @@ pub struct FrvpCache {
     pub job: Option<crate::frvp::FoldJob>,
 }
 
-/// Everything the merge depends on. Anchor moves change the slots, a refold
-/// changes the group, a rebuild bumps the revision, a bar close bumps
-/// `closed_len`, the live edge bumps `partial_snapshot`.
+/// Everything the fold depends on. Anchor moves change the slots, a refold
+/// changes the group, a rebuild of the bars or ladders bumps
+/// `series_revision`, the
+/// live edge bumps `partial_snapshot`.
+///
+/// What is *absent* here is as deliberate as what is present. A print that
+/// only extends the forming bar moves `ChartState::timeline_revision` and
+/// nothing else about the closed bars, and the count of closed bars moves on
+/// every close even for a range nowhere near the live edge. Keying on either
+/// restarted a long fold tens of times a second, so it never finished — the
+/// closed bars a range covers are named by its slots plus
+/// [`ChartState::series_revision`](crate::state::ChartState::series_revision),
+/// and nothing else moves them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrvpCacheKey {
     pub start_slot: usize,
     pub end_slot: usize,
     pub group: Decimal,
-    pub timeline_revision: u64,
-    pub closed_len: usize,
+    pub series_revision: u64,
     pub include_partial: bool,
     pub partial_snapshot: u64,
     pub value_area_pct: u8,
@@ -263,8 +272,20 @@ impl PartialEq for FrvpPayload {
 }
 
 impl DrawingPayload for FrvpPayload {
+    /// The clone carries the config and **drops the cache**.
+    ///
+    /// Every undo step snapshots every drawing, twice per edit, as deep as the
+    /// history goes. Copying the fold into all of them would hold a capped
+    /// ladder, a second capped map and a batch of pending spreads per profile
+    /// per step — for state no undo can use, since the cache is excluded from
+    /// equality and the next refresh rebuilds it regardless. The frame after
+    /// an undo pays one re-fold; the alternative was megabytes of dead history
+    /// per object.
     fn clone_box(&self) -> Box<dyn DrawingPayload> {
-        Box::new(self.clone())
+        Box::new(Self {
+            cache: None,
+            ..self.clone()
+        })
     }
     fn eq_dyn(&self, other: &dyn DrawingPayload) -> bool {
         other
@@ -1270,8 +1291,8 @@ mod tests {
                 start_slot: 0,
                 end_slot: total.saturating_sub(1),
                 group: Decimal::ONE,
-                timeline_revision: 0,
-                closed_len: total,
+                series_revision: 0,
+
                 include_partial: false,
                 partial_snapshot: 0,
                 value_area_pct: DEFAULT_VALUE_AREA_PCT,
@@ -1634,8 +1655,8 @@ mod tests {
                     start_slot: 1,
                     end_slot: 5,
                     group: Decimal::ONE,
-                    timeline_revision: 3,
-                    closed_len: 10,
+                    series_revision: 3,
+
                     include_partial: false,
                     partial_snapshot: 0,
                     value_area_pct: 68,

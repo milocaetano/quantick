@@ -8028,10 +8028,14 @@ impl QuantickApp {
     /// the same picture every run, or a visual diff means nothing. One
     /// generator, shared by every hook that needs a prefix: a second one would
     /// be a second history to keep honest.
-    fn deliver_synthetic_prefix(&mut self, candles: i64, slice: crate::feed::OhlcvSlice) {
+    /// Returns whether the candles were delivered: without a bar to sit them
+    /// in front of there is no seam to anchor on, and a caller that promised a
+    /// long history in its caption had better wait rather than photograph a
+    /// short one.
+    fn deliver_synthetic_prefix(&mut self, candles: i64, slice: crate::feed::OhlcvSlice) -> bool {
         let tab = self.active_tab_mut();
         let Some(first) = tab.flow_pane.state.bars().first() else {
-            return;
+            return false;
         };
         let (first_open, anchor) = (first.open_time, first.open);
         let interval = crate::feed::OHLCV_BASE_INTERVAL_MS;
@@ -8054,6 +8058,7 @@ impl QuantickApp {
             })
             .collect();
         tab.deliver_ohlcv_slice(interval, bars, slice);
+        true
     }
 
     /// Arm one instance on a drawing: compile the form, warm the trigger on
@@ -8474,10 +8479,12 @@ impl QuantickApp {
     /// from N of M bars") is on screen — the surface this hook exists to
     /// photograph. Consumed once, like the drawings demo.
     fn apply_frvp_demo(&mut self) {
-        /// Candles the `=stress` scene installs behind the tape: a time
-        /// chart's worth of venue history, and far more than one fold pass
-        /// spends, so the range is guaranteed to fold across frames rather
-        /// than in the one that placed it.
+        /// One-minute venue candles the `=stress` scene installs behind the
+        /// tape — a time chart's worth of history, and far more than one fold
+        /// pass spends, so the range folds across frames rather than in the one
+        /// that placed it. The time pane folds them to whatever interval it is
+        /// showing, so the slot count is this number only at 1m — the scene is
+        /// about the fold surviving a long history, not about an exact count.
         const FRVP_STRESS_CANDLES: i64 = 25_000;
         if !self.pending_frvp_demo {
             return;
@@ -8510,25 +8517,33 @@ impl QuantickApp {
         if slots < 12 {
             return;
         }
-        self.pending_frvp_demo = false;
         let Some(tool) = drawings::DRAWING_TOOLS
             .into_iter()
             .find(|tool| tool.id() == crate::frvp::TOOL_ID)
         else {
+            self.pending_frvp_demo = false;
             return;
         };
         // `=stress` is the scene this object used to freeze the app on: a
         // venue history longer than any single fold pass, with one profile
         // over the whole of it. What it photographs is the *filling* state —
-        // a partial histogram and its `folding N of M bars` line — which is
+        // a partial histogram and its `loading N of M bars` line — which is
         // only a state at all because the fold is resumable. Pair it with
         // QUANTICK_FRVP_FOLD_BUDGET=1 to hold that frame indefinitely.
-        if stress {
-            self.deliver_synthetic_prefix(
+        //
+        // The delivery has to land before the range is placed: a scene that
+        // drew "the whole chart" over the handful of bars a pane starts with
+        // would be captioned as twenty-five thousand and be a picture of
+        // twenty. It stays armed and tries again next frame instead.
+        if stress
+            && !self.deliver_synthetic_prefix(
                 FRVP_STRESS_CANDLES,
                 crate::feed::OhlcvSlice::Last { complete: true },
-            );
+            )
+        {
+            return;
         }
+        self.pending_frvp_demo = false;
         // Re-read after the delivery: the prefix that just landed is part of
         // the chart the range is about to span.
         let slots = self.active_tab_mut().pane_mut(side).slots();

@@ -123,7 +123,7 @@ pub struct StackedZone {
 /// The two readings are the same data: `BarFootprint::approximated` is written
 /// on top of this one, so there is no second spread to drift.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApproxSpread {
+pub(crate) struct ApproxSpread {
     /// Lowest bucket of the spread, under `2^doublings * base_group`.
     pub lo: i64,
     /// Highest bucket of the spread, inclusive.
@@ -214,15 +214,6 @@ impl ApproxSpread {
             count_extra: bar.trade_count - count_share * rows,
         })
     }
-
-    /// How many rows the spread covers.
-    #[must_use]
-    pub fn rows(&self) -> u64 {
-        #[allow(clippy::cast_sign_loss)]
-        {
-            (self.hi - self.lo + 1) as u64
-        }
-    }
 }
 
 /// The finished (or in-progress) footprint ladder of one bar.
@@ -270,7 +261,7 @@ impl BarFootprint {
     /// Spelling the spread out row by row costs one map entry per bucket, and
     /// a wide candle fills the cap. A caller folding thousands of candles into
     /// one profile takes the spread itself
-    /// ([`ApproxSpread::of`](crate::ApproxSpread::of)) and adds it as a range
+    /// (the crate-internal `ApproxSpread`) and adds it as a range
     /// instead — same numbers, no ladder in between.
     #[must_use]
     pub fn approximated(bar: &crate::Bar, base_group: Decimal, level_cap: usize) -> Option<Self> {
@@ -496,16 +487,32 @@ impl BarFootprint {
     /// `floor(floor(p / g) / 2) == floor(p / 2g)` — so the coarser ladder is
     /// the one a builder with the doubled base group would have produced.
     fn coarsen(&mut self) {
-        let mut merged: BTreeMap<i64, FootprintLevel> = BTreeMap::new();
-        for (bucket, level) in std::mem::take(&mut self.levels) {
-            let target = merged.entry(bucket.div_euclid(2)).or_default();
-            target.buy = target.buy.saturating_add(level.buy);
-            target.sell = target.sell.saturating_add(level.sell);
-            target.trade_count += level.trade_count;
-        }
-        self.levels = merged;
+        self.levels = halved(std::mem::take(&mut self.levels));
         self.doublings += 1;
     }
+}
+
+/// Double a ladder's grouping: merge bucket pairs by integer halving.
+///
+/// The identity behind it — `floor(floor(p/g)/2) == floor(p/2g)` — is why a
+/// coarsened ladder is *exactly* the ladder a coarser builder would have
+/// produced, and why the range fold may coarsen its accumulator at any point
+/// without changing the answer. Shared by the ladder and by
+/// [`ProfileFold`](crate::ProfileFold) for that reason: two copies of this
+/// loop is two chances for the two to stop agreeing, and they had already
+/// started to — one saturated on the trade count, the other did not.
+///
+/// Accumulation saturates: quantities and counts come from an untrusted feed
+/// and a corrupt one must not panic the fold.
+pub(crate) fn halved(levels: BTreeMap<i64, FootprintLevel>) -> BTreeMap<i64, FootprintLevel> {
+    let mut merged: BTreeMap<i64, FootprintLevel> = BTreeMap::new();
+    for (bucket, level) in levels {
+        let target = merged.entry(bucket.div_euclid(2)).or_default();
+        target.buy = target.buy.saturating_add(level.buy);
+        target.sell = target.sell.saturating_add(level.sell);
+        target.trade_count = target.trade_count.saturating_add(level.trade_count);
+    }
+    merged
 }
 
 /// Accumulates one [`BarFootprint`] at a time from the trade stream the bar
