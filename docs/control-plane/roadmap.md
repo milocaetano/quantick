@@ -442,3 +442,176 @@ PR 6 (cockpit) plan, which does not start before the owner decides on the
 authority layer of plan §9.2; PR 7 (paper trading, strategies, the trade
 annotation store of §6.6) and PR 8 (public API, further adapters) keep the
 plan's order and their threat-model extensions.
+
+## 8. Review findings on the open stack (2026-08-24)
+
+A `code-review` pass at `high` over each open pull request, on top of the
+reviews recorded in their bodies, verified against the branch heads. Confirmed
+items are defects a reader can reproduce from the cited line; plausible items
+were not exercised. None blocks the merge order of section 2 on its own, but
+the confirmed ones are the first work of whichever branch touches the area
+next: fix on the stack before merging where the fix is local, otherwise as a
+follow-up named in the pull request body.
+
+### #213 (PR 2), confirmed
+
+- `ChartPane::ingest_backfill` (pane.rs:2642) skips the pagination-revision
+  bump for an empty batch, but `ChartState::ingest_backfill` still reclassifies
+  every retained live trade as backfill and moves `backfill_boundary`. A
+  Binance backfill that fails after live trades arrived sends exactly that
+  empty batch: bars a client already read as `live_trades` re-read as
+  `trade_backfill` under a cursor that was never staled.
+- Heat-cell slot recovery (orderflow_view.rs:257) uses
+  `floor(x0 * regions)` / `ceil(x1 * regions)` on coordinates the timeline
+  produced as `k / regions`; the f64 round trip is inexact for thousands of
+  `(regions, k)` pairs, so `start_slot` / `end_slot_exclusive` can be off by
+  one and `touches_lane` can flip.
+- The cursor floors the fractional bar coordinate (pane.rs:6100) while
+  integer positions are candle centres: the left half of every candle
+  resolves to the previous bar. The test probes the exact centre only.
+- `control_flow_cell_at` (orderflow_view.rs:245) does not apply the two
+  filters the painter applies (`rect.is_positive()`,
+  `heat_fill_parts == None`), so an unpainted cell overlapping a painted one
+  wins the hit test and is reported as displayed.
+
+### #213, plausible or carried
+
+- `CONTROL_UI_BUDGET_US` dropped from 1,000 to 250 with an always-on median
+  assertion in the ordinary test suite, calibrated on one host. Flake risk on
+  a loaded CI runner: watch it, and if it trips, gate the median the way the
+  p99 reading is gated.
+- The interaction module's revision key embeds pointer pixels, so it advances
+  on every mouse move; the chart module's key embeds the viewport, so it
+  advances on every pan. Journal-driven change counters (section 3, #213)
+  are the fix.
+- `apply_spec_change` now goes through `ChartPane::set_spec`, which writes the
+  selectors back from the decimal spec (a lossy round trip the old path never
+  did) and whose doc comment still says startup-scoped.
+- Replay tabs expose the recorded CSV header's symbol verbatim as
+  `active_symbol` while notice text is redacted; the redaction canary does not
+  cover it.
+
+### #220 (PR 1 hardening), confirmed
+
+- `validate_instance` compiles the schema on every call; `FakeHost::handle`
+  validates input and output per request, so each request compiles two
+  schemas that never change after registration. The registry should hold
+  compiled validators.
+- `validate_instance` no longer re-runs the dialect and external-reference
+  guards; today's callers validated at registration, but the function is
+  `pub` and a direct caller silently gets 2020-12 semantics for a draft-07
+  document.
+- Eviction turns the fake host's idempotency guarantee from at-most-once into
+  at-least-once under load (an evicted key re-executes); the response does not
+  distinguish an unknown key from an evicted one. Acceptable for a fake host
+  if the doc says so; a real host must not copy it.
+- `expire_idempotency` is unreachable with the fake clock (+1 ms per request
+  against a 24 h window) and untested.
+- `ControlRegistry` never checks that profiles form a nested chain; two
+  incomparable profiles surface only as a runtime `permission_denied` with no
+  next step.
+- The body's *Architecture review* section is empty; it needs the review
+  before merge, after the rebase of section 2.
+
+### #221 (PR 3), confirmed
+
+- The handshake advertises `default_page_items = 256` and
+  `max_page_items = 2048` while `chart.window.read` caps a page at 32
+  (deferred in the body): a client sizing its first page from the negotiated
+  limits is refused with `control.invalid_request`. The MCP adapter inherits
+  this.
+- `poll_statuses` removes a connection from `revoked_connections` on
+  `Disconnected` before the request drain, so a request the revoked client
+  already queued passes the revoked check and is captured on the UI thread
+  (gateway.rs:725 vs 899), the opposite of what `revoke()` promises.
+- Over-capacity connections spawn one unbounded `quantick-control-reject`
+  thread each (gateway.rs:1147), parked up to the handshake timeout; a local
+  process opening loopback connections without a handshake exhausts threads
+  without authenticating.
+- `verify_windows_acl` (discovery.rs:753) compares the owner only against the
+  user SID while `verify_windows_owner` also accepts the token default owner,
+  so an elevated Quantick still cannot enable access; fix 8 in the body
+  covered one of the two checks.
+- Scope selection, disable and per-client revoke in the access panel are
+  reachable by mouse only (no hook, no named call); `QUANTICK_CONTROL_ACCESS`
+  enables with the default grant only. This is the operable-without-a-hand
+  rule in CLAUDE.md; the annotate tier (5.3) is where the named calls land,
+  but the hooks belong to this surface.
+- Every accepted request pushes a `Requested` status and repaints the UI
+  even for worker-only reads with the panel closed; eight clients at the rate
+  limit force up to 160 frames per second. A per-connection atomic timestamp
+  read at draw time is enough.
+
+### #221, plausible or carried
+
+- `shutdown_for_exit` can time out while the gateway thread is still inside
+  `publish_descriptor`; the descriptor then lands after `remove()` and lives
+  forever (no stale-descriptor cleanup; section 3).
+- `CONTROL_DISCOVERY_MAX_ENTRIES` counts raw `read_dir` entries before the
+  `.json` filter; temporaries and junk can push the live descriptor past the
+  cutoff.
+- `LocalClient::read` maps every codec error, including an idle timeout and a
+  validation failure, to `control.instance_gone`.
+- `ControlAccess::new` compiles eight schemas on every app start (and in every
+  app-level test) for a feature that is off by default.
+- A dropped `GatewayCommand::Finished` (bounded(64) `try_send`) leaks a socket
+  slot until access is re-enabled.
+
+### #222 (PR 4), confirmed
+
+- `docs/control-plane/README.md`: the PR 4 bullet was inserted inside the PR 3
+  bullet, which now ends at "records the authenticated" and whose remaining
+  lines dangle under PR 4. Fix on the branch.
+- `LocalLink::instances()` keeps the cached connection and drops the freshly
+  authenticated one (`entry().or_insert`), and the instance ID is per process:
+  after the trader disables and re-enables access, the cached socket is dead
+  while the discarded fresh one was live. It also evicts a healthy cached
+  connection when a fresh handshake fails transiently (capacity, timeout).
+- The server negotiates `2025-03-26` and `2024-11-05`, versions in which a
+  server must accept JSON-RPC batches, and refuses batches with one null-id
+  error. Either offer `2025-06-18` only or answer batches.
+- `initialize` is accepted at any time and re-negotiates the protocol version
+  mid-session.
+- The server handles frames sequentially, so one parked
+  `quantick_wait_for_change` stalls every other tool call from the same client
+  for up to its timeout, although the gateway answers concurrent reads at
+  once (with #223).
+- Client patience for `events.wait` is `timeout_ms + request_timeout`, but
+  the gateway's worst case adds the 250 ms waiter poll; a legal late reply is
+  reported as `instance_gone` and left on the socket (with #223).
+
+### #223 (PR 5a), confirmed
+
+- `note_rewind` (replay.rs:539) publishes the rewind before `status.publish`
+  (line 557) refreshes the playhead, with a `blocking_send` possible between
+  them. A frame sampling in that window sees the new rewind with the old
+  position: the trace walk injects every mark up to the stale elapsed at once,
+  then detects a second rewind when the real position lands and injects them
+  again. The rerun is no longer the same session. Publish position and rewind
+  as one value (an epoch plus position struct) and order the atomics.
+- Adopting a walk from another tab keeps the previous owner's
+  `last_rewinds` / `last_elapsed_ms`, so the adopter's differing counter reads
+  as a rewind and re-injects entries already replayed in this process. With
+  two tabs on one recording, a mark taken on the non-owner tab is also
+  timestamped on the active tab's timeline but marked executed on the owner's
+  pass.
+- A seek that lands at or before a mark taken this run re-injects that mark
+  at once as an automation duplicate, because any change in `rewinds` clears
+  `executed_this_pass`.
+- A mark on a replaying tab whose sidecar cannot be opened for writing is
+  refused before the handler runs (no journal event, no wake, a warn log
+  only) instead of degrading to an untraced mark with a visible notice.
+- A stale `park.try_send` after the waiter manager exits is answered
+  `control.backpressure` (retryable) instead of a shutdown code, so clients
+  retry against a closing gateway.
+
+### #223, plausible or carried
+
+- The waiter manager wakes every 250 ms with no waiter parked.
+- The trace sidecar name (`X.csv.control-trace.jsonl`) is a second sidecar
+  convention beside `quantick_replay::context_path` (`X.context.csv`); the
+  replay crate should own both and the library scan should know both.
+- On macOS, Ctrl+M reaches the tool rail's `M` (measure) before the menu
+  consumes the mark shortcut; the no-shared-chord test does not cover Ctrl.
+- Actions live in a second registry reached only locally; the remote path
+  (`PreparedDispatch::Action`) is 5.3's first deliverable, as section 5 says.
