@@ -2762,6 +2762,7 @@ dependencies = [
  "toml 0.8.20",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
  "winresource",
 ]
 

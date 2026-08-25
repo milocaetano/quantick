@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
+    sync::Arc,
 };
 
 use quantick_control::{
@@ -33,6 +34,7 @@ use super::{
         ANNOTATE_ATTENTION_PERMISSION_ID, ANNOTATE_EFFECT_ID, ANNOTATE_PERMISSION_ID,
         ANNOTATOR_PROFILE_ID, ATTENTION_MODULE_ID, ActionRegistry,
     },
+    annotate::{ANNOTATE_CHART_PERMISSION_ID, ANNOTATE_MODULE_ID},
     chart::{ChartWindowPage, ChartWindowQuery, chart_window_prevalidated},
     events::{
         EVENTS_MODULE_ID, EVENTS_PERMISSION_ID, EventsReadInput, EventsWaitInput,
@@ -40,7 +42,10 @@ use super::{
         WAIT_CAPABILITY_ID as EVENTS_WAIT_CAPABILITY_ID, complete_wait_page, read_page,
     },
     journal::{EventJournal, EventPage},
+    notify::{NOTIFY_MODULE_ID, NOTIFY_PERMISSION_ID, NOTIFY_SOUND_PERMISSION_ID},
     registry::{ProjectionRegistry, SerializedSnapshotCapture, SnapshotCapture},
+    script::{SCRIPT_MODULE_ID, SCRIPT_PERMISSION_ID},
+    types::known_error,
 };
 
 pub(crate) const OBSERVER_PROFILE_ID: &str = "observer";
@@ -185,6 +190,20 @@ pub(crate) enum PreparedDispatch {
     /// the resolved position or the timeout elapses, then run the bounded
     /// read through the UI queue.
     Parked(ParkedWait),
+    /// A registered action: it runs on the application thread with mutable
+    /// application state, through the very handler the trader's own gesture
+    /// calls. The gateway attaches the connection's trusted actor; the
+    /// payload never carries one.
+    Action(PreparedAction),
+}
+
+/// An action that passed its permission check and its input schema, waiting
+/// for the application thread.
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedAction {
+    pub capability_id: CapabilityId,
+    pub capability_version: u32,
+    pub input: Value,
 }
 
 /// A `wait_for_change` that has been validated and is about to park.
@@ -199,6 +218,7 @@ impl fmt::Debug for PreparedDispatch {
             Self::Worker(_) => "PreparedDispatch::Worker(<registered>)",
             Self::Ui(_) => "PreparedDispatch::Ui(<registered>)",
             Self::Parked(_) => "PreparedDispatch::Parked(<events.wait>)",
+            Self::Action(_) => "PreparedDispatch::Action(<registered>)",
         })
     }
 }
@@ -225,6 +245,20 @@ pub(crate) trait DeferredUiRead: Send {
 
 pub(crate) type UiReadExecution = Box<dyn DeferredUiRead>;
 
+/// An action's result, on its way off the application thread. It is already
+/// a value; the wrapper only lets it travel the same channel a capture does.
+pub(crate) struct DeferredActionResult(pub Value);
+
+impl DeferredUiRead for DeferredActionResult {
+    fn into_serialized(self: Box<Self>) -> Result<SerializedUiRead, DeferredSerializationError> {
+        Ok(SerializedUiRead {
+            capture_revision: None,
+            module_revisions: Vec::new(),
+            result: self.0,
+        })
+    }
+}
+
 pub(crate) trait PreparedUiRead: Send {
     fn execute(
         &self,
@@ -240,6 +274,7 @@ pub(crate) trait PreparedWorkerRead: Send {
         &self,
         contract: &ObserverContract,
         instance_id: &InstanceId,
+        effective_profile: &ProfileId,
         effective_scopes: &BTreeSet<PermissionId>,
         effective_limits: &ProtocolLimits,
     ) -> Result<Value, ControlError>;
@@ -250,14 +285,19 @@ impl PreparedDispatch {
         &self,
         contract: &ObserverContract,
         instance_id: &InstanceId,
+        effective_profile: &ProfileId,
         effective_scopes: &BTreeSet<PermissionId>,
         effective_limits: &ProtocolLimits,
     ) -> Option<Result<Value, ControlError>> {
         match self {
-            Self::Worker(invocation) => {
-                Some(invocation.execute(contract, instance_id, effective_scopes, effective_limits))
-            }
-            Self::Ui(_) | Self::Parked(_) => None,
+            Self::Worker(invocation) => Some(invocation.execute(
+                contract,
+                instance_id,
+                effective_profile,
+                effective_scopes,
+                effective_limits,
+            )),
+            Self::Ui(_) | Self::Parked(_) | Self::Action(_) => None,
         }
     }
 
@@ -274,6 +314,11 @@ impl PreparedDispatch {
                 "a request that does not execute on the application thread entered the UI queue",
                 false,
             )),
+            Self::Action(_) => Err(known_error(
+                codes::CAPABILITY_UNAVAILABLE,
+                "an action reached the read path instead of the action path",
+                false,
+            )),
             Self::Ui(invocation) => invocation.execute(projections, journal, app, instance_id),
         }
     }
@@ -286,11 +331,13 @@ impl PreparedWorkerRead for DescribeInvocation {
         &self,
         contract: &ObserverContract,
         instance_id: &InstanceId,
+        effective_profile: &ProfileId,
         effective_scopes: &BTreeSet<PermissionId>,
         effective_limits: &ProtocolLimits,
     ) -> Result<Value, ControlError> {
         serde_json::to_value(contract.describe(
             instance_id.clone(),
+            effective_profile.clone(),
             effective_scopes.clone(),
             effective_limits.clone(),
         ))
@@ -431,6 +478,7 @@ type CompiledCapabilitySchemas = BTreeMap<CapabilityId, BTreeMap<u32, CompiledSc
 
 pub(crate) struct ObserverContract {
     registry: ControlRegistry,
+    actions: Arc<ActionRegistry>,
     handlers: BTreeMap<(CapabilityId, u32), PrepareHandler>,
     input_validators: CompiledCapabilitySchemas,
     output_validators: CompiledCapabilitySchemas,
@@ -443,7 +491,7 @@ pub(crate) struct ObserverContract {
 impl ObserverContract {
     pub fn new(
         projections: &ProjectionRegistry,
-        actions: &ActionRegistry,
+        actions: Arc<ActionRegistry>,
     ) -> Result<Self, RegistryError> {
         let observer = profile(OBSERVER_PROFILE_ID);
         let annotator = profile(ANNOTATOR_PROFILE_ID);
@@ -473,6 +521,40 @@ impl ObserverContract {
                 label: "Create marks".to_owned(),
                 description: "Append marks carrying the resolved cursor target to the event journal.".to_owned(),
                 sensitive: false,
+                default_grant: DefaultGrant::Prompt,
+                profile_ceilings: BTreeSet::from([annotator.clone()]),
+            },
+            PermissionDescriptor {
+                id: permission(ANNOTATE_CHART_PERMISSION_ID),
+                label: "Answer on the chart".to_owned(),
+                description: "Place labels, arrows and zones, attributed and removable in one action.".to_owned(),
+                sensitive: false,
+                default_grant: DefaultGrant::Prompt,
+                profile_ceilings: BTreeSet::from([annotator.clone()]),
+            },
+            PermissionDescriptor {
+                id: permission(NOTIFY_PERMISSION_ID),
+                label: "Interrupt with a message".to_owned(),
+                description: "Raise a popup or a toast the trader has to read and dismiss.".to_owned(),
+                sensitive: false,
+                default_grant: DefaultGrant::Prompt,
+                profile_ceilings: BTreeSet::from([annotator.clone()]),
+            },
+            PermissionDescriptor {
+                id: permission(NOTIFY_SOUND_PERMISSION_ID),
+                label: "Make a sound".to_owned(),
+                description: "Play the platform's alert sound, which reaches the trader even when they are not looking at the window.".to_owned(),
+                // Off by default and marked: a sound cannot be taken back and
+                // arrives whether or not anyone is at the screen.
+                sensitive: true,
+                default_grant: DefaultGrant::Prompt,
+                profile_ceilings: BTreeSet::from([annotator.clone()]),
+            },
+            PermissionDescriptor {
+                id: permission(SCRIPT_PERMISSION_ID),
+                label: "Attach an indicator script".to_owned(),
+                description: "Compile a Quantick Pine script and attach the indicator it produces to a pane, with a detach that restores the pane exactly.".to_owned(),
+                sensitive: true,
                 default_grant: DefaultGrant::Prompt,
                 profile_ceilings: BTreeSet::from([annotator.clone()]),
             },
@@ -535,6 +617,23 @@ impl ObserverContract {
             description: "The bounded semantic event journal and its cursor.".to_owned(),
         })?;
         registry.register_module(ModuleDescriptor {
+            id: module(ANNOTATE_MODULE_ID),
+            title: "Annotate".to_owned(),
+            description: "Objects an operator places on the chart, attributed and removable."
+                .to_owned(),
+        })?;
+        registry.register_module(ModuleDescriptor {
+            id: module(NOTIFY_MODULE_ID),
+            title: "Notify".to_owned(),
+            description: "Interruptions: a popup, a toast, a sound.".to_owned(),
+        })?;
+        registry.register_module(ModuleDescriptor {
+            id: module(SCRIPT_MODULE_ID),
+            title: "Indicators".to_owned(),
+            description: "Indicator slots, and the Quantick Pine scripts attached to them."
+                .to_owned(),
+        })?;
+        registry.register_module(ModuleDescriptor {
             id: module(ATTENTION_MODULE_ID),
             title: "Attention".to_owned(),
             description: "Human marks: what the user pointed at, as a durable referent.".to_owned(),
@@ -564,6 +663,7 @@ impl ObserverContract {
                 allows_risk_reducing: false,
             },
         })?;
+        registry.register_effect(super::notify::effect_policy(&annotator))?;
         registry.register_effect(EffectPolicy {
             id: effect(OBSERVE_EFFECT_ID),
             permission_floor: permission(OBSERVE_PERMISSION_ID),
@@ -718,6 +818,7 @@ impl ObserverContract {
 
         Ok(Self {
             registry,
+            actions,
             handlers,
             input_validators,
             output_validators,
@@ -738,6 +839,12 @@ impl ObserverContract {
         capability_version: u32,
         result: &Value,
     ) -> bool {
+        if let Some(action) = self
+            .actions
+            .lookup(capability_id.as_str(), capability_version)
+        {
+            return action.output.validate(result).is_ok();
+        }
         self.output_validators
             .get(capability_id)
             .and_then(|versions| versions.get(&capability_version))
@@ -759,6 +866,7 @@ impl ObserverContract {
     pub fn describe(
         &self,
         instance_id: InstanceId,
+        effective_profile: ProfileId,
         effective_scopes: BTreeSet<PermissionId>,
         effective_limits: ProtocolLimits,
     ) -> DescribeResult {
@@ -769,7 +877,7 @@ impl ObserverContract {
                 .unwrap_or("unknown")
                 .to_owned(),
             protocol_version: CURRENT_PROTOCOL_VERSION,
-            effective_profile: profile(OBSERVER_PROFILE_ID),
+            effective_profile,
             effective_scopes,
             effective_limits,
             modules: self.registry.modules().cloned().collect(),
@@ -804,16 +912,26 @@ impl ObserverContract {
                 false,
             ));
         }
-        self.input_validators
-            .get(&descriptor.id)
-            .and_then(|versions| versions.get(&descriptor.version))
-            .ok_or_else(|| {
-                known_error(
-                    codes::CAPABILITY_UNAVAILABLE,
-                    "registered observer capability has no input validator",
-                    false,
-                )
-            })?
+        let action = self
+            .actions
+            .lookup(descriptor.id.as_str(), descriptor.version);
+        let validator = match &action {
+            // An action validates against its own compiled schema — the same
+            // one the hotkey's call passes — so the two paths cannot drift.
+            Some(action) => &action.input,
+            None => self
+                .input_validators
+                .get(&descriptor.id)
+                .and_then(|versions| versions.get(&descriptor.version))
+                .ok_or_else(|| {
+                    known_error(
+                        codes::CAPABILITY_UNAVAILABLE,
+                        "registered observer capability has no input validator",
+                        false,
+                    )
+                })?,
+        };
+        validator
             .validate(&envelope.payload)
             .map_err(|error| ControlError::invalid_request(error.to_string()))?;
         if envelope.dry_run
@@ -821,8 +939,20 @@ impl ObserverContract {
             || !envelope.expected_revisions.is_empty()
         {
             return Err(ControlError::invalid_request(
-                "observer reads forbid dry runs, idempotency keys, and expected revisions",
+                "this tier's capabilities forbid dry runs, idempotency keys, and expected revisions",
             ));
+        }
+        if action.is_some() {
+            let dispatch = PreparedDispatch::Action(PreparedAction {
+                capability_id: descriptor.id.clone(),
+                capability_version: descriptor.version,
+                input: envelope.payload.clone(),
+            });
+            return Ok(PreparedRequest {
+                required_permissions: descriptor.required_permissions.clone(),
+                envelope,
+                dispatch,
+            });
         }
 
         let handler = self
@@ -1068,14 +1198,6 @@ fn decode_payload<T: for<'de> Deserialize<'de>>(payload: &Value) -> Result<T, Co
         .map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 
-fn known_error(code: &str, message: &str, retryable: bool) -> ControlError {
-    ControlError::new(
-        quantick_control::id::ErrorCode::new(code).expect("static error code is valid"),
-        message,
-        retryable,
-    )
-}
-
 fn module(id: &str) -> ModuleId {
     ModuleId::new(id).expect("static module ID is valid")
 }
@@ -1105,7 +1227,7 @@ mod tests {
     fn contract() -> ObserverContract {
         ObserverContract::new(
             &super::super::standard_registry().unwrap(),
-            &super::super::actions::standard_actions().unwrap(),
+            Arc::new(super::super::actions::standard_actions().unwrap()),
         )
         .unwrap()
     }
@@ -1168,12 +1290,15 @@ mod tests {
 
     #[test]
     fn observer_registry_contains_only_read_capabilities() {
-        // Six reads with handlers, plus the registered actions, which have
-        // no read handler here and sit behind permissions the observer
-        // ceiling does not hold: discoverable, never remotely reachable.
+        // Six reads with prepare handlers, plus the registered actions, which
+        // have none here: an action is prepared from the action registry and
+        // sits behind annotate permissions the observer ceiling does not
+        // hold — discoverable to every client, reachable by none of them
+        // until the trader grants the annotator profile.
         let contract = contract();
         let capabilities = contract.registry.capabilities().collect::<Vec<_>>();
-        assert_eq!(capabilities.len(), 7);
+        let actions = contract.actions.descriptors().count();
+        assert_eq!(capabilities.len(), 6 + actions);
         assert_eq!(contract.handlers.len(), 6);
         let observer_ceiling = contract
             .registry
@@ -1228,6 +1353,7 @@ mod tests {
                 .execute_worker(
                     &contract,
                     &InstanceId::from_bytes([1; 16]),
+                    &profile(OBSERVER_PROFILE_ID),
                     &contract.default_grant(),
                     &ProtocolLimits::default(),
                 )

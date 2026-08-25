@@ -10,7 +10,10 @@
 //! permissions are not in the observer ceiling, so a remote invocation is
 //! refused before dispatch.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use quantick_control::{
     error::ControlError,
@@ -54,23 +57,50 @@ const NO_CONFIRMATION_ID: &str = "none";
 const UI_BOUNDED_COST_ID: &str = "ui_bounded";
 
 /// One action's handler. It receives the application and the control access
-/// it lives in (the journal, the trace), the trusted actor, and the validated
+/// it lives in (the journal, the trace), the trusted actor, and the resolved
 /// input; it returns the structured result the registry's output schema
 /// describes.
 pub(crate) type ActionHandler =
     fn(&mut QuantickApp, &mut ControlAccess, &ActorContext, &Value) -> Result<Value, ControlError>;
 
-struct RegisteredAction {
-    descriptor: CapabilityDescriptor,
-    handler: ActionHandler,
-    input: CompiledSchema,
-    output: CompiledSchema,
+/// The step that turns what a caller wrote into what actually happened, before
+/// anything happens.
+///
+/// An action that reads live state at call time — the mark takes whatever is
+/// under the pointer when no target is given — leaves an intent the control
+/// trace cannot reproduce: replay a "mark here" with no *here* and the rerun
+/// resolves a pointer that was somewhere else, or nowhere. Resolving first and
+/// recording the resolved input makes the trace line say what was done rather
+/// than what was asked (contract §11), and an action with nothing to resolve
+/// uses [`identity_resolution`] and pays nothing.
+pub(crate) type ActionResolver =
+    fn(&QuantickApp, &ActorContext, Value) -> Result<Value, ControlError>;
+
+/// The resolver of an action whose input is already exactly what it will do.
+fn identity_resolution(
+    _app: &QuantickApp,
+    _actor: &ActorContext,
+    input: Value,
+) -> Result<Value, ControlError> {
+    Ok(input)
+}
+
+/// One docked action: what `describe` publishes, what runs, and the three
+/// schemas that bound it — the caller's input, the resolved input the trace
+/// records and a replay feeds back, and the result.
+pub(crate) struct RegisteredAction {
+    pub descriptor: CapabilityDescriptor,
+    pub handler: ActionHandler,
+    pub resolve: ActionResolver,
+    pub input: CompiledSchema,
+    pub canonical: CompiledSchema,
+    pub output: CompiledSchema,
 }
 
 /// The registry: descriptors for discovery, handlers for execution, schemas
 /// for both sides of every call.
 pub(crate) struct ActionRegistry {
-    actions: BTreeMap<(CapabilityId, u32), RegisteredAction>,
+    actions: BTreeMap<(CapabilityId, u32), Arc<RegisteredAction>>,
 }
 
 impl ActionRegistry {
@@ -80,12 +110,28 @@ impl ActionRegistry {
         }
     }
 
-    /// Dock one action. The descriptor is what `describe` and search report;
-    /// its schemas are compiled once here and reused for every invocation.
+    /// Dock one action whose input is already what it will do.
     pub fn register(
         &mut self,
         descriptor: CapabilityDescriptor,
         handler: ActionHandler,
+    ) -> Result<(), RegistryError> {
+        let canonical = descriptor.input_schema.clone();
+        self.register_resolved(descriptor, handler, identity_resolution, canonical)
+    }
+
+    /// Dock one action that resolves live state before it acts. The descriptor
+    /// is what `describe` and search report; its schemas are compiled once
+    /// here and reused for every invocation. `canonical_schema` describes the
+    /// resolved input — what the control trace records and what a replay
+    /// hands back — and is not published to clients: a caller writes the
+    /// descriptor's `input_schema` and the resolver produces this.
+    pub fn register_resolved(
+        &mut self,
+        descriptor: CapabilityDescriptor,
+        handler: ActionHandler,
+        resolve: ActionResolver,
+        canonical_schema: Value,
     ) -> Result<(), RegistryError> {
         let key = (descriptor.id.clone(), descriptor.version);
         if self.actions.contains_key(&key) {
@@ -94,26 +140,27 @@ impl ActionRegistry {
                 id: descriptor.id.to_string(),
             });
         }
-        let input = CompiledSchema::new(&descriptor.input_schema).map_err(|error| {
-            RegistryError::InvalidDescriptor(format!(
-                "action `{}` input schema is invalid: {error}",
-                descriptor.id
-            ))
-        })?;
-        let output = CompiledSchema::new(&descriptor.output_schema).map_err(|error| {
-            RegistryError::InvalidDescriptor(format!(
-                "action `{}` output schema is invalid: {error}",
-                descriptor.id
-            ))
-        })?;
+        let compile = |schema: &Value, half: &str| {
+            CompiledSchema::new(schema).map_err(|error| {
+                RegistryError::InvalidDescriptor(format!(
+                    "action `{}` {half} schema is invalid: {error}",
+                    descriptor.id
+                ))
+            })
+        };
+        let input = compile(&descriptor.input_schema, "input")?;
+        let canonical = compile(&canonical_schema, "canonical input")?;
+        let output = compile(&descriptor.output_schema, "output")?;
         self.actions.insert(
             key,
-            RegisteredAction {
+            Arc::new(RegisteredAction {
                 descriptor,
                 handler,
+                resolve,
                 input,
+                canonical,
                 output,
-            },
+            }),
         );
         Ok(())
     }
@@ -122,27 +169,11 @@ impl ActionRegistry {
         self.actions.values().map(|action| &action.descriptor)
     }
 
-    /// The handler for one registered action, with the schemas to validate
-    /// its input before and its output after.
-    pub fn lookup(
-        &self,
-        capability_id: &str,
-        version: u32,
-    ) -> Option<(
-        &CapabilityDescriptor,
-        ActionHandler,
-        &CompiledSchema,
-        &CompiledSchema,
-    )> {
+    /// One registered action, owned: the handler needs `&mut ControlAccess`,
+    /// so the registry cannot stay borrowed across the call.
+    pub fn lookup(&self, capability_id: &str, version: u32) -> Option<Arc<RegisteredAction>> {
         let id = CapabilityId::new(capability_id).ok()?;
-        self.actions.get(&(id, version)).map(|action| {
-            (
-                &action.descriptor,
-                action.handler,
-                &action.input,
-                &action.output,
-            )
-        })
+        self.actions.get(&(id, version)).map(Arc::clone)
     }
 }
 
@@ -150,7 +181,15 @@ impl ActionRegistry {
 /// and one handler here; nothing else opens.
 pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     let mut registry = ActionRegistry::new();
-    registry.register(mark_descriptor(), create_mark)?;
+    registry.register_resolved(
+        mark_descriptor(),
+        create_mark,
+        resolve_mark,
+        generated_schema::<MarkCanonicalInput>(),
+    )?;
+    super::annotate::register(&mut registry)?;
+    super::notify::register(&mut registry)?;
+    super::script::register(&mut registry)?;
     Ok(registry)
 }
 
@@ -169,6 +208,42 @@ pub(crate) struct MarkInput {
     pub note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<CursorSnapshot>,
+}
+
+/// A mark after resolution: the target is settled, and the input says how it
+/// was settled. This is what the control trace records and what a replay
+/// hands back, so a rerun marks the bar that was marked rather than whatever
+/// the pointer happens to be over.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MarkCanonicalInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = CONTROL_REASON_MAX_BYTES))]
+    pub note: Option<String>,
+    pub target: CursorSnapshot,
+    pub target_source: MarkTargetSource,
+}
+
+/// Who settled a mark's target.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MarkTargetSource {
+    /// The pointer of this window, read when the mark was taken.
+    Pointer,
+    /// The caller passed the target it had read from a snapshot.
+    Supplied,
+    /// A control trace re-injected a recorded mark.
+    Replayed,
+}
+
+impl MarkTargetSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pointer => "pointer",
+            Self::Supplied => "supplied",
+            Self::Replayed => "replayed",
+        }
+    }
 }
 
 /// What a mark returns: where it landed in the journal and exactly what was
@@ -234,16 +309,37 @@ fn mark_descriptor() -> CapabilityDescriptor {
     }
 }
 
-/// The mark handler: resolve the pointer the same way the cursor scope does,
-/// then append the event. One path for the hotkey, the hook, the tests and
-/// any authorized agent.
+/// A mark's resolver: what is under the pointer *now* becomes part of the
+/// input, so the trace line and a replay of it name the same bar.
+fn resolve_mark(
+    app: &QuantickApp,
+    _actor: &ActorContext,
+    input: Value,
+) -> Result<Value, ControlError> {
+    let input: MarkInput = serde_json::from_value(input)
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let (target, target_source) = match input.target {
+        Some(target) => (target, MarkTargetSource::Supplied),
+        None => (cursor_snapshot(app), MarkTargetSource::Pointer),
+    };
+    serde_json::to_value(MarkCanonicalInput {
+        note: input.note,
+        target,
+        target_source,
+    })
+    .map_err(|error| ControlError::invalid_request(format!("mark input: {error}")))
+}
+
+/// The mark handler: append the event for the resolved target. One path for
+/// the hotkey, the hook, the tests, a replayed trace entry and any authorized
+/// agent.
 fn create_mark(
-    app: &mut QuantickApp,
+    _app: &mut QuantickApp,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    let input: MarkInput = serde_json::from_value(input.clone())
+    let input: MarkCanonicalInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     if input
         .note
@@ -254,17 +350,16 @@ fn create_mark(
             "a mark note is at most {CONTROL_REASON_MAX_BYTES} bytes"
         )));
     }
-    let (target, target_source) = match (actor.actor_kind, input.target) {
-        (ActorKind::Automation, Some(target)) => (target, "replayed"),
-        (ActorKind::Automation, None) => {
-            return Err(ControlError::invalid_request(
-                "a replayed mark must carry the target that was recorded; the rerun's pointer is not the one that was marked",
-            ));
-        }
-        (ActorKind::Agent, Some(target)) => (target, "supplied"),
-        (ActorKind::HumanUi, Some(target)) => (target, "pointer"),
-        (ActorKind::Agent | ActorKind::HumanUi, None) => (cursor_snapshot(app), "pointer"),
-    };
+    let target = input.target;
+    // A rerun says how *this* mark arrived: from the trace, not from a
+    // pointer that was somewhere else. What the original run resolved stays
+    // in the trace line.
+    let target_source = if actor.actor_kind == ActorKind::Automation {
+        MarkTargetSource::Replayed
+    } else {
+        input.target_source
+    }
+    .as_str();
     let event_actor = EventActor {
         kind: actor.actor_kind,
         client_name: actor.client_name.clone(),
@@ -303,7 +398,8 @@ mod tests {
     #[test]
     fn the_standard_actions_register_and_validate_their_schemas() {
         let registry = standard_actions().unwrap();
-        let (descriptor, _, input, output) = registry.lookup(MARK_CAPABILITY_ID, 1).unwrap();
+        let action = registry.lookup(MARK_CAPABILITY_ID, 1).unwrap();
+        let (descriptor, input, output) = (&action.descriptor, &action.input, &action.output);
         assert_eq!(descriptor.effect.as_str(), ANNOTATE_EFFECT_ID);
         assert!(!descriptor.read_only);
         assert!(

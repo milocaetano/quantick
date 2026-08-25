@@ -5,6 +5,825 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Draws an arrow between two chart coordinates, attributed to its author and removable in one action.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.arrow.create",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "AnnotationAnchor": {
+            "additionalProperties": false,
+            "description": "One anchor, in the coordinates the cursor and the chart window report:\nmarket time and price. Screen pixels are deliberately not accepted — they\nmean nothing a frame later, and an agent that read a bar knows its time.",
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "time_unix_ms",
+              "price"
+            ],
+            "type": "object"
+          },
+          "AnnotationTarget": {
+            "additionalProperties": false,
+            "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
+            "properties": {
+              "pane_side": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PaneSideDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The pane within that tab. Omitted: the pane drawings go to."
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The tab, by the id every snapshot reports. Omitted: the active tab."
+              }
+            },
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "What a label, an arrow or a zone takes. The anchor count is the tool's\n(one for a label, two for an arrow and a zone) and is checked against the\nregistry rather than restated here.",
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/$defs/AnnotationAnchor"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "type": "array"
+          },
+          "name": {
+            "description": "The name the object manager and the inspector show.",
+            "maxLength": 120,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AnnotationTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "description": "The words a label carries. Ignored by the tools that have none.",
+            "maxLength": 280,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "anchors"
+        ],
+        "title": "AnnotationInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "AnnotationAuthor": {
+            "description": "Who placed an object, as the interface shows it.",
+            "properties": {
+              "actor_kind": {
+                "description": "The actor kind on the wire: `agent`, `automation`, `human_ui`.",
+                "type": "string"
+              },
+              "client_name": {
+                "description": "The client's own name from its handshake.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_kind",
+              "client_name"
+            ],
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "ResolvedAnchor": {
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "slot",
+              "time_unix_ms",
+              "price"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What an annotation returns: the object's stable id, where it actually\nlanded, and the authorship the trader sees on it.",
+        "properties": {
+          "anchors": {
+            "description": "Where each anchor landed after resolution: the slot it fell on and the\nmarket time of that slot, which is not always the time asked for.",
+            "items": {
+              "$ref": "#/$defs/ResolvedAnchor"
+            },
+            "type": "array"
+          },
+          "annotation_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "author": {
+            "$ref": "#/$defs/AnnotationAuthor"
+          },
+          "label": {
+            "type": "string"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pane_side": {
+            "$ref": "#/$defs/PaneSideDto"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "annotation_id",
+          "tab_id",
+          "pane_id",
+          "pane_side",
+          "tool_id",
+          "anchors",
+          "author",
+          "label"
+        ],
+        "title": "AnnotationResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.chart"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "An annotation adds one object and edits nothing; a stale caller places an object that is visibly attributed and removed in one action.",
+      "title": "Place an arrow",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Places an anchored note at one chart coordinate, attributed to its author and removable in one action.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.label.create",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "AnnotationAnchor": {
+            "additionalProperties": false,
+            "description": "One anchor, in the coordinates the cursor and the chart window report:\nmarket time and price. Screen pixels are deliberately not accepted — they\nmean nothing a frame later, and an agent that read a bar knows its time.",
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "time_unix_ms",
+              "price"
+            ],
+            "type": "object"
+          },
+          "AnnotationTarget": {
+            "additionalProperties": false,
+            "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
+            "properties": {
+              "pane_side": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PaneSideDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The pane within that tab. Omitted: the pane drawings go to."
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The tab, by the id every snapshot reports. Omitted: the active tab."
+              }
+            },
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "What a label, an arrow or a zone takes. The anchor count is the tool's\n(one for a label, two for an arrow and a zone) and is checked against the\nregistry rather than restated here.",
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/$defs/AnnotationAnchor"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "type": "array"
+          },
+          "name": {
+            "description": "The name the object manager and the inspector show.",
+            "maxLength": 120,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AnnotationTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "description": "The words a label carries. Ignored by the tools that have none.",
+            "maxLength": 280,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "anchors"
+        ],
+        "title": "AnnotationInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "AnnotationAuthor": {
+            "description": "Who placed an object, as the interface shows it.",
+            "properties": {
+              "actor_kind": {
+                "description": "The actor kind on the wire: `agent`, `automation`, `human_ui`.",
+                "type": "string"
+              },
+              "client_name": {
+                "description": "The client's own name from its handshake.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_kind",
+              "client_name"
+            ],
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "ResolvedAnchor": {
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "slot",
+              "time_unix_ms",
+              "price"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What an annotation returns: the object's stable id, where it actually\nlanded, and the authorship the trader sees on it.",
+        "properties": {
+          "anchors": {
+            "description": "Where each anchor landed after resolution: the slot it fell on and the\nmarket time of that slot, which is not always the time asked for.",
+            "items": {
+              "$ref": "#/$defs/ResolvedAnchor"
+            },
+            "type": "array"
+          },
+          "annotation_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "author": {
+            "$ref": "#/$defs/AnnotationAuthor"
+          },
+          "label": {
+            "type": "string"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pane_side": {
+            "$ref": "#/$defs/PaneSideDto"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "annotation_id",
+          "tab_id",
+          "pane_id",
+          "pane_side",
+          "tool_id",
+          "anchors",
+          "author",
+          "label"
+        ],
+        "title": "AnnotationResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.chart"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "An annotation adds one object and edits nothing; a stale caller places an object that is visibly attributed and removed in one action.",
+      "title": "Place a label",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Removes one object placed by an operator other than the trader. An object the trader drew by hand is never removable through this tier.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.remove",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "What a removal takes: the annotation's id, and nothing else. There is no\n\"remove all\" here on purpose — an operator that can sweep the chart is a\ncockpit capability, and the trader's own sweep lives in the object manager.",
+        "properties": {
+          "annotation_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "annotation_id"
+        ],
+        "title": "RemoveInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "annotation_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "removed": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "annotation_id",
+          "tab_id",
+          "pane_id",
+          "removed"
+        ],
+        "title": "RemoveResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.chart"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Removing an already-removed annotation reports that it was not there; no other object can be reached.",
+      "title": "Remove an annotation",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Draws a rectangular region between two chart coordinates, attributed to its author and removable in one action.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.zone.create",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "AnnotationAnchor": {
+            "additionalProperties": false,
+            "description": "One anchor, in the coordinates the cursor and the chart window report:\nmarket time and price. Screen pixels are deliberately not accepted — they\nmean nothing a frame later, and an agent that read a bar knows its time.",
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "time_unix_ms",
+              "price"
+            ],
+            "type": "object"
+          },
+          "AnnotationTarget": {
+            "additionalProperties": false,
+            "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
+            "properties": {
+              "pane_side": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PaneSideDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The pane within that tab. Omitted: the pane drawings go to."
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The tab, by the id every snapshot reports. Omitted: the active tab."
+              }
+            },
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "What a label, an arrow or a zone takes. The anchor count is the tool's\n(one for a label, two for an arrow and a zone) and is checked against the\nregistry rather than restated here.",
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/$defs/AnnotationAnchor"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "type": "array"
+          },
+          "name": {
+            "description": "The name the object manager and the inspector show.",
+            "maxLength": 120,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AnnotationTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "description": "The words a label carries. Ignored by the tools that have none.",
+            "maxLength": 280,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "anchors"
+        ],
+        "title": "AnnotationInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "AnnotationAuthor": {
+            "description": "Who placed an object, as the interface shows it.",
+            "properties": {
+              "actor_kind": {
+                "description": "The actor kind on the wire: `agent`, `automation`, `human_ui`.",
+                "type": "string"
+              },
+              "client_name": {
+                "description": "The client's own name from its handshake.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_kind",
+              "client_name"
+            ],
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "ResolvedAnchor": {
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "slot",
+              "time_unix_ms",
+              "price"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What an annotation returns: the object's stable id, where it actually\nlanded, and the authorship the trader sees on it.",
+        "properties": {
+          "anchors": {
+            "description": "Where each anchor landed after resolution: the slot it fell on and the\nmarket time of that slot, which is not always the time asked for.",
+            "items": {
+              "$ref": "#/$defs/ResolvedAnchor"
+            },
+            "type": "array"
+          },
+          "annotation_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "author": {
+            "$ref": "#/$defs/AnnotationAuthor"
+          },
+          "label": {
+            "type": "string"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pane_side": {
+            "$ref": "#/$defs/PaneSideDto"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "annotation_id",
+          "tab_id",
+          "pane_id",
+          "pane_side",
+          "tool_id",
+          "anchors",
+          "author",
+          "label"
+        ],
+        "title": "AnnotationResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.chart"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "An annotation adds one object and edits nothing; a stale caller places an object that is visibly attributed and removed in one action.",
+      "title": "Place a zone",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Appends a journal event carrying the fully resolved cursor target — pane, bar, price, flow cell, drawing — plus an optional note, attributed to its actor. The primitive that turns \"look at this\" into a referent a client can quote back.",
       "destructive": false,
       "dry_run_supported": false,
@@ -2847,6 +3666,455 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Compiles Quantick Pine and attaches the indicator it produces to the focused pane. A script that does not compile is refused with its diagnostics as structured data — code, span, line, column, message and notes — never as a rendered string.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "indicator.script.attach",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "What an attach takes: the script, its name, and optionally which pane.",
+        "properties": {
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "source": {
+            "description": "Quantick Pine source, exactly as a `.pine` file would hold it.",
+            "maxLength": 65536,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "source"
+        ],
+        "title": "AttachInput",
+        "type": "object"
+      },
+      "module": "indicator",
+      "output_schema": {
+        "$defs": {
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What an attach returns on success: the slot to detach later, and where it\nwent. A failure is an error with the diagnostics in its details, never a\nsuccess carrying a rendered message.",
+        "properties": {
+          "declared_inputs": {
+            "description": "The inputs the script declared, by name, so a caller can see what it\ncan later bind without reading the source back.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pane_side": {
+            "$ref": "#/$defs/PaneSideDto"
+          },
+          "slot_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "slot_id",
+          "tab_id",
+          "pane_side",
+          "name",
+          "declared_inputs"
+        ],
+        "title": "AttachResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Attaching adds a slot and edits none; detaching names the slot it removes, and a slot that is gone reports that it was not there.",
+      "title": "Attach a script indicator",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Removes one attached slot, leaving the pane exactly as it was before the matching attach.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "indicator.script.detach",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "slot_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "slot_id"
+        ],
+        "title": "DetachInput",
+        "type": "object"
+      },
+      "module": "indicator",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "detached": {
+            "type": "boolean"
+          },
+          "slot_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "slot_id",
+          "detached"
+        ],
+        "title": "DetachResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.script"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Attaching adds a slot and edits none; detaching names the slot it removes, and a slot that is gone reports that it was not there.",
+      "title": "Detach a script indicator",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Opens a small window over the chart carrying one message, attributed to whoever asked for it, dismissed by the trader.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "notify",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "notify.popup",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "What a notification says. The actor is not part of it: the interface\nstamps who asked, so a client cannot sign a popup as the platform.",
+        "properties": {
+          "message": {
+            "maxLength": 240,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "description": "A popup's heading. Ignored by the toast and the sound.",
+            "maxLength": 80,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "NotifyInput",
+        "type": "object"
+      },
+      "module": "notify",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a notification returns: that it was raised, and what the trader will\nsee attributed to whom.",
+        "properties": {
+          "channel": {
+            "type": "string"
+          },
+          "displayed_text": {
+            "description": "What the interface shows, including the attribution it added.",
+            "type": "string"
+          },
+          "raised": {
+            "type": "boolean"
+          },
+          "unavailable_reason": {
+            "description": "Present when the channel cannot reach the trader in this build; the\ncall still says so rather than pretending it was heard.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "channel",
+          "raised",
+          "displayed_text"
+        ],
+        "title": "NotifyResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.notification"
+      ],
+      "reversible": false,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [
+        "user_interrupt"
+      ],
+      "risk_reducing": false,
+      "stale_input_safety": "A notification changes no state a later call depends on; a stale caller interrupts once and is attributed.",
+      "title": "Raise a popup",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Asks the platform to make an audible alert. Needs its own scope, which is off by default, and reports honestly when this build has no audio backend.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "notify",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "notify.sound",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "What a notification says. The actor is not part of it: the interface\nstamps who asked, so a client cannot sign a popup as the platform.",
+        "properties": {
+          "message": {
+            "maxLength": 240,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "description": "A popup's heading. Ignored by the toast and the sound.",
+            "maxLength": 80,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "NotifyInput",
+        "type": "object"
+      },
+      "module": "notify",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a notification returns: that it was raised, and what the trader will\nsee attributed to whom.",
+        "properties": {
+          "channel": {
+            "type": "string"
+          },
+          "displayed_text": {
+            "description": "What the interface shows, including the attribution it added.",
+            "type": "string"
+          },
+          "raised": {
+            "type": "boolean"
+          },
+          "unavailable_reason": {
+            "description": "Present when the channel cannot reach the trader in this build; the\ncall still says so rather than pretending it was heard.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "channel",
+          "raised",
+          "displayed_text"
+        ],
+        "title": "NotifyResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.sound"
+      ],
+      "reversible": false,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [
+        "audible_output",
+        "user_interrupt"
+      ],
+      "risk_reducing": false,
+      "stale_input_safety": "A notification changes no state a later call depends on; a stale caller interrupts once and is attributed.",
+      "title": "Sound an alert",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Posts one line to the window's acknowledgement lane, attributed to whoever asked for it.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "notify",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "notify.toast",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "What a notification says. The actor is not part of it: the interface\nstamps who asked, so a client cannot sign a popup as the platform.",
+        "properties": {
+          "message": {
+            "maxLength": 240,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "description": "A popup's heading. Ignored by the toast and the sound.",
+            "maxLength": 80,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "NotifyInput",
+        "type": "object"
+      },
+      "module": "notify",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a notification returns: that it was raised, and what the trader will\nsee attributed to whom.",
+        "properties": {
+          "channel": {
+            "type": "string"
+          },
+          "displayed_text": {
+            "description": "What the interface shows, including the attribution it added.",
+            "type": "string"
+          },
+          "raised": {
+            "type": "boolean"
+          },
+          "unavailable_reason": {
+            "description": "Present when the channel cannot reach the trader in this build; the\ncall still says so rather than pretending it was heard.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "channel",
+          "raised",
+          "displayed_text"
+        ],
+        "title": "NotifyResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.notification"
+      ],
+      "reversible": false,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [
+        "user_interrupt"
+      ],
+      "risk_reducing": false,
+      "stale_input_safety": "A notification changes no state a later call depends on; a stale caller interrupts once and is attributed.",
+      "title": "Raise a toast",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Captures the requested registered scopes coherently on the application thread.",
       "destructive": false,
       "dry_run_supported": false,
@@ -3042,6 +4310,11 @@
   ],
   "modules": [
     {
+      "description": "Objects an operator places on the chart, attributed and removable.",
+      "id": "annotate",
+      "title": "Annotate"
+    },
+    {
       "description": "Human marks: what the user pointed at, as a durable referent.",
       "id": "attention",
       "title": "Attention"
@@ -3072,9 +4345,19 @@
       "title": "Health"
     },
     {
+      "description": "Indicator slots, and the Quantick Pine scripts attached to them.",
+      "id": "indicator",
+      "title": "Indicators"
+    },
+    {
       "description": "Semantic pointer resolution and current UI selections.",
       "id": "interaction",
       "title": "Interaction"
+    },
+    {
+      "description": "Interruptions: a popup, a toast, a sound.",
+      "id": "notify",
+      "title": "Notify"
     },
     {
       "description": "Coherent multi-module semantic captures.",
@@ -3112,6 +4395,46 @@
         "annotator"
       ],
       "sensitive": false
+    },
+    {
+      "default_grant": "prompt",
+      "description": "Place labels, arrows and zones, attributed and removable in one action.",
+      "id": "annotate.chart",
+      "label": "Answer on the chart",
+      "profile_ceilings": [
+        "annotator"
+      ],
+      "sensitive": false
+    },
+    {
+      "default_grant": "prompt",
+      "description": "Raise a popup or a toast the trader has to read and dismiss.",
+      "id": "annotate.notification",
+      "label": "Interrupt with a message",
+      "profile_ceilings": [
+        "annotator"
+      ],
+      "sensitive": false
+    },
+    {
+      "default_grant": "prompt",
+      "description": "Compile a Quantick Pine script and attach the indicator it produces to a pane, with a detach that restores the pane exactly.",
+      "id": "annotate.script",
+      "label": "Attach an indicator script",
+      "profile_ceilings": [
+        "annotator"
+      ],
+      "sensitive": true
+    },
+    {
+      "default_grant": "prompt",
+      "description": "Play the platform's alert sound, which reaches the trader even when they are not looking at the window.",
+      "id": "annotate.sound",
+      "label": "Make a sound",
+      "profile_ceilings": [
+        "annotator"
+      ],
+      "sensitive": true
     },
     {
       "default_grant": "granted",

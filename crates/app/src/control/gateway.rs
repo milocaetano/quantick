@@ -48,20 +48,22 @@ use serde_json::{Value, json};
 use crate::{app::QuantickApp, metrics};
 
 use super::{
-    actions::{ActionRegistry, standard_actions},
+    actions::{ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, ActionRegistry, standard_actions},
     contract::{
-        EventsReadInvocation, OBSERVER_PROFILE_ID, ObserverContract, ParkedWait, PreparedDispatch,
-        PreparedRequest, UiReadExecution,
+        DeferredActionResult, EventsReadInvocation, OBSERVER_PROFILE_ID, ObserverContract,
+        ParkedWait, PreparedDispatch, PreparedRequest, UiReadExecution,
     },
     events::EventsReadInput,
     feed::connection_state,
     interaction::{SelectionIdentity, selection_identity, selection_snapshot},
     journal::{EventJournal, JournalSignal, NewEvent},
+    notify::NotificationLimiter,
     registry::ProjectionRegistry,
     trace::{
         ControlTrace, NoTrace, ReplayTraceFile, TRACE_VERSION, TraceEntry, TraceReplay,
         result_digest,
     },
+    types::known_error,
 };
 
 use quantick_control_local::discovery::publish_descriptor;
@@ -97,13 +99,30 @@ struct UiActorIdentity {
     connection_id: ConnectionId,
 }
 
-/// Where a local action came from: the human at this window, whose action
-/// during a replay is recorded in the control trace, or the control trace
-/// itself replaying that action, which must not be recorded again.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Where an action came from: the human at this window, whose action during a
+/// replay is recorded in the control trace; the control trace itself replaying
+/// that action, which must not be recorded again; or an authorized client on
+/// the local gateway, carrying the actor the *connection* proved — never one
+/// the payload claimed.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ActionOrigin {
     Human,
     TraceReplay,
+    Remote(Box<ActorContext>),
+}
+
+impl ActionOrigin {
+    fn actor_kind(&self) -> ActorKind {
+        match self {
+            Self::Human => ActorKind::HumanUi,
+            Self::TraceReplay => ActorKind::Automation,
+            Self::Remote(actor) => actor.actor_kind,
+        }
+    }
+
+    fn is_trace_replay(&self) -> bool {
+        matches!(self, Self::TraceReplay)
+    }
 }
 
 /// A replay session whose control trace is being re-injected: the entries
@@ -299,6 +318,9 @@ impl GatewayOptions {
 #[derive(Clone)]
 struct GatewayStart {
     identity: ProcessIdentity,
+    /// The highest profile any connection of this run may hold — what the
+    /// human granted in the panel, never what a client asks for.
+    profile_ceiling: ProfileId,
     granted_scopes: BTreeSet<PermissionId>,
     grant_generation: u64,
     options: GatewayOptions,
@@ -427,8 +449,41 @@ impl ClientRateLimiter {
     }
 }
 
+/// Whether a permission belongs to the annotate tier — the `annotate` floor
+/// itself or one of its scopes.
+fn is_annotate_permission(permission: &PermissionId) -> bool {
+    let id = permission.as_str();
+    id == ANNOTATE_PERMISSION_ID || id.starts_with(concat!("annotate", "."))
+}
+
+/// Who a connection is, as the handshake proved it. Every action that
+/// connection asks for is signed with this: the payload never names an actor.
+#[derive(Clone, Debug)]
+struct RemoteActor {
+    principal_id: PrincipalId,
+    client_name: String,
+    connection_id: ConnectionId,
+}
+
+impl RemoteActor {
+    /// The actor for one request of this connection.
+    fn context(&self, request: &RequestEnvelope) -> ActorContext {
+        ActorContext {
+            actor_kind: ActorKind::Agent,
+            principal_id: self.principal_id.clone(),
+            client_name: self.client_name.clone(),
+            connection_id: self.connection_id.clone(),
+            request_id: request.request_id.clone(),
+            reason: request.reason.clone(),
+            requested_at_unix_ms: metrics::wall_clock_ms(),
+        }
+    }
+}
+
 struct UiRequest {
     prepared: PreparedRequest,
+    /// Present when the request is an action: the connection's proved actor.
+    actor: Option<Box<ActorContext>>,
     connection_id: ConnectionId,
     grant_generation: u64,
     deadline: Instant,
@@ -468,12 +523,15 @@ pub(crate) struct ControlAccess {
     /// read through the UI queue; signalled to parked waiters without a lock.
     journal: EventJournal,
     journal_ticks: Receiver<()>,
-    actions: ActionRegistry,
+    actions: Arc<ActionRegistry>,
     /// What the frame emitter last saw; `None` until access is enabled, so a
     /// disabled gateway costs the frame nothing and an enabled one records
     /// changes, not the state it found.
     semantic_baseline: Option<SemanticBaseline>,
     next_ui_request: u64,
+    /// One notification budget per connected client, dropped when the client
+    /// disconnects so a long session cannot accumulate them.
+    notification_limits: BTreeMap<ConnectionId, NotificationLimiter>,
     next_trace_sequence: u64,
     /// The control trace of every replaying recording, keyed by session
     /// path, loaded once and walked by logical replay time; a tab without a
@@ -485,9 +543,9 @@ impl ControlAccess {
     pub fn new() -> Self {
         let projections = super::standard_registry()
             .expect("built-in semantic projection registry must be valid");
-        let actions = standard_actions().expect("built-in action registry must be valid");
+        let actions = Arc::new(standard_actions().expect("built-in action registry must be valid"));
         let contract = Arc::new(
-            ObserverContract::new(&projections, &actions)
+            ObserverContract::new(&projections, Arc::clone(&actions))
                 .expect("built-in observer capability registry must be valid"),
         );
         let (journal, journal_ticks) = EventJournal::new();
@@ -523,6 +581,7 @@ impl ControlAccess {
             actions,
             semantic_baseline: None,
             next_ui_request: 1,
+            notification_limits: BTreeMap::new(),
             next_trace_sequence: 1,
             trace_reinjection: BTreeMap::new(),
         }
@@ -625,6 +684,25 @@ impl ControlAccess {
         &self.journal
     }
 
+    /// Whether this actor may interrupt the trader once more.
+    ///
+    /// Budgeted per connection, not per capability: three toasts and three
+    /// popups from one client are six interruptions to the person reading the
+    /// chart. The trader's own gestures never pass through here.
+    pub(crate) fn allow_notification(
+        &mut self,
+        actor: &ActorContext,
+    ) -> Result<(), std::time::Duration> {
+        let limiter = self
+            .notification_limits
+            .entry(actor.connection_id.clone())
+            .or_insert_with(NotificationLimiter::new);
+        if limiter.allow(Instant::now()) {
+            return Ok(());
+        }
+        Err(limiter.retry_after())
+    }
+
     pub fn journal_mut(&mut self) -> &mut EventJournal {
         &mut self.journal
     }
@@ -663,10 +741,7 @@ impl ControlAccess {
         input: Value,
         origin: ActionOrigin,
     ) -> Result<Value, ControlError> {
-        let actor_kind = match origin {
-            ActionOrigin::Human => ActorKind::HumanUi,
-            ActionOrigin::TraceReplay => ActorKind::Automation,
-        };
+        let actor_kind = origin.actor_kind();
         if self.identity.is_none() {
             return Err(known_error(
                 codes::CAPABILITY_UNAVAILABLE,
@@ -674,27 +749,52 @@ impl ControlAccess {
                 false,
             ));
         }
-        let (descriptor, handler) = {
-            let (descriptor, handler, input_schema, _) = self
-                .actions
-                .lookup(capability_id, capability_version)
-                .ok_or_else(|| {
-                    known_error(
-                        codes::CAPABILITY_UNKNOWN,
-                        "capability ID or version is not a registered action",
-                        false,
-                    )
-                })?;
-            input_schema
+        let action = self
+            .actions
+            .lookup(capability_id, capability_version)
+            .ok_or_else(|| {
+                known_error(
+                    codes::CAPABILITY_UNKNOWN,
+                    "capability ID or version is not a registered action",
+                    false,
+                )
+            })?;
+        let descriptor = &action.descriptor;
+        let actor = match &origin {
+            // A remote caller's actor is what the connection proved at the
+            // handshake, so an agent cannot sign an action as the trader.
+            ActionOrigin::Remote(actor) => (**actor).clone(),
+            ActionOrigin::Human => self.local_actor(actor_kind, None),
+            ActionOrigin::TraceReplay => self.local_actor(
+                actor_kind,
+                Some("replayed from the control trace".to_owned()),
+            ),
+        };
+        // What the caller asked becomes what will happen, before the intent
+        // line is written: a trace entry names the bar that was marked, not
+        // "wherever the pointer is". A replayed entry is already resolved and
+        // is validated against that same shape instead.
+        let input = if origin.is_trace_replay() {
+            action
+                .canonical
                 .validate(&input)
                 .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-            (descriptor.clone(), handler)
+            input
+        } else {
+            action
+                .input
+                .validate(&input)
+                .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+            let resolved = (action.resolve)(app, &actor, input)?;
+            action.canonical.validate(&resolved).map_err(|error| {
+                known_error(
+                    codes::CAPABILITY_UNAVAILABLE,
+                    &format!("the action resolved an input it cannot record: {error}"),
+                    false,
+                )
+            })?;
+            resolved
         };
-        let actor = self.local_actor(
-            actor_kind,
-            (origin == ActionOrigin::TraceReplay)
-                .then(|| "replayed from the control trace".to_owned()),
-        );
 
         // The trace: a replaying tab records the action at its logical time;
         // a live tab has nothing to record. Opening the sidecar is rare and
@@ -712,7 +812,7 @@ impl ControlAccess {
         // A replayed entry is the trace speaking; recording it again would
         // double the sidecar on every run.
         let mut trace: Box<dyn ControlTrace> = match &replaying {
-            Some(_) if origin == ActionOrigin::TraceReplay => Box::new(NoTrace),
+            Some(_) if origin.is_trace_replay() => Box::new(NoTrace),
             Some((session_path, _)) => {
                 Box::new(ReplayTraceFile::open(session_path).map_err(|error| {
                     known_error(
@@ -748,12 +848,9 @@ impl ControlAccess {
             )
         })?;
 
-        let outcome = handler(app, self, &actor, &input).and_then(|result| {
-            let (_, _, _, output_schema) = self
-                .actions
-                .lookup(capability_id, capability_version)
-                .expect("the action was looked up a moment ago");
-            output_schema
+        let outcome = (action.handler)(app, self, &actor, &input).and_then(|result| {
+            action
+                .output
                 .validate(&result)
                 .map(|()| result)
                 .map_err(|error| ControlError::invalid_request(error.to_string()))
@@ -785,7 +882,88 @@ impl ControlAccess {
         outcome
     }
 
-    pub fn begin_frame(&mut self, app: &QuantickApp, ctx: &eframe::egui::Context) {
+    /// One request on the application thread: the authority checks the
+    /// gateway made when it arrived, re-made at the moment it runs, and then
+    /// the read or the action itself.
+    fn execute_on_ui(
+        &mut self,
+        app: &mut QuantickApp,
+        current_generation: u64,
+        request: &UiRequest,
+    ) -> Result<UiReadExecution, ControlError> {
+        if request.deadline <= Instant::now() {
+            return Err(known_error(
+                codes::TIMEOUT,
+                "request expired before application-thread dispatch",
+                true,
+            ));
+        }
+        if request.grant_generation != current_generation
+            || self.revoked_connections.contains(&request.connection_id)
+        {
+            return Err(known_error(
+                codes::PERMISSION_DENIED,
+                "connection authority was revoked before dispatch",
+                false,
+            ));
+        }
+        let instance_id = match &self.identity {
+            Some(identity) => identity.instance_id.clone(),
+            None => {
+                return Err(known_error(
+                    codes::INSTANCE_GONE,
+                    "the running instance has no control identity",
+                    false,
+                ));
+            }
+        };
+        if request.prepared.envelope.instance_id != instance_id {
+            return Err(known_error(
+                codes::INSTANCE_GONE,
+                "request names a different running instance",
+                false,
+            ));
+        }
+        if !request
+            .prepared
+            .required_permissions
+            .is_subset(&self.configured_scopes)
+        {
+            return Err(known_error(
+                codes::SCOPE_DENIED,
+                "a required scope was removed before dispatch",
+                false,
+            ));
+        }
+
+        if let PreparedDispatch::Action(action) = &request.prepared.dispatch {
+            let Some(actor) = request.actor.clone() else {
+                return Err(known_error(
+                    codes::CAPABILITY_UNAVAILABLE,
+                    "an action reached the application thread without the connection's actor",
+                    false,
+                ));
+            };
+            let action = action.clone();
+            let result = self.invoke_local_action(
+                app,
+                action.capability_id.as_str(),
+                action.capability_version,
+                action.input,
+                ActionOrigin::Remote(actor),
+            )?;
+            return Ok(Box::new(DeferredActionResult(result)) as UiReadExecution);
+        }
+
+        request.prepared.dispatch.execute_ui(
+            &mut self.projections,
+            &self.journal,
+            app,
+            &instance_id,
+        )
+    }
+
+    pub fn begin_frame(&mut self, app: &mut QuantickApp, ctx: &eframe::egui::Context) {
         let frame_started = Instant::now();
         self.poll_lifecycle();
         let statuses_have_more = self.poll_statuses(frame_started);
@@ -805,27 +983,14 @@ impl ControlAccess {
 
         self.emit_semantic_changes(app);
 
-        let configured_scopes = &self.configured_scopes;
-        let revoked = &self.revoked_connections;
-        let identity = self
-            .identity
-            .as_ref()
-            .expect("an enabled gateway always has a process identity");
-        let projections = &mut self.projections;
-        let journal = &self.journal;
-        self.last_drain = drain_bounded_since(&requests, frame_started, |request| {
-            let result = execute_on_ui(
-                projections,
-                journal,
-                app,
-                identity,
-                generation,
-                configured_scopes,
-                revoked,
-                &request,
-            );
+        // The drain owns `self` for the whole pass: an action runs through the
+        // same `invoke_local_action` the hotkey uses, which needs the journal
+        // and the trace mutably, so no field can stay borrowed across it.
+        let drain = drain_bounded_since(&requests, frame_started, |request| {
+            let result = self.execute_on_ui(app, generation, &request);
             let _ = request.response.try_send(result);
         });
+        self.last_drain = drain;
         if statuses_have_more || self.last_drain.queue_has_more {
             ctx.request_repaint();
         }
@@ -984,6 +1149,26 @@ impl ControlAccess {
 
     pub fn is_enabled(&self) -> bool {
         matches!(self.state, AccessState::Enabled(_))
+    }
+
+    /// Whether any annotate scope is granted for the next connection — the
+    /// one question that decides whether a client may answer on the chart.
+    pub(crate) fn grants_annotate(&self) -> bool {
+        self.configured_scopes
+            .iter()
+            .any(|permission| is_annotate_permission(permission))
+    }
+
+    /// The ceiling every connection of the next run is capped at. It follows
+    /// the scopes the human ticked: no annotate scope, no annotator profile,
+    /// however loudly a client asks for one.
+    fn configured_profile(&self) -> ProfileId {
+        let id = if self.grants_annotate() {
+            ANNOTATOR_PROFILE_ID
+        } else {
+            OBSERVER_PROFILE_ID
+        };
+        ProfileId::new(id).expect("static profile ID is valid")
     }
 
     pub fn menu_label(&self) -> &'static str {
@@ -1182,6 +1367,7 @@ impl ControlAccess {
         let cancellation = Arc::new(AtomicBool::new(false));
         let start = GatewayStart {
             identity,
+            profile_ceiling: self.configured_profile(),
             granted_scopes: self.configured_scopes.clone(),
             grant_generation: self.grant_generation,
             options,
@@ -1334,6 +1520,7 @@ impl ControlAccess {
                     }
                 }
                 ConnectionStatus::Disconnected(connection_id) => {
+                    self.notification_limits.remove(&connection_id);
                     self.connections.remove(&connection_id);
                     self.revoked_connections.remove(&connection_id);
                 }
@@ -1528,58 +1715,6 @@ fn drain_bounded_since<T>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn execute_on_ui(
-    projections: &mut ProjectionRegistry,
-    journal: &EventJournal,
-    app: &QuantickApp,
-    identity: &ProcessIdentity,
-    current_generation: u64,
-    current_scopes: &BTreeSet<PermissionId>,
-    revoked_connections: &BTreeSet<ConnectionId>,
-    request: &UiRequest,
-) -> Result<UiReadExecution, ControlError> {
-    if request.deadline <= Instant::now() {
-        return Err(known_error(
-            codes::TIMEOUT,
-            "request expired before application-thread dispatch",
-            true,
-        ));
-    }
-    if request.grant_generation != current_generation
-        || revoked_connections.contains(&request.connection_id)
-    {
-        return Err(known_error(
-            codes::PERMISSION_DENIED,
-            "connection authority was revoked before dispatch",
-            false,
-        ));
-    }
-    if request.prepared.envelope.instance_id != identity.instance_id {
-        return Err(known_error(
-            codes::INSTANCE_GONE,
-            "request names a different running instance",
-            false,
-        ));
-    }
-    if !request
-        .prepared
-        .required_permissions
-        .is_subset(current_scopes)
-    {
-        return Err(known_error(
-            codes::SCOPE_DENIED,
-            "a required read scope was removed before dispatch",
-            false,
-        ));
-    }
-
-    request
-        .prepared
-        .dispatch
-        .execute_ui(projections, journal, app, &identity.instance_id)
-}
-
 fn gateway_main(
     start: GatewayStart,
     contract: Arc<ObserverContract>,
@@ -1700,6 +1835,7 @@ fn gateway_run(
     let authority = Arc::new(ConnectionAuthority {
         identity: start.identity.clone(),
         bearer_token: token,
+        profile_ceiling: start.profile_ceiling.clone(),
         granted_scopes: start.granted_scopes.clone(),
         grant_generation: start.grant_generation,
         options: start.options.clone(),
@@ -1856,6 +1992,7 @@ fn waiter_manager(
 struct ConnectionAuthority {
     identity: ProcessIdentity,
     bearer_token: BearerToken,
+    profile_ceiling: ProfileId,
     granted_scopes: BTreeSet<PermissionId>,
     grant_generation: u64,
     options: GatewayOptions,
@@ -2083,6 +2220,11 @@ fn connection_session(
     let principal_id = PrincipalId::from_bytes(
         random_bytes::<CONTROL_RUNTIME_ID_BYTES>().map_err(|_| codes::AUTH_FAILED)?,
     );
+    let remote_actor = RemoteActor {
+        principal_id: principal_id.clone(),
+        client_name: handshake.client_name.clone(),
+        connection_id: connection_id.clone(),
+    };
     let grant = HandshakeGrant {
         protocol_versions: ProtocolVersionRange::new(
             CURRENT_PROTOCOL_VERSION,
@@ -2098,8 +2240,7 @@ fn connection_session(
         application_commit: option_env!("QUANTICK_GIT_COMMIT")
             .unwrap_or("unknown")
             .to_owned(),
-        profile_ceiling: ProfileId::new(OBSERVER_PROFILE_ID)
-            .expect("static observer profile is valid"),
+        profile_ceiling: authority.profile_ceiling.clone(),
         granted_scopes: authority.granted_scopes.clone(),
         // Advertise the timeout this gateway actually applies, so a client's
         // own patience is derived from the truth rather than the default.
@@ -2320,6 +2461,7 @@ fn connection_session(
         dispatch_prepared(
             prepared,
             &connection_id,
+            &remote_actor,
             &accepted,
             &codec,
             &writer,
@@ -2363,6 +2505,7 @@ fn activity_status_high_watermark(max_connections: usize) -> usize {
 fn dispatch_prepared(
     prepared: PreparedRequest,
     connection_id: &ConnectionId,
+    remote_actor: &RemoteActor,
     handshake: &quantick_control::handshake::HandshakeResponse,
     codec: &BoundedCodec,
     writer: &Arc<Mutex<TcpStream>>,
@@ -2375,6 +2518,7 @@ fn dispatch_prepared(
             prepared,
             wait,
             connection_id,
+            remote_actor,
             handshake,
             codec,
             writer,
@@ -2407,6 +2551,7 @@ fn dispatch_prepared(
     if let Some(result) = prepared.dispatch.execute_worker(
         &authority.contract,
         &authority.identity.instance_id,
+        &handshake.effective_profile,
         &handshake.effective_scopes,
         &handshake.effective_limits,
     ) {
@@ -2494,8 +2639,11 @@ fn dispatch_prepared(
         return;
     }
 
+    let actor = matches!(prepared.dispatch, PreparedDispatch::Action(_))
+        .then(|| Box::new(remote_actor.context(&prepared.envelope)));
     let ui_request = UiRequest {
         prepared,
+        actor,
         connection_id: connection_id.clone(),
         grant_generation: authority.grant_generation,
         deadline,
@@ -2532,6 +2680,7 @@ fn dispatch_parked_wait(
     prepared: PreparedRequest,
     wait: ParkedWait,
     connection_id: &ConnectionId,
+    remote_actor: &RemoteActor,
     handshake: &quantick_control::handshake::HandshakeResponse,
     codec: &BoundedCodec,
     writer: &Arc<Mutex<TcpStream>>,
@@ -2576,6 +2725,7 @@ fn dispatch_parked_wait(
         dispatch_prepared(
             to_read(false),
             connection_id,
+            remote_actor,
             handshake,
             codec,
             writer,
@@ -2639,6 +2789,7 @@ fn dispatch_parked_wait(
     slots.track(&envelope.request_id);
     let thread_authority = Arc::clone(authority);
     let thread_connection_id = connection_id.clone();
+    let thread_remote_actor = remote_actor.clone();
     let thread_handshake = handshake.clone();
     let thread_codec = codec.clone();
     let thread_writer = Arc::clone(writer);
@@ -2676,6 +2827,7 @@ fn dispatch_parked_wait(
                 WakeReason::Woken | WakeReason::TimedOut => dispatch_prepared(
                     to_read(reason == WakeReason::TimedOut),
                     &thread_connection_id,
+                    &thread_remote_actor,
                     &thread_handshake,
                     &thread_codec,
                     &thread_writer,
@@ -2843,14 +2995,6 @@ fn send_response(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let _ = stream.write_all(&frame);
-}
-
-fn known_error(code: &str, message: &str, retryable: bool) -> ControlError {
-    ControlError::new(
-        quantick_control::id::ErrorCode::new(code).expect("static error code is valid"),
-        message,
-        retryable,
-    )
 }
 
 fn random_bytes<const N: usize>() -> Result<[u8; N], String> {

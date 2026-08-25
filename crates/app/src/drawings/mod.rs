@@ -1202,10 +1202,38 @@ pub enum DrawingBand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DrawingId(pub u64);
 
+/// Who placed an object, when it was not the trader's own hand.
+///
+/// Data honesty, at the level the eye works: an object an assistant put on
+/// the chart must never be indistinguishable from one the trader drew. The
+/// two strings are the control plane's own vocabulary — the actor kind and
+/// the client's name from its handshake — carried as plain text so the
+/// drawings layer stays free of control types.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrawingAuthor {
+    /// `agent`, `automation` — the wire's actor kind.
+    pub actor_kind: String,
+    /// The client's own name, as it introduced itself.
+    pub client_name: String,
+}
+
+impl DrawingAuthor {
+    /// One line for a panel: "Claude Code (agent)".
+    #[must_use]
+    pub fn label(&self) -> String {
+        format!("{} ({})", self.client_name, self.actor_kind)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Drawing {
     /// See [`DrawingId`]: identity, where the index is only position.
     pub id: DrawingId,
+    /// Set when something other than the trader's hand placed this object.
+    /// `None` is the trader's own; anything else is shown as its author's
+    /// wherever the object is named, and is the only thing the annotate tier
+    /// of the control plane is allowed to remove.
+    pub author: Option<DrawingAuthor>,
     /// The trader's own name for the object ("congestão 108k"). `None`
     /// falls back to the derived `"<tool> <n>"` label everywhere a label is
     /// shown; empty strings are normalised to `None` on edit.
@@ -1282,6 +1310,7 @@ impl PartialEq for Drawing {
         // the live store by their *edits* alone. `name` is content — a
         // rename is an edit the undo history records.
         self.name == other.name
+            && self.author == other.author
             && self.tool == other.tool
             && self.points == other.points
             && self.band == other.band
@@ -1538,6 +1567,7 @@ impl Drawings {
             let id = self.alloc_id();
             self.draft = Some(Drawing {
                 id,
+                author: None,
                 name: None,
                 tool,
                 points: Vec::with_capacity(tool.required_points()),
@@ -1824,6 +1854,56 @@ impl Drawings {
         if let Some(index) = self.selected {
             self.set_hidden_at(index, hidden);
         }
+    }
+
+    /// Remove one object by identity, wherever it sits and whatever is
+    /// selected — the removal an operator's own annotation gets, and the one
+    /// the trader's "remove what an assistant placed" gesture repeats.
+    /// Locked objects placed by an operator are included: a lock the trader
+    /// did not set is not a reason to keep someone else's mark.
+    pub fn remove_by_id(&mut self, id: DrawingId) -> bool {
+        let Some(index) = self.items.iter().position(|drawing| drawing.id == id) else {
+            return false;
+        };
+        let before = self.snapshot();
+        self.items.remove(index);
+        self.selected = match self.selected {
+            Some(selected) if selected == index => None,
+            Some(selected) if selected > index => Some(selected - 1),
+            other => other,
+        };
+        self.record(before);
+        true
+    }
+
+    /// Remove every object an operator other than the trader placed, and
+    /// report how many went. One gesture, one undo entry — the trader's way
+    /// back from an assistant that drew too much.
+    pub fn remove_authored(&mut self) -> usize {
+        if !self.items.iter().any(|drawing| drawing.author.is_some()) {
+            return 0;
+        }
+        let before = self.snapshot();
+        let previous = self.items.len();
+        let selected_id = self
+            .selected
+            .and_then(|index| self.items.get(index))
+            .map(|drawing| drawing.id);
+        self.items.retain(|drawing| drawing.author.is_none());
+        self.selected =
+            selected_id.and_then(|id| self.items.iter().position(|drawing| drawing.id == id));
+        self.record(before);
+        previous - self.items.len()
+    }
+
+    /// How many objects on this pane were placed by an operator other than
+    /// the trader — what the sweep gesture shows before it offers itself.
+    #[must_use]
+    pub fn authored_count(&self) -> usize {
+        self.items
+            .iter()
+            .filter(|drawing| drawing.author.is_some())
+            .count()
     }
 
     pub fn set_locked_at(&mut self, index: usize, locked: bool) {

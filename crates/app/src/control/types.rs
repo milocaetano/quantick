@@ -124,3 +124,28 @@ pub(crate) fn canonical_f32(value: f32, decimal_places: u32) -> Option<Canonical
 pub(crate) fn wire_usize(value: usize) -> WireU64 {
     WireU64::new(u64::try_from(value).unwrap_or(u64::MAX))
 }
+
+/// One `control.*` failure, built from a code the crate declares. The whole
+/// control module answers with the same shape, so a client never has to guess
+/// which surface refused it.
+pub(crate) fn known_error(
+    code: &str,
+    message: impl AsRef<str>,
+    retryable: bool,
+) -> quantick_control::error::ControlError {
+    quantick_control::error::ControlError::new(
+        quantick_control::id::ErrorCode::new(code).expect("static error code is valid"),
+        message.as_ref(),
+        retryable,
+    )
+}
+
+/// The wire name of an actor kind — the same text `ActorKind` serializes to,
+/// for the places that carry it as plain text (a drawing's author).
+pub(crate) fn actor_kind_name(kind: quantick_control::wire::ActorKind) -> &'static str {
+    match kind {
+        quantick_control::wire::ActorKind::HumanUi => "human_ui",
+        quantick_control::wire::ActorKind::Automation => "automation",
+        quantick_control::wire::ActorKind::Agent => "agent",
+    }
+}

@@ -22,8 +22,8 @@ use crate::chart_layers::{self, ChartLayer};
 use crate::config::AppConfig;
 use crate::dock::{Dock, DockEnv, DockTab};
 use crate::drawings::{
-    self, DeleteOutcome, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX,
-    PresetHost as _,
+    self, DeleteOutcome, DrawingAuthor, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX,
+    MIN_DRAWING_WIDTH_PX, PresetHost as _,
 };
 use crate::feed::{self, FeedCommand, FeedHandle, ReplayControl};
 use crate::indicator_legend;
@@ -206,6 +206,14 @@ const DRAWING_MANAGER_DEFAULT_POSITION: egui::Pos2 = egui::pos2(70.0, 140.0);
 const TOAST_UNDO_MS: u64 = 8_000;
 /// Horizontal offset of a duplicated drawing, so the copy is visibly a copy.
 const DUPLICATE_OFFSET_BARS: f32 = 2.0;
+/// How far below the top edge the assistant's popup opens, clear of the menu
+/// row and the toolbar.
+const AGENT_POPUP_TOP_MARGIN_PX: f32 = 96.0;
+/// Widest the assistant's popup gets, so a long message wraps instead of
+/// covering the chart.
+const AGENT_POPUP_MAX_WIDTH_PX: f32 = 360.0;
+/// Room between the message and the attribution line under it.
+const AGENT_POPUP_SPACING_PX: f32 = 6.0;
 /// Vertical clearance between the toast and the bottom chrome.
 const TOAST_BOTTOM_MARGIN_PX: f32 = 44.0;
 /// Width of the Save-as box, in pixels. Wide enough that a name at the
@@ -840,6 +848,10 @@ pub struct QuantickApp {
     // entry once pointer and keyboard let go.
     inspector_edit_baseline: Option<InspectorEdit>,
     toast: Option<Toast>,
+    /// The assistant's message, waiting to be read and dismissed. Drawn over
+    /// the chart, never modal: a trader mid-tape is never locked out of their
+    /// own window by something an assistant said.
+    agent_popup: Option<crate::control::AgentPopup>,
     // Inspector chrome state: open tab, dock pin, whether the user moved the
     // floating window this session (manual position wins over placement),
     // and the selection the last placement was computed for.
@@ -1291,6 +1303,7 @@ impl QuantickApp {
             drawing_delete_confirm: false,
             inspector_edit_baseline: None,
             toast: None,
+            agent_popup: None,
             inspector_tab: InspectorTab::default(),
             inspector_pinned: false,
             inspector_open: false,
@@ -2157,6 +2170,123 @@ impl QuantickApp {
         self.active_tab
     }
 
+    /// The assistant's message on screen: a small window over the chart that
+    /// says who is speaking, carries one message and closes on a click.
+    ///
+    /// Deliberately not modal and deliberately not on the status line: a
+    /// trader reading the tape keeps every control they had, and the fixed
+    /// readings never move to make room for something that leaves again.
+    fn draw_agent_popup(&mut self, ctx: &egui::Context) {
+        let Some(popup) = self.agent_popup.clone() else {
+            return;
+        };
+        let mut open = true;
+        let mut dismissed = false;
+        egui::Window::new(&popup.title)
+            .id(egui::Id::new("agent_popup"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(
+                egui::Align2::CENTER_TOP,
+                egui::vec2(0.0, AGENT_POPUP_TOP_MARGIN_PX),
+            )
+            .show(ctx, |ui| {
+                ui.set_max_width(AGENT_POPUP_MAX_WIDTH_PX);
+                ui.label(&popup.message);
+                ui.add_space(AGENT_POPUP_SPACING_PX);
+                ui.label(
+                    egui::RichText::new(format!("Sent by {}", popup.author))
+                        .small()
+                        .color(theme::TEXT_SUPPORT),
+                );
+                if ui.button("Dismiss").clicked() {
+                    dismissed = true;
+                }
+            });
+        if dismissed || !open {
+            self.agent_popup = None;
+        }
+    }
+
+    /// Put one Quantick Pine script on the focused pane behind a fresh slot.
+    ///
+    /// The one door: the script library's click arrives here, and so does an
+    /// authorized agent's `indicator.script.attach`. Returns the tab, the
+    /// pane and the slot, which is what a caller needs to detach it again.
+    pub(crate) fn attach_script_indicator(
+        &mut self,
+        name: String,
+        text: String,
+    ) -> (u64, crate::control::PaneSideDto, SlotId) {
+        let slot = self
+            .focused_pane_mut()
+            .add_indicator(IndicatorSource::Script {
+                name: name.clone(),
+                text,
+            });
+        let owner = self.target_slot(slot);
+        self.slot_kinds.push((owner, SavedKind::Script { name }));
+        self.mark_indicator_state_dirty();
+        (owner.tab, owner.side.into(), slot)
+    }
+
+    /// Take one attached slot off the chart, wherever it lives, through the
+    /// same removal the indicator legend's own button uses. Reports whether
+    /// there was anything there.
+    pub(crate) fn detach_script_indicator(&mut self, slot: u64) -> bool {
+        let Some(target) = self
+            .slot_kinds
+            .iter()
+            .map(|(owner, _)| *owner)
+            .find(|owner| owner.slot.0 == slot)
+        else {
+            return false;
+        };
+        self.remove_indicator_at(target);
+        true
+    }
+
+    /// Open the assistant's popup. One at a time: a second message replaces
+    /// the first rather than stacking windows over a chart someone is
+    /// trading, and the trader dismisses it.
+    pub(crate) fn show_agent_popup(&mut self, popup: crate::control::AgentPopup) {
+        self.agent_popup = Some(popup);
+    }
+
+    /// Post one line to the window's own acknowledgement lane — the same
+    /// channel a delete or a workspace save uses, with no Undo: there is
+    /// nothing to take back from having been told something.
+    pub(crate) fn show_agent_toast(&mut self, message: String) {
+        self.toast = Some(Toast {
+            message: message.into(),
+            shown_at: Instant::now(),
+            offers_undo: false,
+        });
+    }
+
+    /// Ask the platform for its attention sound, and report honestly when it
+    /// has none rather than letting a client believe it was heard.
+    pub(crate) fn sound_agent_alert(&mut self) -> Option<String> {
+        crate::audio::alert().err().map(ToOwned::to_owned)
+    }
+
+    /// One pane, by tab position and side — the mutable half of
+    /// [`Self::control_tabs`], for the actions that place objects.
+    pub(crate) fn control_pane_mut(
+        &mut self,
+        tab_index: usize,
+        side: crate::pane::PaneSide,
+    ) -> &mut ChartPane {
+        self.tabs[tab_index].pane_mut(side)
+    }
+
+    /// What a freshly placed object of `tool` opens with, through the same
+    /// door the click path uses — saved defaults, named preset and all.
+    pub(crate) fn control_new_drawing(&self, tool: drawings::DrawingTool) -> drawings::NewDrawing {
+        drawings::new_drawing_from_defaults(&self.drawing_presets, tool)
+    }
+
     pub(crate) fn control_config(&self) -> &AppConfig {
         &self.config
     }
@@ -2198,12 +2328,9 @@ impl QuantickApp {
         if let Some(note) = note {
             input.insert("note".to_owned(), serde_json::Value::String(note));
         }
-        // The pointer is resolved here, at the moment of the gesture, and
-        // travels as input: the input alone then determines the mark, which
-        // is what lets a control trace replay it identically.
-        if let Ok(target) = serde_json::to_value(crate::control::cursor_snapshot(self)) {
-            input.insert("target".to_owned(), target);
-        }
+        // No target: the action port resolves the pointer at the moment of
+        // the gesture and records the resolved input, so the trace line
+        // determines the mark on its own and a rerun marks the same bar.
         match self.control_action(
             crate::control::MARK_CAPABILITY_ID,
             crate::control::MARK_CAPABILITY_VERSION,
@@ -3227,20 +3354,13 @@ impl QuantickApp {
         let name = entry.name.clone();
         match self.script_library.read(index) {
             Some(Ok(text)) => {
-                let slot = self
-                    .focused_pane_mut()
-                    .add_indicator(IndicatorSource::Script {
-                        name: name.clone(),
-                        text,
-                    });
+                let (_, _, slot) = self.attach_script_indicator(name, text);
                 let owner = self.target_slot(slot);
                 // Watch the file so a save reloads it. Registered here, with
                 // the add, so the two cannot drift apart.
                 if let Some((_, mtime)) = self.script_library.file_info(index) {
                     self.script_files.push((owner, index, mtime));
                 }
-                self.slot_kinds.push((owner, SavedKind::Script { name }));
-                self.mark_indicator_state_dirty();
                 Some(slot)
             }
             Some(Err(message)) => {
@@ -6251,6 +6371,7 @@ impl QuantickApp {
         let tool = drawing.tool;
         let locked = drawing.locked;
         let hidden = drawing.hidden;
+        let author = drawing.author.as_ref().map(DrawingAuthor::label);
         let shareable = drawing.shareable();
         let mut shared = drawing.scope == drawings::DrawingScope::AllCharts;
         let show_confirm = self.drawing_delete_confirm && locked;
@@ -6262,6 +6383,15 @@ impl QuantickApp {
         actions.toggle_lock |= intent.toggle_lock;
         actions.delete |= intent.delete;
 
+        if let Some(author) = &author {
+            // Data honesty, where the trader decides what to do with the
+            // object: an assistant's mark never passes for their own.
+            ui.label(
+                egui::RichText::new(format!("Placed by {author} - not by you."))
+                    .small()
+                    .color(theme::TEXT_SUPPORT),
+            );
+        }
         if locked {
             ui.label(
                 egui::RichText::new(
@@ -7081,9 +7211,15 @@ impl QuantickApp {
         let locked = drawing.locked;
         let mut style = drawing.style;
         let glyph_before = tool.glyph_size(drawing);
+        // One line, only for an object the trader did not place. Formatting
+        // it costs an allocation on the frames a selected annotation is on
+        // screen — never on the tape's path, and never for the objects the
+        // trader drew.
+        let author = drawing.author.as_ref().map(DrawingAuthor::label);
         let mut object = drawings::context_bar::BarObject {
             style: &mut style,
             glyph_size: glyph_before,
+            author: author.as_deref(),
             locked,
             hidden: drawing.hidden,
             supports_fill: tool.supports_fill(),
@@ -7412,6 +7548,7 @@ impl QuantickApp {
         let mut show_all = false;
         let mut unlock_all = false;
         let mut delete_all = false;
+        let mut sweep_authored = false;
         let mut window = egui::Window::new("Drawn objects")
             .id(egui::Id::new("drawing_manager"))
             .open(&mut open)
@@ -7430,6 +7567,22 @@ impl QuantickApp {
             if count == 0 {
                 ui.label("No drawings yet.");
             }
+            // One gesture back from an assistant that drew too much. It
+            // appears only when there is something to take back, names the
+            // number, and is a single undo entry.
+            let authored = self.drawing_pane().drawings.authored_count();
+            if authored > 0 {
+                if ui
+                    .button(format!("Remove {authored} object(s) placed for you"))
+                    .on_hover_text(
+                        "Removes every object an assistant placed on this chart. Ctrl+Z brings them back.",
+                    )
+                    .clicked()
+                {
+                    sweep_authored = true;
+                }
+                ui.add_space(4.0);
+            }
             egui::ScrollArea::vertical()
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
@@ -7444,6 +7597,7 @@ impl QuantickApp {
                         let off_series = drawing.off_series;
                         let foreign_market = drawing.foreign_market;
                         let name = drawing.display_label(index);
+                        let author = drawing.author.as_ref().map(DrawingAuthor::label);
                         // Read out with the rest of the row's facts, so the
                         // row closure holds no borrow of the pane.
                         let band = self.focused_pane().band_label(drawing);
@@ -7456,6 +7610,14 @@ impl QuantickApp {
                             }
                             if ui.selectable_label(selected, label).clicked() {
                                 select_row = Some(index);
+                            }
+                            if let Some(author) = &author {
+                                ui.label(
+                                    egui::RichText::new("assistant")
+                                        .small()
+                                        .color(theme::TEXT_SUPPORT),
+                                )
+                                .on_hover_text(format!("Placed by {author}, not by you"));
                             }
                             if locked {
                                 ui.label(egui::RichText::new("locked").small());
@@ -7575,6 +7737,21 @@ impl QuantickApp {
             }
         });
         self.drawing_manager_open = open;
+        if sweep_authored {
+            let pane = self.drawing_pane_mut();
+            let removed = pane.drawings.remove_authored();
+            // An assistant's object can be a strategy's region like any
+            // other; the same sweep the delete-all path does keeps no
+            // resting order behind a mark that is gone.
+            pane.sweep_strategy_orphans();
+            if removed > 0 {
+                self.toast = Some(Toast {
+                    message: format!("{removed} object(s) placed for you removed.").into(),
+                    shown_at: now,
+                    offers_undo: true,
+                });
+            }
+        }
         if delete_all {
             let pane = self.drawing_pane_mut();
             let deleted = pane.drawings.delete_all();
@@ -8896,6 +9073,7 @@ impl QuantickApp {
         if let Some(access) = self.control_access.as_mut() {
             access.draw_panel(ctx);
         }
+        self.draw_agent_popup(ctx);
         self.draw_toolbar(ctx);
         self.draw_source_picker(ctx);
         self.draw_workspace_name_box(ctx);
@@ -26624,15 +26802,25 @@ plot(close)
         assert_eq!(catalog["catalog_version"], 1);
         assert_eq!(catalog["profile_id"], "observer");
         let capabilities = catalog["capabilities"].as_array().unwrap();
-        assert_eq!(capabilities.len(), 7);
-        // Every observe-effect capability is read-only; the one annotate
-        // action is the registered mark, discoverable but not an observer read.
+        // Six observer reads plus the annotate tier's registered actions.
+        assert_eq!(
+            capabilities.len(),
+            6 + crate::control::registered_action_count()
+        );
+        // Every observe-effect capability is read-only; everything else is an
+        // action of the annotate tier — discoverable to any client, reachable
+        // only under a profile the trader granted.
         for capability in capabilities {
             if capability["effect"] == "observe" {
                 assert_eq!(capability["read_only"], true, "{}", capability["id"]);
             } else {
-                assert_eq!(capability["effect"], "annotate");
-                assert_eq!(capability["id"], crate::control::MARK_CAPABILITY_ID);
+                assert!(
+                    capability["effect"] == "annotate" || capability["effect"] == "notify",
+                    "{} has an unexpected effect {}",
+                    capability["id"],
+                    capability["effect"]
+                );
+                assert_eq!(capability["read_only"], false, "{}", capability["id"]);
             }
         }
 

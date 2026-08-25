@@ -53,11 +53,13 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
 pub(crate) fn capability_catalog() -> Value {
     let projections = super::standard_registry().expect("built-in projection registry is valid");
     let actions = super::actions::standard_actions().expect("action registry is valid");
-    let contract =
-        ObserverContract::new(&projections, &actions).expect("observer contract is valid");
+    let contract = ObserverContract::new(&projections, std::sync::Arc::new(actions))
+        .expect("observer contract is valid");
     let default_scopes = contract.default_grant();
     let description = contract.describe(
         quantick_control::id::InstanceId::from_bytes([0; 16]),
+        quantick_control::id::ProfileId::new(super::contract::OBSERVER_PROFILE_ID)
+            .expect("static observer profile is valid"),
         default_scopes.clone(),
         quantick_control::handshake::ProtocolLimits::default(),
     );
