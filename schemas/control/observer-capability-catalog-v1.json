@@ -5,6 +5,897 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Appends a journal event carrying the fully resolved cursor target — pane, bar, price, flow cell, drawing — plus an optional note, attributed to its actor. The primitive that turns \"look at this\" into a referent a client can quote back.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "attention.mark.create",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "AvailabilitySnapshot": {
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "available"
+            ],
+            "type": "object"
+          },
+          "BarProvenance": {
+            "properties": {
+              "aggressor_side": {
+                "type": "string"
+              },
+              "completeness": {
+                "type": "string"
+              },
+              "price": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "trade_count": {
+                "type": "string"
+              },
+              "volume": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "completeness",
+              "price",
+              "volume",
+              "aggressor_side",
+              "trade_count"
+            ],
+            "type": "object"
+          },
+          "BarSnapshot": {
+            "properties": {
+              "buy_volume": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "close": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "close_time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              },
+              "delta": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "high": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "low": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "open": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "open_time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              },
+              "provenance": {
+                "$ref": "#/$defs/BarProvenance"
+              },
+              "sell_volume": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "state": {
+                "$ref": "#/$defs/BarStateDto"
+              },
+              "trade_count": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "volume": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "slot",
+              "state",
+              "open_time_unix_ms",
+              "close_time_unix_ms",
+              "open",
+              "high",
+              "low",
+              "close",
+              "volume",
+              "buy_volume",
+              "sell_volume",
+              "delta",
+              "trade_count",
+              "provenance"
+            ],
+            "type": "object"
+          },
+          "BarStateDto": {
+            "enum": [
+              "closed",
+              "in_progress"
+            ],
+            "type": "string"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "CursorSnapshot": {
+            "properties": {
+              "active_tab_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "focused_pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "focused_pane_side": {
+                "$ref": "#/$defs/PaneSideDto"
+              },
+              "pointer": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PointerSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pointer_availability": {
+                "$ref": "#/$defs/AvailabilitySnapshot"
+              },
+              "semantic_scene": {
+                "$ref": "#/$defs/AvailabilitySnapshot"
+              }
+            },
+            "required": [
+              "active_tab_id",
+              "focused_pane_id",
+              "focused_pane_side",
+              "pointer_availability",
+              "semantic_scene"
+            ],
+            "type": "object"
+          },
+          "DrawingHitSnapshot": {
+            "properties": {
+              "drawing_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "handle_index": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "label": {
+                "type": "string"
+              },
+              "locked": {
+                "type": "boolean"
+              },
+              "mirrored": {
+                "type": "boolean"
+              },
+              "owner_pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "owner_pane_side": {
+                "$ref": "#/$defs/PaneSideDto"
+              },
+              "selected": {
+                "type": "boolean"
+              },
+              "tool_id": {
+                "type": "string"
+              },
+              "user_label_present": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "owner_pane_id",
+              "owner_pane_side",
+              "mirrored",
+              "drawing_id",
+              "tool_id",
+              "label",
+              "user_label_present",
+              "selected",
+              "locked"
+            ],
+            "type": "object"
+          },
+          "FlowCellSnapshot": {
+            "properties": {
+              "end_slot_exclusive": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "generation": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "live_lane": {
+                "type": "boolean"
+              },
+              "price_bucket": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "price_span": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "quantity": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "side": {
+                "type": "string"
+              },
+              "start_slot": {
+                "$ref": "#/$defs/WireU64",
+                "description": "The closed-bar slots under the cell. A cell that lies wholly in the\nlive lane has none: both bounds then equal the lane boundary, and\n`live_lane` says where it is."
+              }
+            },
+            "required": [
+              "generation",
+              "side",
+              "price_bucket",
+              "price_span",
+              "quantity",
+              "start_slot",
+              "end_slot_exclusive",
+              "live_lane"
+            ],
+            "type": "object"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "PointerSnapshot": {
+            "properties": {
+              "axis_unit": {
+                "type": "string"
+              },
+              "axis_value": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "band": {
+                "type": "string"
+              },
+              "bar": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BarSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "control_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "control_id_availability": {
+                "$ref": "#/$defs/AvailabilitySnapshot"
+              },
+              "drawing": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/DrawingHitSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "feed_id": {
+                "type": "string"
+              },
+              "flow_cell": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/FlowCellSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pane_focused": {
+                "type": "boolean"
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "pane_side": {
+                "$ref": "#/$defs/PaneSideDto"
+              },
+              "price": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "screen_x_px": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "x-unit": "pixels"
+              },
+              "screen_y_px": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "x-unit": "pixels"
+              },
+              "slot": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "symbol": {
+                "type": "string"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id",
+              "pane_side",
+              "pane_focused",
+              "feed_id",
+              "symbol",
+              "screen_x_px",
+              "screen_y_px",
+              "band",
+              "axis_unit",
+              "control_id_availability"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "What a mark takes: an optional note the human typed, and optionally the\ntarget itself. The hotkey resolves the pointer and supplies the target, so\nthe input alone determines the mark and a control trace can replay it\nidentically; a caller that supplies none gets what is under the pointer\nat that moment — and a replayed entry without one is refused rather than\nresolved against the rerun's pointer, which is not the one that was\nmarked.",
+        "properties": {
+          "note": {
+            "maxLength": 1024,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CursorSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "MarkInput",
+        "type": "object"
+      },
+      "module": "attention",
+      "output_schema": {
+        "$defs": {
+          "ActorKind": {
+            "enum": [
+              "human_ui",
+              "automation",
+              "agent"
+            ],
+            "type": "string"
+          },
+          "AvailabilitySnapshot": {
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "available"
+            ],
+            "type": "object"
+          },
+          "BarProvenance": {
+            "properties": {
+              "aggressor_side": {
+                "type": "string"
+              },
+              "completeness": {
+                "type": "string"
+              },
+              "price": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "trade_count": {
+                "type": "string"
+              },
+              "volume": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "completeness",
+              "price",
+              "volume",
+              "aggressor_side",
+              "trade_count"
+            ],
+            "type": "object"
+          },
+          "BarSnapshot": {
+            "properties": {
+              "buy_volume": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "close": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "close_time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              },
+              "delta": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "high": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "low": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "open": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "open_time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              },
+              "provenance": {
+                "$ref": "#/$defs/BarProvenance"
+              },
+              "sell_volume": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "state": {
+                "$ref": "#/$defs/BarStateDto"
+              },
+              "trade_count": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "volume": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "slot",
+              "state",
+              "open_time_unix_ms",
+              "close_time_unix_ms",
+              "open",
+              "high",
+              "low",
+              "close",
+              "volume",
+              "buy_volume",
+              "sell_volume",
+              "delta",
+              "trade_count",
+              "provenance"
+            ],
+            "type": "object"
+          },
+          "BarStateDto": {
+            "enum": [
+              "closed",
+              "in_progress"
+            ],
+            "type": "string"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "CursorSnapshot": {
+            "properties": {
+              "active_tab_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "focused_pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "focused_pane_side": {
+                "$ref": "#/$defs/PaneSideDto"
+              },
+              "pointer": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PointerSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pointer_availability": {
+                "$ref": "#/$defs/AvailabilitySnapshot"
+              },
+              "semantic_scene": {
+                "$ref": "#/$defs/AvailabilitySnapshot"
+              }
+            },
+            "required": [
+              "active_tab_id",
+              "focused_pane_id",
+              "focused_pane_side",
+              "pointer_availability",
+              "semantic_scene"
+            ],
+            "type": "object"
+          },
+          "DrawingHitSnapshot": {
+            "properties": {
+              "drawing_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "handle_index": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "label": {
+                "type": "string"
+              },
+              "locked": {
+                "type": "boolean"
+              },
+              "mirrored": {
+                "type": "boolean"
+              },
+              "owner_pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "owner_pane_side": {
+                "$ref": "#/$defs/PaneSideDto"
+              },
+              "selected": {
+                "type": "boolean"
+              },
+              "tool_id": {
+                "type": "string"
+              },
+              "user_label_present": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "owner_pane_id",
+              "owner_pane_side",
+              "mirrored",
+              "drawing_id",
+              "tool_id",
+              "label",
+              "user_label_present",
+              "selected",
+              "locked"
+            ],
+            "type": "object"
+          },
+          "EventActor": {
+            "description": "Who caused an event, as the journal retains it: the kind and a display\nname, never a principal that could be mistaken for an identity.",
+            "properties": {
+              "client_name": {
+                "type": "string"
+              },
+              "kind": {
+                "$ref": "#/$defs/ActorKind"
+              }
+            },
+            "required": [
+              "kind",
+              "client_name"
+            ],
+            "type": "object"
+          },
+          "FlowCellSnapshot": {
+            "properties": {
+              "end_slot_exclusive": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "generation": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "live_lane": {
+                "type": "boolean"
+              },
+              "price_bucket": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "price_span": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "quantity": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "side": {
+                "type": "string"
+              },
+              "start_slot": {
+                "$ref": "#/$defs/WireU64",
+                "description": "The closed-bar slots under the cell. A cell that lies wholly in the\nlive lane has none: both bounds then equal the lane boundary, and\n`live_lane` says where it is."
+              }
+            },
+            "required": [
+              "generation",
+              "side",
+              "price_bucket",
+              "price_span",
+              "quantity",
+              "start_slot",
+              "end_slot_exclusive",
+              "live_lane"
+            ],
+            "type": "object"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "PointerSnapshot": {
+            "properties": {
+              "axis_unit": {
+                "type": "string"
+              },
+              "axis_value": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "band": {
+                "type": "string"
+              },
+              "bar": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BarSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "control_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "control_id_availability": {
+                "$ref": "#/$defs/AvailabilitySnapshot"
+              },
+              "drawing": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/DrawingHitSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "feed_id": {
+                "type": "string"
+              },
+              "flow_cell": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/FlowCellSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pane_focused": {
+                "type": "boolean"
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "pane_side": {
+                "$ref": "#/$defs/PaneSideDto"
+              },
+              "price": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "screen_x_px": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "x-unit": "pixels"
+              },
+              "screen_y_px": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "x-unit": "pixels"
+              },
+              "slot": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "symbol": {
+                "type": "string"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id",
+              "pane_side",
+              "pane_focused",
+              "feed_id",
+              "symbol",
+              "screen_x_px",
+              "screen_y_px",
+              "band",
+              "axis_unit",
+              "control_id_availability"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a mark returns: where it landed in the journal and exactly what was\npointed at when it was taken. The journal event at `sequence` carries the\nwall-clock time; the result does not repeat it, so the trace's result\ndigest depends on what was marked and on its place in the journal, never\non the clock.",
+        "properties": {
+          "actor": {
+            "$ref": "#/$defs/EventActor"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sequence": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "target": {
+            "$ref": "#/$defs/CursorSnapshot"
+          },
+          "target_source": {
+            "description": "Who resolved the target: `pointer` — the human's pointer, at the\ngesture (the hotkey and the hook pass it) or at the call (a caller\nthat passed none); `supplied` — an agent passed a target it read from\na snapshot; `replayed` — a control trace re-injected a recorded mark.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sequence",
+          "target",
+          "target_source",
+          "actor"
+        ],
+        "title": "MarkResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.attention"
+      ],
+      "reversible": false,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A mark appends one journal event and overwrites nothing; a stale caller can only mark the wrong thing, which the event's resolved target makes visible.",
+      "title": "Mark what is under the pointer",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Reads a bounded append-only page of chart bars with an optional continuation cursor.",
       "destructive": false,
       "dry_run_supported": false,
@@ -1270,6 +2161,529 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Reads a bounded page of the semantic event journal after a cursor or from an explicit start, and says when older events were dropped.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "events.read",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "EventCursor": {
+            "properties": {
+              "instance_id": {
+                "$ref": "#/$defs/InstanceId"
+              },
+              "next_sequence": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "instance_id",
+              "next_sequence"
+            ],
+            "type": "object"
+          },
+          "EventStart": {
+            "enum": [
+              "oldest",
+              "latest"
+            ],
+            "type": "string"
+          },
+          "InstanceId": {
+            "description": "The identity of one running Quantick instance.",
+            "maxLength": 22,
+            "minLength": 22,
+            "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "`events.read`: a cursor from a previous page, or an explicit start.",
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EventCursor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "format": "uint",
+            "maximum": 256,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "start": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EventStart"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required on a first read (there is no implicit start position);\nforbidden together with a cursor."
+          }
+        },
+        "title": "EventsReadInput",
+        "type": "object"
+      },
+      "module": "events",
+      "output_schema": {
+        "$defs": {
+          "ActorKind": {
+            "enum": [
+              "human_ui",
+              "automation",
+              "agent"
+            ],
+            "type": "string"
+          },
+          "EventActor": {
+            "description": "Who caused an event, as the journal retains it: the kind and a display\nname, never a principal that could be mistaken for an identity.",
+            "properties": {
+              "client_name": {
+                "type": "string"
+              },
+              "kind": {
+                "$ref": "#/$defs/ActorKind"
+              }
+            },
+            "required": [
+              "kind",
+              "client_name"
+            ],
+            "type": "object"
+          },
+          "EventCursor": {
+            "properties": {
+              "instance_id": {
+                "$ref": "#/$defs/InstanceId"
+              },
+              "next_sequence": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "instance_id",
+              "next_sequence"
+            ],
+            "type": "object"
+          },
+          "EventKind": {
+            "description": "A namespaced semantic event kind.",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+            "type": "string"
+          },
+          "InstanceId": {
+            "description": "The identity of one running Quantick instance.",
+            "maxLength": 22,
+            "minLength": 22,
+            "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+            "type": "string"
+          },
+          "ModuleId": {
+            "description": "A module contributing control-plane behavior.",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+            "type": "string"
+          },
+          "SemanticEvent": {
+            "description": "One semantic event as a client reads it.",
+            "properties": {
+              "actor": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/EventActor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Present when a human or an agent caused the event; absent for a\nchange the application observed on its own."
+              },
+              "kind": {
+                "$ref": "#/$defs/EventKind"
+              },
+              "module_id": {
+                "$ref": "#/$defs/ModuleId"
+              },
+              "payload": true,
+              "recorded_at_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              },
+              "sequence": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Monotonic, instance-scoped; the cursor token."
+              }
+            },
+            "required": [
+              "sequence",
+              "recorded_at_unix_ms",
+              "module_id",
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "A page of events as the UI-thread read returns it, before the envelope.",
+        "properties": {
+          "dropped_before": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EventCursor"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present when the requested position had already been evicted; the\npage then begins at the oldest retained event."
+          },
+          "events": {
+            "items": {
+              "$ref": "#/$defs/SemanticEvent"
+            },
+            "type": "array"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "instance_id": {
+            "$ref": "#/$defs/InstanceId"
+          },
+          "next_cursor": {
+            "$ref": "#/$defs/EventCursor",
+            "description": "One past the last returned event, or the resolved start when empty."
+          },
+          "timed_out": {
+            "description": "Set by `wait_for_change` when its timeout elapsed and the page is\nempty; a change that landed between the deadline and the read is\nreported as a change.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "instance_id",
+          "events",
+          "next_cursor",
+          "has_more",
+          "timed_out"
+        ],
+        "title": "EventPage",
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.events"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "Read events",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Parks off the application thread until the journal moves past the cursor or the timeout elapses, then reads the bounded page that completes the call.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "events.wait",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "EventCursor": {
+            "properties": {
+              "instance_id": {
+                "$ref": "#/$defs/InstanceId"
+              },
+              "next_sequence": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "instance_id",
+              "next_sequence"
+            ],
+            "type": "object"
+          },
+          "EventStart": {
+            "enum": [
+              "oldest",
+              "latest"
+            ],
+            "type": "string"
+          },
+          "InstanceId": {
+            "description": "The identity of one running Quantick instance.",
+            "maxLength": 22,
+            "minLength": 22,
+            "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "`events.wait`: the same position, plus how long to wait for it to move.",
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EventCursor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "format": "uint",
+            "maximum": 256,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "start": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EventStart"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timeout_ms": {
+            "format": "uint64",
+            "maximum": 30000,
+            "minimum": 1,
+            "type": "integer",
+            "x-unit": "milliseconds"
+          }
+        },
+        "required": [
+          "timeout_ms"
+        ],
+        "title": "EventsWaitInput",
+        "type": "object"
+      },
+      "module": "events",
+      "output_schema": {
+        "$defs": {
+          "ActorKind": {
+            "enum": [
+              "human_ui",
+              "automation",
+              "agent"
+            ],
+            "type": "string"
+          },
+          "EventActor": {
+            "description": "Who caused an event, as the journal retains it: the kind and a display\nname, never a principal that could be mistaken for an identity.",
+            "properties": {
+              "client_name": {
+                "type": "string"
+              },
+              "kind": {
+                "$ref": "#/$defs/ActorKind"
+              }
+            },
+            "required": [
+              "kind",
+              "client_name"
+            ],
+            "type": "object"
+          },
+          "EventCursor": {
+            "properties": {
+              "instance_id": {
+                "$ref": "#/$defs/InstanceId"
+              },
+              "next_sequence": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "instance_id",
+              "next_sequence"
+            ],
+            "type": "object"
+          },
+          "EventKind": {
+            "description": "A namespaced semantic event kind.",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+            "type": "string"
+          },
+          "InstanceId": {
+            "description": "The identity of one running Quantick instance.",
+            "maxLength": 22,
+            "minLength": 22,
+            "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+            "type": "string"
+          },
+          "ModuleId": {
+            "description": "A module contributing control-plane behavior.",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+            "type": "string"
+          },
+          "SemanticEvent": {
+            "description": "One semantic event as a client reads it.",
+            "properties": {
+              "actor": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/EventActor"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Present when a human or an agent caused the event; absent for a\nchange the application observed on its own."
+              },
+              "kind": {
+                "$ref": "#/$defs/EventKind"
+              },
+              "module_id": {
+                "$ref": "#/$defs/ModuleId"
+              },
+              "payload": true,
+              "recorded_at_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              },
+              "sequence": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Monotonic, instance-scoped; the cursor token."
+              }
+            },
+            "required": [
+              "sequence",
+              "recorded_at_unix_ms",
+              "module_id",
+              "kind",
+              "payload"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "A page of events as the UI-thread read returns it, before the envelope.",
+        "properties": {
+          "dropped_before": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/EventCursor"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present when the requested position had already been evicted; the\npage then begins at the oldest retained event."
+          },
+          "events": {
+            "items": {
+              "$ref": "#/$defs/SemanticEvent"
+            },
+            "type": "array"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "instance_id": {
+            "$ref": "#/$defs/InstanceId"
+          },
+          "next_cursor": {
+            "$ref": "#/$defs/EventCursor",
+            "description": "One past the last returned event, or the resolved start when empty."
+          },
+          "timed_out": {
+            "description": "Set by `wait_for_change` when its timeout elapsed and the page is\nempty; a change that landed between the deadline and the read is\nreported as a change.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "instance_id",
+          "events",
+          "next_cursor",
+          "has_more",
+          "timed_out"
+        ],
+        "title": "EventPage",
+        "type": "object"
+      },
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.events"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "Wait for change",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Captures bounded structured application, indicator, and order-flow health.",
       "destructive": false,
       "dry_run_supported": false,
@@ -1617,6 +3031,7 @@
     "observe.attention",
     "observe.chart",
     "observe.drawings",
+    "observe.events",
     "observe.health",
     "observe.indicators",
     "observe.market",
@@ -1627,6 +3042,11 @@
   ],
   "modules": [
     {
+      "description": "Human marks: what the user pointed at, as a durable referent.",
+      "id": "attention",
+      "title": "Attention"
+    },
+    {
       "description": "Pane framing, bar construction, and visible market coverage.",
       "id": "chart",
       "title": "Chart"
@@ -1635,6 +3055,11 @@
       "description": "Running-instance contract and authority metadata.",
       "id": "control",
       "title": "Control"
+    },
+    {
+      "description": "The bounded semantic event journal and its cursor.",
+      "id": "events",
+      "title": "Events"
     },
     {
       "description": "Feed connection, capabilities, and market-data provenance.",
@@ -1668,6 +3093,26 @@
     }
   ],
   "permissions": [
+    {
+      "default_grant": "prompt",
+      "description": "Add reversible state or bounded notifications; never remove existing work or affect a position.",
+      "id": "annotate",
+      "label": "Annotate",
+      "profile_ceilings": [
+        "annotator"
+      ],
+      "sensitive": false
+    },
+    {
+      "default_grant": "prompt",
+      "description": "Append marks carrying the resolved cursor target to the event journal.",
+      "id": "annotate.attention",
+      "label": "Create marks",
+      "profile_ceilings": [
+        "annotator"
+      ],
+      "sensitive": false
+    },
     {
       "default_grant": "granted",
       "description": "Invoke read-only observer capabilities.",
@@ -1845,6 +3290,14 @@
       "id": "observer",
       "inherits": [],
       "label": "Observer",
+      "permissions": []
+    },
+    {
+      "id": "annotator",
+      "inherits": [
+        "observer"
+      ],
+      "label": "Annotator",
       "permissions": []
     }
   ],

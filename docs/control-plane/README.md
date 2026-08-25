@@ -24,6 +24,9 @@ testable.
   tests that prove them.
   loopback topology, discovery controls, stable failures, frame-budget test,
   and focused verification.
+- [PR 5a events evidence](pr5a-events-evidence.md) records the event journal,
+  the cursor and parked waits, the mark action and hotkey, and the durable
+  control trace.
 
 ## Precedence
 

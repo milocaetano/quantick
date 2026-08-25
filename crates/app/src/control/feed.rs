@@ -177,7 +177,7 @@ fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
     }
 }
 
-fn connection_state(state: FeedConnectionState) -> &'static str {
+pub(crate) fn connection_state(state: FeedConnectionState) -> &'static str {
     match state {
         FeedConnectionState::Connecting => "connecting",
         FeedConnectionState::Reconnecting => "reconnecting",

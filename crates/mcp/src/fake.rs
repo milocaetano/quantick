@@ -20,7 +20,8 @@ use serde_json::{Value, json};
 use crate::{
     link::{ControlLink, InstanceSummary, Instances},
     tools::{
-        CHART_WINDOW_CAPABILITY, DESCRIBE_CAPABILITY, DIAGNOSTICS_CAPABILITY, SNAPSHOT_CAPABILITY,
+        CHART_WINDOW_CAPABILITY, DESCRIBE_CAPABILITY, DIAGNOSTICS_CAPABILITY,
+        EVENTS_READ_CAPABILITY, EVENTS_WAIT_CAPABILITY, SNAPSHOT_CAPABILITY,
     },
 };
 
@@ -124,11 +125,13 @@ impl ControlLink for FakeLink {
             DESCRIBE_CAPABILITY => ResponseOutcome::Success {
                 result: describe_document(&instance_id),
             },
-            SNAPSHOT_CAPABILITY | DIAGNOSTICS_CAPABILITY | CHART_WINDOW_CAPABILITY => {
-                ResponseOutcome::Success {
-                    result: json!({ "echo": payload, "capability": capability_id }),
-                }
-            }
+            SNAPSHOT_CAPABILITY
+            | DIAGNOSTICS_CAPABILITY
+            | CHART_WINDOW_CAPABILITY
+            | EVENTS_READ_CAPABILITY
+            | EVENTS_WAIT_CAPABILITY => ResponseOutcome::Success {
+                result: json!({ "echo": payload, "capability": capability_id }),
+            },
             _ => ResponseOutcome::Failure {
                 error: known(
                     codes::PERMISSION_DENIED,
