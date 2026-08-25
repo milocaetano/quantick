@@ -34,3 +34,12 @@ only after their corresponding implementation pull request lands.
   threat model.
 - A new action must appear in the capability registry. The inventory in this
   directory is a migration baseline, not a second runtime registry.
+
+## Roadmap
+
+[Roadmap](roadmap.md) is the ledger between the plan and the code: which plan
+item is at which stage and in which pull request, the merge order of the open
+stack, the gaps each pull request carried forward, and the docking points and
+acceptance criteria of the remaining MVP work (snapshot modules, semantic
+scene, PR 5b, PR 5c). It adds no decisions; when it and the plan disagree, the
+plan wins and the roadmap is corrected.

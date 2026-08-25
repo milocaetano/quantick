@@ -1,6 +1,8 @@
 # Quantick control plane and MCP development plan
 
-**Status:** Accepted for phased implementation; PR 0 contract in review
+**Status:** Accepted for phased implementation; PR 0 and PR 1 merged, PR 2–5a open
+as a stack. Progress and remaining work are tracked in
+[control-plane/roadmap.md](control-plane/roadmap.md).
 
 **Date:** 2026-08-19
 
@@ -1463,6 +1465,9 @@ The MVP is complete when:
 
 ## 19. References
 
+- [Control-plane roadmap](control-plane/roadmap.md): where each plan item
+  stands, the merge order of the open stack, carried-forward gaps, and the
+  docking points and acceptance criteria of the remaining MVP work.
 - [PR 0 control-plane contract](control-plane/README.md): Normative decisions,
   capability inventory, transport ADR, and observer threat model.
 - [`CLAUDE.md`](../CLAUDE.md): Architecture, determinism, dependency direction,
