@@ -43,17 +43,22 @@ The four application pull requests are stacked and GitHub retargets each one to
 3. #222 (`feat/mcp-observer`)
 4. #223 (`feat/control-events`)
 
-#220 is independent of the stack on paper but not in the tree: it rewrites
-`crates/control/src/codec.rs` and `crates/control/src/schema.rs`, and so does
-the stack (typed handshake reads, the pre-authentication codec ceiling, the
-schema catalog). Merged in either order, the second one conflicts in those two
-files. The cheaper resolution is to merge the stack first and rebase #220 on
-the new `main`: #220 is eleven files and one author, the stack is fifty and
-four pull requests. Its two public signature changes (`to_base64url` returning
-`Zeroizing<String>`; `read` and `decode_frame` no longer `pub`) touch nothing
-the stack calls, so the rebase is a textual merge of the two files, not a
-redesign. After the rebase, #220 still needs the architecture review its body
-left blank.
+#220 is independent of the stack on paper but not in the tree. Six of its
+eleven files are also rewritten by the stack (`codec.rs`, `fake.rs`,
+`handshake.rs`, `schema.rs`, `tests/handshake_contract.rs`,
+`tests/schema_snapshots.rs`; `handshake.rs` twice, by #213 and #221), and
+`git merge-tree` of #220 against the stack head reports content conflicts in
+two of them, `crates/control/src/codec.rs` and `crates/control/src/schema.rs`;
+the other four auto-merge. Merged in either order, the second one carries
+those conflicts. The cheaper resolution is to merge the stack first and rebase
+#220 on the new `main`: #220 is eleven files and one author; the stack is 92
+files across four pull requests. #220's two public signature changes
+(`to_base64url` returning `Zeroizing<String>`; `read` and `decode_frame` no
+longer `pub`) have no caller on the stack, so the rebase is a merge of the two
+conflicting files plus a re-run of the schema snapshot tests (both sides
+regenerate `handshake-response-v1` and `request-envelope-v1`), not a redesign.
+After the rebase, #220 still needs the architecture review its body left
+blank.
 
 Re-stacking rule when a base is rewritten (a rebase or a fixup on #213, say):
 the child carries the base's old commits, and a plain `git rebase <base>`
@@ -138,13 +143,26 @@ area picks them up instead of rediscovering them.
 
 ## 4. Base for the next work
 
-Until the stack merges, a new branch is cut from `feat/control-events` and its
-pull request targets that branch; when the stack lands, the next branch is cut
-from `main` as CLAUDE.md requires. The pull request body says which.
+CLAUDE.md cuts every branch from updated `origin/main`. While the stack is
+open, the remaining MVP work has nothing to build on there, so this is a
+deliberate, time-boxed exception: cut from the stack head and target it,
+
+```sh
+git fetch origin
+git worktree add -b feat/<slug> ../quantick-worktrees/feat-<slug> origin/feat/control-events
+gh pr create --base feat/control-events ...
+```
+
+and re-stack with the `--onto` rule of section 2 whenever the base is
+rewritten. The exception ends the day #223 merges: from then on branches are
+cut from `origin/main` as the rule says. The pull request body says which
+base it was born on.
 
 Read first, in this order: the bodies of #221, #222 and #223; the
-[control contract](control-contract.md) (§2.6, §5, §8, §11 are the vocabulary
-— no package invents a new capability ID, permission, effect or error code);
+[control contract](control-contract.md) (§5, §7, §8 and §11 are the vocabulary
+— identifiers, effects and profiles, tool surface, determinism — and plan §2.6
+the tiers; no package invents a new capability ID, permission, effect or error
+code);
 [ADR 0001](adr-0001-local-transport-and-instance-discovery.md); the
 [observer threat model](observer-threat-model.md); and, while they still live on
 the stack's branches, `pr2-performance.md`, `pr3-gateway-evidence.md`,
@@ -180,7 +198,7 @@ Where to dock (the port exists; a module only registers):
 
 - `crates/app/src/control/registry.rs`: `ProjectionRegistry::register_module`
   and `register_scope`; the canonical list is `standard_registry()` in the
-  control `mod.rs` — one line per module. The `system.health` scope
+  control `mod.rs` — one line per module. The `health.summary` scope
   (`crates/app/src/control/health.rs`) is the DTO exemplar: exact decimals as
   strings, `_unix_ms` suffix, declared provenance, no egui type.
 - Each scope declares the permissions it requires (`observe.*` today); the
@@ -235,6 +253,11 @@ Branch: `feat/control-scene`.
 
 Depends on nothing. Blocks 5.4 (screenshot correlation) and the adapter's
 `quantick_get_scene` tool.
+
+Recorded deviation from the plan: §12 wanted the scene merged before PR 4
+exposed `quantick_get_scene`. PR 4 (#222) shipped without the tool because the
+scene did not exist, and the plan's §12 now says so; the tool docks here, with
+the scene, and the plan's precedence is otherwise unchanged.
 
 What it is (plan §6.3): the tree of what is on screen without rasterising —
 visible controls, label and an ID stable across frames, enabled/selected
@@ -344,8 +367,8 @@ Acceptance (plan PR 5b plus `arch-review`'s second operator):
    position — reviewed against the §2.6 table, stated in the body.
 6. Notification flood tests prove per-client rate and burst; a client without
    `annotate.sound` produces no audio.
-7. Every remote action appears in the control trace during replay (test in
-   the mould of
+7. Every action, local or remote, goes through the control trace (plan PR 5b)
+   and is re-injected during replay (test in the mould of
    `a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time`:
    re-injection with `target_source: replayed`, actor `automation`).
 8. Observer still reaches none of it
@@ -433,7 +456,8 @@ the `pr-gate` marker written before `gh pr create`, and CI watched with
 | Opt-in local access; Codex and Claude connect through MCP; documented read schemas; explain the session without a screenshot; point at a bar, cell or object and have it named; follow changes with a cursor; no cockpit or financial write; per-frame budget enforced and measured; idle hot paths untouched; health metrics flat; checks, review and CI green | the open stack (#213 → #223) |
 | The agent answers on the chart, authorship visible, removable in one action | 5.3 |
 | An indicator described in prose, compiled, corrected from diagnostics, attached | 5.3, read back through 5.1 |
-| Feed, replay, indicator and connection changes through the cursor | 5.1 |
+| Feed, replay and connection changes through the cursor | #223 |
+| Indicator and drawing changes through the cursor | 5.1 |
 | `quantick_get_scene` | 5.2 |
 | An evidence bundle reproduces an investigation | 5.4 |
 
