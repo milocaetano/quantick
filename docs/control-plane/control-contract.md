@@ -549,13 +549,17 @@ a hard limit requires a reviewed contract change and threat-model check.
 | --- | ---: | --- | --- |
 | `CONTROL_TOKEN_BYTES` | 32 | hard | 256-bit instance bearer token |
 | `CONTROL_RUNTIME_ID_BYTES` | 16 | hard | 128-bit generated runtime identifiers |
+| `CONTROL_HANDSHAKE_MAX_BYTES` | 64 KiB | hard | Bound allocation and parsing before authentication |
+| `CONTROL_HANDSHAKE_MAX_SCOPES` | 32 | hard | Bound requested authority before authentication |
 | `CONTROL_REQUEST_ID_MAX_BYTES` | 128 | hard | Bound client correlation identifiers |
 | `CONTROL_DESCRIPTOR_MAX_BYTES` | 16 KiB | hard | Bound descriptor reads before JSON parsing |
+| `CONTROL_DISCOVERY_MAX_ENTRIES` | 64 | hard | Bound one private running-instance directory scan |
 | `CONTROL_CAPABILITY_DESCRIPTOR_MAX_BYTES` | 16 KiB | hard | Bound one registry descriptor, including schemas and examples |
 | `CONTROL_PROTOCOL_MAX_FRAME_BYTES` | 16 MiB | hard | Reject a frame before allocation or JSON parsing |
 | `CONTROL_MAX_REQUEST_BYTES` | 1 MiB | hard | Bound schemas, scripts, and action inputs |
 | `CONTROL_MAX_RESPONSE_BYTES` | 8 MiB | hard | Force pagination or resource chunking |
 | `CONTROL_MAX_BUFFERED_RESPONSE_BYTES` | 64 MiB | hard | Bound responses waiting across all connections |
+| `CONTROL_MAX_BUFFERED_RESPONSE_SLOTS` | 8 | hard | Bound concurrent maximum-sized response encodings |
 | `CONTROL_MAX_JSON_DEPTH` | 64 | hard | Reject adversarial nesting |
 | `CONTROL_MAX_STRING_BYTES` | 256 KiB | hard | Bound any one wire string, including script source |
 | `CONTROL_ID_MAX_BYTES` | 128 | hard | Bound any registry or protocol identifier |
@@ -567,7 +571,9 @@ a hard limit requires a reviewed contract change and threat-model check.
 | `CONTROL_IDEMPOTENCY_RECORD_MAX_BYTES` | 64 KiB | hard | Keep cached action results compact |
 | `CONTROL_IDEMPOTENCY_RETENTION_MS` | 86,400,000 | default | Retain retry records for 24 hours or the instance lifetime |
 | `CONTROL_DEFAULT_PAGE_ITEMS` | 256 | default | Keep ordinary reads compact |
-| `CONTROL_MAX_PAGE_ITEMS` | 2,048 | hard | Bound chart and event pages |
+| `CONTROL_MAX_PAGE_ITEMS` | 2,048 | hard | Bound protocol pages whose capture is not performed on the application thread |
+| `CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS` | 32 | hard | Keep the maximum application-thread chart DTO capture inside the 250 microsecond budget |
+| `CONTROL_MAX_SNAPSHOT_SCOPES` | 32 | hard | Bound one coherent multi-scope capture |
 | `CONTROL_REQUEST_QUEUE_CAPACITY` | 64 | default | Bound pending UI-thread work |
 | `CONTROL_MAX_CONNECTIONS` | 8 | default | Bound local clients per instance |
 | `CONTROL_MAX_IN_FLIGHT_PER_CONNECTION` | 8 | hard | Prevent one client from owning the queue |
@@ -580,6 +586,7 @@ a hard limit requires a reviewed contract change and threat-model check.
 | `CONTROL_NOTIFICATION_RATE_PER_MINUTE` | 6 | default | Bound visible or audible interruptions per client |
 | `CONTROL_NOTIFICATION_BURST` | 2 | hard | Prevent notification floods within one moment |
 | `CONTROL_UI_BUDGET_US` | 250 | default | Maximum control work in one frame; calibrated in PR 2 against a 28 us core-capture p99 |
+| `CONTROL_UI_MAX_REQUESTS_PER_FRAME` | 4 | hard | Deterministic request ceiling under the elapsed frame budget |
 | `CONTROL_EVENT_JOURNAL_CAPACITY` | 8,192 | default | Bound semantic event memory |
 | `CONTROL_EVENT_MAX_BYTES` | 64 KiB | hard | Force large event data into a resource |
 | `CONTROL_EVENT_JOURNAL_MAX_BYTES` | 32 MiB | hard | Bound the journal even when events vary in size |

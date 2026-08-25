@@ -1,8 +1,8 @@
 //! Dynamic, on-demand snapshot projection registry.
 //!
 //! The registry owns no application state and is not called by the frame
-//! loop. A future gateway creates one per running instance, asks it to build
-//! owned DTOs on the UI thread, then moves the capture away from that thread
+//! loop. The local gateway owns one per running instance, asks it to build
+//! owned DTOs on the UI thread, then moves each capture away from that thread
 //! before JSON serialization.
 
 use std::{
@@ -14,8 +14,8 @@ use std::{
 
 use quantick_control::{
     error::ControlError,
-    id::{InstanceId, ModuleId, SnapshotScopeId},
-    limits::CONTROL_UI_BUDGET_US,
+    id::{InstanceId, ModuleId, PermissionId, SnapshotScopeId},
+    limits::{CONTROL_MAX_SNAPSHOT_SCOPES, CONTROL_UI_BUDGET_US},
     registry::ModuleDescriptor,
     schema::{generated_schema, validate_schema},
     wire::{ModuleRevision, WireU64},
@@ -85,6 +85,7 @@ pub(crate) struct ProjectionDescriptor {
     pub schema_version: u32,
     pub title: String,
     pub description: String,
+    pub required_permissions: BTreeSet<PermissionId>,
     pub schema: Value,
     projector: Projector,
 }
@@ -162,6 +163,7 @@ impl ProjectionRegistry {
         schema_version: u32,
         title: impl Into<String>,
         description: impl Into<String>,
+        required_permission_ids: &[&str],
         project: fn(&QuantickApp, CaptureContext) -> T,
     ) -> Result<(), ProjectionRegistryError>
     where
@@ -191,6 +193,21 @@ impl ProjectionRegistry {
                 "scope title and description must not be empty".to_owned(),
             ));
         }
+        let required_permissions = required_permission_ids
+            .iter()
+            .map(|id| {
+                PermissionId::new(*id).map_err(|error| {
+                    ProjectionRegistryError::InvalidDescriptor(format!(
+                        "scope `{scope_id}` has invalid permission `{id}`: {error}"
+                    ))
+                })
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        if required_permissions.is_empty() {
+            return Err(ProjectionRegistryError::InvalidDescriptor(format!(
+                "scope `{scope_id}` must declare at least one permission"
+            )));
+        }
         let schema = generated_schema::<T>();
         validate_schema(&schema).map_err(|error| {
             ProjectionRegistryError::InvalidDescriptor(format!(
@@ -205,6 +222,7 @@ impl ProjectionRegistry {
                 schema_version,
                 title,
                 description,
+                required_permissions,
                 schema,
                 projector: Box::new(move |app, context| {
                     Box::new(TypedProjectionPayload(project(app, context)))
@@ -234,9 +252,9 @@ impl ProjectionRegistry {
         instance_id: &InstanceId,
         requested_scopes: &[SnapshotScopeId],
     ) -> Result<SnapshotCapture, ControlError> {
-        if requested_scopes.is_empty() {
+        if requested_scopes.is_empty() || requested_scopes.len() > CONTROL_MAX_SNAPSHOT_SCOPES {
             return Err(ControlError::invalid_request(
-                "snapshot capture requires at least one scope",
+                "snapshot capture scope count is outside its reviewed limit",
             ));
         }
         let mut unique_scopes = BTreeSet::new();
@@ -384,6 +402,7 @@ pub(crate) struct SerializedSnapshotCapture {
     pub capture_revision: WireU64,
     #[schemars(extend("x-unit" = "unix_milliseconds"))]
     pub captured_at_unix_ms: i64,
+    #[schemars(length(max = CONTROL_MAX_SNAPSHOT_SCOPES))]
     pub module_revisions: Vec<ModuleRevision>,
     #[schemars(extend("x-unit" = "microseconds"))]
     pub capture_elapsed_us: WireU64,
@@ -391,6 +410,7 @@ pub(crate) struct SerializedSnapshotCapture {
     pub capture_budget_us: WireU64,
     pub capture_within_budget: bool,
     pub omitted_scopes: Vec<SnapshotScopeId>,
+    #[schemars(length(max = CONTROL_MAX_SNAPSHOT_SCOPES))]
     pub scopes: BTreeMap<SnapshotScopeId, SerializedScope>,
 }
 

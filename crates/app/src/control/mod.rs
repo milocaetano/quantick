@@ -1,20 +1,27 @@
 //! On-demand semantic observation of the running application.
 //!
 //! This module is the UI-hosted implementation of the transport-neutral
-//! contracts in `quantick-control`. It contains no socket and does not run in
-//! the application frame loop. PR 3 will connect the same projection port to
-//! the authenticated local gateway.
+//! contracts in `quantick-control`. Semantic projection stays on a bounded
+//! application-thread port; authentication, framing, and socket I/O stay in
+//! the local gateway workers.
 
 pub(crate) mod chart;
+mod contract;
 mod feed;
+mod gateway;
 mod health;
 mod interaction;
 pub(crate) use interaction::drawing_band_name;
 mod registry;
+#[cfg(test)]
 pub(crate) mod schema_catalog;
 mod system;
 mod types;
 mod workspace;
+
+#[cfg(test)]
+pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID};
+pub(crate) use gateway::ControlAccess;
 
 use registry::{ProjectionRegistry, ProjectionRegistryError};
 

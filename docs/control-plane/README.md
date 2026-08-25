@@ -18,6 +18,9 @@ testable.
   boundaries, threats, and required controls for the first profile.
 - [PR 2 performance evidence](pr2-performance.md) records the shared-host idle
   frame comparison and the calibrated on-demand capture budget.
+- [PR 3 gateway evidence](pr3-gateway-evidence.md) records the authenticated
+  loopback topology, discovery controls, stable failures, frame-budget test,
+  and focused verification.
 
 ## Precedence
 

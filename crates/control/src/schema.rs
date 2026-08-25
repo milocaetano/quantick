@@ -12,35 +12,45 @@ pub fn generated_schema<T: JsonSchema>() -> Value {
 }
 
 pub fn validate_schema(schema: &Value) -> Result<(), SchemaError> {
-    if let Some(dialect) = schema
-        .as_object()
-        .and_then(|object| object.get("$schema"))
-        .and_then(Value::as_str)
-        && dialect != DRAFT_2020_12_SCHEMA_URI
-    {
-        return Err(SchemaError::UnsupportedDialect(dialect.to_owned()));
+    CompiledSchema::new(schema).map(|_| ())
+}
+
+pub struct CompiledSchema {
+    validator: jsonschema::Validator,
+}
+
+impl CompiledSchema {
+    pub fn new(schema: &Value) -> Result<Self, SchemaError> {
+        if let Some(dialect) = schema
+            .as_object()
+            .and_then(|object| object.get("$schema"))
+            .and_then(Value::as_str)
+            && dialect != DRAFT_2020_12_SCHEMA_URI
+        {
+            return Err(SchemaError::UnsupportedDialect(dialect.to_owned()));
+        }
+        reject_external_references(schema)?;
+        jsonschema::draft202012::meta::validate(schema)
+            .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
+        let validator = jsonschema::draft202012::options()
+            .build(schema)
+            .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
+        Ok(Self { validator })
     }
-    reject_external_references(schema)?;
-    jsonschema::draft202012::meta::validate(schema)
-        .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
-    jsonschema::draft202012::options()
-        .build(schema)
-        .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
-    Ok(())
+
+    pub fn validate(&self, instance: &Value) -> Result<(), SchemaError> {
+        self.validator.validate(instance).map_err(|error| {
+            SchemaError::InvalidInstance(format!(
+                "instance at {} does not satisfy schema keyword {}",
+                error.instance_path(),
+                error.kind().keyword()
+            ))
+        })
+    }
 }
 
 pub fn validate_instance(schema: &Value, instance: &Value) -> Result<(), SchemaError> {
-    validate_schema(schema)?;
-    let validator = jsonschema::draft202012::options()
-        .build(schema)
-        .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
-    validator.validate(instance).map_err(|error| {
-        SchemaError::InvalidInstance(format!(
-            "instance at {} does not satisfy schema keyword {}",
-            error.instance_path(),
-            error.kind().keyword()
-        ))
-    })
+    CompiledSchema::new(schema)?.validate(instance)
 }
 
 fn reject_external_references(value: &Value) -> Result<(), SchemaError> {

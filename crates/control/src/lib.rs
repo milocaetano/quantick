@@ -6,6 +6,7 @@
 pub mod canonical;
 pub mod codec;
 pub mod cursor;
+pub mod descriptor;
 pub mod error;
 pub mod fake;
 pub mod handshake;
