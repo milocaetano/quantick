@@ -11,19 +11,10 @@ use crate::{
         CONTROL_HANDSHAKE_MAX_BYTES, CONTROL_MAX_JSON_DEPTH, CONTROL_MAX_REQUEST_BYTES,
         CONTROL_MAX_RESPONSE_BYTES, CONTROL_MAX_STRING_BYTES, CONTROL_PROTOCOL_MAX_FRAME_BYTES,
     },
-    wire::{RequestEnvelope, ResponseEnvelope},
+    wire::{RESERVED_ACTOR_FIELDS, RequestEnvelope, ResponseEnvelope},
 };
 
 const FRAME_HEADER_BYTES: usize = size_of::<u32>();
-const RESERVED_ACTOR_FIELDS: &[&str] = &[
-    "actor",
-    "actor_context",
-    "actor_kind",
-    "client_name",
-    "connection_id",
-    "principal_id",
-    "requested_at_unix_ms",
-];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FrameRole {
@@ -126,7 +117,16 @@ impl BoundedCodec {
         Ok(frame)
     }
 
-    pub fn read<T: DeserializeOwned>(
+    /// Private on purpose. A generic decode enforces only the shared byte and
+    /// JSON bounds; the reserved-actor rejection and each envelope's own
+    /// `validate()` live on the typed entry points below. While this was
+    /// public, `read::<RequestEnvelope>` was a validation-free door to the same
+    /// type `read_request` guards, sitting directly above it and looking like
+    /// the general case. The typed entry points — the envelope readers and
+    /// decoders, and the handshake readers — are the whole wire surface, so
+    /// nothing is lost by making the bypass unreachable rather than merely
+    /// discouraged.
+    fn read<T: DeserializeOwned>(
         &self,
         role: FrameRole,
         reader: &mut impl Read,
@@ -146,7 +146,11 @@ impl BoundedCodec {
     }
 
     /// First server frame on a connection: the accepted handshake, or the
-    /// redacted error the gateway sends before closing.
+    /// redacted error the gateway sends before closing. It supersedes a plain
+    /// `read_handshake_response`: a client that only knows how to read an
+    /// acceptance cannot tell a refusal from a truncated frame, and the caller
+    /// checks the acceptance against its own request with
+    /// [`HandshakeResponse::validate_for`] after [`HandshakeReply::into_accepted`].
     pub fn read_handshake_reply(
         &self,
         reader: &mut impl Read,
@@ -167,7 +171,9 @@ impl BoundedCodec {
         Ok(response)
     }
 
-    pub fn decode_frame<T: DeserializeOwned>(
+    /// Private for the same reason as [`Self::read`]: use
+    /// [`Self::decode_request_frame`] or [`Self::decode_response_frame`].
+    fn decode_frame<T: DeserializeOwned>(
         &self,
         role: FrameRole,
         frame: &[u8],

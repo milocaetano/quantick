@@ -1,6 +1,6 @@
 ---
 name: mission
-description: Define and enforce a mission for the current session — capture the objective, classify it, derive acceptance criteria including the standard quantick gates (arch-review, visual-qa, trader-ux-review, ui-harness hooks) that match the kind of work, keep every action aligned, verify everything before finishing, and hand back a ready-to-paste /goal condition. Use when the user types /mission <objective> or asks to set a goal for the session/task.
+description: Define and enforce a mission for the current session — capture the objective in English, classify it, derive acceptance criteria including the standard quantick gates (arch-review, visual-qa, trader-ux-review, ui-harness hooks) that match the kind of work, keep every action aligned, verify everything before finishing, and hand back a ready-to-paste /goal condition. Use when the user types /mission <objective> or asks to set a goal for the session/task.
 ---
 
 # Mission
@@ -20,28 +20,33 @@ before it. Step 7 hands over the line to paste.
 
 ## Steps
 
-1. **Capture the mission**: restate the objective in one sentence and confirm
-   it with the user only if it is genuinely ambiguous.
+1. **Capture the mission**: restate the objective in one sentence **written in
+   English**, and confirm it with the user only if it is genuinely ambiguous.
+   That sentence is not a note to self — it becomes `.claude/GOAL.md`, the
+   branch name and the first line of the PR body, every one of them a
+   repository artifact. Saying it back to the trader in their own language too
+   is welcome; the version written down is the English one.
 
 2. **Classify it and inject the standard gates.** Derive 3–7 verifiable
    criteria specific to the objective, then add the gates for its kind:
 
    | The mission… | Injected acceptance criteria |
    | --- | --- |
+   | Any mission at all | **every artifact in English** — the rule, its scope and its three exemptions live in `CLAUDE.md`, which is already loaded; do not restate them here. Graded by `arch-review` dimension 8, enforced by `crates/app/tests/language_guard.rs`. It costs one edit now and a review round later |
    | Any code change | four checks green after rebasing on latest `main`; **performance impact declared** — classify every touched path by rate (per-trade / per-depth / per-frame / rare, the `arch-review` table) as part of the plan, not the review; `arch-review` run with every Blocker/Should-fix resolved or deferred in the PR body; **PR opened** — the mission is not done before the PR exists, and merging is never part of it |
    | Touches a hot path (per-trade, per-depth, per-frame) | evidence that performance is flat or better, not a belief: `APP_HEALTH_SUMMARY` fps/frame_avg under a dense tape vs. a `main` control run, or a bench over a fixture — measured before the PR, numbers in its body |
    | Touches anything user-visible | follow `ui-harness`: every new/changed surface reachable by env hook (hook added in the same change); `visual-qa` pass with all surfaces PASS or defects explicitly accepted; `trader-ux-review` with no unresolved Blocker |
    | Adds a capability (feed, bar type, indicator, layer, panel, crate) | follow `new-extension`: port named, registration-only edits, defaults preserve today's behaviour, fake second implementation tested, blast radius (added vs. edited files) stated in the PR body |
    | Adds something a trader *does* (an action, a tool, a trade, a lock) | drivable without a mouse — read `arch-review`'s *The second operator* and take its act/read/discover criteria from there, rather than from a summary that drifts. Where the capability class has no registry yet (there is none today for actions like a trade or a platform lock), carving one is part of the work, per `new-extension`'s carve-the-port rule — name it in the plan or state why the capability stays local |
    | Engine / determinism territory | test-first: fixture + expected output written before the code; golden test guards determinism |
-   | Docs/skills only | four checks still run (they are cheap when nothing compiled changed); `arch-review`'s seven shape dimensions waived — its step 0 bug pass is not, and `pr-gate` still wants the marker, so the skill runs and reports what step 0 found |
+   | Docs/skills only | four checks still run (they are cheap when nothing compiled changed); `arch-review`'s shape dimensions 1–7 waived — **dimension 8 (English) is not**, since docs are exactly where a foreign-language line hides, and neither is its step 0 bug pass; `pr-gate` still wants the marker, so the skill runs and reports what step 0 and dimension 8 found |
 
    Present the merged checklist to the user before starting work.
 
-3. **Persist it**: write the mission and its criteria to `.claude/GOAL.md` so
-   it survives context compaction. Overwrite any previous one. The file keeps
-   its name: fourteen archives already use it, and renaming the record would
-   buy nothing.
+3. **Persist it**: write the mission and its criteria to `.claude/GOAL.md`, in
+   English, so it survives context compaction. Overwrite any previous one. The
+   file keeps its name: fourteen archives already use it, and renaming the
+   record would buy nothing.
 
 4. **Set up the ground**: fresh worktree from updated `main` under
    `../quantick-worktrees/` per CLAUDE.md — never work in the main checkout,
@@ -90,6 +95,9 @@ before it. Step 7 hands over the line to paste.
      0 and the PR URL is printed", not "the code is correct".
    - Include a bound (`or stop after 20 turns`) so a stuck mission ends.
    - It does not change permissions. Pair with auto mode for unattended runs.
+   - Write the line in English, like the criteria it restates. Those same
+     sentences go into the PR body, and a condition written in one language
+     while the record is in another is two things to keep in sync.
 
 ## What done means
 

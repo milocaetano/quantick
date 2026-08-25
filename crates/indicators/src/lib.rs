@@ -59,7 +59,7 @@ mod output;
 pub use bar::IndicatorBar;
 pub use host::{IndicatorHost, InstanceId, PreviewsAt};
 pub use indicator::{Ctx, EvalError, Indicator, IndicatorDescriptor};
-pub use input::{InputSpec, InputValue, SourceId};
+pub use input::{BoundInputs, InputSpec, InputValue, SourceId, bind_by_position};
 pub use objects::{
     BoxObj, LabelObj, LabelStyle, LineObj, MAX_OBJECTS_PER_KIND, OFF_CHART_BAR, ObjectId,
     ObjectSnapshot, ObjectStore,

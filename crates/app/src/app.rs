@@ -1416,9 +1416,12 @@ impl QuantickApp {
         // Same for a declared opening layout: a feed the user reads by
         // timeframe can open straight on the timeframe chart.
         app.active_tab_mut().apply_feed_declared_layout(&config);
-        // The map itself stays hidden until asked for — a layer nobody
-        // requested must cost no projection. Capture is already running either
-        // way, so this is a display choice and nothing else.
+        // The code's own baseline, and nothing more: what a launch actually
+        // opens with is `config/chart-layers.toml`, applied by
+        // `restore_chart_layers` immediately below and shipping the map on.
+        // This line is what remains if that config is ever unreadable — a
+        // layer nobody requested costing no projection. Capture is already
+        // running either way, so it is a display choice and nothing else.
         app.active_tab_mut().tape_mut().set_depth_visible(false);
         // What the user last had on the canvas, applied over those defaults and
         // under the autostart hooks below: an env var is an explicit request
@@ -3351,7 +3354,7 @@ impl QuantickApp {
         else {
             return;
         };
-        let saved: Option<Vec<quantick_indicators::InputValue>> = match &name {
+        let saved: Option<Vec<Option<quantick_indicators::InputValue>>> = match &name {
             None => Some(Vec::new()),
             Some(name) => {
                 let Some(kind) = self
@@ -3364,27 +3367,37 @@ impl QuantickApp {
                 };
                 self.indicator_presets
                     .get(kind, name)
-                    .map(|inputs| inputs.iter().filter_map(SavedInput::to_value).collect())
+                    // `map`, not `filter_map`: a stored cell that no longer
+                    // reads (a source whose name the dialect dropped, say)
+                    // still has to hold its index. Dropping it from the list
+                    // would slide every value after it one input to the left,
+                    // and same-typed neighbours would take each other's
+                    // settings without a word.
+                    .map(|inputs| inputs.iter().map(SavedInput::to_value).collect())
             }
         };
         let Some(saved) = saved else {
             return;
         };
-        let draft: Vec<quantick_indicators::InputValue> = specs
-            .iter()
-            .enumerate()
-            .map(|(index, spec)| {
-                let default = spec.default_value();
-                match saved.get(index) {
-                    Some(value)
-                        if std::mem::discriminant(value) == std::mem::discriminant(&default) =>
-                    {
-                        value.clone()
-                    }
-                    _ => default,
-                }
-            })
-            .collect();
+        // The same binder the worker binds a saved state file with: one rule
+        // for what a saved value means, in one place.
+        let bound = quantick_indicators::bind_by_position(&specs, &saved);
+        if bound.kept < saved.len() {
+            // The preset on screen is not the preset that was saved. Silence
+            // here would show a chart that does not match the name above it.
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "INDICATOR_PRESET_REBOUND",
+                preset = %name.as_deref().unwrap_or(indicator_panel::DEFAULT_PRESET),
+                saved = saved.len(),
+                declared = specs.len(),
+                kept = bound.kept,
+                action = "bound_by_position",
+                "some of this preset's values no longer bind; those inputs took their defaults"
+            );
+        }
+        let draft = bound.values;
         let label = name.unwrap_or_else(|| indicator_panel::DEFAULT_PRESET.to_owned());
         if let Some(dialog) = self.indicator_settings.as_mut() {
             dialog.draft = draft;
@@ -9985,7 +9998,7 @@ mod tests {
         let pane = &app.active_tab().flow_pane;
         let areas = plot_split(
             pane.last_plot_area.expect("a frame has been drawn"),
-            pane.live_strip_width(),
+            pane.live_strip_width(app.active_tab().capabilities(&app.config)),
             pane.indicators.pane_sizing(
                 &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
             ),
@@ -9999,7 +10012,7 @@ mod tests {
         let pane = &app.active_tab().flow_pane;
         let areas = plot_split(
             pane.last_plot_area.expect("a frame has been drawn"),
-            pane.live_strip_width(),
+            pane.live_strip_width(app.active_tab().capabilities(&app.config)),
             pane.indicators.pane_sizing(
                 &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
             ),
@@ -10019,7 +10032,7 @@ mod tests {
         let pane = &app.active_tab().flow_pane;
         plot_split(
             pane.last_plot_area.expect("a frame has been drawn"),
-            pane.live_strip_width(),
+            pane.live_strip_width(app.active_tab().capabilities(&app.config)),
             pane.indicators.pane_sizing(
                 &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
             ),
@@ -10410,7 +10423,7 @@ mod tests {
             let pane = &app.active_tab().flow_pane;
             plot_split(
                 pane.last_plot_area.expect("a frame has been drawn"),
-                pane.live_strip_width(),
+                pane.live_strip_width(app.active_tab().capabilities(&app.config)),
                 pane.indicators.pane_sizing(
                     &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
                 ),
@@ -12015,6 +12028,15 @@ plot(close)
     /// bar per trade, the finest series a spec change can coarsen.
     fn app_with_history(count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
         let (mut app, evt_tx, cmd_rx, _book_tx) = test_app();
+        // A bare canvas, the one every caller here was written against: the
+        // strip stands beside the price axis and takes width from the candles,
+        // so leaving it on moves every hard-coded pointer coordinate in the
+        // drawing and inspector tests onto it — a collision about layout,
+        // never about what those tests assert. Which layers a launch opens
+        // with is a different question, and `test_app` keeps the shipped
+        // answer intact for the test that reads it
+        // (`each_layer_switch_moves_exactly_one_owner`).
+        app.active_tab_mut().flow_pane.live_strip_visible = false;
         app.active_tab_mut().flow_pane.tick_n = 1;
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
@@ -12023,6 +12045,65 @@ plot(close)
         app.active_tab_mut().drain_feed();
         assert_eq!(app.active_tab().flow_pane.state.bars().len() as u64, count);
         (app, cmd_rx)
+    }
+
+    /// A source with no book must never write the trader's answer for them.
+    ///
+    /// The saved file outranks the shipped default from the next launch on, so
+    /// a `heatmap = false` banked during a session on a book-less source — a
+    /// recording, a CFD bridge — would follow the trader onto every market
+    /// they open afterwards, including the ones that do have a book. Nobody
+    /// chose that: the source did. And the write is not hypothetical, because
+    /// `maintain_chart_layers` persists the whole map on any mask change, so
+    /// one unrelated click anywhere in the layer menu is enough to bank it.
+    #[test]
+    fn a_source_with_no_book_never_banks_the_heatmap_as_switched_off() {
+        let (app, _commands) = app_without_depth();
+        let pane = &app.active_tab().flow_pane;
+        assert!(
+            !pane.layer_visible(ChartLayer::Heatmap, &app.style),
+            "with no book there is nothing to draw, which is the renderer's answer"
+        );
+        assert_eq!(
+            pane.layer_states(&app.style).get(&ChartLayer::Heatmap),
+            Some(&true),
+            "but the file records the switch, which the shipped config left on"
+        );
+        assert_eq!(
+            pane.layer_states(&app.style).get(&ChartLayer::TapeHeatmap),
+            Some(&true),
+            "the tape's depth layer answers to the same rule"
+        );
+    }
+
+    /// A band nothing can fill never takes width from the candles.
+    ///
+    /// The strip draws resting depth and the aggressions landing into it. A
+    /// source with neither fills none of it, and the shipped default is what
+    /// made that reachable — the layer opened off until now, so the missing
+    /// capability gate never showed. Permanently narrowing the candles for a
+    /// blank rect is the one way this branch could make a chart worse.
+    #[test]
+    fn a_source_that_fills_neither_half_gets_no_live_strip() {
+        let (app, _commands) = app_without_depth();
+        let pane = &app.active_tab().flow_pane;
+        assert!(
+            pane.live_strip_visible,
+            "the shipped config switched it on, which is what makes the gate matter"
+        );
+        assert_eq!(
+            pane.live_strip_width(crate::config::FeedCapabilities::none()),
+            0.0,
+            "no book and no traded volume: the band would draw nothing"
+        );
+        assert!(
+            pane.layer_blocked(
+                ChartLayer::LiveStrip,
+                crate::config::FeedCapabilities::none()
+            )
+            .is_some(),
+            "and the menu says why instead of offering a switch that does nothing"
+        );
     }
 
     /// An app whose source quotes prices and nothing else: no book, no traded
@@ -12127,15 +12208,15 @@ plot(close)
     #[test]
     fn each_layer_switch_moves_exactly_one_owner() {
         let (mut app, _events, _commands, _book) = test_app();
-        // What the chart opens with: the market layers are opt-in, the chart's
-        // own chrome is on. This is the state the file's absence must preserve.
+        // What the chart opens with, and where that is decided: with no file
+        // of the trader's own, `config/chart-layers.toml` is what reaches the
+        // panes. The flow layers are on there — they are what the chart is
+        // for — and only the backfill divider is held back.
         for (layer, expected) in [
-            (ChartLayer::Heatmap, false),
-            (ChartLayer::Bubbles, false),
-            // The footprint is opt-in like every market layer: the chart must
-            // open pixel-identical to the day before the layer existed.
-            (ChartLayer::Footprint, false),
-            (ChartLayer::LiveStrip, false),
+            (ChartLayer::Heatmap, true),
+            (ChartLayer::Bubbles, true),
+            (ChartLayer::Footprint, true),
+            (ChartLayer::LiveStrip, true),
             (ChartLayer::LaneMarks, true),
             (ChartLayer::DepthGaps, true),
             (ChartLayer::Grid, true),
@@ -20211,7 +20292,17 @@ plot(close)
     fn bubble_toggle_needs_no_feed_command_and_leaves_capture_alone() {
         let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
         take_capture_start(&mut cmd_rx);
+        // The shipped config opens the layer, so the round trip is off and
+        // back on — both directions have to leave the feed alone, not just
+        // whichever one happens to be the opening state.
+        assert!(app.active_tab().tape().bubbles_enabled());
+
+        app.active_tab_mut().tape_mut().set_bubbles_enabled(false);
         assert!(!app.active_tab().tape().bubbles_enabled());
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "hiding the bubbles is a display choice; no feed command is needed"
+        );
 
         app.active_tab_mut().tape_mut().set_bubbles_enabled(true);
         assert!(app.active_tab().tape().bubbles_enabled());
@@ -22301,7 +22392,7 @@ plot(close)
             "no tape means no book worker behind it"
         );
         assert_eq!(
-            time.live_strip_width(),
+            time.live_strip_width(app.active_tab().capabilities(&app.config)),
             0.0,
             "the strip is a flow layer and claims no pixels here"
         );

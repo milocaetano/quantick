@@ -91,6 +91,15 @@ pub(crate) enum IndicatorSource {
     Script { name: String, text: String },
 }
 
+/// Saved values that were all readable, in the cell form
+/// [`quantick_indicators::bind_by_position`] takes. The preset file can yield
+/// a `None` — a stored cell that no longer parses, which must still hold its
+/// index — while these came from a live indicator and cannot. Widening, not a
+/// loss.
+fn to_cells(values: &[InputValue]) -> Vec<Option<InputValue>> {
+    values.iter().cloned().map(Some).collect()
+}
+
 impl IndicatorSource {
     /// Build the indicator, or explain why the script does not load. The
     /// error string is the full human rendering — every problem, each with
@@ -118,11 +127,55 @@ impl IndicatorSource {
             IndicatorSource::NativeCvd => Ok(Box::new(Cvd::new())),
             IndicatorSource::Script { name, text } => match quantick_pine::compile(text, name) {
                 Ok(compiled) => Ok(Box::new(match values {
-                    Some(values) if values.len() == compiled.inputs.len() => {
+                    // An empty set is a slot that has never been given one:
+                    // a brand-new indicator, or one whose first compile failed
+                    // before any `SetInputs` reached it. Nothing to bind and
+                    // nothing to report — and note this is now genuinely rare,
+                    // because `SetInputs` keeps the values even when it has no
+                    // instance to apply them to.
+                    Some(values) if !values.is_empty() => {
+                        // Cell by cell, type-checked, through the one binder
+                        // both persistence paths use — an edited or upgraded
+                        // script keeps every setting whose input is still
+                        // there, at its type, and only the rest fall back.
+                        // Binding the whole vector on an exact count match
+                        // instead would take a stale value whenever a script
+                        // changed an input's TYPE without changing how many it
+                        // has; refusing the whole vector on a count mismatch
+                        // (which this did) meant one added knob reset every
+                        // other one — "I reopened the app and my settings were
+                        // gone".
+                        let bound = quantick_indicators::bind_by_position(
+                            &compiled.inputs,
+                            &to_cells(values),
+                        );
+                        // Two reasons to speak, and the count is only one of
+                        // them: a cell can be refused at an unchanged count
+                        // when an input changed type. The other is louder than
+                        // it looks — when the list grew or shrank, EVERY value
+                        // after the edit may now sit on a different knob, and
+                        // that binds silently whenever the types happen to
+                        // line up. A count change is therefore worth a line
+                        // even when nothing was refused.
+                        let count_changed = values.len() != compiled.inputs.len();
+                        if count_changed || bound.kept < values.len() {
+                            tracing::warn!(
+                                target: "quantick::app",
+                                schema_version = 1_u8,
+                                event_code = "INDICATOR_INPUTS_REBOUND",
+                                script = %name,
+                                saved = values.len(),
+                                declared = compiled.inputs.len(),
+                                kept = bound.kept,
+                                count_changed,
+                                action = "bound_by_position",
+                                "saved settings were rebound to a changed input list"
+                            );
+                        }
                         quantick_pine::ScriptIndicator::with_inputs(
                             compiled,
                             text.clone(),
-                            values.to_vec(),
+                            bound.values,
                         )
                     }
                     _ => quantick_pine::ScriptIndicator::new(compiled, text.clone()),
@@ -587,9 +640,20 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                     if last_set_inputs.get(&slot) != Some(&index) {
                         continue;
                     }
-                    if let Some(mirror) = slots.get_mut(&slot)
-                        && let Some(host_id) = mirror.host_id
-                    {
+                    if let Some(mirror) = slots.get_mut(&slot) {
+                        let Some(host_id) = mirror.host_id else {
+                            // No instance to rebuild: this slot's first
+                            // compile failed. The values are still the
+                            // trader's, though, and `Reload` builds from this
+                            // mirror — so keep them. Dropping them here is
+                            // what made repairing a broken script cost every
+                            // setting it had: the fixed script loaded at its
+                            // declared defaults, the slot's error cleared,
+                            // and the next state save wrote those defaults
+                            // over the tuned ones on disk.
+                            mirror.values = values;
+                            continue;
+                        };
                         match mirror.source.build_with(Some(&values)) {
                             Ok(indicator) => {
                                 // Mirror what the instance bound, not what
@@ -860,6 +924,97 @@ mod tests {
         let mut builder = TickBarBuilder::new(tick);
         let bars = engine_golden::replay(&mut builder, &trades);
         (bars, builder.partial().cloned())
+    }
+
+    /// A script with three inputs, the third of which is imagined to have
+    /// been added after the trader saved their settings for the first two.
+    fn grown_script() -> IndicatorSource {
+        IndicatorSource::Script {
+            name: "grown.pine".to_owned(),
+            text: concat!(
+                "//@version=5\n",
+                "indicator(\"Grown\", overlay=true)\n",
+                "len = input.int(20, \"len\")\n",
+                "factor = input.float(1.5, \"factor\")\n",
+                "added = input.bool(false, \"added\")\n",
+                "plot(close)\n"
+            )
+            .to_owned(),
+        }
+    }
+
+    /// Saved indicator settings are stored positionally, so a script that
+    /// gained an input arrives with fewer saved values than declared inputs.
+    /// Binding only on an exact count match meant the trader lost the
+    /// settings for every input that WAS still there — one added knob, and a
+    /// whole tuned indicator came back at its defaults.
+    #[test]
+    fn a_script_that_gained_an_input_keeps_the_values_saved_for_the_older_ones() {
+        let saved = vec![InputValue::Int(50), InputValue::Float(2.5)];
+        let built = grown_script()
+            .build_with(Some(&saved))
+            .expect("the script compiles");
+        assert_eq!(
+            built.input_values(),
+            vec![
+                InputValue::Int(50),
+                InputValue::Float(2.5),
+                InputValue::Bool(false),
+            ],
+            "the two saved values survive at their own indices and the input added since takes its declared default"
+        );
+    }
+
+    /// The type check is what keeps the per-cell bind honest: a value that no
+    /// longer matches the input at its index is not carried over, it is
+    /// dropped for that input's default — and its neighbours are unaffected.
+    ///
+    /// It applies at every count, including a matching one: there is no
+    /// longer a fast path that hands the vector over unchecked, so a script
+    /// that changed an input's TYPE without changing how many it has no
+    /// longer binds the stale value.
+    #[test]
+    fn a_saved_value_whose_input_changed_type_falls_back_alone() {
+        let saved = vec![
+            InputValue::Int(50),
+            InputValue::Bool(true), // a float lives at this index now
+        ];
+        let built = grown_script()
+            .build_with(Some(&saved))
+            .expect("the script compiles");
+        assert_eq!(
+            built.input_values(),
+            vec![
+                InputValue::Int(50),
+                InputValue::Float(1.5),
+                InputValue::Bool(false),
+            ],
+            "the mistyped cell falls back alone; the value before it survives"
+        );
+    }
+
+    /// The count-matched case, which used to skip type checks entirely: a
+    /// script that swapped an input's type while keeping the same number of
+    /// them bound the stale value straight through.
+    #[test]
+    fn a_type_change_at_an_unchanged_count_no_longer_binds_the_stale_value() {
+        let saved = vec![
+            InputValue::Int(50),
+            InputValue::Bool(true), // the float's index
+            InputValue::Bool(true),
+        ];
+        let built = grown_script()
+            .build_with(Some(&saved))
+            .expect("the script compiles");
+        assert_eq!(
+            built.input_values(),
+            vec![
+                InputValue::Int(50),
+                InputValue::Float(1.5),
+                InputValue::Bool(true),
+            ],
+            "three saved, three declared, and the mistyped one still falls back alone"
+        );
     }
 
     /// A slider drag enqueues one `SetInputs` per UI frame; only the newest
@@ -1394,7 +1549,7 @@ plot(close * k)
         assert_eq!(
             view.input_values[1],
             InputValue::Source(SourceId::Hl2),
-            "the source cell is bound too — applying `Close` to an instance              that already had it proved nothing"
+            "the source cell is bound too — applying `Close` to an instance that already had it proved nothing"
         );
         assert_eq!(
             format!("{:?}", view.columns[0]),

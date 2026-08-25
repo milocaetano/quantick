@@ -2800,6 +2800,7 @@
               },
               "request_timeout_ms": {
                 "format": "uint64",
+                "maximum": 5000,
                 "minimum": 1,
                 "type": "integer"
               },

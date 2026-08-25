@@ -931,8 +931,10 @@ pub struct ChartPane {
     /// Whether the user wants the live strip shown. The pixels it actually
     /// gets are still capability-gated — see [`Self::live_strip_width`].
     pub live_strip_visible: bool,
-    /// Whether the candle footprint layer is on. Off by default: today's
-    /// rendering is pixel-identical until the user asks for the ladder.
+    /// Whether the candle footprint layer is on. What a fresh launch opens
+    /// with is `config/chart-layers.toml`, not this initialiser — see
+    /// [`crate::chart_layers`]; the ladder still follows the zoom's LOD, so it
+    /// draws nothing where the candle is too narrow to read.
     pub footprint_visible: bool,
     /// This chart's own footprint setup, once it has been configured here.
     ///
@@ -1582,6 +1584,15 @@ impl ChartPane {
                 .then_some("this source quotes prices but prints no traded volume"),
             ChartLayer::Heatmap | ChartLayer::DepthGaps => (!capabilities.book_capture)
                 .then_some("order-book capture is not available for this source"),
+            // The strip draws the book and the aggressions landing into it, so
+            // it takes either one and is empty only without both. Disabled
+            // with the reason rather than offered as a switch that would
+            // reserve width for a blank band.
+            ChartLayer::LiveStrip => (!capabilities.book_capture && !capabilities.traded_volume)
+                .then_some(
+                    "this source publishes neither an order book nor traded volume, \
+                     so the strip would have nothing to draw",
+                ),
             // The badge reports on the book feed, so a source with no book has
             // nothing for it to say — and it is drawn with the map, so while
             // the map is hidden the switch would tick a box that draws
@@ -1606,7 +1617,27 @@ impl ChartPane {
         }
     }
 
-    /// Every layer this pane persists, and whether it is on.
+    /// The same layers as [`Self::layer_visible`], reporting the *switch*
+    /// rather than what the source lets through it.
+    ///
+    /// Only the two depth layers differ, and only because their "is it drawn"
+    /// answer folds in book capture: on a source with no book they read
+    /// undrawn however the switch stands. That is the right answer for a
+    /// renderer and the wrong one for a file — persisting it would record a
+    /// capability as the trader's choice, and their file outranks the shipped
+    /// default on every market from then on, including the ones that do have a
+    /// book. The setters already compare against the switch for this exact
+    /// reason (`OrderflowView::set_depth_visible`); this is the reading half.
+    pub fn layer_switched_on(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
+        let tape = self.orderflow.as_ref();
+        match layer {
+            ChartLayer::Heatmap => tape.is_some_and(OrderflowView::depth_switched_on),
+            ChartLayer::TapeHeatmap => tape.is_some_and(OrderflowView::lane_depth_switched_on),
+            other => self.layer_visible(other, style),
+        }
+    }
+
+    /// Every layer this pane persists, and whether it is switched on.
     ///
     /// `style` comes from the window for the same reason it does in
     /// [`Self::layer_visible`].
@@ -1614,7 +1645,7 @@ impl ChartPane {
         ChartLayer::ALL
             .into_iter()
             .filter(|layer| layer.persisted())
-            .map(|layer| (layer, self.layer_visible(layer, style)))
+            .map(|layer| (layer, self.layer_switched_on(layer, style)))
             .collect()
     }
 
@@ -1630,7 +1661,7 @@ impl ChartPane {
         ChartLayer::ALL
             .into_iter()
             .enumerate()
-            .filter(|(_, layer)| layer.persisted() && self.layer_visible(*layer, style))
+            .filter(|(_, layer)| layer.persisted() && self.layer_switched_on(*layer, style))
             .fold(0_u32, |mask, (bit, _)| mask | (1 << bit))
     }
 
@@ -2543,8 +2574,20 @@ impl ChartPane {
     /// source provides (replay included), and without book data the strip
     /// honestly degrades to that histogram alone. A pane with no tape has no
     /// strip at all (§11).
-    pub fn live_strip_width(&self) -> f32 {
-        if self.live_strip_visible && self.orderflow.is_some() {
+    pub fn live_strip_width(&self, capabilities: FeedCapabilities) -> f32 {
+        // Both halves of the strip come from the source: resting depth and the
+        // aggressions landing into it. A source that produces neither fills
+        // none of it, so the band would be an empty rect permanently narrowing
+        // the candles — which is what the shipped default made reachable, the
+        // layer having opened off until now. The claim that these pixels were
+        // capability-gated predates the gate by some months; this is it.
+        //
+        // Passed in rather than cached on the pane for the reason
+        // `layer_blocked` states: the running feed is resolved once per frame
+        // by the caller, and a copy kept here would be one more thing to keep
+        // in step when MetaTrader narrows its capabilities mid-session.
+        let source_fills_it = capabilities.book_capture || capabilities.traded_volume;
+        if self.live_strip_visible && self.orderflow.is_some() && source_fills_it {
             crate::live_strip::LIVE_STRIP_WIDTH_PX
         } else {
             0.0
@@ -2553,11 +2596,11 @@ impl ChartPane {
 
     /// This pane's regions inside `area`, carved once so the input handler and
     /// the renderer can never disagree about a boundary.
-    fn plot_areas(&self, area: egui::Rect) -> PlotAreas {
+    fn plot_areas(&self, area: egui::Rect, capabilities: FeedCapabilities) -> PlotAreas {
         let mut sizing = [PaneSizing::Auto; crate::indicators::MAX_PANES];
         plot_split(
             area,
-            self.live_strip_width(),
+            self.live_strip_width(capabilities),
             self.indicators.pane_sizing(&mut sizing),
         )
     }
@@ -3878,7 +3921,7 @@ impl ChartPane {
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
         self.last_plot_area = Some(area);
-        let areas = self.plot_areas(area);
+        let areas = self.plot_areas(area, chrome.capabilities);
         self.last_chart_area = Some(areas.chart);
         // One carve, consumed by placement, hit-testing, dragging and — after
         // the panes have drawn — painting.
@@ -4858,7 +4901,7 @@ impl ChartPane {
                 }
             }
         }
-        let areas = self.plot_areas(area);
+        let areas = self.plot_areas(area, chrome.capabilities);
         // Indicator panes claimed the bottom band inside `plot_split`, so the
         // rect the candles scale to is the same one the input handler uses.
         let chart_rect = areas.chart;
@@ -7656,7 +7699,7 @@ mod tests {
     }
 
     fn test_areas(pane: &ChartPane, rect: egui::Rect) -> PlotAreas {
-        pane.plot_areas(rect)
+        pane.plot_areas(rect, crate::config::FeedCapabilities::none())
     }
 
     const TEST_PLOT: egui::Rect = egui::Rect {
