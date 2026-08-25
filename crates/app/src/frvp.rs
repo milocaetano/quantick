@@ -46,6 +46,12 @@ pub const TOOL_ID: &str = "fixed-range-profile";
 /// from the first one. Raising it buys a faster fill and a longer frame;
 /// lowering it buys the reverse. Never zero — a zero budget would fold
 /// nothing, forever.
+///
+/// The pass also *reads* the fold once ([`derive`]), which the budget does not
+/// count: while the fold runs that read walks the pending spreads, so the true
+/// per-pass cost is somewhat above the folding alone. It falls to a map clone
+/// the moment the fold is sealed, which is the state a chart spends almost all
+/// of its life in.
 pub const DEFAULT_FOLD_BUDGET: usize = 1_500;
 
 /// The budget the *process* was launched with: [`DEFAULT_FOLD_BUDGET`], or
