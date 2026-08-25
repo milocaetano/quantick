@@ -11,7 +11,7 @@
 //!
 //! - Ladders whose cap forced different doublings merge at the **coarsest**
 //!   grouping among them; finer ladders fold down by exact integer halving
-//!   (the identity behind [`coarsen`]: `floor(floor(p/g)/2) == floor(p/2g)`).
+//!   (the identity coarsening rests on: `floor(floor(p/g)/2) == floor(p/2g)`).
 //!   Ladders with different *base* groups never aligned at all and the merge
 //!   refuses (`None`) instead of inventing rows.
 //! - The merged ladder is capped like a bar's: past `level_cap` rows the
@@ -26,7 +26,6 @@
 //! caller-supplied fraction of the range's volume (the engine attaches no
 //! thresholds of its own — 70% is the caller's convention, not this module's).
 //!
-//! [`coarsen`]: VolumeProfile::coarsen
 
 use std::collections::BTreeMap;
 
@@ -69,6 +68,12 @@ impl VolumeProfile {
     /// *base* grouping — such ladders never shared bucket boundaries, and a
     /// profile over them would be an invention, not a fold.
     ///
+    /// This is the whole-range spelling of the same fold
+    /// [`ProfileFold`](crate::ProfileFold) runs a piece at a time, and it is
+    /// written on top of it rather than beside it: one accumulator, one set of
+    /// coarsening rules, no second answer to keep in step. Callers that cannot
+    /// afford the whole range in one call reach for the fold directly.
+    ///
     /// # Panics
     ///
     /// Panics if `level_cap` is zero — a configuration error, not feed input,
@@ -79,52 +84,25 @@ impl VolumeProfile {
         level_cap: usize,
     ) -> Option<Self> {
         assert!(level_cap > 0, "profile level cap must be positive");
-        let ladders: Vec<&BarFootprint> = ladders.into_iter().collect();
-        let first = *ladders.first()?;
-        let base_group = first.base_group();
-        if ladders.iter().any(|l| l.base_group() != base_group) {
-            return None;
-        }
-
-        let doublings = ladders.iter().map(|l| l.doublings()).max().unwrap_or(0);
-        let mut profile = Self {
-            levels: BTreeMap::new(),
-            group: first.group(),
-            aggregated: doublings > 0,
-        };
-        // The coarsest input's group, recomputed the way the footprint does
-        // (repeated doubling), so the two stay bit-identical.
-        profile.group = base_group;
-        for _ in 0..doublings {
-            profile.group = profile.group.saturating_mul(Decimal::TWO);
-        }
-
+        let mut ladders = ladders.into_iter();
+        let first = ladders.next()?;
+        let mut fold = crate::ProfileFold::new(first.base_group(), level_cap);
+        fold.push_ladder(first);
         for ladder in ladders {
-            let shift = doublings - ladder.doublings();
-            for (&bucket, level) in ladder.levels() {
-                let target = profile
-                    .levels
-                    .entry(fold_bucket(bucket, shift))
-                    .or_default();
-                target.buy = target.buy.saturating_add(level.buy);
-                target.sell = target.sell.saturating_add(level.sell);
-                target.trade_count += level.trade_count;
-            }
+            // A ladder on another base grouping poisons the fold, which is how
+            // the refusal below reaches the caller as `None`.
+            fold.push_ladder(ladder);
         }
-
-        while profile.levels.len() > level_cap {
-            profile.coarsen();
-        }
-        Some(profile)
+        fold.profile()
     }
 
     /// The profile these rows, this grouping and this honesty flag describe.
     ///
     /// Crate-only, and deliberately: a `VolumeProfile` is a *fold's* result,
-    /// and there are exactly two folds — [`merge`](Self::merge) and
-    /// [`ProfileFold`](crate::ProfileFold), the resumable one that reaches the
-    /// same rows a piece at a time. Handing this to consumers would let a
-    /// third fold exist, which is the drift the one-engine rule forbids.
+    /// and there is exactly one fold — [`ProfileFold`](crate::ProfileFold),
+    /// which [`merge`](Self::merge) itself is written on top of. Handing this
+    /// to consumers would let a second fold exist, which is the drift the
+    /// one-engine rule forbids.
     pub(crate) fn from_parts(
         levels: BTreeMap<i64, FootprintLevel>,
         group: Decimal,
@@ -320,21 +298,6 @@ impl VolumeProfile {
             vah: rows[hi].0,
             val: rows[lo].0,
         })
-    }
-
-    /// Double the grouping: merge bucket pairs by integer halving. The same
-    /// exact identity as the footprint's coarsen.
-    fn coarsen(&mut self) {
-        let mut merged: BTreeMap<i64, FootprintLevel> = BTreeMap::new();
-        for (bucket, level) in std::mem::take(&mut self.levels) {
-            let target = merged.entry(bucket.div_euclid(2)).or_default();
-            target.buy = target.buy.saturating_add(level.buy);
-            target.sell = target.sell.saturating_add(level.sell);
-            target.trade_count += level.trade_count;
-        }
-        self.levels = merged;
-        self.group = self.group.saturating_mul(Decimal::TWO);
-        self.aggregated = true;
     }
 }
 

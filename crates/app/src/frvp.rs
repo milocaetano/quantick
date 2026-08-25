@@ -276,30 +276,25 @@ fn refresh_one(
         approximate: payload.approximate_history,
         partly_covered,
     };
-    if let Some(cache) = payload.cache.as_mut() {
-        if cache.key == key {
-            // Key hit: the fold is current, or still running. Presentation
-            // state follows the frame either way — the map's boundary moves
-            // without invalidating anything already folded.
-            cache.heat_first_slot = inputs.heat_first_slot;
-            if !cache.folding {
-                return false;
-            }
+    // Everything the *closed* fold depends on is unchanged — at most the
+    // forming bar moved. Its ladder is re-snapshotted several times a second,
+    // and treating that as a new fold is a treadmill a long range never gets
+    // off: it would fill part-way, throw away what it had and start again,
+    // flickering the histogram and the status line on every tick. The forming
+    // bar is not in the fold, so a new snapshot costs a re-read and nothing
+    // else — and a fold still running simply carries on where it was.
+    if let Some(cache) = payload.cache.as_mut().filter(|c| c.key.same_fold(&key)) {
+        let live_edge_moved = cache.key.partial_snapshot != key.partial_snapshot;
+        cache.key = key;
+        // Presentation state follows the frame either way — the heatmap's
+        // boundary moving must never re-fold or re-read anything.
+        cache.heat_first_slot = inputs.heat_first_slot;
+        if cache.folding {
             advance(cache, payload.value_area_pct, inputs);
-            return cache.folding;
-        }
-        // Only the forming bar moved. Its ladder is re-snapshotted about ten
-        // times a second, and re-folding the range at that cadence is a
-        // treadmill a long range never gets off — the fold would restart
-        // before it ever finished. The closed bars did not move, so their
-        // fold stands: the forming bar joins a *copy* of it instead, which
-        // costs one ladder rather than the range.
-        if cache.key.same_fold(&key) && !cache.folding {
-            cache.key = key;
-            cache.heat_first_slot = inputs.heat_first_slot;
+        } else if live_edge_moved {
             derive(cache, payload.value_area_pct, inputs);
-            return false;
         }
+        return cache.folding;
     }
 
     if inputs.blocked {
@@ -773,6 +768,56 @@ mod tests {
         // Still one profile object: the fill must not have left the range
         // claiming more bars than the chart has.
         assert_eq!(cache.bars_total, 25_003);
+    }
+
+    /// A live tape must not keep a long fold from finishing.
+    ///
+    /// The forming bar's ladder is re-snapshotted several times a second. If
+    /// that restarted the fold, a range this long would fill part-way, throw
+    /// away what it had and start again — forever, and burning a budget's
+    /// worth of work every frame to do it. The forming bar is not part of the
+    /// fold at all, so a new snapshot must cost nothing but a re-read.
+    #[test]
+    fn a_long_fold_converges_while_the_forming_bar_keeps_moving() {
+        let state = state_with_tape();
+        let partial = state.partial_footprint().expect("forming bar").clone();
+        let prefix: Vec<quantick_engine::Bar> = (0..25_000).map(venue_candle).collect();
+        let mut drawings = Drawings::default();
+        place_frvp(&mut drawings, 0.0, 25_004.0);
+
+        let mut passes = 0u64;
+        loop {
+            // A fresh snapshot on *every* pass — worse than the pane's real
+            // throttle, so a fold that survives this survives any tape.
+            let moving = RefreshInputs {
+                prefix: &prefix,
+                partial_ladder: Some(&partial),
+                partial_version: passes + 1,
+                ..inputs(&state, false)
+            };
+            let folding = refresh(&mut drawings, &moving);
+            passes += 1;
+            assert!(
+                passes < 100,
+                "the fold never converged: {} of {} bars after {passes} passes",
+                cache_of(&drawings).bars_folded,
+                cache_of(&drawings).bars_total
+            );
+            if !folding {
+                break;
+            }
+        }
+
+        let cache = cache_of(&drawings);
+        assert_eq!(cache.bars_approximated, 25_000, "every candle joined once");
+        assert_eq!(
+            cache.bars_covered, 4,
+            "three closed tape bars and the forming one"
+        );
+        assert_eq!(
+            cache.profile.expect("folded").0.total_volume(),
+            dec("100007")
+        );
     }
 
     /// The fold reruns from scratch when the range changes mid-fill — a

@@ -1,10 +1,19 @@
-//! The resumable fold and the whole-range merge must agree, row for row.
+//! A candle folded as a *range* must equal the same candle folded as rows.
 //!
 //! [`ProfileFold`] exists because materialising one approximated ladder per
-//! venue candle costs more than a chart has to spend. Speed bought with a
-//! different answer is not speed, so this file pins the two folds together:
-//! same inputs, same grouping, same rows, same POC and value area — over the
-//! cases that make the two implementations diverge if anything is wrong.
+//! venue candle costs more than a chart has to spend: read as an
+//! [`ApproxSpread`](quantick_engine::ApproxSpread), a candle is three map
+//! touches instead of up to two thousand rows. Speed bought with a different
+//! answer is not speed, so this file pins the two readings together — same
+//! grouping, same rows, same POC and value area — over the cases that make
+//! them diverge if anything is wrong.
+//!
+//! The oracle is deliberately the *other* implementation:
+//! `BarFootprint::approximated` writes the spread out row by row, and
+//! [`VolumeProfile::merge`] folds those rows. (The merge itself is written on
+//! top of `ProfileFold`, so it is the spread — not the accumulator — that
+//! these tests hold to account. The accumulator's own contract is proved by
+//! the engine's unit tests, which the merge runs through unchanged.)
 //!
 //! Every fixture is deterministic and written out here rather than generated
 //! at random: a parity failure must be reproducible from the file alone.
@@ -105,10 +114,7 @@ fn assert_parity(label: &str, group: Decimal, candles: &[Bar], ladders: &[BarFoo
         .iter()
         .filter_map(|bar| BarFootprint::approximated(bar, group, DEFAULT_LEVEL_CAP))
         .collect();
-    let merged = VolumeProfile::merge(
-        approximated.iter().chain(ladders.iter()),
-        DEFAULT_LEVEL_CAP,
-    );
+    let merged = VolumeProfile::merge(approximated.iter().chain(ladders.iter()), DEFAULT_LEVEL_CAP);
 
     let mut fold = ProfileFold::new(group, DEFAULT_LEVEL_CAP);
     for bar in candles {
@@ -238,7 +244,11 @@ fn a_candle_that_traded_nothing_is_skipped_by_both() {
 #[test]
 fn an_empty_fold_has_no_profile_either_way() {
     assert_parity("nothing at all", dec("1"), &[], &[]);
-    assert!(ProfileFold::new(dec("1"), DEFAULT_LEVEL_CAP).profile().is_none());
+    assert!(
+        ProfileFold::new(dec("1"), DEFAULT_LEVEL_CAP)
+            .profile()
+            .is_none()
+    );
 }
 
 #[test]

@@ -404,8 +404,14 @@ fn status_line(
         // count that is still to come is stated rather than implied by a
         // spinner. Said *before* the coverage caveat below, which counts the
         // same unfolded bars as "missing" until the fold reaches them.
+        //
+        // "loading", not "folding": the fold is the engine's word for what is
+        // happening, and this line is read by someone in their first week. The
+        // two sentences it sits beside — `profile from N of M bars` for
+        // coverage, this one for progress — keep different verbs on purpose:
+        // they mean opposite things about the bars they leave out.
         status.push_str(&format!(
-            " · folding {} of {} bars",
+            " · loading {} of {} bars",
             cache.bars_folded, cache.bars_total
         ));
     } else if cache.bars_covered + cache.bars_approximated < cache.bars_total {
@@ -985,7 +991,7 @@ impl DrawingToolImpl for FixedRangeProfile {
                 // to draw *yet* — which is not the same as a range with
                 // nothing in it, and must not borrow that sentence.
                 (true, _) => {
-                    format!("folding {} of {} bars", cache.bars_folded, cache.bars_total)
+                    format!("loading {} of {} bars", cache.bars_folded, cache.bars_total)
                 }
                 (false, Some(FrvpEmpty::Blocked)) => "feed reports no traded volume".to_owned(),
                 (false, _) => "no tape in range".to_owned(),
@@ -1318,7 +1324,7 @@ mod tests {
         let payload = FrvpPayload::default();
         let status = status_line(&profile, &folding_cache(25_003, 4_000), &payload, false);
         assert!(
-            status.contains(" · folding 4000 of 25003 bars"),
+            status.contains(" · loading 4000 of 25003 bars"),
             "a fold in flight names its progress: {status}"
         );
         // And it does not *also* claim partial coverage: the bars it has not
@@ -1333,7 +1339,7 @@ mod tests {
         let profile = some_profile();
         let payload = FrvpPayload::default();
         let status = status_line(&profile, &cache_for(85, 85, 0), &payload, false);
-        assert!(!status.contains("folding"), "{status}");
+        assert!(!status.contains("loading"), "{status}");
     }
 
     /// The regression that started this: an exact, fully covered profile used
