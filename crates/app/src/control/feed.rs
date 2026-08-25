@@ -88,6 +88,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         SCHEMA_VERSION,
         "Feed status",
         "Reports the selected and active markets, source health, capabilities, and provenance.",
+        &["observe", "observe.market"],
         project,
     )
 }
@@ -176,7 +177,7 @@ fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
     }
 }
 
-fn connection_state(state: FeedConnectionState) -> &'static str {
+pub(crate) fn connection_state(state: FeedConnectionState) -> &'static str {
     match state {
         FeedConnectionState::Connecting => "connecting",
         FeedConnectionState::Reconnecting => "reconnecting",

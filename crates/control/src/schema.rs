@@ -12,19 +12,40 @@ pub fn generated_schema<T: JsonSchema>() -> Value {
 }
 
 pub fn validate_schema(schema: &Value) -> Result<(), SchemaError> {
-    if let Some(dialect) = schema
-        .as_object()
-        .and_then(|object| object.get("$schema"))
-        .and_then(Value::as_str)
-        && dialect != DRAFT_2020_12_SCHEMA_URI
-    {
-        return Err(SchemaError::UnsupportedDialect(dialect.to_owned()));
+    CompiledSchema::new(schema).map(|_| ())
+}
+
+pub struct CompiledSchema {
+    validator: jsonschema::Validator,
+}
+
+impl CompiledSchema {
+    pub fn new(schema: &Value) -> Result<Self, SchemaError> {
+        if let Some(dialect) = schema
+            .as_object()
+            .and_then(|object| object.get("$schema"))
+            .and_then(Value::as_str)
+            && dialect != DRAFT_2020_12_SCHEMA_URI
+        {
+            return Err(SchemaError::UnsupportedDialect(dialect.to_owned()));
+        }
+        reject_external_references(schema)?;
+        jsonschema::draft202012::meta::validate(schema)
+            .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
+        Ok(Self {
+            validator: compile(schema)?,
+        })
     }
-    reject_external_references(schema)?;
-    jsonschema::draft202012::meta::validate(schema)
-        .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
-    compile(schema)?;
-    Ok(())
+
+    pub fn validate(&self, instance: &Value) -> Result<(), SchemaError> {
+        self.validator.validate(instance).map_err(|error| {
+            SchemaError::InvalidInstance(format!(
+                "instance at {} does not satisfy schema keyword {}",
+                error.instance_path(),
+                error.kind().keyword()
+            ))
+        })
+    }
 }
 
 /// Compile one schema with the options every control-plane validator uses.
@@ -37,6 +58,9 @@ pub fn validate_schema(schema: &Value) -> Result<(), SchemaError> {
 /// pattern the validator actually runs, after the crate's own ECMA-to-Rust
 /// translation — so the guard cannot drift from the engine, and a plain regex
 /// syntax error is reported as the invalid schema it is.
+///
+/// [`CompiledSchema::new`] is the only caller, which is what keeps the guard
+/// and the engine from drifting apart: there is one door, and it is this one.
 fn compile(schema: &Value) -> Result<jsonschema::Validator, SchemaError> {
     jsonschema::draft202012::options()
         .with_pattern_options(jsonschema::PatternOptions::regex())
@@ -44,24 +68,16 @@ fn compile(schema: &Value) -> Result<jsonschema::Validator, SchemaError> {
         .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))
 }
 
-/// Check one instance against a schema that has already passed
-/// [`validate_schema`].
+/// Check one instance against a schema, compiling the schema for this call
+/// alone.
 ///
-/// The schema is deliberately not re-validated here. Registration is the door:
-/// [`crate::registry::ControlRegistry`] validates every descriptor schema once,
-/// which is also where the pattern and reference guards belong. Repeating that
-/// per instance meta-validated and compiled the same schema twice more on every
-/// request, and a malformed schema still fails below when the validator refuses
-/// to build.
+/// This is the one-shot door, for registration-time example checks and tests.
+/// A caller validating the *same* schema repeatedly — every request against a
+/// registered capability — holds a [`CompiledSchema`] instead and pays the
+/// meta-validation and compilation once, at registration, rather than on every
+/// request.
 pub fn validate_instance(schema: &Value, instance: &Value) -> Result<(), SchemaError> {
-    let validator = compile(schema)?;
-    validator.validate(instance).map_err(|error| {
-        SchemaError::InvalidInstance(format!(
-            "instance at {} does not satisfy schema keyword {}",
-            error.instance_path(),
-            error.kind().keyword()
-        ))
-    })
+    CompiledSchema::new(schema)?.validate(instance)
 }
 
 fn reject_external_references(value: &Value) -> Result<(), SchemaError> {

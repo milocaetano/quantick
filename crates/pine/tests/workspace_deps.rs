@@ -64,6 +64,8 @@ fn feeds_depend_on_the_domain_crates_only() {
 /// is ever added.
 const ALLOWED: &[(&str, &[&str])] = &[
     ("control", &[]),
+    ("control-local", &["control"]),
+    ("mcp", &["control", "control-local"]),
     ("engine", &[]),
     ("orderbook", &[]),
     ("replay", &["engine"]),

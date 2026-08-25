@@ -2,13 +2,18 @@
 
 pub const CONTROL_TOKEN_BYTES: usize = 32;
 pub const CONTROL_RUNTIME_ID_BYTES: usize = 16;
+pub const CONTROL_HANDSHAKE_MAX_BYTES: usize = 64 * 1024;
+pub const CONTROL_HANDSHAKE_MAX_SCOPES: usize = 32;
 pub const CONTROL_REQUEST_ID_MAX_BYTES: usize = 128;
 pub const CONTROL_DESCRIPTOR_MAX_BYTES: usize = 16 * 1024;
+pub const CONTROL_DISCOVERY_MAX_ENTRIES: usize = 64;
 pub const CONTROL_CAPABILITY_DESCRIPTOR_MAX_BYTES: usize = 16 * 1024;
 pub const CONTROL_PROTOCOL_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 pub const CONTROL_MAX_REQUEST_BYTES: usize = 1024 * 1024;
 pub const CONTROL_MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 pub const CONTROL_MAX_BUFFERED_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+pub const CONTROL_MAX_BUFFERED_RESPONSE_SLOTS: usize =
+    CONTROL_MAX_BUFFERED_RESPONSE_BYTES / CONTROL_MAX_RESPONSE_BYTES;
 pub const CONTROL_MAX_JSON_DEPTH: usize = 64;
 pub const CONTROL_MAX_STRING_BYTES: usize = 256 * 1024;
 pub const CONTROL_ID_MAX_BYTES: usize = 128;
@@ -21,10 +26,17 @@ pub const CONTROL_IDEMPOTENCY_RECORD_MAX_BYTES: usize = 64 * 1024;
 pub const CONTROL_IDEMPOTENCY_RETENTION_MS: u64 = 86_400_000;
 pub const CONTROL_DEFAULT_PAGE_ITEMS: usize = 256;
 pub const CONTROL_MAX_PAGE_ITEMS: usize = 2_048;
+/// Maximum chart bars copied into an owned DTO on the application thread.
+/// Calibrated independently from the larger off-thread protocol page ceiling.
+pub const CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS: usize = 32;
+pub const CONTROL_MAX_SNAPSHOT_SCOPES: usize = 32;
 pub const CONTROL_REQUEST_QUEUE_CAPACITY: usize = 64;
 pub const CONTROL_MAX_CONNECTIONS: usize = 8;
 pub const CONTROL_MAX_IN_FLIGHT_PER_CONNECTION: usize = 8;
 pub const CONTROL_MAX_PARKED_WAITERS: usize = 16;
+/// Parked `wait_for_change` registrations one connection may hold at once,
+/// so a single client cannot take every slot from the others.
+pub const CONTROL_MAX_PARKED_WAITERS_PER_CONNECTION: usize = 4;
 pub const CONTROL_HANDSHAKE_TIMEOUT_MS: u64 = 2_000;
 pub const CONTROL_REQUEST_TIMEOUT_MS: u64 = 5_000;
 pub const CONTROL_WAIT_TIMEOUT_MAX_MS: u64 = 30_000;
@@ -38,6 +50,9 @@ pub const CONTROL_NOTIFICATION_BURST: u32 = 2;
 /// coherent capture of every core observer scope. Later modules must remain
 /// below this bound or paginate their payloads.
 pub const CONTROL_UI_BUDGET_US: u64 = 250;
+/// Deterministic admission ceiling even on machines where eight captures fit
+/// inside the time budget. The elapsed-time guard remains authoritative too.
+pub const CONTROL_UI_MAX_REQUESTS_PER_FRAME: usize = 4;
 pub const CONTROL_EVENT_JOURNAL_CAPACITY: usize = 8_192;
 pub const CONTROL_EVENT_MAX_BYTES: usize = 64 * 1024;
 pub const CONTROL_EVENT_JOURNAL_MAX_BYTES: usize = 32 * 1024 * 1024;

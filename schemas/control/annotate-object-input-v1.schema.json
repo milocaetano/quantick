@@ -1,0 +1,111 @@
+{
+  "$defs": {
+    "AnnotationAnchor": {
+      "additionalProperties": false,
+      "description": "One anchor, in the coordinates the cursor and the chart window report:\nmarket time and price. Screen pixels are deliberately not accepted — they\nmean nothing a frame later, and an agent that read a bar knows its time.",
+      "properties": {
+        "price": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "time_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        }
+      },
+      "required": [
+        "time_unix_ms",
+        "price"
+      ],
+      "type": "object"
+    },
+    "AnnotationTarget": {
+      "additionalProperties": false,
+      "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
+      "properties": {
+        "pane_side": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PaneSideDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The pane within that tab. Omitted: the pane drawings go to."
+        },
+        "tab_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The tab, by the id every snapshot reports. Omitted: the active tab."
+        }
+      },
+      "type": "object"
+    },
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What a label, an arrow or a zone takes. The anchor count is the tool's\n(one for a label, two for an arrow and a zone) and is checked against the\nregistry rather than restated here.",
+  "properties": {
+    "anchors": {
+      "items": {
+        "$ref": "#/$defs/AnnotationAnchor"
+      },
+      "maxItems": 2,
+      "minItems": 1,
+      "type": "array"
+    },
+    "name": {
+      "description": "The name the object manager and the inspector show.",
+      "maxLength": 120,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "target": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AnnotationTarget"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "text": {
+      "description": "The words a label carries. Ignored by the tools that have none.",
+      "maxLength": 280,
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "anchors"
+  ],
+  "title": "AnnotationInput",
+  "type": "object"
+}

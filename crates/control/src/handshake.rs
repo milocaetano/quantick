@@ -12,10 +12,11 @@ use crate::{
     error::{ControlError, codes},
     id::{ConnectionId, InstanceId, PermissionId, PrincipalId, ProcessNonce, ProfileId},
     limits::{
-        CONTROL_CLIENT_NAME_MAX_BYTES, CONTROL_DEFAULT_PAGE_ITEMS, CONTROL_ID_MAX_BYTES,
-        CONTROL_MAX_JSON_DEPTH, CONTROL_MAX_PAGE_ITEMS, CONTROL_MAX_REQUEST_BYTES,
-        CONTROL_MAX_RESPONSE_BYTES, CONTROL_MAX_STRING_BYTES, CONTROL_PROTOCOL_MAX_FRAME_BYTES,
-        CONTROL_REQUEST_TIMEOUT_MS, CONTROL_TOKEN_BYTES, CONTROL_WAIT_TIMEOUT_MAX_MS,
+        CONTROL_CLIENT_NAME_MAX_BYTES, CONTROL_DEFAULT_PAGE_ITEMS, CONTROL_HANDSHAKE_MAX_SCOPES,
+        CONTROL_ID_MAX_BYTES, CONTROL_MAX_JSON_DEPTH, CONTROL_MAX_PAGE_ITEMS,
+        CONTROL_MAX_REQUEST_BYTES, CONTROL_MAX_RESPONSE_BYTES, CONTROL_MAX_STRING_BYTES,
+        CONTROL_PROTOCOL_MAX_FRAME_BYTES, CONTROL_REQUEST_TIMEOUT_MS, CONTROL_TOKEN_BYTES,
+        CONTROL_WAIT_TIMEOUT_MAX_MS,
     },
 };
 
@@ -264,6 +265,7 @@ pub struct HandshakeRequest {
     pub client_version: String,
     pub bearer_token: BearerToken,
     pub requested_profile: ProfileId,
+    #[schemars(length(max = CONTROL_HANDSHAKE_MAX_SCOPES))]
     pub requested_scopes: BTreeSet<PermissionId>,
 }
 
@@ -281,6 +283,24 @@ pub struct HandshakeResponse {
     pub effective_profile: ProfileId,
     pub effective_scopes: BTreeSet<PermissionId>,
     pub effective_limits: ProtocolLimits,
+}
+
+/// First server frame: an accepted response in the ADR's direct shape, or a
+/// redacted structured error before the connection closes.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum HandshakeReply {
+    Accepted(HandshakeResponse),
+    Rejected { error: ControlError },
+}
+
+impl HandshakeReply {
+    pub fn into_accepted(self) -> Result<HandshakeResponse, ControlError> {
+        match self {
+            Self::Accepted(response) => Ok(response),
+            Self::Rejected { error } => Err(error),
+        }
+    }
 }
 
 impl HandshakeResponse {
@@ -375,6 +395,11 @@ pub fn accept_handshake(
     validate_version_label("client version", &request.client_version)?;
     validate_version_label("application version", &grant.application_version)?;
     validate_version_label("application commit", &grant.application_commit)?;
+    if request.requested_scopes.len() > CONTROL_HANDSHAKE_MAX_SCOPES {
+        return Err(ControlError::invalid_request(
+            "handshake requested more scopes than the reviewed limit",
+        ));
+    }
 
     let requested_ceiling = authority
         .permission_ceiling(&request.requested_profile)
