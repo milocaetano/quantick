@@ -21,6 +21,9 @@ use crate::{
 
 const TOKEN_BASE64URL_LENGTH: usize = 43;
 
+/// Current Quantick control protocol version supported by this build.
+pub const CURRENT_PROTOCOL_VERSION: u32 = 1;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ProtocolVersionRange {
     #[serde(rename = "protocol_min")]

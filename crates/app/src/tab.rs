@@ -1537,7 +1537,7 @@ impl Tab {
                 // the new cut and have to be re-derived from the market time
                 // each anchor carries.
                 let old_slots = pane.slots();
-                pane.state.set_spec(desired);
+                pane.set_spec(desired);
                 // The venue prefix folds to the new interval before the view
                 // is reanchored: the market time the user was looking at has
                 // to resolve against the series they will be looking at.

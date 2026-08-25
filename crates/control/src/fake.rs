@@ -26,7 +26,7 @@ use crate::{
     },
 };
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub use crate::handshake::CURRENT_PROTOCOL_VERSION as PROTOCOL_VERSION;
 pub const COUNTER_READ: &str = "fake.counter.read";
 pub const COUNTER_SET: &str = "fake.counter.set";
 pub const ECHO: &str = "extension.echo";

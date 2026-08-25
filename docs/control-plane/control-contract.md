@@ -579,7 +579,7 @@ a hard limit requires a reviewed contract change and threat-model check.
 | `CONTROL_CLIENT_BURST` | 40 | default | Short per-client burst |
 | `CONTROL_NOTIFICATION_RATE_PER_MINUTE` | 6 | default | Bound visible or audible interruptions per client |
 | `CONTROL_NOTIFICATION_BURST` | 2 | hard | Prevent notification floods within one moment |
-| `CONTROL_UI_BUDGET_US` | 1,000 | default | Maximum control work in one frame |
+| `CONTROL_UI_BUDGET_US` | 250 | default | Maximum control work in one frame; calibrated in PR 2 against a 28 us core-capture p99 |
 | `CONTROL_EVENT_JOURNAL_CAPACITY` | 8,192 | default | Bound semantic event memory |
 | `CONTROL_EVENT_MAX_BYTES` | 64 KiB | hard | Force large event data into a resource |
 | `CONTROL_EVENT_JOURNAL_MAX_BYTES` | 32 MiB | hard | Bound the journal even when events vary in size |
@@ -613,6 +613,9 @@ bounded capture scopes. It never suspends one coherent capture across frames.
 Page and scope limits must keep each indivisible capture below the budget; an
 unexpected overrun is telemetry and a performance-test failure, not permission
 to return a mixed-revision response.
+
+PR 2 calibrated the default against the shared-host method and core-scope
+capture benchmark in [PR 2 observer performance evidence](pr2-performance.md).
 
 ## 11. Replay determinism decision
 
@@ -751,7 +754,6 @@ fixed by PR 0:
 - the Rust MCP SDK, if any;
 - optional Streamable HTTP support;
 - named pipes or Unix domain sockets as an additional gateway transport;
-- the final measured value of the per-frame budget below its 1 ms opening cap;
 - compression format for evidence resources;
 - remote authentication and every live-trading policy.
 
