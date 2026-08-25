@@ -191,16 +191,25 @@ impl VolumeProfile {
     /// `fraction` of [`total_volume`](Self::total_volume).
     ///
     /// Expansion follows the Sierra Chart / CQG convention: starting at the
-    /// POC, compare the combined volume of the next **two** printed rows above
-    /// against the next two below (a side with fewer rows left contributes
-    /// what it has; an exhausted side contributes zero and the other side is
-    /// taken), and expand into the larger pair. An exact tie expands
-    /// **downward**, consistent with the POC's own tie-toward-lowest rule.
-    /// Within the chosen pair rows are added one at a time and expansion stops
-    /// as soon as the fraction is captured, so the area is minimal.
+    /// POC, compare the combined volume of the next **two** price-adjacent
+    /// buckets above against the next two below, and expand into the larger
+    /// pair. Buckets where nothing traded contribute zero volume, so a pair
+    /// facing a price gap competes with what actually sits behind it — an
+    /// isolated cluster far above the POC no longer outbids a printed row
+    /// directly below it just because the gap between them is free to cross.
+    /// An exact tie expands **downward**, consistent with the POC's own
+    /// tie-toward-lowest rule. Within the chosen pair, buckets are taken one
+    /// at a time and expansion stops as soon as the fraction is captured, so
+    /// the area is minimal.
     ///
-    /// Rows are the profile's *printed* buckets — price gaps where nothing
-    /// traded are not filled in and cost nothing to cross.
+    /// A side whose pair is entirely inside a gap is only ever chosen when the
+    /// other side is exhausted — the remaining volume then genuinely sits
+    /// beyond the gap, and expansion jumps to that side's next printed row
+    /// (this keeps a `fraction ≥ 1` covering every printed row, and keeps the
+    /// loop bounded by printed rows, not by price distance).
+    ///
+    /// [`vah`](ValueArea::vah) and [`val`](ValueArea::val) are always printed
+    /// buckets — empty buckets crossed on the way are never reported as edges.
     ///
     /// `None` on an empty profile. `fraction` is the caller's convention
     /// (0.70 is the classic); a fraction ≥ 1 covers every printed row.
@@ -215,44 +224,73 @@ impl VolumeProfile {
         // The POC came from these same rows; position lookup cannot fail.
         let poc_idx = rows.iter().position(|&(bucket, _)| bucket == poc)?;
 
+        // Volume printed at exactly `bucket`, zero when nothing traded there.
+        let vol_at = |bucket: i64| -> Decimal {
+            rows.binary_search_by_key(&bucket, |&(b, _)| b)
+                .map(|idx| rows[idx].1)
+                .unwrap_or(Decimal::ZERO)
+        };
+
         let target = self.total_volume().saturating_mul(fraction);
         let mut lo = poc_idx;
         let mut hi = poc_idx;
         let mut captured = rows[poc_idx].1;
 
         while captured < target && (lo > 0 || hi + 1 < rows.len()) {
-            let pair_above = row_volume(&rows, hi + 1).saturating_add(row_volume(&rows, hi + 2));
+            let above_exhausted = hi + 1 >= rows.len();
+            let pair_above = if above_exhausted {
+                Decimal::ZERO
+            } else {
+                vol_at(rows[hi].0 + 1).saturating_add(vol_at(rows[hi].0 + 2))
+            };
             let pair_below = if lo == 0 {
                 Decimal::ZERO
             } else {
-                row_volume(&rows, lo - 1).saturating_add(if lo >= 2 {
-                    rows[lo - 2].1
-                } else {
-                    Decimal::ZERO
-                })
+                vol_at(rows[lo].0 - 1).saturating_add(vol_at(rows[lo].0 - 2))
             };
             let take_below = if lo == 0 {
                 false
-            } else if hi + 1 >= rows.len() {
+            } else if above_exhausted {
                 true
             } else {
                 pair_below >= pair_above
             };
 
             if take_below {
-                for _ in 0..lo.min(2) {
+                if pair_below == Decimal::ZERO {
+                    // Both buckets of the pair are inside a gap: this side was
+                    // only chosen because the other is exhausted, so the
+                    // volume still owed sits beyond the gap — jump to the
+                    // next printed row rather than crawling the price axis.
                     lo -= 1;
                     captured = captured.saturating_add(rows[lo].1);
-                    if captured >= target {
-                        break;
+                } else {
+                    let edge = rows[lo].0;
+                    for want in [edge - 1, edge - 2] {
+                        if lo > 0 && rows[lo - 1].0 == want {
+                            lo -= 1;
+                            captured = captured.saturating_add(rows[lo].1);
+                            if captured >= target {
+                                break;
+                            }
+                        }
+                        // `want` not printed: a gap bucket adds nothing and
+                        // is not an edge; keep scanning the pair.
                     }
                 }
+            } else if pair_above == Decimal::ZERO {
+                // Mirror of the gap jump below.
+                hi += 1;
+                captured = captured.saturating_add(rows[hi].1);
             } else {
-                for _ in 0..(rows.len() - 1 - hi).min(2) {
-                    hi += 1;
-                    captured = captured.saturating_add(rows[hi].1);
-                    if captured >= target {
-                        break;
+                let edge = rows[hi].0;
+                for want in [edge + 1, edge + 2] {
+                    if hi + 1 < rows.len() && rows[hi + 1].0 == want {
+                        hi += 1;
+                        captured = captured.saturating_add(rows[hi].1);
+                        if captured >= target {
+                            break;
+                        }
                     }
                 }
             }
@@ -290,10 +328,6 @@ fn fold_bucket(bucket: i64, shift: u32) -> i64 {
     } else {
         bucket.div_euclid(1i64 << shift)
     }
-}
-
-fn row_volume(rows: &[(i64, Decimal)], idx: usize) -> Decimal {
-    rows.get(idx).map(|&(_, v)| v).unwrap_or(Decimal::ZERO)
 }
 
 #[cfg(test)]
@@ -560,6 +594,81 @@ mod tests {
                 poc: 12,
                 vah: 20,
                 val: 10
+            }
+        );
+    }
+
+    #[test]
+    fn value_area_does_not_annex_clusters_across_price_gaps() {
+        // Issue #156's reproduction. 21 units total, 70% needs 14.7. The old
+        // printed-row pairing saw the isolated cluster at 500 as "the next row
+        // above 102" and dragged the VAH 400 buckets up — while leaving out
+        // the row at 100 holding 4x the volume of the row it included.
+        let profile = profile_of(&[
+            ("100", "4", "0"),
+            ("101", "10", "0"),
+            ("102", "1", "0"),
+            ("500", "6", "0"),
+        ]);
+        let area = profile.value_area(dec("0.70")).unwrap();
+        assert_eq!(
+            area,
+            ValueArea {
+                poc: 101,
+                vah: 102,
+                val: 100
+            }
+        );
+    }
+
+    #[test]
+    fn value_area_gap_side_loses_to_a_printed_neighbor() {
+        // The pair above the POC is pure gap; the row directly below wins the
+        // comparison even though the far cluster holds more volume than it.
+        let profile = profile_of(&[("100", "4", "0"), ("101", "10", "0"), ("500", "6", "0")]);
+        // 70% of 20 is 14: POC (10) + the row at 100 (4) completes it.
+        let area = profile.value_area(dec("0.70")).unwrap();
+        assert_eq!(
+            area,
+            ValueArea {
+                poc: 101,
+                vah: 101,
+                val: 100
+            }
+        );
+    }
+
+    #[test]
+    fn value_area_pair_scans_past_a_hole_to_its_printed_second_bucket() {
+        // Below the POC the pair is (99: gap, 98: printed) — the pair's
+        // volume sits in its second bucket and must still be reachable.
+        let profile = profile_of(&[("98", "6", "0"), ("100", "10", "0"), ("101", "2", "0")]);
+        // 70% of 18 is 12.6: POC (10), pair below (6) beats pair above (2),
+        // 99 is skipped as a gap and 98 completes the fraction.
+        let area = profile.value_area(dec("0.70")).unwrap();
+        assert_eq!(
+            area,
+            ValueArea {
+                poc: 100,
+                vah: 100,
+                val: 98
+            }
+        );
+    }
+
+    #[test]
+    fn value_area_terminates_across_an_astronomical_gap() {
+        // The loop must be bounded by printed rows, not by price distance:
+        // covering everything requires crossing a billion-bucket gap, and the
+        // jump must land on the printed row in one step.
+        let profile = profile_of(&[("0", "10", "0"), ("1000000000", "3", "0")]);
+        let area = profile.value_area(dec("1")).unwrap();
+        assert_eq!(
+            area,
+            ValueArea {
+                poc: 0,
+                vah: 1_000_000_000,
+                val: 0
             }
         );
     }
