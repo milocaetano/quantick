@@ -87,6 +87,11 @@ pub struct FrvpCache {
     pub empty: Option<FrvpEmpty>,
     /// Bars whose ladders went into the fold (the partial counts once).
     pub bars_covered: usize,
+    /// The same count without the forming bar — the part the fold itself
+    /// holds. The forming bar joins a *copy* of the fold every time its
+    /// ladder is re-snapshotted, so its contribution is re-derived rather
+    /// than accumulated, and this is the base it is re-derived from.
+    pub closed_covered: usize,
     /// Bars folded from an **approximated** ladder — venue candles with no
     /// tape, their volume spread over their own high–low. Spoken by the
     /// status line, never blended away.
@@ -108,11 +113,16 @@ pub struct FrvpCache {
     /// paint cuts from fill to silhouette. Presentation state beside the
     /// key: the map's boundary moving must never re-merge the fold.
     pub heat_first_slot: Option<usize>,
-    /// The fold still running over this range, `None` once it has reached the
-    /// last bar. While it is `Some`, [`profile`](Self::profile) holds the
-    /// profile of the bars folded *so far* — real data, just not all of it —
-    /// and the status line says how many are still to come. A range too long
-    /// to fold in one frame is drawn filling rather than not drawn at all.
+    /// Whether the fold has bars left to reach. While it is true,
+    /// [`profile`](Self::profile) holds the profile of the bars folded *so
+    /// far* — real data, just not all of it — and the status line says how
+    /// many are still to come. A range too long to fold in one frame is drawn
+    /// filling rather than not drawn at all.
+    pub folding: bool,
+    /// The fold over the range's **closed** bars, kept after it finishes: the
+    /// forming bar is added to a copy of it whenever its ladder moves, which
+    /// is what keeps a live edge from re-folding the range ten times a
+    /// second. `None` only when the range reaches no bar at all.
     pub job: Option<crate::frvp::FoldJob>,
 }
 
@@ -142,6 +152,22 @@ pub struct FrvpCacheKey {
     /// (see [`FrvpCache::bars_partly_covered`]). In the key so dragging off that bar
     /// clears the caveat and dragging back onto it restores it.
     pub partly_covered: bool,
+}
+
+impl FrvpCacheKey {
+    /// Whether both keys describe the same fold of **closed** bars — every
+    /// field but the forming bar's snapshot.
+    ///
+    /// The forming bar is the one input that moves without anything else
+    /// moving, several times a second. Telling that case apart is what lets
+    /// the closed fold stand while only the live edge is re-derived.
+    #[must_use]
+    pub fn same_fold(&self, other: &Self) -> bool {
+        Self {
+            partial_snapshot: other.partial_snapshot,
+            ..*self
+        } == *other
+    }
 }
 
 /// The versioned on-disk shape of a saved preset. Coordinates and cache never
@@ -371,7 +397,7 @@ fn status_line(
         // no seam, and its first bar is short all the same.
         status.push_str(" · first tape bar partly covered");
     }
-    if cache.job.is_some() {
+    if cache.folding {
         // Still folding. The histogram on screen is honest about the bars it
         // has and says nothing about the ones it does not — reading it as the
         // whole range would be reading a number that is still moving, so the
@@ -480,6 +506,26 @@ fn clamped_label_x(preferred_x: f32, width: f32, bounds: egui::Rect) -> f32 {
     (preferred_x.min(bounds.right() - width)).max(bounds.left())
 }
 
+/// The same clamp down the price axis, and for the same reason.
+///
+/// The status line hangs under the object's own bottom, and a profile's bottom
+/// is where its *data* ends — a range folding a long history spans more price
+/// than the window shows, so the line was painted below the pane and every
+/// caveat on it went with it. That is worst exactly where it matters most: the
+/// longest ranges are the ones that fold in stages, and the ones whose
+/// coverage is partial.
+///
+/// Only clamped while some part of the object is on screen: a profile scrolled
+/// entirely out of view keeps its label out of view too, because a caption
+/// with no object under it names something the trader cannot see.
+fn clamped_label_y(preferred_y: f32, span: (f32, f32), height: f32, bounds: egui::Rect) -> f32 {
+    let (top, bottom) = span;
+    if bottom < bounds.top() || top > bounds.bottom() {
+        return preferred_y;
+    }
+    (preferred_y.min(bounds.bottom() - height)).max(bounds.top())
+}
+
 /// Lays the text out exactly as many times as [`knockout_text`] does — the
 /// clamp reads its width off the galley it is about to paint, so keeping the
 /// label on screen costs no extra layout on the per-frame path.
@@ -489,13 +535,15 @@ fn knockout_text_within(
     text: &str,
     color: egui::Color32,
     bounds: egui::Rect,
+    object_span: (f32, f32),
 ) {
     let font = egui::FontId::proportional(LABEL_SIZE_PX);
     let ink_galley = painter.layout_no_wrap(text.to_owned(), font.clone(), color);
     let casing_galley = painter.layout_no_wrap(text.to_owned(), font, CASING);
     let x = clamped_label_x(pos.x, ink_galley.size().x, bounds);
+    let y = clamped_label_y(pos.y, object_span, ink_galley.size().y, bounds);
     let corner = egui::Align2::LEFT_TOP
-        .anchor_size(egui::pos2(x, pos.y), ink_galley.size())
+        .anchor_size(egui::pos2(x, y), ink_galley.size())
         .min;
     for offset in [
         egui::vec2(-1.0, 0.0),
@@ -932,15 +980,15 @@ impl DrawingToolImpl for FixedRangeProfile {
                     }
                 }
             }
-            (None, Some(cache)) => status.push_str(&match (&cache.job, cache.empty) {
+            (None, Some(cache)) => status.push_str(&match (cache.folding, cache.empty) {
                 // A fold that has not reached a bar with tape yet has nothing
                 // to draw *yet* — which is not the same as a range with
                 // nothing in it, and must not borrow that sentence.
-                (Some(_), _) => {
+                (true, _) => {
                     format!("folding {} of {} bars", cache.bars_folded, cache.bars_total)
                 }
-                (None, Some(FrvpEmpty::Blocked)) => "feed reports no traded volume".to_owned(),
-                (None, _) => "no tape in range".to_owned(),
+                (false, Some(FrvpEmpty::Blocked)) => "feed reports no traded volume".to_owned(),
+                (false, _) => "no tape in range".to_owned(),
             }),
             // Not refreshed yet (first frame of a fresh object): say nothing
             // rather than guessing. A profile without a cache cannot exist —
@@ -954,6 +1002,7 @@ impl DrawingToolImpl for FixedRangeProfile {
                 &status,
                 theme::TEXT_MUTED,
                 chart_rect,
+                (top, bottom),
             );
         }
     }
@@ -1228,12 +1277,23 @@ mod tests {
             profile: None,
             empty: None,
             bars_covered: covered,
+            closed_covered: covered,
             bars_approximated: approximated,
             bars_partly_covered: 0,
             bars_folded: total,
             bars_total: total,
             heat_first_slot: None,
-            job: None,
+            folding: false,
+            // A finished fold *keeps* its job — that is how the forming bar
+            // rejoins without a re-fold — so the helper carries one too. A
+            // cache with no job at all is not a state the refresh produces
+            // for a range that reached bars, and a test built on one would
+            // pass while the paint read the wrong field.
+            job: Some(crate::frvp::FoldJob::over(
+                Decimal::ONE,
+                0,
+                total.saturating_sub(1),
+            )),
         }
     }
 
@@ -1241,6 +1301,7 @@ mod tests {
     /// running over the rest.
     fn folding_cache(total: usize, folded: usize) -> FrvpCache {
         FrvpCache {
+            folding: true,
             bars_folded: folded,
             job: Some(crate::frvp::FoldJob::over(Decimal::ONE, folded, total - 1)),
             ..cache_for(total, folded, 0)
@@ -1367,6 +1428,29 @@ mod tests {
         assert_eq!(clamped_label_x(400.0, 1000.0, bounds), 100.0);
         // Never dragged left of the pane by a range anchored off-screen.
         assert_eq!(clamped_label_x(-50.0, 200.0, bounds), 100.0);
+    }
+
+    /// The same rule down the price axis. A profile folding a long history
+    /// spans more price than the window shows, so its bottom — and the whole
+    /// caveat line hanging off it — used to sit below the pane. The label
+    /// follows the object into view; an object entirely out of view keeps its
+    /// label out with it.
+    #[test]
+    fn a_label_under_a_taller_than_the_window_profile_slides_into_view() {
+        let bounds = egui::Rect::from_min_max(egui::pos2(100.0, 0.0), egui::pos2(900.0, 400.0));
+        // Object crossing the pane, label below the bottom edge: slid up so
+        // it ends exactly on it.
+        assert_eq!(clamped_label_y(900.0, (-500.0, 880.0), 12.0, bounds), 388.0);
+        // Comfortably inside: left alone.
+        assert_eq!(clamped_label_y(200.0, (150.0, 260.0), 12.0, bounds), 200.0);
+        // The object is entirely below the pane: no caption for something
+        // that is not on screen.
+        assert_eq!(clamped_label_y(900.0, (500.0, 880.0), 12.0, bounds), 900.0);
+        // And entirely above it.
+        assert_eq!(
+            clamped_label_y(-100.0, (-500.0, -120.0), 12.0, bounds),
+            -100.0
+        );
     }
 
     /// The developing mode's live edge lands on the newest covered slot's
@@ -1557,11 +1641,13 @@ mod tests {
                 profile: None,
                 empty: Some(FrvpEmpty::NoTape),
                 bars_covered: 0,
+                closed_covered: 0,
                 bars_approximated: 0,
                 bars_partly_covered: 0,
                 bars_folded: 5,
                 bars_total: 5,
                 heat_first_slot: None,
+                folding: false,
                 job: None,
             }),
         };

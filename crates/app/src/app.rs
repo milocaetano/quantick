@@ -8482,7 +8482,31 @@ impl QuantickApp {
         if !self.pending_frvp_demo {
             return;
         }
-        let slots = self.active_tab_mut().flow_pane.slots();
+        // `=compare` places two adjacent profiles over the same stretch of
+        // map, one in each over-heatmap mode — the before/after of the
+        // silhouette decision in a single frame, which no toggle-and-wait
+        // pair of screenshots can prove as cleanly.
+        let mode = std::env::var("QUANTICK_FRVP_DEMO").unwrap_or_default();
+        let compare = mode.trim() == "compare";
+        let stress = mode.trim() == "stress";
+        // The venue's candles land on the **time** pane — that is the chart
+        // whose history runs to tens of thousands of bars, and the one a
+        // trader drops a session profile on. Every other scene stays on the
+        // flow pane, where the tape and the map are.
+        let side = if stress {
+            pane::PaneSide::Time
+        } else {
+            pane::PaneSide::Flow
+        };
+        // The time pane is built the first time the split is shown, and
+        // `pane_mut` answers with the flow pane until it is. Waiting is the
+        // only honest option here: a stress scene photographed on the tape
+        // pane would be a picture of twenty bars captioned as twenty-five
+        // thousand.
+        if stress && self.active_tab_mut().time_pane.is_none() {
+            return;
+        }
+        let slots = self.active_tab_mut().pane_mut(side).slots();
         if slots < 12 {
             return;
         }
@@ -8493,19 +8517,13 @@ impl QuantickApp {
         else {
             return;
         };
-        // `=compare` places two adjacent profiles over the same stretch of
-        // map, one in each over-heatmap mode — the before/after of the
-        // silhouette decision in a single frame, which no toggle-and-wait
-        // pair of screenshots can prove as cleanly.
-        let mode = std::env::var("QUANTICK_FRVP_DEMO").unwrap_or_default();
-        let compare = mode.trim() == "compare";
         // `=stress` is the scene this object used to freeze the app on: a
         // venue history longer than any single fold pass, with one profile
         // over the whole of it. What it photographs is the *filling* state —
         // a partial histogram and its `folding N of M bars` line — which is
         // only a state at all because the fold is resumable. Pair it with
         // QUANTICK_FRVP_FOLD_BUDGET=1 to hold that frame indefinitely.
-        if mode.trim() == "stress" {
+        if stress {
             self.deliver_synthetic_prefix(
                 FRVP_STRESS_CANDLES,
                 crate::feed::OhlcvSlice::Last { complete: true },
@@ -8513,8 +8531,8 @@ impl QuantickApp {
         }
         // Re-read after the delivery: the prefix that just landed is part of
         // the chart the range is about to span.
-        let slots = self.active_tab_mut().flow_pane.slots();
-        let prefix = self.active_tab_mut().flow_pane.history_prefix.len();
+        let slots = self.active_tab_mut().pane_mut(side).slots();
+        let prefix = self.active_tab_mut().pane_mut(side).history_prefix.len();
         // The compare scene exists to photograph profiles *over the map*, and
         // the map only covers bars closed after book capture began — the
         // session's earliest bars never get cells. So it waits for enough
@@ -8523,7 +8541,7 @@ impl QuantickApp {
             self.pending_frvp_demo = true;
             return;
         }
-        let pane = &mut self.active_tab_mut().flow_pane;
+        let pane = self.active_tab_mut().pane_mut(side);
         // Straddle the seam when there is one; else the newest stretch.
         let start = if prefix > 0 && prefix < slots {
             prefix.saturating_sub(5)
@@ -8536,7 +8554,7 @@ impl QuantickApp {
             .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
             .unwrap_or(1.0);
         let newest = slots - 1;
-        let ranges: &[(usize, usize, bool)] = if mode.trim() == "stress" {
+        let ranges: &[(usize, usize, bool)] = if stress {
             // The whole chart, oldest slot to newest: the range a trader
             // drags when they want the session's own volume-by-price, and the
             // one that used to take the window with it.

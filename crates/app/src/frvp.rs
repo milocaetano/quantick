@@ -35,16 +35,18 @@ pub const TOOL_ID: &str = "fixed-range-profile";
 /// The unit is "one map touch": a venue candle joins as a *range* whatever
 /// its width ([`ProfileFold::push_candle`]), while a tape bar costs one touch
 /// per row it printed. At the ~1.3 µs per candle the engine's `profile_fold`
-/// bench measures, this budget is a few milliseconds of a 16 ms frame in the
-/// worst case, and a tape bar's rows are cheaper still — so the number is
-/// deliberately conservative rather than tuned to the edge.
+/// bench measures, this budget is about 2 ms — and 2 ms is chosen against the
+/// frame it has to share, not against the 16.7 ms one in the abstract: the
+/// scene this exists for is a chart carrying a hundred thousand candles and a
+/// liquidity map, which already spends ten. A budget of 4 000 measured
+/// `fps 53 · frame 18.9 ms` there; this one leaves the frame intact.
 ///
 /// A range longer than the budget simply takes more passes: 25 000 candles
-/// fill in about seven, a fifth of a second, with a profile on screen from
-/// the first one. Raising it buys a faster fill and a longer frame; lowering
-/// it buys the reverse. Never zero — a zero budget would fold nothing,
-/// forever.
-pub const DEFAULT_FOLD_BUDGET: usize = 4_000;
+/// fill in about seventeen, a third of a second, with a profile on screen
+/// from the first one. Raising it buys a faster fill and a longer frame;
+/// lowering it buys the reverse. Never zero — a zero budget would fold
+/// nothing, forever.
+pub const DEFAULT_FOLD_BUDGET: usize = 1_500;
 
 /// The budget this process folds at: [`DEFAULT_FOLD_BUDGET`], or whatever
 /// `QUANTICK_FRVP_FOLD_BUDGET` names.
@@ -70,11 +72,13 @@ pub fn fold_budget() -> usize {
     })
 }
 
-/// A fold in progress: where it got to, and the engine-side accumulator it
-/// got there with.
+/// A range's fold of **closed** bars: where it got to, and the engine-side
+/// accumulator it got there with.
 ///
-/// Held on the [`FrvpCache`] beside the profile it is building. `None` there
-/// means the fold is finished and the profile is the whole range's.
+/// Held on the [`FrvpCache`] beside the profile it is building, and kept
+/// after it finishes — the forming bar joins a *copy* of it whenever the live
+/// edge moves, which is cheaper than re-folding the range and is the only
+/// reason a long range survives a running tape.
 #[derive(Debug, Clone)]
 pub struct FoldJob {
     fold: ProfileFold,
@@ -272,16 +276,30 @@ fn refresh_one(
         approximate: payload.approximate_history,
         partly_covered,
     };
-    if let Some(cache) = payload.cache.as_mut().filter(|cache| cache.key == key) {
-        // Key hit: the fold is current, or still running. Presentation state
-        // follows the frame either way — the map's boundary moves without
-        // invalidating anything already folded.
-        cache.heat_first_slot = inputs.heat_first_slot;
-        if cache.job.is_none() {
+    if let Some(cache) = payload.cache.as_mut() {
+        if cache.key == key {
+            // Key hit: the fold is current, or still running. Presentation
+            // state follows the frame either way — the map's boundary moves
+            // without invalidating anything already folded.
+            cache.heat_first_slot = inputs.heat_first_slot;
+            if !cache.folding {
+                return false;
+            }
+            advance(cache, payload.value_area_pct, inputs);
+            return cache.folding;
+        }
+        // Only the forming bar moved. Its ladder is re-snapshotted about ten
+        // times a second, and re-folding the range at that cadence is a
+        // treadmill a long range never gets off — the fold would restart
+        // before it ever finished. The closed bars did not move, so their
+        // fold stands: the forming bar joins a *copy* of it instead, which
+        // costs one ladder rather than the range.
+        if cache.key.same_fold(&key) && !cache.folding {
+            cache.key = key;
+            cache.heat_first_slot = inputs.heat_first_slot;
+            derive(cache, payload.value_area_pct, inputs);
             return false;
         }
-        advance(cache, payload.value_area_pct, inputs);
-        return cache.job.is_some();
     }
 
     if inputs.blocked {
@@ -290,43 +308,57 @@ fn refresh_one(
             profile: None,
             empty: Some(FrvpEmpty::Blocked),
             bars_covered: 0,
+            closed_covered: 0,
             bars_approximated: 0,
             bars_partly_covered: 0,
             bars_folded: 0,
             bars_total,
             heat_first_slot: inputs.heat_first_slot,
+            folding: false,
             job: None,
         });
         return false;
     }
 
-    // A fresh range: open a fold over it and spend this pass's budget on it.
-    // Nothing is folded eagerly here — `advance` is the only place bars enter
-    // a profile, so one budget governs the first pass and every later one.
-    let job = span.map(|(start, end)| FoldJob::over(inputs.state.footprint_group(), start, end));
+    // A fresh range: open a fold over its **closed** bars and spend this
+    // pass's budget on it. Nothing is folded eagerly here — `advance` is the
+    // only place bars enter a profile, so one budget governs the first pass
+    // and every later one. The forming bar is not part of the fold at all;
+    // `derive` adds it to a copy, every time it moves.
+    let job = span.map(|(start, end)| {
+        let last_closed = if include_partial {
+            end.saturating_sub(1)
+        } else {
+            end
+        };
+        FoldJob::over(inputs.state.footprint_group(), start, last_closed)
+    });
     let mut cache = FrvpCache {
         key,
         profile: None,
         empty: job.is_none().then_some(FrvpEmpty::NoTape),
         bars_covered: 0,
+        closed_covered: 0,
         bars_approximated: 0,
         bars_partly_covered: usize::from(partly_covered),
         bars_folded: 0,
         bars_total,
         heat_first_slot: inputs.heat_first_slot,
+        folding: job.is_some(),
         job,
     };
     advance(&mut cache, payload.value_area_pct, inputs);
-    let folding = cache.job.is_some();
+    let folding = cache.folding;
     payload.cache = Some(cache);
     folding
 }
 
-/// Spend one pass's [`fold_budget`] on `cache`'s fold, then re-read it.
+/// Spend one pass's [`fold_budget`] on `cache`'s closed-bar fold, then read
+/// the profile out of it.
 ///
-/// The re-read is a snapshot of *what has been folded so far* — a profile of
-/// the range's first N bars, not a guess at its last. That is what the paint
-/// is allowed to draw and the status line is obliged to qualify.
+/// The read is a snapshot of *what has been folded so far* — a profile of the
+/// range's first N bars, not a guess at its last. That is what the paint is
+/// allowed to draw and the status line is obliged to qualify.
 fn advance(cache: &mut FrvpCache, value_area_pct: u8, inputs: &RefreshInputs<'_>) {
     let Some(job) = cache.job.as_mut() else {
         return;
@@ -347,33 +379,57 @@ fn advance(cache: &mut FrvpCache, value_area_pct: u8, inputs: &RefreshInputs<'_>
                 cache.bars_approximated += 1;
             }
             spent += 1;
-        } else if slot < closed_total {
+        } else if let Some(ladder) = ladders
+            .get(slot - prefix_len)
+            .filter(|_| slot < closed_total)
+        {
             // A bar whose ladder printed nothing contributes nothing; it
             // still counts as covered — the tape answered "no trades", which
             // is data, not absence of data.
-            if let Some(ladder) = ladders.get(slot - prefix_len) {
-                job.fold.push_ladder(ladder);
-                cache.bars_covered += 1;
-                spent += ladder.levels().len().max(1);
-            }
-        } else if let Some(partial) = inputs.partial_ladder {
-            job.fold.push_ladder(partial);
-            cache.bars_covered += 1;
-            spent += partial.levels().len().max(1);
+            job.fold.push_ladder(ladder);
+            cache.closed_covered += 1;
+            spent += ladder.levels().len().max(1);
         }
         job.next += 1;
         cache.bars_folded += 1;
     }
+    cache.folding = job.next <= job.end;
+    derive(cache, value_area_pct, inputs);
+}
 
+/// Read the profile out of the closed-bar fold, with the forming bar added to
+/// a copy of it when the range reaches one.
+///
+/// Called once per fold pass, and again — on its own — every time the forming
+/// bar's ladder is re-snapshotted. That is the whole point of keeping the two
+/// apart: the live edge costs one ladder push and one read, never a re-fold.
+fn derive(cache: &mut FrvpCache, value_area_pct: u8, inputs: &RefreshInputs<'_>) {
+    let Some(job) = cache.job.as_ref() else {
+        return;
+    };
+    let partial = cache
+        .key
+        .include_partial
+        .then_some(inputs.partial_ladder)
+        .flatten();
+    let profile = match partial {
+        Some(partial) => {
+            let mut with_partial = job.fold.clone();
+            with_partial.push_ladder(partial);
+            with_partial.profile()
+        }
+        None => job.fold.profile(),
+    };
+    cache.bars_covered = cache.closed_covered + usize::from(partial.is_some());
     let fraction = Decimal::from(value_area_pct) / Decimal::ONE_HUNDRED;
-    cache.profile = job.fold.profile().map(|profile: VolumeProfile| {
+    cache.profile = profile.map(|profile: VolumeProfile| {
         let value_area: Option<ValueArea> = profile.value_area(fraction);
         (profile, value_area)
     });
-    if job.next > job.end {
-        // Folded to the end: the profile is the whole range's, and only now
-        // may an empty one be called empty.
-        cache.job = None;
+    if !cache.folding {
+        // Folded to the end: the profile is the whole range's, the forming
+        // bar included, and only now may an empty one be called empty.
+        cache.bars_folded = cache.bars_total;
         cache.empty = cache.profile.is_none().then_some(FrvpEmpty::NoTape);
     }
 }
@@ -655,10 +711,7 @@ mod tests {
         );
         let cache = cache_of(&drawings);
         assert_eq!(cache.bars_total, 25_003);
-        assert!(
-            cache.job.is_some(),
-            "the fold is still running after one pass"
-        );
+        assert!(cache.folding, "the fold is still running after one pass");
         assert!(
             cache.bars_approximated <= fold_budget(),
             "one pass folded {} candles, past the {} budget",
@@ -710,7 +763,7 @@ mod tests {
         }
 
         let cache = cache_of(&drawings);
-        assert!(cache.job.is_none(), "the fold finished");
+        assert!(!cache.folding, "the fold finished");
         assert_eq!(cache.bars_approximated, 25_000, "every venue candle joined");
         assert_eq!(cache.bars_covered, 3, "and the three tape bars");
         let (profile, value_area) = cache.profile.expect("the range folded");
@@ -748,8 +801,70 @@ mod tests {
             "the new range folded only its own candles, not the old range's"
         );
         assert!(
-            cache.job.is_none(),
+            !cache.folding,
             "a range inside one budget finishes in the pass that started it"
+        );
+    }
+
+    /// The forming bar's ladder is re-snapshotted about ten times a second.
+    /// Treating that as a new fold is a treadmill a long range never gets off
+    /// — the fold restarts before it can finish, so the profile stays stuck
+    /// at "folding" forever and the chart pays for the range every tenth of a
+    /// second. The closed bars did not move, so their fold stands and only
+    /// the live edge is re-derived.
+    #[test]
+    fn a_moving_forming_bar_never_refolds_the_range() {
+        let state = state_with_tape();
+        let partial = state.partial_footprint().expect("forming bar").clone();
+        let prefix: Vec<quantick_engine::Bar> = (0..25_000).map(venue_candle).collect();
+        let mut drawings = Drawings::default();
+        // Slot 25_003 is the forming bar; the anchor reaches past it and
+        // clamps onto it.
+        place_frvp(&mut drawings, 0.0, 25_004.0);
+        let first = RefreshInputs {
+            prefix: &prefix,
+            partial_ladder: Some(&partial),
+            partial_version: 1,
+            ..inputs(&state, false)
+        };
+        let mut passes = 0;
+        while refresh(&mut drawings, &first) {
+            passes += 1;
+            assert!(passes < 100, "the fold should converge");
+        }
+        let done = cache_of(&drawings);
+        assert!(!done.folding);
+        assert_eq!(done.bars_total, 25_004);
+        assert_eq!(
+            done.bars_covered, 4,
+            "three closed tape bars and the forming one"
+        );
+        // 25 000 candles of 4 units each, six units of closed tape, and the
+        // forming bar's single print.
+        let volume = done.profile.clone().expect("folded").0.total_volume();
+        assert_eq!(volume, dec("100007"));
+
+        // The live edge moves: same range, same closed bars, new snapshot.
+        let bumped = RefreshInputs {
+            prefix: &prefix,
+            partial_ladder: Some(&partial),
+            partial_version: 2,
+            ..inputs(&state, false)
+        };
+        assert!(
+            !refresh(&mut drawings, &bumped),
+            "a live-edge bump must not open a new fold"
+        );
+        let after = cache_of(&drawings);
+        assert_eq!(
+            after.bars_folded, done.bars_folded,
+            "not one bar was folded again"
+        );
+        assert_eq!(after.bars_approximated, 25_000);
+        assert_eq!(
+            after.profile.expect("still folded").0.total_volume(),
+            volume,
+            "and the forming bar is still in the profile"
         );
     }
 
