@@ -27485,6 +27485,19 @@ plot(close)
                 .is_empty(),
             "a refused mark leaves no event"
         );
+        // The recorded author is set for the handler and cleared after it. A
+        // refusal never reaches the handler, so it must leave nothing behind:
+        // a latched `HumanUi` author would sign the *next* action's object as
+        // the trader's own, which is the one claim the annotate tier cannot
+        // get wrong.
+        assert!(
+            app.control_access
+                .as_ref()
+                .unwrap()
+                .recorded_author()
+                .is_none(),
+            "a refused replay leaves no author to sign the next action"
+        );
     }
 
     #[test]

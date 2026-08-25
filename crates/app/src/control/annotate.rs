@@ -405,6 +405,11 @@ fn place(
             .place_with(tool, &DrawingBand::Price, point, |_| opening);
     }
     if !completed {
+        // The anchors that did land are sitting in a draft nobody owns. Left
+        // there, the pane reads as "the trader is drawing right now" for the
+        // rest of the session and every later annotation on it is refused —
+        // and a half-drawn object the trader never started is on their chart.
+        pane.drawings.cancel_draft();
         return Err(capability_unavailable(format!(
             "the `{}` tool did not complete from {required} anchor(s)",
             tool.name()
@@ -490,10 +495,10 @@ fn remove_annotation(
         // other object: the same sweep every removal path in the interface
         // does, so no resting simulated order outlives the mark it names.
         pane.sweep_strategy_orphans();
-        found = Some((tab_index, side, pane_id));
+        found = Some((tab_index, pane_id));
         break;
     }
-    let Some((tab_index, side, pane_id)) = found else {
+    let Some((tab_index, pane_id)) = found else {
         return serde_json::to_value(RemoveResult {
             annotation_id: input.annotation_id,
             tab_id: WireU64::new(0),
@@ -509,7 +514,6 @@ fn remove_annotation(
         pane_id: WireU64::new(pane_id),
         removed: true,
     };
-    let _ = side;
     journal_annotation(access, actor, ANNOTATION_REMOVED_EVENT_KIND, &result)?;
     serde_json::to_value(&result)
         .map_err(|error| ControlError::invalid_request(format!("removal result: {error}")))

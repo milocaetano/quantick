@@ -815,13 +815,6 @@ impl ControlAccess {
                 Some("replayed from the control trace".to_owned()),
             ),
         };
-        // A rerun attributes what it produces to the operator the recorded
-        // run named, so a replayed session carries the same authorship the
-        // original did. Cleared below, whatever the handler does.
-        self.replayed_author = match &origin {
-            ActionOrigin::TraceReplay(recorded) => Some((**recorded).clone()),
-            ActionOrigin::Human | ActionOrigin::Remote(_) => None,
-        };
         // What the caller asked becomes what will happen, before the intent
         // line is written: a trace entry names the bar that was marked, not
         // "wherever the pointer is". A replayed entry is already resolved and
@@ -900,6 +893,17 @@ impl ControlAccess {
             )
         })?;
 
+        // A rerun attributes what it produces to the operator the recorded
+        // run named, so a replayed session carries the same authorship the
+        // original did. Set here rather than earlier, and cleared immediately
+        // after: every refusal above returns without running a handler, and a
+        // stale author left behind would sign the *next* action's object with
+        // the recorded run's operator — or, when that operator was the trader,
+        // leave an agent's object carrying no author at all.
+        self.replayed_author = match &origin {
+            ActionOrigin::TraceReplay(recorded) => Some((**recorded).clone()),
+            ActionOrigin::Human | ActionOrigin::Remote(_) => None,
+        };
         let outcome = (action.handler)(app, self, &actor, &input).and_then(|result| {
             action
                 .output
@@ -1667,7 +1671,13 @@ impl ControlAccess {
                 ConnectionStatus::Disconnected(connection_id) => {
                     self.notification_limits.remove(&connection_id);
                     self.connections.remove(&connection_id);
-                    self.revoked_connections.remove(&connection_id);
+                    // The revocation is deliberately *not* lifted here.
+                    // Revoking closes the socket, which produces this very
+                    // status; clearing the id would let a request the revoked
+                    // client had already queued run on the drain that follows
+                    // in the same frame. Connection IDs are random per
+                    // connection, so a later client can never inherit one,
+                    // and the set is emptied when the gateway stops.
                 }
             }
             processed += 1;
@@ -3365,6 +3375,43 @@ mod tests {
             ..GatewayOptions::default()
         };
         assert!(options.validate().is_err());
+    }
+
+    #[test]
+    fn a_revoked_connection_stays_revoked_when_its_socket_closes() {
+        // Revoking closes the socket, so the disconnect it causes lands on the
+        // same frame as any request the revoked client had already queued.
+        // `poll_statuses` runs before `drain_bounded_since`, so lifting the
+        // revocation here would hand that request a clean bill of health and
+        // let it act. Connection IDs are random per connection, so keeping the
+        // id costs nothing: no later client can inherit it.
+        let mut access = ControlAccess::new();
+        let (_requests_tx, requests) = bounded(1);
+        let (statuses_tx, statuses) = bounded(1);
+        let (commands, _commands_rx) = bounded(1);
+        let connection_id = ConnectionId::from_bytes([7; 16]);
+        access.state = AccessState::Enabled(GatewayRuntime {
+            grant_generation: 0,
+            requests,
+            statuses,
+            commands,
+            cancellation: Arc::new(AtomicBool::new(false)),
+            public: GatewayPublicInfo {
+                instance_id: InstanceId::from_bytes([1; 16]),
+                port: 0,
+                descriptor_path: PathBuf::new(),
+                published_at_unix_ms: 0,
+            },
+        });
+        access.revoked_connections.insert(connection_id.clone());
+        statuses_tx
+            .try_send(ConnectionStatus::Disconnected(connection_id.clone()))
+            .unwrap();
+        access.poll_statuses(Instant::now());
+        assert!(
+            access.revoked_connections.contains(&connection_id),
+            "the revocation outlives the disconnect it caused"
+        );
     }
 
     #[test]

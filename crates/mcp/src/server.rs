@@ -55,16 +55,21 @@ impl McpServer {
     /// A server over one link, advertising the tool list for one profile
     /// ceiling. The ceiling is known when the adapter starts (contract §8).
     pub fn new(link: Box<dyn ControlLink>, profile_ceiling: &str) -> Self {
+        // The ceiling decides what the client is offered and what it is told;
+        // only the two the adapter can request are meaningful, and anything
+        // else is treated as the read-only floor. The tool list is built from
+        // the *same* normalized value as the instructions: an unrecognised
+        // ceiling that produced a destructive, open-world `quantick_invoke`
+        // beside instructions promising read-only would point the guardrail
+        // the wrong way.
+        let profile_ceiling = if profile_ceiling == ANNOTATOR_PROFILE {
+            ANNOTATOR_PROFILE
+        } else {
+            OBSERVER_PROFILE
+        };
         Self {
             link,
-            // The ceiling decides what the client is offered and what it is
-            // told; only the two the adapter can request are meaningful, and
-            // anything else is treated as the read-only floor.
-            profile_ceiling: if profile_ceiling == ANNOTATOR_PROFILE {
-                ANNOTATOR_PROFILE
-            } else {
-                OBSERVER_PROFILE
-            },
+            profile_ceiling,
             tools: tools::tools(profile_ceiling),
             protocol_version: None,
             initialized: false,

@@ -215,8 +215,14 @@ fn attach_script(
         .map(|spec| spec.name().to_owned())
         .collect::<Vec<_>>();
     // Attached *by an operator* when it was not the trader's own hand, which
-    // is what the detach then checks before it removes anything.
-    let by_operator = actor.actor_kind != quantick_control::wire::ActorKind::HumanUi;
+    // is what the detach then checks before it removes anything. A rerun asks
+    // the recorded run whose hand it was, exactly as an annotation does:
+    // replaying a script the trader attached by hand as automation's would
+    // hand this tier a detach on the trader's own indicator.
+    let attached_by = access
+        .recorded_author()
+        .map_or(actor.actor_kind, |recorded| recorded.actor_kind);
+    let by_operator = attached_by != quantick_control::wire::ActorKind::HumanUi;
     let (tab_id, pane_side, slot) =
         app.attach_script_indicator(input.name.clone(), input.source, by_operator);
     let result = AttachResult {
