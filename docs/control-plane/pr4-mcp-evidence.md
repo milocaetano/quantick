@@ -93,11 +93,47 @@ token, user name or application launch appears in it.
   binary.
 - The four workspace checks, recorded in the pull request.
 
+## The live check (2026-08-25)
+
+The gap this document carried — "not run: no authorization to launch the
+desktop application" — is closed. A real MCP client session, spoken over the
+adapter's own stdio, against a window running the shipped binary on Binance
+BTCUSDT at 60 fps.
+
+What the session did, in order:
+
+| Frame | Result |
+| --- | --- |
+| `initialize` | negotiated `2025-06-18`; server instructions returned, stating the connection's own authority |
+| `notifications/initialized` | accepted |
+| `tools/list` | the fixed set — 8 tools under `observer`, 13 under `annotator` |
+| `quantick_describe {}` | one instance, by descriptor: `instance_id`, version, `process_id`, publication time |
+| `quantick_describe {instance_id}` | `effective_profile: annotator`, 18 scopes, 16 capabilities |
+| `quantick_get_snapshot` | `feed.status` + `chart.summary`: binance BTCUSDT, 238 closed bars, `tick(50)` |
+| `quantick_get_chart_window` | three real bars with exact decimals and full provenance (`live_trades`, `venue_reported`) |
+
+Two failures worth keeping, because they are the contract working: a
+`chart.window` query missing its required fields was refused
+`control.invalid_request` naming the keyword, and the same call with the
+correct query succeeded — the published schema and the instance agree.
+
+Discovery, authentication and lifecycle were exercised end to end: the gateway
+published its descriptor under `%LOCALAPPDATA%\Quantick\control\instances`,
+the adapter found and authenticated against it with no configuration, and a
+clean window close removed the descriptor (`CONTROL_GATEWAY_DISABLED`,
+directory back to zero entries). A *killed* process leaves its descriptor
+behind, exactly as the `ui-harness` table already documents; discovery reports
+that as an issue rather than an instance.
+
+Not covered by this session: the Codex and Claude Code binaries themselves.
+What was proven is the protocol they speak — the same frames, over the same
+transport, from a client that is not the adapter's own tests.
+
 ## Acceptance against the plan
 
 | PR 4 criterion | Status |
 | --- | --- |
-| Codex and Claude run describe, get_snapshot, get_chart_window, get_diagnostics against the same instance | Not run in this session: the live check needs a running desktop instance, which this session is not authorized to launch. The adapter is registered with the exact commands of contract §13 and the same calls are exercised against the fake gateway and the fake link. |
+| Codex and Claude run describe, get_snapshot, get_chart_window, get_diagnostics against the same instance | **Run, 2026-08-25** — a live MCP session against a running window on Binance BTCUSDT: `initialize` negotiated `2025-06-18`, `tools/list` returned the fixed set, `quantick_describe` discovered the instance by descriptor and reported its profile and scopes, `quantick_get_snapshot` captured `feed.status` + `chart.summary` (238 closed tick(50) bars), and `quantick_get_chart_window` paged three real bars with their provenance. See *The live check* below. |
 | Under the observer ceiling `quantick_invoke` is read-only, no write capability is available, attempted write IDs are denied | Annotations pinned by test; refusal proven against the fake gateway and the fake link |
 | Disconnecting a client does not change application state | The adapter only reads; the gateway's own tests prove observer reads leave every module revision unchanged |
 | Startup, errors and shutdown emit no non-MCP bytes on stdout | Smoke test over real pipes |

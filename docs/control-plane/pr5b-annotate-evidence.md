@@ -88,6 +88,53 @@ the trader drew.
   `crates/app/src/drawings/{mod,context_bar}.rs` (the author field and its
   chip).
 
+## The live check (2026-08-25)
+
+Run against a window on Binance BTCUSDT at 60 fps, with the trader's grant set
+to `all-reads,annotate-tier` through the panel's own named call. Every effect
+below reached the chart through the MCP adapter, the loopback gateway and the
+registered action — nothing was called in-process.
+
+| Call | What the window did |
+| --- | --- |
+| `initialize` | the instructions state the annotator authority, not "read-only": *"it reads, and it may add labels, arrows and zones… nothing can delete the trader's own work, change the layout, or touch an order"* |
+| `tools/list` | 13 tools under `annotator`; **8 and zero write tools** under `observer` |
+| `quantick_annotate` (label) | placed at the newest bar's own open time and close price, `author: {actor_kind: "agent", client_name: "quantick-mcp 0.1.0"}`, anchor resolved back to slot 313 |
+| `quantick_notify` (popup) | on screen, carrying *"Sent by quantick-mcp 0.1.0 (agent)"* and its Dismiss |
+| `quantick_attach_script` (broken source) | refused `control.invalid_request` with `details.diagnostics[0] = {code: "PINE_SYNTAX", line: 3, column: 6, start: 38, end: 38, message: "expected an expression, found end of line"}` — data, not prose |
+| `quantick_attach_script` (valid source) | attached; the indicator legend shows **live ema 78.47K** on the flow pane |
+
+Authority, from the other side: a second session asking for the `observer`
+profile against **the same window with the tier granted** was offered no write
+tool at all, and every one of the eight annotate capability IDs invoked by name
+through `quantick_invoke` came back `control.permission_denied`. Asking for a
+scope is not being granted it, and the ceiling a client requests binds it.
+
+### Visual QA — no longer blocked
+
+Two captures, `PrintWindow` with `PW_RENDERFULLCONTENT`, taken while
+`APP_HEALTH_SUMMARY` reported `fps=60 / frame_avg≈16.7` (a real presented
+surface, not a blank):
+
+1. **The access panel and the popup.** Status reads *"On — reading, and
+   answering on the chart"*; the read scopes are ticked with the sensitive ones
+   marked and clear; the new section *"Let an assistant answer on the chart"*
+   states in plain words what the tier can and cannot do; the assistant's popup
+   is over the chart with its attribution line; the attached script is in the
+   indicator legend; the context bar carries the author chip.
+2. **The attribution surfaces.** The object manager lists the agent's object as
+   `Text 1` with an **`assistant`** chip beside it, above the trader's one-click
+   way back: **"Remove 1 object(s) placed for you"**.
+
+Both were produced from a launch with no hand on the mouse
+(`QUANTICK_CONTROL_SCOPES`, `QUANTICK_CONTROL_ANNOTATE`,
+`QUANTICK_CONTROL_NOTIFY`, `QUANTICK_DRAWINGS_MANAGER`), which is the hook
+rule doing its job: every surface this tier adds is reachable and photographable
+without a click.
+
+**Still not run**: a `trader-ux-review` pass with the personas, and the sound
+channel (it makes a noise on the owner's machine — asked for, not taken).
+
 ## What the review closed
 
 `arch-review`'s step 0 (`code-review` at `xhigh`) ran over the branch and
@@ -135,7 +182,7 @@ and CLAUDE.md's tool list are corrected.
   `unavailable_reason` rather than making a noise. Windows uses the system's
   own information sound (`MessageBeep`); no audio engine is linked, and no
   platform is told the alert was heard when it was not.
-- **Visual QA and the trader UX review were not run**: this session had no
-  authorization to launch the desktop application. Every new surface has a hook
-  (above), so the pass is a launch away; it is recorded as BLOCKED here rather
-  than skipped in silence.
+- **The trader UX review with the personas was not run**, and neither was the
+  sound channel — it makes a noise on the owner's machine, and this session
+  asked for authorization to launch the app rather than to interrupt them.
+  Visual QA *was* run: see *The live check* above.
