@@ -1906,6 +1906,18 @@ impl Drawings {
             .count()
     }
 
+    /// Say who placed one object, after the fact.
+    ///
+    /// The annotate tier stamps authorship as it places, so this exists for
+    /// the tests that need an object to *be* an assistant's without standing
+    /// up a gateway to produce one.
+    #[cfg(test)]
+    pub fn set_author_at(&mut self, index: usize, author: Option<DrawingAuthor>) {
+        if let Some(drawing) = self.items.get_mut(index) {
+            drawing.author = author;
+        }
+    }
+
     pub fn set_locked_at(&mut self, index: usize, locked: bool) {
         let before = self.snapshot();
         if let Some(drawing) = self.items.get_mut(index) {

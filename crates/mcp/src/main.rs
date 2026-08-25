@@ -18,9 +18,25 @@ use quantick_mcp::{
     setup::{SetupClient, walkthrough},
 };
 
-/// The only profile ceiling this release grants. Later profiles arrive with
-/// their threat-model extensions, not with a flag.
-const AVAILABLE_PROFILES: &[&str] = &["observer"];
+/// The profile ceilings a client may ask for. Asking is not granting: the
+/// instance intersects the request with what the trader ticked in its own
+/// panel, so `--profile annotator` against a read-only grant connects as an
+/// observer and every write is refused.
+const AVAILABLE_PROFILES: &[&str] = &[
+    quantick_control_local::client::OBSERVER_PROFILE_ID,
+    quantick_control_local::client::ANNOTATOR_PROFILE_ID,
+];
+
+/// The scopes an annotator connection asks for on top of the observer's:
+/// answering on the chart, interrupting, and attaching a script.
+const ANNOTATOR_SCOPES: &[&str] = &[
+    "annotate",
+    "annotate.attention",
+    "annotate.chart",
+    "annotate.notification",
+    "annotate.sound",
+    "annotate.script",
+];
 
 /// The scopes an observer connection asks for. The gateway intersects them
 /// with the user's grant; asking for a scope never grants it.
@@ -40,13 +56,14 @@ const OBSERVER_SCOPES: &[&str] = &[
 ];
 
 const USAGE: &str = "usage:
-  quantick-mcp [serve] [--profile observer] [--instance <instance_id>] [--instances-dir <path>]
-  quantick-mcp setup --client <codex|claude> [--profile observer]
+  quantick-mcp [serve] [--profile <observer|annotator>] [--instance <instance_id>] [--instances-dir <path>]
+  quantick-mcp setup --client <codex|claude> [--profile <observer|annotator>]
   quantick-mcp --help
 
 serve (default)  run the MCP server over standard input/output; stdout carries
                  MCP frames only, diagnostics go to stderr.
-  --profile      the authority ceiling to request; only `observer` exists yet.
+  --profile      the authority ceiling to request: `observer` reads, `annotator`
+                 also answers on the chart. The window grants it or it does not.
   --instance     pin every call to one running instance by its instance_id.
   --instances-dir
                  read descriptors from this directory instead of the platform's
@@ -178,11 +195,14 @@ fn main() -> ExitCode {
 }
 
 fn serve(profile: &str, instance: Option<InstanceId>, instances_dir: Option<PathBuf>) -> ExitCode {
+    let annotator = profile == quantick_control_local::client::ANNOTATOR_PROFILE_ID;
     let scopes: BTreeSet<PermissionId> = OBSERVER_SCOPES
         .iter()
-        .map(|id| PermissionId::new(*id).expect("static observer scopes are valid"))
+        .chain(if annotator { ANNOTATOR_SCOPES } else { &[] })
+        .map(|id| PermissionId::new(*id).expect("static scope IDs are valid"))
         .collect();
-    let options = ConnectOptions::observer(
+    let options = ConnectOptions::for_profile(
+        profile,
         format!("quantick-mcp {}", env!("CARGO_PKG_VERSION")),
         env!("CARGO_PKG_VERSION"),
         scopes,

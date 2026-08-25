@@ -19,7 +19,7 @@ use quantick_control::{
         RegistryError, RevisionPolicy,
     },
     schema::generated_schema,
-    wire::{ActorContext, CanonicalDecimal, WireU64},
+    wire::{ActorContext, ActorKind, CanonicalDecimal, WireU64},
 };
 use rust_decimal::prelude::ToPrimitive;
 use schemars::JsonSchema;
@@ -341,10 +341,14 @@ fn place(
         )));
     }
     let (tab_id, pane_side) = resolve_target(app, input.target.as_ref())?;
-    let author = DrawingAuthor {
+    // Only an operator other than the trader is stamped. `None` is the
+    // trader's own hand, which is what every surface reads to decide whether
+    // to say anything at all: an object the trader placed through this very
+    // action — the hotkey path, a test — is theirs, not an assistant's.
+    let author = (actor.actor_kind != ActorKind::HumanUi).then(|| DrawingAuthor {
         actor_kind: actor_kind_name(actor.actor_kind).to_owned(),
         client_name: actor.client_name.clone(),
-    };
+    });
     // The look a fresh object opens with is read before the pane is borrowed
     // mutably, through the app's own door: an annotation looks like what the
     // trader would have drawn.
@@ -394,7 +398,7 @@ fn place(
     // Authorship before anything else touches it: an object that reaches the
     // chart without saying who placed it is indistinguishable from the
     // trader's own hand, which is the one thing this tier may not do.
-    drawing.author = Some(author.clone());
+    drawing.author = author;
     drawing.name = input.name.clone();
     if let Some(text) = &input.text
         && drawing.tool.holds_text()
@@ -418,9 +422,11 @@ fn place(
         pane_side: pane_side.into(),
         tool_id: tool.id().to_owned(),
         anchors: resolved,
+        // The result always says who acted, even when the object carries no
+        // author because the trader placed it themselves.
         author: AnnotationAuthor {
-            actor_kind: author.actor_kind.clone(),
-            client_name: author.client_name.clone(),
+            actor_kind: actor_kind_name(actor.actor_kind).to_owned(),
+            client_name: actor.client_name.clone(),
         },
         label,
     };
@@ -464,13 +470,13 @@ fn remove_annotation(
         break;
     }
     let Some((tab_index, side, pane_id)) = found else {
-        return Ok(serde_json::to_value(RemoveResult {
+        return serde_json::to_value(RemoveResult {
             annotation_id: input.annotation_id,
             tab_id: WireU64::new(0),
             pane_id: WireU64::new(0),
             removed: false,
         })
-        .map_err(|error| ControlError::invalid_request(format!("removal result: {error}")))?);
+        .map_err(|error| ControlError::invalid_request(format!("removal result: {error}")));
     };
     let tab_id = app.control_tabs()[tab_index].id;
     let result = RemoveResult {

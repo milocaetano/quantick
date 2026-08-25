@@ -881,6 +881,11 @@ pub struct QuantickApp {
     /// The `QUANTICK_CONTROL_ACCESS` hook: enable observer access on the
     /// first frame, through the panel button's own `enable`.
     pending_control_access_enable: bool,
+    /// The `QUANTICK_CONTROL_ANNOTATE` hook: an agent-authored label on the
+    /// first frame, so every attribution surface can be photographed.
+    pending_control_annotation: Option<String>,
+    /// The `QUANTICK_CONTROL_NOTIFY` hook: `<channel>:<message>`.
+    pending_control_notification: Option<String>,
     /// The `QUANTICK_CONTROL_MARK` hook: take a mark on the first frame,
     /// through the hotkey's own action, with the note the hook carried.
     pending_control_mark: Option<String>,
@@ -1311,6 +1316,8 @@ impl QuantickApp {
             pending_text_edit: false,
             pending_text_note: false,
             pending_control_access_enable: false,
+            pending_control_annotation: None,
+            pending_control_notification: None,
             pending_control_mark: None,
             inline_text_edit: None,
             inspector_moved: false,
@@ -1437,6 +1444,24 @@ impl QuantickApp {
         {
             access.open_panel();
         }
+        // Which scopes the next connection is granted, by ID — the panel's
+        // own checkboxes without a hand on the mouse. `annotate` grants the
+        // whole annotate tier (the profile follows the scopes), and any
+        // comma-separated list of registered permission IDs is honoured, so a
+        // scripted run can reproduce exactly the grant a trader would tick.
+        if let Ok(scopes) = std::env::var("QUANTICK_CONTROL_SCOPES")
+            && let Some(access) = app.control_access.as_mut()
+            && let Err(error) = access.configure_scopes(&scopes)
+        {
+            {
+                tracing::warn!(
+                    target: "quantick::control",
+                    event_code = "CONTROL_SCOPE_HOOK_REFUSED",
+                    error = %error,
+                    "QUANTICK_CONTROL_SCOPES named something this build does not register"
+                );
+            }
+        }
         app.pending_control_access_enable =
             std::env::var("QUANTICK_CONTROL_ACCESS").is_ok_and(|value| value == "1");
         // A mark from a launch: `1` marks with no note, anything else is the
@@ -1445,6 +1470,15 @@ impl QuantickApp {
             .ok()
             .filter(|value| !value.trim().is_empty())
             .map(|value| if value == "1" { String::new() } else { value });
+        // An assistant's own object and an assistant's own interruption, from
+        // a launch: the surfaces that say *who* acted cannot be photographed
+        // without something an operator other than the trader put there.
+        app.pending_control_annotation = std::env::var("QUANTICK_CONTROL_ANNOTATE")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        app.pending_control_notification = std::env::var("QUANTICK_CONTROL_NOTIFY")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
         // Drawing-toolbar hooks, so a validation run reaches every new
         // surface without a click (`.claude/skills/ui-harness`).
         if let Ok(id) = std::env::var("QUANTICK_DRAWING_TOOL")
@@ -2319,6 +2353,93 @@ impl QuantickApp {
             access.invoke_local_action(self, capability_id, capability_version, input, origin);
         self.control_access = Some(access);
         outcome
+    }
+
+    /// The annotate tier's launch hooks: one agent-authored label, one
+    /// notification. Both go through the registered action with an agent
+    /// actor — the same path the gateway takes for a remote client — so what
+    /// a screenshot shows is what a real assistant would have produced.
+    fn apply_control_annotate_hooks(&mut self) {
+        if let Some(text) = self.pending_control_annotation.take() {
+            let anchor = {
+                let pane = self.active_tab().drawing_pane();
+                let slot = pane.slots().saturating_sub(1);
+                match (pane.slot_open_time(slot), pane.closed_bar(slot)) {
+                    (Some(time), Some(bar)) => Some(serde_json::json!({
+                        "time_unix_ms": time,
+                        "price": rust_decimal::prelude::ToPrimitive::to_f64(&bar.close)
+                            .unwrap_or(1.0)
+                            .to_string(),
+                    })),
+                    // No bars yet: put the hook back and take it next frame,
+                    // rather than annotating a chart that has nothing on it.
+                    _ => {
+                        self.pending_control_annotation = Some(text.clone());
+                        None
+                    }
+                }
+            };
+            if let Some(anchor) = anchor {
+                self.pending_control_annotation = None;
+                self.run_agent_action(
+                    "annotate.label.create",
+                    serde_json::json!({ "anchors": [anchor], "text": text }),
+                );
+            }
+        }
+        if let Some(request) = self.pending_control_notification.take() {
+            let (channel, message) = request
+                .split_once(':')
+                .unwrap_or(("toast", request.as_str()));
+            let capability = match channel.trim() {
+                "popup" => Some("notify.popup"),
+                "sound" => Some("notify.sound"),
+                "toast" => Some("notify.toast"),
+                other => {
+                    tracing::warn!(
+                        target: "quantick::control",
+                        event_code = "CONTROL_NOTIFY_HOOK_REFUSED",
+                        channel = other,
+                        "QUANTICK_CONTROL_NOTIFY names no notification channel"
+                    );
+                    None
+                }
+            };
+            if let Some(capability) = capability {
+                self.run_agent_action(
+                    capability,
+                    serde_json::json!({ "message": message, "title": "From your assistant" }),
+                );
+            }
+        }
+    }
+
+    /// Invoke one registered action as an *agent* would, from inside this
+    /// window. The hooks use it so a screenshot shows a real assistant's
+    /// object, attribution and all, without a client on the socket.
+    fn run_agent_action(&mut self, capability_id: &str, input: serde_json::Value) {
+        let Some(mut access) = self.control_access.take() else {
+            return;
+        };
+        let actor = access.hook_agent_actor();
+        let outcome = access.invoke_local_action(
+            self,
+            capability_id,
+            1,
+            input,
+            crate::control::ActionOrigin::Remote(Box::new(actor)),
+        );
+        self.control_access = Some(access);
+        if let Err(error) = outcome {
+            tracing::warn!(
+                target: "quantick::control",
+                event_code = "CONTROL_HOOK_ACTION_FAILED",
+                capability = capability_id,
+                error_code = %error.code,
+                error = %error.message,
+                "an annotate hook could not run its action"
+            );
+        }
     }
 
     /// The mark hotkey's body: `attention.mark.create` with the resolved
@@ -9037,6 +9158,7 @@ impl QuantickApp {
             let note = (!note.is_empty()).then_some(note);
             self.take_mark(note);
         }
+        self.apply_control_annotate_hooks();
         if self
             .control_access
             .as_ref()
@@ -24713,6 +24835,109 @@ plot(close)
         )
     }
 
+    /// A client that asks for the annotate tier as well, for the tests that
+    /// prove what the trader's grant does and does not open.
+    fn annotator_test_options() -> quantick_control_local::client::ConnectOptions {
+        let mut scopes = gateway_test_scopes();
+        for id in [
+            "annotate",
+            "annotate.attention",
+            "annotate.chart",
+            "annotate.notification",
+            "annotate.script",
+        ] {
+            scopes.insert(quantick_control::id::PermissionId::new(id).unwrap());
+        }
+        quantick_control_local::client::ConnectOptions::for_profile(
+            "annotator",
+            "quantick integration test",
+            env!("CARGO_PKG_VERSION"),
+            scopes,
+        )
+    }
+
+    /// Grant the annotate tier for the next connection through the panel's
+    /// own named call — the door the checkboxes and the hook both use.
+    fn grant_annotate_for_test(app: &mut QuantickApp, scopes: &str) {
+        app.control_access
+            .as_mut()
+            .expect("control access is installed")
+            .configure_scopes(scopes)
+            .expect("the test grants registered scopes");
+    }
+
+    /// One anchor at the newest bar's open time and its close price — what an
+    /// agent reads from `chart.window.read` before it annotates.
+    fn newest_anchor(app: &QuantickApp) -> serde_json::Value {
+        let pane = app.active_tab().drawing_pane();
+        let slot = pane.slots().saturating_sub(1);
+        let time = pane
+            .slot_open_time(slot)
+            .expect("the newest bar has a time");
+        let price = pane
+            .closed_bar(slot)
+            .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
+            .unwrap_or(1.0);
+        serde_json::json!({
+            "time_unix_ms": time,
+            "price": format!("{price}"),
+        })
+    }
+
+    /// One remote call, served by the frames it takes: send, let the
+    /// application drain its queue, read the reply.
+    fn remote_call(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        client: &mut quantick_control_local::client::LocalClient,
+        capability: &str,
+        payload: serde_json::Value,
+    ) -> quantick_control::wire::ResponseEnvelope {
+        let request_id = client
+            .send(capability, payload)
+            .expect("the request is sent");
+        for _ in 0..400 {
+            run_frame(app, ctx);
+            if client.reply_pending(std::time::Duration::from_millis(5)) {
+                break;
+            }
+        }
+        let response = client.read().expect("the gateway answered");
+        assert_eq!(response.request_id, request_id);
+        response
+    }
+
+    /// Say that these objects were placed by an assistant, as the gateway's
+    /// own actor does when an agent calls the same action. Named by id, so a
+    /// test can never accidentally relabel the trader's own drawing.
+    fn stamp_agent_author(app: &mut QuantickApp, ids: &[u64]) {
+        let pane = app.active_tab_mut().drawing_pane_mut();
+        let count = pane.drawings.items().len();
+        for index in 0..count {
+            if ids.contains(&pane.drawings.items()[index].id.0) {
+                pane.drawings.set_author_at(
+                    index,
+                    Some(crate::drawings::DrawingAuthor {
+                        actor_kind: "agent".to_owned(),
+                        client_name: "quantick integration test".to_owned(),
+                    }),
+                );
+            }
+        }
+    }
+
+    /// What is on the pane, by indicator kind — the shape a detach has to
+    /// restore exactly.
+    fn indicator_kinds(app: &QuantickApp) -> Vec<String> {
+        app.active_tab()
+            .focused_pane()
+            .indicators
+            .all()
+            .iter()
+            .map(|view| view.kind.to_string())
+            .collect()
+    }
+
     fn gateway_test_directory(name: &str) -> std::path::PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
@@ -26178,6 +26403,511 @@ plot(close)
         std::fs::remove_dir_all(directory).unwrap();
     }
 
+    /// Criterion 1: one handler, two operators. The trader's own placement
+    /// and an authorized agent's remote call put the same kind of object on
+    /// the same pane through `Drawings::place_with`; only the attribution
+    /// differs. Two paths to one door is exactly what this tier must not be.
+    #[test]
+    fn the_same_handler_places_the_traders_object_and_the_agents() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(8);
+        run_frame(&mut app, &ctx);
+        // The trader's own: the note hook takes the click path's own door.
+        app.pending_text_note = true;
+        run_frame(&mut app, &ctx);
+        let after_trader = app.active_tab().drawing_pane().drawings.items().len();
+        assert_eq!(after_trader, 1, "the trader placed one object");
+        assert!(
+            app.active_tab().drawing_pane().drawings.items()[0]
+                .author
+                .is_none(),
+            "the trader's own object carries no author"
+        );
+
+        let directory = gateway_test_directory("annotate-same-handler");
+        grant_annotate_for_test(&mut app, "all-reads,annotate-tier");
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &annotator_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+        let anchor = newest_anchor(&app);
+        let response = remote_call(
+            &mut app,
+            &ctx,
+            &mut client,
+            "annotate.label.create",
+            serde_json::json!({ "anchors": [anchor], "text": "supply here" }),
+        );
+        let result = success_result(&response);
+        assert_eq!(result["author"]["actor_kind"], "agent");
+        assert_eq!(result["tool_id"], "text");
+
+        let items = app.active_tab().drawing_pane().drawings.items();
+        assert_eq!(items.len(), 2, "both operators placed through one door");
+        let agent_object = items
+            .iter()
+            .find(|drawing| drawing.author.is_some())
+            .expect("the agent's object is attributed");
+        assert_eq!(
+            agent_object.tool.id(),
+            items[0].tool.id(),
+            "the same tool, the same placement path"
+        );
+        assert_eq!(
+            agent_object.author.as_ref().unwrap().client_name,
+            "quantick integration test"
+        );
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    /// The launch hooks reach the tier the way a client would: an agent's
+    /// object arrives attributed, and an agent's interruption arrives on the
+    /// channel it named. A hook that a screenshot cannot reach is a surface
+    /// that ships unvalidated (`ui-harness`).
+    #[test]
+    fn an_assistants_object_and_interruption_arrive_from_a_launch() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(8);
+        run_frame(&mut app, &ctx);
+        app.pending_control_annotation = Some("this absorption".to_owned());
+        app.pending_control_notification = Some("popup:look at 108k".to_owned());
+        run_frame(&mut app, &ctx);
+
+        let items = app.active_tab().drawing_pane().drawings.items();
+        assert_eq!(items.len(), 1, "the hook placed one object");
+        let author = items[0]
+            .author
+            .as_ref()
+            .expect("an object a hook placed is an assistant's, never the trader's");
+        assert_eq!(author.actor_kind, "agent");
+        assert!(
+            author.label().contains("agent"),
+            "the label a panel shows names what acted: {}",
+            author.label()
+        );
+        let popup = app.agent_popup.as_ref().expect("the popup is on screen");
+        assert_eq!(popup.message, "look at 108k");
+        assert!(popup.author.contains("agent"));
+    }
+
+    /// Criterion 2: what an assistant placed is visibly its own, and the
+    /// trader takes every one of them back in a single gesture that leaves
+    /// their own drawings exactly where they were.
+    #[test]
+    fn the_trader_takes_back_every_object_an_assistant_placed_in_one_action() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(8);
+        run_frame(&mut app, &ctx);
+        app.pending_text_note = true;
+        run_frame(&mut app, &ctx);
+        let mine = app.active_tab().drawing_pane().drawings.items()[0].id;
+
+        let anchor = newest_anchor(&app);
+        let placed = ["first", "second"]
+            .into_iter()
+            .map(|text| {
+                let result = app
+                    .control_action(
+                        "annotate.label.create",
+                        1,
+                        crate::control::ActionOrigin::Human,
+                        serde_json::json!({ "anchors": [anchor.clone()], "text": text }),
+                    )
+                    .expect("the local path places an annotation");
+                result["annotation_id"]
+                    .as_str()
+                    .unwrap()
+                    .parse::<u64>()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        // A local action is the trader's own hand, so nothing is authored yet.
+        assert_eq!(
+            app.active_tab().drawing_pane().drawings.authored_count(),
+            0,
+            "an object the trader placed is never labelled as an assistant's"
+        );
+
+        // Now the same action with an agent's actor, as the gateway calls it.
+        let removed = {
+            let pane = app.active_tab_mut().drawing_pane_mut();
+            pane.drawings.remove_authored()
+        };
+        assert_eq!(removed, 0, "there is nothing of an assistant's to remove");
+
+        stamp_agent_author(&mut app, &placed);
+        assert_eq!(
+            app.active_tab().drawing_pane().drawings.authored_count(),
+            2,
+            "two objects are now an assistant's"
+        );
+        let removed = app
+            .active_tab_mut()
+            .drawing_pane_mut()
+            .drawings
+            .remove_authored();
+        assert_eq!(removed, 2, "one gesture takes back both");
+        let items = app.active_tab().drawing_pane().drawings.items();
+        assert_eq!(items.len(), 1, "the trader's own object stays");
+        assert_eq!(items[0].id, mine);
+    }
+
+    /// Criterion 5, the tier's floor: an operator cannot reach an object the
+    /// trader drew, whatever id it names. This is what keeps the annotate
+    /// tier below the cockpit (plan §2.6).
+    #[test]
+    fn an_operator_cannot_remove_an_object_the_trader_drew() {
+        use quantick_control::error::codes;
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(8);
+        run_frame(&mut app, &ctx);
+        app.pending_text_note = true;
+        run_frame(&mut app, &ctx);
+        let mine = app.active_tab().drawing_pane().drawings.items()[0].id.0;
+
+        let refused = app
+            .control_action(
+                "annotate.remove",
+                1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({ "annotation_id": mine.to_string() }),
+            )
+            .expect_err("the trader's own object is not an annotation");
+        assert_eq!(refused.code.as_str(), codes::PERMISSION_DENIED);
+        assert_eq!(
+            app.active_tab().drawing_pane().drawings.items().len(),
+            1,
+            "and it is still there"
+        );
+
+        // An object an operator placed is removable, and reports that it went.
+        app.control_action(
+            "annotate.label.create",
+            1,
+            crate::control::ActionOrigin::Human,
+            serde_json::json!({ "anchors": [newest_anchor(&app)], "text": "theirs" }),
+        )
+        .unwrap();
+        let theirs = app
+            .active_tab()
+            .drawing_pane()
+            .drawings
+            .items()
+            .last()
+            .unwrap()
+            .id
+            .0;
+        stamp_agent_author(&mut app, &[theirs]);
+        let id = app
+            .active_tab()
+            .drawing_pane()
+            .drawings
+            .items()
+            .iter()
+            .find(|drawing| drawing.author.is_some())
+            .unwrap()
+            .id
+            .0;
+        let result = app
+            .control_action(
+                "annotate.remove",
+                1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({ "annotation_id": id.to_string() }),
+            )
+            .unwrap();
+        assert_eq!(result["removed"], true);
+    }
+
+    /// Criterion 3: a script that does not compile comes back as spans and
+    /// codes, never as a rendered paragraph an agent has to parse.
+    #[test]
+    fn a_script_that_does_not_compile_answers_with_spans_and_codes() {
+        use quantick_control::error::codes;
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(4);
+        run_frame(&mut app, &ctx);
+        let error = app
+            .control_action(
+                "indicator.script.attach",
+                1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "name": "broken",
+                    "source": "//@version=5\nindicator(\"broken\")\nplot(\n",
+                }),
+            )
+            .expect_err("a broken script never becomes a slot");
+        assert_eq!(error.code.as_str(), codes::INVALID_REQUEST);
+        let details = error.context.details.expect("diagnostics travel as data");
+        let diagnostics = details["diagnostics"].as_array().expect("a list");
+        assert!(!diagnostics.is_empty());
+        let first = &diagnostics[0];
+        assert!(
+            first["code"].as_str().is_some_and(|code| !code.is_empty()),
+            "every diagnostic names its stable code"
+        );
+        assert!(first["line"].as_u64().unwrap() >= 1);
+        assert!(first["column"].as_u64().unwrap() >= 1);
+        assert!(first["end"].as_u64().unwrap() >= first["start"].as_u64().unwrap());
+        assert!(first["message"].as_str().is_some());
+        assert_eq!(indicator_kinds(&app).len(), 0, "nothing was attached");
+    }
+
+    /// Criterion 4: a script that compiles is attached through the same door
+    /// the library's click uses, and detaching restores the pane exactly.
+    #[test]
+    fn attaching_a_script_and_detaching_it_leaves_the_pane_as_it_was() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(4);
+        run_frame(&mut app, &ctx);
+        let before = indicator_kinds(&app);
+
+        let attached = app
+            .control_action(
+                "indicator.script.attach",
+                1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "name": "agent ema",
+                    "source": "//@version=5\nindicator(\"agent ema\")\nplot(close)\n",
+                }),
+            )
+            .expect("a script that compiles is attached");
+        let slot_id = attached["slot_id"].as_str().unwrap().to_owned();
+        // The worker builds off the application thread; frames apply what it
+        // produced, exactly as the library's own click path is served.
+        for _ in 0..200 {
+            run_frame(&mut app, &ctx);
+            if indicator_kinds(&app).len() > before.len() {
+                break;
+            }
+        }
+        assert_eq!(
+            indicator_kinds(&app).len(),
+            before.len() + 1,
+            "the script is on the pane"
+        );
+
+        let detached = app
+            .control_action(
+                "indicator.script.detach",
+                1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({ "slot_id": slot_id }),
+            )
+            .expect("detaching answers");
+        assert_eq!(detached["detached"], true);
+        for _ in 0..200 {
+            run_frame(&mut app, &ctx);
+            if indicator_kinds(&app).len() == before.len() {
+                break;
+            }
+        }
+        assert_eq!(
+            indicator_kinds(&app),
+            before,
+            "the pane is exactly what it was before the attach"
+        );
+    }
+
+    /// Criterion 6: a client that floods the trader is refused before the
+    /// third interruption, and the refusal says when to come back.
+    #[test]
+    fn a_notification_flood_is_refused_before_the_trader_is_buried() {
+        use quantick_control::error::codes;
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(4);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("notify-flood");
+        grant_annotate_for_test(&mut app, "all-reads,annotate-tier");
+        enable_test_gateway(&mut app, &ctx, &directory, 8);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &annotator_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+
+        let mut outcomes = Vec::new();
+        for index in 0..3 {
+            outcomes.push(remote_call(
+                &mut app,
+                &ctx,
+                &mut client,
+                "notify.toast",
+                serde_json::json!({ "message": format!("look {index}") }),
+            ));
+        }
+        assert_eq!(
+            success_result(&outcomes[0])["raised"],
+            true,
+            "the first interruption lands"
+        );
+        assert_eq!(success_result(&outcomes[1])["raised"], true);
+        let refused = response_error(&outcomes[2]);
+        assert_eq!(
+            refused.code.as_str(),
+            codes::BACKPRESSURE,
+            "the burst is spent and the third is refused"
+        );
+        assert!(refused.retryable);
+        assert!(
+            refused
+                .context
+                .next_steps
+                .iter()
+                .any(|step| step.contains("retry in")),
+            "the refusal says when to come back: {:?}",
+            refused.context.next_steps
+        );
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    /// Criterion 6, second half: sound has a scope of its own, and a client
+    /// the trader did not give it to cannot make a noise — however loudly it
+    /// asks for the scope at the handshake.
+    #[test]
+    fn a_client_without_the_sound_scope_cannot_make_a_sound() {
+        use quantick_control::error::codes;
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(4);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("notify-sound");
+        // Everything of the annotate tier except the sound.
+        grant_annotate_for_test(
+            &mut app,
+            "all-reads,annotate,annotate.attention,annotate.chart,annotate.notification,annotate.script",
+        );
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut options = annotator_test_options();
+        options
+            .requested_scopes
+            .insert(quantick_control::id::PermissionId::new("annotate.sound").unwrap());
+        let mut client = quantick_control_local::client::discover_in(&directory, &options)
+            .unwrap()
+            .select(None)
+            .unwrap();
+        let response = remote_call(
+            &mut app,
+            &ctx,
+            &mut client,
+            "notify.sound",
+            serde_json::json!({ "message": "listen" }),
+        );
+        assert_eq!(
+            response_error(&response).code.as_str(),
+            codes::PERMISSION_DENIED,
+            "asking for a scope is not being granted it"
+        );
+        // The toast, which the trader did grant, still works.
+        let response = remote_call(
+            &mut app,
+            &ctx,
+            &mut client,
+            "notify.toast",
+            serde_json::json!({ "message": "read this" }),
+        );
+        assert_eq!(success_result(&response)["raised"], true);
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    /// Criterion 8: the observer profile reaches no action of this tier —
+    /// every one of them, not only the mark.
+    #[test]
+    fn an_observer_reaches_no_action_of_the_annotate_tier() {
+        use quantick_control::error::codes;
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(4);
+        let directory = gateway_test_directory("annotate-denied");
+        // The default grant: reads only, which is what a fresh window offers.
+        enable_test_gateway(&mut app, &ctx, &directory, 8);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &annotator_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+        let anchor = newest_anchor(&app);
+        for (capability, payload) in [
+            (
+                "annotate.label.create",
+                serde_json::json!({ "anchors": [anchor.clone()], "text": "no" }),
+            ),
+            (
+                "annotate.arrow.create",
+                serde_json::json!({ "anchors": [anchor.clone(), anchor.clone()] }),
+            ),
+            (
+                "annotate.zone.create",
+                serde_json::json!({ "anchors": [anchor.clone(), anchor.clone()] }),
+            ),
+            (
+                "annotate.remove",
+                serde_json::json!({ "annotation_id": "1" }),
+            ),
+            ("notify.popup", serde_json::json!({ "message": "hello" })),
+            ("notify.toast", serde_json::json!({ "message": "hello" })),
+            ("notify.sound", serde_json::json!({ "message": "hello" })),
+            (
+                "indicator.script.attach",
+                serde_json::json!({ "name": "x", "source": "//@version=5\nindicator(\"x\")\nplot(close)\n" }),
+            ),
+            (
+                "indicator.script.detach",
+                serde_json::json!({ "slot_id": "1" }),
+            ),
+        ] {
+            let response = remote_call(&mut app, &ctx, &mut client, capability, payload);
+            assert_eq!(
+                response_error(&response).code.as_str(),
+                codes::PERMISSION_DENIED,
+                "{capability} is denied to a connection the trader granted reads to"
+            );
+        }
+        assert_eq!(
+            app.active_tab().drawing_pane().drawings.items().len(),
+            0,
+            "and nothing reached the chart"
+        );
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).ok();
+    }
+
+    /// Criterion 7 and the gap #223 left: the trace records the *resolved*
+    /// input, so a rerun marks the bar that was marked rather than wherever
+    /// the pointer happens to be during the rerun.
+    #[test]
+    fn the_trace_records_what_was_resolved_not_what_was_asked() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(40);
+        run_frame(&mut app, &ctx);
+        hover_bar(&mut app, &ctx, 20);
+        let result = app
+            .control_action(
+                crate::control::MARK_CAPABILITY_ID,
+                crate::control::MARK_CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                // No target at all: the caller says "here", and the port is
+                // what turns that into a bar.
+                serde_json::json!({}),
+            )
+            .expect("the mark resolves the pointer");
+        assert_eq!(
+            result["target_source"], "pointer",
+            "the port resolved it, and says so"
+        );
+        assert_eq!(result["target"]["pointer"]["bar"]["slot"], "20");
+    }
+
     #[test]
     fn gateway_observer_cannot_create_a_mark_remotely_but_reads_the_registered_action() {
         use quantick_control::error::codes;
@@ -26756,7 +27486,10 @@ plot(close)
     #[test]
     fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
         let documents = crate::control::schema_catalog::documents();
-        assert_eq!(documents.len(), 20);
+        // Every published wire type has a committed document, so a breaking
+        // change shows up as a diff in review (contract §6). The count is
+        // here to make an accidental *removal* visible too.
+        assert_eq!(documents.len(), 31);
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("schemas/control");

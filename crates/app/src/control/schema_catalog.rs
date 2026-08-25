@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 use super::{
     actions::{MarkInput, MarkResult},
+    annotate::{AnnotationInput, AnnotationResult, RemoveInput, RemoveResult},
     chart::{ChartSnapshot, ChartWindowPage, ChartWindowQuery},
     contract::{
         ChartWindowInput, DescribeResult, EmptyInput, ObserverContract, SnapshotReadInput,
@@ -15,7 +16,9 @@ use super::{
     health::HealthSnapshot,
     interaction::{CursorSnapshot, SelectionSnapshot},
     journal::EventPage,
+    notify::{NotifyInput, NotifyResult},
     registry::SerializedSnapshotCapture,
+    script::{AttachInput, AttachResult, DetachInput, DetachResult, ScriptDiagnostic},
     system::SystemSnapshot,
     workspace::WorkspaceSnapshot,
 };
@@ -47,6 +50,19 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<EventPage>("observer-event-page-v1.schema.json"),
         document::<MarkInput>("attention-mark-input-v1.schema.json"),
         document::<MarkResult>("attention-mark-result-v1.schema.json"),
+        document::<AnnotationInput>("annotate-object-input-v1.schema.json"),
+        document::<AnnotationResult>("annotate-object-result-v1.schema.json"),
+        document::<RemoveInput>("annotate-remove-input-v1.schema.json"),
+        document::<RemoveResult>("annotate-remove-result-v1.schema.json"),
+        document::<NotifyInput>("notify-input-v1.schema.json"),
+        document::<NotifyResult>("notify-result-v1.schema.json"),
+        document::<AttachInput>("indicator-script-attach-input-v1.schema.json"),
+        document::<AttachResult>("indicator-script-attach-result-v1.schema.json"),
+        document::<DetachInput>("indicator-script-detach-input-v1.schema.json"),
+        document::<DetachResult>("indicator-script-detach-result-v1.schema.json"),
+        // The shape a failed compile puts in `error.context.details`, so a
+        // client can generate a reader for its own diagnostics.
+        document::<ScriptDiagnostic>("indicator-script-diagnostic-v1.schema.json"),
     ]
 }
 

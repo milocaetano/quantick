@@ -84,6 +84,9 @@ const ACCEPT_POLL_MS: u64 = 5;
 const WAITER_POLL_MS: u64 = 250;
 /// What the journal records as the author of a human action taken in this
 /// window. Self-declared like every client name, and honest.
+/// What the annotate launch hooks call themselves. A name, never a
+/// disguise: the object they place says an assistant put it there.
+const HOOK_ACTOR_CLIENT_NAME: &str = "launch hook (agent)";
 const UI_ACTOR_CLIENT_NAME: &str = "quantick-ui";
 /// Take a mark of what is under the pointer (`attention.mark.create`).
 pub(crate) const MARK_SHORTCUT: eframe::egui::KeyboardShortcut =
@@ -689,6 +692,15 @@ impl ControlAccess {
     /// Budgeted per connection, not per capability: three toasts and three
     /// popups from one client are six interruptions to the person reading the
     /// chart. The trader's own gestures never pass through here.
+    /// The actor a launch hook acts as: an agent, named for what it is, so
+    /// nothing it places can pass for the trader's own hand and a screenshot
+    /// shows exactly what a connected assistant would have produced.
+    pub(crate) fn hook_agent_actor(&mut self) -> ActorContext {
+        let mut actor = self.local_actor(ActorKind::Agent, Some("launch hook".to_owned()));
+        actor.client_name = HOOK_ACTOR_CLIENT_NAME.to_owned();
+        actor
+    }
+
     pub(crate) fn allow_notification(
         &mut self,
         actor: &ActorContext,
@@ -789,7 +801,7 @@ impl ControlAccess {
             action.canonical.validate(&resolved).map_err(|error| {
                 known_error(
                     codes::CAPABILITY_UNAVAILABLE,
-                    &format!("the action resolved an input it cannot record: {error}"),
+                    format!("the action resolved an input it cannot record: {error}"),
                     false,
                 )
             })?;
@@ -817,7 +829,7 @@ impl ControlAccess {
                 Box::new(ReplayTraceFile::open(session_path).map_err(|error| {
                     known_error(
                         codes::CAPABILITY_UNAVAILABLE,
-                        &format!("the replay's control trace cannot be written: {error}"),
+                        format!("the replay's control trace cannot be written: {error}"),
                         true,
                     )
                 })?)
@@ -843,7 +855,7 @@ impl ControlAccess {
         trace.append_intent(&entry).map_err(|error| {
             known_error(
                 codes::CAPABILITY_UNAVAILABLE,
-                &format!("the action could not be recorded before it ran: {error}"),
+                format!("the action could not be recorded before it ran: {error}"),
                 true,
             )
         })?;
@@ -1147,6 +1159,50 @@ impl ControlAccess {
         self.show_panel = true;
     }
 
+    /// Grant exactly these scopes to the next connection.
+    ///
+    /// The panel's checkboxes write the same set; this is the named call
+    /// behind them, so a scripted run, a test and a later operator reach the
+    /// grant without a mouse. `annotate` alone is shorthand for the whole
+    /// annotate tier, because a trader who says "let it answer on the chart"
+    /// means the tier, not a list of IDs; `annotate` on its own is the floor
+    /// permission it names and nothing more. `all-reads` is the safe default
+    /// grant. Unknown IDs are refused loudly rather than silently dropped:
+    /// a typo that quietly grants less is a debugging afternoon.
+    pub(crate) fn configure_scopes(&mut self, scopes: &str) -> Result<(), String> {
+        if !matches!(self.state, AccessState::Disabled) {
+            return Err("scopes change only while access is off".to_owned());
+        }
+        let known: BTreeMap<&str, PermissionId> = self
+            .contract
+            .selectable_permissions()
+            .map(|descriptor| (descriptor.id.as_str(), descriptor.id.clone()))
+            .collect();
+        let mut granted = BTreeSet::new();
+        for token in scopes.split(',').map(str::trim).filter(|id| !id.is_empty()) {
+            match token {
+                "all-reads" => granted.extend(self.contract.default_grant()),
+                "annotate-tier" => granted.extend(
+                    known
+                        .values()
+                        .filter(|permission| is_annotate_permission(permission))
+                        .cloned(),
+                ),
+                id => match known.get(id) {
+                    Some(permission) => {
+                        granted.insert(permission.clone());
+                    }
+                    None => return Err(format!("`{id}` is not a registered scope")),
+                },
+            }
+        }
+        // The floor every profile stands on: a grant of scopes with no
+        // `observe` reaches nothing at all, which is never what was meant.
+        granted.extend(self.contract.default_grant().iter().take(1).cloned());
+        self.configured_scopes = granted;
+        Ok(())
+    }
+
     pub fn is_enabled(&self) -> bool {
         matches!(self.state, AccessState::Enabled(_))
     }
@@ -1154,9 +1210,7 @@ impl ControlAccess {
     /// Whether any annotate scope is granted for the next connection — the
     /// one question that decides whether a client may answer on the chart.
     pub(crate) fn grants_annotate(&self) -> bool {
-        self.configured_scopes
-            .iter()
-            .any(|permission| is_annotate_permission(permission))
+        self.configured_scopes.iter().any(is_annotate_permission)
     }
 
     /// The ceiling every connection of the next run is capped at. It follows
@@ -1202,7 +1256,10 @@ impl ControlAccess {
         let status = match self.state {
             AccessState::Disabled => "Off",
             AccessState::Enabling => "Enabling…",
-            AccessState::Enabled(_) => "On — observer only",
+            AccessState::Enabled(_) if self.grants_annotate() => {
+                "On — reading, and answering on the chart"
+            }
+            AccessState::Enabled(_) => "On — reading only",
             AccessState::Disabling(_) => "Disabling and revoking clients…",
         };
         ui.horizontal(|ui| {
@@ -1237,11 +1294,43 @@ impl ControlAccess {
         ui.separator();
         ui.strong("Read scopes for the next connection");
         let can_edit = matches!(self.state, AccessState::Disabled);
-        for descriptor in self.contract.selectable_permissions() {
+        for descriptor in self
+            .contract
+            .selectable_permissions()
+            .filter(|descriptor| !is_annotate_permission(&descriptor.id))
+        {
             let mut selected = self.configured_scopes.contains(&descriptor.id);
             // The description is the label — a first-week user reads "Chart
             // framing, viewport, and bars", not `observe.chart` — and the ID
             // stays beside it because it is what a client asks for by name.
+            let label = if descriptor.sensitive {
+                format!("{} · {} (sensitive)", descriptor.description, descriptor.id)
+            } else {
+                format!("{} · {}", descriptor.description, descriptor.id)
+            };
+            ui.add_enabled(can_edit, eframe::egui::Checkbox::new(&mut selected, label));
+            if can_edit {
+                if selected {
+                    self.configured_scopes.insert(descriptor.id.clone());
+                } else {
+                    self.configured_scopes.remove(&descriptor.id);
+                }
+            }
+        }
+        // The tier that writes is a separate decision, said in the words a
+        // trader would use: everything above lets an assistant *read* the
+        // window; everything here lets it put something in it.
+        ui.add_space(CONTROL_PANEL_SECTION_SPACING_PX);
+        ui.strong("Let an assistant answer on the chart");
+        ui.small(
+            "Objects an assistant places are labelled with its name wherever you see them, and \"Remove objects placed for you\" in the object manager takes them all back at once. Nothing here can delete your own drawings, change your layout, or touch a position.",
+        );
+        for descriptor in self
+            .contract
+            .selectable_permissions()
+            .filter(|descriptor| is_annotate_permission(&descriptor.id))
+        {
+            let mut selected = self.configured_scopes.contains(&descriptor.id);
             let label = if descriptor.sensitive {
                 format!("{} · {} (sensitive)", descriptor.description, descriptor.id)
             } else {
@@ -1263,11 +1352,13 @@ impl ControlAccess {
         ui.separator();
         match self.state {
             AccessState::Disabled => {
+                let label = if self.grants_annotate() {
+                    "Enable access (reading and answering)"
+                } else {
+                    "Enable observer access"
+                };
                 if ui
-                    .add_enabled(
-                        self.identity.is_some(),
-                        eframe::egui::Button::new("Enable observer access"),
-                    )
+                    .add_enabled(self.identity.is_some(), eframe::egui::Button::new(label))
                     .clicked()
                 {
                     self.enable(ui.ctx());

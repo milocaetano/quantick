@@ -19,14 +19,17 @@ testable.
 - [PR 2 performance evidence](pr2-performance.md) records the shared-host idle
   frame comparison and the calibrated on-demand capture budget.
 - [PR 3 gateway evidence](pr3-gateway-evidence.md) records the authenticated
+  loopback topology, discovery controls, stable failures, frame-budget test,
+  and focused verification.
 - [PR 4 MCP adapter evidence](pr4-mcp-evidence.md) records the adapter's tool
   surface, instance selection, authority boundary, stdout discipline and the
   tests that prove them.
-  loopback topology, discovery controls, stable failures, frame-budget test,
-  and focused verification.
 - [PR 5a events evidence](pr5a-events-evidence.md) records the event journal,
   the cursor and parked waits, the mark action and hotkey, and the durable
   control trace.
+- [PR 5b annotate evidence](pr5b-annotate-evidence.md) records the annotate
+  and notify tier: what the trader grants, the acceptance table, the resolve
+  step the trace needed, and the blast radius.
 
 ## Precedence
 
