@@ -1,0 +1,60 @@
+# quantick — which chart layers a fresh launch opens with.
+#
+# This is the *shipped* answer, not the trader's. Resolution order at startup
+# (first hit wins):
+#   1. the file named by the QUANTICK_CHART_LAYERS environment variable
+#   2. `chart-layers.toml` in the durable cockpit home (Documents/Quantick),
+#      which the app writes back the moment a switch flips
+#   3. this file, compiled into the binary as the built-in default
+#
+# So a trader who switches a layer off keeps it off: their own file is written
+# on that click and takes precedence from the next launch on. This file only
+# decides what someone who has never touched a switch sees.
+#
+# Ids are `ChartLayer::id` (see `crates/app/src/chart_layers.rs`). An id this
+# build does not know is dropped rather than failing the launch, and an absent
+# id means "whatever the app decided" — the code default, a feed's preset or an
+# autostart env var. `lane_marks` is deliberately absent: it belongs to the
+# order-flow preset, which is its only home.
+
+version = 1
+
+[layers]
+# The flow layers. These are what the chart is *for* — a first launch that
+# draws none of them reads as a chart with no order flow in it, which is not
+# what this project is. They cost projection work, and the layer menu (or a
+# right-click on the canvas) is where a trader who wants that cost back gives
+# it back; the choice is then theirs and this file stops applying.
+heatmap = true
+bubbles = true
+footprint = true
+live_strip = true
+
+# The tape's own canvas: the band, and each of its two flow layers.
+tape_chart = true
+tape_heatmap = true
+tape_bubbles = true
+
+# The chart's own chrome. On, so the canvas explains itself: the key that names
+# the colours, the badge that says whether the book is live, the boundaries
+# around depth the venue never sent.
+flow_legend = true
+book_status = true
+depth_gaps = true
+grid = true
+last_price = true
+seam_divider = true
+crosshair = true
+
+# What the trader put on the chart. Never hidden by default — the two paper
+# layers are switched apart on purpose, because hiding trade history must never
+# hide the position you are in.
+paper_trading = true
+trade_paint = true
+drawings = true
+
+# The one layer that opens off: a full-height rule across the candles for a
+# boundary that matters once, when reading how far the live tape goes back.
+# Nothing is hidden about the data — the bars either side of it are exactly
+# what they were, and the mark is one click away in the layer menu.
+backfill_divider = false
