@@ -109,6 +109,122 @@ pub struct StackedZone {
     pub side: Side,
 }
 
+/// The uniform spread an [approximated](BarFootprint::approximated) ladder
+/// holds, stated as a *range* instead of a row per bucket.
+///
+/// A venue candle carries no tape, so its volume is spread evenly over the
+/// buckets its low–high crosses: every row of `lo..=hi` holds the same share,
+/// and the rounding remainders all land on the close's row. Written out that
+/// is `hi - lo + 1` map entries — up to the level cap, for one candle. Read as
+/// a range it is six numbers, whatever the candle's width, which is how a fold
+/// over thousands of candles stays affordable
+/// ([`ProfileFold`](crate::ProfileFold)).
+///
+/// The two readings are the same data: `BarFootprint::approximated` is written
+/// on top of this one, so there is no second spread to drift.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApproxSpread {
+    /// Lowest bucket of the spread, under `2^doublings * base_group`.
+    pub lo: i64,
+    /// Highest bucket of the spread, inclusive.
+    pub hi: i64,
+    /// Power-of-two doublings the candle's width forced on the base group.
+    pub doublings: u32,
+    /// The close's bucket, clamped into `lo..=hi` — where the remainders go.
+    pub close: i64,
+    /// Taker-buy quantity on every row of the spread.
+    pub buy_share: Decimal,
+    /// Taker-sell quantity on every row of the spread.
+    pub sell_share: Decimal,
+    /// Trade count on every row of the spread.
+    pub count_share: u64,
+    /// Taker-buy quantity the shares rounded away, owed to [`close`](Self::close).
+    pub buy_extra: Decimal,
+    /// Taker-sell quantity the shares rounded away, owed to [`close`](Self::close).
+    pub sell_extra: Decimal,
+    /// Trade count the shares rounded away, owed to [`close`](Self::close).
+    pub count_extra: u64,
+}
+
+impl ApproxSpread {
+    /// The spread `bar`'s summary implies at `base_group`, or `None` when the
+    /// bar traded nothing (there is no distribution to approximate).
+    ///
+    /// # Panics
+    ///
+    /// On a non-positive `base_group` or a zero `level_cap` — the same
+    /// configuration contract as [`FootprintBuilder::new`].
+    #[must_use]
+    pub fn of(bar: &crate::Bar, base_group: Decimal, level_cap: usize) -> Option<Self> {
+        assert!(
+            base_group > Decimal::ZERO,
+            "footprint base group must be positive"
+        );
+        assert!(level_cap > 0, "footprint level cap must be positive");
+        let volume = bar.buy_volume.saturating_add(bar.sell_volume);
+        if volume <= Decimal::ZERO {
+            return None;
+        }
+        // Widen the grouping until the bar's price span fits the cap — the
+        // same bound the trade fold enforces, decided up front because the
+        // span is known before any bucket exists.
+        let mut doublings = 0u32;
+        let mut group = base_group;
+        let (lo, hi) = loop {
+            let lo = bucket_of(bar.low.min(bar.high), group);
+            let hi = bucket_of(bar.high.max(bar.low), group);
+            let span = hi.saturating_sub(lo).saturating_add(1);
+            if span >= 0 && (span as u128) <= level_cap as u128 {
+                break (lo, hi);
+            }
+            doublings += 1;
+            group = group.saturating_mul(Decimal::TWO);
+        };
+        let close = bucket_of(bar.close, group).clamp(lo, hi);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let rows = (hi - lo + 1) as u64;
+        let rows_dec = Decimal::from(rows);
+        // Per-row shares rounded *down*, remainders to the close's row:
+        // totals conserve exactly, whatever the divisions truncated — a
+        // share rounded up would overdraw the total by an epsilon and break
+        // the conservation the fold is trusted for.
+        let share = |total: Decimal| {
+            total
+                .checked_div(rows_dec)
+                .unwrap_or(Decimal::ZERO)
+                .round_dp_with_strategy(APPROX_SHARE_DECIMALS, RoundingStrategy::ToZero)
+        };
+        let buy_share = share(bar.buy_volume);
+        let sell_share = share(bar.sell_volume);
+        let count_share = bar.trade_count / rows;
+        Some(Self {
+            lo,
+            hi,
+            doublings,
+            close,
+            buy_share,
+            sell_share,
+            count_share,
+            buy_extra: bar
+                .buy_volume
+                .saturating_sub(buy_share.saturating_mul(rows_dec)),
+            sell_extra: bar
+                .sell_volume
+                .saturating_sub(sell_share.saturating_mul(rows_dec)),
+            count_extra: bar.trade_count - count_share * rows,
+        })
+    }
+
+    /// How many rows the spread covers.
+    #[must_use]
+    pub fn rows(&self) -> u64 {
+        #[allow(clippy::cast_sign_loss)]
+        {
+            (self.hi - self.lo + 1) as u64
+        }
+    }
+}
+
 /// The finished (or in-progress) footprint ladder of one bar.
 ///
 /// Obtained from [`FootprintBuilder`]; whether it is closed is known from
@@ -151,69 +267,35 @@ impl BarFootprint {
     /// `None` when the bar traded nothing. # Panics — on a non-positive
     /// `base_group` or a zero `level_cap`, the same configuration contract
     /// as [`FootprintBuilder::new`].
+    /// Spelling the spread out row by row costs one map entry per bucket, and
+    /// a wide candle fills the cap. A caller folding thousands of candles into
+    /// one profile takes the spread itself
+    /// ([`ApproxSpread::of`](crate::ApproxSpread::of)) and adds it as a range
+    /// instead — same numbers, no ladder in between.
     #[must_use]
     pub fn approximated(bar: &crate::Bar, base_group: Decimal, level_cap: usize) -> Option<Self> {
-        assert!(
-            base_group > Decimal::ZERO,
-            "footprint base group must be positive"
-        );
-        assert!(level_cap > 0, "footprint level cap must be positive");
-        let volume = bar.buy_volume.saturating_add(bar.sell_volume);
-        if volume <= Decimal::ZERO {
-            return None;
-        }
-        // Widen the grouping until the bar's price span fits the cap — the
-        // same bound the trade fold enforces, decided up front because the
-        // span is known before any bucket exists.
+        let spread = ApproxSpread::of(bar, base_group, level_cap)?;
         let mut ladder = Self::new(base_group);
-        let (lo, hi) = loop {
-            let group = ladder.group();
-            let lo = bucket_of(bar.low.min(bar.high), group);
-            let hi = bucket_of(bar.high.max(bar.low), group);
-            let span = hi.saturating_sub(lo).saturating_add(1);
-            if span >= 0 && (span as u128) <= level_cap as u128 {
-                break (lo, hi);
-            }
-            ladder.doublings += 1;
-        };
-        let close_bucket = bucket_of(bar.close, ladder.group()).clamp(lo, hi);
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let rows = (hi - lo + 1) as u64;
-        let rows_dec = Decimal::from(rows);
-        // Per-row shares rounded *down*, remainders to the close's row:
-        // totals conserve exactly, whatever the divisions truncated — a
-        // share rounded up would overdraw the total by an epsilon and break
-        // the conservation the fold is trusted for.
-        let share = |total: Decimal| {
-            total
-                .checked_div(rows_dec)
-                .unwrap_or(Decimal::ZERO)
-                .round_dp_with_strategy(APPROX_SHARE_DECIMALS, RoundingStrategy::ToZero)
-        };
-        let buy_share = share(bar.buy_volume);
-        let sell_share = share(bar.sell_volume);
-        let count_share = bar.trade_count / rows;
-        for bucket in lo..=hi {
+        ladder.doublings = spread.doublings;
+        for bucket in spread.lo..=spread.hi {
             ladder.levels.insert(
                 bucket,
                 FootprintLevel {
-                    buy: buy_share,
-                    sell: sell_share,
-                    trade_count: count_share,
+                    buy: spread.buy_share,
+                    sell: spread.sell_share,
+                    trade_count: spread.count_share,
                 },
             );
         }
+        // The remainders every share rounded away, all of them on the close's
+        // row: totals conserve exactly, whichever way the spread was applied.
         let close_level = ladder
             .levels
-            .get_mut(&close_bucket)
+            .get_mut(&spread.close)
             .expect("close bucket is clamped into the spread range");
-        close_level.buy = bar
-            .buy_volume
-            .saturating_sub(buy_share.saturating_mul(Decimal::from(rows - 1)));
-        close_level.sell = bar
-            .sell_volume
-            .saturating_sub(sell_share.saturating_mul(Decimal::from(rows - 1)));
-        close_level.trade_count = bar.trade_count - count_share * (rows - 1);
+        close_level.buy = close_level.buy.saturating_add(spread.buy_extra);
+        close_level.sell = close_level.sell.saturating_add(spread.sell_extra);
+        close_level.trade_count += spread.count_extra;
         Some(ladder)
     }
 

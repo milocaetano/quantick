@@ -118,6 +118,25 @@ impl VolumeProfile {
         Some(profile)
     }
 
+    /// The profile these rows, this grouping and this honesty flag describe.
+    ///
+    /// Crate-only, and deliberately: a `VolumeProfile` is a *fold's* result,
+    /// and there are exactly two folds — [`merge`](Self::merge) and
+    /// [`ProfileFold`](crate::ProfileFold), the resumable one that reaches the
+    /// same rows a piece at a time. Handing this to consumers would let a
+    /// third fold exist, which is the drift the one-engine rule forbids.
+    pub(crate) fn from_parts(
+        levels: BTreeMap<i64, FootprintLevel>,
+        group: Decimal,
+        aggregated: bool,
+    ) -> Self {
+        Self {
+            levels,
+            group,
+            aggregated,
+        }
+    }
+
     /// The ladder, lowest bucket first. Keys are `floor(price / group())`.
     #[must_use]
     pub fn levels(&self) -> &BTreeMap<i64, FootprintLevel> {
@@ -322,7 +341,7 @@ impl VolumeProfile {
 /// `bucket / 2^shift`, floored — the exact fold that lands a finer ladder's
 /// bucket in the coarser grouping. A shift past the integer width collapses
 /// every bucket to row 0 (or -1 below zero), which is where `floor` sends it.
-fn fold_bucket(bucket: i64, shift: u32) -> i64 {
+pub(crate) fn fold_bucket(bucket: i64, shift: u32) -> i64 {
     if shift >= i64::BITS - 1 {
         if bucket < 0 { -1 } else { 0 }
     } else {

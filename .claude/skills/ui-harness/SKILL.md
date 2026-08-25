@@ -78,6 +78,8 @@ Landing with the drawing-toolbar goal (`feat/drawing-toolbar-pro`):
 | `QUANTICK_DRAWINGS_DEMO_SELECT=<tool id>` | selects that tool's demo object and centres the viewport on it. Selection is what puts an object's handles on screen, so this is the only way to photograph the grab points of a tool that is not last in the registry (`parallel-channel` for its corner and rail handles) |
 | `QUANTICK_FRVP_DEMO=1` | one fixed-range volume profile placed on the flow pane once it has bars. When the pane carries a venue history prefix the range straddles the seam, so the partial-coverage label ("profile from N of M bars") is on screen — the honesty surface this hook photographs |
 | `QUANTICK_FRVP_DEMO=compare` | two adjacent profiles over the same stretch of liquidity map, one per over-heatmap mode (outline vs always-fill) — the silhouette decision's before/after in a single frame |
+| `QUANTICK_FRVP_DEMO=stress` | 25 000 venue candles delivered behind the tape with one profile over the whole chart — the range that used to freeze the app. What it photographs is the *filling* state: a partial histogram with `folding N of M bars` on its status line |
+| `QUANTICK_FRVP_FOLD_BUDGET=<bars>` | how much a profile's fold spends per frame (default 4000). `=1` advances one bar per frame, holding the filling state on screen for as long as a capture needs; a non-positive or unparseable value is refused and the default stands |
 
 Landing with the trade-history context goal (`feat/trade-history-context`):
 

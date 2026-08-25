@@ -97,12 +97,23 @@ pub struct FrvpCache {
     /// from here and is never invented; the status line names the bar and
     /// lets the trader judge it.
     pub bars_partly_covered: usize,
+    /// Bars of the range the fold has reached, contributing or not. Equals
+    /// [`bars_total`](Self::bars_total) once the fold is done; below it while
+    /// [`job`](Self::job) is still running, which is what the status line
+    /// counts out.
+    pub bars_folded: usize,
     /// Bars the anchors span on the chart, prefix candles included.
     pub bars_total: usize,
     /// The oldest global slot the L2 heatmap covers this frame — where the
     /// paint cuts from fill to silhouette. Presentation state beside the
     /// key: the map's boundary moving must never re-merge the fold.
     pub heat_first_slot: Option<usize>,
+    /// The fold still running over this range, `None` once it has reached the
+    /// last bar. While it is `Some`, [`profile`](Self::profile) holds the
+    /// profile of the bars folded *so far* — real data, just not all of it —
+    /// and the status line says how many are still to come. A range too long
+    /// to fold in one frame is drawn filling rather than not drawn at all.
+    pub job: Option<crate::frvp::FoldJob>,
 }
 
 /// Everything the merge depends on. Anchor moves change the slots, a refold
@@ -360,7 +371,18 @@ fn status_line(
         // no seam, and its first bar is short all the same.
         status.push_str(" · first tape bar partly covered");
     }
-    if cache.bars_covered + cache.bars_approximated < cache.bars_total {
+    if cache.job.is_some() {
+        // Still folding. The histogram on screen is honest about the bars it
+        // has and says nothing about the ones it does not — reading it as the
+        // whole range would be reading a number that is still moving, so the
+        // count that is still to come is stated rather than implied by a
+        // spinner. Said *before* the coverage caveat below, which counts the
+        // same unfolded bars as "missing" until the fold reaches them.
+        status.push_str(&format!(
+            " · folding {} of {} bars",
+            cache.bars_folded, cache.bars_total
+        ));
+    } else if cache.bars_covered + cache.bars_approximated < cache.bars_total {
         status.push_str(&format!(
             " · profile from {} of {} bars",
             cache.bars_covered + cache.bars_approximated,
@@ -494,7 +516,10 @@ fn price_extent(
     points: &[egui::Pos2],
     ctxt: &DrawContext<'_>,
 ) -> (f32, f32) {
-    if let Some((profile, _)) = payload.cache.as_ref().and_then(|cache| cache.profile.as_ref())
+    if let Some((profile, _)) = payload
+        .cache
+        .as_ref()
+        .and_then(|cache| cache.profile.as_ref())
         && let (Some((&low, _)), Some((&high, _))) = (
             profile.levels().first_key_value(),
             profile.levels().last_key_value(),
@@ -907,9 +932,15 @@ impl DrawingToolImpl for FixedRangeProfile {
                     }
                 }
             }
-            (None, Some(cache)) => status.push_str(match cache.empty {
-                Some(FrvpEmpty::Blocked) => "feed reports no traded volume",
-                _ => "no tape in range",
+            (None, Some(cache)) => status.push_str(&match (&cache.job, cache.empty) {
+                // A fold that has not reached a bar with tape yet has nothing
+                // to draw *yet* — which is not the same as a range with
+                // nothing in it, and must not borrow that sentence.
+                (Some(_), _) => {
+                    format!("folding {} of {} bars", cache.bars_folded, cache.bars_total)
+                }
+                (None, Some(FrvpEmpty::Blocked)) => "feed reports no traded volume".to_owned(),
+                (None, _) => "no tape in range".to_owned(),
             }),
             // Not refreshed yet (first frame of a fresh object): say nothing
             // rather than guessing. A profile without a cache cannot exist —
@@ -949,10 +980,11 @@ impl DrawingToolImpl for FixedRangeProfile {
         // Either edge grabs like a line; the histogram's own strip grabs as
         // an interior. The empty middle of a wide range stays click-through —
         // a full-rect hit would shadow every candle inside the range.
-        let near_edge = (position.x - left).abs() <= radius_px
-            || (position.x - right).abs() <= radius_px;
+        let near_edge =
+            (position.x - left).abs() <= radius_px || (position.x - right).abs() <= radius_px;
         let histogram_right = left + payload.width_frac * (right - left).max(1.0);
-        let in_histogram = position.x >= left - radius_px && position.x <= histogram_right + radius_px;
+        let in_histogram =
+            position.x >= left - radius_px && position.x <= histogram_right + radius_px;
         near_edge || in_histogram
     }
 
@@ -1052,9 +1084,7 @@ fn draw_profile_tab(ui: &mut egui::Ui, drawing: &mut Drawing, host: &mut dyn Pre
     {
         edited = true;
     }
-    edited |= ui
-        .checkbox(&mut payload.show_poc, "POC line")
-        .changed();
+    edited |= ui.checkbox(&mut payload.show_poc, "POC line").changed();
     edited |= ui
         .checkbox(&mut payload.show_value_area, "value area")
         .changed();
@@ -1071,7 +1101,10 @@ fn draw_profile_tab(ui: &mut egui::Ui, drawing: &mut Drawing, host: &mut dyn Pre
         )
         .changed();
     edited |= ui
-        .checkbox(&mut payload.outline_over_heatmap, "outline over liquidity map")
+        .checkbox(
+            &mut payload.outline_over_heatmap,
+            "outline over liquidity map",
+        )
         .on_hover_text(
             "Over the liquidity map the profile draws as an outline, so the \
              map is never painted over. Off = always fill, and the two \
@@ -1131,7 +1164,10 @@ fn draw_profile_tab(ui: &mut egui::Ui, drawing: &mut Drawing, host: &mut dyn Pre
         );
         let trimmed = name.trim();
         if ui
-            .add_enabled(!trimmed.is_empty(), egui::Button::new("Save preset").small())
+            .add_enabled(
+                !trimmed.is_empty(),
+                egui::Button::new("Save preset").small(),
+            )
             .clicked()
             && let Some(value) = payload.export_preset()
         {
@@ -1194,9 +1230,49 @@ mod tests {
             bars_covered: covered,
             bars_approximated: approximated,
             bars_partly_covered: 0,
+            bars_folded: total,
             bars_total: total,
             heat_first_slot: None,
+            job: None,
         }
+    }
+
+    /// The same cache mid-fill: `folded` of `total` bars in, the fold still
+    /// running over the rest.
+    fn folding_cache(total: usize, folded: usize) -> FrvpCache {
+        FrvpCache {
+            bars_folded: folded,
+            job: Some(crate::frvp::FoldJob::over(Decimal::ONE, folded, total - 1)),
+            ..cache_for(total, folded, 0)
+        }
+    }
+
+    /// A profile still filling says so, and says how far it has got. Without
+    /// this the histogram would read as the whole range's while it is still a
+    /// prefix of it — a number that moves under the trader with nothing on
+    /// screen admitting it.
+    #[test]
+    fn status_line_counts_out_a_fold_still_running() {
+        let profile = some_profile();
+        let payload = FrvpPayload::default();
+        let status = status_line(&profile, &folding_cache(25_003, 4_000), &payload, false);
+        assert!(
+            status.contains(" · folding 4000 of 25003 bars"),
+            "a fold in flight names its progress: {status}"
+        );
+        // And it does not *also* claim partial coverage: the bars it has not
+        // reached are late, not missing.
+        assert!(!status.contains("profile from"), "{status}");
+    }
+
+    /// The fold finishing turns the progress line off — a complete profile
+    /// must not keep counting.
+    #[test]
+    fn status_line_drops_the_progress_once_the_fold_is_done() {
+        let profile = some_profile();
+        let payload = FrvpPayload::default();
+        let status = status_line(&profile, &cache_for(85, 85, 0), &payload, false);
+        assert!(!status.contains("folding"), "{status}");
     }
 
     /// The regression that started this: an exact, fully covered profile used
@@ -1269,7 +1345,10 @@ mod tests {
 
         let payload = FrvpPayload::default();
         let status = status_line(&some_profile(), &cache_for(85, 85, 0), &payload, false);
-        assert!(status.contains("Δ +"), "a buy-side delta is signed: {status}");
+        assert!(
+            status.contains("Δ +"),
+            "a buy-side delta is signed: {status}"
+        );
     }
 
     /// The status line slides left to keep its tail — where every caveat
@@ -1374,8 +1453,7 @@ mod tests {
     /// after any drag: the grab points are wherever the histogram is.
     #[test]
     fn handles_ride_the_visible_object_and_resize_in_time_only() {
-        let chart_rect =
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        let chart_rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
         let scale = PriceScale::from_range(90.0, 110.0, 0.0, 400.0);
         let payload = FrvpPayload::default();
         let anchors = [ChartPoint::at(10.0, 104.0), ChartPoint::at(30.0, 96.0)];
@@ -1393,32 +1471,41 @@ mod tests {
             content_editing: false,
         };
 
-        let handles = TOOL.handles(chart_rect, &points, &ctxt).expect("overridden");
+        let handles = TOOL
+            .handles(chart_rect, &points, &ctxt)
+            .expect("overridden");
         // No cache: the extent falls back to the anchors' heights, midpoint
         // 200. Each handle keeps its own anchor's x.
-        assert_eq!(handles.as_slice(), &[
-            egui::pos2(100.0, 200.0),
-            egui::pos2(300.0, 200.0)
-        ]);
+        assert_eq!(
+            handles.as_slice(),
+            &[egui::pos2(100.0, 200.0), egui::pos2(300.0, 200.0)]
+        );
 
         // Dragging the right handle left shrinks the range: only that
         // anchor's x moves, both ys (prices) stay put.
         let dragged = TOOL
-            .drag_handle(chart_rect, &points, 1, egui::pos2(180.0, 350.0), &ctxt, Constrain::Free)
+            .drag_handle(
+                chart_rect,
+                &points,
+                1,
+                egui::pos2(180.0, 350.0),
+                &ctxt,
+                Constrain::Free,
+            )
             .expect("tool owns the gesture");
-        assert_eq!(dragged.as_slice(), &[
-            egui::pos2(100.0, 120.0),
-            egui::pos2(180.0, 280.0)
-        ]);
+        assert_eq!(
+            dragged.as_slice(),
+            &[egui::pos2(100.0, 120.0), egui::pos2(180.0, 280.0)]
+        );
 
         // An extent taller than the viewport clamps the handles into the
         // visible band instead of hiding them off screen.
         let tall = [egui::pos2(100.0, -900.0), egui::pos2(300.0, 1500.0)];
         let clamped = TOOL.handles(chart_rect, &tall, &ctxt).expect("overridden");
         assert!(
-            clamped
-                .iter()
-                .all(|handle| chart_rect.expand(-HANDLE_EDGE_MARGIN_PX + 0.5).contains(*handle)),
+            clamped.iter().all(|handle| chart_rect
+                .expand(-HANDLE_EDGE_MARGIN_PX + 0.5)
+                .contains(*handle)),
             "handles stay inside the band: {clamped:?}"
         );
     }
@@ -1472,8 +1559,10 @@ mod tests {
                 bars_covered: 0,
                 bars_approximated: 0,
                 bars_partly_covered: 0,
+                bars_folded: 5,
                 bars_total: 5,
                 heat_first_slot: None,
+                job: None,
             }),
         };
         let exported = payload.export_preset().expect("frvp exports its preset");

@@ -11,3 +11,7 @@ rust_decimal = "1"
 [[bench]]
 name = "hot_path"
 harness = false
+
+[[bench]]
+name = "profile_fold"
+harness = false

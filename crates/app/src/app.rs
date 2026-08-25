@@ -1496,7 +1496,7 @@ impl QuantickApp {
         // seam when there is one — the partial-coverage honesty label is a
         // surface, and this is how a validation run photographs it.
         app.pending_frvp_demo = std::env::var("QUANTICK_FRVP_DEMO")
-            .is_ok_and(|value| matches!(value.trim(), "1" | "compare"));
+            .is_ok_and(|value| matches!(value.trim(), "1" | "compare" | "stress"));
         // One anchored VWAP, anchored a stretch back so the average and its
         // band stack have room to develop on screen.
         app.pending_avwap_demo =
@@ -8001,6 +8001,9 @@ impl QuantickApp {
     /// left open, which is the mid-load frame progressive delivery exists to
     /// produce and the one no capture could otherwise catch.
     fn apply_venue_history_demo(&mut self) {
+        /// Candles the venue-history scene installs: enough for the seam and
+        /// the divider to read, few enough to stay one screenful of context.
+        const DEMO_PREFIX_CANDLES: i64 = 90;
         let Some(demo) = self.pending_venue_history_demo else {
             return;
         };
@@ -8010,17 +8013,29 @@ impl QuantickApp {
             return;
         }
         self.pending_venue_history_demo = None;
+        let slice = match demo {
+            VenueHistoryDemo::Complete => crate::feed::OhlcvSlice::Last { complete: true },
+            VenueHistoryDemo::Partial => crate::feed::OhlcvSlice::More,
+        };
+        self.deliver_synthetic_prefix(DEMO_PREFIX_CANDLES, slice);
+    }
+
+    /// Deliver `candles` synthetic venue candles for the minutes immediately
+    /// before the first engine bar, so the prefix meets the tape without
+    /// overlapping it.
+    ///
+    /// The wiggle is a fixed function of the minute — the capture has to be
+    /// the same picture every run, or a visual diff means nothing. One
+    /// generator, shared by every hook that needs a prefix: a second one would
+    /// be a second history to keep honest.
+    fn deliver_synthetic_prefix(&mut self, candles: i64, slice: crate::feed::OhlcvSlice) {
         let tab = self.active_tab_mut();
         let Some(first) = tab.flow_pane.state.bars().first() else {
             return;
         };
         let (first_open, anchor) = (first.open_time, first.open);
         let interval = crate::feed::OHLCV_BASE_INTERVAL_MS;
-        // Candles for the minutes immediately before the first engine bar, so
-        // the prefix meets the tape without overlapping it. The wiggle is a
-        // fixed function of the minute — the capture has to be the same
-        // picture every run, or a visual diff means nothing.
-        let bars: Vec<quantick_engine::Bar> = (-90..0)
+        let bars: Vec<quantick_engine::Bar> = (-candles..0)
             .map(|minute| {
                 let open_time = first_open + minute * interval;
                 let drift = rust_decimal::Decimal::from(minute.rem_euclid(7) - 3);
@@ -8038,10 +8053,6 @@ impl QuantickApp {
                 }
             })
             .collect();
-        let slice = match demo {
-            VenueHistoryDemo::Complete => crate::feed::OhlcvSlice::Last { complete: true },
-            VenueHistoryDemo::Partial => crate::feed::OhlcvSlice::More,
-        };
         tab.deliver_ohlcv_slice(interval, bars, slice);
     }
 
@@ -8463,6 +8474,11 @@ impl QuantickApp {
     /// from N of M bars") is on screen — the surface this hook exists to
     /// photograph. Consumed once, like the drawings demo.
     fn apply_frvp_demo(&mut self) {
+        /// Candles the `=stress` scene installs behind the tape: a time
+        /// chart's worth of venue history, and far more than one fold pass
+        /// spends, so the range is guaranteed to fold across frames rather
+        /// than in the one that placed it.
+        const FRVP_STRESS_CANDLES: i64 = 25_000;
         if !self.pending_frvp_demo {
             return;
         }
@@ -8481,8 +8497,23 @@ impl QuantickApp {
         // map, one in each over-heatmap mode — the before/after of the
         // silhouette decision in a single frame, which no toggle-and-wait
         // pair of screenshots can prove as cleanly.
-        let compare =
-            std::env::var("QUANTICK_FRVP_DEMO").is_ok_and(|value| value.trim() == "compare");
+        let mode = std::env::var("QUANTICK_FRVP_DEMO").unwrap_or_default();
+        let compare = mode.trim() == "compare";
+        // `=stress` is the scene this object used to freeze the app on: a
+        // venue history longer than any single fold pass, with one profile
+        // over the whole of it. What it photographs is the *filling* state —
+        // a partial histogram and its `folding N of M bars` line — which is
+        // only a state at all because the fold is resumable. Pair it with
+        // QUANTICK_FRVP_FOLD_BUDGET=1 to hold that frame indefinitely.
+        if mode.trim() == "stress" {
+            self.deliver_synthetic_prefix(
+                FRVP_STRESS_CANDLES,
+                crate::feed::OhlcvSlice::Last { complete: true },
+            );
+        }
+        // Re-read after the delivery: the prefix that just landed is part of
+        // the chart the range is about to span.
+        let slots = self.active_tab_mut().flow_pane.slots();
         let prefix = self.active_tab_mut().flow_pane.history_prefix.len();
         // The compare scene exists to photograph profiles *over the map*, and
         // the map only covers bars closed after book capture began — the
@@ -8505,7 +8536,12 @@ impl QuantickApp {
             .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
             .unwrap_or(1.0);
         let newest = slots - 1;
-        let ranges: &[(usize, usize, bool)] = if compare {
+        let ranges: &[(usize, usize, bool)] = if mode.trim() == "stress" {
+            // The whole chart, oldest slot to newest: the range a trader
+            // drags when they want the session's own volume-by-price, and the
+            // one that used to take the window with it.
+            &[(0, newest, true)]
+        } else if compare {
             // Two adjacent 25-bar ranges over the newest (map-covered) tape.
             // Left object keeps the honest default; right one is forced to
             // "always fill", the composed-into-the-map look under review.

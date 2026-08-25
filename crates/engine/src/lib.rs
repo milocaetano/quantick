@@ -28,6 +28,7 @@ mod dollar;
 mod footprint;
 mod imbalance;
 mod profile;
+mod profile_fold;
 pub mod threshold;
 mod tick;
 mod time;
@@ -38,11 +39,12 @@ pub use bar::Bar;
 pub use builder::{BarBuilder, BarProgress};
 pub use dollar::{DollarBarBuilder, DollarMeasure};
 pub use footprint::{
-    BarFootprint, DEFAULT_LEVEL_CAP, Extreme, FootprintBuilder, FootprintLevel, Imbalance,
-    StackedZone,
+    ApproxSpread, BarFootprint, DEFAULT_LEVEL_CAP, Extreme, FootprintBuilder, FootprintLevel,
+    Imbalance, StackedZone,
 };
 pub use imbalance::{ImbalanceBarBuilder, ImbalanceUnit};
 pub use profile::{ValueArea, VolumeProfile};
+pub use profile_fold::ProfileFold;
 pub use threshold::{Measure, ThresholdBarBuilder};
 pub use tick::{TickBarBuilder, TickMeasure};
 pub use time::TimeBarBuilder;

@@ -1,16 +1,25 @@
 //! Refresh pass for fixed-range volume profile drawings.
 //!
 //! The drawing owns *where* (two anchors, a bar range); the engine owns
-//! *what* ([`VolumeProfile::merge`] over that range's footprint ladders);
-//! this module is the bridge that keeps the two current. It runs once per
-//! frame per pane, before the drawings paint, and it re-merges only when
-//! something the profile depends on actually changed — the cache key names
-//! every such input, so the common frame costs one key comparison per
-//! profile object and no folding at all.
+//! *what* ([`ProfileFold`] over that range's bars); this module is the bridge
+//! that keeps the two current. It runs once per frame per pane, before the
+//! drawings paint, and it re-folds only when something the profile depends on
+//! actually changed — the cache key names every such input, so the common
+//! frame costs one key comparison per profile object and no folding at all.
+//!
+//! **A frame is never held hostage by a range.** A profile dropped on a time
+//! chart can span the venue's whole backfilled history, and folding tens of
+//! thousands of bars in the frame that placed it is how the app used to stall
+//! for seconds. So the fold is *resumable*: each pass spends at most
+//! [`fold_budget`] bars' worth of work, stores what it has, and the paint
+//! draws the partial profile with the count still to go on its status line.
+//! The trader watches it fill instead of watching the window freeze.
 //!
 //! Never on the per-trade path: ingestion does not know this module exists.
 
-use quantick_engine::{Bar, BarFootprint, DEFAULT_LEVEL_CAP, VolumeProfile};
+use quantick_engine::{
+    Bar, BarFootprint, DEFAULT_LEVEL_CAP, ProfileFold, ValueArea, VolumeProfile,
+};
 use rust_decimal::Decimal;
 
 use crate::drawings::{Drawings, FrvpCache, FrvpCacheKey, FrvpEmpty, FrvpPayload};
@@ -20,44 +29,75 @@ use crate::state::ChartState;
 /// module and the pane share to recognise a profile object.
 pub const TOOL_ID: &str = "fixed-range-profile";
 
-/// The venue prefix's approximated ladders, built **once** per
-/// `(group, prefix length)` and borrowed by every refresh after — a ladder
-/// is static data (the candle never changes), and rebuilding 25k of them on
-/// every cache-key change would put a BTreeMap construction storm inside an
-/// anchor drag. `None` per slot = that candle traded nothing.
-pub struct ApproxLadders {
-    group: Decimal,
-    ladders: Vec<Option<BarFootprint>>,
+/// How much folding one refresh pass may do, counted in bars for a venue
+/// candle and in ladder rows for a bar with tape.
+///
+/// The unit is "one map touch": a venue candle joins as a *range* whatever
+/// its width ([`ProfileFold::push_candle`]), while a tape bar costs one touch
+/// per row it printed. At the ~1.3 µs per candle the engine's `profile_fold`
+/// bench measures, this budget is a few milliseconds of a 16 ms frame in the
+/// worst case, and a tape bar's rows are cheaper still — so the number is
+/// deliberately conservative rather than tuned to the edge.
+///
+/// A range longer than the budget simply takes more passes: 25 000 candles
+/// fill in about seven, a fifth of a second, with a profile on screen from
+/// the first one. Raising it buys a faster fill and a longer frame; lowering
+/// it buys the reverse. Never zero — a zero budget would fold nothing,
+/// forever.
+pub const DEFAULT_FOLD_BUDGET: usize = 4_000;
+
+/// The budget this process folds at: [`DEFAULT_FOLD_BUDGET`], or whatever
+/// `QUANTICK_FRVP_FOLD_BUDGET` names.
+///
+/// The override is not a preference knob, it is the door onto a *state*. At a
+/// budget of one bar a fold advances one bar per frame, so the filling
+/// profile and its progress line stay on screen as long as an operator — or a
+/// capture run — needs to look at them; without it that state lasts a fifth of
+/// a second and no screenshot can be aimed at it. A non-positive or
+/// unparseable value is refused rather than guessed, and the default stands.
+///
+/// Read once per process, so the fold never touches the environment on a
+/// frame.
+#[must_use]
+pub fn fold_budget() -> usize {
+    static BUDGET: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *BUDGET.get_or_init(|| {
+        std::env::var("QUANTICK_FRVP_FOLD_BUDGET")
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .filter(|budget| *budget > 0)
+            .unwrap_or(DEFAULT_FOLD_BUDGET)
+    })
 }
 
-impl ApproxLadders {
-    /// The cached ladders for `prefix` at `group`, rebuilding only when the
-    /// prefix grew or the capture grouping refolded. O(prefix) on rebuild —
-    /// once per backfill page or group change, declared; O(1) after.
-    pub fn ensure<'a>(
-        slot: &'a mut Option<ApproxLadders>,
-        prefix: &[Bar],
-        group: Decimal,
-    ) -> &'a ApproxLadders {
-        let stale = slot
-            .as_ref()
-            .is_none_or(|cache| cache.group != group || cache.ladders.len() != prefix.len());
-        if stale {
-            *slot = Some(ApproxLadders {
-                group,
-                ladders: prefix
-                    .iter()
-                    .map(|bar| BarFootprint::approximated(bar, group, DEFAULT_LEVEL_CAP))
-                    .collect(),
-            });
-        }
-        slot.as_ref().expect("just ensured")
-    }
+/// A fold in progress: where it got to, and the engine-side accumulator it
+/// got there with.
+///
+/// Held on the [`FrvpCache`] beside the profile it is building. `None` there
+/// means the fold is finished and the profile is the whole range's.
+#[derive(Debug, Clone)]
+pub struct FoldJob {
+    fold: ProfileFold,
+    /// The next global slot to fold; `end` is inclusive.
+    next: usize,
+    end: usize,
+}
 
-    /// Ladders indexed by prefix slot; `None` where the candle traded nothing.
+impl FoldJob {
+    /// A fold about to run over the global slots `start..=end`, folding
+    /// ladders grouped at `group`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `group` is not positive — the same configuration contract as
+    /// [`ProfileFold::new`].
     #[must_use]
-    pub fn ladders(&self) -> &[Option<BarFootprint>] {
-        &self.ladders
+    pub fn over(group: Decimal, start: usize, end: usize) -> Self {
+        Self {
+            fold: ProfileFold::new(group, DEFAULT_LEVEL_CAP),
+            next: start,
+            end,
+        }
     }
 }
 
@@ -66,12 +106,12 @@ impl ApproxLadders {
 /// the snapshot cadence, never per paint.
 pub struct RefreshInputs<'a> {
     pub state: &'a ChartState,
-    /// The venue prefix's approximated ladders (see [`ApproxLadders`]) —
-    /// one entry per prefix slot, `None` where the candle traded nothing.
-    /// With the payload's `approximate_history` on they join the fold,
-    /// labeled; otherwise a range over them is *partial coverage* and the
-    /// cache says so. Its length is the prefix length.
-    pub prefix_approx: &'a [Option<BarFootprint>],
+    /// The venue-history candles behind the tape — one entry per prefix slot,
+    /// oldest first. With the payload's `approximate_history` on each joins
+    /// the fold as its own approximated spread, labeled; otherwise a range
+    /// over them is *partial coverage* and the cache says so. No ladder is
+    /// built for any of them: the fold takes the candle.
+    pub prefix: &'a [Bar],
     /// The throttled snapshot of the forming bar's ladder, if any.
     pub partial_ladder: Option<&'a BarFootprint>,
     /// Bumped whenever the snapshot above is re-taken.
@@ -102,10 +142,15 @@ pub struct RefreshInputs<'a> {
 
 /// Bring every fixed-range-profile drawing's cached profile up to date.
 ///
+/// Returns whether any fold is still in flight — the caller paints the
+/// partial profile and asks for another frame, which is what turns a long
+/// range into a fill instead of a freeze.
+///
 /// Mutates only derived payload state ([`FrvpCache`]), which is excluded
 /// from payload equality — so this pass can never register as a user edit
 /// in the undo history, however often it runs.
-pub fn refresh(drawings: &mut Drawings, inputs: &RefreshInputs<'_>) {
+pub fn refresh(drawings: &mut Drawings, inputs: &RefreshInputs<'_>) -> bool {
+    let mut folding = false;
     for drawing in drawings.items_mut() {
         if drawing.tool.id() != TOOL_ID || drawing.points.len() < 2 {
             continue;
@@ -114,7 +159,7 @@ pub fn refresh(drawings: &mut Drawings, inputs: &RefreshInputs<'_>) {
         let Some(payload) = drawing.payload.as_any_mut().downcast_mut::<FrvpPayload>() else {
             continue;
         };
-        refresh_one(payload, a.min(b), a.max(b), inputs);
+        folding |= refresh_one(payload, a.min(b), a.max(b), inputs);
     }
     // The in-flight draft folds too, with the hovered bar standing in for
     // the second anchor — the histogram forms under the drag, instead of the
@@ -131,9 +176,10 @@ pub fn refresh(drawings: &mut Drawings, inputs: &RefreshInputs<'_>) {
         if let Some((a, b)) = span
             && let Some(payload) = draft.payload.as_any_mut().downcast_mut::<FrvpPayload>()
         {
-            refresh_one(payload, a.min(b), a.max(b), inputs);
+            folding |= refresh_one(payload, a.min(b), a.max(b), inputs);
         }
     }
+    folding
 }
 
 /// The slots a `[min_bar, max_bar]` anchor span covers: the candle each
@@ -175,9 +221,16 @@ fn covered_slots(min_bar: f32, max_bar: f32, last_slot: Option<usize>) -> Option
     (start <= end).then_some((start, end))
 }
 
-fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &RefreshInputs<'_>) {
+/// Refresh one profile object, folding at most [`fold_budget`] this pass.
+/// Returns whether its fold is still in flight.
+fn refresh_one(
+    payload: &mut FrvpPayload,
+    min_bar: f32,
+    max_bar: f32,
+    inputs: &RefreshInputs<'_>,
+) -> bool {
     let closed_len = inputs.state.bars().len();
-    let closed_total = inputs.prefix_approx.len() + closed_len;
+    let closed_total = inputs.prefix.len() + closed_len;
     let partial_slot = inputs.partial_ladder.is_some().then_some(closed_total);
     let last_slot = partial_slot.or_else(|| closed_total.checked_sub(1));
 
@@ -220,10 +273,15 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
         partly_covered,
     };
     if let Some(cache) = payload.cache.as_mut().filter(|cache| cache.key == key) {
-        // Key hit: the fold is current. Presentation state still follows the
-        // frame — the map's boundary moves without invalidating the merge.
+        // Key hit: the fold is current, or still running. Presentation state
+        // follows the frame either way — the map's boundary moves without
+        // invalidating anything already folded.
         cache.heat_first_slot = inputs.heat_first_slot;
-        return;
+        if cache.job.is_none() {
+            return false;
+        }
+        advance(cache, payload.value_area_pct, inputs);
+        return cache.job.is_some();
     }
 
     if inputs.blocked {
@@ -234,66 +292,90 @@ fn refresh_one(payload: &mut FrvpPayload, min_bar: f32, max_bar: f32, inputs: &R
             bars_covered: 0,
             bars_approximated: 0,
             bars_partly_covered: 0,
+            bars_folded: 0,
             bars_total,
             heat_first_slot: inputs.heat_first_slot,
+            job: None,
         });
-        return;
+        return false;
     }
 
-    // The state-bar ladders the span reaches. Prefix slots have no ladder by
-    // construction; the difference between what the span asks for and what
-    // the tape can answer is `bars_covered < bars_total`, spoken by paint.
-    let ladders_all = inputs.state.bar_footprints();
-    // The venue-prefix slots the span reaches join through the prebuilt
-    // approximated ladders — borrowed, never rebuilt here: one fold, one
-    // profile, one code path.
-    let mut ladders: Vec<&BarFootprint> = Vec::new();
-    if payload.approximate_history && span.is_some() && start_slot < inputs.prefix_approx.len() {
-        let hi_prefix = end_slot.min(inputs.prefix_approx.len().saturating_sub(1));
-        ladders.extend(
-            inputs.prefix_approx[start_slot..=hi_prefix]
-                .iter()
-                .filter_map(Option::as_ref),
-        );
-    }
-    let bars_approximated = ladders.len();
-    if span.is_some() {
-        // State-bar coverage exists only where the span reaches past the
-        // prefix and into the closed bars at all.
-        if end_slot >= inputs.prefix_approx.len() && start_slot < closed_total && closed_total > 0 {
-            let lo = start_slot.max(inputs.prefix_approx.len()) - inputs.prefix_approx.len();
-            let hi_state = end_slot.min(closed_total - 1) - inputs.prefix_approx.len();
-            if lo <= hi_state {
-                for ladder in ladders_all.iter().skip(lo).take(hi_state - lo + 1) {
-                    // A bar whose ladder printed nothing contributes nothing;
-                    // it still counts as covered — the tape answered "no
-                    // trades", which is data, not absence of data.
-                    ladders.push(ladder);
-                }
-            }
-        }
-        if include_partial && let Some(partial) = inputs.partial_ladder {
-            ladders.push(partial);
-        }
-    }
-    let bars_covered = ladders.len() - bars_approximated;
-
-    let profile = VolumeProfile::merge(ladders, DEFAULT_LEVEL_CAP).map(|profile| {
-        let fraction = Decimal::from(payload.value_area_pct) / Decimal::ONE_HUNDRED;
-        let value_area = profile.value_area(fraction);
-        (profile, value_area)
-    });
-    let empty = profile.is_none().then_some(FrvpEmpty::NoTape);
-    payload.cache = Some(FrvpCache {
+    // A fresh range: open a fold over it and spend this pass's budget on it.
+    // Nothing is folded eagerly here — `advance` is the only place bars enter
+    // a profile, so one budget governs the first pass and every later one.
+    let job = span.map(|(start, end)| FoldJob::over(inputs.state.footprint_group(), start, end));
+    let mut cache = FrvpCache {
         key,
-        profile,
-        empty,
-        bars_covered,
-        bars_approximated,
+        profile: None,
+        empty: job.is_none().then_some(FrvpEmpty::NoTape),
+        bars_covered: 0,
+        bars_approximated: 0,
         bars_partly_covered: usize::from(partly_covered),
+        bars_folded: 0,
         bars_total,
         heat_first_slot: inputs.heat_first_slot,
+        job,
+    };
+    advance(&mut cache, payload.value_area_pct, inputs);
+    let folding = cache.job.is_some();
+    payload.cache = Some(cache);
+    folding
+}
+
+/// Spend one pass's [`fold_budget`] on `cache`'s fold, then re-read it.
+///
+/// The re-read is a snapshot of *what has been folded so far* — a profile of
+/// the range's first N bars, not a guess at its last. That is what the paint
+/// is allowed to draw and the status line is obliged to qualify.
+fn advance(cache: &mut FrvpCache, value_area_pct: u8, inputs: &RefreshInputs<'_>) {
+    let Some(job) = cache.job.as_mut() else {
+        return;
+    };
+    let prefix_len = inputs.prefix.len();
+    let closed_total = prefix_len + inputs.state.bars().len();
+    let ladders = inputs.state.bar_footprints();
+    let approximate = cache.key.approximate;
+
+    let mut spent = 0usize;
+    let budget = fold_budget();
+    while spent < budget && job.next <= job.end {
+        let slot = job.next;
+        if slot < prefix_len {
+            // A venue candle joins as a range, not as a ladder: one bar's
+            // worth of work whatever its price width.
+            if approximate && job.fold.push_candle(&inputs.prefix[slot]) {
+                cache.bars_approximated += 1;
+            }
+            spent += 1;
+        } else if slot < closed_total {
+            // A bar whose ladder printed nothing contributes nothing; it
+            // still counts as covered — the tape answered "no trades", which
+            // is data, not absence of data.
+            if let Some(ladder) = ladders.get(slot - prefix_len) {
+                job.fold.push_ladder(ladder);
+                cache.bars_covered += 1;
+                spent += ladder.levels().len().max(1);
+            }
+        } else if let Some(partial) = inputs.partial_ladder {
+            job.fold.push_ladder(partial);
+            cache.bars_covered += 1;
+            spent += partial.levels().len().max(1);
+        }
+        job.next += 1;
+        cache.bars_folded += 1;
+    }
+
+    let fraction = Decimal::from(value_area_pct) / Decimal::ONE_HUNDRED;
+    cache.profile = job.fold.profile().map(|profile: VolumeProfile| {
+        let value_area: Option<ValueArea> = profile.value_area(fraction);
+        (profile, value_area)
     });
+    if job.next > job.end {
+        // Folded to the end: the profile is the whole range's, and only now
+        // may an empty one be called empty.
+        cache.job = None;
+        cache.empty = cache.profile.is_none().then_some(FrvpEmpty::NoTape);
+    }
 }
 
 #[cfg(test)]
@@ -366,7 +448,7 @@ mod tests {
     fn inputs<'a>(state: &'a ChartState, blocked: bool) -> RefreshInputs<'a> {
         RefreshInputs {
             state,
-            prefix_approx: &[],
+            prefix: &[],
             partial_ladder: None,
             partial_version: 0,
             blocked,
@@ -524,6 +606,153 @@ mod tests {
         assert!(cache.empty.is_none());
     }
 
+    /// A venue candle at a price a time chart actually trades at, wide enough
+    /// that spelling its spread out would cost hundreds of rows.
+    fn venue_candle(i: usize) -> quantick_engine::Bar {
+        let low = 36_000 + (i % 500) as i64;
+        quantick_engine::Bar {
+            open_time: 1_699_000_000_000 + i as i64 * 60_000,
+            close_time: 1_699_000_000_000 + (i as i64 + 1) * 60_000 - 1,
+            open: Decimal::from(low),
+            high: Decimal::from(low + 400),
+            low: Decimal::from(low),
+            close: Decimal::from(low + 200),
+            buy_volume: dec("1.5"),
+            sell_volume: dec("2.5"),
+            trade_count: 140,
+        }
+    }
+
+    /// **The freeze, reproduced.** A profile dropped on a time chart spans the
+    /// venue's backfilled history — twenty-five thousand candles is an
+    /// ordinary afternoon's worth. Folding that range inside the frame that
+    /// placed it is what locked the whole app up for seconds: every candle
+    /// spelled out as its own ladder, every ladder merged, all before the next
+    /// paint.
+    ///
+    /// The contract now: **one pass never folds the whole range.** It spends
+    /// its budget, leaves the fold in flight, and hands the paint a real
+    /// profile of what it got through. Set [`DEFAULT_FOLD_BUDGET`] to the range's
+    /// length and this test fails — which is exactly the old behaviour.
+    #[test]
+    fn a_range_over_a_whole_venue_history_never_folds_in_one_pass() {
+        let state = state_with_tape();
+        let prefix: Vec<quantick_engine::Bar> = (0..25_000).map(venue_candle).collect();
+        let mut drawings = Drawings::default();
+        // Slot 0 to the forming bar: prefix, the three closed bars, the
+        // partial — the whole chart, which is how a trader drops one.
+        place_frvp(&mut drawings, 0.0, 25_003.0);
+        let with_prefix = RefreshInputs {
+            prefix: &prefix,
+            partial_ladder: None,
+            ..inputs(&state, false)
+        };
+
+        let folding = refresh(&mut drawings, &with_prefix);
+        assert!(
+            folding,
+            "a 25k-bar range must leave the fold in flight, not swallow it in one frame"
+        );
+        let cache = cache_of(&drawings);
+        assert_eq!(cache.bars_total, 25_003);
+        assert!(
+            cache.job.is_some(),
+            "the fold is still running after one pass"
+        );
+        assert!(
+            cache.bars_approximated <= fold_budget(),
+            "one pass folded {} candles, past the {} budget",
+            cache.bars_approximated,
+            fold_budget()
+        );
+        assert!(
+            cache.profile.is_some(),
+            "what has been folded is already on screen — a partial profile, not a blank"
+        );
+        assert!(
+            cache.empty.is_none(),
+            "a fold still running is not an empty range"
+        );
+    }
+
+    /// The other half of the contract: passes converge, and what they
+    /// converge on is the whole range — every candle counted, every unit of
+    /// volume conserved. A profile that never finished would be worse than a
+    /// freeze.
+    #[test]
+    fn the_passes_converge_on_the_whole_range() {
+        let state = state_with_tape();
+        let prefix: Vec<quantick_engine::Bar> = (0..25_000).map(venue_candle).collect();
+        let mut drawings = Drawings::default();
+        place_frvp(&mut drawings, 0.0, 25_003.0);
+        let with_prefix = RefreshInputs {
+            prefix: &prefix,
+            partial_ladder: None,
+            ..inputs(&state, false)
+        };
+
+        let mut passes = 0;
+        let mut folded_before = 0;
+        loop {
+            let folding = refresh(&mut drawings, &with_prefix);
+            passes += 1;
+            let cache = cache_of(&drawings);
+            let folded = cache.bars_covered + cache.bars_approximated;
+            assert!(
+                folded > folded_before,
+                "pass {passes} folded nothing; the fill would never finish"
+            );
+            folded_before = folded;
+            assert!(passes < 100, "a 25k range should not need 100 passes");
+            if !folding {
+                break;
+            }
+        }
+
+        let cache = cache_of(&drawings);
+        assert!(cache.job.is_none(), "the fold finished");
+        assert_eq!(cache.bars_approximated, 25_000, "every venue candle joined");
+        assert_eq!(cache.bars_covered, 3, "and the three tape bars");
+        let (profile, value_area) = cache.profile.expect("the range folded");
+        // 4 units per candle (1.5 buy + 2.5 sell) plus the six tape trades.
+        assert_eq!(profile.total_volume(), dec("100006"));
+        assert!(value_area.is_some());
+        // Still one profile object: the fill must not have left the range
+        // claiming more bars than the chart has.
+        assert_eq!(cache.bars_total, 25_003);
+    }
+
+    /// The fold reruns from scratch when the range changes mid-fill — a
+    /// trader dragging an anchor while the first fold is still running must
+    /// not be shown the old range's rows under the new rectangle.
+    #[test]
+    fn moving_an_anchor_mid_fold_restarts_the_fold_on_the_new_range() {
+        let state = state_with_tape();
+        let prefix: Vec<quantick_engine::Bar> = (0..25_000).map(venue_candle).collect();
+        let mut drawings = Drawings::default();
+        place_frvp(&mut drawings, 0.0, 25_003.0);
+        let with_prefix = RefreshInputs {
+            prefix: &prefix,
+            partial_ladder: None,
+            ..inputs(&state, false)
+        };
+        assert!(refresh(&mut drawings, &with_prefix), "still folding");
+
+        // Drag the left anchor most of the way right: a much shorter range.
+        drawings.items_mut()[0].points[0].bar = 24_000.0;
+        refresh(&mut drawings, &with_prefix);
+        let cache = cache_of(&drawings);
+        assert_eq!(cache.bars_total, 1_003);
+        assert!(
+            cache.bars_approximated <= 1_000,
+            "the new range folded only its own candles, not the old range's"
+        );
+        assert!(
+            cache.job.is_none(),
+            "a range inside one budget finishes in the pass that started it"
+        );
+    }
+
     #[test]
     fn refresh_skips_when_nothing_changed_and_recomputes_on_anchor_move() {
         let state = state_with_tape();
@@ -622,10 +851,9 @@ mod tests {
         let mut drawings = Drawings::default();
         // Slots 0-1 are venue prefix, 2-4 are the three state bars.
         place_frvp(&mut drawings, 0.0, 4.0);
-        let mut approx_slot = None;
-        let approx = ApproxLadders::ensure(&mut approx_slot, &prefix, dec("1"));
+
         let with_prefix = RefreshInputs {
-            prefix_approx: approx.ladders(),
+            prefix: &prefix,
             ..inputs(&state, false)
         };
         refresh(&mut drawings, &with_prefix);
@@ -651,10 +879,9 @@ mod tests {
             .downcast_mut::<FrvpPayload>()
             .unwrap()
             .approximate_history = false;
-        let mut approx_slot = None;
-        let approx = ApproxLadders::ensure(&mut approx_slot, &prefix, dec("1"));
+
         let with_prefix = RefreshInputs {
-            prefix_approx: approx.ladders(),
+            prefix: &prefix,
             ..inputs(&state, false)
         };
         refresh(&mut drawings, &with_prefix);
