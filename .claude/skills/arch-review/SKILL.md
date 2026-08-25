@@ -213,7 +213,8 @@ edit:
 
 - **A config file — anything a *user* tunes.** Feeds and symbols in
   `crates/app/config/feeds.toml`, bubble looks in `config/bubbles.toml`,
-  footprint styling in `config/footprint.toml`, strategy presets in
+  footprint styling in `config/footprint.toml`, the layers a fresh chart
+  opens with in `config/chart-layers.toml`, strategy presets in
   `quantick-strategies.toml`, each overridable by env var. Symbols, endpoints,
   tick sizes, colours and user-facing thresholds are never literals in code. A
   Rust `const` may hold the *default*, but the knob itself lives in the file: a
@@ -236,6 +237,17 @@ edit:
   inline. This is the tier the repo already uses well — compare against the
   constant blocks at the top of `crates/app/src/app.rs` before proposing
   anything else.
+
+**Opening state is a config value too**, and its tier is always the first
+one. Which layers, panels and surfaces a fresh launch draws is a product
+decision someone may want different, so it belongs in the shipped TOML —
+`config/chart-layers.toml` is the worked example, compiled in with
+`include_str!` the way `feeds.toml` and `bubbles.toml` are. A `Default` impl
+deciding what the first frame shows, or a `set_*(false)` at startup, is a
+finding: it puts a product decision where nobody can change it without a
+build, and it splits the answer across a struct and a file the moment a state
+file exists. The test here is not "is it a number" — it is "would a human ever
+want this different".
 
 Also:
 

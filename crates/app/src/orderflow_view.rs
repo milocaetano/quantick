@@ -315,6 +315,27 @@ impl OrderflowView {
         self.config.lane_depth_visible()
     }
 
+    /// The candles' depth switch alone, whatever capture lets through it.
+    ///
+    /// [`Self::depth_visible`] answers "is it drawn", which is what a renderer
+    /// needs; this answers "did anyone ask for it", which is what persistence
+    /// needs. On a source with no book the map is undrawn however the switch
+    /// stands, and writing that down as the trader's answer would turn a
+    /// capability into a choice they never made — and one that then outranks
+    /// the shipped default on every market, including the ones with a book.
+    /// The same rule [`Self::set_depth_visible`] already compares against.
+    #[must_use]
+    pub fn depth_switched_on(&self) -> bool {
+        self.config.show_depth
+    }
+
+    /// The tape's depth switch alone. Twin of [`Self::depth_switched_on`],
+    /// same rule and the same reason.
+    #[must_use]
+    pub fn lane_depth_switched_on(&self) -> bool {
+        self.config.live_lane.show_depth
+    }
+
     /// Show or hide the depth map on the tape alone. Capture is untouched, and
     /// so are the candles.
     pub fn set_lane_depth_visible(&mut self, visible: bool) {
