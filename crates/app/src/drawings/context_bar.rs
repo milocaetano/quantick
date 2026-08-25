@@ -89,6 +89,9 @@ pub const WIDTH_STEPS_PX: [f32; 4] = [1.0, 2.0, 3.0, 4.0];
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Slot {
     Grip,
+    /// Present only for an object an operator other than the trader placed:
+    /// the chart says whose hand it was before the trader acts on it.
+    Author,
     Color,
     Width,
     /// Type/glyph size, for the tools drawn as glyphs rather than strokes.
@@ -121,6 +124,8 @@ impl Slot {
 pub struct Capabilities {
     pub stroke_width: bool,
     pub glyph_size: bool,
+    /// Whether this object was placed by something other than the trader.
+    pub authored: bool,
     /// Whether the gear earns its slot. It does not when the inspector is
     /// pinned: its destination is already on screen.
     pub settings: bool,
@@ -132,7 +137,12 @@ pub struct Capabilities {
 /// selected, and the bar never holds more cells than fit inline.
 #[must_use]
 pub fn slots(caps: Capabilities) -> SmallVec<[Slot; 12]> {
-    let mut slots = SmallVec::from_slice(&[Slot::Grip, Slot::Color]);
+    let mut slots = SmallVec::from_slice(&[Slot::Grip]);
+    if caps.authored {
+        slots.push(Slot::Author);
+        slots.push(Slot::Separator);
+    }
+    slots.push(Slot::Color);
     if caps.stroke_width {
         slots.push(Slot::Width);
     }
@@ -508,6 +518,10 @@ pub struct BarObject<'a> {
     /// locked object is one the trader declared important, and condition (c)
     /// of this module's contract is what buys the bare glyph everywhere else.
     pub confirming_delete: bool,
+    /// Who placed this object, when it was not the trader — "Claude Code
+    /// (agent)". `None` is the trader's own hand and shows nothing: the
+    /// chip exists to break the tie, not to decorate every object.
+    pub author: Option<&'a str>,
     /// Name of the tool, for the delete tooltip: a trader who cannot tell
     /// *what* was deleted cannot use undo to get it back. `'static` because
     /// the registry's names are, which is what lets the tooltip be cached
@@ -529,6 +543,7 @@ pub fn capabilities(object: &BarObject<'_>) -> Capabilities {
         // a text note moves nothing.
         stroke_width: object.glyph_size.is_none(),
         glyph_size: object.glyph_size.is_some(),
+        authored: object.author.is_some(),
         settings: object.settings_available,
     }
 }
@@ -606,6 +621,16 @@ fn draw_slot(
 ) {
     match slot {
         Slot::Grip => draw_grip(ui, intent),
+        Slot::Author => {
+            // An indicator, not a control: the glyph says an operator placed
+            // this, the tooltip says which one, and the inspector and the
+            // object manager spell it out in words.
+            let author = object.author.unwrap_or_default();
+            IconButton::new(icons::ROBOT, TOOLRAIL_ICON)
+                .accent(theme::TEXT_SUPPORT)
+                .hover_text(&format!("Placed by {author}, not by you"))
+                .show(ui);
+        }
         Slot::Separator => draw_separator(ui),
         Slot::Color => draw_color_slot(ui, bar, object),
         Slot::Width => draw_width_slot(ui, bar, object),
@@ -1150,6 +1175,7 @@ mod tests {
 
     const PLAIN: Capabilities = Capabilities {
         stroke_width: true,
+        authored: false,
         glyph_size: false,
         settings: true,
     };
@@ -1190,6 +1216,7 @@ mod tests {
     fn an_unsupported_property_is_absent_not_disabled() {
         let glyph_tool = slots(Capabilities {
             stroke_width: false,
+            authored: false,
             glyph_size: true,
             settings: true,
         });
@@ -1236,6 +1263,7 @@ mod tests {
             PLAIN,
             Capabilities {
                 stroke_width: false,
+                authored: false,
                 glyph_size: true,
                 settings: false,
             },

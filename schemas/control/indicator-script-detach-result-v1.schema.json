@@ -1,0 +1,23 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "detached": {
+      "type": "boolean"
+    },
+    "slot_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "slot_id",
+    "detached"
+  ],
+  "title": "DetachResult",
+  "type": "object"
+}

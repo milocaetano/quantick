@@ -30,6 +30,14 @@ pub const READ_EVENTS: &str = "quantick_read_events";
 pub const WAIT_FOR_CHANGE: &str = "quantick_wait_for_change";
 pub const SEARCH_CAPABILITIES: &str = "quantick_search_capabilities";
 pub const INVOKE: &str = "quantick_invoke";
+/// The annotate tier's tools. They are listed only for a connection whose
+/// ceiling is the annotator profile: a tool list that offers what the trader
+/// never granted is a promise the instance will refuse.
+pub const ANNOTATE: &str = "quantick_annotate";
+pub const REMOVE_ANNOTATION: &str = "quantick_remove_annotation";
+pub const NOTIFY: &str = "quantick_notify";
+pub const ATTACH_SCRIPT: &str = "quantick_attach_script";
+pub const DETACH_SCRIPT: &str = "quantick_detach_script";
 
 /// The registered capabilities the named tools resolve to. Same IDs the
 /// application's observer contract registers; `quantick_invoke` reaches any
@@ -40,6 +48,25 @@ pub const CHART_WINDOW_CAPABILITY: &str = "chart.window.read";
 pub const DIAGNOSTICS_CAPABILITY: &str = "health.diagnostics.read";
 pub const EVENTS_READ_CAPABILITY: &str = "events.read";
 pub const EVENTS_WAIT_CAPABILITY: &str = "events.wait";
+pub const LABEL_CAPABILITY: &str = "annotate.label.create";
+pub const ARROW_CAPABILITY: &str = "annotate.arrow.create";
+pub const ZONE_CAPABILITY: &str = "annotate.zone.create";
+pub const REMOVE_CAPABILITY: &str = "annotate.remove";
+pub const POPUP_CAPABILITY: &str = "notify.popup";
+pub const TOAST_CAPABILITY: &str = "notify.toast";
+pub const SOUND_CAPABILITY: &str = "notify.sound";
+pub const ATTACH_SCRIPT_CAPABILITY: &str = "indicator.script.attach";
+pub const DETACH_SCRIPT_CAPABILITY: &str = "indicator.script.detach";
+
+/// The profile whose ceiling admits the annotate tier.
+pub const ANNOTATOR_PROFILE: &str = "annotator";
+/// The read-only floor every other ceiling is treated as.
+pub const OBSERVER_PROFILE: &str = "observer";
+/// The routing property that picks which object an annotation places, and
+/// which channel a notification arrives on. Removed before the payload is
+/// validated, exactly as `instance_id` is.
+const OBJECT_PROPERTY: &str = "object";
+const CHANNEL_PROPERTY: &str = "channel";
 
 /// Every first-generation observer capability is registered at version 1.
 const FIRST_CAPABILITY_VERSION: u32 = 1;
@@ -73,6 +100,26 @@ const EVENTS_WAIT_INPUT_SCHEMA: &str =
     include_str!("../../../schemas/control/observer-events-wait-input-v1.schema.json");
 const EVENT_PAGE_SCHEMA: &str =
     include_str!("../../../schemas/control/observer-event-page-v1.schema.json");
+const ANNOTATION_INPUT_SCHEMA: &str =
+    include_str!("../../../schemas/control/annotate-object-input-v1.schema.json");
+const ANNOTATION_RESULT_SCHEMA: &str =
+    include_str!("../../../schemas/control/annotate-object-result-v1.schema.json");
+const ANNOTATION_REMOVE_INPUT_SCHEMA: &str =
+    include_str!("../../../schemas/control/annotate-remove-input-v1.schema.json");
+const ANNOTATION_REMOVE_RESULT_SCHEMA: &str =
+    include_str!("../../../schemas/control/annotate-remove-result-v1.schema.json");
+const NOTIFY_INPUT_SCHEMA: &str =
+    include_str!("../../../schemas/control/notify-input-v1.schema.json");
+const NOTIFY_RESULT_SCHEMA: &str =
+    include_str!("../../../schemas/control/notify-result-v1.schema.json");
+const ATTACH_INPUT_SCHEMA: &str =
+    include_str!("../../../schemas/control/indicator-script-attach-input-v1.schema.json");
+const ATTACH_RESULT_SCHEMA: &str =
+    include_str!("../../../schemas/control/indicator-script-attach-result-v1.schema.json");
+const DETACH_INPUT_SCHEMA: &str =
+    include_str!("../../../schemas/control/indicator-script-detach-input-v1.schema.json");
+const DETACH_RESULT_SCHEMA: &str =
+    include_str!("../../../schemas/control/indicator-script-detach-result-v1.schema.json");
 
 /// The tool list for one profile ceiling. The named reads are read-only
 /// whatever the ceiling; `quantick_invoke` takes the conservative hints of
@@ -102,7 +149,7 @@ pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
             open_world_hint: true,
         },
     };
-    vec![
+    let mut tools = vec![
         Tool {
             name: DESCRIBE.to_owned(),
             title: "Describe the running Quantick instance".to_owned(),
@@ -162,12 +209,122 @@ pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
         Tool {
             name: INVOKE.to_owned(),
             title: "Invoke a registered capability by ID".to_owned(),
-            description: "Execute one registered capability by ID and version with its declared input. Availability, permission, revision and idempotency rules are enforced by the instance exactly as for the named tools; under the observer profile only read capabilities exist and any write ID is refused.".to_owned(),
+            description: "Execute one registered capability by ID and version with its declared input. Availability, permission, revision and idempotency rules are enforced by the instance exactly as for the named tools, whatever this connection's ceiling: a capability ID the trader did not grant is refused with control.permission_denied. Use quantick_describe or quantick_search_capabilities to learn which IDs this instance registers.".to_owned(),
             input_schema: invoke_schema(),
             output_schema: None,
             annotations: invoke_annotations,
         },
+    ];
+    if profile_ceiling == ANNOTATOR_PROFILE {
+        tools.extend(annotate_tools());
+    }
+    tools
+}
+
+/// The tools a connection holding the annotator profile also gets: the half
+/// of the loop that answers on the chart. Each maps to exactly one registered
+/// capability — the routing property picks which — so nothing here is a
+/// second vocabulary beside the instance's own IDs.
+fn annotate_tools() -> Vec<Tool> {
+    vec![
+        Tool {
+            name: ANNOTATE.to_owned(),
+            title: "Place a label, an arrow or a zone on the chart".to_owned(),
+            description: "Add one object to a chart at market-time and price coordinates — the ones chart.window.read and the cursor report. `object` picks what to place: a label (one anchor, carries text), an arrow or a zone (two anchors each). The object is visibly attributed to this client wherever the trader sees it, and either of you can remove it in one action.".to_owned(),
+            input_schema: with_routing_choice(
+                parse_schema(ANNOTATION_INPUT_SCHEMA),
+                OBJECT_PROPERTY,
+                &["label", "arrow", "zone"],
+                "Which object to place.",
+            ),
+            output_schema: Some(capability_output_schema(parse_schema(ANNOTATION_RESULT_SCHEMA))),
+            annotations: annotate_write("Annotate the chart"),
+        },
+        Tool {
+            name: REMOVE_ANNOTATION.to_owned(),
+            title: "Remove an annotation this client placed".to_owned(),
+            description: "Remove one object by the annotation_id an annotate call returned. Only objects placed by an operator can be removed this way: an object the trader drew by hand is refused, whatever ID is asked for.".to_owned(),
+            input_schema: with_instance_routing(parse_schema(ANNOTATION_REMOVE_INPUT_SCHEMA)),
+            output_schema: Some(capability_output_schema(parse_schema(
+                ANNOTATION_REMOVE_RESULT_SCHEMA,
+            ))),
+            annotations: annotate_write("Remove an annotation"),
+        },
+        Tool {
+            name: NOTIFY.to_owned(),
+            title: "Get the trader's attention".to_owned(),
+            description: "Raise one notification: `popup` opens a small window over the chart, `toast` posts a line to the acknowledgement lane, `sound` asks the platform for its alert sound and needs a scope of its own that is off by default. Every channel is attributed to this client and is rate limited; none of them can be taken back, so use them when the chart alone will not do.".to_owned(),
+            input_schema: with_routing_choice(
+                parse_schema(NOTIFY_INPUT_SCHEMA),
+                CHANNEL_PROPERTY,
+                &["popup", "toast", "sound"],
+                "Which channel the notification arrives on.",
+            ),
+            output_schema: Some(capability_output_schema(parse_schema(NOTIFY_RESULT_SCHEMA))),
+            annotations: annotate_write("Notify the trader"),
+        },
+        Tool {
+            name: ATTACH_SCRIPT.to_owned(),
+            title: "Compile and attach a Quantick Pine indicator".to_owned(),
+            description: "Compile Quantick Pine source and attach the indicator it produces to the focused pane. A script that does not compile is refused with its diagnostics as structured data — stable code, byte span, line, column, message and notes — so the next attempt can fix the exact span. Returns the slot id to detach with.".to_owned(),
+            input_schema: with_instance_routing(parse_schema(ATTACH_INPUT_SCHEMA)),
+            output_schema: Some(capability_output_schema(parse_schema(ATTACH_RESULT_SCHEMA))),
+            annotations: annotate_write("Attach a script"),
+        },
+        Tool {
+            name: DETACH_SCRIPT.to_owned(),
+            title: "Detach a script indicator".to_owned(),
+            description: "Remove one indicator slot this client attached, leaving the pane as it was before.".to_owned(),
+            input_schema: with_instance_routing(parse_schema(DETACH_INPUT_SCHEMA)),
+            output_schema: Some(capability_output_schema(parse_schema(DETACH_RESULT_SCHEMA))),
+            annotations: annotate_write("Detach a script"),
+        },
     ]
+}
+
+/// The annotations of a tier that writes but never destroys and never
+/// repeats: not read-only, not destructive, not idempotent (two identical
+/// calls place two objects), closed world.
+fn annotate_write(title: &str) -> ToolAnnotations {
+    ToolAnnotations {
+        title: Some(title.to_owned()),
+        read_only_hint: false,
+        destructive_hint: false,
+        idempotent_hint: false,
+        open_world_hint: false,
+    }
+}
+
+/// A committed input document plus the instance routing and one required
+/// choice property that picks the capability behind the tool.
+fn with_routing_choice(
+    schema: Value,
+    property: &str,
+    choices: &[&str],
+    description: &str,
+) -> Value {
+    let mut schema = with_instance_routing(schema);
+    if let Some(object) = schema.as_object_mut() {
+        if let Some(properties) = object.get_mut("properties").and_then(Value::as_object_mut) {
+            properties.insert(
+                property.to_owned(),
+                json!({
+                    "type": "string",
+                    "enum": choices,
+                    "description": description,
+                }),
+            );
+        }
+        if let Some(required) = object.get_mut("required").and_then(Value::as_array_mut) {
+            required.push(Value::String(property.to_owned()));
+        } else {
+            object.insert(
+                "required".to_owned(),
+                Value::Array(vec![Value::String(property.to_owned())]),
+            );
+        }
+    }
+    schema
 }
 
 /// Execute one tool call. Protocol-level problems (unknown tool, arguments
@@ -228,6 +385,62 @@ pub fn call(
             link,
             instance.as_ref(),
             EVENTS_WAIT_CAPABILITY,
+            Value::Object(arguments),
+        ),
+        ANNOTATE => {
+            let capability = match take_choice(&mut arguments, OBJECT_PROPERTY)?.as_str() {
+                "label" => LABEL_CAPABILITY,
+                "arrow" => ARROW_CAPABILITY,
+                "zone" => ZONE_CAPABILITY,
+                other => {
+                    return Err(RpcError::new(
+                        INVALID_PARAMS,
+                        format!("object must be label, arrow or zone, not `{other}`"),
+                    ));
+                }
+            };
+            forward(
+                link,
+                instance.as_ref(),
+                capability,
+                Value::Object(arguments),
+            )
+        }
+        REMOVE_ANNOTATION => forward(
+            link,
+            instance.as_ref(),
+            REMOVE_CAPABILITY,
+            Value::Object(arguments),
+        ),
+        NOTIFY => {
+            let capability = match take_choice(&mut arguments, CHANNEL_PROPERTY)?.as_str() {
+                "popup" => POPUP_CAPABILITY,
+                "toast" => TOAST_CAPABILITY,
+                "sound" => SOUND_CAPABILITY,
+                other => {
+                    return Err(RpcError::new(
+                        INVALID_PARAMS,
+                        format!("channel must be popup, toast or sound, not `{other}`"),
+                    ));
+                }
+            };
+            forward(
+                link,
+                instance.as_ref(),
+                capability,
+                Value::Object(arguments),
+            )
+        }
+        ATTACH_SCRIPT => forward(
+            link,
+            instance.as_ref(),
+            ATTACH_SCRIPT_CAPABILITY,
+            Value::Object(arguments),
+        ),
+        DETACH_SCRIPT => forward(
+            link,
+            instance.as_ref(),
+            DETACH_SCRIPT_CAPABILITY,
             Value::Object(arguments),
         ),
         SEARCH_CAPABILITIES => search(link, instance.as_ref(), &arguments),
@@ -465,6 +678,22 @@ fn instance_only_schema() -> Value {
 /// Add the routing property to a committed capability input schema. The
 /// committed document forbids unknown properties, so the routing one has to
 /// be declared here and stripped again before the payload is forwarded.
+/// Take one required routing choice out of the arguments, so the payload the
+/// instance validates is exactly its own committed input document.
+fn take_choice(arguments: &mut Map<String, Value>, property: &str) -> Result<String, RpcError> {
+    match arguments.remove(property) {
+        Some(Value::String(choice)) => Ok(choice),
+        Some(_) => Err(RpcError::new(
+            INVALID_PARAMS,
+            format!("{property} must be a string"),
+        )),
+        None => Err(RpcError::new(
+            INVALID_PARAMS,
+            format!("{property} is required"),
+        )),
+    }
+}
+
 fn with_instance_routing(mut schema: Value) -> Value {
     if let Some(object) = schema.as_object_mut() {
         object.remove("$schema");

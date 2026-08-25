@@ -62,15 +62,36 @@ impl ConnectOptions {
         client_version: impl Into<String>,
         requested_scopes: BTreeSet<PermissionId>,
     ) -> Self {
+        Self::for_profile(
+            OBSERVER_PROFILE_ID,
+            client_name,
+            client_version,
+            requested_scopes,
+        )
+    }
+
+    /// Ask for one named profile. The instance intersects it with what the
+    /// human granted, so asking for `annotator` against a window that granted
+    /// only reads yields a read-only connection, never a refusal to connect.
+    pub fn for_profile(
+        profile: &str,
+        client_name: impl Into<String>,
+        client_version: impl Into<String>,
+        requested_scopes: BTreeSet<PermissionId>,
+    ) -> Self {
         Self {
             client_name: client_name.into(),
             client_version: client_version.into(),
-            requested_profile: ProfileId::new("observer")
-                .expect("static observer profile is valid"),
+            requested_profile: ProfileId::new(profile).expect("a static profile ID is valid"),
             requested_scopes,
         }
     }
 }
+
+/// The profile every client may ask for, and the floor of every other.
+pub const OBSERVER_PROFILE_ID: &str = "observer";
+/// The profile that may also answer on the chart.
+pub const ANNOTATOR_PROFILE_ID: &str = "annotator";
 
 /// One authenticated connection to one running instance.
 #[derive(Debug)]

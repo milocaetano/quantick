@@ -771,7 +771,16 @@ impl ToolRail {
             DRAWING_TOOLS.into_iter().find_map(|tool| {
                 tool.shortcut()
                     .filter(|shortcut| {
-                        input.key_pressed(shortcut.key) && input.modifiers.shift == shortcut.shift
+                        // A tool's shortcut is a *bare* key (with Shift where
+                        // the tool asks for it). Ctrl+M, Cmd+M and Alt+M
+                        // belong to whoever claims them — the mark hotkey does
+                        // — and must not also arm a tool out from under the
+                        // trader's hand.
+                        input.key_pressed(shortcut.key)
+                            && input.modifiers.shift == shortcut.shift
+                            && !input.modifiers.ctrl
+                            && !input.modifiers.command
+                            && !input.modifiers.alt
                     })
                     .map(|_| Tool::Drawing(tool))
             })

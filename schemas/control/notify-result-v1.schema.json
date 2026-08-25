@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What a notification returns: that it was raised, and what the trader will\nsee attributed to whom.",
+  "properties": {
+    "channel": {
+      "type": "string"
+    },
+    "displayed_text": {
+      "description": "What the interface shows, including the attribution it added.",
+      "type": "string"
+    },
+    "raised": {
+      "type": "boolean"
+    },
+    "unavailable_reason": {
+      "description": "Present when the channel cannot reach the trader in this build; the\ncall still says so rather than pretending it was heard.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "channel",
+    "raised",
+    "displayed_text"
+  ],
+  "title": "NotifyResult",
+  "type": "object"
+}

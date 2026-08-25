@@ -12,6 +12,7 @@ use tracing_subscriber::EnvFilter;
 use crate::state::BarSpec;
 
 mod app;
+mod audio;
 mod avwap;
 mod bands;
 mod bubble_presets;
