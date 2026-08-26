@@ -261,17 +261,17 @@ impl VolumeProfile {
         let mut lo = poc_idx;
         let mut hi = poc_idx;
         let mut captured = rows[poc_idx].1;
+        // The step's reach in buckets, on either side of an edge.
+        let reach = VALUE_AREA_STEP_ROWS as i64;
+        // Volume printed in the price window a step may take from, gaps
+        // counting zero — the pair the convention compares.
+        let window_volume = |edge: i64, direction: i64| -> Decimal {
+            (1..=reach).fold(Decimal::ZERO, |sum, step| {
+                sum.saturating_add(vol_at(edge + direction * step))
+            })
+        };
 
         while captured < target && (lo > 0 || hi + 1 < rows.len()) {
-            // The step's reach in buckets, on either side of an edge.
-            let reach = VALUE_AREA_STEP_ROWS as i64;
-            // Volume printed in the price window a step may take from, gaps
-            // counting zero — the pair the convention compares.
-            let window_volume = |edge: i64, direction: i64| -> Decimal {
-                (1..=reach).fold(Decimal::ZERO, |sum, step| {
-                    sum.saturating_add(vol_at(edge + direction * step))
-                })
-            };
             let above_exhausted = hi + 1 >= rows.len();
             let pair_above = if above_exhausted {
                 Decimal::ZERO
