@@ -291,6 +291,15 @@ impl OrderflowView {
     fn sync_published(&mut self) {
         self.published = self.worker.published();
         let base = self.published.base_price_grouping;
+        self.adopt_base(base);
+    }
+
+    /// Take an engine-chosen capture bucket into the UI mirror.
+    ///
+    /// Split out of [`Self::sync_published`] because the footprint's row width
+    /// needs the bucket without the rest of the published state, and the
+    /// adoption rule is the same either way.
+    fn adopt_base(&mut self, base: Decimal) {
         if base != self.last_seen_base {
             self.last_seen_base = base;
             // The engine auto-sized the capture bucket from live data; adopt
@@ -300,6 +309,22 @@ impl OrderflowView {
                 self.capture_grouping_draft = base.to_f64().unwrap_or(self.capture_grouping_draft);
             }
         }
+    }
+
+    /// The capture bucket, taking whatever the engine has published since the
+    /// last look.
+    ///
+    /// [`base_capture_grouping`](Self::base_capture_grouping) reads the mirror
+    /// as it stands, which is right for a caller that has already synced this
+    /// frame. The footprint's row width has no such caller: every
+    /// `sync_published` site is gated on a layer or a dock tab being open, and
+    /// the ladder is drawn when all of them are off — the very case this
+    /// sizing exists for. Reading through here rather than off the mirror is
+    /// what keeps the rows from depending on a diagnostics log having run.
+    pub fn capture_grouping_now(&mut self) -> Decimal {
+        let base = self.worker.published_base_grouping();
+        self.adopt_base(base);
+        base
     }
 
     /// The capture bucket the book engine derived for this instrument — the

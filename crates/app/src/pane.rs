@@ -4878,8 +4878,8 @@ impl ChartPane {
         if footprint_on
             && let Some(base) = self
                 .orderflow
-                .as_ref()
-                .map(OrderflowView::base_capture_grouping)
+                .as_mut()
+                .map(OrderflowView::capture_grouping_now)
         {
             self.state.set_footprint_group(base);
         }

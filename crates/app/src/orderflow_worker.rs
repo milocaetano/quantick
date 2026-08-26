@@ -104,6 +104,19 @@ impl BookWorker {
             .clone()
     }
 
+    /// Just the capture bucket from the published mailbox.
+    ///
+    /// The footprint's row width needs this every frame, including when every
+    /// order-flow layer is off and nothing else syncs. Cloning the whole
+    /// published state — a ladder and a projected frame — to read one
+    /// `Decimal` would be paying for the map in order to size a ladder.
+    pub(crate) fn published_base_grouping(&self) -> Decimal {
+        self.published
+            .lock()
+            .expect("book published mailbox poisoned")
+            .base_price_grouping
+    }
+
     /// Block until every command sent before this call has been applied and
     /// published. Tests use this to make the async pipeline deterministic.
     #[cfg(test)]
