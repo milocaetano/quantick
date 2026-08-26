@@ -23,7 +23,7 @@ gaps carried forward. It adds no new decisions.
 | PR 4: `quantick-mcp` STDIO adapter | `feat/mcp-observer` | [#222](https://github.com/milocaetano/quantick/pull/222) | open, stacked on #221 |
 | PR 5a: events, cursor, human mark, action registry, control trace | `feat/control-events` | [#223](https://github.com/milocaetano/quantick/pull/223) | open, stacked on #222 |
 | Snapshot modules: analysis, order flow, session | `feat/control-snapshots-*` | — | not started |
-| Semantic scene | `feat/control-scene` | — | not started |
+| 5.2: semantic scene, `quantick_get_scene` | `feat/control-scene` | [#235](https://github.com/milocaetano/quantick/pull/235) | open, base `main` |
 | PR 5b: annotate and notify tier, `attach_script` | `feat/control-annotate` | — | not started |
 | PR 5c: evidence bundles | `feat/control-evidence` | — | not started |
 | PR 6: cockpit tier | `feat/control-actions` | — | not started; gated on the owner's §9.2 authority decision |

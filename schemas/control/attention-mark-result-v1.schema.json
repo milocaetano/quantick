@@ -9,6 +9,7 @@
       "type": "string"
     },
     "AvailabilitySnapshot": {
+      "description": "Whether something is there to be read or acted on, and the coded reason\nwhen it is not.\n\nThe reason is a stable identifier, never the sentence an interface shows a\nhuman: a client made to parse that sentence would break the day it is\nreworded, and translating the interface would break every such client at\nonce.",
       "properties": {
         "available": {
           "type": "boolean"
@@ -288,6 +289,7 @@
       "type": "string"
     },
     "PointerSnapshot": {
+      "description": "`screen_x_px` and `screen_y_px` keep their names for the clients already\nreading them, but the unit is the window's **logical points** — what the\nwindow lays out in, and what `scene.controls` reports a control's rectangle\nin, so a pointer and a rectangle can be compared without a scale factor\nneither side knows. On a 200% display the framebuffer holds twice these\nnumbers.",
       "properties": {
         "axis_unit": {
           "type": "string"
@@ -368,11 +370,11 @@
         },
         "screen_x_px": {
           "$ref": "#/$defs/CanonicalDecimal",
-          "x-unit": "pixels"
+          "x-unit": "logical_points"
         },
         "screen_y_px": {
           "$ref": "#/$defs/CanonicalDecimal",
-          "x-unit": "pixels"
+          "x-unit": "logical_points"
         },
         "slot": {
           "anyOf": [

@@ -192,7 +192,8 @@ fn answer(instance_id: &InstanceId, request: &RequestEnvelope) -> ResponseOutcom
         },
         tools::SNAPSHOT_CAPABILITY
         | tools::DIAGNOSTICS_CAPABILITY
-        | tools::CHART_WINDOW_CAPABILITY => ResponseOutcome::Success {
+        | tools::CHART_WINDOW_CAPABILITY
+        | tools::SCENE_CAPABILITY => ResponseOutcome::Success {
             result: json!({ "echo": request.payload, "capability": request.capability_id }),
         },
         _ => ResponseOutcome::Failure {

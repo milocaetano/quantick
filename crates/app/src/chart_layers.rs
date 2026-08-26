@@ -121,6 +121,62 @@ pub(crate) enum ChartLayer {
     Drawings,
 }
 
+/// Why a layer cannot be drawn where it was asked for.
+///
+/// Two renderings of one condition, produced together so they cannot name
+/// different things: the sentence a disabled control shows the trader, and the
+/// stable code a control client branches on. Splitting them across two
+/// functions is how a gate drifts — the strip's source gate landed in
+/// `ChartPane::layer_blocked` and a second copy elsewhere did not follow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LayerBlock {
+    /// The stable wire code. Never the sentence below: a client made to parse
+    /// prose breaks the day it is reworded, and translating the interface
+    /// would break every such client at once.
+    pub code: &'static str,
+    /// What the disabled control tells a human.
+    pub explanation: &'static str,
+}
+
+impl LayerBlock {
+    pub(crate) const fn new(code: &'static str, explanation: &'static str) -> Self {
+        Self { code, explanation }
+    }
+}
+
+/// The blocks [`crate::pane::ChartPane::layer_blocked`] answers with, named
+/// once so the same condition cannot acquire a second code.
+pub(crate) mod blocks {
+    use super::LayerBlock;
+
+    pub(crate) const WRONG_PANE: LayerBlock = LayerBlock::new(
+        "the_order_flow_layers_are_drawn_on_the_flow_pane",
+        "the order-flow layers are drawn on the flow pane",
+    );
+    pub(crate) const TAPE_OFF: LayerBlock = LayerBlock::new(
+        "the_tape_is_off",
+        "the tape is off — the switch in the canvas's top-right corner puts it back, \
+         and this layer is waiting exactly as it was left",
+    );
+    pub(crate) const NO_BOOK: LayerBlock = LayerBlock::new(
+        "source_captures_no_order_book",
+        "order-book capture is not available for this source",
+    );
+    pub(crate) const NO_TRADED_VOLUME: LayerBlock = LayerBlock::new(
+        "source_prints_no_traded_volume",
+        "this source quotes prices but prints no traded volume",
+    );
+    pub(crate) const NO_BOOK_AND_NO_VOLUME: LayerBlock = LayerBlock::new(
+        "source_publishes_neither_book_nor_traded_volume",
+        "this source publishes neither an order book nor traded volume, \
+         so the strip would have nothing to draw",
+    );
+    pub(crate) const DEPTH_MAP_HIDDEN: LayerBlock = LayerBlock::new(
+        "the_depth_map_it_reports_on_is_hidden",
+        "the badge reports on the depth map, which is hidden",
+    );
+}
+
 impl ChartLayer {
     /// Every layer, in menu order. A variant missing from here has no switch
     /// and cannot be turned off at all, so a new one belongs in this list and

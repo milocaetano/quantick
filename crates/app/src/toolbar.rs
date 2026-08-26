@@ -19,6 +19,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
+use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::FeedCapabilities;
 use crate::dock::DockTab;
 use crate::state::{BarKind, ImbalanceUnit};
@@ -248,14 +249,13 @@ pub struct ToolbarModel<'a> {
     pub older_candles: crate::tab::OlderCandles,
     /// What the active source's backend can do.
     pub capabilities: FeedCapabilities,
-    /// Whether the L2 depth map is shown. Capture runs regardless.
-    pub heatmap_on: bool,
-    /// Whether the aggression layer is on.
-    pub bubbles_on: bool,
-    /// Whether the live strip is shown.
-    pub live_strip_on: bool,
-    /// Whether the candle footprint is drawn.
-    pub footprint_on: bool,
+    /// The LAYERS group's lamps, in [`LayerToggle::ALL`] order: whether
+    /// each layer is drawn, and what blocks it where something does. Both
+    /// come from `ChartPane::layer_blocked` / `layer_visible` through
+    /// [`crate::tab::Tab::layer_toggle_state`], which the semantic scene reads
+    /// too — so a button cannot tell the trader one thing and an assistant
+    /// another.
+    pub layers: [LayerToggleState; LayerToggle::COUNT],
     /// Whether the dock (strip included) is shown.
     pub dock_visible: bool,
     /// Whether the appearance dialog is open.
@@ -811,6 +811,131 @@ fn draw_trade(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolbar
     }
 }
 
+/// One LAYERS lamp this frame: drawn or not, and what blocks it if anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayerToggleState {
+    pub on: bool,
+    pub blocked: Option<LayerBlock>,
+}
+
+/// The visual layers the LAYERS group toggles, declared once.
+///
+/// The toolbar draws from this list and the semantic scene projects from it,
+/// so a layer cannot wear a button the trader sees and be missing from what an
+/// operator can read, nor the reverse. A hand-kept list beside this one is the
+/// drift this type exists to prevent.
+///
+/// The INDICATORS menu is deliberately not a member: it opens a menu rather
+/// than toggling a layer, and folding it in would give the group two shapes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayerToggle {
+    Bubbles,
+    Heatmap,
+    Footprint,
+    LiveStrip,
+}
+
+impl LayerToggle {
+    /// Every toggle in *call* order, which the right-to-left layout turns
+    /// into right-to-left screen order: the trader reads them the other way
+    /// round. Anything that wants reading order reverses this — the scene
+    /// does, and says so — because the draw order is what the layout needs
+    /// and reordering here would move the buttons under the trader's hand.
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::Bubbles,
+        Self::Heatmap,
+        Self::Footprint,
+        Self::LiveStrip,
+    ];
+
+    /// How many toggles the group has. Named so the model's array, the list
+    /// and any fixture widen together when a layer earns a button.
+    pub const COUNT: usize = 4;
+
+    /// The canvas layer this button switches.
+    ///
+    /// A toolbar button is a shortcut into the pane's own layer menu, never a
+    /// second switch beside it: the identifier, the label and the state all
+    /// come from [`ChartLayer`], which already resolves each layer to the one
+    /// field that owns it. Restating any of them here is how a button and a
+    /// menu start disagreeing about a pixel.
+    #[must_use]
+    pub(crate) fn layer(self) -> ChartLayer {
+        match self {
+            Self::Bubbles => ChartLayer::Bubbles,
+            Self::Heatmap => ChartLayer::Heatmap,
+            Self::Footprint => ChartLayer::Footprint,
+            Self::LiveStrip => ChartLayer::LiveStrip,
+        }
+    }
+
+    /// The glyph. Where a dock tab configures the layer it lends its own, so
+    /// the toggle and the panel behind it cannot wear two different marks.
+    #[must_use]
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Bubbles => DockTab::Bubbles.icon(),
+            Self::Heatmap => DockTab::L2.icon(),
+            Self::Footprint => LAYER_FOOTPRINT_ICON,
+            Self::LiveStrip => LAYER_STRIP_ICON,
+        }
+    }
+
+    #[must_use]
+    fn accent(self) -> egui::Color32 {
+        match self {
+            Self::Bubbles => theme::BUY,
+            Self::Heatmap | Self::LiveStrip => theme::ACCENT,
+            Self::Footprint => theme::POC,
+        }
+    }
+
+    #[must_use]
+    fn hover_text(self) -> &'static str {
+        match self {
+            Self::Bubbles => {
+                "aggression bubbles: confirmed executions from the trade stream — \
+                 right-click for settings"
+            }
+            Self::Heatmap => {
+                "L2 heatmap: show the recorded depth map — recording never stops, so hiding it \
+                 loses nothing. Right-click for settings"
+            }
+            Self::Footprint => {
+                "candle footprint: the buy/sell split per price inside each bar — detail follows \
+                 the zoom. Right-click for style and thresholds"
+            }
+            Self::LiveStrip => {
+                "live strip: the book's resting depth and the forming bar's aggression, \
+                 beside the price axis — right-click for settings"
+            }
+        }
+    }
+
+    #[must_use]
+    fn toggle_action(self, on: bool) -> ToolbarAction {
+        match self {
+            Self::Bubbles => ToolbarAction::SetBubbles(on),
+            Self::Heatmap => ToolbarAction::SetHeatmap(on),
+            Self::Footprint => ToolbarAction::SetFootprint(on),
+            Self::LiveStrip => ToolbarAction::SetLiveStrip(on),
+        }
+    }
+
+    /// Where a right-click goes: the panel that configures the layer. Looking
+    /// is not enabling, so this never toggles on the way.
+    #[must_use]
+    fn settings_action(self) -> ToolbarAction {
+        match self {
+            Self::Bubbles => ToolbarAction::OpenDockTab(DockTab::Bubbles),
+            // The strip reads the same book the depth map draws, so the same
+            // tab configures both.
+            Self::Heatmap | Self::LiveStrip => ToolbarAction::OpenDockTab(DockTab::L2),
+            Self::Footprint => ToolbarAction::OpenFootprintSettings,
+        }
+    }
+}
+
 /// LAYERS: one icon toggle per visual layer. Left-click toggles the layer;
 /// right-click opens its dock tab — looking is not enabling. Drawn inside the
 /// right-to-left layout, so the call order is the reverse of what is seen.
@@ -825,85 +950,25 @@ fn draw_trade(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolbar
 fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
     draw_indicators_menu(ui, model, actions);
 
-    // The glyph comes from the dock tab that configures the layer, so the
-    // toggle and the panel behind it can never wear two different marks.
-    let bubbles = IconButton::new(DockTab::Bubbles.icon(), TOOLBAR_ICON)
-        .active(model.bubbles_on)
-        .accent(theme::BUY)
-        // A bubble's whole message is its size. Where every print is one
-        // synthetic unit, the layer draws one identical circle per tick and
-        // says nothing — so it is withheld rather than drawn empty of meaning.
-        .enabled(model.capabilities.traded_volume)
-        .hover_text(
-            "aggression bubbles: confirmed executions from the trade stream — \
-             right-click for settings",
-        )
-        .disabled_explanation("this source quotes prices but prints no traded volume")
-        .show(ui);
-    if bubbles.clicked() {
-        actions.push(ToolbarAction::SetBubbles(!model.bubbles_on));
-    }
-    if bubbles.secondary_clicked() {
-        actions.push(ToolbarAction::OpenDockTab(DockTab::Bubbles));
-    }
-
-    let heatmap = IconButton::new(DockTab::L2.icon(), TOOLBAR_ICON)
-        .active(model.heatmap_on)
-        .accent(theme::ACCENT)
-        .enabled(model.capabilities.book_capture)
-        .hover_text(
-            "L2 heatmap: show the recorded depth map — recording never stops, so hiding it \
-             loses nothing. Right-click for settings",
-        )
-        .disabled_explanation("order-book capture is not available for this source")
-        .show(ui);
-    if heatmap.clicked() {
-        actions.push(ToolbarAction::SetHeatmap(!model.heatmap_on));
-    }
-    if heatmap.secondary_clicked() {
-        actions.push(ToolbarAction::OpenDockTab(DockTab::L2));
-    }
-
-    // Never capability-gated: the aggression histogram runs on the trade
-    // stream every source provides (replay included), and without book data
-    // the strip honestly degrades to it.
-    // The footprint had lived only in the pane's right-click layer menu — a
-    // representation of the candle itself, reachable only by a gesture two
-    // levels deep, while three lesser layers each had a button. Here it
-    // speaks the group's own language: left-click toggles, right-click opens
-    // its settings.
-    let footprint = IconButton::new(LAYER_FOOTPRINT_ICON, TOOLBAR_ICON)
-        .active(model.footprint_on)
-        .accent(theme::POC)
-        // Same gate as the bubbles, and for the same reason: a ladder of
-        // buyer-against-seller quantities cannot be built from a quote stream
-        // that prints no traded volume.
-        .enabled(model.capabilities.traded_volume)
-        .hover_text(
-            "candle footprint: the buy/sell split per price inside each bar — detail follows the zoom. Right-click for style and thresholds",
-        )
-        .disabled_explanation("this source quotes prices but prints no traded volume")
-        .show(ui);
-    if footprint.clicked() {
-        actions.push(ToolbarAction::SetFootprint(!model.footprint_on));
-    }
-    if footprint.secondary_clicked() {
-        actions.push(ToolbarAction::OpenFootprintSettings);
-    }
-
-    let strip = IconButton::new(LAYER_STRIP_ICON, TOOLBAR_ICON)
-        .active(model.live_strip_on)
-        .accent(theme::ACCENT)
-        .hover_text(
-            "live strip: the book's resting depth and the forming bar's aggression, \
-             beside the price axis — right-click for settings",
-        )
-        .show(ui);
-    if strip.clicked() {
-        actions.push(ToolbarAction::SetLiveStrip(!model.live_strip_on));
-    }
-    if strip.secondary_clicked() {
-        actions.push(ToolbarAction::OpenDockTab(DockTab::L2));
+    // Zipped rather than indexed: the array is filled in `ALL` order, so
+    // walking the two together is what makes that the only ordering. A second
+    // hand-written position map beside `ALL` is how a lamp ends up reporting
+    // the layer next to it.
+    for (layer, state) in LayerToggle::ALL.into_iter().zip(model.layers) {
+        let on = state.on;
+        let response = IconButton::new(layer.icon(), TOOLBAR_ICON)
+            .active(on)
+            .accent(layer.accent())
+            .enabled(state.blocked.is_none())
+            .hover_text(layer.hover_text())
+            .disabled_explanation(state.blocked.map_or("", |block| block.explanation))
+            .show(ui);
+        if response.clicked() {
+            actions.push(layer.toggle_action(!on));
+        }
+        if response.secondary_clicked() {
+            actions.push(layer.settings_action());
+        }
     }
 }
 
@@ -1087,6 +1152,12 @@ fn draw_overflow(
 
 #[cfg(test)]
 mod tests {
+    /// Unblocked lamps from their on/off flags, in [`LayerToggle::ALL`]
+    /// order. A fixture that wants a blocked lamp builds the array itself.
+    fn layer_states(on: [bool; LayerToggle::COUNT]) -> [LayerToggleState; LayerToggle::COUNT] {
+        on.map(|on| LayerToggleState { on, blocked: None })
+    }
+
     use super::*;
 
     /// The flat TRADE pair's width — the old `W_TRADE` constant, kept as the
@@ -1299,10 +1370,7 @@ mod tests {
                             ohlcv_history: !replaying,
                             ohlcv_generation: 0,
                         },
-                        heatmap_on: false,
-                        bubbles_on: true,
-                        footprint_on: false,
-                        live_strip_on: false,
+                        layers: layer_states([true, false, false, false]),
                         dock_visible: true,
                         appearance_open: false,
                         paper: PaperTradeModel::flat(true),
@@ -1389,10 +1457,7 @@ mod tests {
                         ohlcv_history: true,
                         ohlcv_generation: 0,
                     },
-                    heatmap_on: false,
-                    bubbles_on: false,
-                    footprint_on: false,
-                    live_strip_on: false,
+                    layers: layer_states([false, false, false, false]),
                     dock_visible: true,
                     appearance_open: false,
                     paper: PaperTradeModel::flat(true),
@@ -1466,10 +1531,7 @@ mod tests {
                             ohlcv_history: false,
                             ohlcv_generation: 0,
                         },
-                        heatmap_on: false,
-                        bubbles_on: false,
-                        footprint_on: false,
-                        live_strip_on: false,
+                        layers: layer_states([false, false, false, false]),
                         dock_visible: true,
                         appearance_open: false,
                         // Not yet ready: the TRADE pair must lay out in its
@@ -1538,10 +1600,7 @@ mod tests {
                         ohlcv_history: true,
                         ohlcv_generation: 0,
                     },
-                    heatmap_on: false,
-                    bubbles_on: false,
-                    footprint_on: false,
-                    live_strip_on: false,
+                    layers: layer_states([false, false, false, false]),
                     dock_visible: true,
                     appearance_open: false,
                     paper: PaperTradeModel {

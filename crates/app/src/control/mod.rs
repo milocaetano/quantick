@@ -18,6 +18,7 @@ mod journal;
 mod notify;
 pub(crate) use interaction::drawing_band_name;
 mod registry;
+mod scene;
 #[cfg(test)]
 pub(crate) mod schema_catalog;
 mod script;
@@ -58,5 +59,6 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     chart::register(&mut registry)?;
     health::register(&mut registry)?;
     interaction::register(&mut registry)?;
+    scene::register(&mut registry)?;
     Ok(registry)
 }

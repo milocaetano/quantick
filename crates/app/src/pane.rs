@@ -24,7 +24,7 @@ use crate::app::{PlotAreas, fmt_time_as, plot_split, split_time_strip};
 use crate::bands::{self, Band, BandLabel, Bands};
 use crate::candle_view::draw_candle;
 use crate::chart::{self, PriceScale};
-use crate::chart_layers::{ChartLayer, LayerActions};
+use crate::chart_layers::{ChartLayer, LayerActions, LayerBlock, blocks};
 use crate::config::FeedCapabilities;
 use crate::drawings::{
     self, ChartPoint, DrawContext, Drawing, DrawingBand, DrawingStyle, Drawings,
@@ -1568,9 +1568,9 @@ impl ChartPane {
         &self,
         layer: ChartLayer,
         capabilities: FeedCapabilities,
-    ) -> Option<&'static str> {
+    ) -> Option<LayerBlock> {
         if !self.draws_layer(layer) {
-            return Some("the order-flow layers are drawn on the flow pane");
+            return Some(blocks::WRONG_PANE);
         }
         // A layer of a tape that is not on the canvas: the switch is real and
         // remembered, but ticking it now would draw nothing. Offered disabled
@@ -1583,27 +1583,22 @@ impl ChartPane {
                 .as_ref()
                 .is_some_and(OrderflowView::lane_enabled)
         {
-            return Some(
-                "the tape is off — the switch in the canvas's top-right corner puts it back, \
-                 and this layer is waiting exactly as it was left",
-            );
+            return Some(blocks::TAPE_OFF);
         }
         match layer {
-            ChartLayer::TapeHeatmap => (!capabilities.book_capture)
-                .then_some("order-book capture is not available for this source"),
-            ChartLayer::TapeBubbles => (!capabilities.traded_volume)
-                .then_some("this source quotes prices but prints no traded volume"),
-            ChartLayer::Heatmap | ChartLayer::DepthGaps => (!capabilities.book_capture)
-                .then_some("order-book capture is not available for this source"),
+            ChartLayer::TapeHeatmap => (!capabilities.book_capture).then_some(blocks::NO_BOOK),
+            ChartLayer::TapeBubbles => {
+                (!capabilities.traded_volume).then_some(blocks::NO_TRADED_VOLUME)
+            }
+            ChartLayer::Heatmap | ChartLayer::DepthGaps => {
+                (!capabilities.book_capture).then_some(blocks::NO_BOOK)
+            }
             // The strip draws the book and the aggressions landing into it, so
             // it takes either one and is empty only without both. Disabled
             // with the reason rather than offered as a switch that would
             // reserve width for a blank band.
             ChartLayer::LiveStrip => (!capabilities.book_capture && !capabilities.traded_volume)
-                .then_some(
-                    "this source publishes neither an order book nor traded volume, \
-                     so the strip would have nothing to draw",
-                ),
+                .then_some(blocks::NO_BOOK_AND_NO_VOLUME),
             // The badge reports on the book feed, so a source with no book has
             // nothing for it to say — and it is drawn with the map, so while
             // the map is hidden the switch would tick a box that draws
@@ -1614,16 +1609,17 @@ impl ChartPane {
                         .orderflow
                         .as_ref()
                         .is_some_and(OrderflowView::depth_visible))
-                    .then_some("the badge reports on the depth map, which is hidden")
+                    .then_some(blocks::DEPTH_MAP_HIDDEN)
                 } else {
-                    Some("order-book capture is not available for this source")
+                    Some(blocks::NO_BOOK)
                 }
             }
             // The footprint is the buy/sell split per price: on a source that
             // prints no traded volume every cell would be an identical
             // synthetic unit — the same reason the bubbles refuse.
-            ChartLayer::Bubbles | ChartLayer::Footprint => (!capabilities.traded_volume)
-                .then_some("this source quotes prices but prints no traded volume"),
+            ChartLayer::Bubbles | ChartLayer::Footprint => {
+                (!capabilities.traded_volume).then_some(blocks::NO_TRADED_VOLUME)
+            }
             _ => None,
         }
     }
@@ -1849,7 +1845,7 @@ impl ChartPane {
             #[cfg(test)]
             self.layer_menu_rects.push((layer, response.rect));
             if let Some(reason) = blocked {
-                response.on_disabled_hover_text(reason);
+                response.on_disabled_hover_text(reason.explanation);
             } else if response.changed() {
                 self.set_layer_visible(layer, visible, chrome.layers);
             }
@@ -1907,7 +1903,7 @@ impl ChartPane {
             #[cfg(test)]
             self.layer_menu_rects.push((layer, response.rect));
             if let Some(reason) = blocked {
-                response.on_disabled_hover_text(reason);
+                response.on_disabled_hover_text(reason.explanation);
             } else if response.changed() {
                 self.set_layer_visible(layer, visible, chrome.layers);
             }
