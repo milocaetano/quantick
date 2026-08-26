@@ -34,18 +34,65 @@ use rust_decimal::Decimal;
 
 use crate::{BarFootprint, FootprintLevel};
 
-/// How many rows one value-area expansion step weighs, and takes, per side.
+/// The most rows one value-area expansion step weighs, and takes, per side.
 ///
 /// The Sierra Chart / CQG convention expands the area by **two** rows at a
-/// time. Three parts of the expansion read this number and must agree on it —
-/// the rows each side is weighed on, how far the step's window reaches, and
-/// the rows the step takes — because a step weighed on one count and grown by
-/// another is not the convention any more.
+/// time. Two parts of the expansion read this number and must agree on it: how
+/// far a step's window reaches, and how many rows a side may offer inside it.
+/// A step then weighs and takes exactly the rows that window admitted, so all
+/// three stay in step by construction rather than by three literals matching.
+/// A side may offer fewer than this many — that is a price gap costing
+/// something — but never more.
 ///
-/// It counts *rows*, never buckets. The window is this many rows' worth of the
-/// step's own gap, which is what lets one ladder be read at two
-/// groupings and answer the same; see [`VolumeProfile::value_area`].
+/// It counts *rows*, never buckets: the window is this many rows' worth of the
+/// step's own gap, which is what lets one ladder read at two groupings answer
+/// the same. See [`VolumeProfile::value_area`], which owns the rule.
 const VALUE_AREA_STEP_ROWS: usize = 2;
+
+/// Which way a value-area step is walking. The two directions are mirror
+/// images, and the rule they share — how far a step may reach and what it
+/// weighs when it gets there — is only one rule if it is only written once.
+#[derive(Clone, Copy)]
+enum Side {
+    Below,
+    Above,
+}
+
+use Side::{Above, Below};
+
+/// The rows one side offers a step: the next up to [`VALUE_AREA_STEP_ROWS`]
+/// printed rows from `edge`, stopping at the first one further away than
+/// `window`, with their volumes in outward order.
+///
+/// Reach is decided by distance alone — a row that traded nothing is still a
+/// row, and reading it as absent would let a step walk past the window it was
+/// weighed on. Distances are unsigned throughout: buckets saturate on ingest,
+/// so a corrupt feed price can put rows a whole bucket space apart, and a gap
+/// that does not fit in an `i64` must not read as no gap at all.
+fn reachable(
+    rows: &[(i64, Decimal)],
+    edge: usize,
+    window: u64,
+    side: Side,
+) -> ([Decimal; VALUE_AREA_STEP_ROWS], usize) {
+    let mut volumes = [Decimal::ZERO; VALUE_AREA_STEP_ROWS];
+    let mut reach = 0;
+    for offset in 1..=VALUE_AREA_STEP_ROWS {
+        let index = match side {
+            Below => edge.checked_sub(offset),
+            Above => edge.checked_add(offset),
+        };
+        let Some(&(bucket, volume)) = index.and_then(|index| rows.get(index)) else {
+            break;
+        };
+        if rows[edge].0.abs_diff(bucket) > window {
+            break;
+        }
+        volumes[offset - 1] = volume;
+        reach = offset;
+    }
+    (volumes, reach)
+}
 
 /// The value area of a [`VolumeProfile`]: the contiguous row band around the
 /// point of control holding the requested volume fraction. All three fields
@@ -275,7 +322,11 @@ impl VolumeProfile {
     /// like any other rather than read as a gap.
     ///
     /// `None` on an empty profile. `fraction` is the caller's convention
-    /// (0.70 is the classic); a fraction ≥ 1 covers every printed row.
+    /// (0.70 is the classic). A fraction of 1 asks for the whole range's
+    /// volume, which every row that *traded* is needed for — but expansion
+    /// stops the moment it has that volume, so rows holding nothing may sit
+    /// outside the band even then. A zero-quantity print is a row like any
+    /// other and is subject to this.
     #[must_use]
     pub fn value_area(&self, fraction: Decimal) -> Option<ValueArea> {
         let poc = self.poc()?;
@@ -284,8 +335,11 @@ impl VolumeProfile {
             .iter()
             .map(|(&bucket, level)| (bucket, level.volume()))
             .collect();
-        // The POC came from these same rows; position lookup cannot fail.
-        let poc_idx = rows.iter().position(|&(bucket, _)| bucket == poc)?;
+        // `rows` is sorted by bucket, and the POC came from these same rows,
+        // so the lookup is a search rather than a scan and cannot fail.
+        let poc_idx = rows
+            .binary_search_by_key(&poc, |&(bucket, _)| bucket)
+            .ok()?;
 
         // What the first `k` of a side's rows hold.
         let prefix = |volumes: &[Decimal; VALUE_AREA_STEP_ROWS], k: usize| {
@@ -294,7 +348,12 @@ impl VolumeProfile {
                 .fold(Decimal::ZERO, |sum, &volume| sum.saturating_add(volume))
         };
 
-        let target = self.total_volume().saturating_mul(fraction);
+        // Summed off `rows` rather than through `total_volume`, which would
+        // walk the whole map a second time — this runs while a bar forms.
+        let total = rows.iter().fold(Decimal::ZERO, |sum, &(_, volume)| {
+            sum.saturating_add(volume)
+        });
+        let target = total.saturating_mul(fraction);
         let mut lo = poc_idx;
         let mut hi = poc_idx;
         let mut captured = rows[poc_idx].1;
@@ -317,8 +376,13 @@ impl VolumeProfile {
             let step_gap = match (below_gap, above_gap) {
                 (Some(below), Some(above)) => below.min(above),
                 (Some(only), None) | (None, Some(only)) => only,
-                // The loop condition leaves at least one neighbour.
-                (None, None) => break,
+                // The loop condition guarantees a neighbour on one side, so
+                // this is unreachable; it fails loudly in a test build rather
+                // than quietly returning a band that is short of its target.
+                (None, None) => {
+                    debug_assert!(false, "value area step with no neighbour on either side");
+                    break;
+                }
             };
             let window = step_gap.saturating_mul(VALUE_AREA_STEP_ROWS as u64);
 
@@ -326,30 +390,8 @@ impl VolumeProfile {
             // decided by distance alone — a row that traded nothing is still a
             // row, and reading it as absent would let a step walk past the
             // window it was weighed on.
-            let mut below_rows = [Decimal::ZERO; VALUE_AREA_STEP_ROWS];
-            let mut below_reach = 0usize;
-            for offset in 1..=VALUE_AREA_STEP_ROWS {
-                let Some(idx) = lo.checked_sub(offset) else {
-                    break;
-                };
-                if rows[lo].0.abs_diff(rows[idx].0) > window {
-                    break;
-                }
-                below_rows[offset - 1] = rows[idx].1;
-                below_reach = offset;
-            }
-            let mut above_rows = [Decimal::ZERO; VALUE_AREA_STEP_ROWS];
-            let mut above_reach = 0usize;
-            for offset in 1..=VALUE_AREA_STEP_ROWS {
-                let Some(&(bucket, volume)) = rows.get(hi + offset) else {
-                    break;
-                };
-                if rows[hi].0.abs_diff(bucket) > window {
-                    break;
-                }
-                above_rows[offset - 1] = volume;
-                above_reach = offset;
-            }
+            let (below_rows, below_reach) = reachable(&rows, lo, window, Below);
+            let (above_rows, above_reach) = reachable(&rows, hi, window, Above);
 
             let (take_below, steps) = if !has_below {
                 (false, above_reach)
@@ -367,24 +409,36 @@ impl VolumeProfile {
                     if take_below { below_reach } else { above_reach },
                 )
             } else {
-                // Both sides are in reach. Weigh them on the **same** number of
-                // rows: a side that happens to sit tighter must not win on a
-                // second row the other side was never allowed to count, or a
-                // one-bucket difference in spacing decides a comparison the
-                // volumes should have. Ties expand downward, like the POC's.
-                let k = below_reach.min(above_reach);
-                (prefix(&below_rows, k) >= prefix(&above_rows, k), k)
+                // Both sides have rows inside the window, so each is weighed
+                // on everything it actually offers there.
+                //
+                // Weighing them instead on `min(reach)` rows — to make the
+                // comparison "like for like" when one side reaches further —
+                // is worse, and measurably: it throws away a row the window
+                // already admitted. On 8(10), 9(1), 10(20), 12(5) at 70% it
+                // drops the 10-unit row two buckets below and returns a band
+                // that is wider in price and lighter in volume than the one it
+                // rejected. The reach limit is the whole gap charge; a side
+                // that reaches fewer rows is offering less, and that is the
+                // answer, not an artefact to correct for.
+                let take_below =
+                    prefix(&below_rows, below_reach) >= prefix(&above_rows, above_reach);
+                (
+                    take_below,
+                    if take_below { below_reach } else { above_reach },
+                )
             };
 
             // A step takes the rows it was weighed on, one at a time, stopping
             // the moment the fraction is captured, so the area never grows past
             // the point that answers the question.
             //
-            // `max(1)` is what makes every pass advance an edge. The side that
-            // set the window always has a row inside it, so a step normally has
-            // somewhere to go on its own account; this covers the shapes where
-            // saturation leaves both sides reporting nothing, and turns a
-            // stalled pass into a one-row step instead of a spin.
+            // `max(1)` is what makes every pass advance an edge, and so what
+            // guarantees the loop ends. The side that set the window always has
+            // a row inside it, so `steps` is normally at least one on its own
+            // account; the guard is there so a future change to the window or
+            // to the reach rule cannot turn a stalled pass into a spin, inside
+            // a function the chart re-runs while a bar forms.
             if take_below {
                 for _ in 0..steps.max(1) {
                     if lo == 0 || captured >= target {
@@ -456,9 +510,10 @@ mod tests {
     }
 
     /// Volumes laid out as `(price, buy, sell)` rows, folded through one bar.
-    /// Volumes laid out as `(price, buy, sell)` rows, folded through one bar
-    /// at `group`.
-    fn profile_at_group(rows: &[(&str, &str, &str)], group: &str) -> VolumeProfile {
+    ///
+    /// A `"0"` here means *no trade on that side*, and the row is skipped —
+    /// which is why [`profile_at`] exists rather than delegating to this.
+    fn profile_of(rows: &[(&str, &str, &str)]) -> VolumeProfile {
         let mut trades = Vec::new();
         for (i, &(price, buy, sell)) in rows.iter().enumerate() {
             if dec(buy) > Decimal::ZERO {
@@ -468,12 +523,7 @@ mod tests {
                 trades.push(trade(2 * i as u64 + 1, price, sell, Side::Sell));
             }
         }
-        VolumeProfile::merge([&ladder(&trades, group)], DEFAULT_LEVEL_CAP).unwrap()
-    }
-
-    /// The same at the unit group, the shape most fixtures want.
-    fn profile_of(rows: &[(&str, &str, &str)]) -> VolumeProfile {
-        profile_at_group(rows, "1")
+        VolumeProfile::merge([&ladder(&trades, "1")], DEFAULT_LEVEL_CAP).unwrap()
     }
 
     /// Buy-only `(price, quantity)` prints read at `group` — the shape the
@@ -915,6 +965,31 @@ mod tests {
     }
 
     #[test]
+    fn value_area_weighs_a_side_on_every_row_the_window_admits() {
+        // The window is the gap charge, and a side that reaches fewer rows is
+        // offering less — that is the answer, not an artefact to correct for.
+        //
+        // Here the step's gap is one bucket, so the window is two: the rows at
+        // 9 and 8 are both inside it, and above only 12 is. Weighing the sides
+        // on the same *count* of rows — one each, to make the comparison look
+        // fair — drops the 10-unit row the window already admitted, and hands
+        // back a band that is wider in price and lighter in volume than the
+        // one it turned down.
+        //
+        // 36 units total, 70% needs 25.2. 8..10 holds 31 in three buckets;
+        // 9..12 holds 26 in four.
+        let profile = profile_at(&[("8", "10"), ("9", "1"), ("10", "20"), ("12", "5")], "1");
+        assert_eq!(
+            profile.value_area(dec("0.70")).unwrap(),
+            ValueArea {
+                poc: 10,
+                vah: 10,
+                val: 8
+            }
+        );
+    }
+
+    #[test]
     fn value_area_never_lets_a_remote_cluster_outbid_a_nearer_row() {
         // Issue #156's defect in the shape that survives a price-adjacent
         // window. The row below the POC is one step away; the cluster above it
@@ -1030,35 +1105,77 @@ mod tests {
         );
     }
 
-    #[test]
-    fn value_area_is_grouping_invariant_across_a_sweep_of_generated_tapes() {
-        // The property the window's spacing scaling buys, asserted over a
-        // spread of shapes rather than one hand-picked ladder. The generator
-        // is a fixed-seed LCG: no clock, no `rand`, same tapes every run.
-        let mut seed: u64 = 0x2545_F491_4F6C_DD1D;
-        let mut next = |n: u64| -> u64 {
-            seed = seed
+    /// A deterministic pseudo-random source: fixed seed, no clock, no `rand`,
+    /// so a sweep that fails fails the same way on every machine and the tape
+    /// it failed on can be pasted straight into a fixture.
+    struct Tapes(u64);
+
+    impl Tapes {
+        fn new() -> Self {
+            Self(0x2545_F491_4F6C_DD1D)
+        }
+
+        fn next(&mut self, n: u64) -> u64 {
+            self.0 = self
+                .0
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1_442_695_040_888_963_407);
-            (seed >> 33) % n
-        };
+            (self.0 >> 33) % n
+        }
 
-        for _ in 0..2000 {
-            // A tape on a uniform price grid, which is what an instrument
-            // with a tick size prints. Rows land on that grid with gaps of
-            // one to six ticks between them.
-            let tick = 1 + next(9) as i64;
+        /// A tape on a uniform price grid of `tick` — what an instrument with
+        /// a tick size prints, with gaps of one to six ticks between rows.
+        fn on_a_grid(&mut self, tick: i64) -> Vec<(String, String)> {
             let mut price = 1000 * tick;
-            let prints: Vec<(String, String)> = (0..3 + next(10))
+            (0..3 + self.next(10))
                 .map(|_| {
-                    price += tick * (1 + next(6) as i64);
-                    (price.to_string(), (1 + next(20)).to_string())
+                    price += tick * (1 + self.next(6) as i64);
+                    (price.to_string(), (1 + self.next(20)).to_string())
                 })
-                .collect();
-            let prints: Vec<(&str, &str)> = prints
-                .iter()
-                .map(|(p, q)| (p.as_str(), q.as_str()))
-                .collect();
+                .collect()
+        }
+
+        /// A tape whose rows are spaced *irregularly* — clusters a bucket
+        /// apart beside gaps thousands wide, and volumes that vary by orders
+        /// of magnitude. Nothing a tick size explains, and the shape every
+        /// regression in this module so far has hidden in.
+        fn irregular(&mut self) -> Vec<(String, String)> {
+            let mut price = 100_000i64;
+            (0..3 + self.next(12))
+                .map(|_| {
+                    price += match self.next(4) {
+                        0 => 1 + self.next(3) as i64,
+                        1 => 4 + self.next(30) as i64,
+                        2 => 50 + self.next(500) as i64,
+                        _ => 1000 + self.next(20_000) as i64,
+                    };
+                    let quantity = match self.next(3) {
+                        0 => self.next(3),
+                        1 => 1 + self.next(50),
+                        _ => 1 + self.next(5_000),
+                    };
+                    (price.to_string(), quantity.to_string())
+                })
+                .collect()
+        }
+    }
+
+    fn borrowed(prints: &[(String, String)]) -> Vec<(&str, &str)> {
+        prints
+            .iter()
+            .map(|(price, quantity)| (price.as_str(), quantity.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn value_area_is_grouping_invariant_across_a_sweep_of_generated_tapes() {
+        // The property the window's step scaling buys, asserted over a spread
+        // of shapes rather than one hand-picked ladder.
+        let mut tapes = Tapes::new();
+        for _ in 0..2000 {
+            let tick = 1 + tapes.next(9) as i64;
+            let prints = tapes.on_a_grid(tick);
+            let prints = borrowed(&prints);
 
             let at_tick = profile_at(&prints, &tick.to_string());
             let finer = profile_at(&prints, "0.01");
@@ -1070,6 +1187,104 @@ mod tests {
                 area_prices(&at_tick, "0.70"),
                 area_prices(&finer, "0.70"),
                 "tape {prints:?} named a different area at tick {tick} and at 0.01",
+            );
+        }
+    }
+
+    #[test]
+    fn value_area_holds_its_contract_on_irregular_ladders() {
+        // Every "always" this method's doc comment states, checked against
+        // shapes chosen to break it rather than to illustrate it. Written this
+        // way on purpose: the regressions this module has had were each
+        // covered by a fixture that agreed with the rule it was meant to test,
+        // because the fixture and the rule came from one idea of what a ladder
+        // looks like. A generator that does not share that idea is the check.
+        let mut tapes = Tapes::new();
+        for _ in 0..3000 {
+            let prints = tapes.irregular();
+            let prints = borrowed(&prints);
+            let profile = profile_at(&prints, "1");
+            let levels = profile.levels();
+            let lowest = *levels.keys().next().unwrap();
+            let highest = *levels.keys().next_back().unwrap();
+
+            for fraction in ["0.30", "0.70", "0.95", "1"] {
+                let area = profile.value_area(dec(fraction)).unwrap();
+
+                // The edges are printed rows, and the POC is inside its band.
+                assert!(
+                    levels.contains_key(&area.val),
+                    "VAL {} is not a printed row on {prints:?}",
+                    area.val,
+                );
+                assert!(
+                    levels.contains_key(&area.vah),
+                    "VAH {} is not a printed row on {prints:?}",
+                    area.vah,
+                );
+                assert!(
+                    area.val <= area.poc && area.poc <= area.vah,
+                    "POC outside its own band on {prints:?}",
+                );
+
+                // The band holds the fraction, or there was no more tape to
+                // take — the only two ways expansion is allowed to stop.
+                let held: Decimal = levels
+                    .iter()
+                    .filter(|&(&bucket, _)| bucket >= area.val && bucket <= area.vah)
+                    .map(|(_, level)| level.volume())
+                    .sum();
+                let target = profile.total_volume() * dec(fraction);
+                assert!(
+                    held >= target || (area.val == lowest && area.vah == highest),
+                    "band {}..{} holds {held} of {target} on {prints:?}",
+                    area.val,
+                    area.vah,
+                );
+            }
+
+            // Asking for more value can only add rows. The order rows are
+            // taken in does not depend on the fraction — that only decides
+            // where expansion stops — so a band that moved sideways means a
+            // step decided differently for a reason other than the tape.
+            let mut narrower = profile.value_area(dec("0.10")).unwrap();
+            for fraction in ["0.25", "0.50", "0.75", "0.90", "1"] {
+                let wider = profile.value_area(dec(fraction)).unwrap();
+                assert!(
+                    wider.val <= narrower.val && wider.vah >= narrower.vah,
+                    "{fraction} of {prints:?} gave {wider:?}, not a superset of {narrower:?}",
+                );
+                narrower = wider;
+            }
+        }
+    }
+
+    #[test]
+    fn value_area_ignores_a_print_that_traded_nothing_far_outside_it() {
+        // The locality the doc claims for the window, as a property rather
+        // than as a sentence. A zero-quantity print adds a row without adding
+        // volume, so it moves neither the total nor the target. Landing it far
+        // above everything the band reaches must therefore change nothing; a
+        // band that shifts anyway is reading a gap that does not belong to the
+        // step it is taking, which is what a whole-ladder window did.
+        let mut tapes = Tapes::new();
+        for _ in 0..3000 {
+            let prints = tapes.irregular();
+            let profile = profile_at(&borrowed(&prints), "1");
+            let before = profile.value_area(dec("0.70")).unwrap();
+
+            let mut intruded = prints.clone();
+            intruded.push((
+                before.vah.saturating_add(1_000_000).to_string(),
+                "0".to_owned(),
+            ));
+            let after = profile_at(&borrowed(&intruded), "1")
+                .value_area(dec("0.70"))
+                .unwrap();
+
+            assert_eq!(
+                before, after,
+                "a zero-volume print far above moved the band on {prints:?}",
             );
         }
     }
