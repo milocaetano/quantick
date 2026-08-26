@@ -32,22 +32,35 @@
 //! the one field that already owns its layer.
 //!
 //! The file records each layer's *state*, not a list of hidden ones, because
-//! the layers do not share one default — the heatmap, the bubbles, the live
-//! strip and the backfill divider open off, everything else opens on. An
-//! absent entry therefore means
-//! "whatever the app decided", which is what keeps a fresh install, a feed's
-//! preset and the autostart env vars behaving exactly as they did before this
-//! file existed.
+//! the layers do not share one default. An absent entry means "whatever the
+//! app decided", which is what keeps a feed's preset and the autostart env
+//! vars behaving exactly as they did before this file existed.
+//!
+//! What a *fresh* install opens with is `config/chart-layers.toml`, compiled
+//! into the binary ([`EMBEDDED_DEFAULT`]) and read whenever the trader has no
+//! file of their own. Opening state is a product decision someone may want
+//! different, so it is shipped config like `feeds.toml` and `bubbles.toml`,
+//! never a `Default` impl or a `set_*(false)` at startup — those put it where
+//! it cannot be changed without a build. Today that file opens every flow
+//! layer and holds back only the backfill divider.
 //!
 //! Same store discipline as the indicator state: a versioned TOML next to the
 //! config (override with `QUANTICK_CHART_LAYERS`), read once at startup,
 //! written when a switch flips, temp-file-and-rename so a crash mid-write
-//! cannot leave half a file behind. Anything unreadable is ignored entirely.
+//! cannot leave half a file behind. Anything unreadable falls back to the
+//! shipped default rather than to a half-read file.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+/// What a launch opens with when the trader has no file of their own, shipped
+/// as config rather than decided by a field initialiser: which layers a fresh
+/// chart draws is a product decision someone may want different, and burying
+/// it in a `Default` impl puts it where no one can change it without a build.
+/// Same discipline as `feeds.toml` and `bubbles.toml`.
+const EMBEDDED_DEFAULT: &str = include_str!("../config/chart-layers.toml");
 
 /// Environment override for the layer-visibility file location.
 pub(crate) const LAYERS_ENV: &str = "QUANTICK_CHART_LAYERS";
@@ -106,6 +119,62 @@ pub(crate) enum ChartLayer {
     TradePaint,
     /// User drawings (lines, boxes, Fibs).
     Drawings,
+}
+
+/// Why a layer cannot be drawn where it was asked for.
+///
+/// Two renderings of one condition, produced together so they cannot name
+/// different things: the sentence a disabled control shows the trader, and the
+/// stable code a control client branches on. Splitting them across two
+/// functions is how a gate drifts — the strip's source gate landed in
+/// `ChartPane::layer_blocked` and a second copy elsewhere did not follow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LayerBlock {
+    /// The stable wire code. Never the sentence below: a client made to parse
+    /// prose breaks the day it is reworded, and translating the interface
+    /// would break every such client at once.
+    pub code: &'static str,
+    /// What the disabled control tells a human.
+    pub explanation: &'static str,
+}
+
+impl LayerBlock {
+    pub(crate) const fn new(code: &'static str, explanation: &'static str) -> Self {
+        Self { code, explanation }
+    }
+}
+
+/// The blocks [`crate::pane::ChartPane::layer_blocked`] answers with, named
+/// once so the same condition cannot acquire a second code.
+pub(crate) mod blocks {
+    use super::LayerBlock;
+
+    pub(crate) const WRONG_PANE: LayerBlock = LayerBlock::new(
+        "the_order_flow_layers_are_drawn_on_the_flow_pane",
+        "the order-flow layers are drawn on the flow pane",
+    );
+    pub(crate) const TAPE_OFF: LayerBlock = LayerBlock::new(
+        "the_tape_is_off",
+        "the tape is off — the switch in the canvas's top-right corner puts it back, \
+         and this layer is waiting exactly as it was left",
+    );
+    pub(crate) const NO_BOOK: LayerBlock = LayerBlock::new(
+        "source_captures_no_order_book",
+        "order-book capture is not available for this source",
+    );
+    pub(crate) const NO_TRADED_VOLUME: LayerBlock = LayerBlock::new(
+        "source_prints_no_traded_volume",
+        "this source quotes prices but prints no traded volume",
+    );
+    pub(crate) const NO_BOOK_AND_NO_VOLUME: LayerBlock = LayerBlock::new(
+        "source_publishes_neither_book_nor_traded_volume",
+        "this source publishes neither an order book nor traded volume, \
+         so the strip would have nothing to draw",
+    );
+    pub(crate) const DEPTH_MAP_HIDDEN: LayerBlock = LayerBlock::new(
+        "the_depth_map_it_reports_on_is_hidden",
+        "the badge reports on the depth map, which is hidden",
+    );
 }
 
 impl ChartLayer {
@@ -390,13 +459,40 @@ pub(crate) fn validate(text: &str) -> Result<(), String> {
     }
 }
 
-/// Load the stored visibility; empty (change nothing) when the file is
-/// missing, unreadable or from an unknown version. Unknown ids are dropped one
-/// by one — a file from a newer build still restores the layers this one has.
+/// Load the stored visibility **over** [`shipped_default`], falling back to the
+/// shipped answer alone when the file is missing, unreadable or from an unknown
+/// version — all three mean "we do not know what this trader chose", which is
+/// the question a first launch asks. Unknown ids are dropped one by one, so a
+/// file from a newer build still restores the layers this one has.
+///
+/// The trader's file is laid *on top of* the shipped one rather than replacing
+/// it, and that is the whole difference between this reader and the one that
+/// shipped the defaults. A layer the file does not mention has no answer in it,
+/// and the two candidate readings of that silence are not equal:
+///
+/// - "whatever the code decides" — which for all four flow layers is *off*
+///   ([`crate::pane::ChartPane`]'s field initialisers, and the
+///   `set_depth_visible(false)` at startup), so an older file pins them off
+///   forever;
+/// - "whatever this build ships" — the answer in `config/chart-layers.toml`.
+///
+/// The first reading is why shipping the defaults changed nothing for anyone
+/// who already had a cockpit: their file predated the flow-layer keys, so it
+/// answered "off" to a question it had never been asked. Worse, it then froze:
+/// [`crate::app::QuantickApp::maintain_chart_layers`] rewrites the *whole* map
+/// on the first switch of the session, so one unrelated click turns a silent
+/// file into an explicit `heatmap = false`. A default nobody can receive is not
+/// a default, so silence now means the shipped answer.
+///
+/// What that costs is precise and small: a layer absent from **both** files is
+/// still the app's to decide — `lane_marks` is the one, deliberately, because
+/// the order-flow preset is its home. And an explicit `false` in the trader's
+/// file still outranks everything, which is the promise that makes a shipped
+/// default acceptable at all (`the_traders_own_choice_outranks_the_shipped_default`).
 #[must_use]
 pub(crate) fn load(path: &Path) -> BTreeMap<ChartLayer, bool> {
     let Ok(text) = std::fs::read_to_string(path) else {
-        return BTreeMap::new();
+        return shipped_default();
     };
     let stored = match toml::from_str::<LayersFile>(&text) {
         Ok(file) if file.version == FORMAT_VERSION => file.layers,
@@ -407,10 +503,10 @@ pub(crate) fn load(path: &Path) -> BTreeMap<ChartLayer, bool> {
                 event_code = "CHART_LAYERS_VERSION",
                 path = %path.display(),
                 version = file.version,
-                action = "keeping_default_visibility",
+                action = "keeping_shipped_visibility",
                 "chart layer file is from an unknown version"
             );
-            return BTreeMap::new();
+            return shipped_default();
         }
         Err(error) => {
             tracing::warn!(
@@ -419,12 +515,41 @@ pub(crate) fn load(path: &Path) -> BTreeMap<ChartLayer, bool> {
                 event_code = "CHART_LAYERS_UNREADABLE",
                 path = %path.display(),
                 %error,
-                action = "keeping_default_visibility",
+                action = "keeping_shipped_visibility",
                 "chart layer file is unreadable"
             );
-            return BTreeMap::new();
+            return shipped_default();
         }
     };
+    // The trader's answers over the shipped ones, never instead of them.
+    let mut states = shipped_default();
+    states.extend(resolve(stored));
+    states
+}
+
+/// The built-in opening state, from the config compiled into the binary.
+///
+/// A launch with no file of the trader's own lands here, and so does one whose
+/// file this build cannot read: an unreadable file means "we do not know what
+/// they chose", which is the same question a first launch asks, and answering
+/// it from the shipped file keeps one answer instead of two.
+///
+/// The file is tracked, so a parse failure is a build-time mistake rather than
+/// anything a user did — `the_shipped_default_parses` is what catches it. At
+/// runtime an empty map is the honest fallback: it means "the code decides",
+/// exactly as it did before this file existed.
+fn shipped_default() -> BTreeMap<ChartLayer, bool> {
+    match toml::from_str::<LayersFile>(EMBEDDED_DEFAULT) {
+        Ok(file) if file.version == FORMAT_VERSION => resolve(file.layers),
+        _ => BTreeMap::new(),
+    }
+}
+
+/// Map stored ids onto the layers this build knows and this file owns.
+///
+/// An unknown id is dropped rather than failing the read, so a file written by
+/// a newer build still restores the layers this one has.
+fn resolve(stored: BTreeMap<String, bool>) -> BTreeMap<ChartLayer, bool> {
     stored
         .into_iter()
         .filter_map(|(id, visible)| {
@@ -496,11 +621,149 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_file_changes_nothing() {
-        assert!(
-            load(&temp_dir().join("missing.toml")).is_empty(),
-            "a fresh install keeps every layer's own default"
+    fn a_missing_file_opens_on_the_shipped_default() {
+        let fresh = load(&temp_dir().join("missing.toml"));
+        assert_eq!(
+            fresh,
+            shipped_default(),
+            "a fresh install opens on the config, not on a struct initialiser"
         );
+        assert!(!fresh.is_empty(), "the shipped file has to reach the app");
+    }
+
+    /// The promise the shipped default is only acceptable because of: it
+    /// decides for someone who has never touched a switch, and stops deciding
+    /// the moment they do. A trader who switched the heatmap off and found it
+    /// back on next launch would have lost the setting to a default, which is
+    /// worse than the bare chart this whole change is about.
+    #[test]
+    fn the_traders_own_choice_outranks_the_shipped_default() {
+        let path = temp_dir().join("trader-choice.toml");
+        assert_eq!(
+            shipped_default().get(&ChartLayer::Heatmap),
+            Some(&true),
+            "the layer has to be one the shipped file opens, or this proves nothing"
+        );
+        // A file with one switch in it, the way it lands after one click.
+        std::fs::write(&path, "version = 1\n[layers]\nheatmap = false\n").unwrap();
+        let loaded = load(&path);
+        assert_eq!(
+            loaded.get(&ChartLayer::Heatmap),
+            Some(&false),
+            "an explicit no stays a no"
+        );
+        // And the answer they did not give is the shipped one, not the code's
+        // off baseline — see `load`. Switching the heatmap off must not take
+        // the bubbles down with it.
+        assert_eq!(
+            loaded.get(&ChartLayer::Bubbles),
+            Some(&true),
+            "a layer the trader never touched opens on the shipped answer"
+        );
+        // A layer absent from *both* files is still the app's to decide, which
+        // is what keeps the order-flow preset the only home of `lane_marks`.
+        assert!(
+            !loaded.contains_key(&ChartLayer::LaneMarks),
+            "a layer the shipped file holds no opinion on stays the app's"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// The bug that made shipping the defaults change nothing for the trader
+    /// who reported the bare chart in the first place.
+    ///
+    /// Their `chart-layers.toml` was written by a build from before the flow
+    /// layers had shipped defaults, so it names the chrome and says nothing
+    /// about the four layers the chart is for. Read as "whatever the code
+    /// decides", that silence is *off* on all four — a file that has never
+    /// been asked the question answering it anyway, on every launch, forever.
+    ///
+    /// This is the file, key for key, that `chart-layers.toml.bak` on the
+    /// reporter's machine turned out to hold.
+    #[test]
+    fn a_file_from_before_the_defaults_still_opens_the_flow_layers() {
+        let path = temp_dir().join("pre-defaults.toml");
+        std::fs::write(
+            &path,
+            "version = 1
+[layers]
+             grid = true
+             crosshair = true
+             last_price = true
+             backfill_divider = false
+",
+        )
+        .unwrap();
+        let loaded = load(&path);
+        for layer in [
+            ChartLayer::Heatmap,
+            ChartLayer::Bubbles,
+            ChartLayer::Footprint,
+            ChartLayer::LiveStrip,
+        ] {
+            assert_eq!(
+                loaded.get(&layer),
+                Some(&true),
+                "{} is unanswered in this file, so it opens on the shipped answer",
+                layer.id()
+            );
+        }
+        // What the file *does* say still wins, including its one no.
+        assert_eq!(
+            loaded.get(&ChartLayer::BackfillDivider),
+            Some(&false),
+            "the file's own answers are untouched"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// The file is tracked and compiled in, so anything wrong with it is a
+    /// build-time mistake — and one that would otherwise degrade silently into
+    /// "the code decides", which is the state this file exists to end.
+    #[test]
+    fn the_shipped_default_parses_and_opens_the_flow_layers() {
+        let shipped = shipped_default();
+        for layer in [
+            ChartLayer::Heatmap,
+            ChartLayer::Bubbles,
+            ChartLayer::Footprint,
+            ChartLayer::LiveStrip,
+        ] {
+            assert_eq!(
+                shipped.get(&layer),
+                Some(&true),
+                "{} is what the chart is for; a first launch draws it",
+                layer.id()
+            );
+        }
+        assert_eq!(
+            shipped.get(&ChartLayer::BackfillDivider),
+            Some(&false),
+            "the one layer a fresh chart holds back"
+        );
+        // Every layer this file owns is stated, so no reader has to know which
+        // ones fall through to a struct initialiser.
+        for layer in ChartLayer::ALL.into_iter().filter(|l| l.persisted()) {
+            assert!(
+                shipped.contains_key(&layer),
+                "{} has no entry in config/chart-layers.toml",
+                layer.id()
+            );
+        }
+        assert!(
+            !shipped.contains_key(&ChartLayer::LaneMarks),
+            "the preset is the lane marks' only home"
+        );
+    }
+
+    /// What `load` must return for a file holding exactly `states`: the
+    /// trader's answers over the shipped ones. Written once because three
+    /// tests need it and a fourth copy of `shipped_default().extend(...)` is
+    /// three chances to encode the *old* contract by accident.
+    fn shipped_with(states: &BTreeMap<ChartLayer, bool>) -> BTreeMap<ChartLayer, bool> {
+        let mut expected = shipped_default();
+        expected.extend(states.iter().filter(|(layer, _)| layer.persisted()));
+        expected
     }
 
     #[test]
@@ -513,7 +776,10 @@ mod tests {
             (ChartLayer::Drawings, true),
         ]);
         save(&path, &states);
-        assert_eq!(load(&path), states);
+        // Every answer written comes back, and the layers this file says
+        // nothing about come back as the shipped answer rather than as the
+        // code's off baseline — see `load`.
+        assert_eq!(load(&path), shipped_with(&states));
         std::fs::remove_file(&path).ok();
     }
 
@@ -531,8 +797,12 @@ mod tests {
         );
         assert_eq!(
             load(&path),
-            BTreeMap::from([(ChartLayer::Grid, false)]),
-            "everything else still round-trips"
+            shipped_with(&BTreeMap::from([(ChartLayer::Grid, false)])),
+            "everything else still round-trips, over the shipped answer"
+        );
+        assert!(
+            !load(&path).contains_key(&ChartLayer::LaneMarks),
+            "and the lane marks are in neither file, so they stay the app's"
         );
         std::fs::remove_file(&path).ok();
     }
@@ -540,10 +810,21 @@ mod tests {
     #[test]
     fn unknown_versions_ids_and_garbage_degrade_instead_of_failing() {
         let path = temp_dir().join("bad-layers.toml");
+        // A file this build cannot read means "we do not know what they
+        // chose" — the same question a first launch asks, so it gets the same
+        // answer rather than a second one.
         std::fs::write(&path, "version = 99\n[layers]\ngrid = false\n").unwrap();
-        assert!(load(&path).is_empty(), "unknown version changes nothing");
+        assert_eq!(
+            load(&path),
+            shipped_default(),
+            "unknown version falls back to the shipped default"
+        );
         std::fs::write(&path, "not even toml [").unwrap();
-        assert!(load(&path).is_empty(), "garbage changes nothing");
+        assert_eq!(
+            load(&path),
+            shipped_default(),
+            "garbage falls back to the shipped default"
+        );
         std::fs::write(
             &path,
             "version = 1\n[layers]\ngrid = false\nfrom_the_future = true\n",
@@ -551,7 +832,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             load(&path),
-            BTreeMap::from([(ChartLayer::Grid, false)]),
+            shipped_with(&BTreeMap::from([(ChartLayer::Grid, false)])),
             "an id this build does not know is dropped, the rest still restores"
         );
         std::fs::remove_file(&path).ok();

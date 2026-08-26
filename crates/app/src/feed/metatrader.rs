@@ -52,11 +52,12 @@ use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
 
 use quantick_feed_mt5::{
-    BookCaptureSwitch, HistoryPager, Mt5Error, Mt5Event, Mt5Status, ServerConfig, SideMode,
-    TapeKind, run_bridge_server,
+    BookCaptureSwitch, HistoryPager, LatencyHop, LatencySample, Mt5Error, Mt5Event, Mt5Status,
+    ServerConfig, SideMode, TapeKind, run_bridge_server,
 };
 
 use crate::config::{FeedCapabilities, MetaTraderSettings, Mt5SideSource, ProviderKind};
+use crate::feed::FeedLatency;
 
 use super::mt5_bridge::{Supervision, supervise};
 use super::{DepthEvent, FeedCommand, FeedEvent, FeedHandle, FeedNotice};
@@ -92,6 +93,9 @@ pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
     // terminal usually streams an exchange contract with a book and a tape,
     // and the session narrows that the moment it knows better.
     let (caps_tx, caps_rx) = watch::channel(ProviderKind::MetaTrader.capabilities());
+    // Nothing measured yet. The chart shows the end-to-end figure alone until
+    // the first sample arrives, rather than a breakdown of zeros.
+    let (latency_tx, latency_rx) = watch::channel::<Option<FeedLatency>>(None);
     let symbol = symbol.to_string();
     let settings = settings.clone();
     std::thread::Builder::new()
@@ -103,7 +107,7 @@ pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
                 .build()
                 .expect("build feed runtime");
             runtime.block_on(feed_task(
-                symbol, settings, tx, book_tx, notice_tx, caps_tx, cmd_rx,
+                symbol, settings, tx, book_tx, notice_tx, caps_tx, latency_tx, cmd_rx,
             ));
         })
         .expect("spawn mt5 feed thread");
@@ -112,8 +116,99 @@ pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
         book_events: book_rx,
         notices: notice_rx,
         capabilities: caps_rx,
+        latency: latency_rx,
         commands: cmd_tx,
         replay: None,
+    }
+}
+
+// The hook lives here, with the provider whose chain it fakes, rather than in
+// the feed-neutral module: resolving a hop name means knowing which names exist,
+// and `FeedLatency::hop` is a borrowed string precisely so the neutral layer
+// never has to. `feed::forced_latency_split` re-exports it, so the tab still
+// reads one name.
+/// A latency split forced by `QUANTICK_FAKE_LATENCY_SPLIT`, or `None`.
+///
+/// `arrival,source,transport,hop` in milliseconds and one word, e.g.
+/// `18112,17980,132,bridge`. The readout it drives only exists while a real
+/// venue is running slowly, which is a state no screenshot can arrange and no
+/// setting reaches — so without this hook the whole cell, its hop name and its
+/// hover breakdown are invisible to anything but a human waiting for a bad day.
+///
+/// The hop is resolved through [`LatencyHop::ALL`] rather than taken as text:
+/// a name that exists is reachable here, and one that does not is refused. Two
+/// things fall out of that. The port's `hop` stays a `&'static str` with no
+/// string leaked to reach it, and a script cannot photograph a hop name the
+/// system is incapable of producing — the bargain `QUANTICK_FOOTPRINT_STYLE`
+/// already makes with `FootprintStyle::ALL`.
+///
+/// MetaTrader owns the names because it is the only provider that cuts its own
+/// chain, so the state this hook fakes is that provider's state.
+///
+/// A malformed value is logged and ignored rather than silently treated as a
+/// default — a typo in a validation script must not photograph the wrong state
+/// and call it a pass.
+#[must_use]
+pub fn forced_latency_split() -> Option<FeedLatency> {
+    let raw = std::env::var("QUANTICK_FAKE_LATENCY_SPLIT").ok()?;
+    let parsed = parse_forced_latency(raw.trim());
+    if parsed.is_none() {
+        tracing::warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "FAKE_LATENCY_SPLIT_REJECTED",
+            value = %raw,
+            known_hops = ?LatencyHop::ALL.map(LatencyHop::label),
+            action = "ignore",
+            "expected arrival,source,transport,hop in milliseconds"
+        );
+    }
+    parsed
+}
+
+fn parse_forced_latency(raw: &str) -> Option<FeedLatency> {
+    let mut parts = raw.split(',').map(str::trim);
+    let arrival: i64 = parts.next()?.parse().ok()?;
+    let source: i64 = parts.next()?.parse().ok()?;
+    let transport: i64 = parts.next()?.parse().ok()?;
+    let hop = match parts.next().filter(|hop| !hop.is_empty()) {
+        // Named, and the name has to be one the feed can really report.
+        Some(name) => Some(LatencyHop::from_label(name)?.label()),
+        None => None,
+    };
+    if parts.next().is_some() {
+        return None; // a fifth field means the script means something else
+    }
+    Some(FeedLatency {
+        arrival_lag_ms: arrival,
+        source_lag_ms: Some(source),
+        // One print, so the worst of the window is that print.
+        source_lag_peak_ms: Some(source),
+        transport_lag_ms: Some(transport),
+        hop,
+        prints: 1,
+    })
+}
+
+/// One bridge latency sample in the provider-neutral vocabulary the chart
+/// reads.
+///
+/// MetaTrader's chain has four hops and no other provider's does, so what
+/// crosses this boundary is the shape every provider can answer in — the two
+/// halves either side of the wire, plus this provider's own name for whichever
+/// hop is spending the time. The names come from [`LatencySample::dominant`],
+/// so the chart never has to know what a bridge is.
+fn neutral_latency(sample: &LatencySample) -> FeedLatency {
+    FeedLatency {
+        arrival_lag_ms: sample.arrival_lag_ms,
+        // Everything before the socket is "the source" from the chart's side:
+        // whether the terminal or the bridge inside it spent the time is what
+        // `hop` is for, and folding it into the number would lose the answer.
+        source_lag_ms: sample.terminal_lag_ms,
+        source_lag_peak_ms: sample.terminal_lag_peak_ms,
+        transport_lag_ms: sample.transport_lag_ms,
+        hop: sample.dominant().map(|hop| hop.label()),
+        prints: sample.prints,
     }
 }
 
@@ -177,6 +272,7 @@ async fn feed_task(
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
     caps_tx: watch::Sender<FeedCapabilities>,
+    latency_tx: watch::Sender<Option<FeedLatency>>,
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
 ) {
     // Resolve the UI's initial history load immediately: there is no
@@ -600,6 +696,13 @@ async fn feed_task(
                             caps.ohlcv_generation = ohlcv_generation;
                         });
                     }
+                    Some(Mt5Event::Latency(sample)) => {
+                        // A current reading, not an event: `send_replace` so a
+                        // consumer that missed three samples reads the newest
+                        // one instead of a backlog, and a consumer that has
+                        // gone away does not stop the feed.
+                        latency_tx.send_replace(Some(neutral_latency(&sample)));
+                    }
                     Some(Mt5Event::Live(trade)) => {
                         forwarded_any = true;
                         last_forwarded_ms = last_forwarded_ms.max(trade.timestamp_ms);
@@ -963,7 +1066,11 @@ async fn answer_command(
             );
             true
         }
-        FeedCommand::FetchOhlcv { span_ms, slice_ms } => {
+        FeedCommand::FetchOhlcv {
+            span_ms,
+            slice_ms,
+            before_ms,
+        } => {
             // Answered from what the bridge already pushed. `span_ms` is not a
             // request that can be made here — the bridge chose its own reach
             // before this feed could say anything (its `--rates-months`) — so
@@ -993,6 +1100,16 @@ async fn answer_command(
                 source = if candles.is_some() { "bridge_block" } else { "nothing_held" },
                 complete,
                 requested_slice_ms = slice_ms.unwrap_or(0),
+                // A *load older* asks for candles before an instant. The
+                // bridge's block is the whole of this feed's reach — it is
+                // pushed, never fetched — so the answer is the same block
+                // again, and the merge on the other side finds nothing new.
+                // Logged rather than dropped: "asked for older and got no
+                // older" is a fact about the bridge's `--rates-months`, and an
+                // operator reading this needs to see the request that went
+                // unmet rather than infer it.
+                requested_before_ms = before_ms.unwrap_or(0),
+                reach = if before_ms.is_some() { "bridge_block_is_the_whole_reach" } else { "opening_request" },
                 delivery = "single_reply",
                 "answered a candle-history request"
             );
@@ -1059,6 +1176,48 @@ fn log_status(symbol: &str, status: &Mt5Status) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_forced_split_parses_into_a_reading() {
+        // The state this hook exists for only happens while a real venue is
+        // running badly, so a validation run has to be able to ask for it.
+        let split = parse_forced_latency("18112,17980,132,MT5").expect("a well-formed hook");
+        assert_eq!(split.arrival_lag_ms, 18_112);
+        assert_eq!(split.source_lag_ms, Some(17_980));
+        assert_eq!(split.transport_lag_ms, Some(132));
+        assert_eq!(split.hop, Some("MT5"));
+        assert_eq!(split.prints, 1);
+    }
+
+    #[test]
+    fn the_hop_name_is_optional_but_the_numbers_are_not() {
+        let unnamed = parse_forced_latency("900,800,100").expect("three fields is enough");
+        assert_eq!(unnamed.hop, None);
+        assert_eq!(unnamed.arrival_lag_ms, 900);
+    }
+
+    #[test]
+    fn a_malformed_forced_split_is_rejected_not_defaulted() {
+        // A typo in a validation script must not photograph the wrong state and
+        // call it a pass, so every one of these is a refusal.
+        for bad in [
+            "",
+            "18112",
+            "18112,17980",
+            "18112,17980,x",
+            "18112,17980,132,bridge,extra",
+            "a,b,c",
+            // A hop the feed cannot report. Refused rather than shown, so a
+            // capture never claims a state the system has no way to produce.
+            "18112,17980,132,Bridge",
+            "18112,17980,132,the socket",
+        ] {
+            assert!(
+                parse_forced_latency(bad).is_none(),
+                "{bad:?} should be refused"
+            );
+        }
+    }
     use tokio::io::AsyncWriteExt as _;
 
     async fn notice_matching(
@@ -2127,6 +2286,7 @@ mod tests {
             .send(FeedCommand::FetchOhlcv {
                 span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
                 slice_ms: None,
+                before_ms: None,
             })
             .await
             .expect("the feed is listening");
@@ -2209,6 +2369,7 @@ mod tests {
             .send(FeedCommand::FetchOhlcv {
                 span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
                 slice_ms: Some(crate::feed::OHLCV_SLICE_SPAN_MS),
+                before_ms: None,
             })
             .await
             .expect("the feed is listening");
@@ -2271,6 +2432,7 @@ mod tests {
             .send(FeedCommand::FetchOhlcv {
                 span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
                 slice_ms: None,
+                before_ms: None,
             })
             .await
             .expect("the feed is listening");
@@ -2358,6 +2520,7 @@ mod tests {
                 .send(FeedCommand::FetchOhlcv {
                     span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
                     slice_ms: None,
+                    before_ms: None,
                 })
                 .await
                 .expect("the feed is listening");

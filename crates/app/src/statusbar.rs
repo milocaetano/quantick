@@ -15,8 +15,9 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use crate::feed::FeedConnectionState;
+use crate::feed::{FeedConnectionState, FeedLatency};
 use crate::metrics;
+use crate::orderflow;
 use crate::theme;
 use crate::timezone::TzOffset;
 
@@ -106,6 +107,13 @@ pub struct StatusModel {
     /// frame. This is what catches a transport that stays open and stops
     /// delivering, which no error and no connection state reports.
     pub tape_age_ms: Option<i64>,
+    /// Where that delay is being spent, when the provider can cut its own
+    /// chain. `None` on a provider that cannot, and before the first sample.
+    ///
+    /// The cell shows the hop's name beside the figure and puts the numbers in
+    /// the hover: a trader mid-session needs one word to know whether to look
+    /// at their terminal or at this chart, and the breakdown only when they ask.
+    pub feed_latency: Option<FeedLatency>,
     /// The bar spec, e.g. `tick(50)`.
     pub spec_summary: String,
     /// How far the forming bar is from closing, e.g. `37/50 ticks`, when its
@@ -154,20 +162,53 @@ pub struct StatusModel {
     pub show_perf: bool,
 }
 
+/// The delay the tape cell reports, and the sample the hop beside it came from.
+///
+/// A provider that cut its own chain reports the total *its own halves add up
+/// to*, measured where it read the print off the wire. The chart's own
+/// end-to-end figure — the one that also counts the queue and the frame — stays
+/// available and is named separately in the hover.
+///
+/// Showing one of those totals with a breakdown of the other is what this
+/// exists to prevent: three numbers that do not reconcile, on a readout whose
+/// entire selling point is that two of them sum to the third.
+#[must_use]
+pub fn tape_arrival_ms(arrival_ms: Option<i64>, latency: Option<FeedLatency>) -> Option<i64> {
+    latency.map(|split| split.arrival_lag_ms).or(arrival_ms)
+}
+
 /// The tape cell: `arrival 123 ms` live, `stale 12 s` when the tape has gone
 /// quiet, `10× 45%` while replaying, `arrival —` before the first trade.
 ///
 /// Two different measurements, and the distinction is the point. *Arrival* is
-/// how late the newest print was when it reached the UI — an observation
+/// how late the newest print was when it reached the chart — an observation
 /// stored when that print arrived, which stops ageing the moment prints stop.
 /// *Staleness* is wall clock minus the newest event's own timestamp, computed
 /// every frame. A socket that stays open and delivers nothing keeps a healthy
 /// arrival figure forever, so the honest readout is the age of the tape.
+///
+/// A late tape that knows *where* the time went says so by **replacing** the
+/// word `arrival` with the hop's name: `MT5 4210 ms`. Replacing rather than
+/// appending, because this row has no width budget between its three sections —
+/// a label that grows in the middle overruns the machinery readouts on the
+/// right, which is what the side-note comment in [`draw_content`] has always
+/// warned about, and it was reproduced at 1000 px by an earlier version of this
+/// cell that appended ` · bridge`. Swapped rather than appended, and swapped
+/// for something no wider: `LatencyHop::MAX_LABEL_CHARS` is the width of the
+/// word `arrival` itself, so the cell can only get narrower by knowing more.
+/// Both ends assert it.
+///
+/// Nothing is lost by dropping `arrival`: the word was only ever explained by
+/// the hover, which still explains both readings and now carries the numbers
+/// too. The name appears only once the delay is worth acting on
+/// ([`metrics::HIGH_LAG_MS`]) — a healthy tape does not need to tell anyone
+/// which of its hops was nominally slowest.
 #[must_use]
 pub fn tape_text(
     replay: Option<ReplayFigures>,
     arrival_ms: Option<i64>,
     tape_age_ms: Option<i64>,
+    latency: Option<FeedLatency>,
 ) -> String {
     if let Some(figures) = replay {
         return format!(
@@ -176,13 +217,88 @@ pub fn tape_text(
             figures.progress.clamp(0.0, 1.0) * 100.0
         );
     }
-    match (tape_age_ms, arrival_ms) {
+    match (tape_age_ms, tape_arrival_ms(arrival_ms, latency)) {
         (Some(age), _) if age > metrics::STALE_TAPE_MS => {
             format!("stale {} s", age / 1_000)
         }
-        (_, Some(arrival)) => format!("arrival {arrival} ms"),
+        (_, Some(arrival)) => {
+            // Gated on the figure shown, which is the figure the hop was
+            // chosen from: a hop picked for one measurement and revealed by
+            // another can name a culprit for a delay it is not displaying.
+            let hop = latency
+                .filter(|_| arrival > metrics::HIGH_LAG_MS)
+                .and_then(|split| split.hop);
+            match hop {
+                Some(hop) => format!("{hop} {arrival} ms"),
+                None => format!("arrival {arrival} ms"),
+            }
+        }
         (_, None) => "arrival —".to_owned(),
     }
+}
+
+/// What the tape cell always says on hover, split or no split.
+const TAPE_TOOLTIP_BASE: &str = "arrival: how late the newest print was when it \
+     reached the chart; stale: how long the tape has been silent (a socket can \
+     stay open and deliver nothing); replay shows speed and progress instead";
+
+/// The hover text under the tape cell.
+///
+/// Always explains the two measurements the cell can show, because they are
+/// easy to conflate. When the provider has cut its own chain the split follows
+/// — the numbers behind the one word on the cell, so a trader who wants to know
+/// *how much* of the delay is theirs to fix can read it without leaving the
+/// chart.
+///
+/// Every figure says where it was taken. The feed measures at the socket and
+/// the chart measures at the frame, so the two totals are not the same number
+/// and must never be printed as though they were; their *difference* is what
+/// quantick's own queueing and drawing cost, and that is the one hop neither
+/// side can see alone.
+#[must_use]
+pub fn tape_tooltip(arrival_ms: Option<i64>, latency: Option<FeedLatency>) -> String {
+    let mut text = String::from(TAPE_TOOLTIP_BASE);
+    let Some(split) = latency else {
+        return text;
+    };
+    let ms = orderflow::format_window_ms;
+    // Both halves or neither: they come from the same pair of stamps, and one
+    // alone would invite the reader to infer the other by subtracting from a
+    // total that has a different sample behind it.
+    if let (Some(source), Some(transport)) = (split.source_lag_ms, split.transport_lag_ms) {
+        text.push_str(&format!(
+            "\n\nthe feed measured {} from the venue's stamp: {} before it was \
+             handed over, {} from there to the socket",
+            ms(split.arrival_lag_ms),
+            ms(source),
+            ms(transport),
+        ));
+        if let Some(hop) = split.hop {
+            text.push_str(&format!(" — most of it in {hop}"));
+        }
+    }
+    if let Some(peak) = split.source_lag_peak_ms {
+        text.push_str(&format!(
+            "\nslowest handover in the last {} prints: {}",
+            split.prints,
+            ms(peak),
+        ));
+    }
+    // The hop neither side can see alone. Two measurements taken at two
+    // instants, so the difference is an estimate — said out loud rather than
+    // presented as a third measured figure.
+    if let Some(drawn) = arrival_ms {
+        let queued = drawn - split.arrival_lag_ms;
+        if queued > 0 {
+            text.push_str(&format!(
+                "\nthe chart drew it {} after the venue's stamp, so roughly {} \
+                 of that was the chart's own queue and drawing",
+                ms(drawn),
+                ms(queued),
+            ));
+        }
+    }
+    text
 }
 
 /// The bar-count cell, keeping the backfilled+live split: `240+61 bars`.
@@ -254,7 +370,10 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
     let stale = model
         .tape_age_ms
         .is_some_and(|age| age > metrics::STALE_TAPE_MS);
-    let tape_color = match (state, model.feed_arrival_ms) {
+    // The same figure the cell prints, so a cell reading nine seconds cannot
+    // be coloured from a different measurement reading two hundred milliseconds.
+    let shown_arrival = tape_arrival_ms(model.feed_arrival_ms, model.feed_latency);
+    let tape_color = match (state, shown_arrival) {
         (FeedState::Replay, _) => theme::AMBER,
         // A quiet tape and a late print are both worth a warning, and a
         // wedged socket only shows up as the first.
@@ -269,15 +388,18 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
             model.replay,
             model.feed_arrival_ms,
             model.tape_age_ms,
+            model.feed_latency,
         ))
         .monospace()
         .color(tape_color),
     )
-    .on_hover_text(
-        "arrival: how late the newest print was when it reached the chart; \
-         stale: how long the tape has been silent (a socket can stay open \
-         and deliver nothing); replay shows speed and progress instead",
-    );
+    // `on_hover_ui`, not `on_hover_text`: the split's sentences are built with
+    // `format!`, and `on_hover_text` evaluates its argument on every frame
+    // whether or not anyone is pointing at the cell. A per-frame allocation for
+    // a tooltip nobody is reading is exactly the trade this repo does not make.
+    .on_hover_ui(|ui| {
+        ui.label(tape_tooltip(model.feed_arrival_ms, model.feed_latency));
+    });
 }
 
 /// Middle section: bar spec, counts, honesty labels and navigation hints.
@@ -437,15 +559,145 @@ mod tests {
             speed: 10.0,
             progress: 0.45,
         });
-        assert_eq!(tape_text(replay, None, None), "10×  45%");
-        assert_eq!(tape_text(None, Some(230), Some(300)), "arrival 230 ms");
+        assert_eq!(tape_text(replay, None, None, None), "10×  45%");
+        assert_eq!(
+            tape_text(None, Some(230), Some(300), None),
+            "arrival 230 ms"
+        );
         // The tape has gone quiet: the stored arrival figure is stale itself.
         assert_eq!(
-            tape_text(None, Some(42), Some(12_000)),
+            tape_text(None, Some(42), Some(12_000), None),
             "stale 12 s",
             "a wedged socket keeps a healthy-looking arrival forever"
         );
-        assert_eq!(tape_text(None, None, None), "arrival —");
+        assert_eq!(tape_text(None, None, None, None), "arrival —");
+    }
+
+    /// A split as a bridge reports one.
+    fn split(arrival: i64, source: i64, transport: i64, hop: &'static str) -> FeedLatency {
+        FeedLatency {
+            arrival_lag_ms: arrival,
+            source_lag_ms: Some(source),
+            source_lag_peak_ms: Some(source + 100),
+            transport_lag_ms: Some(transport),
+            hop: Some(hop),
+            prints: 64,
+        }
+    }
+
+    #[test]
+    fn a_late_tape_names_the_hop_and_a_healthy_one_stays_quiet() {
+        // One word is what a trader mid-session can act on: look at the
+        // terminal, or look at the chart. It appears only when there is
+        // something to act on — a cell that always carries a second word stops
+        // being read, and a healthy tape naming its nominally slowest hop is
+        // noise dressed as a diagnosis.
+        let late = split(9_000, 8_800, 200, "MT5");
+        assert_eq!(
+            tape_text(None, Some(9_600), Some(9_000), Some(late)),
+            "MT5 9000 ms"
+        );
+        let healthy = split(120, 90, 30, "MT5");
+        assert_eq!(
+            tape_text(None, Some(140), Some(120), Some(healthy)),
+            "arrival 120 ms"
+        );
+    }
+
+    #[test]
+    fn the_cell_shows_the_total_its_own_halves_add_up_to() {
+        // The regression this shape exists to prevent: the cell showing the
+        // chart's end-to-end figure while the hover broke down the feed's, so
+        // the trader read a total that its own halves did not sum to. The
+        // chart's figure is larger — it also counts the queue and the frame —
+        // and the hover is where it is named, as its own measurement.
+        let late = split(9_000, 8_800, 200, "MT5");
+        assert_eq!(tape_arrival_ms(Some(9_600), Some(late)), Some(9_000));
+        assert_eq!(
+            late.source_lag_ms.unwrap() + late.transport_lag_ms.unwrap(),
+            late.arrival_lag_ms
+        );
+        // A provider with no split to publish is untouched: the chart's own
+        // figure is the only one there is.
+        assert_eq!(tape_arrival_ms(Some(120), None), Some(120));
+    }
+
+    #[test]
+    fn naming_the_hop_never_widens_the_cell() {
+        // The three sections of this row share one width with no budget between
+        // them, so a cell that grows pushes the machinery readouts off the end.
+        // Measured at 1000 px: appending the hop overlapped `bars`/`trades`
+        // outright, and swapping in an eight-character name still grazed them.
+        // `LatencyHop::MAX_LABEL_CHARS` is therefore the width of `arrival`
+        // itself; this is the other half of that bargain, asserted where the
+        // cell is built, and it is `<=` with no slack on purpose.
+        let plain = tape_text(None, Some(18_112), Some(100), None);
+        for hop in quantick_feed_mt5::LatencyHop::ALL.map(quantick_feed_mt5::LatencyHop::label) {
+            let named = tape_text(
+                None,
+                Some(18_112),
+                Some(100),
+                Some(split(18_112, 17_980, 132, hop)),
+            );
+            assert!(
+                named.chars().count() <= plain.chars().count(),
+                "{named:?} is wider than {plain:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stale_tape_still_reports_staleness_over_any_split() {
+        // A wedged socket is the one state where the arrival figure lies, and
+        // a hop name beside it would make the lie more convincing.
+        assert_eq!(
+            tape_text(
+                None,
+                Some(9_000),
+                Some(60_000),
+                Some(split(9_000, 8_800, 200, "MT5"))
+            ),
+            "stale 60 s"
+        );
+    }
+
+    #[test]
+    fn the_hover_says_where_each_figure_was_taken() {
+        // The feed measures at the socket and the chart at the frame, so the
+        // two totals are different numbers about different things. Printing
+        // them as one is what produced three figures that did not reconcile;
+        // naming the gap turns it into the one hop neither side sees alone.
+        let text = tape_tooltip(Some(9_600), Some(split(9_000, 8_800, 200, "MT5")));
+        assert!(text.starts_with(TAPE_TOOLTIP_BASE), "the base always leads");
+        assert!(text.contains("the feed measured 9 s from the venue's stamp"));
+        assert!(text.contains("8 s before it was handed over"));
+        assert!(text.contains("200 ms from there to the socket"));
+        assert!(text.contains("most of it in MT5"));
+        assert!(text.contains("slowest handover in the last 64 prints"));
+        assert!(
+            text.contains("the chart's own queue and drawing"),
+            "the hop neither side can see alone is named: {text}"
+        );
+    }
+
+    #[test]
+    fn a_provider_that_cannot_split_says_only_what_it_measured() {
+        // Data honesty: no invented zeros, and no breakdown of a chain nobody
+        // cut. The hover is exactly what it always was.
+        assert_eq!(tape_tooltip(Some(120), None), TAPE_TOOLTIP_BASE);
+        let unsplit = FeedLatency {
+            arrival_lag_ms: 9_000,
+            source_lag_ms: None,
+            source_lag_peak_ms: None,
+            transport_lag_ms: None,
+            hop: None,
+            prints: 3,
+        };
+        assert_eq!(tape_tooltip(Some(9_000), Some(unsplit)), TAPE_TOOLTIP_BASE);
+        assert_eq!(
+            tape_text(None, Some(9_000), Some(9_000), Some(unsplit)),
+            "arrival 9000 ms"
+        );
     }
 
     #[test]
@@ -454,7 +706,7 @@ mod tests {
             speed: 1.0,
             progress: 1.7,
         });
-        assert_eq!(tape_text(over, None, None), "1× 100%");
+        assert_eq!(tape_text(over, None, None, None), "1× 100%");
     }
 
     #[test]
@@ -491,6 +743,7 @@ mod tests {
                 }),
                 connection: FeedConnectionState::Connected,
                 feed_arrival_ms: (!replaying).then_some(120),
+                feed_latency: None,
                 tape_age_ms: (!replaying).then_some(200),
                 spec_summary: "tick(50)".to_owned(),
                 bar_progress: Some("37/50 ticks".to_owned()),
@@ -539,6 +792,7 @@ mod tests {
             replay: None,
             connection: FeedConnectionState::Connected,
             feed_arrival_ms: Some(106),
+            feed_latency: None,
             tape_age_ms: Some(150),
             spec_summary: "tick(50)".to_owned(),
             bar_progress: Some("37/50 ticks".to_owned()),

@@ -120,13 +120,36 @@ any of them still connects and still streams ticks.
 ### tick
 
 ```json
-{"type":"tick","seq":1,"time_ms":1784824300802,"bid":"0","ask":"0","last":"177795","volume":3,"flags":1080}
+{"type":"tick","seq":1,"time_ms":1784824300802,"sent_ms":1784824300815,"bid":"0","ask":"0","last":"177795","volume":3,"flags":1080}
 ```
 
 - `seq` — bridge-assigned, monotonic from 1 per session. **Synthetic** (MT5
   has no exchange trade id): good for gap detection, not stable across
   sessions.
 - `time_ms` — `MqlTick.time_msc`, in **server time** (see hello).
+- `sent_ms` — *optional*, **server time**: when the bridge handed this line
+  over. It exists so a late tape can be diagnosed instead of merely noticed.
+  A chart can subtract a print's `time_ms` from its own clock and get one
+  end-to-end number, and that number cannot tell a terminal that received the
+  tick late from a socket that delivered it late — opposite faults with
+  opposite fixes. `sent_ms` cuts the chain in two: `sent_ms - time_ms` is the
+  delay inside the terminal, and the reader's own arrival minus `sent_ms` is
+  the delay on the wire. A bridge may stamp once per batch rather than once per
+  tick, so the figure is the instant the *batch* left, never later than the
+  line itself. **Absent means an older bridge**: the reader reports the split
+  as unavailable rather than inventing a zero. Live prints only — on a backfill
+  or paged tick the stamp is honest and the difference is the age of the
+  history, not a latency.
+
+  **Two halves, and deliberately not three.** The obvious next cut — what the
+  terminal cost against what the bridge's own pump cost — is not on this wire.
+  A bridge has no cheap way to ask the terminal "what is the newest tick you
+  hold that I have not sent yet", and every approximation of it collapses into
+  *time since the last print*, which during a stall equals the delay itself and
+  so blames the pump for all of it. A field that names the wrong hop is worse
+  than no field. The pump reports its own health where it can actually measure
+  it, in the terminal's own log: see `BRIDGE_PUMP_LIMIT` and
+  `BRIDGE_SEND_STALLED` in README.md.
 - `bid`/`ask`/`last` — price strings with exactly `digits` decimals; `"0"`
   when the feed carries none (B3 history ticks have no quotes).
 - `volume` — contracts; `0` on quote-only ticks.

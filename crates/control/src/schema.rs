@@ -32,10 +32,9 @@ impl CompiledSchema {
         reject_external_references(schema)?;
         jsonschema::draft202012::meta::validate(schema)
             .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
-        let validator = jsonschema::draft202012::options()
-            .build(schema)
-            .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))?;
-        Ok(Self { validator })
+        Ok(Self {
+            validator: compile(schema)?,
+        })
     }
 
     pub fn validate(&self, instance: &Value) -> Result<(), SchemaError> {
@@ -49,6 +48,34 @@ impl CompiledSchema {
     }
 }
 
+/// Compile one schema with the options every control-plane validator uses.
+///
+/// Patterns run under the linear-time `regex` engine only. Left to its default,
+/// `jsonschema` hands lookaround and backreferences to a backtracking engine and
+/// then runs them against attacker-supplied payloads; a module registering a
+/// capability chooses its patterns, and the host pays for them. Selecting the
+/// linear engine here makes `build` refuse such a pattern at the door — on the
+/// pattern the validator actually runs, after the crate's own ECMA-to-Rust
+/// translation — so the guard cannot drift from the engine, and a plain regex
+/// syntax error is reported as the invalid schema it is.
+///
+/// [`CompiledSchema::new`] is the only caller, which is what keeps the guard
+/// and the engine from drifting apart: there is one door, and it is this one.
+fn compile(schema: &Value) -> Result<jsonschema::Validator, SchemaError> {
+    jsonschema::draft202012::options()
+        .with_pattern_options(jsonschema::PatternOptions::regex())
+        .build(schema)
+        .map_err(|error| SchemaError::InvalidSchema(error.masked().to_string()))
+}
+
+/// Check one instance against a schema, compiling the schema for this call
+/// alone.
+///
+/// This is the one-shot door, for registration-time example checks and tests.
+/// A caller validating the *same* schema repeatedly — every request against a
+/// registered capability — holds a [`CompiledSchema`] instead and pays the
+/// meta-validation and compilation once, at registration, rather than on every
+/// request.
 pub fn validate_instance(schema: &Value, instance: &Value) -> Result<(), SchemaError> {
     CompiledSchema::new(schema)?.validate(instance)
 }
@@ -499,6 +526,60 @@ mod tests {
         assert!(compare_schemas(&previous, &required).is_breaking());
         assert!(require_compatible_version(1, &previous, 1, &required).is_err());
         assert!(require_compatible_version(1, &previous, 2, &required).is_ok());
+    }
+
+    #[test]
+    fn patterns_that_need_a_backtracking_engine_are_refused_at_the_door() {
+        // The classic catastrophic case: matching `^(?=(a+)+b)` against a
+        // string of 'a's is exponential. Left to its default engine
+        // `jsonschema` would compile it and run it against every request
+        // payload, so a module could stall the host with a descriptor well
+        // under the size cap. With the linear-time engine selected, `build`
+        // refuses it as an invalid schema.
+        assert!(matches!(
+            validate_schema(&json!({"type": "string", "pattern": "^(?=(a+)+b)"})),
+            Err(SchemaError::InvalidSchema(_))
+        ));
+
+        // Nested and `patternProperties` keys are patterns too.
+        assert!(matches!(
+            validate_schema(&json!({
+                "type": "object",
+                "properties": {"inner": {"type": "string", "pattern": r"(\w)\1"}}
+            })),
+            Err(SchemaError::InvalidSchema(_))
+        ));
+        assert!(matches!(
+            validate_schema(&json!({
+                "type": "object",
+                "patternProperties": {"^(?!x)": {"type": "string"}}
+            })),
+            Err(SchemaError::InvalidSchema(_))
+        ));
+
+        // A pattern in a data position is data, not a pattern: the engine, not
+        // a shape-based walk, decides what is refused.
+        assert!(
+            validate_schema(&json!({
+                "type": "object",
+                "examples": [{"pattern": "(?=x)"}],
+                "default": {"pattern": "(a+)+\\1"}
+            }))
+            .is_ok()
+        );
+
+        // The guard asks the linear-time engine, not a blacklist of characters,
+        // so a busy-looking pattern it can run stays allowed. Nested alternation
+        // and repetition are linear there, and the shipped identifier patterns
+        // have to keep passing.
+        assert!(validate_schema(&json!({"type": "string", "pattern": "(a|a)*$"})).is_ok());
+        assert!(
+            validate_schema(&json!({
+                "type": "string",
+                "pattern": r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,7}$"
+            }))
+            .is_ok()
+        );
     }
 
     #[test]

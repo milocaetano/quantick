@@ -529,7 +529,7 @@ fn verify_windows_owner(path: &Path) -> Result<(), DiscoveryError> {
         Foundation::{ERROR_SUCCESS, LocalFree},
         Security::{
             Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT},
-            EqualSid, IsValidSid, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+            OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
         },
     };
 
@@ -560,31 +560,7 @@ fn verify_windows_owner(path: &Path) -> Result<(), DiscoveryError> {
             std::io::Error::from_raw_os_error(status as i32),
         ));
     }
-    let result = (|| {
-        if owner_sid.is_null() || unsafe { IsValidSid(owner_sid) } == 0 {
-            return Err(DiscoveryError::new(
-                "descriptor owner SID is unavailable or invalid",
-            ));
-        }
-        let current_user = current_windows_user_sid()?;
-        // SAFETY: both SIDs were validated; `EqualSid` only reads them.
-        let owned_by_user =
-            unsafe { EqualSid(owner_sid, current_user.as_ptr().cast_mut().cast()) } != 0;
-        // An elevated process creates objects owned by its token's default
-        // owner (BUILTIN\Administrators), not by the user SID; either is
-        // this process's own ownership. A token whose default owner cannot
-        // be read falls back to the user SID alone.
-        let owned_by_token_owner = current_windows_token_owner_sid().is_ok_and(|default_owner| {
-            // SAFETY: as above.
-            (unsafe { EqualSid(owner_sid, default_owner.as_ptr().cast_mut().cast()) }) != 0
-        });
-        if !owned_by_user && !owned_by_token_owner {
-            return Err(DiscoveryError::new(
-                "descriptor path is not owned by the current Windows user",
-            ));
-        }
-        Ok(())
-    })();
+    let result = verify_owner_sid(owner_sid);
     // SAFETY: the pointer was returned by `GetNamedSecurityInfoW` above.
     unsafe {
         if !security_descriptor.is_null() {
@@ -592,6 +568,39 @@ fn verify_windows_owner(path: &Path) -> Result<(), DiscoveryError> {
         }
     }
     result
+}
+
+/// Whether an object's owner SID is one this process itself creates objects
+/// with. One predicate for both the owner check and the ACL check: an
+/// elevated process creates objects owned by its token's default owner
+/// (`BUILTIN\Administrators`), not by the user SID, and a check that accepts
+/// that in one place and refuses it in the other leaves elevated Quantick
+/// unable to publish at all.
+#[cfg(windows)]
+fn verify_owner_sid(owner_sid: windows_sys::Win32::Security::PSID) -> Result<(), DiscoveryError> {
+    use windows_sys::Win32::Security::{EqualSid, IsValidSid};
+
+    if owner_sid.is_null() || unsafe { IsValidSid(owner_sid) } == 0 {
+        return Err(DiscoveryError::new(
+            "descriptor owner SID is unavailable or invalid",
+        ));
+    }
+    let current_user = current_windows_user_sid()?;
+    // SAFETY: both SIDs were validated; `EqualSid` only reads them.
+    let owned_by_user =
+        unsafe { EqualSid(owner_sid, current_user.as_ptr().cast_mut().cast()) } != 0;
+    // A token whose default owner cannot be read falls back to the user SID
+    // alone.
+    let owned_by_token_owner = current_windows_token_owner_sid().is_ok_and(|default_owner| {
+        // SAFETY: as above.
+        (unsafe { EqualSid(owner_sid, default_owner.as_ptr().cast_mut().cast()) }) != 0
+    });
+    if !owned_by_user && !owned_by_token_owner {
+        return Err(DiscoveryError::new(
+            "descriptor path is not owned by the current Windows user",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -745,17 +754,11 @@ fn verify_windows_acl(path: &Path) -> Result<(), DiscoveryError> {
     }
 
     let result = (|| {
-        if owner_sid.is_null() || unsafe { IsValidSid(owner_sid) } == 0 {
-            return Err(DiscoveryError::new(
-                "descriptor owner SID is unavailable or invalid",
-            ));
-        }
+        // The same ownership rule the publisher applies, including the
+        // elevated case: a check that refused the token owner here would
+        // reject the directory this process had just created.
+        verify_owner_sid(owner_sid)?;
         let current_user = current_windows_user_sid()?;
-        if unsafe { EqualSid(owner_sid, current_user.as_ptr().cast_mut().cast()) } == 0 {
-            return Err(DiscoveryError::new(
-                "descriptor path is not owned by the current Windows user",
-            ));
-        }
         if dacl.is_null() {
             return Err(DiscoveryError::new(
                 "descriptor ACL grants implicit access to everyone",

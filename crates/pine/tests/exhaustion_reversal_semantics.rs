@@ -31,24 +31,29 @@ type Ohlc = (f64, f64, f64, f64);
 /// identical at any length. Positional — the script's `input.*` order.
 fn inputs() -> Vec<InputValue> {
     vec![
-        InputValue::Int(4),     // 0  1 Force bar: body average window
-        InputValue::Float(1.5), // 1  1 Force bar: min body (×average)
-        InputValue::Int(4),     // 2  1 Force bar: reaches the extreme of
-        InputValue::Bool(true), // 3  1 Force bar: must close with the push
-        InputValue::Bool(true), // 4  2 Run: on
-        InputValue::Int(3),     // 5  2 Run: opposite candles in a row
-        InputValue::Int(5),     // 6  2 Run: window after the force bar
-        InputValue::Float(0.7), // 7  2 Run: min give-back
-        InputValue::Bool(true), // 8  3 Cover: on
-        InputValue::Int(3),     // 9  3 Cover: window after the force bar
-        InputValue::Float(0.7), // 10 3 Cover: min overlap
-        InputValue::Bool(true), // 11 4 Display: mark top reversals
-        InputValue::Bool(true), // 12 4 Display: mark bottom reversals
+        InputValue::Int(4),      // 0  1 Force bar: body average window
+        InputValue::Float(1.5),  // 1  1 Force bar: min body (×average)
+        InputValue::Int(4),      // 2  1 Force bar: reaches the extreme of
+        InputValue::Bool(true),  // 3  1 Force bar: must close with the push
+        InputValue::Bool(true),  // 4  2 Run: on
+        InputValue::Int(3),      // 5  2 Run: opposite candles in a row
+        InputValue::Int(5),      // 6  2 Run: window after the force bar
+        InputValue::Float(0.7),  // 7  2 Run: min give-back
+        InputValue::Bool(true),  // 8  3 Cover: on
+        InputValue::Int(3),      // 9  3 Cover: window after the force bar
+        InputValue::Float(0.7),  // 10 3 Cover: min overlap
+        InputValue::Bool(true),  // 11 4 Display: mark top reversals
+        InputValue::Bool(true),  // 12 4 Display: mark bottom reversals
+        InputValue::Float(0.0),  // 13 5 Calibration: points floor, off
+        InputValue::Bool(false), // 14 5 Calibration: run reads the body
+        InputValue::Bool(false), // 15 5 Calibration: cover reads the body
+        InputValue::Bool(false), // 16 5 Calibration: paint what armed
+        InputValue::Bool(true),  // 17 6 Invalidation: a close past the far end
     ]
 }
 
 // Positions into the hand-ordered `Vec` above. Naming them keeps a test from
-// reading as `off[8] = false` — but note this is legibility only: the bind
+// reading as `off[10] = false` — but note this is legibility only: the bind
 // path checks the input *count*, never a name, so reordering two same-typed
 // inputs would leave these pointing at the wrong knob with the suite green.
 // There is no by-name input API to reach for; the behavioural assertions are
@@ -58,6 +63,11 @@ const USE_RUN: usize = 4;
 const RUN_WINDOW: usize = 6;
 const USE_COVER: usize = 8;
 const SHOW_TOP: usize = 11;
+const MIN_BODY_POINTS: usize = 13;
+const RUN_BODY_ONLY: usize = 14;
+const COVER_BODY_ONLY: usize = 15;
+const PAINT_FORCE: usize = 16;
+const INVALIDATE_BEYOND: usize = 17;
 
 fn make(index: usize, row: Ohlc) -> IndicatorBar {
     let (open, high, low, close) = row;
@@ -202,6 +212,192 @@ fn none() -> Vec<usize> {
     Vec::new()
 }
 
+/// `color.orange` and `color.blue` as this dialect folds them: the two paints
+/// the section-5 diagnostic uses. Constants in the script, constants here —
+/// asserting on the exact colour is what catches the two sides being wired to
+/// the same one, which is a bug the arrows already shipped once.
+const PAINT_TOP: Rgba8 = Rgba8::opaque(0xFF, 0x98, 0x00);
+const PAINT_BOTTOM: Rgba8 = Rgba8::opaque(0x29, 0x62, 0xFF);
+
+/// The bar paint of each row, `None` where the script asked for none. The row
+/// count is passed in rather than read off the channel: the channel is kept
+/// only as far as the last painted bar, so its length would silently shorten
+/// the assertion to exactly the rows that happen to be painted.
+fn paints(indicator: &ScriptIndicator, rows: usize) -> Vec<Option<Rgba8>> {
+    (0..rows)
+        .map(|row| indicator.plots().bar_paint(row))
+        .collect()
+}
+
+/// Twenty-two flat bars: body 1.0, high 101.0. Long enough to fill the
+/// SHIPPED windows (20-bar body average, 10-bar extreme), which the fixtures
+/// above shrink to keep themselves readable. The scenarios below deliberately
+/// shrink nothing — the question they answer is whether the defaults a trader
+/// gets on adding the indicator read the chart the way they drew it.
+fn quiet_context() -> Vec<Ohlc> {
+    vec![(100.0, 101.0, 100.0, 101.0); 22]
+}
+
+/// The buying push those defaults are measured against: body 100..110 against
+/// an average of 1.0, high 112 over an extreme of 101. Its range is 99..112,
+/// so the body is 10 wide and the whole bar 13 — the two rulers disagree,
+/// which is the point of every scenario that follows.
+const PUSH: Ohlc = (100.0, 112.0, 99.0, 110.0);
+
+/// Index of the force bar in a `quiet_context()` tape.
+const PUSH_BAR: usize = 22;
+
+/// The declared defaults, read off the script rather than restated here, so
+/// a scenario cannot quietly test a configuration nobody ships.
+fn defaults() -> Vec<InputValue> {
+    load().input_values()
+}
+
+/// Run a tape against those defaults — no input vector at all, exactly what
+/// the settings dialog opens with.
+fn run_defaults(rows: &[Ohlc]) -> ScriptIndicator {
+    let mut indicator = load();
+    let mut cvd = Vec::new();
+    let mut sum = 0.0;
+    for (index, row) in rows.iter().enumerate() {
+        let bar = make(index, *row);
+        sum += bar.delta();
+        cvd.push(sum);
+        let mut ctx = Ctx {
+            bar_index: index,
+            cvd: &cvd,
+        };
+        indicator.on_close(&bar, &mut ctx).expect("commit run");
+    }
+    indicator
+}
+
+#[test]
+fn the_defaults_mark_one_candle_that_covers_the_bodys_seventy_percent() {
+    // Scenario 1: the force bar, then one opposite candle whose BODY covers
+    // 70% of the force bar's body. Against the full range that same candle
+    // covers 54% and says nothing — which is why body-to-body is the shipped
+    // default rather than an option to go and find.
+    let mut tape = quiet_context();
+    tape.push(PUSH); //                         22  force bar
+    tape.push((110.0, 110.0, 103.0, 103.0)); // 23  body 110->103 = 70% of 100..110
+
+    assert_eq!(
+        sells(&run_defaults(&tape)),
+        vec![PUSH_BAR + 1],
+        "the cover marks on the candle that erased the body"
+    );
+}
+
+#[test]
+fn the_defaults_mark_three_candles_that_hand_back_the_body() {
+    // Scenario 2: three consecutive down candles, price back to 103 — 70% of
+    // the body handed back by the close of the third. No single one of them
+    // covers enough to be a cover, so this is the run and nothing else.
+    let mut tape = quiet_context();
+    tape.push(PUSH); //                         22  force bar
+    tape.push((110.0, 110.0, 107.0, 107.0)); // 23  1 of 3
+    tape.push((107.0, 107.0, 105.0, 105.0)); // 24  2 of 3
+    tape.push((105.0, 105.0, 103.0, 103.0)); // 25  3 of 3 -> 70%
+
+    assert_eq!(
+        sells(&run_defaults(&tape)),
+        vec![PUSH_BAR + 3],
+        "the mark lands on the close of the third candle, not at the extreme"
+    );
+}
+
+#[test]
+fn the_defaults_still_mark_a_run_that_completes_on_the_fifth_bar() {
+    // Scenario 3: a green candle interrupts, so the three-in-a-row only
+    // completes on the fifth bar after the push — the last bar the window
+    // allows.
+    let mut tape = quiet_context();
+    tape.push(PUSH); //                         22  force bar
+    tape.push((110.0, 110.0, 108.0, 108.0)); // 23  down
+    tape.push((108.0, 109.0, 108.0, 109.0)); // 24  up — the streak restarts
+    tape.push((109.0, 109.0, 106.0, 106.0)); // 25  1 of 3
+    tape.push((106.0, 106.0, 104.0, 104.0)); // 26  2 of 3
+    tape.push((104.0, 104.0, 102.0, 102.0)); // 27  3 of 3 -> 80%, age 5
+
+    assert_eq!(
+        sells(&run_defaults(&tape)),
+        vec![PUSH_BAR + 5],
+        "five bars after the push is inside the window, and the run is what marks"
+    );
+}
+
+#[test]
+fn the_defaults_mark_a_cover_four_bars_after_the_push() {
+    // Scenario 4: nothing for three bars, then one big opposite candle that
+    // covers the body. The cover's window ships at 5 for exactly this: at the
+    // old 3, the identical candle arrived too late and the setup said nothing.
+    let mut tape = quiet_context();
+    tape.push(PUSH); //                         22  force bar
+    tape.push((110.0, 110.0, 108.0, 108.0)); // 23  small down
+    tape.push((108.0, 110.0, 108.0, 110.0)); // 24  up
+    tape.push((109.0, 111.0, 109.0, 110.0)); // 25  up
+    tape.push((110.0, 110.0, 103.0, 103.0)); // 26  covers 70% of the body, age 4
+
+    assert_eq!(
+        sells(&run_defaults(&tape)),
+        vec![PUSH_BAR + 4],
+        "a cover on the fourth bar is inside the shipped window"
+    );
+}
+
+#[test]
+fn a_cover_that_closes_past_the_force_bars_low_is_not_a_reversal() {
+    // Scenario 5: the candle covers the body outright, but closes BELOW the
+    // force bar's low. That is not the push being faded, it is the push being
+    // replaced — the candle is a selling force bar in its own right, and
+    // marking it would be fading the exhaustion of the exhaustion.
+    let mut tape = quiet_context();
+    tape.push(PUSH); //                         22  force bar, low 99
+    tape.push((110.0, 110.0, 97.0, 98.0)); //   23  closes at 98, under the low
+
+    assert_eq!(
+        sells(&run_defaults(&tape)),
+        none(),
+        "the setup is killed by that close, not marked"
+    );
+
+    // And the switch is real: off, the same tape is an ordinary cover.
+    let mut off = defaults();
+    off[INVALIDATE_BEYOND] = InputValue::Bool(false);
+    assert_eq!(
+        sells(&run(&off, &tape)),
+        vec![PUSH_BAR + 1],
+        "with invalidation off the identical candle marks"
+    );
+}
+
+#[test]
+fn a_run_whose_last_candle_closes_past_the_low_is_not_a_reversal() {
+    // Scenario 6: the same rule reached by the other shape. Three candles
+    // down, the third closing under the force bar's low — 120% handed back,
+    // which is not a deeper give-back but a new push the other way.
+    let mut tape = quiet_context();
+    tape.push(PUSH); //                         22  force bar, low 99
+    tape.push((110.0, 110.0, 106.0, 106.0)); // 23  1 of 3
+    tape.push((106.0, 106.0, 102.0, 102.0)); // 24  2 of 3
+    tape.push((102.0, 102.0, 97.0, 98.0)); //   25  3 of 3, closes at 98
+
+    assert_eq!(
+        sells(&run_defaults(&tape)),
+        none(),
+        "a run that runs past the force bar is the reversal of the reversal"
+    );
+
+    let mut off = defaults();
+    off[INVALIDATE_BEYOND] = InputValue::Bool(false);
+    assert_eq!(
+        sells(&run(&off, &tape)),
+        vec![PUSH_BAR + 3],
+        "with invalidation off the identical run marks"
+    );
+}
+
 #[test]
 fn the_declared_marks_are_the_ones_the_renderer_draws() {
     // Shape, location and colour all fold at load time and all fall back
@@ -245,6 +441,69 @@ fn the_declared_marks_are_the_ones_the_renderer_draws() {
     );
 }
 
+/// The thirteen inputs the indicator shipped with in #212, at the indices it
+/// shipped them. This is not documentation — it is the binding contract for
+/// every value a trader has already saved, which is matched by POSITION.
+///
+/// The titles are the current ones, not #212's: two of them lost "(fraction
+/// of range)" when the fraction became readable against the body. What is
+/// pinned here is the ORDER; the titles are how a reader checks it against
+/// the script in one glance, and a rename trips the test on purpose because
+/// `name()` is a slug of the title and is documented as a persistence key.
+const SHIPPED_ORDER: [&str; 13] = [
+    "1 Force bar: body average window (bars)",
+    "1 Force bar: min body (×average)",
+    "1 Force bar: reaches the extreme of (bars)",
+    "1 Force bar: must close in the direction of the push",
+    "2 Run: mark a give-back by consecutive candles",
+    "2 Run: opposite candles in a row",
+    "2 Run: window after the force bar (bars)",
+    "2 Run: min give-back of the force bar",
+    "3 Cover: mark a give-back by one opposite candle",
+    "3 Cover: window after the force bar (bars)",
+    "3 Cover: min overlap with the force bar",
+    "4 Display: mark top reversals (sell side)",
+    "4 Display: mark bottom reversals (buy side)",
+];
+
+#[test]
+fn the_inputs_this_script_shipped_with_keep_their_positions() {
+    // A saved preset is a list of values matched to inputs BY POSITION, with
+    // only a type check to object (`App::load_indicator_preset`): the loader
+    // walks the declared inputs and takes the saved value at the same index
+    // when the discriminant matches. Insert an input in the middle and every
+    // preset saved before it shifts one place — silently, because a `bool`
+    // matches a `bool`. That is not hypothetical: dropping "paint the bars
+    // that arm a push" at index 4 would have handed it the value saved for
+    // "2 Run: on" — `true` by default — and a trader's candles would have
+    // started repainting themselves from a preset written before the switch
+    // existed. So new inputs go at the END, in section 5, and this test is
+    // what says so out loud.
+    //
+    // Two titles here lost "(fraction of range)" in this same change, because
+    // the fraction can now be read against the body instead; that is a
+    // rename, not a reorder, and the loader never reads a title. The test
+    // still catches it, deliberately: `InputSpec::name()` is documented as a
+    // persistence key, and the day something starts persisting by it, a
+    // rename becomes a silent data loss.
+    let indicator = load();
+    let declared: Vec<&str> = indicator
+        .descriptor()
+        .inputs
+        .iter()
+        .map(|spec| spec.title())
+        .collect();
+    assert!(
+        declared.len() >= SHIPPED_ORDER.len(),
+        "an input was removed: presets bind by position, so removing one shifts every value saved after it"
+    );
+    assert_eq!(
+        &declared[..SHIPPED_ORDER.len()],
+        &SHIPPED_ORDER[..],
+        "the inputs this script shipped with must keep their indices — append new ones instead of inserting them"
+    );
+}
+
 #[test]
 fn no_declared_input_is_a_control_that_does_nothing() {
     // `input.color` does not fold in this dialect, so a colour handed to a
@@ -254,12 +513,16 @@ fn no_declared_input_is_a_control_that_does_nothing() {
     // nothing, which the repo treats as worse than an absent one. This
     // script therefore declares no colour input at all and takes its colours
     // from the Style tab; the assertion is here so nobody adds one back.
+    //
+    // `barcolor` is the one site an `input.color` *would* fold through
+    // (force_bar.pine proves it), so this is a ban on the picker, not on
+    // paint: the diagnostic below paints with folded constants instead.
     let indicator = load();
     let inputs = &indicator.descriptor().inputs;
     assert_eq!(
         inputs.len(),
-        13,
-        "four force-bar knobs, four run, three cover, two display"
+        18,
+        "four force-bar knobs, four run, three cover, two display, four calibration, one invalidation"
     );
     for spec in inputs {
         assert!(
@@ -377,6 +640,52 @@ fn an_ordinary_bar_at_a_new_high_is_not_a_force_bar() {
 }
 
 #[test]
+fn a_ratio_without_a_size_is_not_an_elephant() {
+    // The force bar's body is 10 points against an average of 1.0, so the
+    // ratio says force at any factor this fixture could carry. The floor is
+    // the other half of the question, and it is the half a quiet tape needs:
+    // a collapsed average makes 1.5× of almost nothing arm a push nobody
+    // would call one (measured on WINV26: 247 of 1 355 bars by ratio alone,
+    // 7 with a 100-point floor — docs/ux/strategy-anchors.md).
+    let mut floored = inputs();
+    floored[MIN_BODY_POINTS] = InputValue::Float(11.0);
+    assert_eq!(
+        sells(&run(&floored, &sell_tape())),
+        none(),
+        "a 10-point body under an 11-point floor never arms, so nothing the bars after it do can mark"
+    );
+
+    // And the floor is a floor, not a filter on the mark: one point lower and
+    // the identical tape marks where it always did.
+    let mut cleared = inputs();
+    cleared[MIN_BODY_POINTS] = InputValue::Float(10.0);
+    assert_eq!(
+        sells(&run(&cleared, &sell_tape())),
+        vec![8],
+        "the floor is `>=`: a body exactly at it still counts"
+    );
+
+    // Off is off — the shipped default changes nothing about the old ruler.
+    assert_eq!(sells(&run(&inputs(), &sell_tape())), vec![8]);
+}
+
+#[test]
+fn the_floor_and_the_paint_agree_about_what_armed() {
+    // The diagnostic is only useful if it reports the same decision the
+    // signal path made. A floor that silenced the arrow while leaving the bar
+    // painted would send the trader hunting a bug that is not there.
+    let mut floored = inputs();
+    floored[MIN_BODY_POINTS] = InputValue::Float(11.0);
+    floored[PAINT_FORCE] = InputValue::Bool(true);
+    let tape = sell_tape();
+    assert_eq!(
+        paints(&run(&floored, &tape), tape.len()),
+        vec![None; tape.len()],
+        "no bar armed, so no bar is painted"
+    );
+}
+
+#[test]
 fn a_force_bar_that_reaches_no_extreme_is_not_a_force_bar() {
     // Identical to the canonical tape except bar 3, which leaves a 120 high
     // standing above everything the force bar can reach.
@@ -421,13 +730,19 @@ fn the_direction_rule_decides_whether_a_reversal_bar_can_anchor() {
     wick.push((100.0, 100.0, 99.0, 99.0)); //   7  bearish
     wick.push((99.0, 99.0, 98.0, 98.0)); //     8  bearish, 127% given back
 
+    // This tape hands back 127%: it closes past the force bar's low, which
+    // section 6 kills on sight. Invalidation is off for both halves here —
+    // the clause under test is the direction rule, and the kill has its own
+    // scenarios.
+    let mut base = inputs();
+    base[INVALIDATE_BEYOND] = InputValue::Bool(false);
     assert_eq!(
-        sells(&run(&inputs(), &wick)),
+        sells(&run(&base, &wick)),
         none(),
         "with the direction rule on, only a bar closing up can be a buying push"
     );
 
-    let mut loose = inputs();
+    let mut loose = base.clone();
     loose[NEED_DIRECTION] = InputValue::Bool(false);
     assert_eq!(
         sells(&run(&loose, &wick)),
@@ -491,6 +806,190 @@ fn a_window_shorter_than_the_run_still_means_the_run() {
         sells(&run(&impossible, &sell_tape())),
         vec![8],
         "an input that cannot fire is a trap, not a setting"
+    );
+}
+
+#[test]
+fn the_run_can_measure_give_back_against_the_force_bars_body_instead_of_its_range() {
+    // A force bar with wicks on both sides: body 105..111 (width 6), full
+    // range 101..115 (width 14, a 4-wide wick on each end). The three-candle
+    // run below closes at 106 — 64% of the RANGE given back (short of 70%)
+    // but 83% of the BODY (past it).
+    let mut wicked = context_up();
+    wicked.push((105.0, 115.0, 101.0, 111.0)); // 5  force bar, body 105..111
+    wicked.push((111.0, 111.0, 109.0, 109.0)); // 6  give-back 1 of 3
+    wicked.push((109.0, 109.0, 107.0, 107.0)); // 7  give-back 2 of 3
+    wicked.push((107.0, 107.0, 106.0, 106.0)); // 8  give-back 3 of 3
+
+    assert_eq!(
+        sells(&run(&inputs(), &wicked)),
+        none(),
+        "measured against the full range this run gives back only 64% of \
+         it — short of the 70% threshold"
+    );
+
+    let mut body_only = inputs();
+    body_only[RUN_BODY_ONLY] = InputValue::Bool(true);
+    assert_eq!(
+        sells(&run(&body_only, &wicked)),
+        vec![8],
+        "the identical tape marks once the switch says to ignore the wicks \
+         and judge the give-back against the body alone"
+    );
+}
+
+#[test]
+fn the_force_bar_diagnostic_paints_the_push_and_leaves_every_other_bar_alone() {
+    // Silent unless asked. An indicator that painted candles the moment it
+    // was added would repaint the chart of everyone who already runs it.
+    let tape = sell_tape();
+    assert_eq!(
+        paints(&run(&inputs(), &tape), tape.len()),
+        vec![None; tape.len()],
+        "with the switch off the script asks for no paint at all"
+    );
+
+    let mut on = inputs();
+    on[PAINT_FORCE] = InputValue::Bool(true);
+    let painted = paints(&run(&on, &tape), tape.len());
+    assert_eq!(
+        painted[5],
+        Some(PAINT_TOP),
+        "bar 5 is the force bar — the whole point of the switch is that it becomes visible whether or not anything fades it"
+    );
+    assert_eq!(
+        painted[8], None,
+        "bar 8 carries the arrow, and the give-back is not a push: painting it would answer a question nobody asked"
+    );
+    assert_eq!(
+        painted.iter().filter(|p| p.is_some()).count(),
+        1,
+        "one push in this tape, one painted bar"
+    );
+
+    // The switch is a diagnostic, not a filter: the arrow is unchanged.
+    assert_eq!(sells(&run(&on, &tape)), vec![8]);
+}
+
+#[test]
+fn the_two_sides_of_the_diagnostic_wear_different_colours() {
+    // A single colour for both would make the paint useless exactly where a
+    // trader needs it — a bar painted at the bottom of a slide is either the
+    // selling push it should be, or a buying push read upside down.
+    let mut on = inputs();
+    on[PAINT_FORCE] = InputValue::Bool(true);
+
+    let tape = buy_tape();
+    assert_eq!(
+        paints(&run(&inputs(), &tape), tape.len()),
+        vec![None; tape.len()],
+        "off is off on this side too — the bottom branch needs its own guard, and a sell tape can never prove it has one"
+    );
+
+    let painted = paints(&run(&on, &tape), tape.len());
+    assert_eq!(
+        painted[5],
+        Some(PAINT_BOTTOM),
+        "the selling push at a new low is the other colour"
+    );
+    assert_ne!(PAINT_TOP, PAINT_BOTTOM);
+    assert_eq!(painted.iter().filter(|p| p.is_some()).count(), 1);
+}
+
+#[test]
+fn the_run_reads_the_body_on_the_buy_side_too() {
+    // The mirror of the test above, and not a formality: the buy side reads
+    // `bottom_run_low` where the sell side reads `top_run_high`, so a min/max
+    // slip in the arming block would leave the sell side correct and this one
+    // measuring the give-back from the wrong end of the force bar.
+    //
+    // Selling push with wicks on both sides: body 94..100 (width 6), full
+    // range 90..104 (width 14). The three-candle run closes at 99 — 64% of
+    // the RANGE handed back (short of 70%) but 83% of the BODY (past it).
+    let mut wicked = context_down();
+    wicked.push((100.0, 104.0, 90.0, 94.0)); // 5  force bar, body 94..100
+    wicked.push((94.0, 96.0, 94.0, 96.0)); //   6  give-back 1 of 3
+    wicked.push((96.0, 98.0, 96.0, 98.0)); //   7  give-back 2 of 3
+    wicked.push((98.0, 99.0, 98.0, 99.0)); //   8  give-back 3 of 3
+
+    assert_eq!(
+        buys(&run(&inputs(), &wicked)),
+        none(),
+        "against the full range this run gives back only 64% of it"
+    );
+
+    let mut body_only = inputs();
+    body_only[RUN_BODY_ONLY] = InputValue::Bool(true);
+    assert_eq!(
+        buys(&run(&body_only, &wicked)),
+        vec![8],
+        "the identical tape marks once the give-back is judged against the body alone"
+    );
+}
+
+#[test]
+fn the_cover_reads_the_body_on_the_buy_side_too() {
+    // Same mirror for the cover, which reads `bottom_cover_high`/`_low`: a
+    // selling push with a 4-wide wick BELOW its body, body 100..110 (width
+    // 10) inside a 96..110 range (width 14). The answering candle's body
+    // covers exactly 70% of the body and only 50% of the range.
+    let mut wicked = context_down();
+    wicked.push((110.0, 110.0, 96.0, 100.0)); // 5  force bar, body 100..110
+    wicked.push((100.0, 107.0, 100.0, 107.0)); // 6  body 100->107
+
+    assert_eq!(
+        buys(&run(&inputs(), &wicked)),
+        none(),
+        "against the full range the overlap is 50%, short of the threshold"
+    );
+
+    let mut body_only = inputs();
+    body_only[COVER_BODY_ONLY] = InputValue::Bool(true);
+    assert_eq!(
+        buys(&run(&body_only, &wicked)),
+        vec![6],
+        "the identical candle marks once the overlap is judged against the body"
+    );
+}
+
+#[test]
+fn the_display_toggles_silence_the_triangle_and_leave_the_paint_alone() {
+    // The script states this as a contract, and it is the reason the
+    // diagnostic is trustworthy: a trader who silenced one side and then went
+    // looking for why nothing arms there must not be answered by a diagnostic
+    // that silenced itself along with the marks.
+    let mut top_off = inputs();
+    top_off[SHOW_TOP] = InputValue::Bool(false);
+    top_off[PAINT_FORCE] = InputValue::Bool(true);
+
+    let tape = sell_tape();
+    let hit = run(&top_off, &tape);
+    assert_eq!(sells(&hit), none(), "the triangle is silenced");
+    assert_eq!(
+        paints(&hit, tape.len())[5],
+        Some(PAINT_TOP),
+        "the force bar is still painted: the toggle governs the marks, not the ruler"
+    );
+}
+
+#[test]
+fn a_bar_that_anchors_both_sides_is_painted_for_the_top() {
+    // Reachable only with the direction filter off, which is exactly why it
+    // is worth pinning: an outside bar with a body big enough to arm makes a
+    // new high AND a new low, both anchors fire on the same bar, and the
+    // script promises a fixed priority rather than whatever the evaluation
+    // order happens to be.
+    let mut both = inputs();
+    both[NEED_DIRECTION] = InputValue::Bool(false);
+    both[PAINT_FORCE] = InputValue::Bool(true);
+
+    let mut tape = context_up();
+    tape.push((100.0, 115.0, 90.0, 110.0)); // 5  outside bar: new high and new low
+
+    assert_eq!(
+        paints(&run(&both, &tape), tape.len())[5],
+        Some(PAINT_TOP),
+        "one bar, one colour, and the top wins by rule"
     );
 }
 
@@ -667,6 +1166,34 @@ fn the_cover_marks_the_buy_side_too() {
     let hit = run(&inputs(), &t);
     assert_eq!(buys(&hit), vec![6]);
     assert_eq!(sells(&hit), none());
+}
+
+#[test]
+fn the_cover_can_measure_overlap_against_the_force_bars_body_instead_of_its_range() {
+    // A force bar with a wick above its body: body 101..111 (width 10), full
+    // range 101..115 (width 14, a 4-wide upper wick). The next candle's body
+    // overlaps the force bar's body by exactly 70%, but only 50% of its full
+    // range — the trader's exact complaint: a candle that visibly erases the
+    // body still fails a threshold judged against the whole wick-to-wick range.
+    let mut wicked = context_up();
+    wicked.push((101.0, 115.0, 101.0, 111.0)); // 5  force bar, body 101..111
+    wicked.push((111.0, 111.0, 104.0, 104.0)); // 6  body 111->104: 50% of range, 70% of body
+
+    assert_eq!(
+        sells(&run(&inputs(), &wicked)),
+        none(),
+        "measured against the full range the overlap is only 50%, short of \
+         the 70% threshold"
+    );
+
+    let mut body_only = inputs();
+    body_only[COVER_BODY_ONLY] = InputValue::Bool(true);
+    assert_eq!(
+        sells(&run(&body_only, &wicked)),
+        vec![6],
+        "the identical candle marks once the switch says to judge the \
+         overlap against the body alone"
+    );
 }
 
 #[test]

@@ -815,13 +815,6 @@ impl ControlAccess {
                 Some("replayed from the control trace".to_owned()),
             ),
         };
-        // A rerun attributes what it produces to the operator the recorded
-        // run named, so a replayed session carries the same authorship the
-        // original did. Cleared below, whatever the handler does.
-        self.replayed_author = match &origin {
-            ActionOrigin::TraceReplay(recorded) => Some((**recorded).clone()),
-            ActionOrigin::Human | ActionOrigin::Remote(_) => None,
-        };
         // What the caller asked becomes what will happen, before the intent
         // line is written: a trace entry names the bar that was marked, not
         // "wherever the pointer is". A replayed entry is already resolved and
@@ -900,6 +893,17 @@ impl ControlAccess {
             )
         })?;
 
+        // A rerun attributes what it produces to the operator the recorded
+        // run named, so a replayed session carries the same authorship the
+        // original did. Set here rather than earlier, and cleared immediately
+        // after: every refusal above returns without running a handler, and a
+        // stale author left behind would sign the *next* action's object with
+        // the recorded run's operator — or, when that operator was the trader,
+        // leave an agent's object carrying no author at all.
+        self.replayed_author = match &origin {
+            ActionOrigin::TraceReplay(recorded) => Some((**recorded).clone()),
+            ActionOrigin::Human | ActionOrigin::Remote(_) => None,
+        };
         let outcome = (action.handler)(app, self, &actor, &input).and_then(|result| {
             action
                 .output
@@ -1487,6 +1491,14 @@ impl ControlAccess {
         granted.insert(
             PermissionId::new(OBSERVE_PERMISSION_ID).expect("static permission ID is valid"),
         );
+        // The annotate tier's own floor, for the same reason: every annotate
+        // capability requires it, so `annotate.chart` on its own would raise
+        // the ceiling to `annotator` and then refuse every call made with it.
+        if granted.iter().any(is_annotate_scope) {
+            granted.insert(
+                PermissionId::new(ANNOTATE_PERMISSION_ID).expect("static permission ID is valid"),
+            );
+        }
         self.configured_scopes = granted;
         Ok(())
     }
@@ -1499,8 +1511,15 @@ impl ControlAccess {
     /// one question that decides whether a client may answer on the chart.
     pub(crate) fn grants_annotate(&self) -> bool {
         // The floor on its own opens nothing, so it never makes the status
-        // line claim the window can be answered on.
+        // line claim the window can be answered on — and a scope without the
+        // floor opens nothing either, because every annotate capability
+        // requires both. Claiming otherwise would put "answering on the
+        // chart" on the panel over a connection that is refused every time.
         self.configured_scopes.iter().any(is_annotate_scope)
+            && self
+                .configured_scopes
+                .iter()
+                .any(|permission| permission.as_str() == ANNOTATE_PERMISSION_ID)
     }
 
     /// The ceiling every connection of the next run is capped at. It follows
@@ -1824,10 +1843,12 @@ impl ControlAccess {
                     );
                     self.state = AccessState::Enabled(runtime);
                 }
-                LifecycleEvent::Started { runtime, .. } => {
-                    runtime.request_shutdown();
-                    self.state = AccessState::Disabling(Some(runtime));
-                }
+                // A gateway of a generation this run has moved past: shut it
+                // down and let it go. Overwriting the state here would throw
+                // away the runtime — or the pending enable — that replaced it,
+                // and an enable/disable/enable in quick succession would leave
+                // access off with no way back short of another enable.
+                LifecycleEvent::Started { runtime, .. } => runtime.request_shutdown(),
                 LifecycleEvent::Failed {
                     generation,
                     message,
@@ -1851,7 +1872,22 @@ impl ControlAccess {
                 LifecycleEvent::Failed { .. } => {}
                 LifecycleEvent::Stopped { generation } => {
                     let expected = matches!(self.state, AccessState::Disabling(_));
-                    if generation <= self.grant_generation {
+                    // Only the gateway this state actually holds may end it.
+                    // `request_disable` bumps the generation before the run it
+                    // is stopping reports back, so a `Disabling` state accepts
+                    // the stop it asked for; every other generation is an
+                    // older run finishing its own cleanup and must not turn
+                    // off the one that replaced it.
+                    let held = match &self.state {
+                        AccessState::Enabled(runtime) | AccessState::Disabling(Some(runtime)) => {
+                            Some(runtime.grant_generation)
+                        }
+                        AccessState::Disabled
+                        | AccessState::Enabling
+                        | AccessState::Disabling(None) => None,
+                    };
+                    let ours = held.map_or(expected, |held| held == generation);
+                    if ours {
                         self.active_cancellation = None;
                         self.connections.clear();
                         self.revoked_connections.clear();
@@ -1903,7 +1939,13 @@ impl ControlAccess {
                 ConnectionStatus::Disconnected(connection_id) => {
                     self.notification_limits.remove(&connection_id);
                     self.connections.remove(&connection_id);
-                    self.revoked_connections.remove(&connection_id);
+                    // The revocation is deliberately *not* lifted here.
+                    // Revoking closes the socket, which produces this very
+                    // status; clearing the id would let a request the revoked
+                    // client had already queued run on the drain that follows
+                    // in the same frame. Connection IDs are random per
+                    // connection, so a later client can never inherit one,
+                    // and the set is emptied when the gateway stops.
                 }
             }
             processed += 1;
@@ -2494,7 +2536,10 @@ fn waiter_manager(
             .unwrap_or(Duration::from_millis(WAITER_POLL_MS))
             .min(Duration::from_millis(WAITER_POLL_MS));
         crossbeam_channel::select! {
-            recv(ticks) -> _ => {}
+            // A disconnected receiver is *always* ready: without this the
+            // journal going away would spin this thread at full speed
+            // instead of ending it.
+            recv(ticks) -> tick => if tick.is_err() { break },
             recv(park) -> waiter => match waiter {
                 Ok(waiter) => waiters.push(waiter),
                 Err(_) => break,
@@ -2556,6 +2601,9 @@ fn accept_loop(
     let mut sockets = BTreeMap::<u64, TrackedSocket>::new();
     let mut next_socket_key = 1u64;
     let mut shutdown = false;
+    // Capacity rejections answer off this thread; this counts the ones still
+    // in flight so a reconnect loop cannot spawn threads without bound.
+    let rejecting = Arc::new(AtomicUsize::new(0));
     while !shutdown && !authority.cancellation.load(Ordering::Acquire) {
         loop {
             match commands.try_recv() {
@@ -2608,11 +2656,25 @@ fn accept_loop(
                     if sockets.len() >= authority.options.max_connections {
                         // Off the accept thread: the rejection reads the
                         // client's handshake first (see the function), which
-                        // may wait up to the handshake timeout.
+                        // may wait up to the handshake timeout. Bounded, for
+                        // the same reason the connections are: a peer that
+                        // reconnects in a loop would otherwise spawn a thread
+                        // per attempt, each living to the handshake timeout.
+                        if !try_reserve_in_flight(&rejecting, authority.options.max_connections) {
+                            let _ = stream.shutdown(Shutdown::Both);
+                            continue;
+                        }
                         let options = authority.options.clone();
-                        let _ = thread::Builder::new()
+                        let in_flight = Arc::clone(&rejecting);
+                        let spawned = thread::Builder::new()
                             .name("quantick-control-reject".to_owned())
-                            .spawn(move || reject_connection_capacity(stream, &options));
+                            .spawn(move || {
+                                reject_connection_capacity(stream, &options);
+                                in_flight.fetch_sub(1, Ordering::AcqRel);
+                            });
+                        if spawned.is_err() {
+                            rejecting.fetch_sub(1, Ordering::AcqRel);
+                        }
                         continue;
                     }
                     let Some(next_socket_key_value) = next_socket_key.checked_add(1) else {
@@ -3534,7 +3596,13 @@ fn send_response(
     let mut stream = writer
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let _ = stream.write_all(&frame);
+    // A write that fails part-way has already put a truncated frame on the
+    // wire: every byte after it would be read as that frame's payload. The
+    // connection cannot be recovered, so it is closed rather than left
+    // writing garbage the client will parse as answers.
+    if stream.write_all(&frame).is_err() {
+        let _ = stream.shutdown(Shutdown::Both);
+    }
 }
 
 fn random_bytes<const N: usize>() -> Result<[u8; N], String> {
@@ -3554,6 +3622,43 @@ mod tests {
             std::process::id(),
             NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+
+    /// The panel may not promise what the contract will refuse.
+    ///
+    /// Every annotate capability requires the `annotate` floor *and* its own
+    /// scope. Granting a scope alone used to raise the ceiling to `annotator`
+    /// and put "answering on the chart" on the status line over a connection
+    /// that was then denied every call it made.
+    #[test]
+    fn granting_an_annotate_scope_grants_the_floor_every_capability_also_needs() {
+        let mut access = ControlAccess::new();
+        access
+            .configure_scopes("all-reads,annotate.chart")
+            .expect("the test grants registered scopes");
+
+        assert!(
+            access.grants_annotate(),
+            "the panel says the window can be answered on"
+        );
+        assert!(
+            access
+                .configured_scopes
+                .iter()
+                .any(|permission| permission.as_str() == ANNOTATE_PERMISSION_ID),
+            "so the floor every annotate capability requires has to be there too"
+        );
+
+        // The contrast: the floor on its own opens nothing, so it must not
+        // make the status line claim the window can be answered on.
+        let mut floor_only = ControlAccess::new();
+        floor_only
+            .configure_scopes("all-reads,annotate")
+            .expect("the test grants registered scopes");
+        assert!(
+            !floor_only.grants_annotate(),
+            "a floor with no scope under it answers on nothing"
+        );
     }
 
     #[test]
@@ -3756,6 +3861,43 @@ mod tests {
             ..GatewayOptions::default()
         };
         assert!(options.validate().is_err());
+    }
+
+    #[test]
+    fn a_revoked_connection_stays_revoked_when_its_socket_closes() {
+        // Revoking closes the socket, so the disconnect it causes lands on the
+        // same frame as any request the revoked client had already queued.
+        // `poll_statuses` runs before `drain_bounded_since`, so lifting the
+        // revocation here would hand that request a clean bill of health and
+        // let it act. Connection IDs are random per connection, so keeping the
+        // id costs nothing: no later client can inherit it.
+        let mut access = ControlAccess::new();
+        let (_requests_tx, requests) = bounded(1);
+        let (statuses_tx, statuses) = bounded(1);
+        let (commands, _commands_rx) = bounded(1);
+        let connection_id = ConnectionId::from_bytes([7; 16]);
+        access.state = AccessState::Enabled(GatewayRuntime {
+            grant_generation: 0,
+            requests,
+            statuses,
+            commands,
+            cancellation: Arc::new(AtomicBool::new(false)),
+            public: GatewayPublicInfo {
+                instance_id: InstanceId::from_bytes([1; 16]),
+                port: 0,
+                descriptor_path: PathBuf::new(),
+                published_at_unix_ms: 0,
+            },
+        });
+        access.revoked_connections.insert(connection_id.clone());
+        statuses_tx
+            .try_send(ConnectionStatus::Disconnected(connection_id.clone()))
+            .unwrap();
+        access.poll_statuses(Instant::now());
+        assert!(
+            access.revoked_connections.contains(&connection_id),
+            "the revocation outlives the disconnect it caused"
+        );
     }
 
     #[test]

@@ -265,6 +265,59 @@ pub enum InputValue {
     Source(SourceId),
 }
 
+/// What [`bind_by_position`] made of a saved value set.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoundInputs {
+    /// One value per declared input, in declaration order — ready to hand to
+    /// an indicator.
+    pub values: Vec<InputValue>,
+    /// How many saved cells were taken as they stood. Anything less than the
+    /// number of saved cells means the rest fell back to a default, which is
+    /// a trader's setting quietly changing under them: say so.
+    pub kept: usize,
+}
+
+/// Bind saved values to declared inputs **by position**, cell by cell.
+///
+/// Saved input sets carry no names — neither the state file nor a preset
+/// stores one — so position is the only key there is, and a value is taken
+/// only when the input now at its index still has its type. Everything else
+/// takes its declared default: an input added since (there is no saved cell
+/// at its index), an input removed (the saved tail is ignored), an input
+/// whose type changed, and a cell that could not be read at all, which is why
+/// `saved` holds `Option`s — a dropped cell must hold its place or every
+/// value after it binds to the wrong input.
+///
+/// This is only safe under one rule, and the rule is on the script author:
+/// **new inputs are appended**. An input inserted in the middle shifts every
+/// value saved before it onto its neighbour, silently, because a `bool`
+/// matches a `bool`. Scripts pin their input order in a test.
+///
+/// One function rather than one copy per persistence path: the state file and
+/// the preset file are two ways of storing the same thing, and a binding rule
+/// that lives twice diverges on the third change.
+#[must_use]
+pub fn bind_by_position(specs: &[InputSpec], saved: &[Option<InputValue>]) -> BoundInputs {
+    let mut kept = 0;
+    let values = specs
+        .iter()
+        .enumerate()
+        .map(|(index, spec)| {
+            let default = spec.default_value();
+            match saved.get(index).and_then(Option::as_ref) {
+                Some(value)
+                    if std::mem::discriminant(value) == std::mem::discriminant(&default) =>
+                {
+                    kept += 1;
+                    value.clone()
+                }
+                _ => default,
+            }
+        })
+        .collect();
+    BoundInputs { values, kept }
+}
+
 #[cfg(test)]
 mod tests {
     /// A fifteenth series would vanish from every settings dropdown without
@@ -353,6 +406,112 @@ mod tests {
         assert_eq!(SourceId::SellVolume.value(&b, 0.0), 1.0);
         assert_eq!(SourceId::TradeCount.value(&b, 0.0), 4.0);
         assert_eq!(SourceId::Cvd.value(&b, -7.5), -7.5);
+    }
+
+    fn specs() -> Vec<InputSpec> {
+        vec![
+            InputSpec::Int {
+                name: "len".into(),
+                title: "Length".into(),
+                default: 20,
+                min: None,
+                max: None,
+                step: None,
+                options: Vec::new(),
+            },
+            InputSpec::Float {
+                name: "factor".into(),
+                title: "Factor".into(),
+                default: 1.5,
+                min: None,
+                max: None,
+                step: None,
+                options: Vec::new(),
+            },
+            InputSpec::Bool {
+                name: "added".into(),
+                title: "Added since".into(),
+                default: false,
+            },
+        ]
+    }
+
+    /// The upgrade case: a script (or a native) gained an input, so the saved
+    /// set is shorter than the declared one. Refusing the whole set here is
+    /// how "I reopened the app and every setting was back to default" used to
+    /// happen — one added knob costing the trader all the others.
+    #[test]
+    fn values_saved_before_an_input_existed_still_bind() {
+        let saved = vec![Some(InputValue::Int(50)), Some(InputValue::Float(2.5))];
+        let bound = bind_by_position(&specs(), &saved);
+        assert_eq!(
+            bound.values,
+            vec![
+                InputValue::Int(50),
+                InputValue::Float(2.5),
+                InputValue::Bool(false),
+            ]
+        );
+        assert_eq!(bound.kept, 2, "both saved cells were taken as they stood");
+    }
+
+    /// An unreadable cell must hold its place. Dropping it from the list
+    /// instead would slide every later value one input to the left, and
+    /// same-typed neighbours would take each other's settings in silence.
+    #[test]
+    fn an_unreadable_cell_holds_its_place_instead_of_shifting_the_rest() {
+        let saved = vec![
+            Some(InputValue::Int(50)),
+            None,
+            Some(InputValue::Bool(true)),
+        ];
+        let bound = bind_by_position(&specs(), &saved);
+        assert_eq!(
+            bound.values,
+            vec![
+                InputValue::Int(50),
+                InputValue::Float(1.5),
+                InputValue::Bool(true),
+            ],
+            "the float falls back alone; the bool after it is not pulled forward"
+        );
+        assert_eq!(bound.kept, 2);
+    }
+
+    /// The type check is the whole guard: a value is a bare number in the
+    /// file, so an input that changed type would otherwise bind a stale one.
+    #[test]
+    fn a_value_whose_input_changed_type_falls_back_alone() {
+        let saved = vec![
+            Some(InputValue::Int(50)),
+            Some(InputValue::Bool(true)),
+            Some(InputValue::Bool(true)),
+        ];
+        let bound = bind_by_position(&specs(), &saved);
+        assert_eq!(
+            bound.values,
+            vec![
+                InputValue::Int(50),
+                InputValue::Float(1.5),
+                InputValue::Bool(true),
+            ]
+        );
+        assert_eq!(bound.kept, 2, "the mistyped cell is not counted as kept");
+    }
+
+    /// A saved tail that no longer has inputs to bind to is ignored, not an
+    /// error: removing an input is a script edit, not a corrupt file.
+    #[test]
+    fn a_saved_set_longer_than_the_declared_one_binds_what_fits() {
+        let saved = vec![
+            Some(InputValue::Int(50)),
+            Some(InputValue::Float(2.5)),
+            Some(InputValue::Bool(true)),
+            Some(InputValue::Int(9)),
+        ];
+        let bound = bind_by_position(&specs(), &saved);
+        assert_eq!(bound.values.len(), 3);
+        assert_eq!(bound.kept, 3);
     }
 
     #[test]

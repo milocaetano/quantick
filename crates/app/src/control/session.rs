@@ -17,10 +17,9 @@ use serde::{Deserialize, Serialize};
 use crate::{app::QuantickApp, paper_trading::PositionSummary, tab::Tab};
 
 use super::{
-    interaction::AvailabilitySnapshot,
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
     trace::ReplayTraceFile,
-    types::{canonical_decimal, canonical_f32, wire_usize},
+    types::{AvailabilitySnapshot, canonical_decimal, canonical_f32, unavailable, wire_usize},
 };
 
 pub(crate) const REPLAY_SCOPE_ID: &str = "session.replay";
@@ -362,9 +361,7 @@ fn replay_session_snapshot(link: &crate::feed::replay::ReplayLink) -> ReplaySess
         speed: canonical_f32(status.speed(), RATIO_DECIMAL_PLACES),
         rewinds: WireU64::new(status.rewinds()),
         trace: ReplayTraceSnapshot {
-            state: AvailabilitySnapshot::unavailable(
-                "trace_state_is_served_by_the_gateway_not_by_a_capture",
-            ),
+            state: unavailable("trace_state_is_served_by_the_gateway_not_by_a_capture"),
             file_name: file_name(&ReplayTraceFile::path_for(&link.session.path)),
         },
     }

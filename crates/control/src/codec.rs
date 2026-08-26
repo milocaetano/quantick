@@ -6,24 +6,15 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 use crate::{
-    handshake::{HandshakeReply, HandshakeRequest, ProtocolLimits},
+    handshake::{HandshakeReply, HandshakeRequest, HandshakeResponse, ProtocolLimits},
     limits::{
         CONTROL_HANDSHAKE_MAX_BYTES, CONTROL_MAX_JSON_DEPTH, CONTROL_MAX_REQUEST_BYTES,
         CONTROL_MAX_RESPONSE_BYTES, CONTROL_MAX_STRING_BYTES, CONTROL_PROTOCOL_MAX_FRAME_BYTES,
     },
-    wire::{RequestEnvelope, ResponseEnvelope},
+    wire::{RESERVED_ACTOR_FIELDS, RequestEnvelope, ResponseEnvelope},
 };
 
 const FRAME_HEADER_BYTES: usize = size_of::<u32>();
-const RESERVED_ACTOR_FIELDS: &[&str] = &[
-    "actor",
-    "actor_context",
-    "actor_kind",
-    "client_name",
-    "connection_id",
-    "principal_id",
-    "requested_at_unix_ms",
-];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FrameRole {
@@ -126,7 +117,16 @@ impl BoundedCodec {
         Ok(frame)
     }
 
-    pub fn read<T: DeserializeOwned>(
+    /// Private on purpose. A generic decode enforces only the shared byte and
+    /// JSON bounds; the reserved-actor rejection and each envelope's own
+    /// `validate()` live on the typed entry points below. While this was
+    /// public, `read::<RequestEnvelope>` was a validation-free door to the same
+    /// type `read_request` guards, sitting directly above it and looking like
+    /// the general case. The typed entry points — the envelope readers and
+    /// decoders, and the handshake readers — are the whole wire surface, so
+    /// nothing is lost by making the bypass unreachable rather than merely
+    /// discouraged.
+    fn read<T: DeserializeOwned>(
         &self,
         role: FrameRole,
         reader: &mut impl Read,
@@ -135,9 +135,11 @@ impl BoundedCodec {
         self.decode_payload(&payload)
     }
 
-    /// First client frame on a connection: the handshake, read under the
-    /// pre-authentication ceiling of [`Self::handshake`]. Typed on purpose, like
-    /// [`Self::read_request`]: the generic decoder is not a public door.
+    /// First client frame on a connection: the handshake request, read under
+    /// whatever ceiling this codec was built with — a host reads it with
+    /// [`Self::handshake`], a pre-authentication codec bounded tighter than the
+    /// envelope codec. Typed on purpose, like [`Self::read_request`]: the
+    /// generic decoder is not a public door.
     pub fn read_handshake_request(
         &self,
         reader: &mut impl Read,
@@ -146,11 +148,24 @@ impl BoundedCodec {
     }
 
     /// First server frame on a connection: the accepted handshake, or the
-    /// redacted error the gateway sends before closing.
+    /// redacted error the gateway sends before closing. A caller that has
+    /// already established the connection is accepted wants
+    /// [`Self::read_handshake_response`] instead.
     pub fn read_handshake_reply(
         &self,
         reader: &mut impl Read,
     ) -> Result<HandshakeReply, CodecError> {
+        self.read(FrameRole::Response, reader)
+    }
+
+    /// First server frame on an *accepted* connection: the handshake response
+    /// in its direct shape, without the [`HandshakeReply::Rejected`] arm. The
+    /// caller checks it against its own request with
+    /// [`HandshakeResponse::validate_for`].
+    pub fn read_handshake_response(
+        &self,
+        reader: &mut impl Read,
+    ) -> Result<HandshakeResponse, CodecError> {
         self.read(FrameRole::Response, reader)
     }
 
@@ -167,7 +182,9 @@ impl BoundedCodec {
         Ok(response)
     }
 
-    pub fn decode_frame<T: DeserializeOwned>(
+    /// Private for the same reason as [`Self::read`]: use
+    /// [`Self::decode_request_frame`] or [`Self::decode_response_frame`].
+    fn decode_frame<T: DeserializeOwned>(
         &self,
         role: FrameRole,
         frame: &[u8],

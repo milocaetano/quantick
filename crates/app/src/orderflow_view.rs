@@ -121,6 +121,9 @@ pub struct OrderflowView {
     published: BookPublished,
     /// Engine bucket last adopted into the mirror, to detect auto-base moves.
     last_seen_base: Decimal,
+    /// The tape grid last sent to the engine, so the per-trade path sends one
+    /// command per change rather than one per print.
+    last_tape_price_step: Option<Decimal>,
     capture_grouping_draft: f64,
     pending_capture_grouping_previous: Option<Decimal>,
     /// Named bubble looks, loaded from the versionable presets file.
@@ -180,6 +183,7 @@ impl OrderflowView {
             config,
             published: BookPublished::initial(),
             last_seen_base: base_grouping,
+            last_tape_price_step: None,
             capture_grouping_draft: base_grouping.to_f64().unwrap_or(0.01),
             pending_capture_grouping_previous: None,
             presets,
@@ -320,6 +324,15 @@ impl OrderflowView {
     fn sync_published(&mut self) {
         self.published = self.worker.published();
         let base = self.published.base_price_grouping;
+        self.adopt_base(base);
+    }
+
+    /// Take an engine-chosen capture bucket into the UI mirror.
+    ///
+    /// Split out of [`Self::sync_published`] because the footprint's row width
+    /// needs the bucket without the rest of the published state, and the
+    /// adoption rule is the same either way.
+    fn adopt_base(&mut self, base: Decimal) {
         if base != self.last_seen_base {
             self.last_seen_base = base;
             // The engine auto-sized the capture bucket from live data; adopt
@@ -329,6 +342,30 @@ impl OrderflowView {
                 self.capture_grouping_draft = base.to_f64().unwrap_or(self.capture_grouping_draft);
             }
         }
+    }
+
+    /// The capture bucket, taking whatever the engine has published since the
+    /// last look.
+    ///
+    /// [`base_capture_grouping`](Self::base_capture_grouping) reads the mirror
+    /// as it stands, which is right for a caller that has already synced this
+    /// frame. The footprint's row width has no such caller: every
+    /// `sync_published` site is gated on a layer or a dock tab being open, and
+    /// the ladder is drawn when all of them are off — the very case this
+    /// sizing exists for. Reading through here rather than off the mirror is
+    /// what keeps the rows from depending on a diagnostics log having run.
+    pub fn capture_grouping_now(&mut self) -> Decimal {
+        let base = self.worker.published_base_grouping();
+        // The mirror takes it too. A split's *other* pane is handed the row
+        // width through `base_capture_grouping`, which reads the mirror and
+        // takes `&self` — so leaving the mirror behind here would let the two
+        // panes of one chart draw the same market on different rows, which is
+        // the divergence this whole sizing path exists to prevent. Cheap: the
+        // field is a `Decimal`, and the rest of the published snapshot is
+        // untouched because nothing here has read it.
+        self.published.base_price_grouping = base;
+        self.adopt_base(base);
+        base
     }
 
     /// The capture bucket the book engine derived for this instrument — the
@@ -454,6 +491,27 @@ impl OrderflowView {
     #[must_use]
     pub fn lane_depth_visible(&self) -> bool {
         self.config.lane_depth_visible()
+    }
+
+    /// The candles' depth switch alone, whatever capture lets through it.
+    ///
+    /// [`Self::depth_visible`] answers "is it drawn", which is what a renderer
+    /// needs; this answers "did anyone ask for it", which is what persistence
+    /// needs. On a source with no book the map is undrawn however the switch
+    /// stands, and writing that down as the trader's answer would turn a
+    /// capability into a choice they never made — and one that then outranks
+    /// the shipped default on every market, including the ones with a book.
+    /// The same rule [`Self::set_depth_visible`] already compares against.
+    #[must_use]
+    pub fn depth_switched_on(&self) -> bool {
+        self.config.show_depth
+    }
+
+    /// The tape's depth switch alone. Twin of [`Self::depth_switched_on`],
+    /// same rule and the same reason.
+    #[must_use]
+    pub fn lane_depth_switched_on(&self) -> bool {
+        self.config.live_lane.show_depth
     }
 
     /// Show or hide the depth map on the tape alone. Capture is untouched, and
@@ -745,6 +803,11 @@ impl OrderflowView {
         self.symbol = symbol.into();
         self.config.enabled = false;
         self.pending_capture_grouping_previous = None;
+        // The send-once cache is keyed on what was *sent*, so a new market
+        // whose tape prints on the same grid would be suppressed — and a grid
+        // the engine refused while the trader had picked a bucket by hand
+        // would never be re-offered once auto sizing is re-armed here.
+        self.last_tape_price_step = None;
         self.published = BookPublished::initial();
         // The starvation clock is per market, like the history it starves.
         // Carrying the old symbol's zero across would open the new one on a
@@ -823,6 +886,27 @@ impl OrderflowView {
             return;
         }
         self.worker.send(BookCommand::Trade(trade.clone()));
+    }
+
+    /// Tell the engine the price grid the tape prints on.
+    ///
+    /// Sent only when the answer changes, which a running GCD makes rare: it
+    /// starts as nothing, names a grid once the tape has shown one, and only
+    /// ever narrows from there. On the trader's own recordings it settles
+    /// within about thirty prints and never moves again, so a session pays for
+    /// one regroup rather than one per trade — which matters, because this is
+    /// called from the per-trade path.
+    ///
+    /// Deliberately *not* gated on a layer being enabled, unlike
+    /// [`record_trade`](Self::record_trade): the grid sizes the footprint
+    /// ladder as well as the liquidity map, and a trader reading a ladder with
+    /// the heatmap switched off needs its rows the right width just the same.
+    pub fn observe_tape_price_step(&mut self, step: Decimal) {
+        if self.last_tape_price_step == Some(step) {
+            return;
+        }
+        self.last_tape_price_step = Some(step);
+        self.worker.send(BookCommand::TapePriceGrid(step));
     }
 
     /// Whether the scripted starvation hook is holding this print back.
@@ -2393,6 +2477,32 @@ mod tests {
     /// The ask, in one test: the toolbar governs the candles and nothing else.
     /// Every one of the four movements — each layer switched off *and* back on
     /// — has to leave the tape exactly where the trader left it.
+
+    #[test]
+    fn a_direct_read_of_the_capture_bucket_leaves_the_mirror_agreeing() {
+        // Two readers of one number. `capture_grouping_now` takes it straight
+        // from the worker mailbox, because the footprint's row width is needed
+        // on frames where nothing syncs; `base_capture_grouping` reads the
+        // mirror and takes `&self`, and is how a split hands the row width to
+        // its other pane. If the direct read does not leave the mirror behind,
+        // the two panes of one chart draw the same market on different rows.
+        //
+        // The worker is flushed but the view is deliberately NOT synced: a sync
+        // would write the mirror by itself and the test would pass either way.
+        let mut view = OrderflowView::new("WINV26");
+        let before = view.base_capture_grouping();
+        view.observe_tape_price_step(Decimal::from(5));
+        view.worker.flush();
+
+        let direct = view.capture_grouping_now();
+        assert_ne!(direct, before, "the engine never took the tape's grid");
+        assert_eq!(direct, Decimal::from(5));
+        assert_eq!(
+            view.base_capture_grouping(),
+            direct,
+            "the mirror the other pane reads disagrees with the mailbox this one read",
+        );
+    }
     #[test]
     fn the_toolbar_switches_move_the_candles_and_never_the_tape() {
         let mut view = OrderflowView::new("BTCUSDT");

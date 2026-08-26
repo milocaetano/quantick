@@ -132,6 +132,9 @@ async fn tcp_replay_equals_the_pure_mapper() {
             // Only one client ever dials this listener.
             Mt5Event::SessionBusy { peer, .. } => panic!("unexpected second client: {peer}"),
             Mt5Event::HistoryPage { .. } => panic!("nothing asked this fixture for older ticks"),
+            // A recorded session carries no `sent_ms`, so the split is
+            // reported unavailable; the fixture is about bars, not lag.
+            Mt5Event::Latency(_) => {}
         }
     }
 

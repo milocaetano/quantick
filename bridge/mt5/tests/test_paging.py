@@ -144,6 +144,7 @@ def session_for(bridge, terminal, **args):
     # The tick half's own state, which `__init__` would have set.
     session.seq = 0
     session.ticks_sent = 0
+    session.pump_round_limits = 0
     session.earliest_ms = None
     session.earliest_known = False
     session.inbox = b""
@@ -516,6 +517,154 @@ def test_an_endless_line_does_not_grow_the_buffer_without_bound():
         "the buffer is bounded",
         len(session.inbox) <= bridge.MAX_COMMAND_LINE_BYTES,
         len(session.inbox),
+    )
+
+
+def test_a_burst_larger_than_one_batch_is_drained_in_one_pass():
+    """The delay this whole change exists to remove, at its source.
+
+    `copy_ticks_from` returns at most the count it was asked for, so a pass that
+    filled its batch has *not* caught up — it has been truncated. Forwarding one
+    batch and returning left the remainder for the next pass, and on a burst
+    that is how a tape falls whole seconds behind a book that never batches at
+    all. The pass now keeps asking while the answers come back full.
+
+    The Expert Advisor's `Pump()` carries the identical loop and the identical
+    two bounds, and cargo can never compile MQL5 — so this is the only place
+    either implementation's drain is executed by a test. Change one, change
+    both, and change the numbers here with them.
+    """
+    term = FakeTerminal(0, NOW)
+    bridge = load_bridge(term)
+    session = session_for(bridge, term)
+    # Two and a bit batches' worth, all newer than the cursor.
+    burst = bridge.TICKS_PER_PUMP_ROUND * 2 + 17
+    term.ticks = [tick_at(1_000 + i, last=100.0 + (i % 5)) for i in range(burst)]
+
+    session.pump_ticks()
+
+    check(
+        "the whole burst is forwarded in one pass",
+        len(session.sent) == burst,
+        f"{len(session.sent)} of {burst}",
+    )
+    check(
+        "which took more than one request to the terminal",
+        len(term.from_calls) == 3,
+        term.from_calls,
+    )
+    check(
+        "every request asked for a full batch",
+        {count for _, count, _ in term.from_calls} == {bridge.TICKS_PER_PUMP_ROUND},
+        term.from_calls,
+    )
+    check(
+        "and the ticks arrive in order, none repeated",
+        [msg["time_ms"] for msg in session.sent] == [1_000 + i for i in range(burst)],
+        session.sent[:3],
+    )
+    check(
+        "every line is stamped",
+        all(msg["sent_ms"] is not None for msg in session.sent),
+        session.sent[0]["sent_ms"],
+    )
+    check(
+        "and no stamp is older than the tick it carries",
+        all(msg["sent_ms"] >= msg["time_ms"] for msg in session.sent),
+        [m for m in session.sent if m["sent_ms"] < m["time_ms"]][:2],
+    )
+
+    # A second pass has nothing left to say: the cursor carries (msc,
+    # count-at-msc), so no tick is ever sent twice.
+    before = len(session.sent)
+    session.pump_ticks()
+    check("a drained pump repeats nothing", len(session.sent) == before, len(session.sent))
+
+
+def test_a_second_denser_than_one_batch_is_still_drained():
+    """The wedge the drain loop would otherwise have introduced.
+
+    `copy_ticks_from` takes its floor in whole *seconds*. When one second holds
+    more ticks than a batch, advancing the millisecond cursor changes nothing
+    about the request: every round re-fetches the same first batch, finds every
+    tick in it already sent, and the pass gives up — permanently, silently, with
+    the rest of that second never sent and the cursor never moving again. A
+    reviewer reproduced exactly that against the first version of this loop.
+
+    The fix is to ask deeper for that one second rather than to give up, and
+    this is what holds it. The Expert Advisor's `Pump()` does not need it: MQL5's
+    `CopyTicks` takes a millisecond floor, so its cursor really can walk through
+    a dense second. The two bridges differ here on purpose.
+    """
+    term = FakeTerminal(0, NOW)
+    bridge = load_bridge(term)
+    session = session_for(bridge, term)
+    # One and a half batches, every tick inside the same second.
+    dense = bridge.TICKS_PER_PUMP_ROUND + bridge.TICKS_PER_PUMP_ROUND // 2
+    base = 1_000_000
+    term.ticks = [tick_at(base, last=100.0 + (i % 5)) for i in range(dense)]
+
+    session.pump_ticks()
+
+    check(
+        "every tick in the dense second is forwarded",
+        len(session.sent) == dense,
+        f"{len(session.sent)} of {dense}",
+    )
+    check(
+        "the request widened rather than giving up",
+        max(count for _, count, _ in term.from_calls) > bridge.TICKS_PER_PUMP_ROUND,
+        term.from_calls,
+    )
+    check(
+        "and a second pass has nothing left to send",
+        (session.pump_ticks(), len(session.sent))[1] == dense,
+        len(session.sent),
+    )
+
+
+def test_an_endless_tape_gives_the_thread_back():
+    """The round bound, and the only thing it is for.
+
+    A pump pass shares its loop with the book and the heartbeat, so however fast
+    the tape arrives, one pass has to end. A terminal that keeps producing
+    genuinely new ticks — a firehose, not a wedge — is the case that reaches the
+    bound: the pass forwards what it can, stops at `MAX_PUMP_ROUNDS`, says so,
+    and the remainder is the next pass's, milliseconds later. The Expert
+    Advisor's `Pump()` carries the same bound plus a wall-clock one, because
+    there a pass holds the terminal's own main thread.
+    """
+    term = FakeTerminal(0, NOW)
+    bridge = load_bridge(term)
+    session = session_for(bridge, term)
+    bridge.TICKS_PER_PUMP_ROUND = 8
+
+    produced = {"next_msc": 1_000}
+
+    def endless(_symbol, _from_s, count, flags):
+        term.from_calls.append((0, int(count), int(flags)))
+        served = [tick_at(produced["next_msc"] + i, last=100.0) for i in range(count)]
+        produced["next_msc"] += count
+        return served
+
+    sys.modules["MetaTrader5"].copy_ticks_from = endless
+
+    session.pump_ticks()
+
+    check(
+        "the pass gives the thread back",
+        len(term.from_calls) == bridge.MAX_PUMP_ROUNDS,
+        len(term.from_calls),
+    )
+    check(
+        "having forwarded every round it took",
+        len(session.sent) == 8 * bridge.MAX_PUMP_ROUNDS,
+        len(session.sent),
+    )
+    check(
+        "and counted the pass as bounded rather than drained",
+        session.pump_round_limits == 1,
+        session.pump_round_limits,
     )
 
 

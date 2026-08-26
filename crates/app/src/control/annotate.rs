@@ -361,10 +361,10 @@ fn place(
     };
     // The look a fresh object opens with is read before the pane is borrowed
     // mutably, through the app's own door: an annotation looks like what the
-    // trader would have drawn.
-    let mut fresh: Vec<drawings::NewDrawing> = (0..required)
-        .map(|_| app.control_new_drawing(tool))
-        .collect();
+    // trader would have drawn. One is enough for the whole placement —
+    // `place_with` asks for the opening only when it installs the draft, so
+    // the second anchor of an arrow or a zone never calls for another.
+    let mut fresh = Some(app.control_new_drawing(tool));
     let pane = control_pane_mut(app, tab_id, pane_side)?;
     let pane_id = pane.id;
     // The trader is mid-gesture: `place_with` would push this call's anchor
@@ -399,12 +399,18 @@ fn place(
 
     let mut completed = false;
     for point in points {
-        let opening = fresh.pop().expect("one opening look per anchor");
         completed = pane
             .drawings
-            .place_with(tool, &DrawingBand::Price, point, |_| opening);
+            .place_with(tool, &DrawingBand::Price, point, |_| {
+                fresh.take().expect("one opening look per placement")
+            });
     }
     if !completed {
+        // The anchors that did land are sitting in a draft nobody owns. Left
+        // there, the pane reads as "the trader is drawing right now" for the
+        // rest of the session and every later annotation on it is refused —
+        // and a half-drawn object the trader never started is on their chart.
+        pane.drawings.cancel_draft();
         return Err(capability_unavailable(format!(
             "the `{}` tool did not complete from {required} anchor(s)",
             tool.name()
@@ -490,10 +496,10 @@ fn remove_annotation(
         // other object: the same sweep every removal path in the interface
         // does, so no resting simulated order outlives the mark it names.
         pane.sweep_strategy_orphans();
-        found = Some((tab_index, side, pane_id));
+        found = Some((tab_index, pane_id));
         break;
     }
-    let Some((tab_index, side, pane_id)) = found else {
+    let Some((tab_index, pane_id)) = found else {
         return serde_json::to_value(RemoveResult {
             annotation_id: input.annotation_id,
             tab_id: WireU64::new(0),
@@ -509,7 +515,6 @@ fn remove_annotation(
         pane_id: WireU64::new(pane_id),
         removed: true,
     };
-    let _ = side;
     journal_annotation(access, actor, ANNOTATION_REMOVED_EVENT_KIND, &result)?;
     serde_json::to_value(&result)
         .map_err(|error| ControlError::invalid_request(format!("removal result: {error}")))

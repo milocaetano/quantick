@@ -51,6 +51,7 @@ use crate::toolbar::{self, ToolbarAction};
 use crate::toolrail::{Tool, ToolRail, ToolboxDock};
 use crate::ui_state;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
+use crate::window_scale;
 
 /// Width of the right-hand price-axis gutter, in pixels (§5 zone 9).
 const AXIS_GUTTER: f32 = 64.0;
@@ -113,6 +114,19 @@ const INLINE_TEXT_FRAME_PAD_PX: f32 = 10.0;
 /// About ten seconds at 60 fps, which is longer than any bridge takes to say
 /// hello and shorter than a person's patience with a frozen window.
 const LOAD_OLDER_HOOK_FRAMES: u32 = 600;
+
+/// Frames the `QUANTICK_LOAD_OLDER_CANDLES` hook has for the *whole* run.
+///
+/// Much larger than the trade twin's, and for a reason the trade twin does
+/// not have: a page of prints is one venue round trip, while a span of
+/// candles is several slices of several pages each, and the hook is
+/// documented as reaching the old ninety-day default in thirteen of them.
+/// Every frame spent waiting for a span costs one tick here, so the budget
+/// has to cover the legitimate fetching as well as the hang it exists to
+/// bound. About a minute at 60 fps: longer than thirteen spans take against
+/// a venue that is answering, and far shorter than a capture run's patience
+/// with one that is not.
+const LOAD_OLDER_CANDLES_HOOK_FRAMES: u32 = 3_600;
 
 /// How much of the newest chart the `QUANTICK_DRAWINGS_DEMO` hook spreads its
 /// objects across. Close to what a default viewport shows, so every object
@@ -882,8 +896,11 @@ pub struct QuantickApp {
     /// first frame, through the panel button's own `enable`.
     pending_control_access_enable: bool,
     /// The indicator slots an operator other than the trader attached — the
-    /// only ones the annotate tier may take back off the chart.
-    operator_slots: std::collections::BTreeSet<u64>,
+    /// only ones the annotate tier may take back off the chart. Keyed by the
+    /// whole [`TabSlot`]: a slot number is allocated per pane and is reused
+    /// by every other pane, so the number alone would mark one tab's slot 0
+    /// as an operator's because another tab's slot 0 was.
+    operator_slots: std::collections::BTreeSet<TabSlot>,
     /// The `QUANTICK_CONTROL_ANNOTATE` hook: an agent-authored label on the
     /// first frame, so every attribution surface can be photographed.
     pending_control_annotation: Option<String>,
@@ -911,6 +928,11 @@ pub struct QuantickApp {
     /// Pages of older history the `QUANTICK_LOAD_OLDER` hook still owes, and
     /// the frame budget it has left to wait for a chart to ask from.
     pending_load_older: Option<(usize, u32)>,
+    /// Spans of older *candles* the `QUANTICK_LOAD_OLDER_CANDLES` hook still
+    /// owes, and the frame budget it has left to wait for a first reply to
+    /// reach back from. The trade twin of this is `pending_load_older`; they
+    /// are two records with two capabilities, so they are two hooks.
+    pending_load_older_candles: Option<(usize, u32)>,
     // Scripted-validation hook: one fixed-range volume profile straddling the
     // venue-prefix seam (when there is one). Consumed once.
     pending_frvp_demo: bool,
@@ -1006,8 +1028,17 @@ pub struct QuantickApp {
     /// panel. A dozen bool reads and an integer compare: cheaper than teaching
     /// four call sites to remember.
     saved_layer_mask: u32,
-    /// What the file said at startup, applied to every pane opened since.
-    layer_defaults: std::collections::BTreeMap<ChartLayer, bool>,
+    /// Which tab [`Self::saved_layer_mask`] was taken from, so a tab *switch*
+    /// is never mistaken for a switch the trader flipped.
+    saved_layer_tab: u64,
+    /// The window this app is drawing into, kept so the health summary can
+    /// report the client area the platform believes it has — see
+    /// [`crate::window_scale`] for why that number is worth logging, and for
+    /// the defect it was measured chasing.
+    surface: Option<window_scale::SurfaceProbe>,
+    /// Whether `QUANTICK_WINDOW_MAXIMIZED=1` still owes the window a maximise.
+    /// Drained on the first frame — see [`Self::apply_maximize_hook`].
+    pending_maximize: bool,
     /// Where a pane's layer menu leaves the grid switch and the "an indicator
     /// was hidden" flag; drained right after the canvas is drawn.
     layer_actions: chart_layers::LayerActions,
@@ -1097,9 +1128,11 @@ pub struct QuantickApp {
     /// Whether venue candle history is asked for in slices, newest first
     /// (View → progressive venue history).
     ///
-    /// On by default. Ninety days of one-minute candles is a couple of minutes
-    /// of sequential venue round trips, and fetched whole the chart shows
-    /// nothing at all for the whole of it. Off restores exactly that: one
+    /// On by default. A span of one-minute candles is a run of sequential
+    /// venue round trips — seconds for the opening week, and another such run
+    /// for every span the trader reaches back through — and fetched whole the
+    /// chart shows nothing at all for the whole of it. Off restores exactly
+    /// that: one
     /// request, one reply, one very late frame — kept because a trader on a
     /// metered or rate-limited connection may prefer the smaller number of
     /// requests, and because a setting whose "off" is not the old behaviour is
@@ -1200,7 +1233,7 @@ struct InspectorEdit {
 /// Slot ids are allocated per pane, so the id alone identifies nothing once
 /// there are two panes, let alone two tabs: without the rest, removing one
 /// tab's slot 0 would drop another's bookkeeping for its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct TabSlot {
     tab: u64,
     side: PaneSide,
@@ -1329,6 +1362,7 @@ impl QuantickApp {
             context_bar: drawings::context_bar::ContextBar::default(),
             pending_drawing_demo: false,
             pending_load_older: None,
+            pending_load_older_candles: None,
             pending_frvp_demo: false,
             pending_avwap_demo: false,
             pending_replay_restart: None,
@@ -1356,7 +1390,10 @@ impl QuantickApp {
             manager_action_rects: Vec::new(),
             chart_layers_path: chart_layers::default_path(),
             saved_layer_mask: 0,
-            layer_defaults: std::collections::BTreeMap::new(),
+            saved_layer_tab: 0,
+            surface: None,
+            pending_maximize: std::env::var("QUANTICK_WINDOW_MAXIMIZED")
+                .is_ok_and(|value| value == "1"),
             layer_actions: chart_layers::LayerActions::default(),
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
             footprint_settings_path,
@@ -1416,9 +1453,12 @@ impl QuantickApp {
         // Same for a declared opening layout: a feed the user reads by
         // timeframe can open straight on the timeframe chart.
         app.active_tab_mut().apply_feed_declared_layout(&config);
-        // The map itself stays hidden until asked for — a layer nobody
-        // requested must cost no projection. Capture is already running either
-        // way, so this is a display choice and nothing else.
+        // The code's own baseline, and nothing more: what a launch actually
+        // opens with is `config/chart-layers.toml`, applied by
+        // `restore_chart_layers` immediately below and shipping the map on.
+        // This line is what remains if that config is ever unreadable — a
+        // layer nobody requested costing no projection. Capture is already
+        // running either way, so it is a display choice and nothing else.
         app.active_tab_mut().tape_mut().set_depth_visible(false);
         // What the user last had on the canvas, applied over those defaults and
         // under the autostart hooks below: an env var is an explicit request
@@ -1565,6 +1605,15 @@ impl QuantickApp {
             .and_then(|value| value.trim().parse::<usize>().ok())
             .filter(|pages| *pages > 0)
             .map(|pages| (pages, LOAD_OLDER_HOOK_FRAMES));
+        // The same door onto the candle reach. A chart opens on one week
+        // (`feed::TIME_HISTORY_SPAN_MS`) and the quarter is asked for a week at
+        // a time, so "what does a deep chart look like" is a state no capture
+        // could otherwise reach without a hand on the menu.
+        app.pending_load_older_candles = std::env::var("QUANTICK_LOAD_OLDER_CANDLES")
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .filter(|spans| *spans > 0)
+            .map(|spans| (spans, LOAD_OLDER_CANDLES_HOOK_FRAMES));
         // How many anchors of the armed tool are already down when the run
         // opens — the half-placed state a screenshot cannot otherwise reach,
         // because it lives between two clicks. See `apply_drawing_draft`.
@@ -1576,7 +1625,7 @@ impl QuantickApp {
         // seam when there is one — the partial-coverage honesty label is a
         // surface, and this is how a validation run photographs it.
         app.pending_frvp_demo = std::env::var("QUANTICK_FRVP_DEMO")
-            .is_ok_and(|value| matches!(value.trim(), "1" | "compare"));
+            .is_ok_and(|value| matches!(value.trim(), "1" | "compare" | "stress"));
         // One anchored VWAP, anchored a stretch back so the average and its
         // band stack have room to develop on screen.
         app.pending_avwap_demo =
@@ -2269,7 +2318,7 @@ impl QuantickApp {
         // Whose slot this is decides who may take it away again: the annotate
         // tier removes what it attached, never what the trader put there.
         if by_operator {
-            self.operator_slots.insert(slot.0);
+            self.operator_slots.insert(owner);
         }
         self.mark_indicator_state_dirty();
         (owner.tab, owner.side.into(), slot)
@@ -2282,19 +2331,29 @@ impl QuantickApp {
     /// takes back its own, and never removes work done by hand (plan §2.6).
     /// `Ok(false)` when there is no such slot at all.
     pub(crate) fn detach_script_indicator(&mut self, slot: u64) -> Result<bool, ()> {
-        let Some(target) = self
-            .slot_kinds
-            .iter()
-            .map(|(owner, _)| *owner)
-            .find(|owner| owner.slot.0 == slot)
-        else {
-            return Ok(false);
-        };
-        if !self.operator_slots.contains(&slot) {
-            return Err(());
+        // A slot number is allocated per pane, so several panes can carry the
+        // same one: the operator's own is the one to take, and matching on the
+        // number alone would remove whichever pane happened to be registered
+        // first — the trader's, as often as not.
+        let mut known = false;
+        let mut target = None;
+        for (owner, _) in &self.slot_kinds {
+            if owner.slot.0 != slot {
+                continue;
+            }
+            known = true;
+            if self.operator_slots.contains(owner) {
+                target = Some(*owner);
+                break;
+            }
         }
+        let Some(target) = target else {
+            // A slot that exists but belongs to the trader is refused; one
+            // that exists nowhere simply was not there.
+            return if known { Err(()) } else { Ok(false) };
+        };
         self.remove_indicator_at(target);
-        self.operator_slots.remove(&slot);
+        self.operator_slots.remove(&target);
         Ok(true)
     }
 
@@ -2346,6 +2405,22 @@ impl QuantickApp {
     /// carries no override of its own.
     pub(crate) fn control_footprint_config(&self) -> &crate::footprint_config::FootprintConfig {
         &self.footprint_config
+    }
+
+    /// The window's shared chart style, which owns the layers no pane does.
+    pub(crate) fn control_style(&self) -> &ChartStyle {
+        &self.style
+    }
+
+    /// The drawing tool rail: which tool is armed, and whether it is on
+    /// screen at all.
+    pub(crate) fn control_tool_rail(&self) -> &ToolRail {
+        &self.toolrail
+    }
+
+    /// The right-hand dock: whether it is shown, and which tab is open.
+    pub(crate) fn control_dock(&self) -> &Dock {
+        &self.dock
     }
 
     pub(crate) fn control_timezone(&self) -> TzOffset {
@@ -2674,6 +2749,15 @@ impl QuantickApp {
         // a market opened to compare against the active one is only
         // comparable the same way up. Per pane; a pane the source tab does
         // not have follows its flow chart.
+        // The layers the active tab is *actually showing*, read before the new
+        // tab is pushed. This used to be `self.layer_defaults` — the map read
+        // off the file at startup — which was only harmless while that map was
+        // whatever partial thing the trader's file happened to hold. Now that a
+        // file's silence resolves to the shipped answer (`chart_layers::load`),
+        // that map speaks for every layer, and applying it here would undo the
+        // switches of the session mid-flight. Reading the live state is also
+        // what the comment below has always promised.
+        let inherited_layers = self.active_tab().flow_pane.layer_states(&self.style);
         let flow_inverted = self.active_tab().flow_pane.price_view.is_inverted();
         let time_inverted = self
             .active_tab()
@@ -2692,10 +2776,9 @@ impl QuantickApp {
         // The new tab opens on the layers the user left showing, over the
         // preset it just put on: opening a second market is not a request to
         // bring back the chrome they switched off.
-        let defaults = self.layer_defaults.clone();
         self.active_tab_mut()
             .flow_pane
-            .apply_layer_states(&defaults);
+            .apply_layer_states(&inherited_layers);
         // The scripted footprint/zoom hooks reach tabs opened later too: the
         // replay tab a validation run autostarts is the tab the run means,
         // and it does not exist yet when the boot hooks fire.
@@ -2746,6 +2829,7 @@ impl QuantickApp {
         // Its slots are gone with its panes; the bookkeeping must not outlive
         // them or a later tab reusing a slot number would inherit its kind.
         self.slot_kinds.retain(|(owner, _)| owner.tab != closed.id);
+        self.operator_slots.retain(|owner| owner.tab != closed.id);
         self.script_files
             .retain(|(owner, ..)| owner.tab != closed.id);
         if self.persisted_tab == Some(closed.id) {
@@ -2775,6 +2859,39 @@ impl QuantickApp {
         let count = self.tabs.len() as isize;
         let next = (self.active_tab as isize + delta).rem_euclid(count);
         self.active_tab = next as usize;
+    }
+
+    /// Whether the toolbar's heatmap lamp is lit.
+    ///
+    /// The *switch*, not what capture lets through it — the same reading the
+    /// layer file was taught in 848cba0, and for a sibling reason. A lamp lit
+    /// from `depth_visible()` (`enabled && show_depth`) reports the heatmap off
+    /// for as long as book capture is starting, and forever on a source with no
+    /// book: the trader sees an unlit button, presses it, and switches the
+    /// layer they wanted *off*. The button already has an honest way to say a
+    /// source cannot fill it — `.enabled(...)` carrying its
+    /// `disabled_explanation` — so the lamp beside it answers the only other
+    /// question there is.
+    ///
+    /// A named reading rather than an expression inside the toolbar's own
+    /// frame, so the rule can be asserted without painting a toolbar. What
+    /// reads it back without looking at the screen is the semantic scene,
+    /// which takes the same `Tab::layer_toggle_state` this delegates to.
+    #[must_use]
+    #[cfg(test)]
+    fn heatmap_lamp_on(&self) -> bool {
+        // Through the group's one reading, so this named rule and the lamp the
+        // toolbar actually paints cannot become two answers to one question.
+        // `#[cfg(test)]` because the toolbar now takes the group's reading
+        // directly: keeping a second production entry point to the same answer
+        // is how the two drift.
+        self.active_tab()
+            .layer_toggle_state(
+                ChartLayer::Heatmap,
+                &self.style,
+                self.active_tab().capabilities(&self.config),
+            )
+            .0
     }
 
     /// Build the toolbar's model from the app's state, draw it, and carry
@@ -2824,9 +2941,20 @@ impl QuantickApp {
                 ),
             });
         let capabilities = self.active_tab().capabilities(&self.config);
+        let candles_held = self.active_tab().venue_candles_held();
+        let older_candles = self.active_tab().older_candles(capabilities);
         let feed_display_name = self.active_tab().feed_display_name(&self.config).to_owned();
-        let heatmap_on = self.active_tab().tape().depth_visible();
-        let bubbles_on = self.active_tab().tape().bubbles_enabled();
+        // One reading per lamp, taken through the call the semantic scene
+        // makes too, so the button and what an operator captures cannot
+        // disagree about a layer. Every lamp reports the *switch* rather than
+        // what the source lets through it — the rule `heatmap_lamp_on` names,
+        // now the whole group's.
+        let layers = toolbar::LayerToggle::ALL.map(|toggle| {
+            let (on, blocked) =
+                self.active_tab()
+                    .layer_toggle_state(toggle.layer(), &self.style, capabilities);
+            toolbar::LayerToggleState { on, blocked }
+        });
         // The focused pane's slots (§11): the menu lists what a command from
         // it would act on, and never the pane beside it.
         let indicators: Vec<toolbar::IndicatorMenuEntry> = self
@@ -2858,16 +2986,10 @@ impl QuantickApp {
         // the Time layout the group governs the chart actually on screen.
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
-        let live_strip_on = tab.flow_pane.live_strip_visible;
         let pane = match focused {
             PaneSide::Time => tab.time_pane.as_mut().unwrap_or(&mut tab.flow_pane),
             PaneSide::Flow => &mut tab.flow_pane,
         };
-        // The focused pane's, like every other BARS reading: the footprint is
-        // per-pane — each pane folds its own retained trades — so a lamp lit
-        // from the flow pane while the time pane has focus reports a layer the
-        // trader is not looking at.
-        let footprint_on = pane.footprint_visible;
         let mut model = toolbar::ToolbarModel {
             feeds,
             feed_id: &mut tab.feed_id,
@@ -2884,11 +3006,10 @@ impl QuantickApp {
             imbalance_unit: &mut pane.imbalance_unit,
             history_step: &mut tab.history_step,
             history_trades: tab.history_trades,
+            history_candles: candles_held,
+            older_candles,
             capabilities,
-            heatmap_on,
-            bubbles_on,
-            live_strip_on,
-            footprint_on,
+            layers,
             dock_visible,
             appearance_open: show_style,
             paper: toolbar::PaperTradeModel {
@@ -2923,6 +3044,14 @@ impl QuantickApp {
     fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
             ToolbarAction::LoadOlder => self.active_tab_mut().request_older_history(),
+            ToolbarAction::LoadOlderCandles => {
+                // Read before the tab is borrowed mutably — and the capability
+                // block rather than the whole config, because that is all the
+                // request needs to know.
+                let capabilities = self.active_tab().capabilities(&self.config);
+                self.active_tab_mut()
+                    .request_older_ohlcv_history(capabilities);
+            }
             ToolbarAction::SetHeatmap(shown) => {
                 self.active_tab_mut().tape_mut().set_depth_visible(shown);
             }
@@ -3127,6 +3256,7 @@ impl QuantickApp {
         pane.indicator_worker
             .send(IndicatorCommand::Remove(target.slot));
         self.slot_kinds.retain(|(owner, _)| *owner != target);
+        self.operator_slots.remove(&target);
         self.script_files.retain(|(owner, ..)| *owner != target);
         self.mark_indicator_state_dirty();
     }
@@ -3357,7 +3487,7 @@ impl QuantickApp {
         else {
             return;
         };
-        let saved: Option<Vec<quantick_indicators::InputValue>> = match &name {
+        let saved: Option<Vec<Option<quantick_indicators::InputValue>>> = match &name {
             None => Some(Vec::new()),
             Some(name) => {
                 let Some(kind) = self
@@ -3370,27 +3500,37 @@ impl QuantickApp {
                 };
                 self.indicator_presets
                     .get(kind, name)
-                    .map(|inputs| inputs.iter().filter_map(SavedInput::to_value).collect())
+                    // `map`, not `filter_map`: a stored cell that no longer
+                    // reads (a source whose name the dialect dropped, say)
+                    // still has to hold its index. Dropping it from the list
+                    // would slide every value after it one input to the left,
+                    // and same-typed neighbours would take each other's
+                    // settings without a word.
+                    .map(|inputs| inputs.iter().map(SavedInput::to_value).collect())
             }
         };
         let Some(saved) = saved else {
             return;
         };
-        let draft: Vec<quantick_indicators::InputValue> = specs
-            .iter()
-            .enumerate()
-            .map(|(index, spec)| {
-                let default = spec.default_value();
-                match saved.get(index) {
-                    Some(value)
-                        if std::mem::discriminant(value) == std::mem::discriminant(&default) =>
-                    {
-                        value.clone()
-                    }
-                    _ => default,
-                }
-            })
-            .collect();
+        // The same binder the worker binds a saved state file with: one rule
+        // for what a saved value means, in one place.
+        let bound = quantick_indicators::bind_by_position(&specs, &saved);
+        if bound.kept < saved.len() {
+            // The preset on screen is not the preset that was saved. Silence
+            // here would show a chart that does not match the name above it.
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "INDICATOR_PRESET_REBOUND",
+                preset = %name.as_deref().unwrap_or(indicator_panel::DEFAULT_PRESET),
+                saved = saved.len(),
+                declared = specs.len(),
+                kept = bound.kept,
+                action = "bound_by_position",
+                "some of this preset's values no longer bind; those inputs took their defaults"
+            );
+        }
+        let draft = bound.values;
         let label = name.unwrap_or_else(|| indicator_panel::DEFAULT_PRESET.to_owned());
         if let Some(dialog) = self.indicator_settings.as_mut() {
             dialog.draft = draft;
@@ -4061,8 +4201,50 @@ impl QuantickApp {
     /// chances to forget one.
     fn maintain_chart_layers(&mut self) {
         let mask = self.layer_mask();
+        // Layer state is per-pane, and this reads the *active* tab's flow pane
+        // — so activating a tab whose chart is set up differently changes the
+        // mask with nobody having touched a switch. Left alone, Ctrl+Tab
+        // records the other tab's opinion as the trader's choice, thrashes the
+        // file between two of them, and fills the log below with switches no
+        // hand moved. A different chart answering is a re-baseline, not an
+        // edit; the file keeps whatever the last real switch put there.
+        let tab = self.active_tab().id;
+        if tab != self.saved_layer_tab {
+            self.saved_layer_tab = tab;
+            self.saved_layer_mask = mask;
+            return;
+        }
         if mask == self.saved_layer_mask {
             return;
+        }
+        // Name every switch that moved, before writing it down.
+        //
+        // This file is the trader's own answer, and it outranks the shipped
+        // default from the next launch on — so a layer that goes off without a
+        // click is not a display glitch, it is a choice attributed to someone
+        // who never made it, and it lasts. The bug that motivated this line was
+        // exactly that shape and cost a day to chase, because the only record
+        // was the file itself: a trio of `false`s with no timestamp, no
+        // sequence and nothing to say whether a hand had been near them.
+        //
+        // Off the frame path in every sense that matters: the mask compare
+        // above already gates it, so this runs on the frames a switch actually
+        // moves — a handful in a session — and not one of the other 60 a
+        // second.
+        let flipped = mask ^ self.saved_layer_mask;
+        for (bit, layer) in ChartLayer::ALL.into_iter().enumerate() {
+            if flipped & (1 << bit) == 0 {
+                continue;
+            }
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "CHART_LAYER_SWITCHED",
+                layer = layer.id(),
+                on = mask & (1 << bit) != 0,
+                action = "persist_switch",
+                "a chart layer switch moved; recording it as the trader's choice"
+            );
         }
         chart_layers::save(
             &self.chart_layers_path,
@@ -4077,32 +4259,57 @@ impl QuantickApp {
     /// still wins for the run it was set on: a validation session asks for the
     /// heatmap on the command line and gets it, whatever the file remembers.
     fn restore_chart_layers(&mut self) {
-        self.layer_defaults = chart_layers::load(&self.chart_layers_path);
+        let defaults = chart_layers::load(&self.chart_layers_path);
         // Whatever the file said (including nothing at all) is now on screen;
         // only a change from here is worth another write.
-        if self.layer_defaults.is_empty() {
+        if defaults.is_empty() {
+            // Only reachable when the *shipped* config failed to parse, since
+            // every other path in `load` falls back to it — a build-time
+            // mistake, and the one launch where saying nothing would be worst:
+            // the chart opens on whatever the code decided and no one is told
+            // the product's own answer never arrived.
+            tracing::error!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "CHART_LAYERS_UNAVAILABLE",
+                path = %self.chart_layers_path.display(),
+                action = "keep_code_defaults",
+                "no layer visibility to apply; the shipped config did not parse"
+            );
             self.saved_layer_mask = self.layer_mask();
+            self.saved_layer_tab = self.active_tab().id;
             return;
         }
-        if let Some(grid) = self.layer_defaults.get(&ChartLayer::Grid) {
+        if let Some(grid) = defaults.get(&ChartLayer::Grid) {
             self.style.canvas.grid_enabled = *grid;
         }
-        let defaults = self.layer_defaults.clone();
         self.apply_layer_defaults(&defaults);
         self.saved_layer_mask = self.layer_mask();
+        self.saved_layer_tab = self.active_tab().id;
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "CHART_LAYERS_RESTORED",
             path = %self.chart_layers_path.display(),
-            hidden = defaults.values().filter(|visible| !**visible).count(),
+            // `off`, not `hidden`: the map now always speaks for every layer,
+            // the shipped-off `backfill_divider` included, so a count over it
+            // is no longer "how many the trader switched off". Renamed rather
+            // than quietly redefined — a field that keeps its name and changes
+            // its meaning misleads every dashboard already reading it.
+            off = defaults.values().filter(|visible| !**visible).count(),
+            layers = defaults.len(),
             "chart layer visibility restored"
         );
     }
 
-    /// Put every open pane on the saved visibility. Also run when a tab is
-    /// opened later, so a new tab looks like the one beside it rather than
-    /// bringing back layers the user switched off.
+    /// Put every open pane on the saved visibility, once, at startup.
+    ///
+    /// A tab opened later does *not* come through here: it inherits the layers
+    /// the active tab is showing at that moment (`inherited_layers` in
+    /// [`Self::adopt_tab`]), which is the live state rather than the map read
+    /// off disk during boot. The two policies differ on purpose — see the note
+    /// there — so a reader arriving here for new-tab behaviour is in the wrong
+    /// function.
     fn apply_layer_defaults(&mut self, states: &std::collections::BTreeMap<ChartLayer, bool>) {
         for tab in &mut self.tabs {
             tab.flow_pane.apply_layer_states(states);
@@ -4693,6 +4900,7 @@ impl QuantickApp {
             }
         }
         self.slot_kinds.clear();
+        self.operator_slots.clear();
         self.script_files.clear();
         self.pending_hidden.clear();
         self.pending_styles.clear();
@@ -5269,6 +5477,41 @@ impl QuantickApp {
         });
     }
 
+    /// Hand the app the window it is drawing into.
+    ///
+    /// Called once from `main`, which is where eframe offers the handle: the
+    /// hook that needs it (`raw_input_hook`) is given only the input. One
+    /// registration line rather than a constructor argument, because every
+    /// other construction path — every test — wants the `None` this defaults
+    /// to, which is also what every non-Windows target gets.
+    pub fn attach_surface(&mut self, handle: &impl raw_window_handle::HasWindowHandle) {
+        self.surface = window_scale::SurfaceProbe::new(handle);
+    }
+
+    /// Take the window manager's own maximise, once, on the first frame.
+    ///
+    /// Through [`egui::ViewportCommand::Maximized`] rather than the viewport
+    /// builder's `with_maximized`: eframe 0.29 does not honour that flag beside
+    /// an `inner_size`, and a hook that silently opens a 1100×650 window while
+    /// reporting success is worse than no hook — a validation run would
+    /// photograph the wrong state and call it a pass. The command is the one
+    /// the platform runs when a hand hits the title bar, which is the state
+    /// this hook exists to reach.
+    fn apply_maximize_hook(&mut self, ctx: &egui::Context) {
+        if !self.pending_maximize {
+            return;
+        }
+        self.pending_maximize = false;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "WINDOW_MAXIMIZE_AUTOSTART",
+            action = "maximize",
+            "QUANTICK_WINDOW_MAXIMIZED asked for the maximised layout"
+        );
+    }
+
     /// Keep the window size the workspace would record, flush a popup the
     /// trader just re-parked, and take the exit save when the window is
     /// closing.
@@ -5337,11 +5580,37 @@ impl QuantickApp {
     }
 
     /// Periodically log a perf summary and warn on threshold breaches.
-    fn maybe_emit_summary(&mut self, now: Instant) {
+    fn maybe_emit_summary(&mut self, now: Instant, ctx: &egui::Context) {
         let elapsed = now - self.last_summary;
         if elapsed < SUMMARY_INTERVAL {
             return;
         }
+        // The window's own geometry, because a chart that lays out wider than
+        // the surface it is painted on loses its right edge — the toolbar's
+        // layer group, the price axis, the live strip and the dock all live
+        // there — and nothing else in this line would say so.
+        //
+        // `client_px` is the platform's *own* answer, not `screen * scale`:
+        // that product is algebraically the same number as `screen_pt` beside
+        // it and could never contradict anything, which would make the whole
+        // block decoration. Two independent readings, so the line can be read
+        // for whether they agree — and by the time it is written a correction
+        // may already have restored that agreement, which `WINDOW_SCALE_CORRECTED`
+        // is the record of.
+        // Read outside the `input` closure: egui holds one lock for the whole
+        // of it, and reaching back into the context from inside deadlocks.
+        let zoom = ctx.zoom_factor();
+        let client = self
+            .surface
+            .as_ref()
+            .and_then(window_scale::SurfaceProbe::client_size_px);
+        let (screen, scale, native_scale) = ctx.input(|input| {
+            (
+                input.screen_rect.size(),
+                input.pixels_per_point(),
+                input.viewport().native_pixels_per_point,
+            )
+        });
         let rate = self.trades_since_summary as f64 / elapsed.as_secs_f64();
         let lag = self.active_tab().trade_arrival_ms();
         let avg = self.frames.avg_ms().unwrap_or(0.0);
@@ -5371,7 +5640,25 @@ impl QuantickApp {
             trades_per_s = rate,
             live_trades = self.active_tab().live_trades,
             bar_spec = self.active_tab().flow_pane.state.spec().summary(),
+            // What the tape says its own price grid is, and what the ladder
+            // ended up drawing rows at. A validation run reads the pair to
+            // tell "the chart has not been told a tick yet" from "the chart
+            // is drawing rows finer than the instrument can trade at".
+            tape_price_step = self
+                .active_tab()
+                .flow_pane
+                .state
+                .tape_price_step()
+                .map_or_else(|| "unknown".to_owned(), |step| step.to_string()),
+            footprint_rows = %self.active_tab().flow_pane.state.footprint_group(),
             canvas_layout = ?self.active_tab().layout,
+            screen_pt_w = screen.x,
+            screen_pt_h = screen.y,
+            client_px_w = client.map(|size| size.x),
+            client_px_h = client.map(|size| size.y),
+            scale = scale,
+            native_scale = native_scale,
+            zoom_factor = zoom,
             time_pane_spec = self.active_tab().time_pane.as_ref().map(|pane| pane.state.spec().summary()),
             // Drawings are a per-frame, O(objects) paint cost, and the shared
             // ones are additionally reprojected on every other pane of the
@@ -5561,6 +5848,7 @@ impl QuantickApp {
                 }),
             connection: self.active_tab().feed_connection,
             feed_arrival_ms: self.active_tab().trade_arrival_ms(),
+            feed_latency: self.active_tab().feed_latency(),
             tape_age_ms: self.active_tab().tape_age_at(metrics::wall_clock_ms()),
             spec_summary: pane.state.spec().summary(),
             bar_progress: pane
@@ -8230,6 +8518,96 @@ impl QuantickApp {
         self.pending_load_older = (pages > 1).then_some((pages - 1, budget));
     }
 
+    /// The `QUANTICK_LOAD_OLDER_CANDLES` hook: the history menu's "+ older
+    /// candles" entry, pressed without a hand, once per frame at most.
+    ///
+    /// Same shape and same reasons as [`Self::apply_load_older`], against a
+    /// different record: it goes through `Tab::request_older_ohlcv_history`
+    /// rather than the feed command, so a run under this hook exercises the
+    /// trader's own path; it waits, because there is nothing to reach back
+    /// *from* until the opening request has landed; and it gives up rather
+    /// than hanging a capture on a venue that never answers.
+    fn apply_load_older_candles(&mut self) {
+        let Some((spans, budget)) = self.pending_load_older_candles else {
+            return;
+        };
+        let capabilities = self.active_tab().capabilities(&self.config);
+        // Waiting costs budget, but a *slower* budget. A span really being
+        // fetched is the feature working, and charging it at the same rate as
+        // an empty chart would give up around the fourth of the documented
+        // thirteen spans. Charging it nothing, though, is how a venue that
+        // simply never answers hangs a capture run for the life of the
+        // process — which is the exact failure this counter exists to bound,
+        // and what the doc above promises it does. So a fetching frame spends
+        // one tick of a budget scaled to how long fetching legitimately takes.
+        if self
+            .active_tab()
+            .loading
+            .is_active(LoadingTask::VenueHistory)
+        {
+            self.pending_load_older_candles = budget.checked_sub(1).map(|left| (spans, left));
+            if self.pending_load_older_candles.is_none() {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
+                    spans,
+                    frames_waited = LOAD_OLDER_CANDLES_HOOK_FRAMES,
+                    reason = "venue_never_answered",
+                    action = "chart_left_as_it_is",
+                    "QUANTICK_LOAD_OLDER_CANDLES gave up waiting for a span to arrive"
+                );
+            }
+            return;
+        }
+        if !self.active_tab().can_load_older_candles(capabilities) {
+            // Nothing to reach back *from* yet, or the venue's record starts
+            // here. Both are worth waiting a bounded while for, and both end
+            // the same way; the log names what the tab held so an operator can
+            // tell them apart.
+            self.pending_load_older_candles = budget.checked_sub(1).map(|left| (spans, left));
+            if self.pending_load_older_candles.is_none() {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
+                    spans,
+                    frames_waited = LOAD_OLDER_HOOK_FRAMES,
+                    candles_held = self.active_tab().venue_candles_held(),
+                    ohlcv_history = capabilities.ohlcv_history,
+                    action = "chart_left_as_it_is",
+                    "QUANTICK_LOAD_OLDER_CANDLES found nothing to reach back from"
+                );
+            }
+            return;
+        }
+        // Only a request that actually went out costs a *span*. A full command
+        // channel is a busy frame, not a span delivered, and counting it as one
+        // would quietly shorten the reach the operator asked for — but it still
+        // costs a frame of budget, or a permanently saturated channel leaves
+        // the hook armed for the life of the process with nothing ever logged.
+        if self
+            .active_tab_mut()
+            .request_older_ohlcv_history(capabilities)
+        {
+            self.pending_load_older_candles = (spans > 1).then_some((spans - 1, budget));
+        } else {
+            self.pending_load_older_candles = budget.checked_sub(1).map(|left| (spans, left));
+            if self.pending_load_older_candles.is_none() {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
+                    spans,
+                    frames_waited = LOAD_OLDER_CANDLES_HOOK_FRAMES,
+                    reason = "request_never_queued",
+                    action = "chart_left_as_it_is",
+                    "QUANTICK_LOAD_OLDER_CANDLES could not get a request out"
+                );
+            }
+        }
+    }
+
     /// The `QUANTICK_DRAWINGS_DEMO` hook: one of every registered drawing on
     /// the flow pane, spread across the visible bars, the last one selected
     /// so the inspector is on screen too.
@@ -8477,6 +8855,9 @@ impl QuantickApp {
     /// left open, which is the mid-load frame progressive delivery exists to
     /// produce and the one no capture could otherwise catch.
     fn apply_venue_history_demo(&mut self) {
+        /// Candles the venue-history scene installs: enough for the seam and
+        /// the divider to read, few enough to stay one screenful of context.
+        const DEMO_PREFIX_CANDLES: i64 = 90;
         let Some(demo) = self.pending_venue_history_demo else {
             return;
         };
@@ -8486,17 +8867,33 @@ impl QuantickApp {
             return;
         }
         self.pending_venue_history_demo = None;
+        let slice = match demo {
+            VenueHistoryDemo::Complete => crate::feed::OhlcvSlice::Last { complete: true },
+            VenueHistoryDemo::Partial => crate::feed::OhlcvSlice::More,
+        };
+        self.deliver_synthetic_prefix(DEMO_PREFIX_CANDLES, slice);
+    }
+
+    /// Deliver `candles` synthetic venue candles for the minutes immediately
+    /// before the first engine bar, so the prefix meets the tape without
+    /// overlapping it.
+    ///
+    /// The wiggle is a fixed function of the minute — the capture has to be
+    /// the same picture every run, or a visual diff means nothing. One
+    /// generator, shared by every hook that needs a prefix: a second one would
+    /// be a second history to keep honest.
+    /// Returns whether the candles were delivered: without a bar to sit them
+    /// in front of there is no seam to anchor on, and a caller that promised a
+    /// long history in its caption had better wait rather than photograph a
+    /// short one.
+    fn deliver_synthetic_prefix(&mut self, candles: i64, slice: crate::feed::OhlcvSlice) -> bool {
         let tab = self.active_tab_mut();
         let Some(first) = tab.flow_pane.state.bars().first() else {
-            return;
+            return false;
         };
         let (first_open, anchor) = (first.open_time, first.open);
         let interval = crate::feed::OHLCV_BASE_INTERVAL_MS;
-        // Candles for the minutes immediately before the first engine bar, so
-        // the prefix meets the tape without overlapping it. The wiggle is a
-        // fixed function of the minute — the capture has to be the same
-        // picture every run, or a visual diff means nothing.
-        let bars: Vec<quantick_engine::Bar> = (-90..0)
+        let bars: Vec<quantick_engine::Bar> = (-candles..0)
             .map(|minute| {
                 let open_time = first_open + minute * interval;
                 let drift = rust_decimal::Decimal::from(minute.rem_euclid(7) - 3);
@@ -8514,11 +8911,8 @@ impl QuantickApp {
                 }
             })
             .collect();
-        let slice = match demo {
-            VenueHistoryDemo::Complete => crate::feed::OhlcvSlice::Last { complete: true },
-            VenueHistoryDemo::Partial => crate::feed::OhlcvSlice::More,
-        };
         tab.deliver_ohlcv_slice(interval, bars, slice);
+        true
     }
 
     /// Arm one instance on a drawing: compile the form, warm the trigger on
@@ -8939,27 +9333,75 @@ impl QuantickApp {
     /// from N of M bars") is on screen — the surface this hook exists to
     /// photograph. Consumed once, like the drawings demo.
     fn apply_frvp_demo(&mut self) {
+        /// One-minute venue candles the `=stress` scene installs behind the
+        /// tape — a time chart's worth of history, and far more than one fold
+        /// pass spends, so the range folds across frames rather than in the one
+        /// that placed it. The time pane folds them to whatever interval it is
+        /// showing, so the slot count is this number only at 1m — the scene is
+        /// about the fold surviving a long history, not about an exact count.
+        const FRVP_STRESS_CANDLES: i64 = 25_000;
         if !self.pending_frvp_demo {
             return;
         }
-        let slots = self.active_tab_mut().flow_pane.slots();
-        if slots < 12 {
-            return;
-        }
-        self.pending_frvp_demo = false;
-        let Some(tool) = drawings::DRAWING_TOOLS
-            .into_iter()
-            .find(|tool| tool.id() == crate::frvp::TOOL_ID)
-        else {
-            return;
-        };
         // `=compare` places two adjacent profiles over the same stretch of
         // map, one in each over-heatmap mode — the before/after of the
         // silhouette decision in a single frame, which no toggle-and-wait
         // pair of screenshots can prove as cleanly.
-        let compare =
-            std::env::var("QUANTICK_FRVP_DEMO").is_ok_and(|value| value.trim() == "compare");
-        let prefix = self.active_tab_mut().flow_pane.history_prefix.len();
+        let mode = std::env::var("QUANTICK_FRVP_DEMO").unwrap_or_default();
+        let compare = mode.trim() == "compare";
+        let stress = mode.trim() == "stress";
+        // The venue's candles land on the **time** pane — that is the chart
+        // whose history runs to tens of thousands of bars, and the one a
+        // trader drops a session profile on. Every other scene stays on the
+        // flow pane, where the tape and the map are.
+        let side = if stress {
+            pane::PaneSide::Time
+        } else {
+            pane::PaneSide::Flow
+        };
+        // The time pane is built the first time the split is shown, and
+        // `pane_mut` answers with the flow pane until it is. Waiting is the
+        // only honest option here: a stress scene photographed on the tape
+        // pane would be a picture of twenty bars captioned as twenty-five
+        // thousand.
+        if stress && self.active_tab_mut().time_pane.is_none() {
+            return;
+        }
+        let slots = self.active_tab_mut().pane_mut(side).slots();
+        if slots < 12 {
+            return;
+        }
+        let Some(tool) = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == crate::frvp::TOOL_ID)
+        else {
+            self.pending_frvp_demo = false;
+            return;
+        };
+        // `=stress` is the scene this object used to freeze the app on: a
+        // venue history longer than any single fold pass, with one profile
+        // over the whole of it. What it photographs is the *filling* state —
+        // a partial histogram and its `loading N of M bars` line — which is
+        // only a state at all because the fold is resumable. Pair it with
+        // QUANTICK_FRVP_FOLD_BUDGET=1 to hold that frame indefinitely.
+        //
+        // The delivery has to land before the range is placed: a scene that
+        // drew "the whole chart" over the handful of bars a pane starts with
+        // would be captioned as twenty-five thousand and be a picture of
+        // twenty. It stays armed and tries again next frame instead.
+        if stress
+            && !self.deliver_synthetic_prefix(
+                FRVP_STRESS_CANDLES,
+                crate::feed::OhlcvSlice::Last { complete: true },
+            )
+        {
+            return;
+        }
+        self.pending_frvp_demo = false;
+        // Re-read after the delivery: the prefix that just landed is part of
+        // the chart the range is about to span.
+        let slots = self.active_tab_mut().pane_mut(side).slots();
+        let prefix = self.active_tab_mut().pane_mut(side).history_prefix.len();
         // The compare scene exists to photograph profiles *over the map*, and
         // the map only covers bars closed after book capture began — the
         // session's earliest bars never get cells. So it waits for enough
@@ -8968,7 +9410,7 @@ impl QuantickApp {
             self.pending_frvp_demo = true;
             return;
         }
-        let pane = &mut self.active_tab_mut().flow_pane;
+        let pane = self.active_tab_mut().pane_mut(side);
         // Straddle the seam when there is one; else the newest stretch.
         let start = if prefix > 0 && prefix < slots {
             prefix.saturating_sub(5)
@@ -8981,7 +9423,12 @@ impl QuantickApp {
             .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
             .unwrap_or(1.0);
         let newest = slots - 1;
-        let ranges: &[(usize, usize, bool)] = if compare {
+        let ranges: &[(usize, usize, bool)] = if stress {
+            // The whole chart, oldest slot to newest: the range a trader
+            // drags when they want the session's own volume-by-price, and the
+            // one that used to take the window with it.
+            &[(0, newest, true)]
+        } else if compare {
             // Two adjacent 25-bar ranges over the newest (map-covered) tape.
             // Left object keeps the honest default; right one is forced to
             // "always fill", the composed-into-the-map look under review.
@@ -9246,6 +9693,7 @@ impl QuantickApp {
         self.apply_scripted_view();
         self.apply_drawing_demo();
         self.apply_load_older();
+        self.apply_load_older_candles();
         self.apply_drawing_draft();
         self.apply_text_note_hook();
         self.apply_venue_history_demo();
@@ -9253,7 +9701,8 @@ impl QuantickApp {
         self.apply_avwap_demo();
         self.apply_strategy_demo();
         self.apply_replay_restart();
-        self.maybe_emit_summary(now);
+        self.apply_maximize_hook(ctx);
+        self.maybe_emit_summary(now, ctx);
         self.maintain_workspace(ctx);
 
         let bg = pane::background_color(&self.style);
@@ -9455,9 +9904,14 @@ impl QuantickApp {
         tab.maybe_switch_feed(config);
         // Both deferrals settle here, a frame after the click that armed
         // them, so the frame carrying the change paints its overlay first.
-        let Self { tabs, config, .. } = self;
+        let Self {
+            tabs,
+            config,
+            style,
+            ..
+        } = self;
         for tab in tabs.iter_mut() {
-            tab.apply_pending_layout(config);
+            tab.apply_pending_layout(config, style);
         }
         self.active_tab_mut().apply_spec_changes();
         self.draw_style_panel(ctx, now);
@@ -9991,7 +10445,7 @@ mod tests {
         let pane = &app.active_tab().flow_pane;
         let areas = plot_split(
             pane.last_plot_area.expect("a frame has been drawn"),
-            pane.live_strip_width(),
+            pane.live_strip_width(app.active_tab().capabilities(&app.config)),
             pane.indicators.pane_sizing(
                 &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
             ),
@@ -10005,7 +10459,7 @@ mod tests {
         let pane = &app.active_tab().flow_pane;
         let areas = plot_split(
             pane.last_plot_area.expect("a frame has been drawn"),
-            pane.live_strip_width(),
+            pane.live_strip_width(app.active_tab().capabilities(&app.config)),
             pane.indicators.pane_sizing(
                 &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
             ),
@@ -10025,7 +10479,7 @@ mod tests {
         let pane = &app.active_tab().flow_pane;
         plot_split(
             pane.last_plot_area.expect("a frame has been drawn"),
-            pane.live_strip_width(),
+            pane.live_strip_width(app.active_tab().capabilities(&app.config)),
             pane.indicators.pane_sizing(
                 &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
             ),
@@ -10416,7 +10870,7 @@ mod tests {
             let pane = &app.active_tab().flow_pane;
             plot_split(
                 pane.last_plot_area.expect("a frame has been drawn"),
-                pane.live_strip_width(),
+                pane.live_strip_width(app.active_tab().capabilities(&app.config)),
                 pane.indicators.pane_sizing(
                     &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
                 ),
@@ -10954,6 +11408,7 @@ mod tests {
                     ohlcv_history: false,
                     ohlcv_generation: 0,
                 }),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -11006,6 +11461,7 @@ mod tests {
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -11351,6 +11807,7 @@ plot(close)
                 book_events: book_rx,
                 notices: notice_rx,
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -11904,6 +12361,54 @@ plot(close)
         );
     }
 
+    /// The latency port, end to end through a tab: a provider that publishes a
+    /// split, one that cannot, and a recording that has no chain to attribute.
+    #[test]
+    fn a_tab_reads_the_split_its_provider_publishes_and_nothing_more() {
+        let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
+        assert_eq!(
+            app.active_tab().feed_latency(),
+            None,
+            "a feed that has published nothing yet has nothing to report"
+        );
+
+        let split = feed::FeedLatency {
+            arrival_lag_ms: 18_112,
+            source_lag_ms: Some(17_980),
+            source_lag_peak_ms: Some(18_400),
+            transport_lag_ms: Some(132),
+            hop: Some("MT5"),
+            prints: 64,
+        };
+        app.active_tab_mut().publish_latency_for_test(Some(split));
+        assert_eq!(app.active_tab().feed_latency(), Some(split));
+
+        // The cell the trader reads takes it from there: the feed's own total,
+        // with the hop named because that delay is past the threshold worth
+        // acting on. The chart has drained no print of its own yet, and the
+        // cell is right to show the feed's figure anyway — a split only exists
+        // because a print did arrive at the feed.
+        assert_eq!(
+            statusbar::tape_text(
+                None,
+                app.active_tab().trade_arrival_ms(),
+                Some(50),
+                app.active_tab().feed_latency(),
+            ),
+            "MT5 18112 ms"
+        );
+        assert_eq!(
+            app.active_tab().trade_arrival_ms(),
+            None,
+            "and the chart's own measurement is untouched by the reading"
+        );
+
+        // A provider that cannot cut its own chain leaves the cell exactly as
+        // it has always been — never a breakdown of zeros nobody measured.
+        app.active_tab_mut().publish_latency_for_test(None);
+        assert_eq!(app.active_tab().feed_latency(), None);
+    }
+
     /// The gap the removed `Stalled` state used to cover: a transport that
     /// stays open and stops delivering. No error, no disconnect, and the
     /// stored arrival figure never ages — only the tape's own age does.
@@ -11922,7 +12427,7 @@ plot(close)
             .expect("a live tape has an age");
         assert!(age < metrics::STALE_TAPE_MS);
         assert_eq!(
-            statusbar::tape_text(None, app.active_tab().trade_arrival_ms(), Some(age)),
+            statusbar::tape_text(None, app.active_tab().trade_arrival_ms(), Some(age), None),
             "arrival 42 ms"
         );
 
@@ -11938,7 +12443,7 @@ plot(close)
             "the arrival observation is frozen, which is why it cannot report this"
         );
         assert_eq!(
-            statusbar::tape_text(None, app.active_tab().trade_arrival_ms(), Some(age)),
+            statusbar::tape_text(None, app.active_tab().trade_arrival_ms(), Some(age), None),
             "stale 60 s"
         );
     }
@@ -12021,6 +12526,15 @@ plot(close)
     /// bar per trade, the finest series a spec change can coarsen.
     fn app_with_history(count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
         let (mut app, evt_tx, cmd_rx, _book_tx) = test_app();
+        // A bare canvas, the one every caller here was written against: the
+        // strip stands beside the price axis and takes width from the candles,
+        // so leaving it on moves every hard-coded pointer coordinate in the
+        // drawing and inspector tests onto it — a collision about layout,
+        // never about what those tests assert. Which layers a launch opens
+        // with is a different question, and `test_app` keeps the shipped
+        // answer intact for the test that reads it
+        // (`each_layer_switch_moves_exactly_one_owner`).
+        app.active_tab_mut().flow_pane.live_strip_visible = false;
         app.active_tab_mut().flow_pane.tick_n = 1;
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
@@ -12029,6 +12543,65 @@ plot(close)
         app.active_tab_mut().drain_feed();
         assert_eq!(app.active_tab().flow_pane.state.bars().len() as u64, count);
         (app, cmd_rx)
+    }
+
+    /// A source with no book must never write the trader's answer for them.
+    ///
+    /// The saved file outranks the shipped default from the next launch on, so
+    /// a `heatmap = false` banked during a session on a book-less source — a
+    /// recording, a CFD bridge — would follow the trader onto every market
+    /// they open afterwards, including the ones that do have a book. Nobody
+    /// chose that: the source did. And the write is not hypothetical, because
+    /// `maintain_chart_layers` persists the whole map on any mask change, so
+    /// one unrelated click anywhere in the layer menu is enough to bank it.
+    #[test]
+    fn a_source_with_no_book_never_banks_the_heatmap_as_switched_off() {
+        let (app, _commands) = app_without_depth();
+        let pane = &app.active_tab().flow_pane;
+        assert!(
+            !pane.layer_visible(ChartLayer::Heatmap, &app.style),
+            "with no book there is nothing to draw, which is the renderer's answer"
+        );
+        assert_eq!(
+            pane.layer_states(&app.style).get(&ChartLayer::Heatmap),
+            Some(&true),
+            "but the file records the switch, which the shipped config left on"
+        );
+        assert_eq!(
+            pane.layer_states(&app.style).get(&ChartLayer::TapeHeatmap),
+            Some(&true),
+            "the tape's depth layer answers to the same rule"
+        );
+    }
+
+    /// A band nothing can fill never takes width from the candles.
+    ///
+    /// The strip draws resting depth and the aggressions landing into it. A
+    /// source with neither fills none of it, and the shipped default is what
+    /// made that reachable — the layer opened off until now, so the missing
+    /// capability gate never showed. Permanently narrowing the candles for a
+    /// blank rect is the one way this branch could make a chart worse.
+    #[test]
+    fn a_source_that_fills_neither_half_gets_no_live_strip() {
+        let (app, _commands) = app_without_depth();
+        let pane = &app.active_tab().flow_pane;
+        assert!(
+            pane.live_strip_visible,
+            "the shipped config switched it on, which is what makes the gate matter"
+        );
+        assert_eq!(
+            pane.live_strip_width(crate::config::FeedCapabilities::none()),
+            0.0,
+            "no book and no traded volume: the band would draw nothing"
+        );
+        assert!(
+            pane.layer_blocked(
+                ChartLayer::LiveStrip,
+                crate::config::FeedCapabilities::none()
+            )
+            .is_some(),
+            "and the menu says why instead of offering a switch that does nothing"
+        );
     }
 
     /// An app whose source quotes prices and nothing else: no book, no traded
@@ -12047,6 +12620,7 @@ plot(close)
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(FeedCapabilities::none()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -12133,15 +12707,15 @@ plot(close)
     #[test]
     fn each_layer_switch_moves_exactly_one_owner() {
         let (mut app, _events, _commands, _book) = test_app();
-        // What the chart opens with: the market layers are opt-in, the chart's
-        // own chrome is on. This is the state the file's absence must preserve.
+        // What the chart opens with, and where that is decided: with no file
+        // of the trader's own, `config/chart-layers.toml` is what reaches the
+        // panes. The flow layers are on there — they are what the chart is
+        // for — and only the backfill divider is held back.
         for (layer, expected) in [
-            (ChartLayer::Heatmap, false),
-            (ChartLayer::Bubbles, false),
-            // The footprint is opt-in like every market layer: the chart must
-            // open pixel-identical to the day before the layer existed.
-            (ChartLayer::Footprint, false),
-            (ChartLayer::LiveStrip, false),
+            (ChartLayer::Heatmap, true),
+            (ChartLayer::Bubbles, true),
+            (ChartLayer::Footprint, true),
+            (ChartLayer::LiveStrip, true),
             (ChartLayer::LaneMarks, true),
             (ChartLayer::DepthGaps, true),
             (ChartLayer::Grid, true),
@@ -12312,6 +12886,7 @@ plot(close)
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -12323,6 +12898,123 @@ plot(close)
             "the new tab brought back a layer the user had switched off"
         );
         std::fs::remove_file(&path).ok();
+    }
+
+    /// The split's second pane opens wearing the same layers as the first.
+    ///
+    /// `apply_pending_layout` used to copy `hidden_layers` and stop, which left
+    /// out every per-pane layer that does not live in that set — the footprint
+    /// being the one that has one. So the shipped `footprint = true` reached
+    /// the flow pane and never the time pane, and the toolbar's footprint lamp
+    /// went dark the moment the trader clicked into the left chart. The
+    /// deferred finding from PR #229, closed here.
+    #[test]
+    fn the_time_pane_opens_on_the_same_layers_as_the_flow_pane() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(120);
+        // The state a shipped default leaves behind: the ladder on, before the
+        // second pane exists at all.
+        app.active_tab_mut().flow_pane.footprint_visible = true;
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        // One frame builds the time pane; that is the frame under test.
+        run_frame(&mut app, &ctx);
+        let time = app
+            .active_tab()
+            .time_pane
+            .as_ref()
+            .expect("the split is what this proof is about");
+        assert!(
+            time.footprint_visible,
+            "the time pane opened without the ladder the flow pane beside it is drawing"
+        );
+    }
+
+    /// A tab opened mid-session inherits what is on screen *now*, not what the
+    /// file said at startup.
+    ///
+    /// `open_tab` used to apply the map read off disk during boot. That was
+    /// harmless only while the map was whatever partial thing the trader's file
+    /// held; now that a file's silence resolves to the shipped answer, it
+    /// speaks for every layer, and applying it here would undo the session's
+    /// own switches on the way past.
+    #[test]
+    fn a_new_tab_inherits_the_live_layers_not_the_startup_file() {
+        let dir = std::env::temp_dir().join(format!("quantick-app-live-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let path = dir.join("chart-layers.toml");
+        let _ = std::fs::remove_file(&path);
+
+        let (mut app, _events, _commands, _book) = test_app();
+        app.chart_layers_path = path.clone();
+        // Boot on a file that says the crosshair is off...
+        std::fs::write(
+            &path,
+            "version = 1
+[layers]
+crosshair = false
+",
+        )
+        .unwrap();
+        app.restore_chart_layers();
+        assert!(!layer_on(&app, ChartLayer::Crosshair), "the file was read");
+        // ...then the trader switches it back on, and opens a second market.
+        switch_layer(&mut app, ChartLayer::Crosshair, true);
+        let (_evt_tx, evt_rx) = mpsc::channel(4);
+        let (_book_tx, book_rx) = mpsc::channel(4);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(4);
+        app.adopt_tab(
+            "binance".to_owned(),
+            "OTHERUSDT".to_owned(),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
+                commands: cmd_tx,
+                replay: None,
+            },
+            None,
+        );
+        assert!(
+            layer_on(&app, ChartLayer::Crosshair),
+            "the new tab reached past the session and brought back the startup file's answer"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// The toolbar's heatmap lamp answers "is this switched on", not "is the
+    /// book capture up yet".
+    ///
+    /// `depth_visible()` is `enabled && show_depth`, so a lamp lit from it
+    /// reads dark while capture is starting — and a trader who presses a dark
+    /// button switches *off* the layer they were reaching for. The button
+    /// states a source's inability separately, through `disabled_explanation`.
+    #[test]
+    fn the_heatmap_lamp_reads_the_switch_not_the_capture() {
+        let (mut app, _events, _commands, _book) = test_app();
+        {
+            let tape = app.active_tab_mut().tape_mut();
+            tape.set_depth_visible(true);
+            // Capture not up: exactly the first seconds of every launch, and
+            // permanently on a source with no book.
+            tape.set_enabled(false, 0);
+            assert!(
+                !tape.depth_visible(),
+                "the renderer is right to draw nothing; this test is about the lamp"
+            );
+            assert!(tape.depth_switched_on(), "the switch itself is on");
+        }
+        assert!(
+            app.heatmap_lamp_on(),
+            "the lamp reads the switch, so it stays lit while capture catches up"
+        );
+        // And it goes dark for the one reason it should: the switch itself.
+        app.active_tab_mut().tape_mut().set_depth_visible(false);
+        assert!(
+            !app.heatmap_lamp_on(),
+            "switched off is the only way it darkens"
+        );
     }
 
     /// The menu itself: every layer gets a switch, a layer the feed cannot
@@ -13524,7 +14216,8 @@ plot(close)
             ChartLayer::DepthGaps,
         ] {
             assert_eq!(
-                time.layer_blocked(layer, capabilities),
+                time.layer_blocked(layer, capabilities)
+                    .map(|block| block.explanation),
                 Some("the order-flow layers are drawn on the flow pane"),
                 "{} has no machinery on a time pane",
                 layer.id()
@@ -14369,10 +15062,18 @@ plot(close)
     /// roomy, so a test about something else is never accidentally a test
     /// about a cramped layout.
     const TEST_WINDOW: egui::Vec2 = egui::vec2(1400.0, 900.0);
-    /// The smallest window the app itself allows (`main.rs`
-    /// `with_min_inner_size`). The layout has to hold here, and this is where
-    /// the pane band is under real pressure.
+    /// The smallest window whose *layout* is still promised: the chrome
+    /// collapses down to here and clips below it (the drawing rail's Minimal
+    /// stage, docs/drawing-toolbar-ux.md §2.8). The window itself has no
+    /// minimum any more — see [`A_DEGENERATE_WINDOW`] — but this is still
+    /// where the pane band is under real pressure while everything is
+    /// expected to read, so the layout tests stay aimed at it.
     const MIN_WINDOW: egui::Vec2 = egui::vec2(900.0, 560.0);
+    /// A window dragged down to nothing. `main.rs` sets no
+    /// `with_min_inner_size`, so this is reachable by a trader with a mouse;
+    /// nothing is promised about what it looks like, only that the app is
+    /// still there when the window is dragged back out.
+    const A_DEGENERATE_WINDOW: egui::Vec2 = egui::vec2(1.0, 1.0);
 
     fn run_frame_with_modifiers(
         app: &mut QuantickApp,
@@ -14399,6 +15100,36 @@ plot(close)
             ..Default::default()
         };
         ctx.run(input, |ctx| app.draw_frame(ctx, Instant::now()))
+    }
+
+    /// The window has no minimum, so a trader can drag it down to nothing —
+    /// and drag it back. Nothing is promised about the layout in between:
+    /// this asserts only that the frames at a degenerate size are survivable
+    /// and that the chart is whole again on the other side, which is the
+    /// difference between a window that reads badly and a chart that is gone.
+    #[test]
+    fn the_window_drags_down_to_nothing_and_comes_back() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+
+        for size in [
+            A_DEGENERATE_WINDOW,
+            egui::vec2(0.0, 0.0),
+            egui::vec2(1.0, 900.0),
+            egui::vec2(1400.0, 0.0),
+        ] {
+            // Twice each: the first frame is where a cached layout from the
+            // previous size is still around, and the second is the steady
+            // state at this one.
+            run_sized_frame(&mut app, &ctx, size, Vec::new());
+            run_sized_frame(&mut app, &ctx, size, Vec::new());
+        }
+
+        let output = run_sized_frame(&mut app, &ctx, TEST_WINDOW, Vec::new());
+        assert!(
+            has_price_axis(&painted_text(&output)),
+            "the chart paints again once the window has room"
+        );
     }
 
     /// A press-drag-release in a window of `size`.
@@ -19951,6 +20682,7 @@ plot(close)
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -19987,6 +20719,7 @@ plot(close)
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -20217,7 +20950,17 @@ plot(close)
     fn bubble_toggle_needs_no_feed_command_and_leaves_capture_alone() {
         let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
         take_capture_start(&mut cmd_rx);
+        // The shipped config opens the layer, so the round trip is off and
+        // back on — both directions have to leave the feed alone, not just
+        // whichever one happens to be the opening state.
+        assert!(app.active_tab().tape().bubbles_enabled());
+
+        app.active_tab_mut().tape_mut().set_bubbles_enabled(false);
         assert!(!app.active_tab().tape().bubbles_enabled());
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "hiding the bubbles is a display choice; no feed command is needed"
+        );
 
         app.active_tab_mut().tape_mut().set_bubbles_enabled(true);
         assert!(app.active_tab().tape().bubbles_enabled());
@@ -20649,6 +21392,7 @@ plot(close)
             book_events: mpsc::channel(8).1,
             notices: feed::silent_notices(),
             capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+            latency: feed::unsplit_latency(),
             commands: cmd_tx,
             replay: None,
         });
@@ -21124,6 +21868,7 @@ plot(close)
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -21164,6 +21909,7 @@ plot(close)
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -21875,6 +22621,7 @@ plot(close)
                     ohlcv_history: true,
                     ohlcv_generation: 0,
                 }),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -22307,7 +23054,7 @@ plot(close)
             "no tape means no book worker behind it"
         );
         assert_eq!(
-            time.live_strip_width(),
+            time.live_strip_width(app.active_tab().capabilities(&app.config)),
             0.0,
             "the strip is a flow layer and claims no pixels here"
         );
@@ -22618,6 +23365,7 @@ plot(close)
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -22657,6 +23405,7 @@ plot(close)
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -22840,21 +23589,59 @@ plot(close)
             .collect()
     }
 
-    /// Every FetchOhlcv sitting in the command channel.
+    /// What one queued `FetchOhlcv` asked for: whether it wanted a progressive
+    /// answer (`slice_ms`) and where its newest edge was (`before_ms`).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct OhlcvAsk {
+        slice_ms: Option<i64>,
+        before_ms: Option<i64>,
+    }
+
+    /// Every FetchOhlcv sitting in the command channel, in order.
+    ///
+    /// One drain, not one per field: a receiver is consumed by reading it, so
+    /// two helpers over the same channel meant the second call always saw an
+    /// empty queue — a trap a test would fail on for the wrong reason.
+    fn drain_ohlcv_fetches(commands: &mut mpsc::Receiver<FeedCommand>) -> Vec<OhlcvAsk> {
+        let mut asked = Vec::new();
+        while let Ok(command) = commands.try_recv() {
+            if let FeedCommand::FetchOhlcv {
+                slice_ms,
+                before_ms,
+                ..
+            } = command
+            {
+                asked.push(OhlcvAsk {
+                    slice_ms,
+                    before_ms,
+                });
+            }
+        }
+        asked
+    }
+
+    /// How many candle requests went out.
     fn drain_ohlcv_requests(commands: &mut mpsc::Receiver<FeedCommand>) -> usize {
-        drain_ohlcv_slice_requests(commands).len()
+        drain_ohlcv_fetches(commands).len()
     }
 
     /// The `slice_ms` every queued FetchOhlcv asked for, in order — what says
     /// whether the tab asked for a progressive answer or the old single one.
     fn drain_ohlcv_slice_requests(commands: &mut mpsc::Receiver<FeedCommand>) -> Vec<Option<i64>> {
-        let mut asked = Vec::new();
-        while let Ok(command) = commands.try_recv() {
-            if let FeedCommand::FetchOhlcv { slice_ms, .. } = command {
-                asked.push(slice_ms);
-            }
-        }
-        asked
+        drain_ohlcv_fetches(commands)
+            .into_iter()
+            .map(|ask| ask.slice_ms)
+            .collect()
+    }
+
+    /// The `before_ms` every queued FetchOhlcv asked for, in order — what says
+    /// whether the tab asked for the opening span or reached back past what it
+    /// already holds.
+    fn drain_ohlcv_before_requests(commands: &mut mpsc::Receiver<FeedCommand>) -> Vec<Option<i64>> {
+        drain_ohlcv_fetches(commands)
+            .into_iter()
+            .map(|ask| ask.before_ms)
+            .collect()
     }
 
     /// A split app whose feed reports candle history, with the channel ends
@@ -22885,6 +23672,7 @@ plot(close)
                     ohlcv_history: true,
                     ohlcv_generation: 0,
                 }),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -22947,6 +23735,302 @@ plot(close)
         assert!(
             has_price_axis(&texts),
             "the pane draws its chart: {texts:?}"
+        );
+    }
+
+    /// A chart opens on one week, not a quarter — and the quarter is still
+    /// reachable, a week at a time. "+ older candles" asks for the same span
+    /// again with its right-hand edge moved to just before the oldest bucket
+    /// held, so the two windows meet without overlapping.
+    #[test]
+    fn asking_for_older_candles_reaches_back_past_the_oldest_held() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        assert_eq!(
+            drain_ohlcv_before_requests(&mut commands),
+            vec![None],
+            "the opening request reaches back from the live edge"
+        );
+        assert!(
+            !app.active_tab()
+                .can_load_older_candles(app.active_tab().capabilities(&app.config)),
+            "with nothing held there is nothing to reach back from"
+        );
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-120, -20),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+        let oldest = -120 * crate::feed::OHLCV_BASE_INTERVAL_MS;
+        assert_eq!(app.active_tab().venue_candles_held(), 100);
+        assert!(
+            app.active_tab()
+                .can_load_older_candles(app.active_tab().capabilities(&app.config)),
+            "now there is"
+        );
+
+        let slots_before = app.active_tab().pane(PaneSide::Time).slots();
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        assert_eq!(
+            drain_ohlcv_before_requests(&mut commands),
+            vec![Some(oldest - 1)],
+            "one millisecond before the oldest bucket held, so nothing is fetched twice"
+        );
+        assert!(
+            app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "and the chart says it is waiting again"
+        );
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-200, -120),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        assert_eq!(
+            app.active_tab().venue_candles_held(),
+            180,
+            "the older span went in front of what was already held"
+        );
+        assert!(
+            app.active_tab().pane(PaneSide::Time).slots() > slots_before,
+            "and the chart grew leftwards by it"
+        );
+        assert!(
+            app.active_tab()
+                .can_load_older_candles(app.active_tab().capabilities(&app.config)),
+            "a span that brought something older leaves the door open"
+        );
+    }
+
+    /// The instrument's price grid is a fact about the market, so both panes
+    /// of a split read it the same way — including while the footprint layer
+    /// is hidden on one of them.
+    ///
+    /// This is the bug a trader saw as the same volume profile painting as a
+    /// wash on the time chart and as a slab on the flow chart. The two are one
+    /// object drawn by one function; what differed was the row height under
+    /// it, because the tab propagated the flow pane's capture bucket only
+    /// while the time pane's *footprint layer* was visible. A range profile
+    /// folds those same ladders with the layer hidden, so on WDO one chart
+    /// grouped at 0.01 and the other at 1 — a hundredfold difference in the
+    /// height of every row.
+    #[test]
+    fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden() {
+        let ctx = egui::Context::default();
+        let (mut app, _events, _commands) = history_app(&ctx);
+
+        // The bucket the flow pane's tape publishes for this market. That is
+        // the one answer; the question is whether the other pane reaches it.
+        let market_bucket = app
+            .active_tab()
+            .pane(PaneSide::Flow)
+            .state
+            .footprint_group();
+
+        // The state the defect lived in: the layer off on both panes, and a
+        // range profile on the time pane wanting the ladders anyway.
+        for side in [PaneSide::Time, PaneSide::Flow] {
+            app.active_tab_mut().pane_mut(side).set_layer_visible(
+                ChartLayer::Footprint,
+                false,
+                &mut chart_layers::LayerActions::default(),
+            );
+        }
+        let frvp = crate::drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == crate::frvp::TOOL_ID)
+            .expect("frvp is registered");
+        {
+            let time = app.active_tab_mut().pane_mut(PaneSide::Time);
+            assert!(
+                !time
+                    .drawings
+                    .place(frvp, crate::drawings::ChartPoint::at(1.0, 100.0))
+            );
+            assert!(
+                time.drawings
+                    .place(frvp, crate::drawings::ChartPoint::at(20.0, 105.0))
+            );
+            // And put its ladders deliberately out of step, which is exactly
+            // what a pane with no tape of its own drifts to when nothing hands
+            // it the market's grid.
+            time.state
+                .set_footprint_group(market_bucket * Decimal::from(100));
+        }
+        assert_ne!(
+            app.active_tab()
+                .pane(PaneSide::Time)
+                .state
+                .footprint_group(),
+            market_bucket,
+            "the panes really start out disagreeing, or this proves nothing"
+        );
+
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        let time_group = app
+            .active_tab()
+            .pane(PaneSide::Time)
+            .state
+            .footprint_group();
+        let flow_group = app
+            .active_tab()
+            .pane(PaneSide::Flow)
+            .state
+            .footprint_group();
+        assert_eq!(
+            time_group, flow_group,
+            "one market, one price grid: the two panes must not disagree"
+        );
+        assert_eq!(
+            time_group, market_bucket,
+            "and it is the market's bucket, not either pane's default"
+        );
+    }
+
+    /// A short answer teaches nothing about where the record starts. A venue
+    /// that stopped answering, or a socket that failed, brings back nothing
+    /// older for a reason that has nothing to do with the venue's depth —
+    /// latching on it would retire the control for the session and tell the
+    /// trader their history begins here, which is a lie the data-honesty rule
+    /// exists to prevent.
+    #[test]
+    fn a_short_answer_never_retires_the_candle_reach() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_ohlcv_fetches(&mut commands);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-120, -20),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        assert_eq!(drain_ohlcv_fetches(&mut commands).len(), 1);
+        // The shape of a failed fetch: nothing, and known to be short.
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: Vec::new(),
+                slice: crate::feed::OhlcvSlice::Last { complete: false },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        let capabilities = app.active_tab().capabilities(&app.config);
+        assert_eq!(
+            app.active_tab().older_candles(capabilities),
+            crate::tab::OlderCandles::Available,
+            "a short answer is a reason to try again, not to stop offering"
+        );
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        assert_eq!(
+            drain_ohlcv_fetches(&mut commands).len(),
+            1,
+            "and pressing it again really asks"
+        );
+    }
+
+    /// A reach-back reply at an interval the pane cannot fold from is refused,
+    /// not obeyed. Recording an empty base is right for the *opening* answer —
+    /// it is how "this venue serves nothing this pane can fold" is remembered
+    /// — but doing it here would throw away every span the trader had already
+    /// waited for, over one unusable slice.
+    #[test]
+    fn a_reach_back_at_a_bad_interval_keeps_the_history_already_paged_in() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_ohlcv_fetches(&mut commands);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-120, -20),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+        let held = app.active_tab().venue_candles_held();
+        assert_eq!(held, 100);
+
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        drain_ohlcv_fetches(&mut commands);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: 5 * crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-200, -120),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        assert_eq!(
+            app.active_tab().venue_candles_held(),
+            held,
+            "the week the trader already has survives a slice it cannot fold"
+        );
+        let capabilities = app.active_tab().capabilities(&app.config);
+        assert_eq!(
+            app.active_tab().older_candles(capabilities),
+            crate::tab::OlderCandles::Available,
+            "and the reach is still offered"
+        );
+    }
+
+    /// The venue's record starts somewhere, and the only way to find that out
+    /// is to ask. A provider that answers a *load older* by re-sending what is
+    /// already held is not answering empty — so the test is whether the oldest
+    /// bucket moved, and a run that did not move it stops offering the button.
+    #[test]
+    fn a_load_older_that_brings_nothing_older_stops_offering() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_ohlcv_before_requests(&mut commands);
+        let held = venue_history_range(-120, -20);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: held.clone(),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        assert_eq!(drain_ohlcv_before_requests(&mut commands).len(), 1);
+        // The same candles again — an honest answer from a provider serving
+        // from a block it already holds, and not an empty one.
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: held,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        assert!(
+            !app.active_tab()
+                .can_load_older_candles(app.active_tab().capabilities(&app.config)),
+            "nothing older came back, so there is nothing older to offer"
+        );
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        assert!(
+            drain_ohlcv_before_requests(&mut commands).is_empty(),
+            "and pressing it again asks the venue nothing"
         );
     }
 
@@ -23211,6 +24295,7 @@ plot(close)
                     ohlcv_history: true,
                     ohlcv_generation: 0,
                 }),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -23462,6 +24547,7 @@ plot(close)
             book_events: book_rx,
             notices: feed::silent_notices(),
             capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+            latency: feed::unsplit_latency(),
             commands: cmd_tx,
             replay: None,
         });
@@ -23514,7 +24600,7 @@ plot(close)
     }
 
     /// (e) The rebuild an indicator sees spans the prefix, so an average over
-    /// three months of context is a real average and not a warm-up.
+    /// the loaded context is a real average and not a warm-up.
     #[test]
     fn the_indicator_rebuild_covers_the_venue_prefix() {
         let ctx = egui::Context::default();
@@ -23624,6 +24710,7 @@ plot(close)
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: caps_rx,
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -23950,9 +25037,9 @@ plot(close)
                 &mut chart_layers::LayerActions::default(),
             );
         }
-        // The view follows the live edge, and three months of venue history is
-        // far behind it, so bring the seam on screen the way a user scrolling
-        // back would.
+        // The view follows the live edge, and the venue history is far behind
+        // it, so bring the seam on screen the way a user scrolling back
+        // would.
         let slots = app.active_tab().pane(PaneSide::Time).slots();
         let width = app
             .active_tab()
@@ -24107,6 +25194,7 @@ plot(close)
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::MetaTrader.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -24190,6 +25278,7 @@ plot(close)
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: caps_rx,
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -25560,7 +26649,7 @@ plot(close)
             .descriptors()
             .map(|descriptor| (descriptor.scope_id.clone(), descriptor.schema.clone()))
             .collect::<Vec<_>>();
-        assert_eq!(descriptors.len(), 16, "every registered scope is projected");
+        assert_eq!(descriptors.len(), 17, "every registered scope is projected");
         let scopes = descriptors
             .iter()
             .map(|(scope_id, _)| scope_id.clone())
@@ -25813,7 +26902,16 @@ plot(close)
         // The footprint scope answers for every pane, engine or not: the layer
         // and its setup are chart state, not book state.
         let footprint = &capture.scopes[&scopes[1]].value["tabs"][0]["panes"][0];
-        assert_eq!(footprint["visible"], false, "the layer is off by default");
+        // Compared against the pane rather than a literal: which layers a
+        // fresh chart opens with is a product decision that lives in
+        // `config/chart-layers.toml`, and a test that pins it here fails the
+        // day someone edits the file. What this asserts is that the scope
+        // reports what the pane actually holds.
+        assert_eq!(
+            footprint["visible"],
+            app.active_tab().flow_pane.footprint_visible,
+            "the scope reports the pane's own layer state"
+        );
         assert_eq!(
             footprint["overridden"], false,
             "a fresh pane follows the window's setup"
@@ -27406,6 +28504,104 @@ plot(close)
         );
     }
 
+    /// The regression the slot-identity fix exists for: slot numbers are
+    /// allocated per pane, so the trader's chart and an operator's second
+    /// chart both hold a slot 0. Keyed by the number alone, the operator's
+    /// detach walked `slot_kinds` and took whichever slot 0 was registered
+    /// first — the trader's.
+    #[test]
+    fn an_operator_detaching_its_own_slot_leaves_the_traders_slot_of_the_same_number() {
+        use quantick_control::error::codes;
+
+        const SCRIPT: &str = "//@version=5
+indicator(\"probe\")
+plot(close)
+";
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(4);
+        run_frame(&mut app, &ctx);
+
+        // The trader's own, on the tab that is already open.
+        let (traders_tab, _, traders_slot) =
+            app.attach_script_indicator("the trader's".to_owned(), SCRIPT.to_owned(), false);
+        for _ in 0..200 {
+            run_frame(&mut app, &ctx);
+            if !indicator_kinds(&app).is_empty() {
+                break;
+            }
+        }
+
+        // A second chart, whose slot numbering starts over from zero.
+        app.open_tab("binance".to_owned(), "ETHUSDT".to_owned(), None);
+        run_frame(&mut app, &ctx);
+        let (operators_tab, _, operators_slot) =
+            app.attach_script_indicator("an assistant's".to_owned(), SCRIPT.to_owned(), true);
+        for _ in 0..200 {
+            run_frame(&mut app, &ctx);
+            if !indicator_kinds(&app).is_empty() {
+                break;
+            }
+        }
+        assert_ne!(traders_tab, operators_tab, "two charts, not one");
+        assert_eq!(
+            traders_slot.0, operators_slot.0,
+            "the numbering starts over per pane, which is what made the bug reachable"
+        );
+
+        // The operator takes back its own. The trader's, wearing the same
+        // number on another chart, must still be there afterwards.
+        assert!(
+            app.control_action(
+                "indicator.script.detach",
+                1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({ "slot_id": operators_slot.0.to_string() }),
+            )
+            .is_ok(),
+            "an operator may take back what it attached"
+        );
+        run_frame(&mut app, &ctx);
+        assert!(
+            indicator_kinds(&app).is_empty(),
+            "the assistant's is off its own chart"
+        );
+
+        let traders_index = app
+            .control_tabs()
+            .iter()
+            .position(|tab| tab.id == traders_tab)
+            .expect("the trader's chart is still open");
+        assert_eq!(
+            app.control_tabs()[traders_index]
+                .focused_pane()
+                .indicators
+                .all()
+                .len(),
+            1,
+            "and the trader's, sharing only a number with it, was never touched"
+        );
+
+        // With its own claim spent, the same number now names only the
+        // trader's slot, and the tier refuses it rather than reaching across.
+        app.active_tab = traders_index;
+        run_frame(&mut app, &ctx);
+        let refused = app
+            .control_action(
+                "indicator.script.detach",
+                1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({ "slot_id": traders_slot.0.to_string() }),
+            )
+            .expect_err("the trader's own indicator is not this tier's to remove");
+        assert_eq!(refused.code.as_str(), codes::PERMISSION_DENIED);
+        assert_eq!(
+            indicator_kinds(&app).len(),
+            1,
+            "and it is still on the pane"
+        );
+    }
+
     /// An annotation never lands inside a drawing the trader is still making:
     /// `place_with` would have pushed the call's anchor onto their draft.
     #[test]
@@ -28066,6 +29262,19 @@ plot(close)
                 .is_empty(),
             "a refused mark leaves no event"
         );
+        // The recorded author is set for the handler and cleared after it. A
+        // refusal never reaches the handler, so it must leave nothing behind:
+        // a latched `HumanUi` author would sign the *next* action's object as
+        // the trader's own, which is the one claim the annotate tier cannot
+        // get wrong.
+        assert!(
+            app.control_access
+                .as_ref()
+                .unwrap()
+                .recorded_author()
+                .is_none(),
+            "a refused replay leaves no author to sign the next action"
+        );
     }
 
     #[test]
@@ -28176,6 +29385,415 @@ plot(close)
         assert_eq!(cursor["pointer"]["bar"]["slot"], expected_slot.to_string());
         assert_eq!(cursor["pointer"]["bar"]["state"], "closed");
         assert_eq!(cursor["pointer"]["symbol"], "TESTUSDT");
+    }
+
+    /// One capture of the scene scope, as a client would read it.
+    fn observer_scene(app: &QuantickApp) -> serde_json::Value {
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scope = observer_scope("scene.controls");
+        let capture = registry
+            .capture(app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        capture.scopes[&scope].value.clone()
+    }
+
+    /// The scene's control IDs, in the order it reports them.
+    fn scene_control_ids(scene: &serde_json::Value) -> Vec<String> {
+        scene["controls"]
+            .as_array()
+            .expect("the scene reports a control list")
+            .iter()
+            .map(|control| control["control_id"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    fn scene_control<'a>(scene: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
+        scene["controls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|control| control["control_id"] == id)
+            .unwrap_or_else(|| panic!("the scene names {id}"))
+    }
+
+    #[test]
+    fn the_scene_names_the_same_controls_two_frames_running() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(20);
+        run_frame(&mut app, &ctx);
+        let first = observer_scene(&app);
+        run_frame(&mut app, &ctx);
+        let second = observer_scene(&app);
+        assert_eq!(
+            first, second,
+            "a frame passing may not rename anything on screen"
+        );
+
+        // And the identifiers are not positions in disguise. Switching the
+        // dock adds or removes a strip of tabs ahead of the chart canvases,
+        // moving every control after it; one that answered to its index would
+        // be renamed by that alone, and an assistant told to press it a moment
+        // later would press whatever had slid into its place.
+        let before = scene_control_ids(&first);
+        let dock_was_open = app.dock.visible();
+        app.dock.toggle_visible();
+        run_frame(&mut app, &ctx);
+        let after = scene_control_ids(&observer_scene(&app));
+        let dock_now_listed = after.iter().any(|id| id.starts_with("dock."));
+        assert_ne!(
+            dock_now_listed, dock_was_open,
+            "switching the dock changes what is on screen"
+        );
+        assert_ne!(
+            after.len(),
+            before.len(),
+            "so the controls after it have all moved"
+        );
+        let survivors: Vec<&String> = before
+            .iter()
+            .filter(|id| id.starts_with("tool_rail.") || id.starts_with("toolbar."))
+            .collect();
+        assert!(
+            !survivors.is_empty(),
+            "the rail and the layer toggles are on screen in this fixture"
+        );
+        for id in survivors {
+            assert!(
+                after.contains(id),
+                "{id} kept its place on screen and must keep its name"
+            );
+        }
+    }
+
+    #[test]
+    fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (book_tx, book_rx) = mpsc::channel(64);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(16);
+        let app = QuantickApp::new(
+            test_config(),
+            "binance",
+            "TESTUSDT",
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                // A broker-quoted instrument: prices, no traded size, no book.
+                capabilities: feed::fixed_capabilities(FeedCapabilities {
+                    book_capture: false,
+                    history_paging: false,
+                    traded_volume: false,
+                    ohlcv_history: false,
+                    ohlcv_generation: 0,
+                }),
+                commands: cmd_tx,
+                replay: None,
+                latency: feed::unsplit_latency(),
+            },
+        );
+        let _ends = (evt_tx, book_tx);
+
+        let scene = observer_scene(&app);
+        let bubbles = scene_control(&scene, "toolbar.layers.bubbles");
+        assert_eq!(bubbles["availability"]["available"], false);
+        assert_eq!(
+            bubbles["availability"]["reason"], "source_prints_no_traded_volume",
+            "the reason is the code the gate declares"
+        );
+        let heatmap = scene_control(&scene, "toolbar.layers.heatmap");
+        assert_eq!(heatmap["availability"]["available"], false);
+        assert_eq!(
+            heatmap["availability"]["reason"],
+            "source_captures_no_order_book"
+        );
+
+        // The strip takes either a book or traded volume and this source has
+        // neither, so it is blocked too — with its own code, not one of the
+        // two above. A gate declared beside the button instead of read from
+        // `ChartPane::layer_blocked` reported this one available, and the
+        // trader saw a lit switch that reserved no width.
+        let strip = scene_control(&scene, "toolbar.layers.live_strip");
+        assert_eq!(strip["availability"]["available"], false);
+        assert_eq!(
+            strip["availability"]["reason"],
+            "source_publishes_neither_book_nor_traded_volume"
+        );
+
+        // The contrast: a control nothing gates is available with no reason at
+        // all, rather than a reason saying "fine".
+        let tab_id = scene_control_ids(&scene)
+            .into_iter()
+            .find(|id| id.starts_with("tab_strip.tab."))
+            .expect("the open chart has a chip");
+        let tab = scene_control(&scene, &tab_id);
+        assert_eq!(tab["availability"]["available"], true);
+        assert!(tab["availability"]["reason"].is_null());
+
+        // Every reason is a code a client can branch on, never the sentence
+        // the disabled button shows a human — which is the thing a client
+        // would otherwise have to parse, and which translation would break.
+        for control in scene["controls"].as_array().unwrap() {
+            let Some(reason) = control["availability"]["reason"].as_str() else {
+                continue;
+            };
+            assert!(
+                !reason.contains(' '),
+                "{} answered with prose: {reason}",
+                control["control_id"]
+            );
+        }
+        assert_ne!(
+            bubbles["availability"]["reason"],
+            "this source quotes prices but prints no traded volume",
+            "the sentence on the button is not the answer on the wire"
+        );
+    }
+
+    #[test]
+    fn the_control_the_cursor_resolves_to_is_one_the_scene_names() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(40);
+        run_frame(&mut app, &ctx);
+        let position = {
+            let pane = &app.active_tab().flow_pane;
+            let chart = pane.last_chart_area.expect("the pane reported its rect");
+            chart.center()
+        };
+        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(position)]);
+
+        // One capture, so the two scopes cannot describe different moments.
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scopes = [
+            observer_scope("interaction.cursor"),
+            observer_scope("scene.controls"),
+        ];
+        let capture = registry
+            .capture(&app, &observer_instance(), &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let cursor = &capture.scopes[&scopes[0]].value;
+        let scene = &capture.scopes[&scopes[1]].value;
+
+        assert_eq!(cursor["semantic_scene"]["available"], true);
+        assert_eq!(
+            cursor["pointer"]["control_id_availability"]["available"],
+            true
+        );
+        let under_pointer = cursor["pointer"]["control_id"]
+            .as_str()
+            .expect("the pointer resolves to a control");
+        assert!(
+            scene_control_ids(scene).contains(&under_pointer.to_owned()),
+            "the cursor answered {under_pointer}, which the scene does not name"
+        );
+
+        // And it is the canvas of the pane the cursor reports, not merely some
+        // control that happens to exist.
+        let control = scene_control(scene, under_pointer);
+        assert_eq!(control["role"], "canvas");
+        assert_eq!(control["owner"]["kind"], "tab");
+        assert_eq!(
+            control["control_id"],
+            format!(
+                "pane.{}.canvas",
+                cursor["pointer"]["pane_id"].as_str().unwrap()
+            )
+        );
+
+        // A canvas is the one control the frame already measured, so it is the
+        // one that answers with a rectangle instead of saying it has none.
+        assert_eq!(control["bounds_availability"]["available"], true);
+        assert!(control["bounds"]["width_pt"].is_string());
+    }
+
+    #[test]
+    fn the_layer_toggles_are_listed_the_way_the_trader_reads_them() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(12);
+        run_frame(&mut app, &ctx);
+        let listed: Vec<String> = scene_control_ids(&observer_scene(&app))
+            .into_iter()
+            .filter(|id| id.starts_with("toolbar.layers."))
+            .collect();
+        // The group draws right-to-left from `LayerToggle::ALL`, so the eye
+        // meets them in the reverse of call order. An assistant asked about
+        // "the second button from the left" has to count the way the eye does.
+        assert_eq!(
+            listed,
+            vec![
+                "toolbar.layers.live_strip",
+                "toolbar.layers.footprint",
+                "toolbar.layers.heatmap",
+                "toolbar.layers.bubbles",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_scene_names_the_rails_buttons_and_not_the_tools_behind_them() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(12);
+        run_frame(&mut app, &ctx);
+        let rail: Vec<String> = scene_control_ids(&observer_scene(&app))
+            .into_iter()
+            .filter(|id| id.starts_with("tool_rail."))
+            .collect();
+        assert!(rail.len() < 2 + drawings::DRAWING_TOOLS.len(), "{rail:?}");
+        // A family folds into one slot with a flyout, so its members have no
+        // button of their own and the scene must not name them. `ray` shares
+        // the lines family with `trend-line`; listing it would send an
+        // assistant looking for a button that is not painted.
+        assert!(
+            rail.iter().any(|id| id == "tool_rail.tool.pointer"),
+            "{rail:?}"
+        );
+        assert!(
+            !rail.iter().any(|id| id == "tool_rail.tool.ray"),
+            "a folded family member has no button of its own: {rail:?}"
+        );
+    }
+
+    #[test]
+    fn the_scene_says_which_regions_it_looked_at_rather_than_claiming_the_screen() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(12);
+        run_frame(&mut app, &ctx);
+        let scene = observer_scene(&app);
+        // Whole regions of the window are still unnamed — the SOURCE and BARS
+        // groups, the menus, every dialog. A capture that answered "complete"
+        // would tell a client those controls do not exist.
+        let regions = scene["covered_regions"].as_array().unwrap();
+        assert!(regions.iter().any(|region| region == "toolbar"));
+        assert!(regions.iter().any(|region| region == "tool_rail"));
+        for control in scene["controls"].as_array().unwrap() {
+            assert!(
+                regions.contains(&control["owner"]["kind"]),
+                "{} belongs to a region the capture did not declare",
+                control["control_id"]
+            );
+        }
+
+        // And a *declared* region is not a finished one either. The toolbar is
+        // walked as far as its LAYERS group and no further, so a client that
+        // read `coverage` as "this is the toolbar" would conclude the PANELS
+        // button and the whole SOURCE half do not exist. Nothing is truncated
+        // in this fixture and the answer is still not "complete".
+        assert!(
+            !scene["controls"].as_array().unwrap().is_empty(),
+            "the fixture has controls, so this is not vacuously partial"
+        );
+        assert_eq!(scene["coverage"]["available"], false);
+        assert_eq!(
+            scene["coverage"]["reason"],
+            "only_the_named_group_of_each_covered_region_is_enumerated",
+            "and it says which of the two cuts applies"
+        );
+        // The toolbar paints these beside the four the scene names; they are
+        // the proof the region is a walk and not an inventory.
+        let named: Vec<String> = scene_control_ids(&scene);
+        assert!(
+            !named.iter().any(|id| id.starts_with("toolbar.source")),
+            "the SOURCE group is unnamed, which is what `coverage` admits"
+        );
+    }
+
+    /// A starred tool is a real button in the rail's pinned section, and one
+    /// the trader put there on purpose.
+    ///
+    /// It is painted beside the folded run, so it needs a name of its own:
+    /// naming it after the run slot it was pinned from would give one
+    /// identifier two rectangles. The rail listed neither, and an assistant
+    /// asked to press the button the trader had starred was told it was not
+    /// on screen.
+    #[test]
+    fn a_starred_tool_is_a_button_the_scene_names_in_its_own_right() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(12);
+        run_frame(&mut app, &ctx);
+        let unpinned = scene_control_ids(&observer_scene(&app));
+        assert!(
+            !unpinned
+                .iter()
+                .any(|id| id.starts_with("tool_rail.favorite.")),
+            "nothing is starred yet: {unpinned:?}"
+        );
+
+        let starred = drawings::DRAWING_TOOLS[0];
+        app.toolrail.toggle_favorite(starred);
+        run_frame(&mut app, &ctx);
+        let pinned = scene_control_ids(&observer_scene(&app));
+        let expected = format!("tool_rail.favorite.{}", starred.id());
+        assert!(
+            pinned.contains(&expected),
+            "the star paints a button, so the scene names it: {pinned:?}"
+        );
+        // And it is a *second* name, not a rename: the run keeps its slot.
+        assert_eq!(
+            pinned.iter().filter(|id| **id == expected).count(),
+            1,
+            "one pinned button, one name"
+        );
+        assert!(
+            pinned.len() > unpinned.len(),
+            "starring adds a button rather than moving one"
+        );
+    }
+
+    /// A rail that has been hidden reports nothing, on the very frame it is
+    /// hidden.
+    ///
+    /// Control captures are served before the rail draws, so a rail that
+    /// remembered the stage it last painted would answer the first capture
+    /// after a hide with the buttons of a rail nobody can see.
+    #[test]
+    fn a_rail_hidden_this_frame_names_no_buttons_before_the_next_draw() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(12);
+        run_frame(&mut app, &ctx);
+        assert!(
+            scene_control_ids(&observer_scene(&app))
+                .iter()
+                .any(|id| id.starts_with("tool_rail.")),
+            "the rail opens visible"
+        );
+
+        // Hidden, and captured before the next frame paints anything.
+        app.toolrail.toggle_visible();
+        let folded = scene_control_ids(&observer_scene(&app));
+        assert!(
+            !folded.iter().any(|id| id.starts_with("tool_rail.")),
+            "a rail nobody can see contributes no controls: {folded:?}"
+        );
+    }
+
+    #[test]
+    fn a_rail_folded_away_puts_no_tools_on_a_screen_that_does_not_show_them() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(12);
+        run_frame(&mut app, &ctx);
+        let visible = scene_control_ids(&observer_scene(&app));
+        assert!(
+            visible.iter().any(|id| id == "tool_rail.tool.pointer"),
+            "the rail opens with the pointer armed"
+        );
+
+        app.toolrail.toggle_visible();
+        run_frame(&mut app, &ctx);
+        let folded = scene_control_ids(&observer_scene(&app));
+        assert!(
+            !folded.iter().any(|id| id.starts_with("tool_rail.")),
+            "a rail nobody can see contributes no controls"
+        );
+        // The scene is what is on screen, so folding the rail away removes its
+        // tools rather than listing them as unavailable — but everything that
+        // is still painted keeps the name it had.
+        for id in folded {
+            assert!(visible.contains(&id), "{id} appeared out of nowhere");
+        }
     }
 
     #[test]
@@ -28360,7 +29978,7 @@ plot(close)
         // Every published wire type has a committed document, so a breaking
         // change shows up as a diff in review (contract §6). The count is
         // here to make an accidental *removal* visible too.
-        assert_eq!(documents.len(), 40);
+        assert_eq!(documents.len(), 41);
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("schemas/control");
@@ -28406,10 +30024,10 @@ plot(close)
         assert_eq!(catalog["catalog_version"], 1);
         assert_eq!(catalog["profile_id"], "observer");
         let capabilities = catalog["capabilities"].as_array().unwrap();
-        // Six observer reads plus the annotate tier's registered actions.
+        // Seven observer reads plus the annotate tier's registered actions.
         assert_eq!(
             capabilities.len(),
-            6 + crate::control::registered_action_count()
+            7 + crate::control::registered_action_count()
         );
         // Every observe-effect capability is read-only; everything else is an
         // action of the annotate tier — discoverable to any client, reachable

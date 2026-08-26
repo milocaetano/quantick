@@ -102,6 +102,19 @@ pub enum Tool {
 }
 
 impl Tool {
+    /// The stable wire name, for the places that name a tool rather than draw
+    /// it. The drawing tools lend their own registered identifier, so a tool
+    /// is called the same thing in the rail, in a saved workspace and in the
+    /// semantic scene.
+    #[must_use]
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Pointer => "pointer",
+            Self::Crosshair => "crosshair",
+            Self::Drawing(tool) => tool.id(),
+        }
+    }
+
     #[must_use]
     pub fn drawing_tool(self) -> Option<DrawingTool> {
         match self {
@@ -136,7 +149,7 @@ impl Tool {
     }
 
     #[must_use]
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Pointer => "Pointer",
             Self::Crosshair => "Crosshair",
@@ -241,6 +254,60 @@ enum RailStage {
     Compact,
     /// Pointer, the armed tool, More and Objects.
     Minimal,
+}
+
+/// One control the rail actually paints, as something that is not looking at
+/// the screen would name it.
+///
+/// A family that folded into one slot is *one* control here, not one per
+/// member: the members behind its flyout have no button of their own, and a
+/// scene that named them would be describing a rail nobody is looking at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RailControl {
+    /// Which registry the id below is drawn from — the namespace that keeps
+    /// two different buttons from answering to one name.
+    pub kind: RailControlKind,
+    /// The tool's registered id, or the family's — stable either way.
+    pub id: &'static str,
+    pub label: &'static str,
+    /// Whether the armed tool is this control, or a member behind it.
+    pub armed: bool,
+}
+
+/// Which of the rail's three button registries a [`RailControl`] came from.
+///
+/// The three share no namespace: `ToolFamily::id` and `DrawingTool::id` are
+/// separate registries that already collide (`brush` and `measure` name both
+/// a family and a tool), and a starred tool is painted a second time in the
+/// pinned section beside its slot in the run. Without this, one identifier
+/// would name the family flyout on a wide window and the tool itself on a
+/// narrow one, and a favorite would answer to the same name as the run slot
+/// it is pinned from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RailControlKind {
+    /// A single tool's own button.
+    Tool,
+    /// One slot standing for a family, with its members behind a flyout.
+    Family,
+    /// A starred tool, pinned to the rail's head with a star badge.
+    Favorite,
+}
+
+/// The slice of the scrolling band one draw put on screen.
+///
+/// The band's content is the spilled favorites followed by every tool slot;
+/// the viewport shows `visible` whole buttons of it starting at `first`, and
+/// the chevrons move that window. Recorded because a reader that is not
+/// looking at the screen cannot re-derive it: it depends on the extent the
+/// layout handed the rail and on wherever the trader last scrolled to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BandWindow {
+    /// Favorites anchored ahead of the band, outside its clip.
+    anchored: usize,
+    /// Index into the band's content of its first visible button.
+    first: usize,
+    /// Whole buttons the viewport shows.
+    visible: usize,
 }
 
 /// One leading-cluster slot after family folding: a lone tool, or a family
@@ -437,6 +504,18 @@ fn stage_for(available: f32, tool_slot_count: usize, favorite_count: usize) -> R
 pub struct ToolRail {
     tool: Tool,
     visible: bool,
+    /// The stage the last draw settled on, or `None` before the first — and
+    /// again once the rail is hidden, because nothing is painted then.
+    ///
+    /// Read by the semantic scene, never by the draw: the stage is a pure
+    /// function of the extent and is recomputed every frame regardless.
+    last_stage: Option<RailStage>,
+    /// Which slice of the scrolling band the last draw actually showed.
+    ///
+    /// Only the Scroll stage has one; every other stage clears it. The band
+    /// clips, so this is the difference between the buttons the rail owns and
+    /// the buttons a trader can see — the scene reports the second.
+    last_band: Option<BandWindow>,
     dock: ToolboxDock,
     /// The repeat pin: `true` keeps a drawing tool armed after it completes
     /// an object; the default is one-shot back to Pointer.
@@ -518,6 +597,8 @@ impl Default for ToolRail {
         Self {
             tool: Tool::Pointer,
             visible: true,
+            last_stage: None,
+            last_band: None,
             dock: ToolboxDock::Left,
             repeat: false,
             magnet: false,
@@ -599,6 +680,119 @@ impl ToolRail {
         }
     }
 
+    /// The controls the rail painted last frame, in rail order.
+    ///
+    /// Folded through the very `tool_slots()` the draw folds through, and cut
+    /// by the stage and the band window the draw recorded, so this can never
+    /// name a button that is behind a flyout, off the scrolled run, or inside
+    /// the More menu. A rail nobody can see, and one that has not been drawn
+    /// yet, both report nothing: the guarantee is made here rather than left
+    /// to whichever caller remembers to ask [`Self::visible`] first.
+    #[must_use]
+    pub(crate) fn painted_controls(&self) -> Vec<RailControl> {
+        if !self.visible {
+            return Vec::new();
+        }
+        let Some(stage) = self.last_stage else {
+            return Vec::new();
+        };
+        let armed_drawing = self.tool.drawing_tool();
+        let mut controls = vec![RailControl {
+            kind: RailControlKind::Tool,
+            id: Tool::Pointer.id(),
+            label: Tool::Pointer.name(),
+            armed: self.tool == Tool::Pointer,
+        }];
+        // Minimal drops the crosshair; every wider stage keeps it.
+        if stage != RailStage::Minimal {
+            controls.push(RailControl {
+                kind: RailControlKind::Tool,
+                id: Tool::Crosshair.id(),
+                label: Tool::Crosshair.name(),
+                armed: self.tool == Tool::Crosshair,
+            });
+        }
+        match stage {
+            // The whole run has a button, and so does every star: nothing is
+            // clipped and nothing is folded away at this width.
+            RailStage::Full => {
+                for tool in &self.favorites {
+                    controls.push(self.favorite_control(*tool));
+                }
+                for slot in tool_slots() {
+                    controls.push(Self::slot_control(slot, armed_drawing));
+                }
+            }
+            // The band clips. Only the anchored stars stay outside it; the
+            // rest of the stars and the whole tool run scroll behind two
+            // chevrons, and only the window the draw recorded is on screen.
+            RailStage::Scroll => {
+                let Some(band) = self.last_band else {
+                    return controls;
+                };
+                let anchored = band.anchored.min(self.favorites.len());
+                for tool in &self.favorites[..anchored] {
+                    controls.push(self.favorite_control(*tool));
+                }
+                let slots = tool_slots();
+                let spilled = self.favorites.len() - anchored;
+                let content = spilled + slots.len();
+                let first = band.first.min(content);
+                let last = first.saturating_add(band.visible).min(content);
+                for index in first..last {
+                    controls.push(match index.checked_sub(spilled) {
+                        Some(slot) => Self::slot_control(&slots[slot], armed_drawing),
+                        None => self.favorite_control(self.favorites[anchored + index]),
+                    });
+                }
+            }
+            // Only the armed tool keeps a button of its own; the rest are
+            // behind More, which is not a control the scene can name yet.
+            // The stars go with them — these stages draw no pinned section.
+            RailStage::Compact | RailStage::Minimal => {
+                if let Some(tool) = armed_drawing {
+                    controls.push(RailControl {
+                        kind: RailControlKind::Tool,
+                        id: tool.id(),
+                        label: tool.name(),
+                        armed: true,
+                    });
+                }
+            }
+        }
+        controls
+    }
+
+    /// One entry of the folded tool run, as the draw paints it.
+    fn slot_control(slot: &RailSlot, armed_drawing: Option<DrawingTool>) -> RailControl {
+        match slot {
+            RailSlot::Single(tool) => RailControl {
+                kind: RailControlKind::Tool,
+                id: tool.id(),
+                label: tool.name(),
+                armed: armed_drawing == Some(*tool),
+            },
+            RailSlot::Family { family, members } => RailControl {
+                kind: RailControlKind::Family,
+                id: family.id,
+                label: family.title,
+                armed: armed_drawing.is_some_and(|tool| members.contains(&tool)),
+            },
+        }
+    }
+
+    /// One pinned button. A star is a second button for a tool that also has
+    /// a slot in the run, so it is named in its own namespace rather than
+    /// answering to the slot's name.
+    fn favorite_control(&self, tool: DrawingTool) -> RailControl {
+        RailControl {
+            kind: RailControlKind::Favorite,
+            id: tool.id(),
+            label: tool.name(),
+            armed: self.tool == Tool::Drawing(tool),
+        }
+    }
+
     /// Whether a grip drag is live this frame — the app's escape stack must
     /// yield Esc to the drag while it is.
     #[must_use]
@@ -610,6 +804,13 @@ impl ToolRail {
         self.visible = !self.visible;
         if !self.visible {
             self.tool = Tool::Pointer;
+            // Nothing is painted while the rail is away, so what the last
+            // draw settled on stops describing the screen. Forgotten rather
+            // than kept: control captures are served before the rail draws,
+            // so a stale stage would answer the first capture after a hide
+            // with the buttons of a rail nobody can see.
+            self.last_stage = None;
+            self.last_band = None;
         }
     }
 
@@ -855,6 +1056,11 @@ impl ToolRail {
         let slots = tool_slots();
         let favorite_count = self.favorites.len();
         let stage = stage_for(available, slots.len(), favorite_count);
+        // The one thing the rail writes down for a later reader: which stage
+        // it drew. A single enum store per frame, and the only way the
+        // semantic scene can answer "what has a button right now" without
+        // re-deriving a layout it did not measure.
+        self.last_stage = Some(stage);
 
         // Chart-facing hairline: the only stroke the rail paints — a
         // four-sided stroke would draw a seam against the window edge.
@@ -891,6 +1097,7 @@ impl ToolRail {
                 RailStage::Full => {
                     self.band_offset = 0.0;
                     self.band_target = None;
+                    self.last_band = None;
                     self.draw_favorites_section(ui, vertical, drawings, 0..favorite_count);
                     for slot in slots {
                         match slot {
@@ -911,6 +1118,7 @@ impl ToolRail {
                 RailStage::Compact | RailStage::Minimal => {
                     self.band_offset = 0.0;
                     self.band_target = None;
+                    self.last_band = None;
                     if let Some(armed) = self.tool.drawing_tool() {
                         self.draw_button(ui, Tool::Drawing(armed), drawings);
                     }
@@ -1428,6 +1636,16 @@ impl ToolRail {
             output.state.offset.x
         };
         self.band_offset = scrolled.clamp(0.0, max_offset);
+        // The window this draw actually showed, written down for the same
+        // reason the stage is: a reader that is not looking at the screen
+        // cannot re-derive it, because it depends on the extent the layout
+        // handed the rail and on wherever the trader last scrolled to.
+        let span = TOOLRAIL_ICON.hit + TOOLBOX_ITEM_GAP_PX;
+        self.last_band = Some(BandWindow {
+            anchored,
+            first: (self.band_offset / span).round() as usize,
+            visible: band_visible_items(viewport),
+        });
 
         if self.draw_chevron(ui, vertical, false, self.band_offset < max_offset) {
             self.band_target = Some(self.band_offset + step);

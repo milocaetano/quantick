@@ -56,6 +56,20 @@ impl DockTab {
         Self::Trades,
     ];
 
+    /// The stable wire name, for the places that name a tab rather than draw
+    /// it. Never the title: that is prose a reader sees, and rewording it must
+    /// not move an operator's ground.
+    #[must_use]
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::L2 => "l2",
+            Self::Bubbles => "bubbles",
+            Self::Session => "session",
+            Self::Trading => "trading",
+            Self::Trades => "trades",
+        }
+    }
+
     /// The Phosphor glyph on the strip.
     ///
     /// A tab wears the same glyph as the toolbar toggle for the same thing —

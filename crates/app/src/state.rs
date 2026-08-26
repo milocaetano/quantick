@@ -14,7 +14,7 @@
 /// unit next to [`BarSpec`], not off in the engine.
 pub use quantick_engine::ImbalanceUnit;
 use quantick_engine::{
-    Bar, BarBuilder, BarFootprint, BarProgress, DollarBarBuilder, ImbalanceBarBuilder,
+    Bar, BarBuilder, BarFootprint, BarProgress, DollarBarBuilder, ImbalanceBarBuilder, PriceGrid,
     TickBarBuilder, TimeBarBuilder, Trade, VolumeBarBuilder,
 };
 use rust_decimal::Decimal;
@@ -336,6 +336,9 @@ pub struct ChartState {
     spec: BarSpec,
     /// O(1) identity of the current temporal bar partition.
     timeline_revision: u64,
+    /// O(1) identity of the closed bars *and their ladders* — see
+    /// [`Self::series_revision`].
+    series_revision: u64,
     builder: Box<dyn BarBuilder>,
     trades: Vec<Trade>,
     backfill_trade_count: usize,
@@ -346,6 +349,11 @@ pub struct ChartState {
     /// Per-bar footprint ladders, index-aligned with `bars`; fed the same
     /// trades the bar builder folds (see [`FootprintSeries`]).
     footprints: FootprintSeries,
+    /// The price grid the tape prints on, folded from every trade this chart
+    /// has seen. Unconditional: it is a fact about the market, not about
+    /// whether a layer that draws it is switched on, and a consumer sizing
+    /// rows needs it before anything is drawn.
+    price_grid: PriceGrid,
     /// Whether the ladders are being accumulated at all. Off (the default)
     /// costs nothing per trade and holds nothing per bar — a capability
     /// nobody asked for must not tax every ingest. Enabling refolds the
@@ -361,6 +369,7 @@ impl ChartState {
         Self {
             spec,
             timeline_revision: 0,
+            series_revision: 0,
             builder,
             trades: Vec::new(),
             backfill_trade_count: 0,
@@ -369,6 +378,7 @@ impl ChartState {
             partial: None,
             backfill_boundary: None,
             footprints: FootprintSeries::new(footprint_series::default_group()),
+            price_grid: PriceGrid::new(),
             footprint_enabled: false,
         }
     }
@@ -377,6 +387,9 @@ impl ChartState {
     /// trades), then mark the boundary.
     pub fn ingest_backfill(&mut self, trades: &[Trade]) {
         self.trades.extend_from_slice(trades);
+        for trade in trades {
+            self.price_grid.observe(trade.price);
+        }
         self.backfill_trade_count = self.trades.len();
         self.backfill_done = true;
         for trade in trades {
@@ -390,7 +403,7 @@ impl ChartState {
         }
         self.backfill_boundary = Some(self.bars.len());
         self.refresh_partial();
-        self.bump_timeline_revision();
+        self.bump_series_revision();
     }
 
     /// Prepend older backfilled history to the front of the retained stream.
@@ -408,6 +421,14 @@ impl ChartState {
             return 0;
         }
         let bars_before = self.bars.len();
+        // Older prints are evidence about the grid like any other. Skipping
+        // them would leave a chart that paged left into a busier stretch
+        // drawing wide rows over history visibly trading finer, with only a
+        // future live print able to correct it — and on a paused replay or a
+        // closed market that print never comes.
+        for trade in trades {
+            self.price_grid.observe(trade.price);
+        }
         let mut combined = Vec::with_capacity(trades.len() + self.trades.len());
         combined.extend_from_slice(trades);
         combined.append(&mut self.trades);
@@ -420,6 +441,7 @@ impl ChartState {
     /// Ingest one live trade, incrementally (no full rebuild).
     pub fn ingest_live(&mut self, trade: &Trade) {
         self.trades.push(trade.clone());
+        self.price_grid.observe(trade.price);
         let closed = self.builder.push(trade);
         if self.footprint_enabled {
             self.footprints.observe(trade, closed.as_ref());
@@ -428,6 +450,10 @@ impl ChartState {
             self.bars.push(bar);
         }
         self.refresh_partial();
+        // Live ingest only ever *appends*: no bar already closed changes, and
+        // no ladder already built is touched. So the series identity stands
+        // and a consumer folding a fixed set of closed bars keeps its work —
+        // see [`Self::series_revision`].
         self.bump_timeline_revision();
     }
 
@@ -469,7 +495,7 @@ impl ChartState {
         self.builder = builder;
         self.bars = bars;
         self.backfill_boundary = boundary;
-        self.bump_timeline_revision();
+        self.bump_series_revision();
     }
 
     fn refresh_partial(&mut self) {
@@ -480,10 +506,38 @@ impl ChartState {
         self.timeline_revision = self.timeline_revision.saturating_add(1);
     }
 
+    /// The closed bars changed: one closed, history was prepended, or the
+    /// series was rebuilt. Always bumps the timeline too — a change to the
+    /// closed bars is a change to the timeline; never the other way round.
+    fn bump_series_revision(&mut self) {
+        self.series_revision = self.series_revision.saturating_add(1);
+        self.bump_timeline_revision();
+    }
+
     /// Monotonic identity for order-flow projections keyed by these bar bounds.
     #[must_use]
     pub fn timeline_revision(&self) -> u64 {
         self.timeline_revision
+    }
+
+    /// Monotonic identity of the closed bars **and their ladders** — the
+    /// inputs a range fold reads.
+    ///
+    /// It moves when those inputs are *rebuilt or shifted*: a spec change, a
+    /// page of history prepended, a footprint refold, the initial backfill.
+    /// It deliberately does **not** move when a print lands or a bar closes,
+    /// because live ingest only appends: no bar already closed changes, and no
+    /// ladder already built is touched, so a fold over a fixed set of bars is
+    /// still valid.
+    ///
+    /// That is the whole difference from
+    /// [`timeline_revision`](Self::timeline_revision), which answers "did
+    /// anything about the bars move" and steps on every single print. Keying
+    /// a kept fold on *that* is what made a range profile over a long history
+    /// restart tens of times a second and never finish.
+    #[must_use]
+    pub fn series_revision(&self) -> u64 {
+        self.series_revision
     }
 
     /// The current bar spec.
@@ -523,6 +577,18 @@ impl ChartState {
         self.footprints.partial()
     }
 
+    /// The price grid this chart's tape prints on, once enough prints have
+    /// shown one.
+    ///
+    /// [`None`] means the tape has not said yet — a chart that has seen one
+    /// print, or a run of prints all at one price. It never means "the grid is
+    /// fine": a caller sizing rows from this keeps whatever it had until an
+    /// answer arrives.
+    #[must_use]
+    pub fn tape_price_step(&self) -> Option<Decimal> {
+        self.price_grid.step()
+    }
+
     /// The row width footprints are captured at. Rendering reads the width
     /// off each ladder ([`BarFootprint::group`]); this is the capture side of
     /// that round trip — what the range-profile cache keys on to notice a
@@ -545,6 +611,7 @@ impl ChartState {
             self.refold_footprints(self.footprints.base_group());
         } else {
             self.footprints.reset(self.footprints.base_group());
+            self.bump_series_revision();
         }
     }
 
@@ -563,6 +630,7 @@ impl ChartState {
             self.refold_footprints(group);
         } else {
             self.footprints.reset(group);
+            self.bump_series_revision();
         }
     }
 
@@ -570,6 +638,9 @@ impl ChartState {
     /// spec, rebuilding the ladders on `group`-wide rows against the very
     /// same bar boundaries the real builder produced.
     fn refold_footprints(&mut self, group: Decimal) {
+        // The ladders are rebuilt wholesale, so anything folding them is
+        // reading different inputs from this point on.
+        self.bump_series_revision();
         self.footprints.reset(group);
         let mut builder = self.spec.build();
         for trade in &self.trades {
@@ -782,6 +853,71 @@ mod tests {
         }
     }
 
+    /// A print at `price`, with everything else fixed — these tests are about
+    /// the price grid and nothing else.
+    fn print_at(agg_id: u64, price: &str) -> Trade {
+        Trade {
+            agg_id,
+            timestamp_ms: 1000 + agg_id as i64 * 100,
+            price: dec(price),
+            quantity: dec("1.0"),
+            side: Side::Buy,
+        }
+    }
+
+    #[test]
+    fn a_chart_names_the_grid_its_own_tape_prints_on() {
+        // B3's mini index moves in five-point steps. Nothing states that here:
+        // the chart is told only the prints, exactly as a market replay tells
+        // it, and the grid is what it works out.
+        let mut chart = ChartState::new(BarSpec::Tick(1000));
+        for (i, price) in [
+            "174565", "174570", "174560", "174570", "174585", "174580", "174570", "174575",
+            "174590", "174585",
+        ]
+        .iter()
+        .enumerate()
+        {
+            chart.ingest_live(&print_at(i as u64, price));
+        }
+        assert_eq!(chart.tape_price_step(), Some(dec("5")));
+    }
+
+    #[test]
+    fn a_chart_that_has_not_been_told_enough_names_nothing() {
+        // Silence is not an answer of "fine" — a caller sizing rows from this
+        // has to keep what it had, and that only works if it can tell the two
+        // apart.
+        let mut chart = ChartState::new(BarSpec::Tick(1000));
+        assert_eq!(chart.tape_price_step(), None);
+        for i in 0..20 {
+            chart.ingest_live(&print_at(i, "174565"));
+        }
+        assert_eq!(
+            chart.tape_price_step(),
+            None,
+            "a run of prints at one price shows no distance and so no grid",
+        );
+    }
+
+    #[test]
+    fn backfilled_history_names_the_grid_as_well_as_live_prints_do() {
+        // History arrives as one batch before the first live print. A chart
+        // that only learned the grid from live prints would draw its first
+        // screen — the whole backfill — on the wrong rows.
+        let mut chart = ChartState::new(BarSpec::Tick(1000));
+        let history: Vec<Trade> = [
+            "5216.0", "5216.5", "5217.0", "5216.5", "5215.5", "5217.5", "5218.0", "5217.0",
+            "5216.0", "5215.5",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, price)| print_at(i as u64, price))
+        .collect();
+        chart.ingest_backfill(&history);
+        assert_eq!(chart.tape_price_step(), Some(dec("0.5")));
+    }
+
     #[test]
     fn only_the_size_measuring_rules_need_a_traded_volume() {
         // Volume and dollar bars measure size, so a venue that prints none can
@@ -882,6 +1018,52 @@ mod tests {
         assert_eq!(state.timeline_revision(), 3, "an unchanged spec is a no-op");
         state.set_spec(BarSpec::Tick(3));
         assert_eq!(state.timeline_revision(), 4);
+    }
+
+    /// The series identity is the *narrow* question — "were the bars and
+    /// ladders a fold reads rebuilt?" — and it has to stay narrow. Live
+    /// ingest only appends, so neither a print nor a bar closing on the right
+    /// edge changes a bar that a range already folded; a consumer keeping that
+    /// fold must not be told otherwise, or a long range restarts on every tick
+    /// and never finishes.
+    #[test]
+    fn series_revision_ignores_prints_and_closes_and_tracks_rebuilds() {
+        let mut state = ChartState::new(BarSpec::Tick(2));
+        assert_eq!(state.series_revision(), 0);
+
+        // Two trades: the first opens the forming bar, the second closes it.
+        // Neither rewrites a bar that was already there.
+        state.ingest_live(&trade(1));
+        state.ingest_live(&trade(2));
+        assert_eq!(state.bars().len(), 1, "a bar did close");
+        assert_eq!(
+            state.series_revision(),
+            0,
+            "appending never rewrites what was already folded"
+        );
+        assert_eq!(
+            state.timeline_revision(),
+            2,
+            "the timeline moved on both prints all the same"
+        );
+
+        // Every way the series is genuinely rebuilt does move it.
+        state.ingest_backfill(&(5..=8).map(trade).collect::<Vec<_>>());
+        assert_eq!(state.series_revision(), 1, "the backfill rebuilt the bars");
+        state.prepend_history(&(3..=4).map(trade).collect::<Vec<_>>());
+        assert_eq!(state.series_revision(), 2, "so does a prepended page");
+        state.set_spec(BarSpec::Tick(3));
+        assert_eq!(state.series_revision(), 3, "and a new bar rule");
+        state.set_spec(BarSpec::Tick(3));
+        assert_eq!(state.series_revision(), 3, "an unchanged spec is a no-op");
+        state.set_footprint_enabled(true);
+        assert_eq!(
+            state.series_revision(),
+            4,
+            "switching the ladders on rebuilds them, which is a fold's inputs"
+        );
+        state.set_footprint_group(dec("2"));
+        assert_eq!(state.series_revision(), 5, "and so does a refold");
     }
 
     #[test]

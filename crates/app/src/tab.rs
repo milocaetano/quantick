@@ -17,9 +17,11 @@ use tokio::sync::{mpsc, watch};
 
 use quantick_feed_binance::depth::DepthEvent;
 
+use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::feed::{
-    self, FeedCommand, FeedConnectionState, FeedEvent, FeedHandle, FeedNotice, ReplayLink,
+    self, FeedCommand, FeedConnectionState, FeedEvent, FeedHandle, FeedLatency, FeedNotice,
+    ReplayLink,
 };
 use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
@@ -178,6 +180,52 @@ fn trim_to_seam(
     folded
 }
 
+/// Whether the chart can reach further back for venue candles, and when it
+/// cannot, why — see [`Tab::older_candles`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OlderCandles {
+    /// Another span can be asked for.
+    Available,
+    /// This feed publishes no candle history at all.
+    FeedServesNone,
+    /// Nothing on this chart is cut by time, so no venue candle was ever
+    /// wanted — the prefix follows what a pane *shows*, not which pane it is.
+    NoChartCutByTime,
+    /// A request is out; the answer is what to wait for.
+    Fetching,
+    /// The opening span has not landed yet. There is nothing to reach back
+    /// *from* until it does.
+    NotArrivedYet,
+    /// A reach-back came back complete with nothing older in it. That is the
+    /// venue's record, or the provider's, and it is the one reason here that
+    /// had to be learned by asking.
+    RecordStartsHere,
+}
+
+impl OlderCandles {
+    /// Whether the control is live.
+    #[must_use]
+    pub const fn is_available(self) -> bool {
+        matches!(self, Self::Available)
+    }
+
+    /// What to tell the trader hovering a control this state disabled.
+    /// `None` when it is not disabled.
+    #[must_use]
+    pub const fn why_not(self) -> Option<&'static str> {
+        match self {
+            Self::Available => None,
+            Self::FeedServesNone => Some("this feed publishes no candle history"),
+            Self::NoChartCutByTime => {
+                Some("no chart here is cut by time, so there are no venue candles to extend")
+            }
+            Self::Fetching => Some("a request is already out; this is what it is fetching"),
+            Self::NotArrivedYet => Some("the first span has not arrived yet"),
+            Self::RecordStartsHere => Some("this is as far back as the venue's record goes"),
+        }
+    }
+}
+
 /// One open market. See the module docs for what does and does not live here.
 /// One frame's answer, for both panes, to "what shared mark of the *other*
 /// pane is the pointer over?".
@@ -240,6 +288,18 @@ pub struct Tab {
     /// What the running feed can really do, read fresh every frame. The feed
     /// narrows it once a session tells it what the symbol actually offers.
     pub feed_capabilities: watch::Receiver<FeedCapabilities>,
+    /// Where this feed's delay is being spent, read fresh every frame.
+    ///
+    /// A reading rather than an event, so a frame that skipped three samples
+    /// sees the newest one instead of a queue. `None` on a provider that
+    /// cannot cut its own chain, and until the first sample arrives.
+    pub feed_latency: watch::Receiver<Option<FeedLatency>>,
+    /// A latency split forced by `QUANTICK_FAKE_LATENCY_SPLIT`, for a scripted
+    /// run that has to photograph the readout without a slow venue.
+    ///
+    /// Overrides the feed's own reading when set, and set only from the hook —
+    /// a live session leaves it `None` and reads the real one.
+    pub forced_latency: Option<FeedLatency>,
     pub commands: mpsc::Sender<FeedCommand>,
 
     // Market Replay. `replay` is `Some` exactly while a recorded session is
@@ -317,6 +377,24 @@ pub struct Tab {
     /// part — the slices that had already been thrown away. So they are
     /// dropped, and the closing one re-opens the door for a fresh request.
     ohlcv_stale: bool,
+    /// The oldest candle held when the in-flight request went out, for a
+    /// request that was reaching *back* past it — `None` for the opening one.
+    ///
+    /// Kept so the closing reply can answer the only question the trader has
+    /// after clicking "older": did that get me anything? A reply is not empty
+    /// when the venue has nothing older — a provider serving from a block it
+    /// already holds honestly re-sends the same candles — so the answer is
+    /// "did the oldest bar move", which is a fact rather than an inference.
+    ohlcv_reaching_back: Option<i64>,
+    /// Whether the last *load older* came back with nothing older than what
+    /// was already held: the venue's record starts here, or the provider's
+    /// reach does.
+    ///
+    /// Latched rather than recomputed, because the only way to know is to
+    /// have asked. Cleared by a change of market, and by the opening request
+    /// of a new one — never by time passing, which cannot make a venue's
+    /// record deeper.
+    ohlcv_older_exhausted: bool,
     /// Whether the next candle request asks for slices (View → progressive
     /// venue history). Mirrored from the app each frame rather than read from
     /// it, because the tab is what phrases the request and a tab in a test has
@@ -406,6 +484,8 @@ impl Tab {
             notice: FeedNotice::Clear,
             feed_connection: FeedConnectionState::Connecting,
             feed_capabilities: feed.capabilities,
+            feed_latency: feed.latency,
+            forced_latency: crate::feed::forced_latency_split(),
             commands: feed.commands,
             replay: feed.replay,
             history_step: 2000,
@@ -422,6 +502,8 @@ impl Tab {
             ohlcv_base: None,
             ohlcv_pending: false,
             ohlcv_stale: false,
+            ohlcv_reaching_back: None,
+            ohlcv_older_exhausted: false,
             progressive_history: true,
             ohlcv_generation: 0,
             ohlcv_capable: false,
@@ -457,6 +539,10 @@ impl Tab {
         // The channel carrying any in-flight slices is dropped with the old
         // handle, so nothing survives to be dropped as stale.
         self.ohlcv_stale = false;
+        // A different market has a different record. Whatever this tab
+        // learned about how far back the last one reached says nothing here.
+        self.ohlcv_reaching_back = None;
+        self.ohlcv_older_exhausted = false;
         self.ohlcv_capable = false;
         self.loading.set_active(LoadingTask::VenueHistory, false);
         for pane in std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut()) {
@@ -466,6 +552,7 @@ impl Tab {
         self.book_events = handle.book_events;
         self.notices = handle.notices;
         self.feed_capabilities = handle.capabilities;
+        self.feed_latency = handle.latency;
         self.notice = FeedNotice::Clear;
         self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
@@ -524,12 +611,24 @@ impl Tab {
         self.attach(handle);
     }
 
+    /// Publish a latency reading as the attached feed would, for a test that
+    /// needs the tab to have read one.
+    #[cfg(test)]
+    pub fn publish_latency_for_test(&mut self, split: Option<FeedLatency>) {
+        let (tx, rx) = watch::channel(split);
+        self.feed_latency = rx;
+        // The sender is dropped on purpose: a `watch` receiver keeps serving
+        // the value it was born with, which is what a test wants and what
+        // `unsplit_latency` relies on in production.
+        drop(tx);
+    }
+
     /// Whether any pane on this tab cuts bars by a foldable time interval —
     /// the gate for venue candle history. Capability-shaped, like every other
     /// gate in the app (audit S1): the prefix belongs to what a pane *shows*
     /// (`BarSpec::Time` at a whole number of venue candles), never to which
-    /// pane object it is. `bars → time` on the flow pane earns the same 90
-    /// days the split's time pane gets.
+    /// pane object it is. `bars → time` on the flow pane earns the same span
+    /// the split's time pane gets.
     fn any_pane_wants_venue_history(&self) -> bool {
         std::iter::once(&self.flow_pane)
             .chain(self.time_pane.as_ref())
@@ -562,10 +661,15 @@ impl Tab {
         let command = FeedCommand::FetchOhlcv {
             span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
             slice_ms,
+            // The opening request: back from the live edge. Reaching further
+            // than one span is `request_older_ohlcv_history`'s job.
+            before_ms: None,
         };
         match self.commands.try_send(command) {
             Ok(()) => {
                 self.ohlcv_pending = true;
+                self.ohlcv_reaching_back = None;
+                self.ohlcv_older_exhausted = false;
                 self.loading.begin(LoadingTask::VenueHistory);
                 tracing::info!(
                     target: "quantick::app",
@@ -618,6 +722,13 @@ impl Tab {
             // first one took.
             self.ohlcv_generation = capabilities.ohlcv_generation;
             self.ohlcv_base = None;
+            // And with it, everything learned by reaching back through it. The
+            // oldest bucket a request was measured against is gone, so a reply
+            // still in flight must not be compared to it; and "the record
+            // starts here" was a fact about a block this generation replaces.
+            // `attach` clears both for the same reason on a change of market.
+            self.ohlcv_reaching_back = None;
+            self.ohlcv_older_exhausted = false;
             // Slices of the discarded answer may still be on their way. They
             // describe a base that no longer exists, so they are dropped
             // rather than folded onto nothing.
@@ -668,6 +779,8 @@ impl Tab {
             if last {
                 self.ohlcv_stale = false;
                 self.ohlcv_pending = false;
+                // Whatever this answer was measured against no longer exists.
+                self.ohlcv_reaching_back = None;
                 self.loading.end(LoadingTask::VenueHistory);
             }
             tracing::debug!(
@@ -686,6 +799,25 @@ impl Tab {
             return;
         }
         self.ohlcv_pending = false;
+        if slice == crate::feed::OhlcvSlice::Refused {
+            // Nobody looked, so nothing is known. End the wait — the spinner
+            // was raised before the command left — and touch nothing else: no
+            // short-answer warning about a venue that never answered, no
+            // refold of the whole base over an empty vector, and above all no
+            // verdict on a reach-back that was never served.
+            self.ohlcv_reaching_back = None;
+            self.loading.end(LoadingTask::VenueHistory);
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "OHLCV_REFUSED",
+                tab = self.id,
+                symbol = %self.symbol,
+                action = "await_the_running_fetch",
+                "the provider was already fetching; this request was not served"
+            );
+            return;
+        }
         let complete = matches!(slice, crate::feed::OhlcvSlice::Last { complete } if complete);
         if !complete {
             // Known-short, not merely short: a venue that stopped answering
@@ -720,10 +852,54 @@ impl Tab {
             action = if bars.is_empty() { "no_prefix" } else { "install_prefix" },
             "candle history arrived"
         );
-        self.take_ohlcv_slice(interval_ms, bars);
+        let usable = self.take_ohlcv_slice(interval_ms, bars);
+        // A *load older* that closed: did the oldest candle actually move? A
+        // reply that re-sends what is already held is not an empty reply, so
+        // the bar count cannot answer this and the oldest bucket can. Latched
+        // here rather than asked again, because the only way to find out was
+        // to ask.
+        if let Some(was_oldest) = self.ohlcv_reaching_back.take() {
+            let now_oldest = self.oldest_venue_candle_ms();
+            let moved = now_oldest.is_some_and(|oldest| oldest < was_oldest);
+            // Only a *complete* answer teaches anything about where the record
+            // starts. A run that came up short — a venue that stopped
+            // answering, a socket that failed — brought nothing older for a
+            // reason that has nothing to do with the venue's depth, and
+            // latching on it would retire the button for the session and tell
+            // the trader their history starts here. Short means try again.
+            // Complete *and* usable. A run that came up short brought nothing
+            // older for a reason unrelated to the venue's depth, and a reply
+            // the pane had to refuse is not an answer about depth at all.
+            self.ohlcv_older_exhausted = complete && usable && !moved;
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "OHLCV_OLDER_SETTLED",
+                tab = self.id,
+                symbol = %self.symbol,
+                was_oldest_ms = was_oldest,
+                now_oldest_ms = now_oldest.unwrap_or(0),
+                complete,
+                usable,
+                moved,
+                exhausted = self.ohlcv_older_exhausted,
+                action = if self.ohlcv_older_exhausted {
+                    "stop_offering_older"
+                } else if moved {
+                    "older_available"
+                } else {
+                    "no_evidence_try_again"
+                },
+                "a request for older candles settled"
+            );
+        }
     }
 
     /// Merge one slice into the base and rebuild the prefix from it.
+    ///
+    /// Reports whether the slice was *usable* — an interval this pane can fold
+    /// from. A refused slice is not an answer about the venue's depth, and the
+    /// exhaustion latch upstream must not read it as one.
     ///
     /// Shared by the closing reply and every slice before it: whether an
     /// answer arrived whole or in thirteen pieces changes when the wait ends,
@@ -731,7 +907,7 @@ impl Tab {
     /// what makes that true — a run's last slice is the *oldest* week of the
     /// span, and assigning it over the base would throw away the twelve that
     /// had already been drawn.
-    fn take_ohlcv_slice(&mut self, interval_ms: i64, bars: Vec<quantick_engine::Bar>) {
+    fn take_ohlcv_slice(&mut self, interval_ms: i64, bars: Vec<quantick_engine::Bar>) -> bool {
         if interval_ms != crate::feed::OHLCV_BASE_INTERVAL_MS && !bars.is_empty() {
             // The event tags its own interval so a consumer never has to
             // guess; a base this fold was not written for is refused rather
@@ -742,11 +918,23 @@ impl Tab {
                 event_code = "OHLCV_UNEXPECTED_BASE",
                 interval_ms,
                 expected_ms = crate::feed::OHLCV_BASE_INTERVAL_MS,
-                action = "no_prefix",
+                action = if self.ohlcv_base.is_some() {
+                    "refuse_slice_keep_prefix"
+                } else {
+                    "no_prefix"
+                },
                 "candle history arrived at an interval the pane cannot fold from"
             );
-            self.ohlcv_base = Some(Vec::new());
-            return;
+            // Refuse the slice, never the history. Recording an empty base is
+            // right for the *opening* answer — it is how "this venue serves
+            // nothing this pane can fold" is remembered — but a reach-back
+            // reply at a bad interval arrives on top of a week (or a quarter)
+            // the trader has already paged in, and throwing that away would
+            // cost them everything they waited for over one unusable slice.
+            if self.ohlcv_base.is_none() {
+                self.ohlcv_base = Some(Vec::new());
+            }
+            return false;
         }
         let base = self.ohlcv_base.get_or_insert_with(Vec::new);
         if base.is_empty() {
@@ -755,6 +943,7 @@ impl Tab {
             merge_older_candles(base, bars);
         }
         self.refold_history_prefix();
+        true
     }
 
     /// Hand the tab one candle-history reply directly, as the feed drain does.
@@ -776,6 +965,140 @@ impl Tab {
             self.loading.begin(LoadingTask::VenueHistory);
         }
         self.take_ohlcv_history(interval_ms, bars, slice);
+    }
+
+    /// How many venue candles this tab holds, at the base interval. Zero on a
+    /// feed that serves none, and before the first reply lands.
+    #[must_use]
+    pub fn venue_candles_held(&self) -> usize {
+        self.ohlcv_base.as_ref().map_or(0, Vec::len)
+    }
+
+    /// The oldest venue candle held, by bucket start.
+    fn oldest_venue_candle_ms(&self) -> Option<i64> {
+        self.ohlcv_base.as_ref()?.first().map(|bar| bar.open_time)
+    }
+
+    /// Whether asking for older candles could get the trader anything — and
+    /// when it could not, *which* of the reasons it is.
+    ///
+    /// A bool would be enough to grey the control out and is not enough to
+    /// say why, and "why" is the whole of the disabled tooltip. Under the
+    /// data-honesty rule a control that offers three possible reasons and is
+    /// disabled for a fourth is telling the trader something untrue: on a tick
+    /// chart the answer is not "the venue's record starts here", it is that
+    /// nothing on this chart is cut by time, so no venue candle was ever
+    /// wanted. One enum, so the reason shown is the reason.
+    #[must_use]
+    pub fn older_candles(&self, capabilities: FeedCapabilities) -> OlderCandles {
+        if !capabilities.ohlcv_history {
+            OlderCandles::FeedServesNone
+        } else if !self.any_pane_wants_venue_history() {
+            OlderCandles::NoChartCutByTime
+        } else if self.ohlcv_pending {
+            OlderCandles::Fetching
+        } else if self.oldest_venue_candle_ms().is_none() {
+            OlderCandles::NotArrivedYet
+        } else if self.ohlcv_older_exhausted {
+            OlderCandles::RecordStartsHere
+        } else {
+            OlderCandles::Available
+        }
+    }
+
+    /// Shorthand for the one caller that only needs the yes/no.
+    #[must_use]
+    pub fn can_load_older_candles(&self, capabilities: FeedCapabilities) -> bool {
+        self.older_candles(capabilities).is_available()
+    }
+
+    /// Reach one more [`crate::feed::TIME_HISTORY_SPAN_MS`] into the past and
+    /// prepend what comes back.
+    ///
+    /// The whole reason a chart opens on a week rather than a quarter: the
+    /// deep history is available, it is simply asked for by the trader who
+    /// wants it. Each call is the same request the opening one was, with its
+    /// right-hand edge moved to just before the oldest candle held — so the
+    /// windows never overlap and the merge on the way back in has nothing to
+    /// reconcile.
+    ///
+    /// Reports whether a request actually went out, so a caller can tell "the
+    /// venue is fetching" from "there was nothing to ask for".
+    pub fn request_older_ohlcv_history(&mut self, capabilities: FeedCapabilities) -> bool {
+        let oldest = self.oldest_venue_candle_ms();
+        if !self.can_load_older_candles(capabilities) || oldest.is_none() {
+            tracing::debug!(
+                target: "quantick::app",
+                event_code = "OHLCV_OLDER_DECLINED",
+                tab = self.id,
+                pending = self.ohlcv_pending,
+                exhausted = self.ohlcv_older_exhausted,
+                held = oldest.is_some(),
+                "nothing older to ask for"
+            );
+            return false;
+        }
+        // Read once above and unwrapped here: `can_load_older_candles` already
+        // required it, and a second read that could disagree with the guard is
+        // exactly the kind of duplicate this branch is trying not to leave.
+        let oldest = oldest.expect("the guard above required a candle held");
+        // One millisecond before the oldest bucket start held. The plan's
+        // windows are closed at both ends, so anything else would re-fetch the
+        // candle already on screen.
+        let before_ms = oldest.saturating_sub(1);
+        let slice_ms = self
+            .progressive_history
+            .then_some(crate::feed::OHLCV_SLICE_SPAN_MS);
+        let command = FeedCommand::FetchOhlcv {
+            span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+            slice_ms,
+            before_ms: Some(before_ms),
+        };
+        match self.commands.try_send(command) {
+            Ok(()) => {
+                self.ohlcv_pending = true;
+                self.ohlcv_reaching_back = Some(oldest);
+                self.loading.begin(LoadingTask::VenueHistory);
+                tracing::info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "OHLCV_OLDER_REQUESTED",
+                    tab = self.id,
+                    symbol = %self.symbol,
+                    span_ms = crate::feed::TIME_HISTORY_SPAN_MS,
+                    before_ms,
+                    slice_ms = slice_ms.unwrap_or(0),
+                    action = "await_prepend",
+                    "asked the venue for another span of older candles"
+                );
+                true
+            }
+            // Same two cases the opening request distinguishes, and for the
+            // same reasons: a busy frame is worth a retry, a dead feed is
+            // worth saying out loud.
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::debug!(
+                    target: "quantick::app",
+                    event_code = "OHLCV_OLDER_BACKPRESSURE",
+                    tab = self.id,
+                    action = "retry_on_next_click",
+                    "older-candle request not queued; channel full"
+                );
+                false
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "OHLCV_OLDER_CHANNEL_CLOSED",
+                    tab = self.id,
+                    symbol = %self.symbol,
+                    action = "no_history_until_feed_restart",
+                    "older-candle request cannot be sent; the feed is gone"
+                );
+                false
+            }
+        }
     }
 
     /// Rebuild every pane's prefix from the base at that pane's interval.
@@ -843,6 +1166,71 @@ impl Tab {
         match side {
             PaneSide::Time => self.time_pane.as_ref().unwrap_or(&self.flow_pane),
             PaneSide::Flow => &self.flow_pane,
+        }
+    }
+
+    /// Whether a LAYERS lamp reads as on, and what blocks it if anything.
+    ///
+    /// One reading, two callers: the toolbar model built each frame and the
+    /// semantic scene an operator captures on demand. A lamp that told the
+    /// trader one thing and an assistant another would be worse than no scene
+    /// at all, so neither side gets its own copy of the question — both come
+    /// here, and here asks [`ChartPane::layer_switched_on`] and
+    /// [`ChartPane::layer_blocked`], which already resolve every layer to the
+    /// one field and the one gate that own it.
+    ///
+    /// The reading is the *switch*, not what the source lets through it: a
+    /// lamp lit from `layer_visible` reads dark while book capture is starting
+    /// and forever on a source with no book, so the trader presses an unlit
+    /// button and switches the layer they wanted off. The block beside it is
+    /// what says the source cannot fill it.
+    pub(crate) fn layer_toggle_state(
+        &self,
+        layer: ChartLayer,
+        style: &ChartStyle,
+        capabilities: FeedCapabilities,
+    ) -> (bool, Option<LayerBlock>) {
+        let pane = self.pane(self.layer_toggle_side(layer));
+        (
+            pane.layer_switched_on(layer, style),
+            pane.layer_blocked(layer, capabilities),
+        )
+    }
+
+    /// Which pane a LAYERS button speaks for.
+    ///
+    /// The footprint folds the pane's *own* retained trades, so its lamp
+    /// answers for the pane with focus: one lit from the flow pane while the
+    /// time pane has focus would report a layer the trader is not looking at.
+    /// The other three read the tape, and only the flow pane has one.
+    fn layer_toggle_side(&self, layer: ChartLayer) -> PaneSide {
+        match layer {
+            // Read off the tape, and only the flow pane has one. A time pane
+            // asked about these answers for machinery it does not own, which
+            // is what `ChartPane::layer_blocked` says in words.
+            ChartLayer::TapeChart
+            | ChartLayer::TapeHeatmap
+            | ChartLayer::TapeBubbles
+            | ChartLayer::Heatmap
+            | ChartLayer::Bubbles
+            | ChartLayer::LiveStrip
+            | ChartLayer::LaneMarks
+            | ChartLayer::FlowLegend
+            | ChartLayer::BookStatus
+            | ChartLayer::DepthGaps => PaneSide::Flow,
+            // The pane's own: the footprint folds the pane's retained trades,
+            // the rest are that canvas's chrome and its objects. A lamp lit
+            // from the flow pane while the time pane has focus would report a
+            // layer the trader is not looking at.
+            ChartLayer::Footprint
+            | ChartLayer::Grid
+            | ChartLayer::LastPrice
+            | ChartLayer::BackfillDivider
+            | ChartLayer::SeamDivider
+            | ChartLayer::Crosshair
+            | ChartLayer::PaperTrading
+            | ChartLayer::TradePaint
+            | ChartLayer::Drawings => self.focused_side(),
         }
     }
 
@@ -1015,7 +1403,7 @@ impl Tab {
     ///
     /// Runs at the top of the frame after the click, so the overlay armed by
     /// [`Self::set_layout`] has already been painted once.
-    pub fn apply_pending_layout(&mut self, config: &AppConfig) {
+    pub fn apply_pending_layout(&mut self, config: &AppConfig, style: &ChartStyle) {
         if !self.pending_time_pane {
             return;
         }
@@ -1032,7 +1420,26 @@ impl Tab {
         // an upside-down market does not turn back over by being given a
         // second view, and the boot's QUANTICK_INVERTED hook fires before
         // this pane exists at all.
-        pane.hidden_layers = self.flow_pane.hidden_layers.clone();
+        // Copying the *switches* rather than a list of field names: an earlier
+        // version cloned `hidden_layers` alone, which left the footprint
+        // behind — a per-pane field of its own — so the split opened with the
+        // ladder on in the flow pane and off in the time pane, contradicting
+        // the paragraph above and darkening the toolbar's footprint lamp the
+        // moment the trader clicked into the left chart. `apply_layer_states`
+        // drops whatever this pane does not draw, which is the whole of what
+        // §11 asks for, and it covers `hidden_layers` in passing.
+        //
+        // Every layer but one. `Drawings` resolves to `DrawingStore`, whose
+        // setter records an undo entry — right for a click, wrong for a pane
+        // being born: seeded through it, a time pane holding zero objects
+        // opens with a non-empty history, and the trader's first Ctrl+Z there
+        // un-hides drawings rather than doing nothing. It is seeded through
+        // the store's own opening setter instead.
+        let mut states = self.flow_pane.layer_states(style);
+        states.remove(&ChartLayer::Drawings);
+        pane.apply_layer_states(&states);
+        pane.drawings
+            .open_all_hidden(self.flow_pane.drawings.all_hidden());
         pane.price_view
             .set_inverted(self.flow_pane.price_view.is_inverted());
         self.time_pane = Some(pane);
@@ -1098,6 +1505,20 @@ impl Tab {
         // already asks the capability rather than the provider name, so they
         // enable and disable themselves from this one value.
         *self.feed_capabilities.borrow()
+    }
+
+    /// Where this feed's delay is being spent, as far as the provider can tell.
+    ///
+    /// `None` while replaying: a recording's prints are as old as the day they
+    /// were captured and the playback clock decides when they appear, so there
+    /// is no delay here for any hop to own — the same reason
+    /// [`trade_arrival_ms`](Self::trade_arrival_ms) reports nothing there.
+    #[must_use]
+    pub fn feed_latency(&self) -> Option<FeedLatency> {
+        if self.replay.is_some() {
+            return None;
+        }
+        self.forced_latency.or(*self.feed_latency.borrow())
     }
 
     /// Ask the feed thread to fetch and prepend `history_step` older trades.
@@ -1912,6 +2333,13 @@ impl Tab {
         if self.replay.is_some() {
             return None;
         }
+        // Never the forced split's figure. This is a *measurement* — it reaches
+        // the log as APP_HIGH_TRADE_LAG, the control feed scope and the health
+        // view, none of which carry a marker saying a capture run invented it,
+        // and inferred data that is not labelled as such is the one thing this
+        // repo does not ship. The hook drives the readout through the latency
+        // port instead, where every consumer already knows the figure is the
+        // feed's own and not the chart's.
         self.latest_trade_latency_ms
     }
 
@@ -2143,14 +2571,27 @@ impl Tab {
             // The time pane has no tape of its own (§11), so its footprint
             // rows adopt the flow pane's capture bucket — the instrument's
             // grid is a fact about the market, not about which pane shows it.
+            //
+            // Which is why there is no longer a gate here. This used to run
+            // only while the time pane's *footprint layer* was visible, and
+            // that contradicted the sentence above it: the ladders have a
+            // second consumer now, and a fixed-range volume profile folds them
+            // with the layer hidden. So the same profile, on the same market,
+            // read at the flow pane's bucket on one chart and at the default
+            // on the other — a hundredfold difference in row height on WDO,
+            // which paints as a slab beside a wash. Two surfaces that are the
+            // same thing have to behave the same way.
+            //
+            // Unconditional is also cheap: `set_footprint_group` returns
+            // immediately when the bucket has not changed, which is every
+            // frame but the one after a market switch.
             if let (Some(time), Some(base)) = (
                 time_pane.as_mut(),
                 flow_pane
                     .orderflow
                     .as_ref()
                     .map(|tape| tape.base_capture_grouping()),
-            ) && time.footprint_visible
-            {
+            ) {
                 time.state.set_footprint_group(base);
             }
             let mut chrome = PaneChrome {

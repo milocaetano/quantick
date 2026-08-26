@@ -27,7 +27,9 @@ mod builder;
 mod dollar;
 mod footprint;
 mod imbalance;
+mod price_grid;
 mod profile;
+mod profile_fold;
 pub mod threshold;
 mod tick;
 mod time;
@@ -42,7 +44,9 @@ pub use footprint::{
     StackedZone,
 };
 pub use imbalance::{ImbalanceBarBuilder, ImbalanceUnit};
+pub use price_grid::PriceGrid;
 pub use profile::{ValueArea, VolumeProfile};
+pub use profile_fold::ProfileFold;
 pub use threshold::{Measure, ThresholdBarBuilder};
 pub use tick::{TickBarBuilder, TickMeasure};
 pub use time::TimeBarBuilder;

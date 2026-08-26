@@ -19,6 +19,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
+use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::FeedCapabilities;
 use crate::dock::DockTab;
 use crate::state::{BarKind, ImbalanceUnit};
@@ -237,16 +238,24 @@ pub struct ToolbarModel<'a> {
     pub history_step: &'a mut usize,
     /// Trades backfilled so far, for the history menu readout.
     pub history_trades: usize,
+    /// Venue candles held so far, for the history menu readout. Zero on a
+    /// feed that serves none.
+    pub history_candles: usize,
+    /// Whether asking for another span of older candles could get the trader
+    /// anything, and when it could not, why — see `Tab::older_candles`.
+    /// Decided by the tab, which is the only thing that knows what it has
+    /// already asked for. Carried as the reason rather than a bool because the
+    /// disabled tooltip is nothing but the reason.
+    pub older_candles: crate::tab::OlderCandles,
     /// What the active source's backend can do.
     pub capabilities: FeedCapabilities,
-    /// Whether the L2 depth map is shown. Capture runs regardless.
-    pub heatmap_on: bool,
-    /// Whether the aggression layer is on.
-    pub bubbles_on: bool,
-    /// Whether the live strip is shown.
-    pub live_strip_on: bool,
-    /// Whether the candle footprint is drawn.
-    pub footprint_on: bool,
+    /// The LAYERS group's lamps, in [`LayerToggle::ALL`] order: whether
+    /// each layer is drawn, and what blocks it where something does. Both
+    /// come from `ChartPane::layer_blocked` / `layer_visible` through
+    /// [`crate::tab::Tab::layer_toggle_state`], which the semantic scene reads
+    /// too — so a button cannot tell the trader one thing and an assistant
+    /// another.
+    pub layers: [LayerToggleState; LayerToggle::COUNT],
     /// Whether the dock (strip included) is shown.
     pub dock_visible: bool,
     /// Whether the appearance dialog is open.
@@ -318,6 +327,13 @@ pub struct IndicatorMenuEntry {
 pub enum ToolbarAction {
     /// Fetch and prepend one page of older trades.
     LoadOlder,
+    /// Fetch and prepend one more span of older venue candles.
+    ///
+    /// The trade twin above and this one are two different records — a page of
+    /// prints and a span of buckets — served by two different venue endpoints
+    /// under two different capabilities. A feed can page one and not the
+    /// other, so they are two actions rather than one with a mode.
+    LoadOlderCandles,
     /// Show or hide the L2 depth map. Display-only: the recorder keeps
     /// running, so reopening the map brings its history back whole.
     SetHeatmap(bool),
@@ -624,9 +640,15 @@ fn param_summary(model: &ToolbarModel) -> String {
 }
 
 /// HISTORY: the `+ older ▾` split button. The page size lives in the caret
-/// menu; the whole group gates on the `history_paging` capability.
+/// menu, and so does the candle reach.
+///
+/// The button gates on `history_paging` — older *trades* — but the caret does
+/// not: a feed can serve candle history without paging its tape (Hyperliquid
+/// is exactly that), and gating the menu on the button's capability would
+/// leave the candle reach behind a control the trader cannot open.
 fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<ToolbarAction>) {
     let paging = model.capabilities.history_paging;
+    let menu = history_menu_reachable(model);
     let load = ui
         .add_enabled(paging, egui::Button::new(format!("{} older", icons::PLUS)))
         .on_hover_text("fetch older trades and prepend them")
@@ -637,22 +659,102 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
     if load.clicked() {
         actions.push(ToolbarAction::LoadOlder);
     }
-    ui.add_enabled_ui(paging, |ui| {
+    ui.add_enabled_ui(menu, |ui| {
         ui.menu_button(icons::CARET_DOWN, |ui| {
-            draw_history_menu(ui, model);
+            draw_history_menu(ui, model, actions);
         });
     });
 }
 
+/// Whether the history menu has anything in it — trade paging, candle reach,
+/// or both.
+///
+/// One owner, called by the bar's caret and by the overflow entry. Written
+/// twice it would drift, and the drift would be a feed that offers the candle
+/// reach on the bar and hides it in the overflow — the exact split the caret's
+/// own comment says it exists to prevent.
+fn history_menu_reachable(model: &ToolbarModel) -> bool {
+    model.capabilities.history_paging || model.capabilities.ohlcv_history
+}
+
 /// The history caret/overflow menu body: page size and the running total.
-fn draw_history_menu(ui: &mut egui::Ui, model: &mut ToolbarModel) {
-    ui.label("page size (trades per load)");
-    ui.add(
-        egui::DragValue::new(model.history_step)
-            .range(500.0..=50_000.0)
-            .speed(100.0),
-    );
-    ui.small(format!("{} trades backfilled so far", model.history_trades));
+fn draw_history_menu(
+    ui: &mut egui::Ui,
+    model: &mut ToolbarModel,
+    actions: &mut Vec<ToolbarAction>,
+) {
+    // The trade half of the menu, behind the trade capability. The caret now
+    // opens for a feed that serves candles without paging its tape, and an
+    // enabled page-size box on such a feed is a control that will never be
+    // read — the same honesty the disabled-reason enum below is about.
+    if model.capabilities.history_paging {
+        ui.label("page size (trades per load)");
+        ui.add(
+            egui::DragValue::new(model.history_step)
+                .range(500.0..=50_000.0)
+                .speed(100.0),
+        );
+        ui.small(format!("{} trades backfilled so far", model.history_trades));
+    }
+    // Candles are the other record, and the other reach. A chart opens on one
+    // week of them (`feed::TIME_HISTORY_SPAN_MS`) precisely so it opens fast;
+    // this is where the trader who wants the quarter asks for it, a week at a
+    // time. It lives in the menu rather than on the bar because it is a
+    // deliberate act on a time chart, not a per-minute one.
+    if model.capabilities.ohlcv_history {
+        ui.separator();
+        // The reach is named from the constant that owns it, never spelled out
+        // beside it: the span was ninety days one release ago, and a sentence
+        // carrying its own copy of that number starts lying the day it moves.
+        let reach = fmt_history_span(crate::feed::TIME_HISTORY_SPAN_MS);
+        let older = ui
+            .add_enabled(
+                model.older_candles.is_available(),
+                egui::Button::new(format!("{} older candles", icons::PLUS)),
+            )
+            .on_hover_text(format!(
+                "fetch another {reach} of venue candles and prepend it"
+            ));
+        // The reason, not a list of reasons: see `Tab::older_candles`.
+        let older = match model.older_candles.why_not() {
+            Some(reason) => older.on_disabled_hover_text(reason),
+            None => older,
+        };
+        if older.clicked() {
+            actions.push(ToolbarAction::LoadOlderCandles);
+            ui.close_menu();
+        }
+        // "1-minute", said out loud: the base is always at
+        // `OHLCV_BASE_INTERVAL_MS` while the pane folds it to whatever it
+        // shows, so a 1-hour chart holding a week would otherwise read
+        // "10 080 venue candles held" beside 168 drawn bars.
+        ui.small(format!(
+            "{} 1-minute venue candles held",
+            model.history_candles
+        ));
+    }
+}
+
+/// A candle-history span in the words the menu uses: whole weeks, else days,
+/// else hours. Rendered from the constant so the control and the request can
+/// never disagree about how far one press reaches.
+fn fmt_history_span(span_ms: i64) -> String {
+    const HOUR_MS: i64 = 60 * 60 * 1_000;
+    const DAY_MS: i64 = 24 * HOUR_MS;
+    const WEEK_MS: i64 = 7 * DAY_MS;
+    let plural = |count: i64, unit: &str| {
+        if count == 1 {
+            unit.to_owned()
+        } else {
+            format!("{count} {unit}s")
+        }
+    };
+    match span_ms {
+        span if span >= WEEK_MS && span % WEEK_MS == 0 => plural(span / WEEK_MS, "week"),
+        span if span >= DAY_MS => plural(span / DAY_MS, "day"),
+        span if span >= HOUR_MS => plural(span / HOUR_MS, "hour"),
+        span => format!("{} ms", span.max(0)),
+    }
 }
 
 /// TRADE: the simulated market entries and, while a position is open, its
@@ -709,6 +811,131 @@ fn draw_trade(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolbar
     }
 }
 
+/// One LAYERS lamp this frame: drawn or not, and what blocks it if anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayerToggleState {
+    pub on: bool,
+    pub blocked: Option<LayerBlock>,
+}
+
+/// The visual layers the LAYERS group toggles, declared once.
+///
+/// The toolbar draws from this list and the semantic scene projects from it,
+/// so a layer cannot wear a button the trader sees and be missing from what an
+/// operator can read, nor the reverse. A hand-kept list beside this one is the
+/// drift this type exists to prevent.
+///
+/// The INDICATORS menu is deliberately not a member: it opens a menu rather
+/// than toggling a layer, and folding it in would give the group two shapes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayerToggle {
+    Bubbles,
+    Heatmap,
+    Footprint,
+    LiveStrip,
+}
+
+impl LayerToggle {
+    /// Every toggle in *call* order, which the right-to-left layout turns
+    /// into right-to-left screen order: the trader reads them the other way
+    /// round. Anything that wants reading order reverses this — the scene
+    /// does, and says so — because the draw order is what the layout needs
+    /// and reordering here would move the buttons under the trader's hand.
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::Bubbles,
+        Self::Heatmap,
+        Self::Footprint,
+        Self::LiveStrip,
+    ];
+
+    /// How many toggles the group has. Named so the model's array, the list
+    /// and any fixture widen together when a layer earns a button.
+    pub const COUNT: usize = 4;
+
+    /// The canvas layer this button switches.
+    ///
+    /// A toolbar button is a shortcut into the pane's own layer menu, never a
+    /// second switch beside it: the identifier, the label and the state all
+    /// come from [`ChartLayer`], which already resolves each layer to the one
+    /// field that owns it. Restating any of them here is how a button and a
+    /// menu start disagreeing about a pixel.
+    #[must_use]
+    pub(crate) fn layer(self) -> ChartLayer {
+        match self {
+            Self::Bubbles => ChartLayer::Bubbles,
+            Self::Heatmap => ChartLayer::Heatmap,
+            Self::Footprint => ChartLayer::Footprint,
+            Self::LiveStrip => ChartLayer::LiveStrip,
+        }
+    }
+
+    /// The glyph. Where a dock tab configures the layer it lends its own, so
+    /// the toggle and the panel behind it cannot wear two different marks.
+    #[must_use]
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Bubbles => DockTab::Bubbles.icon(),
+            Self::Heatmap => DockTab::L2.icon(),
+            Self::Footprint => LAYER_FOOTPRINT_ICON,
+            Self::LiveStrip => LAYER_STRIP_ICON,
+        }
+    }
+
+    #[must_use]
+    fn accent(self) -> egui::Color32 {
+        match self {
+            Self::Bubbles => theme::BUY,
+            Self::Heatmap | Self::LiveStrip => theme::ACCENT,
+            Self::Footprint => theme::POC,
+        }
+    }
+
+    #[must_use]
+    fn hover_text(self) -> &'static str {
+        match self {
+            Self::Bubbles => {
+                "aggression bubbles: confirmed executions from the trade stream — \
+                 right-click for settings"
+            }
+            Self::Heatmap => {
+                "L2 heatmap: show the recorded depth map — recording never stops, so hiding it \
+                 loses nothing. Right-click for settings"
+            }
+            Self::Footprint => {
+                "candle footprint: the buy/sell split per price inside each bar — detail follows \
+                 the zoom. Right-click for style and thresholds"
+            }
+            Self::LiveStrip => {
+                "live strip: the book's resting depth and the forming bar's aggression, \
+                 beside the price axis — right-click for settings"
+            }
+        }
+    }
+
+    #[must_use]
+    fn toggle_action(self, on: bool) -> ToolbarAction {
+        match self {
+            Self::Bubbles => ToolbarAction::SetBubbles(on),
+            Self::Heatmap => ToolbarAction::SetHeatmap(on),
+            Self::Footprint => ToolbarAction::SetFootprint(on),
+            Self::LiveStrip => ToolbarAction::SetLiveStrip(on),
+        }
+    }
+
+    /// Where a right-click goes: the panel that configures the layer. Looking
+    /// is not enabling, so this never toggles on the way.
+    #[must_use]
+    fn settings_action(self) -> ToolbarAction {
+        match self {
+            Self::Bubbles => ToolbarAction::OpenDockTab(DockTab::Bubbles),
+            // The strip reads the same book the depth map draws, so the same
+            // tab configures both.
+            Self::Heatmap | Self::LiveStrip => ToolbarAction::OpenDockTab(DockTab::L2),
+            Self::Footprint => ToolbarAction::OpenFootprintSettings,
+        }
+    }
+}
+
 /// LAYERS: one icon toggle per visual layer. Left-click toggles the layer;
 /// right-click opens its dock tab — looking is not enabling. Drawn inside the
 /// right-to-left layout, so the call order is the reverse of what is seen.
@@ -723,85 +950,25 @@ fn draw_trade(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolbar
 fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
     draw_indicators_menu(ui, model, actions);
 
-    // The glyph comes from the dock tab that configures the layer, so the
-    // toggle and the panel behind it can never wear two different marks.
-    let bubbles = IconButton::new(DockTab::Bubbles.icon(), TOOLBAR_ICON)
-        .active(model.bubbles_on)
-        .accent(theme::BUY)
-        // A bubble's whole message is its size. Where every print is one
-        // synthetic unit, the layer draws one identical circle per tick and
-        // says nothing — so it is withheld rather than drawn empty of meaning.
-        .enabled(model.capabilities.traded_volume)
-        .hover_text(
-            "aggression bubbles: confirmed executions from the trade stream — \
-             right-click for settings",
-        )
-        .disabled_explanation("this source quotes prices but prints no traded volume")
-        .show(ui);
-    if bubbles.clicked() {
-        actions.push(ToolbarAction::SetBubbles(!model.bubbles_on));
-    }
-    if bubbles.secondary_clicked() {
-        actions.push(ToolbarAction::OpenDockTab(DockTab::Bubbles));
-    }
-
-    let heatmap = IconButton::new(DockTab::L2.icon(), TOOLBAR_ICON)
-        .active(model.heatmap_on)
-        .accent(theme::ACCENT)
-        .enabled(model.capabilities.book_capture)
-        .hover_text(
-            "L2 heatmap: show the recorded depth map — recording never stops, so hiding it \
-             loses nothing. Right-click for settings",
-        )
-        .disabled_explanation("order-book capture is not available for this source")
-        .show(ui);
-    if heatmap.clicked() {
-        actions.push(ToolbarAction::SetHeatmap(!model.heatmap_on));
-    }
-    if heatmap.secondary_clicked() {
-        actions.push(ToolbarAction::OpenDockTab(DockTab::L2));
-    }
-
-    // Never capability-gated: the aggression histogram runs on the trade
-    // stream every source provides (replay included), and without book data
-    // the strip honestly degrades to it.
-    // The footprint had lived only in the pane's right-click layer menu — a
-    // representation of the candle itself, reachable only by a gesture two
-    // levels deep, while three lesser layers each had a button. Here it
-    // speaks the group's own language: left-click toggles, right-click opens
-    // its settings.
-    let footprint = IconButton::new(LAYER_FOOTPRINT_ICON, TOOLBAR_ICON)
-        .active(model.footprint_on)
-        .accent(theme::POC)
-        // Same gate as the bubbles, and for the same reason: a ladder of
-        // buyer-against-seller quantities cannot be built from a quote stream
-        // that prints no traded volume.
-        .enabled(model.capabilities.traded_volume)
-        .hover_text(
-            "candle footprint: the buy/sell split per price inside each bar — detail follows the zoom. Right-click for style and thresholds",
-        )
-        .disabled_explanation("this source quotes prices but prints no traded volume")
-        .show(ui);
-    if footprint.clicked() {
-        actions.push(ToolbarAction::SetFootprint(!model.footprint_on));
-    }
-    if footprint.secondary_clicked() {
-        actions.push(ToolbarAction::OpenFootprintSettings);
-    }
-
-    let strip = IconButton::new(LAYER_STRIP_ICON, TOOLBAR_ICON)
-        .active(model.live_strip_on)
-        .accent(theme::ACCENT)
-        .hover_text(
-            "live strip: the book's resting depth and the forming bar's aggression, \
-             beside the price axis — right-click for settings",
-        )
-        .show(ui);
-    if strip.clicked() {
-        actions.push(ToolbarAction::SetLiveStrip(!model.live_strip_on));
-    }
-    if strip.secondary_clicked() {
-        actions.push(ToolbarAction::OpenDockTab(DockTab::L2));
+    // Zipped rather than indexed: the array is filled in `ALL` order, so
+    // walking the two together is what makes that the only ordering. A second
+    // hand-written position map beside `ALL` is how a lamp ends up reporting
+    // the layer next to it.
+    for (layer, state) in LayerToggle::ALL.into_iter().zip(model.layers) {
+        let on = state.on;
+        let response = IconButton::new(layer.icon(), TOOLBAR_ICON)
+            .active(on)
+            .accent(layer.accent())
+            .enabled(state.blocked.is_none())
+            .hover_text(layer.hover_text())
+            .disabled_explanation(state.blocked.map_or("", |block| block.explanation))
+            .show(ui);
+        if response.clicked() {
+            actions.push(layer.toggle_action(!on));
+        }
+        if response.secondary_clicked() {
+            actions.push(layer.settings_action());
+        }
     }
 }
 
@@ -942,8 +1109,8 @@ fn draw_overflow(
                 actions.push(ToolbarAction::LoadOlder);
                 ui.close_menu();
             }
-            if paging {
-                draw_history_menu(ui, model);
+            if history_menu_reachable(model) {
+                draw_history_menu(ui, model, actions);
             }
         }
         if !plan.trade_inline {
@@ -985,6 +1152,12 @@ fn draw_overflow(
 
 #[cfg(test)]
 mod tests {
+    /// Unblocked lamps from their on/off flags, in [`LayerToggle::ALL`]
+    /// order. A fixture that wants a blocked lamp builds the array itself.
+    fn layer_states(on: [bool; LayerToggle::COUNT]) -> [LayerToggleState; LayerToggle::COUNT] {
+        on.map(|on| LayerToggleState { on, blocked: None })
+    }
+
     use super::*;
 
     /// The flat TRADE pair's width — the old `W_TRADE` constant, kept as the
@@ -1188,6 +1361,8 @@ mod tests {
                         imbalance_unit: &mut imbalance_unit,
                         history_step: &mut history_step,
                         history_trades: 1_000,
+                        history_candles: 0,
+                        older_candles: crate::tab::OlderCandles::NotArrivedYet,
                         capabilities: FeedCapabilities {
                             book_capture: !replaying,
                             history_paging: !replaying,
@@ -1195,10 +1370,7 @@ mod tests {
                             ohlcv_history: !replaying,
                             ohlcv_generation: 0,
                         },
-                        heatmap_on: false,
-                        bubbles_on: true,
-                        footprint_on: false,
-                        live_strip_on: false,
+                        layers: layer_states([true, false, false, false]),
                         dock_visible: true,
                         appearance_open: false,
                         paper: PaperTradeModel::flat(true),
@@ -1276,6 +1448,8 @@ mod tests {
                     imbalance_unit: &mut imbalance_unit,
                     history_step: &mut history_step,
                     history_trades: 1_000,
+                    history_candles: 0,
+                    older_candles: crate::tab::OlderCandles::NotArrivedYet,
                     capabilities: FeedCapabilities {
                         book_capture: true,
                         history_paging: true,
@@ -1283,10 +1457,7 @@ mod tests {
                         ohlcv_history: true,
                         ohlcv_generation: 0,
                     },
-                    heatmap_on: false,
-                    bubbles_on: false,
-                    footprint_on: false,
-                    live_strip_on: false,
+                    layers: layer_states([false, false, false, false]),
                     dock_visible: true,
                     appearance_open: false,
                     paper: PaperTradeModel::flat(true),
@@ -1351,6 +1522,8 @@ mod tests {
                         imbalance_unit: &mut imbalance_unit,
                         history_step: &mut history_step,
                         history_trades: 200_000,
+                        history_candles: 0,
+                        older_candles: crate::tab::OlderCandles::NotArrivedYet,
                         capabilities: FeedCapabilities {
                             book_capture: false,
                             history_paging: false,
@@ -1358,10 +1531,7 @@ mod tests {
                             ohlcv_history: false,
                             ohlcv_generation: 0,
                         },
-                        heatmap_on: false,
-                        bubbles_on: false,
-                        footprint_on: false,
-                        live_strip_on: false,
+                        layers: layer_states([false, false, false, false]),
                         dock_visible: true,
                         appearance_open: false,
                         // Not yet ready: the TRADE pair must lay out in its
@@ -1421,6 +1591,8 @@ mod tests {
                     imbalance_unit: &mut imbalance_unit,
                     history_step: &mut history_step,
                     history_trades: 1_000,
+                    history_candles: 0,
+                    older_candles: crate::tab::OlderCandles::NotArrivedYet,
                     capabilities: FeedCapabilities {
                         book_capture: true,
                         history_paging: true,
@@ -1428,10 +1600,7 @@ mod tests {
                         ohlcv_history: true,
                         ohlcv_generation: 0,
                     },
-                    heatmap_on: false,
-                    bubbles_on: false,
-                    footprint_on: false,
-                    live_strip_on: false,
+                    layers: layer_states([false, false, false, false]),
                     dock_visible: true,
                     appearance_open: false,
                     paper: PaperTradeModel {

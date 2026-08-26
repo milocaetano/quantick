@@ -54,6 +54,46 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A request as it arrives from a client.\n\nUnknown fields other than the reserved actor names are ignored, as the\ncontract's tolerant-reader rule requires of every wire DTO.",
+  "not": {
+    "anyOf": [
+      {
+        "required": [
+          "actor"
+        ]
+      },
+      {
+        "required": [
+          "actor_context"
+        ]
+      },
+      {
+        "required": [
+          "actor_kind"
+        ]
+      },
+      {
+        "required": [
+          "client_name"
+        ]
+      },
+      {
+        "required": [
+          "connection_id"
+        ]
+      },
+      {
+        "required": [
+          "principal_id"
+        ]
+      },
+      {
+        "required": [
+          "requested_at_unix_ms"
+        ]
+      }
+    ]
+  },
   "properties": {
     "capability_id": {
       "$ref": "#/$defs/CapabilityId"
@@ -85,7 +125,9 @@
     "instance_id": {
       "$ref": "#/$defs/InstanceId"
     },
-    "payload": true,
+    "payload": {
+      "description": "Capability input. Floating-point numbers are rejected: exact decimals\ncross this boundary as strings, so a price never arrives as an f64.\nJSON Schema cannot express that over arbitrary nesting, so the schema\nstates it and `canonical::validate_control_value` enforces it."
+    },
     "protocol_version": {
       "format": "uint32",
       "minimum": 1,

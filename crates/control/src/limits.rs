@@ -74,6 +74,16 @@ pub const CONTROL_UI_BUDGET_US: u64 = 250;
 /// Deterministic admission ceiling even on machines where eight captures fit
 /// inside the time budget. The elapsed-time guard remains authoritative too.
 pub const CONTROL_UI_MAX_REQUESTS_PER_FRAME: usize = 4;
+/// Controls one semantic-scene capture may carry.
+///
+/// Every registry behind the scene is fixed-size — the layer toggles, the
+/// drawing tools, the dock's tabs — so the only unbounded contributor is the
+/// trader's own tab strip. Set an order of magnitude above the roughly forty
+/// controls a full window projects today, high enough that no real workspace
+/// meets it and low enough that a runaway one cannot build an unbounded
+/// payload on the application thread. A capture that meets it says so rather
+/// than truncating in silence.
+pub const CONTROL_SCENE_MAX_CONTROLS: usize = 512;
 pub const CONTROL_EVENT_JOURNAL_CAPACITY: usize = 8_192;
 pub const CONTROL_EVENT_MAX_BYTES: usize = 64 * 1024;
 pub const CONTROL_EVENT_JOURNAL_MAX_BYTES: usize = 32 * 1024 * 1024;

@@ -24,7 +24,8 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::chart::PriceScale;
-use crate::footprint_config::{FootprintStyle, StylePlate};
+use crate::footprint_config::{CandleTreatment, FootprintStyle, StylePlate};
+use crate::style::CandleStyle;
 use crate::theme;
 
 /// How much detail the current zoom supports. Ordered: more detail is greater.
@@ -233,6 +234,53 @@ fn canvas_backdrop() -> egui::Color32 {
 pub fn candle_body_fade(candle_width: f32) -> f32 {
     let span = ladder_detailed_min_width() - PROFILE_MIN_WIDTH;
     (1.0 - (candle_width - PROFILE_MIN_WIDTH) / span).clamp(0.0, 1.0)
+}
+
+/// What a *painting* footprint layer does to the candles under it: the lane it
+/// takes at the left of each slot, and the candle style it leaves behind
+/// (`None` meaning "the chart's own, untouched").
+///
+/// One function because the two answers are one decision, and because the
+/// decision has exactly one input that is easy to get wrong. `paints` is
+/// whether the layer will actually *draw* this frame — not whether the
+/// ladders are accumulating. The two diverge: a fixed-range volume profile
+/// folds the same ladders with the layer hidden, and for a while that switch
+/// was what reached here, so dropping a profile on a chart moved every candle
+/// into a sidebar lane and faded its body to an outline for a layer that drew
+/// nothing. The layer that does not paint does not dress.
+#[must_use]
+pub fn candle_dressing(
+    paints: bool,
+    treatment: CandleTreatment,
+    candle_width: f32,
+    base: CandleStyle,
+) -> (f32, Option<CandleStyle>) {
+    if !paints {
+        return (0.0, None);
+    }
+    match treatment {
+        // The candle cedes its interior to the ladder as the zoom crosses
+        // into detail: the body fill fades out and the outline steps in — the
+        // reference charts' outline-box candles.
+        CandleTreatment::Fade => {
+            let body = candle_body_fade(candle_width);
+            let dressed = (body < 1.0).then(|| {
+                let mut faded = base;
+                faded.fill_opacity *= body;
+                faded.outline_opacity = faded.outline_opacity.max(1.0 - body);
+                faded
+            });
+            (treatment.content_inset(), dressed)
+        }
+        // Beside the box, the candle is a solid sliver again: nothing is
+        // behind anything, so there is nothing to fade *for*, and a 3 px
+        // outline-only bar would read as a scratch.
+        CandleTreatment::Sidebar => {
+            let mut sidebar = base;
+            sidebar.fill_opacity = 1.0;
+            (treatment.content_inset(), Some(sidebar))
+        }
+    }
 }
 
 /// The smallest detail level — and the row multiple — with hysteresis
@@ -3165,5 +3213,61 @@ mod tests {
         let flat = builder.close().unwrap();
         assert_eq!(bar_delta(&flat), Decimal::ZERO);
         assert_eq!(fmt_delta(bar_delta(&flat)), None, "no winner, no chip");
+    }
+
+    /// A layer that does not paint does not dress. This is the whole reason
+    /// [`candle_dressing`] takes `paints` instead of reading the switch that
+    /// turns the ladders on: a fixed-range volume profile turns those on
+    /// while the layer stays hidden, and for a while that was what reached
+    /// here — so dropping a profile on a chart moved every candle into the
+    /// sidebar lane and faded its body to an outline, under nothing.
+    #[test]
+    fn a_hidden_footprint_leaves_the_candles_exactly_as_they_were() {
+        let base = crate::style::ChartStyle::default().candles;
+        for treatment in [CandleTreatment::Fade, CandleTreatment::Sidebar] {
+            // Wide enough that `Fade` would really fade and `Sidebar` would
+            // really claim its lane, so this cannot pass by accident.
+            for candle_width in [4.0_f32, 40.0, 400.0] {
+                assert_eq!(
+                    candle_dressing(false, treatment, candle_width, base),
+                    (0.0, None),
+                    "{treatment:?} at {candle_width} px, layer hidden"
+                );
+            }
+        }
+    }
+
+    /// And the other half of the same law: with the layer painting, the
+    /// dressing is still there. A fix that simply stopped dressing candles
+    /// would pass the test above and break the footprint.
+    #[test]
+    fn a_painting_footprint_still_dresses_the_candles() {
+        let base = crate::style::ChartStyle::default().candles;
+        let wide = ladder_detailed_min_width().max(PROFILE_MIN_WIDTH) + 1.0;
+
+        let (lane, dressed) = candle_dressing(true, CandleTreatment::Sidebar, wide, base);
+        assert!(lane > 0.0, "the sidebar candle keeps a lane of its own");
+        assert_eq!(
+            dressed.expect("a sidebar candle is restyled").fill_opacity,
+            1.0,
+            "beside the box the candle is solid again"
+        );
+
+        // The fade runs from Profile (untouched) to Detailed (outline only),
+        // so it is halfway across that span that the body is really fading.
+        let halfway = f32::midpoint(PROFILE_MIN_WIDTH, ladder_detailed_min_width());
+        let (lane, dressed) = candle_dressing(true, CandleTreatment::Fade, halfway, base);
+        assert_eq!(lane, 0.0, "a fading candle stays where it was");
+        let faded = dressed.expect("the body fades once the zoom crosses Profile");
+        assert!(faded.fill_opacity < base.fill_opacity);
+        assert!(faded.outline_opacity >= base.outline_opacity);
+
+        // At the Profile floor itself nothing has faded yet, and "nothing to
+        // do" is reported as the chart's own style rather than a copy of it.
+        assert_eq!(
+            candle_dressing(true, CandleTreatment::Fade, PROFILE_MIN_WIDTH, base),
+            (0.0, None),
+            "the body is whole until the zoom crosses Profile"
+        );
     }
 }

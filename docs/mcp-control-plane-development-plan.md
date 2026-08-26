@@ -1,7 +1,8 @@
 # Quantick control plane and MCP development plan
 
-**Status:** Accepted for phased implementation; PR 0 and PR 1 merged, PR 2 in
-review, and PR 3 implemented pending architecture review
+**Status:** Accepted for phased implementation; PR 0 and PR 1 merged, PR 2–5b
+implemented and landing on `main` together as one stack. Progress and remaining
+work are tracked in [control-plane/roadmap.md](control-plane/roadmap.md).
 
 **Date:** 2026-08-19
 
@@ -1249,6 +1250,10 @@ merges before PR 4; the remaining modules merge before PR 5c closes the evidence
 acceptance. Once the action registry is stable, indicator, drawing, replay, and
 workspace actions can be developed in parallel when they do not share files.
 
+The semantic scene did not merge before PR 4 as the diagram above wants: PR 4
+shipped without `quantick_get_scene`, and the tool lands with the scene module
+(roadmap 5.2). The rest of the order is unchanged.
+
 The ordering inside PR 5 is the one change worth defending. 5a comes first
 because the event cursor is what the pointing channel is built on, and pointing
 is the capability that makes every later conversation specific instead of
@@ -1441,19 +1446,15 @@ ADR, and threat model:
 
 ## 17. Immediate next action
 
-PR 0 now contains the capability inventory, local transport ADR, observer
-threat model, contract conventions and limits, tool-surface decision, trade
-annotation owner, deterministic control-trace decision, and Codex and Claude
-setup flows.
+PR 0 and PR 1 are merged; PR 2 through PR 5a are open as one stack. The
+current next action, the merge order of that stack, and the docking points of
+the remaining MVP work are kept in
+[control-plane/roadmap.md](control-plane/roadmap.md), which this section no
+longer duplicates.
 
-1. Validate those documents, complete the architecture review, and merge PR 0.
-2. Create `feat/control-contract` in its own worktree.
-3. Implement only `quantick-control`, the fake host and client, and their tests.
-4. Run all four repository checks and the architecture review.
-5. Merge the contract before changing the application.
-
-This sequence establishes a small, testable boundary before touching the large
-`QuantickApp` state. It also keeps MCP SDK decisions out of domain code.
+The sequence PR 0 → PR 1 → application was chosen to establish a small,
+testable boundary before touching the large `QuantickApp` state, and to keep
+MCP SDK decisions out of domain code. That rationale stands.
 
 ## 18. MVP definition of done
 
@@ -1481,6 +1482,9 @@ The MVP is complete when:
 
 ## 19. References
 
+- [Control-plane roadmap](control-plane/roadmap.md): where each plan item
+  stands, the merge order of the open stack, carried-forward gaps, and the
+  docking points and acceptance criteria of the remaining MVP work.
 - [PR 0 control-plane contract](control-plane/README.md): Normative decisions,
   capability inventory, transport ADR, and observer threat model.
 - [`CLAUDE.md`](../CLAUDE.md): Architecture, determinism, dependency direction,

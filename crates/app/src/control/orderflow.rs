@@ -39,9 +39,11 @@ use crate::{
 };
 
 use super::{
-    interaction::AvailabilitySnapshot,
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
-    types::{PaneSideDto, canonical_decimal, canonical_f32, wire_usize},
+    types::{
+        AvailabilitySnapshot, PaneSideDto, available, canonical_decimal, canonical_f32,
+        unavailable, wire_usize,
+    },
 };
 
 pub(crate) const TAPE_SCOPE_ID: &str = "orderflow.tape";
@@ -629,9 +631,9 @@ fn level(value: BookLevel) -> BookLevelSnapshot {
 /// read as "the venue is quoting nothing".
 fn engine_availability(pane: &ChartPane) -> AvailabilitySnapshot {
     if pane.orderflow.is_some() {
-        AvailabilitySnapshot::available()
+        available()
     } else {
-        AvailabilitySnapshot::unavailable(NO_ENGINE)
+        unavailable(NO_ENGINE)
     }
 }
 

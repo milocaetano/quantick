@@ -59,6 +59,9 @@ pub fn spawn(symbol: &str) -> FeedHandle {
         // Every aggTrade is an execution carrying its real size, and the venue
         // answers the same for every symbol it lists — nothing to narrow later.
         capabilities: super::fixed_capabilities(ProviderKind::Binance.capabilities()),
+        // A web-socket venue stamps a trade and quantick reads it: there is no
+        // hop between those two to attribute a delay to.
+        latency: super::unsplit_latency(),
         commands: cmd_tx,
         replay: None,
     }
@@ -112,8 +115,9 @@ async fn feed_task(
     let snapshot_limit = initial_book_depth();
     let mut book_capture: Option<BookCaptureTask> = None;
     let mut ever_connected = false;
-    // Candle history runs off this loop, not inside it. Ninety days is ~130
-    // sequential pages — five seconds on a good day, far longer against a venue
+    // Candle history runs off this loop, not inside it. A week is ~11
+    // sequential pages and a trader paging back through a quarter asks for
+    // thirteen such runs — seconds on a good day, far longer against a venue
     // that is throttling — and awaiting that in a command arm stops `live_rx`
     // from being polled for the duration: the trade channel fills, the
     // websocket read loop behind it stalls, and pongs stop going out. The task
@@ -175,7 +179,11 @@ async fn feed_task(
                             break; // UI gone
                         }
                     }
-                    Some(FeedCommand::FetchOhlcv { span_ms, slice_ms }) => {
+                    Some(FeedCommand::FetchOhlcv {
+                        span_ms,
+                        slice_ms,
+                        before_ms,
+                    }) => {
                         if ohlcv_task.as_ref().is_some_and(|task| !task.is_finished()) {
                             // One fetch at a time: the venue's rate budget is
                             // shared, and the in-flight one already answers.
@@ -185,15 +193,33 @@ async fn feed_task(
                                 event_code = "BINANCE_OHLCV_ALREADY_RUNNING",
                                 symbol,
                                 requested_span_ms = span_ms,
-                                action = "ignore_duplicate",
-                                "a candle fetch is already in flight; the running one will answer"
+                                requested_before_ms = before_ms.unwrap_or(0),
+                                action = "answer_empty_and_let_the_running_one_finish",
+                                "a candle fetch is already in flight; this one is refused, not queued"
                             );
+                            // Refused, but *answered*. The caller marked itself
+                            // pending and put its spinner up before this command
+                            // left, so a silent drop leaves that spinner turning
+                            // for the rest of the session and the reach-back
+                            // button disabled behind it — the same reason
+                            // `load_older` never returns silence either.
+                            // `Refused` rather than a short answer: nothing was
+                            // fetched because nobody looked, which is not a
+                            // statement about the venue's record.
+                            if ohlcv_tx
+                                .send((Vec::new(), crate::feed::OhlcvSlice::Refused))
+                                .await
+                                .is_err()
+                            {
+                                break; // UI gone
+                            }
                         } else {
                             ohlcv_task = Some(spawn_ohlcv(
                                 klines.clone(),
                                 symbol.clone(),
                                 span_ms,
                                 slice_ms,
+                                before_ms,
                                 ohlcv_tx.clone(),
                             ));
                         }
@@ -397,10 +423,16 @@ fn spawn_ohlcv(
     symbol: String,
     span_ms: i64,
     slice_ms: Option<i64>,
+    before_ms: Option<i64>,
     reply: mpsc::Sender<(Vec<quantick_engine::Bar>, crate::feed::OhlcvSlice)>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let now_ms = crate::metrics::wall_clock_ms();
+        // The right-hand edge of everything this request covers: the live edge
+        // for the opening fetch, and the millisecond before the oldest candle
+        // held for a *load older*. The plan needs no other change to reach
+        // further back — it always cut a span ending at a caller-supplied
+        // instant, and the wall clock was only ever the instant that mattered.
+        let now_ms = before_ms.unwrap_or_else(crate::metrics::wall_clock_ms);
         let windows = crate::feed::ohlcv_plan::plan(now_ms, span_ms, slice_ms);
         info!(
             target: "quantick::app",

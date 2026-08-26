@@ -20,6 +20,7 @@ mod notify;
 mod orderflow;
 pub(crate) use interaction::drawing_band_name;
 mod registry;
+mod scene;
 #[cfg(test)]
 pub(crate) mod schema_catalog;
 mod script;
@@ -71,5 +72,6 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     interaction::register(&mut registry)?;
     orderflow::register(&mut registry)?;
     session::register(&mut registry)?;
+    scene::register(&mut registry)?;
     Ok(registry)
 }

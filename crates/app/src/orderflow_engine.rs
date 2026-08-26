@@ -471,6 +471,14 @@ pub struct BookEngine {
     generation_floor: u64,
     latest_generation: Option<u64>,
     last_snapshot_observed_ms: Option<i64>,
+    /// The instrument tick a feed stated, when one ever did. A tape-derived
+    /// grid is a fallback for a chart that was never told, so it defers to
+    /// this and never replaces it.
+    venue_price_step: Option<Decimal>,
+    /// The last price the book was seen around, for sizing a bucket when no
+    /// tick is known. Kept because the tape can name a grid long before, or
+    /// entirely without, a depth snapshot.
+    reference_price: Option<f64>,
     /// Updated only after symbol/generation validation and history acceptance.
     latest_arrival_latency_ms: Option<i64>,
     depth_updates: u64,
@@ -516,6 +524,8 @@ impl BookEngine {
             history: LiquidityHistory::new(config.clone()),
             config,
             auto_base: true,
+            venue_price_step: None,
+            reference_price: None,
             status: CaptureStatus::Disabled,
             generation_floor: 0,
             latest_generation: None,
@@ -573,7 +583,13 @@ impl BookEngine {
         self.symbol = symbol.into();
         self.config.enabled = false;
         // A new market has a new price scale; re-derive the capture bucket.
+        // That means forgetting what the *previous* one said about itself: a
+        // tick the old venue stated would otherwise keep the new chart from
+        // ever sizing itself, and the old instrument's price would size the new
+        // one's rows.
         self.auto_base = true;
+        self.venue_price_step = None;
+        self.reference_price = None;
         self.history = LiquidityHistory::new(self.config.clone());
         self.status = CaptureStatus::Disabled;
         self.generation_floor = 0;
@@ -830,6 +846,18 @@ impl BookEngine {
             } => {
                 self.invalidate_projection();
                 self.last_snapshot_observed_ms = Some(observed_at_ms);
+                // Remember both, so the tape's own grid can size the bucket
+                // later without a second snapshot, and so a venue that did
+                // state a tick keeps precedence over one derived from prints.
+                if let Some(step) = price_step.filter(|step| *step > Decimal::ZERO) {
+                    self.venue_price_step = Some(step);
+                }
+                // Read once: the helper walks every level on both sides, and a
+                // full Binance snapshot is five thousand a side. Keeping the
+                // last usable price also means a snapshot that arrives with no
+                // levels at all sizes from the one before it rather than from
+                // nothing.
+                self.reference_price = snapshot_reference_price(&snapshot).or(self.reference_price);
                 // Size the capture bucket before the first snapshot of a
                 // capture: from the instrument's tick size when the feed states
                 // one, otherwise from the asset price so a dense book (BTC etc.)
@@ -837,8 +865,7 @@ impl BookEngine {
                 // by hand.
                 if self.auto_base
                     && matches!(self.history.status(), HistoryStatus::Empty)
-                    && let Some((base, source)) =
-                        capture_base(price_step, snapshot_reference_price(&snapshot))
+                    && let Some((base, source)) = capture_base(price_step, self.reference_price)
                 {
                     self.apply_auto_base(base, source);
                 }
@@ -1149,6 +1176,49 @@ impl BookEngine {
             Err(error) => {
                 self.log_history_error("auto_base", self.latest_generation.unwrap_or(0), &error);
             }
+        }
+    }
+
+    /// Size the capture bucket from the price grid the **tape** prints on.
+    ///
+    /// `capture_base` already says the instrument's tick is the finest bucket
+    /// that can ever hold liquidity. The trouble is where that number comes
+    /// from: a feed states it only inside a depth snapshot, so a market replay
+    /// — which reports no depth at all — and any feed without L2 leave the
+    /// chart on the fine default, drawing a ladder of which most rows can
+    /// never hold a print. The tape knows the grid regardless, because every
+    /// print lands on it.
+    ///
+    /// A venue-stated step always wins: this is the fallback for a chart that
+    /// was never told, never an override of one that was. It is also skipped
+    /// once the trader sets the base resolution by hand, like every other
+    /// automatic sizing here.
+    ///
+    /// Goes through `capture_base`, so the ladder and the liquidity map are
+    /// sized by one rule rather than by two that have to be kept in step.
+    pub fn size_from_tape(&mut self, step: Decimal) {
+        // `apply_auto_base` resizes by *discarding* history — the bucket width
+        // is the grid every run and aggression was recorded against, and there
+        // is no reindexing them. Its own doc says "while history is still empty
+        // (so no data is discarded)" and the snapshot caller honours that; this
+        // has to as well. The cost of not doing so is not a wrong number: the
+        // grid only ever narrows, so one later print would resize mid-session,
+        // clear the run store, and leave every delta after it unsynchronized —
+        // a heat map blank until the venue happens to resync. The chart this
+        // exists for has no depth at all, so its history never leaves `Empty`
+        // and the gate costs it nothing.
+        if !self.auto_base
+            || self.venue_price_step.is_some()
+            || !matches!(self.history.status(), HistoryStatus::Empty)
+        {
+            return;
+        }
+        // `capture_base`'s own labels both name the instrument as the source.
+        // That is true where a feed stated the tick and a lie here, where the
+        // number was inferred from prints — and this log line is the only place
+        // the provenance is recorded.
+        if let Some((base, _)) = capture_base(Some(step), self.reference_price) {
+            self.apply_auto_base(base, "tape_price_grid");
         }
     }
 
@@ -1615,6 +1685,76 @@ mod tests {
         let ladder = engine.published().ladder.expect("ladder");
         assert_eq!(ladder.bids.len(), 4);
         assert_eq!(ladder.asks.len(), 4);
+    }
+
+    #[test]
+    fn a_tape_grid_sizes_the_bucket_when_no_feed_ever_stated_a_tick() {
+        // The case this exists for: a market replay reports no depth at all,
+        // so nothing ever states an instrument tick and the bucket would stay
+        // on the fine default — rows most of which no print can land in.
+        let mut engine = BookEngine::new("WINV26");
+        let default_base = engine.config.price_grouping;
+        engine.size_from_tape(Decimal::from(5));
+        assert_ne!(
+            engine.published().base_price_grouping,
+            default_base,
+            "the tape said five and the bucket stayed on the default",
+        );
+        assert_eq!(engine.published().base_price_grouping, Decimal::from(5));
+    }
+
+    #[test]
+    fn a_venue_stated_tick_beats_the_tape_grid() {
+        // This is a fallback for a chart that was never told, never an
+        // override of one that was. A feed that states a tick has said
+        // something the tape can only infer, and it keeps precedence even
+        // when the tape later infers something different.
+        // The fixture snapshot is BTCUSDT's, and a snapshot for another
+        // symbol is refused before it can state anything.
+        let mut engine = BookEngine::new("BTCUSDT");
+        engine.set_enabled(true, 1);
+        let DepthEvent::Snapshot {
+            symbol,
+            generation,
+            observed_at_ms,
+            effective_at_ms,
+            snapshot,
+            ..
+        } = snapshot_event(1)
+        else {
+            unreachable!("the fixture is a snapshot")
+        };
+        engine.handle_depth_event(DepthEvent::Snapshot {
+            symbol,
+            generation,
+            observed_at_ms,
+            effective_at_ms,
+            price_step: Some(Decimal::from(2)),
+            snapshot,
+        });
+        assert_eq!(engine.published().base_price_grouping, Decimal::from(2));
+
+        engine.size_from_tape(Decimal::from(5));
+        assert_eq!(
+            engine.published().base_price_grouping,
+            Decimal::from(2),
+            "the tape overrode a venue that had already stated its tick",
+        );
+    }
+
+    #[test]
+    fn a_hand_picked_bucket_is_not_resized_by_the_tape() {
+        // Every other automatic sizing here steps aside once the trader has
+        // chosen; so does this one.
+        let mut engine = BookEngine::new("WINV26");
+        engine.apply_grouping_now(Decimal::from(2));
+        let chosen = engine.published().base_price_grouping;
+        engine.size_from_tape(Decimal::from(5));
+        assert_eq!(
+            engine.published().base_price_grouping,
+            chosen,
+            "the tape overrode a bucket the trader picked by hand",
+        );
     }
 
     #[test]

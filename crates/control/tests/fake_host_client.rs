@@ -8,6 +8,7 @@ use quantick_control::{
         FakeInvocation, TrustedSession,
     },
     id::{ConnectionId, IdempotencyKey, InstanceId, ModuleId, PermissionId, PrincipalId},
+    limits::CONTROL_IDEMPOTENCY_MAX_ENTRIES,
     wire::{ModuleRevision, RequestEnvelope, ResponseEnvelope, ResponseOutcome, WireU64},
 };
 use serde_json::{Value, json};
@@ -160,4 +161,60 @@ fn successful_result(response: &ResponseEnvelope) -> Value {
         ResponseOutcome::Success { result } => result.clone(),
         ResponseOutcome::Failure { error } => panic!("unexpected error: {error:?}"),
     }
+}
+
+#[test]
+fn the_idempotency_store_reclaims_instead_of_saturating_forever() {
+    let instance = InstanceId::from_bytes([1; 16]);
+    let mut host = FakeHost::new(instance.clone()).unwrap();
+    let connection = host.connect(session());
+    let mut client = client(instance, connection);
+
+    fn fake_revision(response: &ResponseEnvelope) -> u64 {
+        response
+            .module_revisions
+            .iter()
+            .find(|revision| revision.module_id.as_str() == "fake")
+            .map(|revision| revision.revision.get())
+            .expect("the fake module reports a revision")
+    }
+
+    // One distinct key per call, well past the entry cap. Nothing evicted and
+    // nothing expired, so every call past the cap used to return
+    // `control.backpressure` — reported as retryable, and never able to
+    // succeed however long the client waited.
+    let mut revision = 0;
+    let mut last_key = String::new();
+    for index in 0..(CONTROL_IDEMPOTENCY_MAX_ENTRIES + 64) {
+        last_key = format!("set-{index}");
+        let mut set = FakeInvocation::try_new(COUNTER_SET, json!({"value": 5})).unwrap();
+        set.expected_revisions = vec![ModuleRevision {
+            module_id: ModuleId::new("fake").unwrap(),
+            revision: WireU64::new(revision),
+        }];
+        set.idempotency_key = Some(IdempotencyKey::new(&last_key).unwrap());
+        let response = client.invoke(set);
+        assert!(
+            matches!(response.outcome, ResponseOutcome::Success { .. }),
+            "call {index} was refused: {:?}",
+            response.outcome
+        );
+        revision = fake_revision(&response);
+    }
+
+    // Reclaiming must not weaken the guarantee for a key still in the window:
+    // the most recent one replays rather than re-executing.
+    let mut replay = FakeInvocation::try_new(COUNTER_SET, json!({"value": 5})).unwrap();
+    replay.expected_revisions = vec![ModuleRevision {
+        module_id: ModuleId::new("fake").unwrap(),
+        revision: WireU64::new(revision - 1),
+    }];
+    replay.idempotency_key = Some(IdempotencyKey::new(&last_key).unwrap());
+    let replayed = client.invoke(replay);
+    assert!(matches!(replayed.outcome, ResponseOutcome::Success { .. }));
+    assert_eq!(
+        fake_revision(&replayed),
+        revision,
+        "a replay returns the recorded revisions instead of advancing state"
+    );
 }

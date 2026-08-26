@@ -55,16 +55,21 @@ impl McpServer {
     /// A server over one link, advertising the tool list for one profile
     /// ceiling. The ceiling is known when the adapter starts (contract §8).
     pub fn new(link: Box<dyn ControlLink>, profile_ceiling: &str) -> Self {
+        // The ceiling decides what the client is offered and what it is told;
+        // only the two the adapter can request are meaningful, and anything
+        // else is treated as the read-only floor. The tool list is built from
+        // the *same* normalized value as the instructions: an unrecognised
+        // ceiling that produced a destructive, open-world `quantick_invoke`
+        // beside instructions promising read-only would point the guardrail
+        // the wrong way.
+        let profile_ceiling = if profile_ceiling == ANNOTATOR_PROFILE {
+            ANNOTATOR_PROFILE
+        } else {
+            OBSERVER_PROFILE
+        };
         Self {
             link,
-            // The ceiling decides what the client is offered and what it is
-            // told; only the two the adapter can request are meaningful, and
-            // anything else is treated as the read-only floor.
-            profile_ceiling: if profile_ceiling == ANNOTATOR_PROFILE {
-                ANNOTATOR_PROFILE
-            } else {
-                OBSERVER_PROFILE
-            },
+            profile_ceiling,
             tools: tools::tools(profile_ceiling),
             protocol_version: None,
             initialized: false,
@@ -389,9 +394,10 @@ mod tests {
             .iter()
             .map(|tool| tool["name"].as_str().unwrap().to_owned())
             .collect::<Vec<_>>();
-        assert_eq!(names.len(), 8);
+        assert_eq!(names.len(), 9);
         assert_eq!(names[0], tools::DESCRIBE);
         assert!(names.contains(&tools::WAIT_FOR_CHANGE.to_owned()));
+        assert!(names.contains(&tools::GET_SCENE.to_owned()));
         let missing = server
             .handle_line(&request(3, "resources/list", json!({})))
             .unwrap();
@@ -464,6 +470,38 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(unknown["error"]["code"], INVALID_PARAMS);
+    }
+
+    /// Every named read the adapter lists must actually reach its capability.
+    ///
+    /// `quantick_get_scene` was listed and routed while the port's own
+    /// registered-read set had never heard of `scene.read`, so the call came
+    /// back `control.permission_denied` — a refusal that was not true of any
+    /// real instance. Nothing caught it because no test called a scene, only
+    /// looked for its name in the list. This one calls every read there is.
+    #[test]
+    fn every_listed_read_reaches_its_capability_instead_of_being_refused() {
+        let id = InstanceId::from_bytes([7; 16]);
+        for name in [
+            tools::GET_SNAPSHOT,
+            tools::GET_CHART_WINDOW,
+            tools::GET_DIAGNOSTICS,
+            tools::GET_SCENE,
+            tools::READ_EVENTS,
+            tools::WAIT_FOR_CHANGE,
+        ] {
+            let mut link = FakeLink::default();
+            link.add_instance(id.clone());
+            let mut server = initialized(server_over(link));
+            let reply = server
+                .handle_line(&request(2, "tools/call", json!({"name": name})))
+                .unwrap();
+            assert_eq!(
+                reply["result"]["isError"], false,
+                "{name} was refused: {:?}",
+                reply["result"]["structuredContent"]
+            );
+        }
     }
 
     #[test]
