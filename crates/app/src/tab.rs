@@ -883,8 +883,32 @@ impl Tab {
     /// The other three read the tape, and only the flow pane has one.
     fn layer_toggle_side(&self, layer: ChartLayer) -> PaneSide {
         match layer {
-            ChartLayer::Footprint => self.focused_side(),
-            _ => PaneSide::Flow,
+            // Read off the tape, and only the flow pane has one. A time pane
+            // asked about these answers for machinery it does not own, which
+            // is what `ChartPane::layer_blocked` says in words.
+            ChartLayer::TapeChart
+            | ChartLayer::TapeHeatmap
+            | ChartLayer::TapeBubbles
+            | ChartLayer::Heatmap
+            | ChartLayer::Bubbles
+            | ChartLayer::LiveStrip
+            | ChartLayer::LaneMarks
+            | ChartLayer::FlowLegend
+            | ChartLayer::BookStatus
+            | ChartLayer::DepthGaps => PaneSide::Flow,
+            // The pane's own: the footprint folds the pane's retained trades,
+            // the rest are that canvas's chrome and its objects. A lamp lit
+            // from the flow pane while the time pane has focus would report a
+            // layer the trader is not looking at.
+            ChartLayer::Footprint
+            | ChartLayer::Grid
+            | ChartLayer::LastPrice
+            | ChartLayer::BackfillDivider
+            | ChartLayer::SeamDivider
+            | ChartLayer::Crosshair
+            | ChartLayer::PaperTrading
+            | ChartLayer::TradePaint
+            | ChartLayer::Drawings => self.focused_side(),
         }
     }
 

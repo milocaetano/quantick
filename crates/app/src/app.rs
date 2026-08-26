@@ -28402,7 +28402,6 @@ plot(close)
         let regions = scene["covered_regions"].as_array().unwrap();
         assert!(regions.iter().any(|region| region == "toolbar"));
         assert!(regions.iter().any(|region| region == "tool_rail"));
-        assert_eq!(scene["coverage"]["available"], true);
         for control in scene["controls"].as_array().unwrap() {
             assert!(
                 regions.contains(&control["owner"]["kind"]),
@@ -28410,6 +28409,98 @@ plot(close)
                 control["control_id"]
             );
         }
+
+        // And a *declared* region is not a finished one either. The toolbar is
+        // walked as far as its LAYERS group and no further, so a client that
+        // read `coverage` as "this is the toolbar" would conclude the PANELS
+        // button and the whole SOURCE half do not exist. Nothing is truncated
+        // in this fixture and the answer is still not "complete".
+        assert!(
+            !scene["controls"].as_array().unwrap().is_empty(),
+            "the fixture has controls, so this is not vacuously partial"
+        );
+        assert_eq!(scene["coverage"]["available"], false);
+        assert_eq!(
+            scene["coverage"]["reason"],
+            "only_the_named_group_of_each_covered_region_is_enumerated",
+            "and it says which of the two cuts applies"
+        );
+        // The toolbar paints these beside the four the scene names; they are
+        // the proof the region is a walk and not an inventory.
+        let named: Vec<String> = scene_control_ids(&scene);
+        assert!(
+            !named.iter().any(|id| id.starts_with("toolbar.source")),
+            "the SOURCE group is unnamed, which is what `coverage` admits"
+        );
+    }
+
+    /// A starred tool is a real button in the rail's pinned section, and one
+    /// the trader put there on purpose.
+    ///
+    /// It is painted beside the folded run, so it needs a name of its own:
+    /// naming it after the run slot it was pinned from would give one
+    /// identifier two rectangles. The rail listed neither, and an assistant
+    /// asked to press the button the trader had starred was told it was not
+    /// on screen.
+    #[test]
+    fn a_starred_tool_is_a_button_the_scene_names_in_its_own_right() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(12);
+        run_frame(&mut app, &ctx);
+        let unpinned = scene_control_ids(&observer_scene(&app));
+        assert!(
+            !unpinned
+                .iter()
+                .any(|id| id.starts_with("tool_rail.favorite.")),
+            "nothing is starred yet: {unpinned:?}"
+        );
+
+        let starred = drawings::DRAWING_TOOLS[0];
+        app.toolrail.toggle_favorite(starred);
+        run_frame(&mut app, &ctx);
+        let pinned = scene_control_ids(&observer_scene(&app));
+        let expected = format!("tool_rail.favorite.{}", starred.id());
+        assert!(
+            pinned.contains(&expected),
+            "the star paints a button, so the scene names it: {pinned:?}"
+        );
+        // And it is a *second* name, not a rename: the run keeps its slot.
+        assert_eq!(
+            pinned.iter().filter(|id| **id == expected).count(),
+            1,
+            "one pinned button, one name"
+        );
+        assert!(
+            pinned.len() > unpinned.len(),
+            "starring adds a button rather than moving one"
+        );
+    }
+
+    /// A rail that has been hidden reports nothing, on the very frame it is
+    /// hidden.
+    ///
+    /// Control captures are served before the rail draws, so a rail that
+    /// remembered the stage it last painted would answer the first capture
+    /// after a hide with the buttons of a rail nobody can see.
+    #[test]
+    fn a_rail_hidden_this_frame_names_no_buttons_before_the_next_draw() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(12);
+        run_frame(&mut app, &ctx);
+        assert!(
+            scene_control_ids(&observer_scene(&app))
+                .iter()
+                .any(|id| id.starts_with("tool_rail.")),
+            "the rail opens visible"
+        );
+
+        // Hidden, and captured before the next frame paints anything.
+        app.toolrail.toggle_visible();
+        let folded = scene_control_ids(&observer_scene(&app));
+        assert!(
+            !folded.iter().any(|id| id.starts_with("tool_rail.")),
+            "a rail nobody can see contributes no controls: {folded:?}"
+        );
     }
 
     #[test]

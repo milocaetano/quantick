@@ -240,13 +240,13 @@ pub struct ToolbarModel<'a> {
     pub history_trades: usize,
     /// What the active source's backend can do.
     pub capabilities: FeedCapabilities,
-    /// The LAYERS group's four lamps, in [`LayerToggle::ALL`] order: whether
+    /// The LAYERS group's lamps, in [`LayerToggle::ALL`] order: whether
     /// each layer is drawn, and what blocks it where something does. Both
     /// come from `ChartPane::layer_blocked` / `layer_visible` through
     /// [`crate::tab::Tab::layer_toggle_state`], which the semantic scene reads
     /// too — so a button cannot tell the trader one thing and an assistant
     /// another.
-    pub layers: [LayerToggleState; 4],
+    pub layers: [LayerToggleState; LayerToggle::COUNT],
     /// Whether the dock (strip included) is shown.
     pub dock_visible: bool,
     /// Whether the appearance dialog is open.
@@ -739,12 +739,16 @@ impl LayerToggle {
     /// round. Anything that wants reading order reverses this — the scene
     /// does, and says so — because the draw order is what the layout needs
     /// and reordering here would move the buttons under the trader's hand.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; Self::COUNT] = [
         Self::Bubbles,
         Self::Heatmap,
         Self::Footprint,
         Self::LiveStrip,
     ];
+
+    /// How many toggles the group has. Named so the model's array, the list
+    /// and any fixture widen together when a layer earns a button.
+    pub const COUNT: usize = 4;
 
     /// The canvas layer this button switches.
     ///
@@ -806,17 +810,6 @@ impl LayerToggle {
         }
     }
 
-    /// This toggle's slot in [`ToolbarModel::layers`].
-    #[must_use]
-    pub(crate) fn index(self) -> usize {
-        match self {
-            Self::Bubbles => 0,
-            Self::Heatmap => 1,
-            Self::Footprint => 2,
-            Self::LiveStrip => 3,
-        }
-    }
-
     #[must_use]
     fn toggle_action(self, on: bool) -> ToolbarAction {
         match self {
@@ -855,8 +848,11 @@ impl LayerToggle {
 fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
     draw_indicators_menu(ui, model, actions);
 
-    for layer in LayerToggle::ALL {
-        let state = model.layers[layer.index()];
+    // Zipped rather than indexed: the array is filled in `ALL` order, so
+    // walking the two together is what makes that the only ordering. A second
+    // hand-written position map beside `ALL` is how a lamp ends up reporting
+    // the layer next to it.
+    for (layer, state) in LayerToggle::ALL.into_iter().zip(model.layers) {
         let on = state.on;
         let response = IconButton::new(layer.icon(), TOOLBAR_ICON)
             .active(on)
@@ -1054,9 +1050,9 @@ fn draw_overflow(
 
 #[cfg(test)]
 mod tests {
-    /// Four unblocked lamps from their on/off flags, in [`LayerToggle::ALL`]
+    /// Unblocked lamps from their on/off flags, in [`LayerToggle::ALL`]
     /// order. A fixture that wants a blocked lamp builds the array itself.
-    fn layer_states(on: [bool; 4]) -> [LayerToggleState; 4] {
+    fn layer_states(on: [bool; LayerToggle::COUNT]) -> [LayerToggleState; LayerToggle::COUNT] {
         on.map(|on| LayerToggleState { on, blocked: None })
     }
 

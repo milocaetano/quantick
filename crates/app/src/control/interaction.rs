@@ -21,8 +21,8 @@ use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
     scene,
     types::{
-        AvailabilitySnapshot, PaneSideDto, available, canonical_decimal, canonical_f32,
-        canonical_f64, unavailable, visible_panes, wire_usize,
+        AvailabilitySnapshot, PaneSideDto, SCREEN_DECIMAL_PLACES, available, canonical_decimal,
+        canonical_f32, canonical_f64, unavailable, visible_panes, wire_usize,
     },
 };
 
@@ -31,7 +31,6 @@ pub(crate) const SELECTION_SCOPE_ID: &str = "interaction.selection";
 const MODULE_ID: &str = "interaction";
 const SCHEMA_VERSION: u32 = 1;
 const AXIS_DECIMAL_PLACES: u32 = 10;
-const SCREEN_PIXEL_DECIMAL_PLACES: u32 = 3;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct CursorSnapshot {
@@ -44,6 +43,13 @@ pub(crate) struct CursorSnapshot {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+///
+/// `screen_x_px` and `screen_y_px` keep their names for the clients already
+/// reading them, but the unit is the window's **logical points** — what the
+/// window lays out in, and what `scene.controls` reports a control's rectangle
+/// in, so a pointer and a rectangle can be compared without a scale factor
+/// neither side knows. On a 200% display the framebuffer holds twice these
+/// numbers.
 pub(crate) struct PointerSnapshot {
     pub tab_id: WireU64,
     pub pane_id: WireU64,
@@ -51,9 +57,9 @@ pub(crate) struct PointerSnapshot {
     pub pane_focused: bool,
     pub feed_id: String,
     pub symbol: String,
-    #[schemars(extend("x-unit" = "pixels"))]
+    #[schemars(extend("x-unit" = "logical_points"))]
     pub screen_x_px: CanonicalDecimal,
-    #[schemars(extend("x-unit" = "pixels"))]
+    #[schemars(extend("x-unit" = "logical_points"))]
     pub screen_y_px: CanonicalDecimal,
     pub band: String,
     pub axis_value: Option<CanonicalDecimal>,
@@ -244,9 +250,9 @@ fn pointer_snapshot(
         pane_focused: tab.focused_side() == side,
         feed_id: tab.feed_id.clone(),
         symbol: tab.symbol.clone(),
-        screen_x_px: canonical_f32(hit.screen_x_px, SCREEN_PIXEL_DECIMAL_PLACES)
+        screen_x_px: canonical_f32(hit.screen_x_px, SCREEN_DECIMAL_PLACES)
             .expect("egui pointer coordinates are finite"),
-        screen_y_px: canonical_f32(hit.screen_y_px, SCREEN_PIXEL_DECIMAL_PLACES)
+        screen_y_px: canonical_f32(hit.screen_y_px, SCREEN_DECIMAL_PLACES)
             .expect("egui pointer coordinates are finite"),
         band: hit.band,
         price: (hit.axis_unit == "price")

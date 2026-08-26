@@ -1102,6 +1102,7 @@
             "type": "string"
           },
           "PointerSnapshot": {
+            "description": "`screen_x_px` and `screen_y_px` keep their names for the clients already\nreading them, but the unit is the window's **logical points** — what the\nwindow lays out in, and what `scene.controls` reports a control's rectangle\nin, so a pointer and a rectangle can be compared without a scale factor\nneither side knows. On a 200% display the framebuffer holds twice these\nnumbers.",
             "properties": {
               "axis_unit": {
                 "type": "string"
@@ -1182,11 +1183,11 @@
               },
               "screen_x_px": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "x-unit": "pixels"
+                "x-unit": "logical_points"
               },
               "screen_y_px": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "x-unit": "pixels"
+                "x-unit": "logical_points"
               },
               "slot": {
                 "anyOf": [
@@ -1542,6 +1543,7 @@
             "type": "string"
           },
           "PointerSnapshot": {
+            "description": "`screen_x_px` and `screen_y_px` keep their names for the clients already\nreading them, but the unit is the window's **logical points** — what the\nwindow lays out in, and what `scene.controls` reports a control's rectangle\nin, so a pointer and a rectangle can be compared without a scale factor\nneither side knows. On a 200% display the framebuffer holds twice these\nnumbers.",
             "properties": {
               "axis_unit": {
                 "type": "string"
@@ -1622,11 +1624,11 @@
               },
               "screen_x_px": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "x-unit": "pixels"
+                "x-unit": "logical_points"
               },
               "screen_y_px": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "x-unit": "pixels"
+                "x-unit": "logical_points"
               },
               "slot": {
                 "anyOf": [
@@ -4265,7 +4267,9 @@
       "read_only": true,
       "required_permissions": [
         "observe",
-        "observe.attention"
+        "observe.attention",
+        "observe.market",
+        "observe.workspace"
       ],
       "reversible": false,
       "revision_policy": "forbidden",
@@ -5885,6 +5889,7 @@
             "type": "string"
           },
           "PointerSnapshot": {
+            "description": "`screen_x_px` and `screen_y_px` keep their names for the clients already\nreading them, but the unit is the window's **logical points** — what the\nwindow lays out in, and what `scene.controls` reports a control's rectangle\nin, so a pointer and a rectangle can be compared without a scale factor\nneither side knows. On a 200% display the framebuffer holds twice these\nnumbers.",
             "properties": {
               "axis_unit": {
                 "type": "string"
@@ -5965,11 +5970,11 @@
               },
               "screen_x_px": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "x-unit": "pixels"
+                "x-unit": "logical_points"
               },
               "screen_y_px": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "x-unit": "pixels"
+                "x-unit": "logical_points"
               },
               "slot": {
                 "anyOf": [
@@ -6214,7 +6219,9 @@
       "module_id": "scene",
       "required_permissions": [
         "observe",
-        "observe.attention"
+        "observe.attention",
+        "observe.market",
+        "observe.workspace"
       ],
       "schema": {
         "$defs": {
@@ -6424,7 +6431,7 @@
           },
           "coverage": {
             "$ref": "#/$defs/AvailabilitySnapshot",
-            "description": "Whether every control of every covered region fits in `controls`.\n\nThe scene is bounded like every other projection, and says so rather\nthan truncating in silence. This is a statement about the *covered*\nregions only — `covered_regions` is what bounds the rest."
+            "description": "Whether `controls` is every control on screen. It never is yet.\n\nTwo things cut it, and this says which. Each covered region is walked\nonly as far as one group of it — the toolbar's LAYERS, the rail's\ntools, the dock's tab strip, a tab's canvases — so a capture that has\ntruncated nothing is still not the screen, and reports as much rather\nthan letting a client read a short list as a complete one. Beyond\nthat the scene is bounded like every other projection, and a capture\nthat met the bound says so instead of truncating in silence."
           },
           "covered_regions": {
             "description": "The regions this capture enumerated, in the order it walked them.\n\nThe honest bound on everything above: a control belonging to a region\nabsent from this list was not looked for, and its absence from\n`controls` says nothing about whether it is on screen.",
@@ -6434,7 +6441,15 @@
             "type": "array"
           },
           "focused_pane_id": {
-            "$ref": "#/$defs/WireU64"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The focused canvas, when this capture lists one.\n\nAbsent while the active tab is between layouts and has no painted\npane at all — an honest gap rather than an ID pointing at a control\n`controls` does not contain."
           },
           "focused_pane_side": {
             "$ref": "#/$defs/PaneSideDto"
@@ -6442,7 +6457,6 @@
         },
         "required": [
           "active_tab_id",
-          "focused_pane_id",
           "focused_pane_side",
           "controls",
           "covered_regions",

@@ -791,7 +791,14 @@ impl ObserverContract {
                 "scene",
                 "Read semantic scene",
                 "Names every control on screen with a frame-stable ID, its owner, whether it is selected, and the coded reason when it cannot be operated.",
-                [OBSERVE_PERMISSION_ID, "observe.attention"],
+                // The scope's own list, and for its reasons: the labels name
+                // the markets the trader has open.
+                [
+                    OBSERVE_PERMISSION_ID,
+                    "observe.attention",
+                    "observe.workspace",
+                    "observe.market",
+                ],
                 None,
             ),
             prepare_scene,

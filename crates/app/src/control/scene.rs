@@ -31,10 +31,11 @@
 //! The scene enumerates the regions listed in [`SceneOwnerKindDto`] and no
 //! others: the SOURCE, BARS, HISTORY and TRADE toolbar groups, the window
 //! menus, the rail's trailing cluster and every dialog are still unnamed. A
-//! capture says so in [`SceneSnapshot::coverage`] rather than reporting a
-//! short list as the whole screen — a client that read this as complete would
-//! conclude those controls do not exist, and inferred or incomplete data is
-//! labelled here as everywhere else.
+//! capture says so in [`SceneSnapshot::coverage`], which is never `available`
+//! for that reason, rather than reporting a short list as the whole screen
+//! — a client that read this as complete would conclude those controls do
+//! not exist, and inferred or incomplete data is labelled here as everywhere
+//! else.
 //!
 //! ## Cost
 //!
@@ -65,22 +66,20 @@ use crate::{
     pane::{ChartPane, PaneSide},
     tab::Tab,
     toolbar::LayerToggle,
+    toolrail::{RailControl, RailControlKind},
 };
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
     types::{
-        AvailabilitySnapshot, PaneSideDto, available, canonical_f32, unavailable, visible_panes,
+        AvailabilitySnapshot, PaneSideDto, SCREEN_DECIMAL_PLACES, available, canonical_f32,
+        unavailable, visible_panes,
     },
 };
 
 pub(crate) const CONTROLS_SCOPE_ID: &str = "scene.controls";
 const MODULE_ID: &str = "scene";
 const SCHEMA_VERSION: u32 = 1;
-/// Screen coordinates are reported to the same precision as the cursor's, so
-/// a bound and a pointer position can be compared without either being
-/// rounded first.
-const SCREEN_POINT_DECIMAL_PLACES: u32 = 3;
 
 /// The identifier prefix of every control the tab strip owns.
 const TAB_STRIP_OWNER_ID: &str = "tab_strip";
@@ -100,7 +99,13 @@ const DOCK_OWNER_ID: &str = "dock";
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct SceneSnapshot {
     pub active_tab_id: WireU64,
-    pub focused_pane_id: WireU64,
+    /// The focused canvas, when this capture lists one.
+    ///
+    /// Absent while the active tab is between layouts and has no painted
+    /// pane at all — an honest gap rather than an ID pointing at a control
+    /// `controls` does not contain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focused_pane_id: Option<WireU64>,
     pub focused_pane_side: PaneSideDto,
     pub controls: Vec<SceneControlSnapshot>,
     /// The regions this capture enumerated, in the order it walked them.
@@ -109,11 +114,15 @@ pub(crate) struct SceneSnapshot {
     /// absent from this list was not looked for, and its absence from
     /// `controls` says nothing about whether it is on screen.
     pub covered_regions: Vec<SceneOwnerKindDto>,
-    /// Whether every control of every covered region fits in `controls`.
+    /// Whether `controls` is every control on screen. It never is yet.
     ///
-    /// The scene is bounded like every other projection, and says so rather
-    /// than truncating in silence. This is a statement about the *covered*
-    /// regions only — `covered_regions` is what bounds the rest.
+    /// Two things cut it, and this says which. Each covered region is walked
+    /// only as far as one group of it — the toolbar's LAYERS, the rail's
+    /// tools, the dock's tab strip, a tab's canvases — so a capture that has
+    /// truncated nothing is still not the screen, and reports as much rather
+    /// than letting a client read a short list as a complete one. Beyond
+    /// that the scene is bounded like every other projection, and a capture
+    /// that met the bound says so instead of truncating in silence.
     pub coverage: AvailabilitySnapshot,
 }
 
@@ -242,7 +251,18 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         SCHEMA_VERSION,
         "Visible controls",
         "Every control on screen with a frame-stable ID, its owner, whether it is selected, and the coded reason when it cannot be operated.",
-        &["observe", "observe.attention"],
+        // A chip's label is the market it is open on and a layer's reason is
+        // what the live source publishes, so this scope carries the same
+        // `observe.market` payload `workspace.summary` and `interaction.cursor`
+        // do, and the same `observe.workspace` list of open charts. Named here
+        // too: a trader who withholds one of those scopes withholds it
+        // everywhere, or the narrower grant is worth nothing.
+        &[
+            "observe",
+            "observe.attention",
+            "observe.workspace",
+            "observe.market",
+        ],
         project_controls,
     )
 }
@@ -265,10 +285,21 @@ fn layer_control_id(layer: ChartLayer) -> String {
     format!("{TOOLBAR_LAYERS_OWNER_ID}.{}", layer.id())
 }
 
-/// The identifier of one button on the drawing rail — a tool's, or the
-/// family's where consecutive tools folded into one slot.
-fn rail_control_id(id: &str) -> String {
-    format!("{TOOL_RAIL_OWNER_ID}.tool.{id}")
+/// The identifier of one button on the drawing rail.
+///
+/// The rail draws from three registries and they share no namespace: a tool
+/// and a family may carry the same registered name (`brush` and `measure` do
+/// today), and a starred tool is painted a second time in the pinned section
+/// beside its slot in the run. The kind is part of the identifier so one name
+/// cannot mean the family flyout on a wide window and the tool itself on a
+/// narrow one.
+fn rail_control_id(control: &RailControl) -> String {
+    let registry = match control.kind {
+        RailControlKind::Tool => "tool",
+        RailControlKind::Family => "family",
+        RailControlKind::Favorite => "favorite",
+    };
+    format!("{TOOL_RAIL_OWNER_ID}.{registry}.{}", control.id)
 }
 
 /// The identifier of one tab on the dock's strip.
@@ -295,27 +326,40 @@ pub(crate) fn scene_snapshot(app: &QuantickApp) -> SceneSnapshot {
     // resolves to, and the cap below cuts from the end. A workspace large
     // enough to truncate must not be one where `interaction.cursor` answers
     // with a control ID this scope no longer contains.
-    push_panes(&mut controls, active, focused_side);
+    let focused_pane_id = push_panes(&mut controls, active, focused_side);
     push_layer_toggles(&mut controls, app, active);
     push_tool_rail(&mut controls, app);
     push_dock(&mut controls, app);
-    push_tab_strip(&mut controls, tabs, active.id);
-
     // Bounded like every other projection, and honest about it. Every registry
     // behind the scene is fixed-size except the trader's own tab strip, which
-    // is why the strip is walked last: an implausible number of open charts
-    // costs a truncated list rather than an unbounded payload built on the
-    // application thread.
-    let coverage = if controls.len() > CONTROL_SCENE_MAX_CONTROLS {
+    // is why the strip is walked last and why it is the one walk told when to
+    // stop. Cutting a finished list would still have built it: an implausible
+    // number of open charts must cost a truncated answer, not an unbounded
+    // allocation on the application thread.
+    let strip_complete = push_tab_strip(&mut controls, tabs, active.id);
+
+    let coverage = if !strip_complete || controls.len() > CONTROL_SCENE_MAX_CONTROLS {
         controls.truncate(CONTROL_SCENE_MAX_CONTROLS);
         unavailable("control_count_exceeded_the_scene_limit")
     } else {
-        available()
+        // Never `available()`. A region in `covered_regions` was *walked*,
+        // not exhausted: the toolbar contributes its LAYERS group and not the
+        // SOURCE, BARS, HISTORY or TRADE groups beside it, the rail its tools
+        // and not its trailing cluster, the strip its chips and not the `+`.
+        // Reporting completeness here would tell a client the controls this
+        // walk does not reach are not on screen, which is the one lie the
+        // module cannot tolerate.
+        unavailable("only_the_named_group_of_each_covered_region_is_enumerated")
     };
 
     SceneSnapshot {
         active_tab_id: WireU64::new(active.id),
-        focused_pane_id: WireU64::new(active.pane(focused_side).id),
+        // From the walk, not from `Tab::pane`. The two disagree for the frame
+        // between a tab asking for the time layout and its time pane being
+        // built: `focused_side` falls back to the flow pane while the layout
+        // shows no flow pane at all, so naming a focused pane there would
+        // name a canvas this capture does not list.
+        focused_pane_id: focused_pane_id.map(WireU64::new),
         focused_pane_side: focused_side.into(),
         controls,
         covered_regions: COVERED_REGIONS.to_vec(),
@@ -336,9 +380,16 @@ const COVERED_REGIONS: [SceneOwnerKindDto; 5] = [
     SceneOwnerKindDto::TabStrip,
 ];
 
-/// The open charts, in strip order.
-fn push_tab_strip(controls: &mut Vec<SceneControlSnapshot>, tabs: &[Tab], active_id: u64) {
+/// The open charts, in strip order, up to the scene's ceiling.
+///
+/// Answers whether every open chart fitted. The last walk, and the only one
+/// the trader can grow, so this is where the ceiling is enforced rather than
+/// applied to a list that has already been built.
+fn push_tab_strip(controls: &mut Vec<SceneControlSnapshot>, tabs: &[Tab], active_id: u64) -> bool {
     for tab in tabs {
+        if controls.len() >= CONTROL_SCENE_MAX_CONTROLS {
+            return false;
+        }
         controls.push(SceneControlSnapshot {
             control_id: tab_control_id(tab.id),
             // The string the chip paints, not one assembled here: an
@@ -357,6 +408,7 @@ fn push_tab_strip(controls: &mut Vec<SceneControlSnapshot>, tabs: &[Tab], active
             capability_id: None,
         });
     }
+    true
 }
 
 /// The toolbar's LAYERS group: one toggle per visual layer, each answering
@@ -396,18 +448,18 @@ fn push_layer_toggles(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickAp
 ///
 /// A folded rail contributes nothing: the scene reports what the trader can
 /// see, and the keyboard shortcuts that still arm a tool are not controls.
+/// [`crate::toolrail::ToolRail::painted_controls`] answers with nothing in
+/// that case, so the rule lives with the rail rather than here.
 fn push_tool_rail(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
     let rail = app.control_tool_rail();
-    if !rail.visible() {
-        return;
-    }
     // What the rail *painted*, folded through the same slots the draw folds
-    // through and cut by the stage the draw recorded. Listing the registry
-    // instead would name thirteen tools that live behind a family flyout and
-    // two more the narrow stages drop entirely.
+    // through and cut by the stage and the band window the draw recorded.
+    // Listing the registry instead would name thirteen tools that live behind
+    // a family flyout, the ones the band has scrolled out of sight, and two
+    // more the narrow stages drop entirely.
     for control in rail.painted_controls() {
         controls.push(SceneControlSnapshot {
-            control_id: rail_control_id(control.id),
+            control_id: rail_control_id(&control),
             label: control.label.to_owned(),
             role: SceneRoleDto::Tool,
             owner: SceneOwnerSnapshot {
@@ -452,8 +504,16 @@ fn push_dock(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
 ///
 /// These are the one place the scene has real bounds: a pane records the
 /// rectangle it drew into as part of drawing it, so reporting it costs a read.
-fn push_panes(controls: &mut Vec<SceneControlSnapshot>, tab: &Tab, focused: PaneSide) {
+fn push_panes(
+    controls: &mut Vec<SceneControlSnapshot>,
+    tab: &Tab,
+    focused: PaneSide,
+) -> Option<u64> {
+    let mut focused_pane_id = None;
     for (pane, side) in visible_panes(tab) {
+        if side == focused {
+            focused_pane_id = Some(pane.id);
+        }
         let bounds = pane_bounds(pane);
         controls.push(SceneControlSnapshot {
             control_id: pane_canvas_control_id(pane.id),
@@ -468,29 +528,37 @@ fn push_panes(controls: &mut Vec<SceneControlSnapshot>, tab: &Tab, focused: Pane
             bounds_availability: match &bounds {
                 Bounds::Rect(_) => available(),
                 Bounds::NotDrawn => unavailable("the_pane_has_not_been_drawn_yet"),
-                Bounds::NotFinite => unavailable("the_panes_rectangle_is_not_a_finite_number"),
+                Bounds::NotReportable => {
+                    unavailable("the_panes_rectangle_is_not_a_reportable_number")
+                }
             },
             bounds: bounds.into_snapshot(),
             capability_id: None,
         });
     }
+    focused_pane_id
 }
 
 /// Why a pane has no rectangle, kept apart from *having* one so the two
 /// reasons never borrow each other's words: a pane drawn into a degenerate
 /// layout was drawn, and telling a polling client it was not would leave it
 /// waiting for a state that has already arrived.
+///
+/// The second reason is "not reportable", not "not finite": a coordinate can
+/// also be a perfectly finite number that no decimal on this wire can carry,
+/// and a client branching on a code that named non-finiteness would be told
+/// something false about it.
 enum Bounds {
     Rect(SceneBoundsSnapshot),
     NotDrawn,
-    NotFinite,
+    NotReportable,
 }
 
 impl Bounds {
     fn into_snapshot(self) -> Option<SceneBoundsSnapshot> {
         match self {
             Self::Rect(bounds) => Some(bounds),
-            Self::NotDrawn | Self::NotFinite => None,
+            Self::NotDrawn | Self::NotReportable => None,
         }
     }
 }
@@ -499,7 +567,14 @@ fn pane_bounds(pane: &ChartPane) -> Bounds {
     let Some(rect) = pane.last_chart_area else {
         return Bounds::NotDrawn;
     };
-    let point = |value: f32| canonical_f32(value, SCREEN_POINT_DECIMAL_PLACES);
+    // `egui::Rect` does not normalise, so a degenerate layout can hand back a
+    // rectangle whose corners are the wrong way round. A negative width is a
+    // number a client would happily halve to find a centre, landing outside
+    // the canvas; refused with the reason instead. `NaN` fails both tests.
+    if !(rect.width() >= 0.0 && rect.height() >= 0.0) {
+        return Bounds::NotReportable;
+    }
+    let point = |value: f32| canonical_f32(value, SCREEN_DECIMAL_PLACES);
     match (
         point(rect.min.x),
         point(rect.min.y),
@@ -514,7 +589,7 @@ fn pane_bounds(pane: &ChartPane) -> Bounds {
                 height_pt,
             })
         }
-        _ => Bounds::NotFinite,
+        _ => Bounds::NotReportable,
     }
 }
 

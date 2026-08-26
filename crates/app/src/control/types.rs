@@ -147,6 +147,15 @@ pub(crate) fn visible_panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {
 /// A tab shows at most a time pane and a flow pane.
 const MAX_PANES_PER_TAB: usize = 2;
 
+/// Decimal places every screen coordinate on the wire is rounded to.
+///
+/// One constant, because two scopes are meant to be comparable without either
+/// being rounded first: `interaction.cursor` reports where the pointer is and
+/// `scene.controls` reports where a control is, and a client that asks whether
+/// the first is inside the second must not lose the answer to a rounding
+/// difference. Raising it for one of them raises it for both.
+pub(crate) const SCREEN_DECIMAL_PLACES: u32 = 3;
+
 pub(crate) fn canonical_decimal(value: Decimal) -> CanonicalDecimal {
     CanonicalDecimal::new(value.normalize().to_string())
         .expect("rust_decimal normalization is canonical")

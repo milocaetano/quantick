@@ -265,6 +265,7 @@
       "type": "string"
     },
     "PointerSnapshot": {
+      "description": "`screen_x_px` and `screen_y_px` keep their names for the clients already\nreading them, but the unit is the window's **logical points** — what the\nwindow lays out in, and what `scene.controls` reports a control's rectangle\nin, so a pointer and a rectangle can be compared without a scale factor\nneither side knows. On a 200% display the framebuffer holds twice these\nnumbers.",
       "properties": {
         "axis_unit": {
           "type": "string"
@@ -345,11 +346,11 @@
         },
         "screen_x_px": {
           "$ref": "#/$defs/CanonicalDecimal",
-          "x-unit": "pixels"
+          "x-unit": "logical_points"
         },
         "screen_y_px": {
           "$ref": "#/$defs/CanonicalDecimal",
-          "x-unit": "pixels"
+          "x-unit": "logical_points"
         },
         "slot": {
           "anyOf": [

@@ -187,7 +187,7 @@ pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
         Tool {
             name: GET_SCENE.to_owned(),
             title: "Read what is on screen, as named controls".to_owned(),
-            description: "The semantic scene: every control the trader can see — chart tabs, the toolbar's layer toggles, the drawing tool rail, the dock's tabs and each chart canvas — with an ID stable across frames, its owner, whether it is selected, and a coded reason when it cannot be operated. Chart canvases carry their rectangle in window pixels; the chrome reports that its bounds are not recorded rather than guessing. The cursor scope answers with the same control IDs, so a pointer position and this list name the same button.".to_owned(),
+            description: "The semantic scene: every control the trader can see — chart tabs, the toolbar's layer toggles, the drawing tool rail, the dock's tabs and each chart canvas — with an ID stable across frames, its owner, whether it is selected, and a coded reason when it cannot be operated. Chart canvases carry their rectangle in logical points, the same unit the cursor scope reports a pointer position in — not device pixels, so a client composing them with a screenshot must apply the display's scale factor itself. The chrome reports that its bounds are not recorded rather than guessing. The cursor scope answers with the same control IDs, so a pointer position and this list name the same button.".to_owned(),
             input_schema: instance_only_schema(),
             output_schema: Some(capability_output_schema(parse_schema(SNAPSHOT_CAPTURE_SCHEMA))),
             annotations: ToolAnnotations::observer_read("Scene"),
