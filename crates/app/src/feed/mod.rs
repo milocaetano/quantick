@@ -28,6 +28,8 @@ use quantick_engine::{Bar, Trade};
 // venue's re-export is the name the next feed author would copy.
 pub use quantick_orderbook::DepthEvent;
 
+use quantick_feed_mt5::LatencyHop;
+
 use crate::config::{FeedCapabilities, ProviderKind};
 
 pub use replay::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
@@ -523,9 +525,15 @@ pub struct FeedHandle {
 /// setting reaches — so without this hook the whole cell, its hop name and its
 /// hover breakdown are invisible to anything but a human waiting for a bad day.
 ///
-/// The hop is leaked to `'static` because that is the shape a provider's own
-/// name has: real ones are compile-time constants from the provider crate, and
-/// one scripted string per process is a bounded, one-off cost paid at startup.
+/// The hop is resolved through [`LatencyHop::ALL`] rather than taken as text:
+/// a name that exists is reachable here, and one that does not is refused. Two
+/// things fall out of that. The port's `hop` stays a `&'static str` with no
+/// string leaked to reach it, and a script cannot photograph a hop name the
+/// system is incapable of producing — the bargain `QUANTICK_FOOTPRINT_STYLE`
+/// already makes with `FootprintStyle::ALL`.
+///
+/// MetaTrader owns the names because it is the only provider that cuts its own
+/// chain, so the state this hook fakes is that provider's state.
 ///
 /// A malformed value is logged and ignored rather than silently treated as a
 /// default — a typo in a validation script must not photograph the wrong state
@@ -540,48 +548,36 @@ pub fn forced_latency_split() -> Option<FeedLatency> {
             schema_version = 1_u8,
             event_code = "FAKE_LATENCY_SPLIT_REJECTED",
             value = %raw,
+            known_hops = ?LatencyHop::ALL.map(LatencyHop::label),
             action = "ignore",
             "expected arrival,source,transport,hop in milliseconds"
         );
     }
-    parsed.map(|split| FeedLatency {
-        hop: split.hop.map(|hop| &*Box::leak(hop.into_boxed_str())),
-        ..split.latency
-    })
+    parsed
 }
 
-/// What one `QUANTICK_FAKE_LATENCY_SPLIT` value means, before the hop name is
-/// given the `'static` life the port asks for. Split out so the parsing is
-/// testable without leaking a string per test.
-struct ForcedLatency {
-    latency: FeedLatency,
-    hop: Option<String>,
-}
-
-fn parse_forced_latency(raw: &str) -> Option<ForcedLatency> {
+fn parse_forced_latency(raw: &str) -> Option<FeedLatency> {
     let mut parts = raw.split(',').map(str::trim);
     let arrival: i64 = parts.next()?.parse().ok()?;
     let source: i64 = parts.next()?.parse().ok()?;
     let transport: i64 = parts.next()?.parse().ok()?;
-    let hop = parts
-        .next()
-        .filter(|hop| !hop.is_empty())
-        .map(str::to_owned);
+    let hop = match parts.next().filter(|hop| !hop.is_empty()) {
+        // Named, and the name has to be one the feed can really report.
+        Some(name) => Some(LatencyHop::from_label(name)?.label()),
+        None => None,
+    };
     if parts.next().is_some() {
         return None; // a fifth field means the script means something else
     }
-    Some(ForcedLatency {
-        latency: FeedLatency {
-            arrival_lag_ms: arrival,
-            // One print, so the worst of the window is that print.
-            arrival_lag_peak_ms: arrival,
-            source_lag_ms: Some(source),
-            transport_lag_ms: Some(transport),
-            transport_lag_peak_ms: Some(transport),
-            hop: None,
-            prints: 1,
-        },
+    Some(FeedLatency {
+        arrival_lag_ms: arrival,
+        // One print, so the worst of the window is that print.
+        arrival_lag_peak_ms: arrival,
+        source_lag_ms: Some(source),
+        transport_lag_ms: Some(transport),
+        transport_lag_peak_ms: Some(transport),
         hop,
+        prints: 1,
     })
 }
 
@@ -639,18 +635,18 @@ mod tests {
         // The state this hook exists for only happens while a real venue is
         // running badly, so a validation run has to be able to ask for it.
         let split = parse_forced_latency("18112,17980,132,bridge").expect("a well-formed hook");
-        assert_eq!(split.latency.arrival_lag_ms, 18_112);
-        assert_eq!(split.latency.source_lag_ms, Some(17_980));
-        assert_eq!(split.latency.transport_lag_ms, Some(132));
-        assert_eq!(split.hop.as_deref(), Some("bridge"));
-        assert_eq!(split.latency.prints, 1);
+        assert_eq!(split.arrival_lag_ms, 18_112);
+        assert_eq!(split.source_lag_ms, Some(17_980));
+        assert_eq!(split.transport_lag_ms, Some(132));
+        assert_eq!(split.hop, Some("bridge"));
+        assert_eq!(split.prints, 1);
     }
 
     #[test]
     fn the_hop_name_is_optional_but_the_numbers_are_not() {
         let unnamed = parse_forced_latency("900,800,100").expect("three fields is enough");
         assert_eq!(unnamed.hop, None);
-        assert_eq!(unnamed.latency.arrival_lag_ms, 900);
+        assert_eq!(unnamed.arrival_lag_ms, 900);
     }
 
     #[test]
@@ -664,12 +660,57 @@ mod tests {
             "18112,17980,x",
             "18112,17980,132,bridge,extra",
             "a,b,c",
+            // A hop the feed cannot report. Refused rather than shown, so a
+            // capture never claims a state the system has no way to produce.
+            "18112,17980,132,Bridge",
+            "18112,17980,132,the socket",
         ] {
             assert!(
                 parse_forced_latency(bad).is_none(),
                 "{bad:?} should be refused"
             );
         }
+    }
+
+    #[test]
+    fn a_provider_that_cannot_split_publishes_nothing_forever() {
+        // The other half of the port, exercised by a second implementation:
+        // three of the four providers in this repo publish exactly this, and a
+        // receiver whose sender is already gone has to keep answering `None`
+        // rather than closing or panicking on the frame that reads it.
+        let unsplit = unsplit_latency();
+        assert_eq!(*unsplit.borrow(), None);
+        assert_eq!(*unsplit.borrow(), None, "and on every frame after");
+    }
+
+    #[test]
+    fn a_provider_that_can_split_publishes_its_newest_reading() {
+        // A `watch`, not a queue: a consumer that missed three samples must
+        // read the newest one, never a backlog of readings that are no longer
+        // true. This is the behaviour the status bar and the health view both
+        // depend on, and the reason the port is a watch at all.
+        let (tx, rx) = watch::channel::<Option<FeedLatency>>(None);
+        let reading = |ms: i64| FeedLatency {
+            arrival_lag_ms: ms,
+            arrival_lag_peak_ms: ms,
+            source_lag_ms: Some(ms - 100),
+            transport_lag_ms: Some(100),
+            transport_lag_peak_ms: Some(100),
+            hop: Some("bridge"),
+            prints: 64,
+        };
+        tx.send_replace(Some(reading(9_000)));
+        tx.send_replace(Some(reading(300)));
+        assert_eq!(
+            rx.borrow().map(|split| split.arrival_lag_ms),
+            Some(300),
+            "the newest reading, not the first"
+        );
+
+        // A feed that stops leaves its last reading standing rather than
+        // closing the channel out from under a frame that is mid-draw.
+        drop(tx);
+        assert_eq!(rx.borrow().map(|split| split.arrival_lag_ms), Some(300));
     }
 
     #[test]

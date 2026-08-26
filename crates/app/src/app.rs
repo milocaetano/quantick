@@ -12315,6 +12315,48 @@ plot(close)
         );
     }
 
+    /// The latency port, end to end through a tab: a provider that publishes a
+    /// split, one that cannot, and a recording that has no chain to attribute.
+    #[test]
+    fn a_tab_reads_the_split_its_provider_publishes_and_nothing_more() {
+        let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
+        assert_eq!(
+            app.active_tab().feed_latency(),
+            None,
+            "a feed that has published nothing yet has nothing to report"
+        );
+
+        let split = feed::FeedLatency {
+            arrival_lag_ms: 18_112,
+            arrival_lag_peak_ms: 18_400,
+            source_lag_ms: Some(17_980),
+            transport_lag_ms: Some(132),
+            transport_lag_peak_ms: Some(400),
+            hop: Some("bridge"),
+            prints: 64,
+        };
+        app.active_tab_mut().publish_latency_for_test(Some(split));
+        assert_eq!(app.active_tab().feed_latency(), Some(split));
+
+        // The cell the trader reads takes it from there, and names the hop
+        // because the delay is past the threshold worth acting on.
+        assert_eq!(
+            statusbar::tape_text(
+                None,
+                app.active_tab().trade_arrival_ms(),
+                Some(50),
+                app.active_tab().feed_latency(),
+            ),
+            "arrival —",
+            "no print has arrived, so there is no figure for the hop to qualify"
+        );
+
+        // A provider that cannot cut its own chain leaves the cell exactly as
+        // it has always been — never a breakdown of zeros nobody measured.
+        app.active_tab_mut().publish_latency_for_test(None);
+        assert_eq!(app.active_tab().feed_latency(), None);
+    }
+
     /// The gap the removed `Stalled` state used to cover: a transport that
     /// stays open and stops delivering. No error, no disconnect, and the
     /// stored arrival figure never ages — only the tape's own age does.

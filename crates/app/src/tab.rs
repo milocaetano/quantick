@@ -611,6 +611,18 @@ impl Tab {
         self.attach(handle);
     }
 
+    /// Publish a latency reading as the attached feed would, for a test that
+    /// needs the tab to have read one.
+    #[cfg(test)]
+    pub fn publish_latency_for_test(&mut self, split: Option<FeedLatency>) {
+        let (tx, rx) = watch::channel(split);
+        self.feed_latency = rx;
+        // The sender is dropped on purpose: a `watch` receiver keeps serving
+        // the value it was born with, which is what a test wants and what
+        // `unsplit_latency` relies on in production.
+        drop(tx);
+    }
+
     /// Whether any pane on this tab cuts bars by a foldable time interval —
     /// the gate for venue candle history. Capability-shaped, like every other
     /// gate in the app (audit S1): the prefix belongs to what a pane *shows*

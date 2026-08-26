@@ -519,6 +519,92 @@ def test_an_endless_line_does_not_grow_the_buffer_without_bound():
     )
 
 
+def test_a_burst_larger_than_one_batch_is_drained_in_one_pass():
+    """The delay this whole change exists to remove, at its source.
+
+    `copy_ticks_from` returns at most the count it was asked for, so a pass that
+    filled its batch has *not* caught up — it has been truncated. Forwarding one
+    batch and returning left the remainder for the next pass, and on a burst
+    that is how a tape falls whole seconds behind a book that never batches at
+    all. The pass now keeps asking while the answers come back full.
+
+    The Expert Advisor's `Pump()` carries the identical loop and the identical
+    two bounds, and cargo can never compile MQL5 — so this is the only place
+    either implementation's drain is executed by a test. Change one, change
+    both, and change the numbers here with them.
+    """
+    term = FakeTerminal(0, NOW)
+    bridge = load_bridge(term)
+    session = session_for(bridge, term)
+    # Two and a bit batches' worth, all newer than the cursor.
+    burst = bridge.TICKS_PER_PUMP_ROUND * 2 + 17
+    term.ticks = [tick_at(1_000 + i, last=100.0 + (i % 5)) for i in range(burst)]
+
+    session.pump_ticks()
+
+    check(
+        "the whole burst is forwarded in one pass",
+        len(session.sent) == burst,
+        f"{len(session.sent)} of {burst}",
+    )
+    check(
+        "which took more than one request to the terminal",
+        len(term.from_calls) == 3,
+        term.from_calls,
+    )
+    check(
+        "every request asked for a full batch",
+        {count for _, count, _ in term.from_calls} == {bridge.TICKS_PER_PUMP_ROUND},
+        term.from_calls,
+    )
+    check(
+        "and the ticks arrive in order, none repeated",
+        [msg["time_ms"] for msg in session.sent] == [1_000 + i for i in range(burst)],
+        session.sent[:3],
+    )
+    check(
+        "one stamp for the pass, on every line",
+        len({msg["sent_ms"] for msg in session.sent}) == 1,
+        session.sent[0]["sent_ms"],
+    )
+
+    # A second pass has nothing left to say: the cursor carries (msc,
+    # count-at-msc), so no tick is ever sent twice.
+    before = len(session.sent)
+    session.pump_ticks()
+    check("a drained pump repeats nothing", len(session.sent) == before, len(session.sent))
+
+
+def test_a_terminal_that_never_advances_cannot_own_the_pump():
+    """The bound under the loop above.
+
+    A terminal that keeps answering with ticks the cursor has already passed
+    would otherwise be asked forever, and this pump shares its thread with the
+    book and the heartbeat. The pass gives up, says so, and comes back next
+    time — the EA logs the same `BRIDGE_PUMP_ROUND_LIMIT`.
+    """
+    term = FakeTerminal(0, NOW)
+    bridge = load_bridge(term)
+    session = session_for(bridge, term)
+    # Every answer is a full batch of the *same* instant, so the cursor can
+    # never move past it: the (msc, count-at-msc) rule sends each exactly once
+    # and then has nothing new, which is the shape that used to spin.
+    term.ticks = [tick_at(1_000, last=100.0) for _ in range(bridge.TICKS_PER_PUMP_ROUND)]
+
+    session.pump_ticks()
+
+    check(
+        "the pass ends rather than spinning",
+        len(term.from_calls) <= bridge.MAX_PUMP_ROUNDS,
+        len(term.from_calls),
+    )
+    check(
+        "having forwarded that instant's ticks exactly once",
+        len(session.sent) == bridge.TICKS_PER_PUMP_ROUND,
+        len(session.sent),
+    )
+
+
 def test_the_live_pump_asks_only_for_prints():
     """The tape's own latency, decided one line earlier than anyone looks.
 

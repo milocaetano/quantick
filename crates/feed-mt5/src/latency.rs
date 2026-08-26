@@ -64,14 +64,43 @@ pub enum LatencyHop {
 }
 
 impl LatencyHop {
+    /// Every hop this crate can name, for a caller that has to resolve one by
+    /// name rather than produce one.
+    ///
+    /// A registry, not a convenience: the app's `QUANTICK_FAKE_LATENCY_SPLIT`
+    /// hook resolves the word a validation script typed through this list, so a
+    /// hop that exists is reachable by name and one that does not is refused
+    /// rather than photographed. The same bargain `FootprintStyle::ALL` makes
+    /// with the style hook.
+    pub const ALL: [Self; 4] = [
+        Self::Upstream,
+        Self::Bridge,
+        Self::Terminal,
+        Self::Transport,
+    ];
+
+    /// Longest a [`label`](Self::label) may be, in characters.
+    ///
+    /// A consumer's readout has to put this word somewhere, and the one that
+    /// does — quantick's status bar — swaps it for the word `arrival`, whose
+    /// seven characters are the budget it has. One more is affordable; a
+    /// ten-character name was measured pushing the neighbouring cell off a
+    /// 1000 px window. Owned here and asserted on both sides of that boundary,
+    /// so neither end can widen it alone.
+    pub const MAX_LABEL_CHARS: usize = 8;
+
+    /// The hop whose [`label`](Self::label) is `name`, if any.
+    #[must_use]
+    pub fn from_label(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|hop| hop.label() == name)
+    }
+
     /// Short, fixed name for a readout. Stable enough to assert on.
     ///
-    /// Kept to eight characters. A consumer's readout has to put this word
-    /// somewhere, and the one that does — quantick's status bar — swaps it for
-    /// the word `arrival`, so a name longer than that is a name that pushes a
-    /// neighbouring cell off a narrow window. `MT5` rather than `MetaTrader`
-    /// for exactly that reason: the feed is named MetaTrader everywhere the
-    /// trader chose it, so the short form is unambiguous where it appears.
+    /// Held to [`MAX_LABEL_CHARS`](Self::MAX_LABEL_CHARS). `MT5` rather than
+    /// `MetaTrader` for exactly that reason: the feed is named MetaTrader
+    /// everywhere the trader chose it, so the short form is unambiguous where
+    /// it appears.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
@@ -277,15 +306,6 @@ impl LatencyTracker {
         self.prints = 0;
         Some(sample)
     }
-
-    /// Forget everything the current session observed.
-    ///
-    /// The cursor reading goes too: it belongs to the bridge that reported it,
-    /// and carrying it into the next session would describe a pump that is no
-    /// longer running.
-    pub fn reset(&mut self) {
-        *self = Self::new();
-    }
 }
 
 #[cfg(test)]
@@ -295,18 +315,13 @@ mod tests {
     #[test]
     fn every_hop_name_fits_the_cell_that_has_to_show_it() {
         // A consumer swaps this word for `arrival`, whose seven characters are
-        // the budget. Eight is the agreed ceiling; a longer one silently pushes
-        // a neighbouring status-bar cell off a narrow window, which is a defect
-        // that only shows up on someone's laptop.
-        for hop in [
-            LatencyHop::Upstream,
-            LatencyHop::Bridge,
-            LatencyHop::Terminal,
-            LatencyHop::Transport,
-        ] {
+        // the budget. A longer one silently pushes a neighbouring status-bar
+        // cell off a narrow window, a defect that only shows up on someone's
+        // laptop.
+        for hop in LatencyHop::ALL {
             let label = hop.label();
             assert!(
-                label.chars().count() <= 8,
+                label.chars().count() <= LatencyHop::MAX_LABEL_CHARS,
                 "{label:?} is too long for the readout"
             );
         }
@@ -430,9 +445,12 @@ mod tests {
     }
 
     #[test]
-    fn the_cursor_reading_outlives_a_window_but_not_a_session() {
-        // It describes the pump, not the prints, so a sample must not clear it
-        // — and a reconnect must, because the pump it described is gone.
+    fn the_cursor_reading_outlives_a_window() {
+        // It describes the pump, not the prints, so drawing a sample must not
+        // clear it — a bridge reporting its cursor every five seconds would
+        // otherwise have nothing to say about the four seconds in between. A
+        // session boundary does clear it, by building a new tracker: the pump
+        // it described is gone with the connection.
         let mut tracker = LatencyTracker::new();
         tracker.observe_cursor_lag(Some(40));
         tracker.observe_live(server(0), Some(server(10)));
@@ -444,12 +462,6 @@ mod tests {
         assert_eq!(
             tracker.sample(1_000, OFFSET_MS).unwrap().cursor_lag_ms,
             Some(40)
-        );
-        tracker.reset();
-        tracker.observe_live(server(0), Some(server(10)));
-        assert_eq!(
-            tracker.sample(1_000, OFFSET_MS).unwrap().cursor_lag_ms,
-            None
         );
     }
 
@@ -465,6 +477,18 @@ mod tests {
         assert!(tracker.due());
         tracker.sample(1_000, OFFSET_MS).unwrap();
         assert!(!tracker.due(), "the sample starts a new window");
+    }
+
+    #[test]
+    fn every_hop_is_reachable_by_the_name_it_reports() {
+        // The hook that fakes a split resolves the word a script typed through
+        // this list, so a name that round-trips is a state a capture can reach
+        // and a typo is a refusal rather than a picture of the wrong hop.
+        for hop in LatencyHop::ALL {
+            assert_eq!(LatencyHop::from_label(hop.label()), Some(hop));
+        }
+        assert_eq!(LatencyHop::from_label("Bridge"), None, "names are exact");
+        assert_eq!(LatencyHop::from_label(""), None);
     }
 
     #[test]

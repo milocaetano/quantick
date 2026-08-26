@@ -346,7 +346,13 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
         .monospace()
         .color(tape_color),
     )
-    .on_hover_text(tape_tooltip(model.feed_latency));
+    // `on_hover_ui`, not `on_hover_text`: the split's sentences are built with
+    // `format!`, and `on_hover_text` evaluates its argument on every frame
+    // whether or not anyone is pointing at the cell. A per-frame allocation for
+    // a tooltip nobody is reading is exactly the trade this repo does not make.
+    .on_hover_ui(|ui| {
+        ui.label(tape_tooltip(model.feed_latency));
+    });
 }
 
 /// Middle section: bar spec, counts, honesty labels and navigation hints.
@@ -562,6 +568,10 @@ mod tests {
         // other half of the same bargain, asserted where the cell is built.
         let plain = tape_text(None, Some(18_112), Some(100), None);
         for hop in ["terminal", "bridge", "MT5", "quantick"] {
+            assert!(
+                hop.chars().count() <= quantick_feed_mt5::LatencyHop::MAX_LABEL_CHARS,
+                "the fixture outgrew the budget the labels are held to"
+            );
             let named = tape_text(
                 None,
                 Some(18_112),
