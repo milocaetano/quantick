@@ -373,6 +373,53 @@ pub fn silent_notices() -> mpsc::Receiver<FeedNotice> {
     rx
 }
 
+/// Where a feed's delay is being spent, as far as the provider can tell.
+///
+/// The chart has always been able to say *how* late a print was — its timestamp
+/// against the local clock, one number. That number cannot be acted on: a tape
+/// running seconds behind looks the same whether the venue's own adapter got it
+/// late, the transport carried it late, or the chart drained it late, and those
+/// have different fixes. This is that number cut into the pieces the provider
+/// can actually measure.
+///
+/// Every split is optional, and the whole struct is absent for a provider that
+/// cannot cut its own chain. That is deliberate: an invented zero would read as
+/// "this hop is instant", which is a measurement nobody took.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FeedLatency {
+    /// Newest print: venue stamp to the provider reading it off the wire.
+    pub arrival_lag_ms: i64,
+    /// The same figure for whichever print in the sample waited longest.
+    pub arrival_lag_peak_ms: i64,
+    /// Venue stamp to the source handing the print over — everything upstream
+    /// of quantick.
+    pub source_lag_ms: Option<i64>,
+    /// The source handing it over to quantick reading it: the wire.
+    pub transport_lag_ms: Option<i64>,
+    /// Worst `transport_lag_ms` in the sample.
+    pub transport_lag_peak_ms: Option<i64>,
+    /// The provider's own name for the hop that owns most of the delay.
+    ///
+    /// A borrowed name rather than a shared enum, because the chains differ:
+    /// MetaTrader's runs venue → terminal → bridge → socket, a web-socket
+    /// venue's does not have a terminal at all, and a recorded session has no
+    /// chain to speak of. One enum covering all of them would either lose the
+    /// detail that makes the reading actionable or grow a variant per provider,
+    /// and this readout exists to be acted on.
+    pub hop: Option<&'static str>,
+    /// How many live prints the sample covers.
+    pub prints: u32,
+}
+
+/// The latency channel of a feed that cannot split its own chain.
+///
+/// The sender is dropped immediately, so the receiver serves `None` forever and
+/// the chart shows the end-to-end figure with no breakdown beside it.
+#[must_use]
+pub fn unsplit_latency() -> watch::Receiver<Option<FeedLatency>> {
+    watch::channel(None).1
+}
+
 /// The capability channel of a feed whose answer is known at spawn and never
 /// changes. The sender is dropped immediately; a `watch` receiver keeps serving
 /// the value it was born with.
@@ -449,12 +496,93 @@ pub struct FeedHandle {
     /// value every frame — exactly as it read the static provider answer
     /// before — so an affordance withdraws itself the moment the truth is known.
     pub capabilities: watch::Receiver<FeedCapabilities>,
+    /// Where this feed's delay is being spent, when the provider can tell.
+    ///
+    /// A `watch` rather than an event, because it is a *current reading* and
+    /// not a thing that happened: a consumer that missed three samples wants
+    /// the newest one, never the backlog. Its own channel for the same reason
+    /// notices have one — a tape that has stopped arriving is exactly when the
+    /// question "who is late" is being asked, and the trade channel is silent.
+    ///
+    /// `None` until the provider has something measured to say, and on every
+    /// provider that cannot cut its own chain.
+    pub latency: watch::Receiver<Option<FeedLatency>>,
     /// UI → feed: on-demand history loading.
     pub commands: mpsc::Sender<FeedCommand>,
     /// Present only while a recorded session is playing: what the transport bar
     /// reads to draw itself. `None` means this is a live feed, which is the one
     /// check the UI needs to tell the two modes apart.
     pub replay: Option<ReplayLink>,
+}
+
+/// A latency split forced by `QUANTICK_FAKE_LATENCY_SPLIT`, or `None`.
+///
+/// `arrival,source,transport,hop` in milliseconds and one word, e.g.
+/// `18112,17980,132,bridge`. The readout it drives only exists while a real
+/// venue is running slowly, which is a state no screenshot can arrange and no
+/// setting reaches — so without this hook the whole cell, its hop name and its
+/// hover breakdown are invisible to anything but a human waiting for a bad day.
+///
+/// The hop is leaked to `'static` because that is the shape a provider's own
+/// name has: real ones are compile-time constants from the provider crate, and
+/// one scripted string per process is a bounded, one-off cost paid at startup.
+///
+/// A malformed value is logged and ignored rather than silently treated as a
+/// default — a typo in a validation script must not photograph the wrong state
+/// and call it a pass.
+#[must_use]
+pub fn forced_latency_split() -> Option<FeedLatency> {
+    let raw = std::env::var("QUANTICK_FAKE_LATENCY_SPLIT").ok()?;
+    let parsed = parse_forced_latency(raw.trim());
+    if parsed.is_none() {
+        tracing::warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "FAKE_LATENCY_SPLIT_REJECTED",
+            value = %raw,
+            action = "ignore",
+            "expected arrival,source,transport,hop in milliseconds"
+        );
+    }
+    parsed.map(|split| FeedLatency {
+        hop: split.hop.map(|hop| &*Box::leak(hop.into_boxed_str())),
+        ..split.latency
+    })
+}
+
+/// What one `QUANTICK_FAKE_LATENCY_SPLIT` value means, before the hop name is
+/// given the `'static` life the port asks for. Split out so the parsing is
+/// testable without leaking a string per test.
+struct ForcedLatency {
+    latency: FeedLatency,
+    hop: Option<String>,
+}
+
+fn parse_forced_latency(raw: &str) -> Option<ForcedLatency> {
+    let mut parts = raw.split(',').map(str::trim);
+    let arrival: i64 = parts.next()?.parse().ok()?;
+    let source: i64 = parts.next()?.parse().ok()?;
+    let transport: i64 = parts.next()?.parse().ok()?;
+    let hop = parts
+        .next()
+        .filter(|hop| !hop.is_empty())
+        .map(str::to_owned);
+    if parts.next().is_some() {
+        return None; // a fifth field means the script means something else
+    }
+    Some(ForcedLatency {
+        latency: FeedLatency {
+            arrival_lag_ms: arrival,
+            // One print, so the worst of the window is that print.
+            arrival_lag_peak_ms: arrival,
+            source_lag_ms: Some(source),
+            transport_lag_ms: Some(transport),
+            transport_lag_peak_ms: Some(transport),
+            hop: None,
+            prints: 1,
+        },
+        hop,
+    })
 }
 
 /// The initial backfill depth: `QUANTICK_BACKFILL` if it parses to a positive
@@ -505,6 +633,44 @@ pub fn spawn_live(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_forced_split_parses_into_a_reading() {
+        // The state this hook exists for only happens while a real venue is
+        // running badly, so a validation run has to be able to ask for it.
+        let split = parse_forced_latency("18112,17980,132,bridge").expect("a well-formed hook");
+        assert_eq!(split.latency.arrival_lag_ms, 18_112);
+        assert_eq!(split.latency.source_lag_ms, Some(17_980));
+        assert_eq!(split.latency.transport_lag_ms, Some(132));
+        assert_eq!(split.hop.as_deref(), Some("bridge"));
+        assert_eq!(split.latency.prints, 1);
+    }
+
+    #[test]
+    fn the_hop_name_is_optional_but_the_numbers_are_not() {
+        let unnamed = parse_forced_latency("900,800,100").expect("three fields is enough");
+        assert_eq!(unnamed.hop, None);
+        assert_eq!(unnamed.latency.arrival_lag_ms, 900);
+    }
+
+    #[test]
+    fn a_malformed_forced_split_is_rejected_not_defaulted() {
+        // A typo in a validation script must not photograph the wrong state and
+        // call it a pass, so every one of these is a refusal.
+        for bad in [
+            "",
+            "18112",
+            "18112,17980",
+            "18112,17980,x",
+            "18112,17980,132,bridge,extra",
+            "a,b,c",
+        ] {
+            assert!(
+                parse_forced_latency(bad).is_none(),
+                "{bad:?} should be refused"
+            );
+        }
+    }
 
     #[test]
     fn reconnect_loop_lifecycle_uses_explicit_transport_notices() {

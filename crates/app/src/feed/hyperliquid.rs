@@ -57,6 +57,9 @@ pub fn spawn(symbol: &str) -> FeedHandle {
         book_events: book_rx,
         notices: notice_rx,
         capabilities: super::fixed_capabilities(ProviderKind::Hyperliquid.capabilities()),
+        // A web-socket venue stamps a trade and quantick reads it: there is no
+        // hop between those two to attribute a delay to.
+        latency: super::unsplit_latency(),
         commands: cmd_tx,
         replay: None,
     }

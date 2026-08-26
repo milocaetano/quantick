@@ -13,6 +13,7 @@ use crate::{
     loading::LoadingTask,
     orderflow_engine::OrderflowHealth,
     pane::{ChartPane, PaneSide},
+    tab::Tab,
 };
 
 use super::{
@@ -50,6 +51,52 @@ pub(crate) struct TabHealthSnapshot {
     pub tab_id: WireU64,
     pub active_loading_tasks: Vec<LoadingTaskSnapshot>,
     pub panes: Vec<PaneHealthSnapshot>,
+    /// How late this tab's tape is, and where the time is going. `None` while
+    /// replaying — a recording's prints are as old as the day they were
+    /// captured and the playback clock decides when they appear.
+    pub tape: Option<TapeHealthSnapshot>,
+}
+
+/// Where a tab's tape delay is being spent.
+///
+/// The whole point of the breakdown is that "the chart is eighteen seconds
+/// behind" is not actionable on its own: it reads the same whether the venue's
+/// adapter was late, the wire was late, or this process drained late, and those
+/// have different fixes. An investigation that starts here can name the hop
+/// without a screenshot and without a person watching the corner of a window.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct TapeHealthSnapshot {
+    /// Newest print: venue stamp to this chart drawing it. The end-to-end
+    /// figure the status bar shows.
+    #[schemars(extend("x-unit" = "milliseconds"))]
+    pub arrival_latency_ms: Option<i64>,
+    /// The same measurement taken where the feed read the print off the wire,
+    /// one hop earlier.
+    ///
+    /// The gap between this and `arrival_latency_ms` is what quantick's own
+    /// queue and frame drain cost. It is a *derived* reading, not a measured
+    /// one — the two are sampled at different instants — but a gap of seconds
+    /// between them is unambiguous, and it is the only way to see that hop at
+    /// all. `None` on a provider that cannot cut its own chain.
+    #[schemars(extend("x-unit" = "milliseconds"))]
+    pub feed_arrival_latency_ms: Option<i64>,
+    /// The worst end-to-end figure over the sampled prints, at the feed.
+    #[schemars(extend("x-unit" = "milliseconds"))]
+    pub feed_arrival_latency_peak_ms: Option<i64>,
+    /// Venue stamp to the source handing the print over: everything upstream
+    /// of quantick.
+    #[schemars(extend("x-unit" = "milliseconds"))]
+    pub source_latency_ms: Option<i64>,
+    /// The source handing it over to quantick reading it: the wire.
+    #[schemars(extend("x-unit" = "milliseconds"))]
+    pub transport_latency_ms: Option<i64>,
+    /// The worst wire figure over the sampled prints.
+    #[schemars(extend("x-unit" = "milliseconds"))]
+    pub transport_latency_peak_ms: Option<i64>,
+    /// The provider's own name for the hop that owns most of the delay.
+    pub dominant_hop: Option<String>,
+    /// How many live prints the split covers.
+    pub sampled_prints: WireU64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -202,10 +249,33 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
                         })
                         .collect(),
                     panes,
+                    tape: tape_health(tab),
                 }
             })
             .collect(),
     }
+}
+
+/// This tab's tape delay, split as far as its provider can tell.
+///
+/// `None` when there is nothing measured to report at all: a tab that has not
+/// seen a live print, and any tab playing a recording.
+fn tape_health(tab: &Tab) -> Option<TapeHealthSnapshot> {
+    let arrival_latency_ms = tab.trade_arrival_ms();
+    let split = tab.feed_latency();
+    if arrival_latency_ms.is_none() && split.is_none() {
+        return None;
+    }
+    Some(TapeHealthSnapshot {
+        arrival_latency_ms,
+        feed_arrival_latency_ms: split.map(|s| s.arrival_lag_ms),
+        feed_arrival_latency_peak_ms: split.map(|s| s.arrival_lag_peak_ms),
+        source_latency_ms: split.and_then(|s| s.source_lag_ms),
+        transport_latency_ms: split.and_then(|s| s.transport_lag_ms),
+        transport_latency_peak_ms: split.and_then(|s| s.transport_lag_peak_ms),
+        dominant_hop: split.and_then(|s| s.hop).map(str::to_owned),
+        sampled_prints: WireU64::new(u64::from(split.map_or(0, |s| s.prints))),
+    })
 }
 
 fn pane_health(pane: &ChartPane, side: PaneSide) -> PaneHealthSnapshot {

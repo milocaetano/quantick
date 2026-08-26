@@ -299,6 +299,18 @@ impl TickMapper {
         server_ms.saturating_sub(self.offset_ms)
     }
 
+    /// The current `server_time - utc` offset in milliseconds.
+    ///
+    /// For a caller that must do the conversion in its own arithmetic rather
+    /// than one instant at a time — the latency split subtracts two server
+    /// stamps and one UTC clock, and threading each through
+    /// [`to_utc_ms`](Self::to_utc_ms) would read the offset twice for one sum.
+    /// Still sourced here, so there is one owner of what the offset is.
+    #[must_use]
+    pub fn server_utc_offset_ms(&self) -> i64 {
+        self.offset_ms
+    }
+
     /// Map one tick. Updates the tick-rule state and the stats ledger.
     pub fn map(&mut self, tick: &Tick) -> MapOutcome {
         match self.tape {
@@ -463,6 +475,7 @@ mod tests {
         Tick {
             seq,
             time_ms: 1_784_824_300_000 + seq as i64,
+            sent_ms: None,
             bid: "0".to_string(),
             ask: "0".to_string(),
             last: last.to_string(),
@@ -555,6 +568,7 @@ mod tests {
         let quote = Tick {
             seq: 1,
             time_ms: 0,
+            sent_ms: None,
             bid: "99".to_string(),
             ask: "101".to_string(),
             last: "0".to_string(),
@@ -591,6 +605,7 @@ mod tests {
         Tick {
             seq,
             time_ms: 1_785_327_308_000 + seq as i64,
+            sent_ms: None,
             bid: bid.to_string(),
             ask: ask.to_string(),
             last: "0.00".to_string(),

@@ -5802,6 +5802,7 @@ impl QuantickApp {
                 }),
             connection: self.active_tab().feed_connection,
             feed_arrival_ms: self.active_tab().trade_arrival_ms(),
+            feed_latency: self.active_tab().feed_latency(),
             tape_age_ms: self.active_tab().tape_age_at(metrics::wall_clock_ms()),
             spec_summary: pane.state.spec().summary(),
             bar_progress: pane
@@ -11361,6 +11362,7 @@ mod tests {
                     ohlcv_history: false,
                     ohlcv_generation: 0,
                 }),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -11413,6 +11415,7 @@ mod tests {
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -11758,6 +11761,7 @@ plot(close)
                 book_events: book_rx,
                 notices: notice_rx,
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -12329,7 +12333,7 @@ plot(close)
             .expect("a live tape has an age");
         assert!(age < metrics::STALE_TAPE_MS);
         assert_eq!(
-            statusbar::tape_text(None, app.active_tab().trade_arrival_ms(), Some(age)),
+            statusbar::tape_text(None, app.active_tab().trade_arrival_ms(), Some(age), None),
             "arrival 42 ms"
         );
 
@@ -12345,7 +12349,7 @@ plot(close)
             "the arrival observation is frozen, which is why it cannot report this"
         );
         assert_eq!(
-            statusbar::tape_text(None, app.active_tab().trade_arrival_ms(), Some(age)),
+            statusbar::tape_text(None, app.active_tab().trade_arrival_ms(), Some(age), None),
             "stale 60 s"
         );
     }
@@ -12522,6 +12526,7 @@ plot(close)
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(FeedCapabilities::none()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -12787,6 +12792,7 @@ plot(close)
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -12870,6 +12876,7 @@ crosshair = false
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -20580,6 +20587,7 @@ crosshair = false
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -20616,6 +20624,7 @@ crosshair = false
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -21288,6 +21297,7 @@ crosshair = false
             book_events: mpsc::channel(8).1,
             notices: feed::silent_notices(),
             capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+            latency: feed::unsplit_latency(),
             commands: cmd_tx,
             replay: None,
         });
@@ -21763,6 +21773,7 @@ crosshair = false
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -21803,6 +21814,7 @@ crosshair = false
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -22514,6 +22526,7 @@ crosshair = false
                     ohlcv_history: true,
                     ohlcv_generation: 0,
                 }),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -23257,6 +23270,7 @@ crosshair = false
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -23296,6 +23310,7 @@ crosshair = false
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -23562,6 +23577,7 @@ crosshair = false
                     ohlcv_history: true,
                     ohlcv_generation: 0,
                 }),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -24184,6 +24200,7 @@ crosshair = false
                     ohlcv_history: true,
                     ohlcv_generation: 0,
                 }),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -24435,6 +24452,7 @@ crosshair = false
             book_events: book_rx,
             notices: feed::silent_notices(),
             capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+            latency: feed::unsplit_latency(),
             commands: cmd_tx,
             replay: None,
         });
@@ -24597,6 +24615,7 @@ crosshair = false
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: caps_rx,
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -25080,6 +25099,7 @@ crosshair = false
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: feed::fixed_capabilities(ProviderKind::MetaTrader.capabilities()),
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },
@@ -25163,6 +25183,7 @@ crosshair = false
                 book_events: book_rx,
                 notices: feed::silent_notices(),
                 capabilities: caps_rx,
+                latency: feed::unsplit_latency(),
                 commands: cmd_tx,
                 replay: None,
             },

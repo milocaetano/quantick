@@ -120,13 +120,26 @@ any of them still connects and still streams ticks.
 ### tick
 
 ```json
-{"type":"tick","seq":1,"time_ms":1784824300802,"bid":"0","ask":"0","last":"177795","volume":3,"flags":1080}
+{"type":"tick","seq":1,"time_ms":1784824300802,"sent_ms":1784824300815,"bid":"0","ask":"0","last":"177795","volume":3,"flags":1080}
 ```
 
 - `seq` — bridge-assigned, monotonic from 1 per session. **Synthetic** (MT5
   has no exchange trade id): good for gap detection, not stable across
   sessions.
 - `time_ms` — `MqlTick.time_msc`, in **server time** (see hello).
+- `sent_ms` — *optional*, **server time**: when the bridge handed this line
+  over. It exists so a late tape can be diagnosed instead of merely noticed.
+  A chart can subtract a print's `time_ms` from its own clock and get one
+  end-to-end number, and that number cannot tell a terminal that received the
+  tick late from a socket that delivered it late — opposite faults with
+  opposite fixes. `sent_ms` cuts the chain in two: `sent_ms - time_ms` is the
+  delay inside the terminal, and the reader's own arrival minus `sent_ms` is
+  the delay on the wire. A bridge may stamp once per batch rather than once per
+  tick, so the figure is the instant the *batch* left, never later than the
+  line itself. **Absent means an older bridge**: the reader reports the split
+  as unavailable rather than inventing a zero. Live prints only — on a backfill
+  or paged tick the stamp is honest and the difference is the age of the
+  history, not a latency.
 - `bid`/`ask`/`last` — price strings with exactly `digits` decimals; `"0"`
   when the feed carries none (B3 history ticks have no quotes).
 - `volume` — contracts; `0` on quote-only ticks.
@@ -253,11 +266,19 @@ The next session re-sends it.
 ### heartbeat
 
 ```json
-{"type":"heartbeat","seq_last":42,"time_ms":1784824301000,"ticks_sent":42,"server_utc_offset_s":-10800}
+{"type":"heartbeat","seq_last":42,"time_ms":1784824301000,"ticks_sent":42,"server_utc_offset_s":-10800,"cursor_lag_ms":4}
 ```
 
 Sent every ~5 s. Refreshes the offset (DST-safe). A feed hearing nothing for
 its read timeout (default 30 s) presumes the bridge dead.
+
+- `cursor_lag_ms` — *optional*: how far the bridge's send cursor trails the
+  newest tick the terminal itself holds. This is the one hop no timestamp
+  comparison downstream can see. A tape running late inside the terminal and a
+  tape running late on the wire look identical from the chart; together with
+  `sent_ms` this separates them, and the three figures account for the whole
+  chain. It is a property of the pump, not of a print, so it rides the
+  heartbeat instead of costing every tick. **Absent means an older bridge.**
 
 ### backfill_start / backfill_end
 

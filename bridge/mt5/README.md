@@ -138,9 +138,41 @@ right edge, and past the lane's window disappearing from it altogether.
 
 `BRIDGE_TAPE_STATS` reports it every heartbeat: `ticks_sent` against
 `socket_writes` (well apart is the batching working), plus `tick_lag_ms` — how
-far the tick cursor sits behind the server clock. On the quantick side the same
+far the tick cursor sits behind the server clock — and `send_stalls` and
+`pump_round_limits`, the two counts below. On the quantick side the same
 distance appears as `tape_newest_print_age_ms` in `APP_HEALTH_SUMMARY`, and on
 the chart as the caption under the tape.
+
+## Why a late tape says who is late
+
+A chart running seconds behind the terminal used to be one number in a corner —
+`arrival 18112 ms` — and that number reads the same whether the terminal got the
+print late, this bridge's pump is trailing the terminal, or quantick read the
+socket late. Three faults, three different fixes, one indistinguishable symptom.
+
+So the bridge stamps what it sends. Every tick carries `sent_ms` (when the
+bridge handed the line over, on the same server clock as `time_ms`) and every
+heartbeat carries `cursor_lag_ms` (how far the send cursor trails the newest
+tick the terminal holds). quantick subtracts them and names the hop, on the
+status bar and in `quantick_get_diagnostics`. The full accounting is in
+`crates/feed-mt5/src/latency.rs`; `PROTOCOL.md` defines the two fields.
+
+Both are additive within schema 1: a bridge that predates them still streams,
+and the split is then reported unavailable rather than as a zero nobody
+measured.
+
+Three things the EA reports about its own share:
+
+- `BRIDGE_PUMP_ROUND_LIMIT` — one pass hit `PUMP_MAX_ROUNDS` without draining
+  the terminal. A pass keeps calling `CopyTicks` while the answers come back
+  full, so this is the tape genuinely arriving faster than one pass can forward
+  it, not a batch cap being hit.
+- `BRIDGE_SEND_STALLED` — `SocketSend` blocked for `blocked_ms`. It runs on the
+  terminal's main thread, so that is time no tick was being collected: the cause
+  is quantick not reading, and the symptom looks like a slow terminal.
+- `InpPumpIntervalMs` (default 25 ms) — the safety net under `OnTick`, which is
+  the fast path. It was a fifth of a second, which is a fifth of a second the
+  net itself could cost on any symbol whose chart is not receiving `OnTick`.
 
 ## Depth of Market (book heatmap)
 
@@ -219,7 +251,9 @@ Both sides speak structured logs:
   `BRIDGE_CONNECT_FAILED` (feed not running / URL not allowed),
   `BRIDGE_SESSION_STARTED`, `BRIDGE_DISCONNECTED` (+ retry),
   `BRIDGE_BOOK_SUBSCRIBED` / `BRIDGE_BOOK_SUBSCRIBE_FAILED`, and
-  `BRIDGE_BOOK_STATS` every heartbeat (images sent vs skipped as unchanged).
+  `BRIDGE_BOOK_STATS` every heartbeat (images sent vs skipped as unchanged),
+  plus `BRIDGE_PUMP_ROUND_LIMIT` and `BRIDGE_SEND_STALLED` when the tape or the
+  socket is the reason a chart is late.
 - **quantick (stderr, `QUANTICK_LOG_FORMAT=json`)**: `MT5_*` events. The
   feed's own — `MT5_LISTENING`, `MT5_SESSION_BUSY`, `MT5_HELLO_OK` and the
   rest — are tabulated in `crates/feed-mt5/src/lib.rs`. The app layer emits a

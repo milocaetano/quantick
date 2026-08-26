@@ -52,11 +52,12 @@ use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
 
 use quantick_feed_mt5::{
-    BookCaptureSwitch, HistoryPager, Mt5Error, Mt5Event, Mt5Status, ServerConfig, SideMode,
-    TapeKind, run_bridge_server,
+    BookCaptureSwitch, HistoryPager, LatencySample, Mt5Error, Mt5Event, Mt5Status, ServerConfig,
+    SideMode, TapeKind, run_bridge_server,
 };
 
 use crate::config::{FeedCapabilities, MetaTraderSettings, Mt5SideSource, ProviderKind};
+use crate::feed::FeedLatency;
 
 use super::mt5_bridge::{Supervision, supervise};
 use super::{DepthEvent, FeedCommand, FeedEvent, FeedHandle, FeedNotice};
@@ -92,6 +93,9 @@ pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
     // terminal usually streams an exchange contract with a book and a tape,
     // and the session narrows that the moment it knows better.
     let (caps_tx, caps_rx) = watch::channel(ProviderKind::MetaTrader.capabilities());
+    // Nothing measured yet. The chart shows the end-to-end figure alone until
+    // the first sample arrives, rather than a breakdown of zeros.
+    let (latency_tx, latency_rx) = watch::channel::<Option<FeedLatency>>(None);
     let symbol = symbol.to_string();
     let settings = settings.clone();
     std::thread::Builder::new()
@@ -103,7 +107,7 @@ pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
                 .build()
                 .expect("build feed runtime");
             runtime.block_on(feed_task(
-                symbol, settings, tx, book_tx, notice_tx, caps_tx, cmd_rx,
+                symbol, settings, tx, book_tx, notice_tx, caps_tx, latency_tx, cmd_rx,
             ));
         })
         .expect("spawn mt5 feed thread");
@@ -112,8 +116,32 @@ pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
         book_events: book_rx,
         notices: notice_rx,
         capabilities: caps_rx,
+        latency: latency_rx,
         commands: cmd_tx,
         replay: None,
+    }
+}
+
+/// One bridge latency sample in the provider-neutral vocabulary the chart
+/// reads.
+///
+/// MetaTrader's chain has four hops and no other provider's does, so what
+/// crosses this boundary is the shape every provider can answer in — the two
+/// halves either side of the wire, plus this provider's own name for whichever
+/// hop is spending the time. The names come from [`LatencySample::dominant`],
+/// so the chart never has to know what a bridge is.
+fn neutral_latency(sample: &LatencySample) -> FeedLatency {
+    FeedLatency {
+        arrival_lag_ms: sample.arrival_lag_ms,
+        arrival_lag_peak_ms: sample.arrival_lag_peak_ms,
+        // Everything before the socket is "the source" from the chart's side:
+        // whether the terminal or the bridge inside it spent the time is what
+        // `hop` is for, and folding it into the number would lose the answer.
+        source_lag_ms: sample.terminal_lag_ms,
+        transport_lag_ms: sample.transport_lag_ms,
+        transport_lag_peak_ms: sample.transport_lag_peak_ms,
+        hop: sample.dominant().map(|hop| hop.label()),
+        prints: sample.prints,
     }
 }
 
@@ -177,6 +205,7 @@ async fn feed_task(
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
     caps_tx: watch::Sender<FeedCapabilities>,
+    latency_tx: watch::Sender<Option<FeedLatency>>,
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
 ) {
     // Resolve the UI's initial history load immediately: there is no
@@ -599,6 +628,13 @@ async fn feed_task(
                             caps.ohlcv_history = true;
                             caps.ohlcv_generation = ohlcv_generation;
                         });
+                    }
+                    Some(Mt5Event::Latency(sample)) => {
+                        // A current reading, not an event: `send_replace` so a
+                        // consumer that missed three samples reads the newest
+                        // one instead of a backlog, and a consumer that has
+                        // gone away does not stop the feed.
+                        latency_tx.send_replace(Some(neutral_latency(&sample)));
                     }
                     Some(Mt5Event::Live(trade)) => {
                         forwarded_any = true;

@@ -343,6 +343,10 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
             ohlcv_generation: 0,
         }),
         commands: cmd_tx,
+        // A recording has no chain to attribute: its prints are as old as the
+        // day they were captured, and the playback clock decides when they
+        // appear. There is no delay here to blame anything for.
+        latency: super::unsplit_latency(),
         replay: Some(link),
     }
 }

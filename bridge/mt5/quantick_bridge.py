@@ -57,7 +57,7 @@ except ImportError:  # pragma: no cover - environment problem, not logic
 
 SCHEMA_VERSION = 1
 BRIDGE_NAME = "quantick-mt5-bridge-py"
-BRIDGE_VERSION = "0.1.0"
+BRIDGE_VERSION = "0.2.0"
 
 #: Timezone offsets are whole 15-minute steps everywhere on earth, so snapping
 #: to that grid removes the millisecond of tick latency from the measurement.
@@ -184,6 +184,16 @@ MAX_COMMAND_LINE_BYTES = 64 * 1024
 # without pause would otherwise keep `select` readable forever and starve the
 # tick, book and heartbeat pumps that share this loop.
 MAX_COMMAND_READS = 16
+
+# Ticks one `copy_ticks_from` may return. This bounds a single request, not a
+# pump pass: the pass keeps asking while the answers come back full, so a burst
+# larger than one batch is drained now instead of waiting for the next pass.
+TICKS_PER_PUMP_ROUND = 4096
+
+# Hard stop on that loop, so a tape arriving faster than one pass can forward
+# it ends the pass and says so rather than owning the loop the book and the
+# heartbeat share.
+MAX_PUMP_ROUNDS = 16
 
 
 def log(event_code: str, **fields: object) -> None:
@@ -348,6 +358,7 @@ class Session:
         self.args = args
         self.seq = 0
         self.ticks_sent = 0
+        self.pump_round_limits = 0
         self.book_seq = 0
         self.book_sent = 0
         self.book_skipped = 0
@@ -517,8 +528,13 @@ class Session:
         # An empty block still gets both markers: backfill_end is the
         # "history is done" signal quantick's loader waits on.
         self.send({"type": "backfill_start", "count_hint": count})
+        # History is stamped like anything else: `sent_ms` says when the bridge
+        # handed the line over, which for a backfill tick is minutes after the
+        # print happened. The feed measures latency from live prints only, so
+        # the stamp here is a true statement nobody draws a lag from.
+        backfill_sent_ms = self.server_now_ms()
         for tick in ticks if ticks is not None else ():
-            self.send_tick(tick)
+            self.send_tick(tick, backfill_sent_ms)
         self.send({"type": "backfill_end"})
 
         if count:
@@ -622,8 +638,9 @@ class Session:
         # counted yet can still frame the block.
         self.send({"type": "history_start"})
         ticks, exhausted, scanned_to_ms, calls = self.walk_back(wanted, before_ms)
+        page_sent_ms = self.server_now_ms()
         for tick in ticks:
-            self.send_tick(tick)
+            self.send_tick(tick, page_sent_ms)
         self.send(
             {
                 "type": "history_end",
@@ -1001,13 +1018,25 @@ class Session:
             fell_back_to_tick_volume=fell_back,
         )
 
-    def send_tick(self, tick) -> None:
+    def send_tick(self, tick, sent_ms: int) -> None:
+        """Queue one tick, stamped with when this bridge handed it over.
+
+        `sent_ms` is on the same server clock as `time_ms`, so the reader can
+        split one end-to-end delay into the part spent inside the terminal
+        (`sent_ms - time_ms`) and the part spent on the wire (its own arrival
+        minus `sent_ms`). Those are opposite faults with opposite fixes, and a
+        single arrival figure cannot tell them apart. See PROTOCOL.md.
+
+        Stamped once per pump pass rather than once per tick: it is the instant
+        the batch left, never later than the line itself.
+        """
         self.seq += 1
         self.send(
             {
                 "type": "tick",
                 "seq": self.seq,
                 "time_ms": int(tick["time_msc"]),
+                "sent_ms": sent_ms,
                 "bid": self.price(float(tick["bid"])),
                 "ask": self.price(float(tick["ask"])),
                 "last": self.price(float(tick["last"])),
@@ -1038,30 +1067,79 @@ class Session:
         return mt5.COPY_TICKS_TRADE if self.tape == "trades" else mt5.COPY_TICKS_ALL
 
     def pump_ticks(self) -> None:
-        """Forward every tick newer than the cursor, exactly once."""
-        # The request floor is whole seconds; the (msc, count-at-msc) cursor
-        # below is what actually guarantees no tick is sent twice.
-        ticks = mt5.copy_ticks_from(
-            self.symbol, self.cursor_msc // 1000, 4096, self.tick_flags()
-        )
-        if ticks is None or not len(ticks):
-            return
-        at_cursor_seen = 0
-        for tick in ticks:
-            msc = int(tick["time_msc"])
-            if msc < self.cursor_msc:
-                continue
-            if msc == self.cursor_msc:
-                at_cursor_seen += 1
-                if at_cursor_seen <= self.sent_at_cursor:
+        """Forward every tick newer than the cursor, exactly once.
+
+        One `copy_ticks_from` returns at most `TICKS_PER_PUMP_ROUND`, so a full
+        answer does not mean the terminal is drained — it means the batch was
+        capped. The pass asks again from the advanced cursor while the answers
+        keep coming back full, because leaving the remainder for the next pass
+        is how a burst turns into a tape running whole seconds behind a book
+        that never batches at all. Bounded by `MAX_PUMP_ROUNDS` so one pass can
+        never own the loop.
+        """
+        # One stamp for the pass, taken before the work: a send that blocks
+        # then pays for itself in wire delay rather than hiding in terminal
+        # delay, which is where it belongs.
+        sent_ms = self.server_now_ms()
+        rounds = 0
+        while rounds < MAX_PUMP_ROUNDS:
+            rounds += 1
+            # The request floor is whole seconds; the (msc, count-at-msc)
+            # cursor below is what actually guarantees no tick is sent twice.
+            ticks = mt5.copy_ticks_from(
+                self.symbol,
+                self.cursor_msc // 1000,
+                TICKS_PER_PUMP_ROUND,
+                self.tick_flags(),
+            )
+            if ticks is None or not len(ticks):
+                return
+            at_cursor_seen = 0
+            forwarded = 0
+            for tick in ticks:
+                msc = int(tick["time_msc"])
+                if msc < self.cursor_msc:
                     continue
-                self.send_tick(tick)
-                self.sent_at_cursor += 1
-            else:
-                self.send_tick(tick)
-                self.cursor_msc = msc
-                self.sent_at_cursor = 1
-                at_cursor_seen = 0
+                if msc == self.cursor_msc:
+                    at_cursor_seen += 1
+                    if at_cursor_seen <= self.sent_at_cursor:
+                        continue
+                    self.send_tick(tick, sent_ms)
+                    self.sent_at_cursor += 1
+                    forwarded += 1
+                else:
+                    self.send_tick(tick, sent_ms)
+                    self.cursor_msc = msc
+                    self.sent_at_cursor = 1
+                    at_cursor_seen = 0
+                    forwarded += 1
+            # A short batch is the terminal saying it has nothing more; a batch
+            # that forwarded nothing means every tick in it was already sent,
+            # and asking again from the same cursor would return them forever.
+            if len(ticks) < TICKS_PER_PUMP_ROUND or forwarded == 0:
+                return
+        # Hitting the bound is the tape arriving faster than one pass can
+        # forward it — the reading behind a late chart, so it is said aloud
+        # rather than silently retried on the next pass.
+        self.pump_round_limits += 1
+        log(
+            "BRIDGE_PUMP_ROUND_LIMIT",
+            symbol=self.symbol,
+            rounds=MAX_PUMP_ROUNDS,
+            ticks_per_round=TICKS_PER_PUMP_ROUND,
+            passes=self.pump_round_limits,
+            cursor_lag_ms=self.cursor_lag_ms(),
+        )
+
+    def cursor_lag_ms(self) -> int:
+        """How far the send cursor trails the newest tick the terminal holds.
+
+        The one hop no timestamp comparison downstream can see: a tape late
+        inside the terminal and a tape late on the wire look identical from the
+        chart. Never negative — the cursor cannot be ahead of the terminal, and
+        a clock estimate that says otherwise is reporting its own error.
+        """
+        return max(0, self.server_now_ms() - self.cursor_msc)
 
     def pump_book(self) -> None:
         """Send one complete DOM image, when it differs from the last one."""
@@ -1125,6 +1203,7 @@ class Session:
                 "time_ms": self.server_now_ms(),
                 "ticks_sent": self.ticks_sent,
                 "server_utc_offset_s": self.offset_s,
+                "cursor_lag_ms": self.cursor_lag_ms(),
             }
         )
         if self.book_subscribed:

@@ -332,6 +332,17 @@ pub struct Tick {
     pub seq: u64,
     /// Server-time epoch milliseconds (`MqlTick.time_msc`).
     pub time_ms: i64,
+    /// Server-time epoch milliseconds when the bridge handed this line over.
+    ///
+    /// The cut that makes a late tape diagnosable: `sent_ms - time_ms` is the
+    /// delay inside MetaTrader and the reader's own arrival minus `sent_ms` is
+    /// the delay on the wire. One end-to-end figure cannot tell those apart,
+    /// and they have opposite fixes. See [`crate::latency`].
+    ///
+    /// `None` on a bridge that predates the field — the split is reported as
+    /// unavailable rather than as a zero nobody measured.
+    #[serde(default)]
+    pub sent_ms: Option<i64>,
     /// Bid price, or `"0"` when the feed carries none (common on B3 history).
     pub bid: String,
     /// Ask price, or `"0"` when the feed carries none.
@@ -439,6 +450,15 @@ pub struct Heartbeat {
     /// Refreshed `server_time - utc` seconds, if the bridge recomputed it.
     #[serde(default)]
     pub server_utc_offset_s: Option<i64>,
+    /// How far the bridge's send cursor trails the newest tick the terminal
+    /// itself holds, in milliseconds.
+    ///
+    /// The one hop no timestamp comparison downstream can see: a tape running
+    /// late inside the terminal and a bridge whose pump has fallen behind look
+    /// identical from the chart. Rides the heartbeat because it describes the
+    /// pump rather than any one print. `None` on a bridge that predates it.
+    #[serde(default)]
+    pub cursor_lag_ms: Option<i64>,
 }
 
 /// Why a line could not become a [`BridgeMsg`].
@@ -771,6 +791,49 @@ mod tests {
             panic!("expected a book image");
         };
         assert!(book.bids.is_empty() && book.asks.is_empty());
+    }
+
+    #[test]
+    fn a_tick_carries_the_instant_the_bridge_sent_it() {
+        // Verbatim from PROTOCOL.md. `sent_ms` is what makes a late tape
+        // diagnosable rather than merely visible: without it the chart can say
+        // how late a print was and nothing about which hop spent the time.
+        let line = r#"{"type":"tick","seq":1,"time_ms":1784824300802,"sent_ms":1784824300815,"bid":"0","ask":"0","last":"177795","volume":3,"flags":1080}"#;
+        let BridgeMsg::Tick(tick) = parse_line(line).unwrap() else {
+            panic!("expected a tick");
+        };
+        assert_eq!(tick.time_ms, 1_784_824_300_802);
+        assert_eq!(tick.sent_ms, Some(1_784_824_300_815));
+    }
+
+    #[test]
+    fn a_bridge_that_predates_the_stamp_still_streams() {
+        // Additive within schema 1: the field arrived after bridges were in
+        // the wild, and one that never sends it must keep charting. The split
+        // is then reported unavailable, never as a zero nobody measured.
+        let line = r#"{"type":"tick","seq":1,"time_ms":1784824300802,"bid":"0","ask":"0","last":"177795","volume":3,"flags":1080}"#;
+        let BridgeMsg::Tick(tick) = parse_line(line).unwrap() else {
+            panic!("expected a tick");
+        };
+        assert_eq!(tick.sent_ms, None);
+        assert_eq!(tick.last, "177795");
+    }
+
+    #[test]
+    fn a_heartbeat_carries_how_far_the_pump_trails() {
+        // Verbatim from PROTOCOL.md, and optional for the same reason as
+        // `sent_ms`: an older bridge reports no cursor and the terminal is then
+        // named whole rather than split on a guess.
+        let with = r#"{"type":"heartbeat","seq_last":42,"time_ms":1784824301000,"ticks_sent":42,"server_utc_offset_s":-10800,"cursor_lag_ms":4}"#;
+        let without = r#"{"type":"heartbeat","seq_last":42,"time_ms":1784824301000,"ticks_sent":42,"server_utc_offset_s":-10800}"#;
+        let BridgeMsg::Heartbeat(a) = parse_line(with).unwrap() else {
+            panic!()
+        };
+        let BridgeMsg::Heartbeat(b) = parse_line(without).unwrap() else {
+            panic!()
+        };
+        assert_eq!(a.cursor_lag_ms, Some(4));
+        assert_eq!(b.cursor_lag_ms, None);
     }
 
     #[test]
