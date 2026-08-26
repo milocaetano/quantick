@@ -23343,6 +23343,93 @@ plot(close)
         );
     }
 
+    /// The instrument's price grid is a fact about the market, so both panes
+    /// of a split read it the same way — including while the footprint layer
+    /// is hidden on one of them.
+    ///
+    /// This is the bug a trader saw as the same volume profile painting as a
+    /// wash on the time chart and as a slab on the flow chart. The two are one
+    /// object drawn by one function; what differed was the row height under
+    /// it, because the tab propagated the flow pane's capture bucket only
+    /// while the time pane's *footprint layer* was visible. A range profile
+    /// folds those same ladders with the layer hidden, so on WDO one chart
+    /// grouped at 0.01 and the other at 1 — a hundredfold difference in the
+    /// height of every row.
+    #[test]
+    fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden() {
+        let ctx = egui::Context::default();
+        let (mut app, _events, _commands) = history_app(&ctx);
+
+        // The bucket the flow pane's tape publishes for this market. That is
+        // the one answer; the question is whether the other pane reaches it.
+        let market_bucket = app
+            .active_tab()
+            .pane(PaneSide::Flow)
+            .state
+            .footprint_group();
+
+        // The state the defect lived in: the layer off on both panes, and a
+        // range profile on the time pane wanting the ladders anyway.
+        for side in [PaneSide::Time, PaneSide::Flow] {
+            app.active_tab_mut().pane_mut(side).set_layer_visible(
+                ChartLayer::Footprint,
+                false,
+                &mut chart_layers::LayerActions::default(),
+            );
+        }
+        let frvp = crate::drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == crate::frvp::TOOL_ID)
+            .expect("frvp is registered");
+        {
+            let time = app.active_tab_mut().pane_mut(PaneSide::Time);
+            assert!(
+                !time
+                    .drawings
+                    .place(frvp, crate::drawings::ChartPoint::at(1.0, 100.0))
+            );
+            assert!(
+                time.drawings
+                    .place(frvp, crate::drawings::ChartPoint::at(20.0, 105.0))
+            );
+            // And put its ladders deliberately out of step, which is exactly
+            // what a pane with no tape of its own drifts to when nothing hands
+            // it the market's grid.
+            time.state
+                .set_footprint_group(market_bucket * Decimal::from(100));
+        }
+        assert_ne!(
+            app.active_tab()
+                .pane(PaneSide::Time)
+                .state
+                .footprint_group(),
+            market_bucket,
+            "the panes really start out disagreeing, or this proves nothing"
+        );
+
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        let time_group = app
+            .active_tab()
+            .pane(PaneSide::Time)
+            .state
+            .footprint_group();
+        let flow_group = app
+            .active_tab()
+            .pane(PaneSide::Flow)
+            .state
+            .footprint_group();
+        assert_eq!(
+            time_group, flow_group,
+            "one market, one price grid: the two panes must not disagree"
+        );
+        assert_eq!(
+            time_group, market_bucket,
+            "and it is the market's bucket, not either pane's default"
+        );
+    }
+
     /// A short answer teaches nothing about where the record starts. A venue
     /// that stopped answering, or a socket that failed, brings back nothing
     /// older for a reason that has nothing to do with the venue's depth —
