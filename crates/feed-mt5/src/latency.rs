@@ -2,30 +2,35 @@
 //!
 //! The chart has always been able to say *how* late a print was: subtract its
 //! timestamp from the local clock and there is one number. That number cannot
-//! be acted on. A tape eighteen seconds behind looks identical whether the
-//! terminal received the print late, the bridge's pump is trailing the
-//! terminal, or quantick read the socket late — three faults with three
-//! different fixes, and the trader is told the same thing in every case.
+//! be acted on. A tape eighteen seconds behind looks identical whether
+//! MetaTrader handed the print over late or quantick read the socket late —
+//! two faults with two different fixes, and the trader is told the same thing
+//! in both cases.
 //!
 //! So the chain is cut where the bridge can stamp it. A tick carries `time_ms`
 //! (when the venue's clock says it happened) and `sent_ms` (when the bridge
-//! handed the line over), both on the server clock, and the heartbeat carries
-//! `cursor_lag_ms` (how far the pump trails the newest tick the terminal
-//! holds). Those three, plus the reader's own arrival instant, account for the
-//! whole chain:
+//! handed the line over), both on the server clock. With the reader's own
+//! arrival instant that is the whole chain, in two exact halves:
 //!
 //! ```text
-//! venue stamp --upstream--> terminal --bridge--> wire --transport--> chart
-//! |                                  |                              |
-//! |<--------- terminal_lag ---------->|<------ transport_lag ------->|
-//! |<------------------------ arrival_lag ---------------------------->|
+//! venue stamp -----------------> bridge sends -----------------> chart reads
+//! |<-------- terminal_lag ------>|<------ transport_lag -------->|
+//! |<--------------------- arrival_lag -------------------------->|
 //! ```
 //!
-//! `arrival_lag = terminal_lag + transport_lag` exactly, because both sides
-//! come from the same two stamps and one clock read. `cursor_lag` splits
-//! `terminal_lag` again — into what the terminal cost and what the pump cost —
-//! and that split is an estimate, because the two are sampled at different
-//! instants. It is labelled as one everywhere it is used.
+//! `arrival_lag = terminal_lag + transport_lag` exactly, because both halves
+//! come from the same two stamps and one clock read.
+//!
+//! **Two halves and not three, deliberately.** An earlier version split
+//! `terminal_lag` again — what the terminal cost against what the bridge's
+//! pump cost — from a `cursor_lag_ms` the heartbeat carried. It could not be
+//! made honest. A bridge has no cheap way to ask "what is the newest tick you
+//! hold that I have not sent", and every approximation of it collapses to
+//! *time since the last print*, which on a stall equals the delay itself and
+//! blames the pump for everything. A figure that names the wrong hop is worse
+//! than one that names none, so the pump reports its own health where it can
+//! actually measure it — `BRIDGE_PUMP_LIMIT` and `BRIDGE_SEND_STALLED`
+//! in the Experts tab — and this module reports only what it can subtract.
 //!
 //! Nothing here reads a clock. The tracker accumulates from arithmetic alone
 //! and is handed a clock only when a sample is drawn, which is at most once
@@ -41,25 +46,30 @@
 /// that prints once a minute still reports.
 pub const SAMPLE_EVERY_PRINTS: u32 = 64;
 
+/// Below this, a sample names no hop at all.
+///
+/// Every delay has a larger half, and reporting it on a tape that is four
+/// milliseconds behind would put a culprit's name on noise — on the chart, and
+/// worse, in `quantick_get_diagnostics`, where something that is not looking at
+/// the screen would read it as a finding. The floor is deliberately far under
+/// the thresholds either consumer acts on (`stream::LAG_REPORT_MS`, the app's
+/// `metrics::HIGH_LAG_MS`), so it withholds nothing anyone would use.
+pub const HOP_FLOOR_MS: i64 = 100;
+
 /// Which hop owns most of the delay in a [`LatencySample`].
 ///
-/// Deliberately one answer rather than a table: the reading a trader acts on
-/// is "who is late", and a reader that has to compare four numbers to find out
-/// is a reader that does not.
+/// Deliberately one answer rather than a table: the reading a trader acts on is
+/// "who is late", and a reader that has to compare four numbers to find out is
+/// a reader that does not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LatencyHop {
-    /// The terminal itself received the print late — nothing on this side of
-    /// the socket can shorten it. Reported only when the bridge told us how far
-    /// its own pump trails, so this hop is what is left after that.
-    Upstream,
-    /// The bridge's pump trails the ticks the terminal already holds.
-    Bridge,
-    /// Somewhere inside MetaTrader, with no `cursor_lag_ms` to say which half:
-    /// an older bridge that does not report it, or a session that has not sent
-    /// a heartbeat yet.
+    /// The print was already late when the bridge handed it over: the terminal
+    /// received it late, or the bridge's pump had not reached it yet. Nothing
+    /// on this side of the socket can shorten either, and the Experts tab is
+    /// where the two are told apart.
     Terminal,
-    /// The line left the bridge on time and quantick read it late — the socket,
-    /// the decoder, or the chart's own drain.
+    /// The bridge handed it over on time and quantick read it late — the
+    /// socket, the decoder, or the consumer's own queue.
     Transport,
 }
 
@@ -72,22 +82,21 @@ impl LatencyHop {
     /// hop that exists is reachable by name and one that does not is refused
     /// rather than photographed. The same bargain `FootprintStyle::ALL` makes
     /// with the style hook.
-    pub const ALL: [Self; 4] = [
-        Self::Upstream,
-        Self::Bridge,
-        Self::Terminal,
-        Self::Transport,
-    ];
+    pub const ALL: [Self; 2] = [Self::Terminal, Self::Transport];
 
     /// Longest a [`label`](Self::label) may be, in characters.
     ///
-    /// A consumer's readout has to put this word somewhere, and the one that
-    /// does — quantick's status bar — swaps it for the word `arrival`, whose
-    /// seven characters are the budget it has. One more is affordable; a
-    /// ten-character name was measured pushing the neighbouring cell off a
-    /// 1000 px window. Owned here and asserted on both sides of that boundary,
-    /// so neither end can widen it alone.
-    pub const MAX_LABEL_CHARS: usize = 8;
+    /// The width of the word `arrival`, and that is exactly where the number
+    /// comes from. A consumer's readout has to put this word somewhere, and the
+    /// one that does — quantick's status bar — puts it *in place of* `arrival`,
+    /// on a row whose three sections share one width with no budget between
+    /// them. Measured at 1000 px: a ten-character name overlapped the
+    /// neighbouring cell outright, and even a single extra character grazed it.
+    /// So the rule is not "short enough", it is **never wider than the word it
+    /// replaces** — then no window can be made worse by the chart knowing more.
+    /// Owned here and asserted on both sides of that boundary, so neither end
+    /// can widen it alone.
+    pub const MAX_LABEL_CHARS: usize = 7;
 
     /// The hop whose [`label`](Self::label) is `name`, if any.
     #[must_use]
@@ -97,17 +106,17 @@ impl LatencyHop {
 
     /// Short, fixed name for a readout. Stable enough to assert on.
     ///
-    /// Held to [`MAX_LABEL_CHARS`](Self::MAX_LABEL_CHARS). `MT5` rather than
-    /// `MetaTrader` for exactly that reason: the feed is named MetaTrader
-    /// everywhere the trader chose it, so the short form is unambiguous where
-    /// it appears.
+    /// Held to [`MAX_LABEL_CHARS`](Self::MAX_LABEL_CHARS), which is why these
+    /// are the short forms. `MT5` rather than `MetaTrader`: the feed is named
+    /// MetaTrader everywhere the trader chose it, so the short form is
+    /// unambiguous where it appears. `chart` rather than `quantick`: it is the
+    /// word a trader uses for this side of the socket, and the hover says the
+    /// precise thing — the queue and the drawing — for anyone who asks.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Upstream => "terminal",
-            Self::Bridge => "bridge",
             Self::Terminal => "MT5",
-            Self::Transport => "quantick",
+            Self::Transport => "chart",
         }
     }
 }
@@ -120,94 +129,63 @@ impl LatencyHop {
 /// not measure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LatencySample {
-    /// Newest print: venue stamp to this chart. The figure the status bar has
-    /// always shown, kept so the split can be checked against it.
+    /// Newest print: venue stamp to the reader taking it off the socket. The
+    /// total the two halves below add up to.
     pub arrival_lag_ms: i64,
-    /// Oldest print in this window: the same measurement for whichever print
-    /// waited longest. A burst that arrived in one read has one arrival instant
-    /// and many send instants, so this is a true peak, not an estimate.
-    pub arrival_lag_peak_ms: i64,
     /// Newest print: venue stamp to the bridge handing it over.
     pub terminal_lag_ms: Option<i64>,
     /// Worst `terminal_lag_ms` over the window.
+    ///
+    /// A true peak, and the only one here: it is two bridge stamps subtracted
+    /// per print, so every print in the window contributes its own reading with
+    /// no clock involved. The arrival and transport figures cannot have one —
+    /// they need the reader's clock, which is read once per sample, and
+    /// applying that one instant to a print that arrived earlier measures the
+    /// print's *age*, not its delay. An earlier version did exactly that and
+    /// reported the heartbeat interval as latency on every healthy slow tape.
     pub terminal_lag_peak_ms: Option<i64>,
-    /// Newest print: bridge handing it over to this chart reading it.
+    /// Newest print: bridge handing it over to the reader taking it off the
+    /// socket.
     pub transport_lag_ms: Option<i64>,
-    /// Worst `transport_lag_ms` over the window, from the oldest print in it.
-    pub transport_lag_peak_ms: Option<i64>,
-    /// Last `cursor_lag_ms` the bridge reported on a heartbeat: how far its
-    /// pump trails the newest tick the terminal holds.
-    pub cursor_lag_ms: Option<i64>,
     /// How many live prints this sample covers.
     pub prints: u32,
 }
 
 impl LatencySample {
-    /// What the terminal cost before the bridge could see the print.
-    ///
-    /// **An estimate.** `terminal_lag_ms` is measured on one print and
-    /// `cursor_lag_ms` on the last heartbeat, so subtracting one from the other
-    /// compares two instants up to a heartbeat apart. It is the right estimate
-    /// to make — the alternative is not splitting the terminal at all — and it
-    /// is clamped at zero, because a negative reading here means the two
-    /// samples disagreed, never that a print arrived before it happened.
-    #[must_use]
-    pub fn upstream_lag_ms(&self) -> Option<i64> {
-        let terminal = self.terminal_lag_ms?;
-        let cursor = self.cursor_lag_ms?;
-        Some((terminal - cursor).max(0))
-    }
-
-    /// What the bridge's pump cost, bounded by the terminal figure it is part
-    /// of. Same estimate, same caveat, as [`Self::upstream_lag_ms`].
-    #[must_use]
-    pub fn bridge_lag_ms(&self) -> Option<i64> {
-        let terminal = self.terminal_lag_ms?;
-        let cursor = self.cursor_lag_ms?;
-        Some(cursor.clamp(0, terminal.max(0)))
-    }
-
     /// The hop that owns most of this sample's delay.
     ///
-    /// `None` when there is no split to report — an older bridge, or a session
-    /// that has not delivered a live print yet.
+    /// `None` when there is nothing to report: an older bridge that sends no
+    /// `sent_ms`, or a delay under [`HOP_FLOOR_MS`], where naming a culprit
+    /// would be putting a name on noise.
     #[must_use]
     pub fn dominant(&self) -> Option<LatencyHop> {
         let terminal = self.terminal_lag_ms?;
         let transport = self.transport_lag_ms?;
+        if self.arrival_lag_ms < HOP_FLOOR_MS {
+            return None;
+        }
         // Ties go to the terminal side. A tie means the two halves are equally
         // to blame, and naming the one this process controls would send the
         // trader to look at quantick for a delay MetaTrader shares.
         if transport > terminal {
-            return Some(LatencyHop::Transport);
-        }
-        match (self.upstream_lag_ms(), self.bridge_lag_ms()) {
-            (Some(upstream), Some(bridge)) if bridge > upstream => Some(LatencyHop::Bridge),
-            (Some(_), Some(_)) => Some(LatencyHop::Upstream),
-            // No heartbeat has split the terminal yet: say "MetaTrader" rather
-            // than guess which half of it.
-            _ => Some(LatencyHop::Terminal),
+            Some(LatencyHop::Transport)
+        } else {
+            Some(LatencyHop::Terminal)
         }
     }
 }
 
-/// Accumulates the chain from live prints and heartbeats.
+/// Accumulates the chain from live prints.
 ///
-/// Per print this does two subtractions and two comparisons: no clock, no
+/// Per print this does one subtraction and one comparison: no clock, no
 /// allocation, nothing that grows with the tape. The clock is read once, by the
 /// caller, when [`Self::sample`] is called.
 #[derive(Debug, Clone, Default)]
 pub struct LatencyTracker {
     /// Newest live print seen since the last sample.
     newest: Option<PrintStamps>,
-    /// Oldest live print seen since the last sample. Its send stamp is the
-    /// earliest, so at one arrival instant it carries the window's worst wait.
-    oldest: Option<PrintStamps>,
     /// Worst `sent_ms - time_ms` over the window.
     terminal_peak_ms: Option<i64>,
-    /// Last `cursor_lag_ms` a heartbeat reported. Survives a sample: it
-    /// describes the pump, not the window.
-    cursor_lag_ms: Option<i64>,
     prints: u32,
 }
 
@@ -218,6 +196,20 @@ struct PrintStamps {
     /// When the bridge handed the line over, server time. `None` on a bridge
     /// that predates the field.
     sent_ms: Option<i64>,
+}
+
+/// `sent_ms - time_ms`, floored at zero.
+///
+/// Both stamps arrive from a bridge any local process on this machine can
+/// impersonate, so the arithmetic saturates rather than overflowing. The floor
+/// is not paranoia either: a bridge stamps a batch once and the terminal can
+/// hand it a tick *during* that batch, so a stamp fractionally older than the
+/// tick it carries is an ordinary event, not a hostile one. A negative here
+/// would be handed on as an inflated transport figure and blame quantick for a
+/// delay that never happened.
+fn terminal_lag(stamps: PrintStamps) -> Option<i64> {
+    let sent = stamps.sent_ms?;
+    Some(sent.saturating_sub(stamps.time_ms).max(0))
 }
 
 impl LatencyTracker {
@@ -234,27 +226,14 @@ impl LatencyTracker {
     /// from them would report minutes of delay on a chart that is current.
     pub fn observe_live(&mut self, time_ms: i64, sent_ms: Option<i64>) {
         let stamps = PrintStamps { time_ms, sent_ms };
-        self.oldest.get_or_insert(stamps);
         self.newest = Some(stamps);
-        if let Some(sent) = sent_ms {
-            let terminal = sent.saturating_sub(time_ms);
+        if let Some(terminal) = terminal_lag(stamps) {
             self.terminal_peak_ms = Some(match self.terminal_peak_ms {
                 Some(peak) if peak >= terminal => peak,
                 _ => terminal,
             });
         }
         self.prints = self.prints.saturating_add(1);
-    }
-
-    /// Record what a heartbeat said about the pump's cursor.
-    ///
-    /// A heartbeat without the field leaves the previous reading in place: the
-    /// bridge either reports it on every heartbeat or on none, so a missing one
-    /// is an older bridge, not a pump that just caught up.
-    pub fn observe_cursor_lag(&mut self, cursor_lag_ms: Option<i64>) {
-        if let Some(lag) = cursor_lag_ms {
-            self.cursor_lag_ms = Some(lag.max(0));
-        }
     }
 
     /// Whether enough prints have arrived to be worth a clock read.
@@ -266,42 +245,36 @@ impl LatencyTracker {
     /// Draw a sample and start a new window.
     ///
     /// `now_utc_ms` is the caller's clock — read once, here, and nowhere in the
-    /// per-print path. `offset_ms` is `server_time - utc` in milliseconds, the
-    /// same conversion the tick mapper applies.
+    /// per-print path. It must be read where the newest print came off the
+    /// wire, not after handing that print downstream: a consumer that is slow
+    /// to take it would otherwise have its own queueing charged to the wire.
+    /// `offset_ms` is `server_time - utc` in milliseconds, the same conversion
+    /// the tick mapper applies.
     ///
     /// `None` when no live print has arrived since the last sample: there is
     /// nothing to measure, and reporting the previous window again would let a
     /// wedged socket show a healthy split forever.
     pub fn sample(&mut self, now_utc_ms: i64, offset_ms: i64) -> Option<LatencySample> {
         let newest = self.newest?;
-        let oldest = self.oldest.unwrap_or(newest);
-        let lag_of = |stamps: PrintStamps| {
-            now_utc_ms.saturating_sub(stamps.time_ms.saturating_sub(offset_ms))
-        };
-        let arrival_lag_ms = lag_of(newest);
-        let arrival_lag_peak_ms = lag_of(oldest);
+        let arrival_lag_ms = now_utc_ms
+            .saturating_sub(newest.time_ms.saturating_sub(offset_ms))
+            .max(0);
+        let terminal_lag_ms = terminal_lag(newest);
         // Derived, not measured a second time: transport is whatever the
         // arrival figure has left after the terminal's share, so the two always
-        // add up to the number the status bar already showed.
-        let terminal_lag_ms = newest
-            .sent_ms
-            .map(|sent| sent.saturating_sub(newest.time_ms));
-        let transport_lag_ms = terminal_lag_ms.map(|terminal| arrival_lag_ms - terminal);
-        let transport_lag_peak_ms = oldest
-            .sent_ms
-            .map(|sent| arrival_lag_peak_ms - sent.saturating_sub(oldest.time_ms));
+        // add up to the total above. Floored for the same reason `terminal_lag`
+        // is — a terminal share larger than the total is two clocks
+        // disagreeing, never a print that arrived before it was sent.
+        let transport_lag_ms =
+            terminal_lag_ms.map(|terminal| arrival_lag_ms.saturating_sub(terminal).max(0));
         let sample = LatencySample {
             arrival_lag_ms,
-            arrival_lag_peak_ms,
             terminal_lag_ms,
             terminal_lag_peak_ms: self.terminal_peak_ms,
             transport_lag_ms,
-            transport_lag_peak_ms,
-            cursor_lag_ms: self.cursor_lag_ms,
             prints: self.prints,
         };
         self.newest = None;
-        self.oldest = None;
         self.terminal_peak_ms = None;
         self.prints = 0;
         Some(sample)
@@ -312,12 +285,21 @@ impl LatencyTracker {
 mod tests {
     use super::*;
 
+    /// B3: server = UTC-3, so a server stamp is three hours ahead of the UTC
+    /// instant it names.
+    const OFFSET_MS: i64 = -3 * 60 * 60 * 1000;
+
+    /// A server-time instant, from a UTC one.
+    fn server(utc_ms: i64) -> i64 {
+        utc_ms + OFFSET_MS
+    }
+
     #[test]
     fn every_hop_name_fits_the_cell_that_has_to_show_it() {
-        // A consumer swaps this word for `arrival`, whose seven characters are
-        // the budget. A longer one silently pushes a neighbouring status-bar
-        // cell off a narrow window, a defect that only shows up on someone's
-        // laptop.
+        // A consumer puts this word *in place of* `arrival`, so anything wider
+        // pushes a neighbouring status-bar cell off a narrow window — a defect
+        // that only shows up on someone's laptop. Measured: ten characters
+        // overlapped outright, eight grazed.
         for hop in LatencyHop::ALL {
             let label = hop.label();
             assert!(
@@ -327,13 +309,16 @@ mod tests {
         }
     }
 
-    /// B3: server = UTC-3, so a server stamp is three hours ahead of the UTC
-    /// instant it names.
-    const OFFSET_MS: i64 = -3 * 60 * 60 * 1000;
-
-    /// A server-time instant, from a UTC one.
-    fn server(utc_ms: i64) -> i64 {
-        utc_ms + OFFSET_MS
+    #[test]
+    fn every_hop_is_reachable_by_the_name_it_reports() {
+        // The hook that fakes a split resolves the word a script typed through
+        // this list, so a name that round-trips is a state a capture can reach
+        // and a typo is a refusal rather than a picture of the wrong hop.
+        for hop in LatencyHop::ALL {
+            assert_eq!(LatencyHop::from_label(hop.label()), Some(hop));
+        }
+        assert_eq!(LatencyHop::from_label("MT5 "), None, "names are exact");
+        assert_eq!(LatencyHop::from_label(""), None);
     }
 
     #[test]
@@ -368,66 +353,72 @@ mod tests {
     }
 
     #[test]
-    fn the_oldest_print_in_a_burst_carries_the_peak() {
-        // One read delivers a burst: every print in it arrives at the same
-        // instant, so the one sent earliest waited longest. Reporting only the
-        // newest would show a healthy figure for a burst that was not.
+    fn a_slow_tape_is_not_reported_late_for_being_slow() {
+        // The regression this shape exists to prevent. A window is the prints
+        // since the last sample, and on a thin tape sampled by heartbeat those
+        // span seconds. Measuring the oldest of them against the sample's own
+        // clock reports how *old* it is, not how late it was — an earlier
+        // version did that and fired a warn on every healthy quiet symbol,
+        // edge-triggered, so the matching recovery could never follow.
         let mut tracker = LatencyTracker::new();
-        tracker.observe_live(server(0), Some(server(100)));
-        tracker.observe_live(server(500), Some(server(600)));
-        tracker.observe_live(server(900), Some(server(950)));
-        let s = tracker.sample(1_000, OFFSET_MS).unwrap();
-        assert_eq!(s.prints, 3);
-        assert_eq!(s.arrival_lag_ms, 100, "newest print");
-        assert_eq!(s.arrival_lag_peak_ms, 1_000, "oldest print");
-        assert_eq!(s.transport_lag_ms, Some(50));
-        assert_eq!(s.transport_lag_peak_ms, Some(900));
-        assert_eq!(s.terminal_lag_peak_ms, Some(100));
+        for i in 0..5 {
+            // One print a second, each handed over 20 ms after it happened.
+            let at = i * 1_000;
+            tracker.observe_live(server(at), Some(server(at + 20)));
+        }
+        // The sample is drawn five seconds after the first print.
+        let s = tracker.sample(4_030, OFFSET_MS).unwrap();
+        assert_eq!(s.prints, 5);
+        assert_eq!(s.arrival_lag_ms, 30, "the newest print is 30 ms behind");
+        assert_eq!(s.terminal_lag_peak_ms, Some(20), "and none took longer");
+        assert!(
+            s.arrival_lag_ms < 1_000,
+            "nothing here may report the sampling interval as delay"
+        );
     }
 
     #[test]
-    fn a_blocked_socket_names_quantick_not_metatrader() {
-        // The bridge stamped it promptly and it still arrived late: whatever
-        // ate the time is on this side of the wire.
+    fn the_worst_print_in_the_window_is_reported_from_the_bridge_stamps_alone() {
+        // The one true peak: both stamps come from the bridge, per print, so
+        // every print contributes without a clock being read.
         let mut tracker = LatencyTracker::new();
-        tracker.observe_cursor_lag(Some(2));
-        tracker.observe_live(server(0), Some(server(5)));
-        let s = tracker.sample(4_000, OFFSET_MS).unwrap();
+        tracker.observe_live(server(0), Some(server(700)));
+        tracker.observe_live(server(1_000), Some(server(1_020)));
+        let s = tracker.sample(1_030, OFFSET_MS).unwrap();
+        assert_eq!(s.terminal_lag_ms, Some(20), "the newest print");
+        assert_eq!(s.terminal_lag_peak_ms, Some(700), "the worst of the two");
+    }
+
+    #[test]
+    fn a_blocked_socket_names_quantick_and_a_slow_handover_names_mt5() {
+        let mut wire = LatencyTracker::new();
+        wire.observe_live(server(0), Some(server(5)));
+        let s = wire.sample(4_000, OFFSET_MS).unwrap();
         assert_eq!(s.dominant(), Some(LatencyHop::Transport));
-        assert_eq!(s.dominant().unwrap().label(), "quantick");
-    }
+        assert_eq!(s.dominant().unwrap().label(), "chart");
 
-    #[test]
-    fn a_trailing_pump_names_the_bridge_and_a_slow_terminal_does_not() {
-        // Same terminal lag, two different causes, told apart by how far the
-        // bridge says its own cursor is behind.
-        let mut trailing = LatencyTracker::new();
-        trailing.observe_cursor_lag(Some(3_000));
-        trailing.observe_live(server(0), Some(server(4_000)));
-        let s = trailing.sample(4_010, OFFSET_MS).unwrap();
-        assert_eq!(s.dominant(), Some(LatencyHop::Bridge));
-        assert_eq!(s.bridge_lag_ms(), Some(3_000));
-        assert_eq!(s.upstream_lag_ms(), Some(1_000));
-
-        let mut upstream = LatencyTracker::new();
-        upstream.observe_cursor_lag(Some(5));
-        upstream.observe_live(server(0), Some(server(4_000)));
-        let s = upstream.sample(4_010, OFFSET_MS).unwrap();
-        assert_eq!(s.dominant(), Some(LatencyHop::Upstream));
-        assert_eq!(s.dominant().unwrap().label(), "terminal");
-    }
-
-    #[test]
-    fn without_a_heartbeat_the_terminal_is_named_whole() {
-        // Refusing to guess which half is the honest answer, and it still
-        // points the trader at MetaTrader rather than at the chart.
-        let mut tracker = LatencyTracker::new();
-        tracker.observe_live(server(0), Some(server(4_000)));
-        let s = tracker.sample(4_010, OFFSET_MS).unwrap();
+        let mut terminal = LatencyTracker::new();
+        terminal.observe_live(server(0), Some(server(4_000)));
+        let s = terminal.sample(4_010, OFFSET_MS).unwrap();
         assert_eq!(s.dominant(), Some(LatencyHop::Terminal));
         assert_eq!(s.dominant().unwrap().label(), "MT5");
-        assert_eq!(s.upstream_lag_ms(), None);
-        assert_eq!(s.bridge_lag_ms(), None);
+    }
+
+    #[test]
+    fn a_healthy_tape_names_nobody() {
+        // Every delay has a larger half. On a four-millisecond tape, saying
+        // which one would put a culprit's name on noise — on the chart, and in
+        // the diagnostics an agent reads as a finding.
+        let mut tracker = LatencyTracker::new();
+        tracker.observe_live(server(0), Some(server(2)));
+        let s = tracker.sample(4, OFFSET_MS).unwrap();
+        assert_eq!(s.arrival_lag_ms, 4);
+        assert_eq!(s.dominant(), None);
+        assert_eq!(
+            s.terminal_lag_ms,
+            Some(2),
+            "still measured, just not blamed"
+        );
     }
 
     #[test]
@@ -441,27 +432,6 @@ mod tests {
         assert!(
             tracker.sample(9_000, OFFSET_MS).is_none(),
             "the window emptied with the sample"
-        );
-    }
-
-    #[test]
-    fn the_cursor_reading_outlives_a_window() {
-        // It describes the pump, not the prints, so drawing a sample must not
-        // clear it — a bridge reporting its cursor every five seconds would
-        // otherwise have nothing to say about the four seconds in between. A
-        // session boundary does clear it, by building a new tracker: the pump
-        // it described is gone with the connection.
-        let mut tracker = LatencyTracker::new();
-        tracker.observe_cursor_lag(Some(40));
-        tracker.observe_live(server(0), Some(server(10)));
-        assert_eq!(
-            tracker.sample(1_000, OFFSET_MS).unwrap().cursor_lag_ms,
-            Some(40)
-        );
-        tracker.observe_live(server(0), Some(server(10)));
-        assert_eq!(
-            tracker.sample(1_000, OFFSET_MS).unwrap().cursor_lag_ms,
-            Some(40)
         );
     }
 
@@ -480,27 +450,31 @@ mod tests {
     }
 
     #[test]
-    fn every_hop_is_reachable_by_the_name_it_reports() {
-        // The hook that fakes a split resolves the word a script typed through
-        // this list, so a name that round-trips is a state a capture can reach
-        // and a typo is a refusal rather than a picture of the wrong hop.
-        for hop in LatencyHop::ALL {
-            assert_eq!(LatencyHop::from_label(hop.label()), Some(hop));
-        }
-        assert_eq!(LatencyHop::from_label("Bridge"), None, "names are exact");
-        assert_eq!(LatencyHop::from_label(""), None);
-    }
-
-    #[test]
-    fn a_negative_cursor_reading_is_clamped_rather_than_believed() {
-        // `cursor_lag_ms` arrives from a bridge any local process can
-        // impersonate, and a pump cannot be ahead of the terminal it reads.
+    fn a_crafted_stamp_cannot_overflow_or_read_backwards() {
+        // Any local process can impersonate the bridge on the loopback port, so
+        // these two subtractions are the ones a hostile line reaches. Nothing
+        // here may panic in debug or wrap in release, and no reading may come
+        // out negative — a negative terminal share inflates the transport share
+        // and blames quantick for a delay that never happened.
         let mut tracker = LatencyTracker::new();
-        tracker.observe_cursor_lag(Some(-500));
-        tracker.observe_live(server(0), Some(server(100)));
+        tracker.observe_live(0, Some(i64::MIN));
         let s = tracker.sample(1_000, OFFSET_MS).unwrap();
-        assert_eq!(s.cursor_lag_ms, Some(0));
-        assert_eq!(s.bridge_lag_ms(), Some(0));
-        assert_eq!(s.upstream_lag_ms(), Some(100));
+        assert_eq!(s.terminal_lag_ms, Some(0));
+        assert!(s.transport_lag_ms.unwrap() >= 0);
+
+        let mut ahead = LatencyTracker::new();
+        ahead.observe_live(i64::MIN, Some(i64::MAX));
+        let s = ahead.sample(i64::MAX, i64::MIN).unwrap();
+        assert!(s.arrival_lag_ms >= 0);
+        assert!(s.transport_lag_ms.unwrap() >= 0);
+
+        // The ordinary case, not a hostile one: a bridge stamps a batch once
+        // and the terminal hands it a tick during that batch, so the stamp is
+        // fractionally older than the tick it carries.
+        let mut during = LatencyTracker::new();
+        during.observe_live(server(500), Some(server(480)));
+        let s = during.sample(600, OFFSET_MS).unwrap();
+        assert_eq!(s.terminal_lag_ms, Some(0), "floored, never negative");
+        assert_eq!(s.transport_lag_ms, Some(100));
     }
 }

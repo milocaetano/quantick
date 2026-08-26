@@ -1,16 +1,29 @@
 //! What one print costs on the way from the wire to a `Trade`.
 //!
-//! The latency split added work to the per-print path — two subtractions, two
-//! comparisons and a `try_send` where a `send` used to be — and "that is
+//! The latency split added work to the per-print path — one subtraction and one
+//! comparison per print, plus a wider tick line to decode — and "that is
 //! obviously cheap" is a belief, not a measurement. This is the measurement.
 //!
 //! It drives the real decoder over a synthetic burst: `parse_line` on lines
-//! shaped exactly like the bridge's, then `TickMapper::map`, then the tracker.
-//! No socket and no runtime, because neither is what changed; what is timed is
-//! the code every print runs.
+//! shaped exactly like the bridge's, `sent_ms` included, then `TickMapper::map`,
+//! then `LatencyTracker::observe_live`. That is the whole of what runs per
+//! print, and all this claims to measure.
+//!
+//! **What it deliberately leaves out**, so the number is not read as more than
+//! it is: there is no channel here, so the `try_send` that replaced a `send` in
+//! `stream.rs` is not timed — on the happy path the two are the same call shape
+//! and the difference is not resolvable against a ~650 ns decode. And
+//! `LatencyTracker::sample` is drawn once per run rather than once per
+//! `SAMPLE_EVERY_PRINTS`, because its cost is a system clock read that belongs
+//! to the sampling rate, not to a print. Both are stated rather than folded in.
+//!
+//! Dependency-free and `harness = false`, like `engine/benches/hot_path.rs`:
+//! the workload is deterministic (derived from the print index, no rng and no
+//! wall clock in its *shape*), so the figure is comparable across commits and a
+//! meaningful drop between two of them is a regression to investigate.
 //!
 //! ```sh
-//! cargo run --release --example tape_burst -p quantick-feed-mt5
+//! cargo bench -p quantick-feed-mt5
 //! ```
 //!
 //! To compare against a branch that has no tracker, delete the `observe_live`

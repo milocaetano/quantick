@@ -12328,18 +12328,20 @@ plot(close)
 
         let split = feed::FeedLatency {
             arrival_lag_ms: 18_112,
-            arrival_lag_peak_ms: 18_400,
             source_lag_ms: Some(17_980),
+            source_lag_peak_ms: Some(18_400),
             transport_lag_ms: Some(132),
-            transport_lag_peak_ms: Some(400),
-            hop: Some("bridge"),
+            hop: Some("MT5"),
             prints: 64,
         };
         app.active_tab_mut().publish_latency_for_test(Some(split));
         assert_eq!(app.active_tab().feed_latency(), Some(split));
 
-        // The cell the trader reads takes it from there, and names the hop
-        // because the delay is past the threshold worth acting on.
+        // The cell the trader reads takes it from there: the feed's own total,
+        // with the hop named because that delay is past the threshold worth
+        // acting on. The chart has drained no print of its own yet, and the
+        // cell is right to show the feed's figure anyway — a split only exists
+        // because a print did arrive at the feed.
         assert_eq!(
             statusbar::tape_text(
                 None,
@@ -12347,8 +12349,12 @@ plot(close)
                 Some(50),
                 app.active_tab().feed_latency(),
             ),
-            "arrival —",
-            "no print has arrived, so there is no figure for the hop to qualify"
+            "MT5 18112 ms"
+        );
+        assert_eq!(
+            app.active_tab().trade_arrival_ms(),
+            None,
+            "and the chart's own measurement is untouched by the reading"
         );
 
         // A provider that cannot cut its own chain leaves the cell exactly as

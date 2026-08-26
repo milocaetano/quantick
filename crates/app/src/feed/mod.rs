@@ -390,16 +390,27 @@ pub fn silent_notices() -> mpsc::Receiver<FeedNotice> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FeedLatency {
     /// Newest print: venue stamp to the provider reading it off the wire.
+    ///
+    /// Measured at the provider, not at the chart. The chart keeps its own
+    /// end-to-end figure (`Tab::trade_arrival_ms`), taken when the print is
+    /// drained into a frame, and the *difference* between the two is what
+    /// quantick's own queueing and drawing cost. Two measurements of two
+    /// different things, and every surface that shows both says which is which.
     pub arrival_lag_ms: i64,
-    /// The same figure for whichever print in the sample waited longest.
-    pub arrival_lag_peak_ms: i64,
     /// Venue stamp to the source handing the print over — everything upstream
     /// of quantick.
     pub source_lag_ms: Option<i64>,
+    /// Worst `source_lag_ms` over the sample.
+    ///
+    /// The only peak here, because it is the only one a provider can take
+    /// without a clock: both stamps come from the source, per print. A peak on
+    /// the arrival or wire figures would need the reader's clock applied to a
+    /// print that arrived earlier, which measures that print's *age* rather
+    /// than its delay — and on a quiet tape that is the sampling interval,
+    /// reported as latency.
+    pub source_lag_peak_ms: Option<i64>,
     /// The source handing it over to quantick reading it: the wire.
     pub transport_lag_ms: Option<i64>,
-    /// Worst `transport_lag_ms` in the sample.
-    pub transport_lag_peak_ms: Option<i64>,
     /// The provider's own name for the hop that owns most of the delay.
     ///
     /// A borrowed name rather than a shared enum, because the chains differ:
@@ -571,11 +582,10 @@ fn parse_forced_latency(raw: &str) -> Option<FeedLatency> {
     }
     Some(FeedLatency {
         arrival_lag_ms: arrival,
-        // One print, so the worst of the window is that print.
-        arrival_lag_peak_ms: arrival,
         source_lag_ms: Some(source),
+        // One print, so the worst of the window is that print.
+        source_lag_peak_ms: Some(source),
         transport_lag_ms: Some(transport),
-        transport_lag_peak_ms: Some(transport),
         hop,
         prints: 1,
     })
@@ -634,11 +644,11 @@ mod tests {
     fn a_forced_split_parses_into_a_reading() {
         // The state this hook exists for only happens while a real venue is
         // running badly, so a validation run has to be able to ask for it.
-        let split = parse_forced_latency("18112,17980,132,bridge").expect("a well-formed hook");
+        let split = parse_forced_latency("18112,17980,132,MT5").expect("a well-formed hook");
         assert_eq!(split.arrival_lag_ms, 18_112);
         assert_eq!(split.source_lag_ms, Some(17_980));
         assert_eq!(split.transport_lag_ms, Some(132));
-        assert_eq!(split.hop, Some("bridge"));
+        assert_eq!(split.hop, Some("MT5"));
         assert_eq!(split.prints, 1);
     }
 
@@ -692,10 +702,9 @@ mod tests {
         let (tx, rx) = watch::channel::<Option<FeedLatency>>(None);
         let reading = |ms: i64| FeedLatency {
             arrival_lag_ms: ms,
-            arrival_lag_peak_ms: ms,
             source_lag_ms: Some(ms - 100),
+            source_lag_peak_ms: Some(ms - 100),
             transport_lag_ms: Some(100),
-            transport_lag_peak_ms: Some(100),
             hop: Some("bridge"),
             prints: 64,
         };

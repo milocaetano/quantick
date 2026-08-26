@@ -2256,13 +2256,14 @@ impl Tab {
         if self.replay.is_some() {
             return None;
         }
-        // A forced split carries the arrival figure with it. The readout it
-        // exists to photograph only appears above `HIGH_LAG_MS`, so a hook that
-        // supplied the breakdown and left the total to a healthy live feed
-        // would reach the state it was written for exactly never.
-        self.forced_latency
-            .map(|forced| forced.arrival_lag_ms)
-            .or(self.latest_trade_latency_ms)
+        // Never the forced split's figure. This is a *measurement* — it reaches
+        // the log as APP_HIGH_TRADE_LAG, the control feed scope and the health
+        // view, none of which carry a marker saying a capture run invented it,
+        // and inferred data that is not labelled as such is the one thing this
+        // repo does not ship. The hook drives the readout through the latency
+        // port instead, where every consumer already knows the figure is the
+        // feed's own and not the chart's.
+        self.latest_trade_latency_ms
     }
 
     /// How old the newest event on the tape is, right now.

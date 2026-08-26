@@ -65,6 +65,13 @@ const BUSY_REFUSAL_WINDOW: Duration = Duration::from_millis(250);
 /// cannot happen" the chart exists to honour. It is an edge-triggered report,
 /// not a per-sample one: a tape that stays late says so once and then stops
 /// filling the log with the same sentence.
+///
+/// **Deliberately lower than the chart's own threshold.** quantick's status bar
+/// colours the cell and names the hop at `metrics::HIGH_LAG_MS` (five seconds),
+/// because a readout a trader glances at mid-session must not cry wolf. A log
+/// nobody watches until something is wrong can afford to start earlier, and a
+/// one-to-five-second spell is exactly the kind that is over before anyone
+/// looks. The two are meant to differ; if either moves, read the other first.
 const LAG_REPORT_MS: i64 = 1_000;
 
 /// Runtime switch controlling whether DOM images are published.
@@ -1247,12 +1254,12 @@ async fn serve_connection(
                             // latency from one would report minutes of delay on
                             // a chart that is perfectly current.
                             latency.observe_live(tick.time_ms, tick.sent_ms);
-                            if send_live(tx, trade, &config.symbol, &mut backpressure_reported)
-                                .await
-                                .is_err()
-                            {
-                                break ConnEnd::UiGone;
-                            }
+                            // Sampled *before* the trade is handed downstream,
+                            // never after. `send_live` waits when the consumer
+                            // is not draining, and a clock read on the far side
+                            // of that wait charges the consumer's own queueing
+                            // to the wire — collapsing the very gap the health
+                            // view publishes these two figures to expose.
                             if latency.due()
                                 && publish_latency(
                                     &mut latency,
@@ -1261,6 +1268,12 @@ async fn serve_connection(
                                     &mut lag_reported,
                                     tx,
                                 )
+                                .await
+                                .is_err()
+                            {
+                                break ConnEnd::UiGone;
+                            }
+                            if send_live(tx, trade, &config.symbol, &mut backpressure_reported)
                                 .await
                                 .is_err()
                             {
@@ -1284,11 +1297,11 @@ async fn serve_connection(
                     mapper.set_server_utc_offset_s(offset);
                     depth.set_server_utc_offset_s(offset);
                 }
-                // The heartbeat is the only place the pump's own cursor is
-                // reported, and it is also the beat a thin tape is measured on:
-                // a symbol printing once a minute never reaches the per-print
-                // sampling bound, and would otherwise never report at all.
-                latency.observe_cursor_lag(hb.cursor_lag_ms);
+                // The beat a thin tape is measured on: a symbol printing once
+                // a minute never reaches the per-print sampling bound, and
+                // would otherwise never report at all. The figures are still
+                // the newest print's own, so a quiet stretch reports how late
+                // that print was and never how long ago it was.
                 if publish_latency(&mut latency, &mapper, &config.symbol, &mut lag_reported, tx)
                     .await
                     .is_err()
@@ -1873,7 +1886,6 @@ impl DepthSession {
     }
 }
 
-/// Publish one depth status. `Err(())` means the consumer is gone.
 /// Publish one live trade, saying so when the consumer's queue is full.
 ///
 /// `Err(())` means the consumer is gone.
@@ -1950,7 +1962,7 @@ async fn publish_latency(
         // healthy split forever.
         return Ok(());
     };
-    let late = sample.arrival_lag_peak_ms >= LAG_REPORT_MS;
+    let late = sample.arrival_lag_ms >= LAG_REPORT_MS;
     if late != *lag_reported {
         *lag_reported = late;
         // Named, not absorbed. A tape that falls behind used to be visible only
@@ -1963,12 +1975,9 @@ async fn publish_latency(
                 event_code = "MT5_TAPE_LATE",
                 symbol = %symbol,
                 arrival_lag_ms = sample.arrival_lag_ms,
-                arrival_lag_peak_ms = sample.arrival_lag_peak_ms,
                 terminal_lag_ms = sample.terminal_lag_ms,
+                terminal_lag_peak_ms = sample.terminal_lag_peak_ms,
                 transport_lag_ms = sample.transport_lag_ms,
-                cursor_lag_ms = sample.cursor_lag_ms,
-                upstream_lag_ms = sample.upstream_lag_ms(),
-                bridge_lag_ms = sample.bridge_lag_ms(),
                 prints = sample.prints,
                 hop = sample.dominant().map(crate::latency::LatencyHop::label),
                 "the tape is running behind; the hop field says where the time went"
@@ -1999,6 +2008,7 @@ fn wall_clock_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Publish one depth status. `Err(())` means the consumer is gone.
 async fn send_depth_status(
     tx: &mpsc::Sender<Mt5Event>,
     symbol: &str,

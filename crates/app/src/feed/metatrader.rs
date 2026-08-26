@@ -133,13 +133,12 @@ pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
 fn neutral_latency(sample: &LatencySample) -> FeedLatency {
     FeedLatency {
         arrival_lag_ms: sample.arrival_lag_ms,
-        arrival_lag_peak_ms: sample.arrival_lag_peak_ms,
         // Everything before the socket is "the source" from the chart's side:
         // whether the terminal or the bridge inside it spent the time is what
         // `hop` is for, and folding it into the number would lose the answer.
         source_lag_ms: sample.terminal_lag_ms,
+        source_lag_peak_ms: sample.terminal_lag_peak_ms,
         transport_lag_ms: sample.transport_lag_ms,
-        transport_lag_peak_ms: sample.transport_lag_peak_ms,
         hop: sample.dominant().map(|hop| hop.label()),
         prints: sample.prints,
     }

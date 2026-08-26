@@ -140,6 +140,16 @@ any of them still connects and still streams ticks.
   as unavailable rather than inventing a zero. Live prints only — on a backfill
   or paged tick the stamp is honest and the difference is the age of the
   history, not a latency.
+
+  **Two halves, and deliberately not three.** The obvious next cut — what the
+  terminal cost against what the bridge's own pump cost — is not on this wire.
+  A bridge has no cheap way to ask the terminal "what is the newest tick you
+  hold that I have not sent yet", and every approximation of it collapses into
+  *time since the last print*, which during a stall equals the delay itself and
+  so blames the pump for all of it. A field that names the wrong hop is worse
+  than no field. The pump reports its own health where it can actually measure
+  it, in the terminal's own log: see `BRIDGE_PUMP_LIMIT` and
+  `BRIDGE_SEND_STALLED` in README.md.
 - `bid`/`ask`/`last` — price strings with exactly `digits` decimals; `"0"`
   when the feed carries none (B3 history ticks have no quotes).
 - `volume` — contracts; `0` on quote-only ticks.
@@ -266,19 +276,11 @@ The next session re-sends it.
 ### heartbeat
 
 ```json
-{"type":"heartbeat","seq_last":42,"time_ms":1784824301000,"ticks_sent":42,"server_utc_offset_s":-10800,"cursor_lag_ms":4}
+{"type":"heartbeat","seq_last":42,"time_ms":1784824301000,"ticks_sent":42,"server_utc_offset_s":-10800}
 ```
 
 Sent every ~5 s. Refreshes the offset (DST-safe). A feed hearing nothing for
 its read timeout (default 30 s) presumes the bridge dead.
-
-- `cursor_lag_ms` — *optional*: how far the bridge's send cursor trails the
-  newest tick the terminal itself holds. This is the one hop no timestamp
-  comparison downstream can see. A tape running late inside the terminal and a
-  tape running late on the wire look identical from the chart; together with
-  `sent_ms` this separates them, and the three figures account for the whole
-  chain. It is a property of the pump, not of a print, so it rides the
-  heartbeat instead of costing every tick. **Absent means an older bridge.**
 
 ### backfill_start / backfill_end
 

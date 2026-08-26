@@ -34,7 +34,7 @@
 //! | Full book depth | coverage always labelled `Limited`, never `Full` | [`depth`] |
 //! | Older-history paging | a back-channel the bridge opts into; unsupported sessions answer empty | [`stream::HistoryPager`], [`protocol::FeedMsg`] |
 //! | A tape at all (broker CFDs print none) | bridge declares [`protocol::TapeKind`]; quotes chart as one-unit synthetic prints, counted apart | [`map`] |
-//! | Any way to see *where* a late tape lost its time | bridge stamps each batch (`sent_ms`) and reports its own cursor (`cursor_lag_ms`); the chain is split and the guilty hop named | [`latency`], [`protocol`] |
+//! | Any way to see *where* a late tape lost its time | bridge stamps each batch (`sent_ms`); the chain splits into what MetaTrader cost and what the wire cost, and the larger half is named | [`latency`], [`protocol`] |
 //!
 //! # AI-first diagnosis
 //!
@@ -83,7 +83,7 @@
 //! | `MT5_BOOK_MALFORMED` | unreadable level; whole image rejected | bridge/feed version skew |
 //! | `MT5_BOOK_TIME_BACKWARDS` | image timestamp went back; held | terminal clock jumped |
 //! | `MT5_BOOK_SUMMARY` | per-session book ledger | audit image/skip counts here |
-//! | `MT5_TAPE_LATE` | the tape fell behind; edge-triggered, once per spell | read `hop`: `terminal`/`bridge` = look in MetaTrader (its Experts tab logs `BRIDGE_PUMP_ROUND_LIMIT` and `BRIDGE_SEND_STALLED`), `quantick` = look here |
+//! | `MT5_TAPE_LATE` | the tape fell behind; edge-triggered, once per spell | read `hop`: `MT5` = look in MetaTrader, whose Experts tab logs `BRIDGE_PUMP_LIMIT` and `BRIDGE_SEND_STALLED`; `quantick` = look here, starting with `MT5_CONSUMER_BACKPRESSURE` |
 //! | `MT5_TAPE_CAUGHT_UP` | the tape is current again | pairs with the report above; one without the other means it never recovered |
 //! | `MT5_CONSUMER_BACKPRESSURE` | the consumer stopped draining live trades | this blocks the socket read, which stalls the bridge's sends and makes the *terminal* look late; find what is holding the UI thread |
 //! | `MT5_CONSUMER_KEEPING_UP` | its queue drained again | — |

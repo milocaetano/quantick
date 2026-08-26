@@ -57,7 +57,7 @@ except ImportError:  # pragma: no cover - environment problem, not logic
 
 SCHEMA_VERSION = 1
 BRIDGE_NAME = "quantick-mt5-bridge-py"
-BRIDGE_VERSION = "0.2.0"
+BRIDGE_VERSION = "0.3.0"
 
 #: Timezone offsets are whole 15-minute steps everywhere on earth, so snapping
 #: to that grid removes the millisecond of tick latency from the measurement.
@@ -194,6 +194,15 @@ TICKS_PER_PUMP_ROUND = 4096
 # it ends the pass and says so rather than owning the loop the book and the
 # heartbeat share.
 MAX_PUMP_ROUNDS = 16
+
+# Ceiling on the widened request below. `copy_ticks_from` takes a floor in whole
+# *seconds*, so a second holding more ticks than one batch can never be walked
+# past by advancing the cursor — every round would re-fetch the same batch, find
+# nothing new, and the tape would wedge inside that second forever. The answer is
+# to ask deeper for that one second rather than to give up, and this bounds how
+# deep: four million ticks is orders of magnitude past any real second on any
+# venue, and it is a bound on memory, not a tuning knob.
+MAX_TICKS_PER_REQUEST = 4_194_304
 
 
 def log(event_code: str, **fields: object) -> None:
@@ -1069,28 +1078,36 @@ class Session:
     def pump_ticks(self) -> None:
         """Forward every tick newer than the cursor, exactly once.
 
-        One `copy_ticks_from` returns at most `TICKS_PER_PUMP_ROUND`, so a full
-        answer does not mean the terminal is drained — it means the batch was
-        capped. The pass asks again from the advanced cursor while the answers
-        keep coming back full, because leaving the remainder for the next pass
-        is how a burst turns into a tape running whole seconds behind a book
-        that never batches at all. Bounded by `MAX_PUMP_ROUNDS` so one pass can
-        never own the loop.
+        One `copy_ticks_from` returns at most the count it was asked for, so a
+        full answer does not mean the terminal is drained — it means the batch
+        was truncated. The pass keeps asking while the answers come back full,
+        because leaving the remainder for the next pass is how a burst turns
+        into a tape running whole seconds behind a book that never batches at
+        all.
+
+        Two things bound it. `MAX_PUMP_ROUNDS`, so one pass cannot own the loop
+        the book and the heartbeat share. And the request itself widens when a
+        round comes back full having forwarded nothing new: that is the shape of
+        a single second holding more ticks than one batch, and since this API's
+        floor is whole seconds, advancing the cursor cannot walk past it — only
+        asking deeper can. Without the widening the tape wedges inside that
+        second permanently and silently, which is worse than the delay this
+        method exists to remove.
         """
-        # One stamp for the pass, taken before the work: a send that blocks
-        # then pays for itself in wire delay rather than hiding in terminal
-        # delay, which is where it belongs.
-        sent_ms = self.server_now_ms()
+        # One stamp per round, not per pass: a pass that forwards sixteen
+        # batches takes long enough that the terminal hands over ticks during
+        # it, and those would carry a `time_ms` newer than a stamp taken before
+        # the pass began — a negative delay inside the terminal, which the
+        # reader would charge to the wire.
         rounds = 0
+        count = TICKS_PER_PUMP_ROUND
         while rounds < MAX_PUMP_ROUNDS:
             rounds += 1
+            sent_ms = self.server_now_ms()
             # The request floor is whole seconds; the (msc, count-at-msc)
             # cursor below is what actually guarantees no tick is sent twice.
             ticks = mt5.copy_ticks_from(
-                self.symbol,
-                self.cursor_msc // 1000,
-                TICKS_PER_PUMP_ROUND,
-                self.tick_flags(),
+                self.symbol, self.cursor_msc // 1000, count, self.tick_flags()
             )
             if ticks is None or not len(ticks):
                 return
@@ -1113,33 +1130,33 @@ class Session:
                     self.sent_at_cursor = 1
                     at_cursor_seen = 0
                     forwarded += 1
-            # A short batch is the terminal saying it has nothing more; a batch
-            # that forwarded nothing means every tick in it was already sent,
-            # and asking again from the same cursor would return them forever.
-            if len(ticks) < TICKS_PER_PUMP_ROUND or forwarded == 0:
-                return
-        # Hitting the bound is the tape arriving faster than one pass can
+            if len(ticks) < count:
+                return  # the terminal said it has nothing more
+            if forwarded == 0:
+                # A full batch with nothing new in it: every tick in it is
+                # already sent and they all share this second, so the same
+                # request will keep returning the same ticks. Ask deeper.
+                if count >= MAX_TICKS_PER_REQUEST:
+                    log(
+                        "BRIDGE_PUMP_SECOND_TOO_DENSE",
+                        symbol=self.symbol,
+                        second=self.cursor_msc // 1000,
+                        asked=count,
+                        hint="one second holds more ticks than this bridge can request",
+                    )
+                    return
+                count = min(count * 2, MAX_TICKS_PER_REQUEST)
+        # Hitting the round bound is the tape arriving faster than one pass can
         # forward it — the reading behind a late chart, so it is said aloud
         # rather than silently retried on the next pass.
         self.pump_round_limits += 1
         log(
-            "BRIDGE_PUMP_ROUND_LIMIT",
+            "BRIDGE_PUMP_LIMIT",
             symbol=self.symbol,
             rounds=MAX_PUMP_ROUNDS,
-            ticks_per_round=TICKS_PER_PUMP_ROUND,
+            ticks_per_round=count,
             passes=self.pump_round_limits,
-            cursor_lag_ms=self.cursor_lag_ms(),
         )
-
-    def cursor_lag_ms(self) -> int:
-        """How far the send cursor trails the newest tick the terminal holds.
-
-        The one hop no timestamp comparison downstream can see: a tape late
-        inside the terminal and a tape late on the wire look identical from the
-        chart. Never negative — the cursor cannot be ahead of the terminal, and
-        a clock estimate that says otherwise is reporting its own error.
-        """
-        return max(0, self.server_now_ms() - self.cursor_msc)
 
     def pump_book(self) -> None:
         """Send one complete DOM image, when it differs from the last one."""
@@ -1203,7 +1220,6 @@ class Session:
                 "time_ms": self.server_now_ms(),
                 "ticks_sent": self.ticks_sent,
                 "server_utc_offset_s": self.offset_s,
-                "cursor_lag_ms": self.cursor_lag_ms(),
             }
         )
         if self.book_subscribed:

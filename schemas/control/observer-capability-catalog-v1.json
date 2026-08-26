@@ -5487,15 +5487,6 @@
                 ],
                 "x-unit": "milliseconds"
               },
-              "feed_arrival_latency_peak_ms": {
-                "description": "The worst end-to-end figure over the sampled prints, at the feed.",
-                "format": "int64",
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "x-unit": "milliseconds"
-              },
               "sampled_prints": {
                 "$ref": "#/$defs/WireU64",
                 "description": "How many live prints the split covers."
@@ -5509,8 +5500,8 @@
                 ],
                 "x-unit": "milliseconds"
               },
-              "transport_latency_ms": {
-                "description": "The source handing it over to quantick reading it: the wire.",
+              "source_latency_peak_ms": {
+                "description": "The worst `source_latency_ms` over the sampled prints.\n\nThe only peak reported, and deliberately: it is two source-side stamps\nsubtracted per print, so every print contributes with no clock involved.\nA peak on the arrival or wire figures would need the reader's clock\napplied to a print that arrived earlier, which measures that print's age\nrather than its delay — on a quiet tape, the sampling interval itself.",
                 "format": "int64",
                 "type": [
                   "integer",
@@ -5518,8 +5509,8 @@
                 ],
                 "x-unit": "milliseconds"
               },
-              "transport_latency_peak_ms": {
-                "description": "The worst wire figure over the sampled prints.",
+              "transport_latency_ms": {
+                "description": "The source handing it over to quantick reading it: the wire.",
                 "format": "int64",
                 "type": [
                   "integer",

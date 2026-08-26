@@ -450,15 +450,6 @@ pub struct Heartbeat {
     /// Refreshed `server_time - utc` seconds, if the bridge recomputed it.
     #[serde(default)]
     pub server_utc_offset_s: Option<i64>,
-    /// How far the bridge's send cursor trails the newest tick the terminal
-    /// itself holds, in milliseconds.
-    ///
-    /// The one hop no timestamp comparison downstream can see: a tape running
-    /// late inside the terminal and a bridge whose pump has fallen behind look
-    /// identical from the chart. Rides the heartbeat because it describes the
-    /// pump rather than any one print. `None` on a bridge that predates it.
-    #[serde(default)]
-    pub cursor_lag_ms: Option<i64>,
 }
 
 /// Why a line could not become a [`BridgeMsg`].
@@ -817,23 +808,6 @@ mod tests {
         };
         assert_eq!(tick.sent_ms, None);
         assert_eq!(tick.last, "177795");
-    }
-
-    #[test]
-    fn a_heartbeat_carries_how_far_the_pump_trails() {
-        // Verbatim from PROTOCOL.md, and optional for the same reason as
-        // `sent_ms`: an older bridge reports no cursor and the terminal is then
-        // named whole rather than split on a guess.
-        let with = r#"{"type":"heartbeat","seq_last":42,"time_ms":1784824301000,"ticks_sent":42,"server_utc_offset_s":-10800,"cursor_lag_ms":4}"#;
-        let without = r#"{"type":"heartbeat","seq_last":42,"time_ms":1784824301000,"ticks_sent":42,"server_utc_offset_s":-10800}"#;
-        let BridgeMsg::Heartbeat(a) = parse_line(with).unwrap() else {
-            panic!()
-        };
-        let BridgeMsg::Heartbeat(b) = parse_line(without).unwrap() else {
-            panic!()
-        };
-        assert_eq!(a.cursor_lag_ms, Some(4));
-        assert_eq!(b.cursor_lag_ms, None);
     }
 
     #[test]
