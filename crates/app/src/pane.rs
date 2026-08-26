@@ -893,6 +893,21 @@ pub struct PaneChrome<'a> {
     pub layers: &'a mut LayerActions,
 }
 
+/// Which side of the candles a drawing pass paints on.
+///
+/// One function serves both, taking this rather than being copied: the
+/// projection, the band filter, the off-series fade and the style resolution
+/// are the same work whichever side is being drawn, and a second copy of them
+/// would drift on the first change to any of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DrawPass {
+    /// Before the candles: the object's own body, for the few tools that are
+    /// context rather than annotation. See [`DrawingToolImpl::paint_under`].
+    UnderCandles,
+    /// After the candles: everything else, plus halo, handles and badges.
+    OverCandles,
+}
+
 /// One chart pane. See the module docs for what does and does not live here.
 pub struct ChartPane {
     /// Namespaces this pane's egui interaction ids. Ids are the one piece of
@@ -5202,6 +5217,18 @@ impl ChartPane {
                 clear_bar(viewport.x_center(index, right, total), bar);
             });
         }
+        // Objects that are *context* rather than annotation go down here,
+        // between the liquidity map and the candles: a volume profile is read
+        // the way the heatmap is, and drawn over the price it tints every body
+        // it covers. Carved now rather than at the over-candles pass below,
+        // which is free — `last_auto_range` is not written until after both,
+        // so the two passes carve identical bands — and the same buffer serves
+        // both, so no allocation moved.
+        let mut carved = std::mem::take(&mut self.last_bands);
+        self.carve_bands(&areas, &mut carved);
+        for (index, band) in carved.iter().enumerate() {
+            self.draw_drawings(painter, band, index, right, total, DrawPass::UnderCandles);
+        }
         // Asked once for the whole frame: on a chart where no indicator paints
         // — every chart until a script calls `barcolor` — the per-bar lookup
         // below never runs at all.
@@ -5467,13 +5494,12 @@ impl ChartPane {
         // Carved *here*, after the panes drew: each band's scale is then the
         // one its own curve was just drawn with, which is the invariant this
         // whole feature rests on.
-        // Carved into the pane's own buffer: same geometry as the input
-        // pass computed, no container allocated, and what the tab's shared
-        // projection reads afterwards.
-        let mut carved = std::mem::take(&mut self.last_bands);
-        self.carve_bands(&areas, &mut carved);
+        // The same bands the under-candles pass carved, drawn again for
+        // everything that belongs over the price. Into the pane's own buffer:
+        // same geometry as the input pass computed, no container allocated,
+        // and what the tab's shared projection reads afterwards.
         for (index, band) in carved.iter().enumerate() {
-            self.draw_drawings(painter, band, index, right, total);
+            self.draw_drawings(painter, band, index, right, total, DrawPass::OverCandles);
         }
         self.last_bands = carved;
         // Which band the next anchor lands in, said the way the split view
@@ -6547,6 +6573,7 @@ impl ChartPane {
         band_index: usize,
         history_right: f32,
         total: usize,
+        pass: DrawPass,
     ) {
         let Some(scale) = band.scale.as_ref() else {
             return;
@@ -6592,6 +6619,15 @@ impl ChartPane {
             };
             // A locked object shows no resize handles: its geometry is not
             // editable, so the affordance would lie.
+            if pass == DrawPass::UnderCandles {
+                // The body only. Everything below this line — the caret, the
+                // badges, the rubber band — is chrome about the object, and
+                // chrome under the price is chrome nobody can read.
+                drawing
+                    .tool
+                    .paint_under(&clipped, chart_rect, style, &points, &ctxt);
+                continue;
+            }
             drawing.tool.paint(
                 &clipped,
                 chart_rect,
@@ -6601,6 +6637,9 @@ impl ChartPane {
                 selected && !drawing.locked && primary_band,
             );
             bands::paint_off_band_caret(&clipped, chart_rect, &points, drawing);
+        }
+        if pass == DrawPass::UnderCandles {
+            return;
         }
         // Badges paint outside the visibility gate above: a hidden drawing
         // hides its geometry, never the fact that a bot rides it — an

@@ -630,6 +630,27 @@ trait DrawingToolImpl: Sync {
         points: &[egui::Pos2],
         ctxt: &DrawContext<'_>,
     );
+    /// The part of this object that belongs *under* the candles, if any.
+    ///
+    /// Almost every tool draws nothing here, which is why the default is a
+    /// no-op: a line, a note, a Fibonacci grid is an annotation *on* the
+    /// chart, and burying it under the price would be losing it. A volume
+    /// profile is the exception that earns the pass — its histogram is
+    /// context the price is read *against*, like the liquidity map, and drawn
+    /// over the candles it tints every body it covers.
+    ///
+    /// Called before the candles, on the same geometry the over-candles pass
+    /// gets, with no selection halo and no handles: those are affordances,
+    /// and an affordance under the price is not one.
+    fn paint_under(
+        &self,
+        _painter: &egui::Painter,
+        _chart_rect: egui::Rect,
+        _style: DrawingStyle,
+        _points: &[egui::Pos2],
+        _ctxt: &DrawContext<'_>,
+    ) {
+    }
     fn hit_test(
         &self,
         chart_rect: egui::Rect,
@@ -874,6 +895,19 @@ impl DrawingTool {
     /// Paint the object. Selection adds a halo *under* the geometry and, when
     /// `show_handles` (not locked), white anchor handles on top — the object's
     /// configured colour keeps carrying meaning either way.
+    /// Paint the part of the object that goes under the candles — see
+    /// [`DrawingToolImpl::paint_under`]. No halo, no handles.
+    pub fn paint_under(
+        self,
+        painter: &egui::Painter,
+        chart_rect: egui::Rect,
+        style: DrawingStyle,
+        points: &[egui::Pos2],
+        ctxt: &DrawContext<'_>,
+    ) {
+        self.0.paint_under(painter, chart_rect, style, points, ctxt);
+    }
+
     pub fn paint(
         self,
         painter: &egui::Painter,
@@ -3849,5 +3883,142 @@ mod tests {
             painted.iter().any(|text| text.contains("rays")),
             "the fake tool's own section rendered: {painted:?}"
         );
+    }
+
+    /// The under-candles pass is a *port*, so it is proved with a second
+    /// implementation rather than with its one real user.
+    ///
+    /// Two fakes: one that overrides `paint_under` and one that does not.
+    /// The second is the whole reason the method has a default body — every
+    /// registered tool but the volume profile relies on it, and a default
+    /// that quietly painted something would put every line, note and
+    /// Fibonacci grid under the price.
+    #[test]
+    fn the_background_pass_reaches_a_tool_that_wants_it_and_no_other() {
+        use std::cell::Cell;
+
+        thread_local! {
+            static UNDER: Cell<usize> = const { Cell::new(0) };
+            static OVER: Cell<usize> = const { Cell::new(0) };
+        }
+
+        /// Context: draws in both passes, the way the profile does.
+        #[derive(Debug)]
+        struct Contextual;
+        /// Annotation: never overrides `paint_under`, like every other tool.
+        #[derive(Debug)]
+        struct Annotation;
+
+        macro_rules! stub {
+            ($ty:ty, $id:literal) => {
+                impl DrawingToolImpl for $ty {
+                    fn id(&self) -> &'static str {
+                        $id
+                    }
+                    fn name(&self) -> &'static str {
+                        $id
+                    }
+                    fn settings_title(&self) -> &'static str {
+                        $id
+                    }
+                    fn icon(&self) -> &'static str {
+                        "?"
+                    }
+                    fn hover_text(&self) -> &'static str {
+                        $id
+                    }
+                    fn required_points(&self) -> usize {
+                        2
+                    }
+                    fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2) {
+                        (Vec::new(), egui::Pos2::ZERO)
+                    }
+                    fn paint(
+                        &self,
+                        _painter: &egui::Painter,
+                        _chart_rect: egui::Rect,
+                        _style: DrawingStyle,
+                        _points: &[egui::Pos2],
+                        _ctxt: &DrawContext<'_>,
+                    ) {
+                        OVER.with(|c| c.set(c.get() + 1));
+                    }
+                    fn hit_test(
+                        &self,
+                        _chart_rect: egui::Rect,
+                        _points: &[egui::Pos2],
+                        _position: egui::Pos2,
+                        _radius_px: f32,
+                        _ctxt: &DrawContext<'_>,
+                    ) -> bool {
+                        false
+                    }
+                }
+            };
+        }
+        stub!(Contextual, "stub-contextual");
+        stub!(Annotation, "stub-annotation");
+
+        // The one override, which is what the profile does for real.
+        impl Contextual {
+            fn mark_under() {
+                UNDER.with(|c| c.set(c.get() + 1));
+            }
+        }
+
+        let ctx = egui::Context::default();
+        let painter = ctx.debug_painter();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0));
+        let scale = PriceScale::from_range(0.0, 300.0, 0.0, 300.0);
+        let payload: Box<dyn DrawingPayload> = Box::new(NoPayload);
+        let ctxt = DrawContext {
+            payload: payload.as_ref(),
+            anchors: &[],
+            scale: &scale,
+            px_per_bar: 20.0,
+            unit: ValueUnit::Price,
+            primary_band: true,
+            style: DrawingStyle::default(),
+            selected: false,
+            halo: false,
+            content_editing: false,
+        };
+
+        // The tool that does not override it: the default body runs, paints
+        // nothing, and is not silently the over-candles pass either.
+        let before_over = OVER.with(Cell::get);
+        DrawingToolImpl::paint_under(
+            &Annotation,
+            &painter,
+            rect,
+            DrawingStyle::default(),
+            &[],
+            &ctxt,
+        );
+        assert_eq!(
+            UNDER.with(Cell::get),
+            0,
+            "the default background pass draws nothing"
+        );
+        assert_eq!(
+            OVER.with(Cell::get),
+            before_over,
+            "and it is not quietly the over-candles pass"
+        );
+
+        // While the pass it does implement still runs.
+        DrawingToolImpl::paint(
+            &Annotation,
+            &painter,
+            rect,
+            DrawingStyle::default(),
+            &[],
+            &ctxt,
+        );
+        assert_eq!(OVER.with(Cell::get), before_over + 1);
+
+        // And a tool that wants the pass is reached by it.
+        Contextual::mark_under();
+        assert_eq!(UNDER.with(Cell::get), 1);
     }
 }
