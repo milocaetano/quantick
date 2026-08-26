@@ -178,6 +178,52 @@ fn trim_to_seam(
     folded
 }
 
+/// Whether the chart can reach further back for venue candles, and when it
+/// cannot, why — see [`Tab::older_candles`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OlderCandles {
+    /// Another span can be asked for.
+    Available,
+    /// This feed publishes no candle history at all.
+    FeedServesNone,
+    /// Nothing on this chart is cut by time, so no venue candle was ever
+    /// wanted — the prefix follows what a pane *shows*, not which pane it is.
+    NoChartCutByTime,
+    /// A request is out; the answer is what to wait for.
+    Fetching,
+    /// The opening span has not landed yet. There is nothing to reach back
+    /// *from* until it does.
+    NotArrivedYet,
+    /// A reach-back came back complete with nothing older in it. That is the
+    /// venue's record, or the provider's, and it is the one reason here that
+    /// had to be learned by asking.
+    RecordStartsHere,
+}
+
+impl OlderCandles {
+    /// Whether the control is live.
+    #[must_use]
+    pub const fn is_available(self) -> bool {
+        matches!(self, Self::Available)
+    }
+
+    /// What to tell the trader hovering a control this state disabled.
+    /// `None` when it is not disabled.
+    #[must_use]
+    pub const fn why_not(self) -> Option<&'static str> {
+        match self {
+            Self::Available => None,
+            Self::FeedServesNone => Some("this feed publishes no candle history"),
+            Self::NoChartCutByTime => {
+                Some("no chart here is cut by time, so there are no venue candles to extend")
+            }
+            Self::Fetching => Some("a request is already out; this is what it is fetching"),
+            Self::NotArrivedYet => Some("the first span has not arrived yet"),
+            Self::RecordStartsHere => Some("this is as far back as the venue's record goes"),
+        }
+    }
+}
+
 /// One open market. See the module docs for what does and does not live here.
 /// One frame's answer, for both panes, to "what shared mark of the *other*
 /// pane is the pointer over?".
@@ -552,8 +598,8 @@ impl Tab {
     /// the gate for venue candle history. Capability-shaped, like every other
     /// gate in the app (audit S1): the prefix belongs to what a pane *shows*
     /// (`BarSpec::Time` at a whole number of venue candles), never to which
-    /// pane object it is. `bars → time` on the flow pane earns the same 90
-    /// days the split's time pane gets.
+    /// pane object it is. `bars → time` on the flow pane earns the same span
+    /// the split's time pane gets.
     fn any_pane_wants_venue_history(&self) -> bool {
         std::iter::once(&self.flow_pane)
             .chain(self.time_pane.as_ref())
@@ -647,6 +693,13 @@ impl Tab {
             // first one took.
             self.ohlcv_generation = capabilities.ohlcv_generation;
             self.ohlcv_base = None;
+            // And with it, everything learned by reaching back through it. The
+            // oldest bucket a request was measured against is gone, so a reply
+            // still in flight must not be compared to it; and "the record
+            // starts here" was a fact about a block this generation replaces.
+            // `attach` clears both for the same reason on a change of market.
+            self.ohlcv_reaching_back = None;
+            self.ohlcv_older_exhausted = false;
             // Slices of the discarded answer may still be on their way. They
             // describe a base that no longer exists, so they are dropped
             // rather than folded onto nothing.
@@ -697,6 +750,8 @@ impl Tab {
             if last {
                 self.ohlcv_stale = false;
                 self.ohlcv_pending = false;
+                // Whatever this answer was measured against no longer exists.
+                self.ohlcv_reaching_back = None;
                 self.loading.end(LoadingTask::VenueHistory);
             }
             tracing::debug!(
@@ -749,7 +804,7 @@ impl Tab {
             action = if bars.is_empty() { "no_prefix" } else { "install_prefix" },
             "candle history arrived"
         );
-        self.take_ohlcv_slice(interval_ms, bars);
+        let usable = self.take_ohlcv_slice(interval_ms, bars);
         // A *load older* that closed: did the oldest candle actually move? A
         // reply that re-sends what is already held is not an empty reply, so
         // the bar count cannot answer this and the oldest bucket can. Latched
@@ -757,7 +812,17 @@ impl Tab {
         // to ask.
         if let Some(was_oldest) = self.ohlcv_reaching_back.take() {
             let now_oldest = self.oldest_venue_candle_ms();
-            self.ohlcv_older_exhausted = now_oldest.is_none_or(|oldest| oldest >= was_oldest);
+            let moved = now_oldest.is_some_and(|oldest| oldest < was_oldest);
+            // Only a *complete* answer teaches anything about where the record
+            // starts. A run that came up short — a venue that stopped
+            // answering, a socket that failed — brought nothing older for a
+            // reason that has nothing to do with the venue's depth, and
+            // latching on it would retire the button for the session and tell
+            // the trader their history starts here. Short means try again.
+            // Complete *and* usable. A run that came up short brought nothing
+            // older for a reason unrelated to the venue's depth, and a reply
+            // the pane had to refuse is not an answer about depth at all.
+            self.ohlcv_older_exhausted = complete && usable && !moved;
             tracing::info!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -766,11 +831,16 @@ impl Tab {
                 symbol = %self.symbol,
                 was_oldest_ms = was_oldest,
                 now_oldest_ms = now_oldest.unwrap_or(0),
+                complete,
+                usable,
+                moved,
                 exhausted = self.ohlcv_older_exhausted,
                 action = if self.ohlcv_older_exhausted {
                     "stop_offering_older"
-                } else {
+                } else if moved {
                     "older_available"
+                } else {
+                    "no_evidence_try_again"
                 },
                 "a request for older candles settled"
             );
@@ -779,13 +849,17 @@ impl Tab {
 
     /// Merge one slice into the base and rebuild the prefix from it.
     ///
+    /// Reports whether the slice was *usable* — an interval this pane can fold
+    /// from. A refused slice is not an answer about the venue's depth, and the
+    /// exhaustion latch upstream must not read it as one.
+    ///
     /// Shared by the closing reply and every slice before it: whether an
     /// answer arrived whole or in thirteen pieces changes when the wait ends,
     /// never how the candles are installed. Merging rather than replacing is
     /// what makes that true — a run's last slice is the *oldest* week of the
     /// span, and assigning it over the base would throw away the twelve that
     /// had already been drawn.
-    fn take_ohlcv_slice(&mut self, interval_ms: i64, bars: Vec<quantick_engine::Bar>) {
+    fn take_ohlcv_slice(&mut self, interval_ms: i64, bars: Vec<quantick_engine::Bar>) -> bool {
         if interval_ms != crate::feed::OHLCV_BASE_INTERVAL_MS && !bars.is_empty() {
             // The event tags its own interval so a consumer never has to
             // guess; a base this fold was not written for is refused rather
@@ -796,11 +870,23 @@ impl Tab {
                 event_code = "OHLCV_UNEXPECTED_BASE",
                 interval_ms,
                 expected_ms = crate::feed::OHLCV_BASE_INTERVAL_MS,
-                action = "no_prefix",
+                action = if self.ohlcv_base.is_some() {
+                    "refuse_slice_keep_prefix"
+                } else {
+                    "no_prefix"
+                },
                 "candle history arrived at an interval the pane cannot fold from"
             );
-            self.ohlcv_base = Some(Vec::new());
-            return;
+            // Refuse the slice, never the history. Recording an empty base is
+            // right for the *opening* answer — it is how "this venue serves
+            // nothing this pane can fold" is remembered — but a reach-back
+            // reply at a bad interval arrives on top of a week (or a quarter)
+            // the trader has already paged in, and throwing that away would
+            // cost them everything they waited for over one unusable slice.
+            if self.ohlcv_base.is_none() {
+                self.ohlcv_base = Some(Vec::new());
+            }
+            return false;
         }
         let base = self.ohlcv_base.get_or_insert_with(Vec::new);
         if base.is_empty() {
@@ -809,6 +895,7 @@ impl Tab {
             merge_older_candles(base, bars);
         }
         self.refold_history_prefix();
+        true
     }
 
     /// Hand the tab one candle-history reply directly, as the feed drain does.
@@ -844,20 +931,37 @@ impl Tab {
         self.ohlcv_base.as_ref()?.first().map(|bar| bar.open_time)
     }
 
-    /// Whether asking for older candles could get the trader anything.
+    /// Whether asking for older candles could get the trader anything — and
+    /// when it could not, *which* of the reasons it is.
     ///
-    /// Four ways it cannot: the feed serves no candles at all, nothing has
-    /// been fetched yet (the opening request is what to wait for, not a second
-    /// one), a request is already out, or the last *load older* came back with
-    /// nothing older than what was held. The fourth is the only one that is
-    /// remembered rather than observed, and it is remembered because the only
-    /// way to learn it was to ask.
+    /// A bool would be enough to grey the control out and is not enough to
+    /// say why, and "why" is the whole of the disabled tooltip. Under the
+    /// data-honesty rule a control that offers three possible reasons and is
+    /// disabled for a fourth is telling the trader something untrue: on a tick
+    /// chart the answer is not "the venue's record starts here", it is that
+    /// nothing on this chart is cut by time, so no venue candle was ever
+    /// wanted. One enum, so the reason shown is the reason.
+    #[must_use]
+    pub fn older_candles(&self, capabilities: FeedCapabilities) -> OlderCandles {
+        if !capabilities.ohlcv_history {
+            OlderCandles::FeedServesNone
+        } else if !self.any_pane_wants_venue_history() {
+            OlderCandles::NoChartCutByTime
+        } else if self.ohlcv_pending {
+            OlderCandles::Fetching
+        } else if self.oldest_venue_candle_ms().is_none() {
+            OlderCandles::NotArrivedYet
+        } else if self.ohlcv_older_exhausted {
+            OlderCandles::RecordStartsHere
+        } else {
+            OlderCandles::Available
+        }
+    }
+
+    /// Shorthand for the one caller that only needs the yes/no.
     #[must_use]
     pub fn can_load_older_candles(&self, capabilities: FeedCapabilities) -> bool {
-        capabilities.ohlcv_history
-            && !self.ohlcv_pending
-            && !self.ohlcv_older_exhausted
-            && self.oldest_venue_candle_ms().is_some()
+        self.older_candles(capabilities).is_available()
     }
 
     /// Reach one more [`crate::feed::TIME_HISTORY_SPAN_MS`] into the past and
@@ -873,21 +977,23 @@ impl Tab {
     /// Reports whether a request actually went out, so a caller can tell "the
     /// venue is fetching" from "there was nothing to ask for".
     pub fn request_older_ohlcv_history(&mut self, capabilities: FeedCapabilities) -> bool {
-        if !self.can_load_older_candles(capabilities) {
+        let oldest = self.oldest_venue_candle_ms();
+        if !self.can_load_older_candles(capabilities) || oldest.is_none() {
             tracing::debug!(
                 target: "quantick::app",
                 event_code = "OHLCV_OLDER_DECLINED",
                 tab = self.id,
                 pending = self.ohlcv_pending,
                 exhausted = self.ohlcv_older_exhausted,
-                held = self.oldest_venue_candle_ms().is_some(),
+                held = oldest.is_some(),
                 "nothing older to ask for"
             );
             return false;
         }
-        let Some(oldest) = self.oldest_venue_candle_ms() else {
-            return false;
-        };
+        // Read once above and unwrapped here: `can_load_older_candles` already
+        // required it, and a second read that could disagree with the guard is
+        // exactly the kind of duplicate this branch is trying not to leave.
+        let oldest = oldest.expect("the guard above required a candle held");
         // One millisecond before the oldest bucket start held. The plan's
         // windows are closed at both ends, so anything else would re-fetch the
         // candle already on screen.

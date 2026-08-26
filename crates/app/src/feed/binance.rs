@@ -112,8 +112,9 @@ async fn feed_task(
     let snapshot_limit = initial_book_depth();
     let mut book_capture: Option<BookCaptureTask> = None;
     let mut ever_connected = false;
-    // Candle history runs off this loop, not inside it. Ninety days is ~130
-    // sequential pages — five seconds on a good day, far longer against a venue
+    // Candle history runs off this loop, not inside it. A week is ~11
+    // sequential pages and a trader paging back through a quarter asks for
+    // thirteen such runs — seconds on a good day, far longer against a venue
     // that is throttling — and awaiting that in a command arm stops `live_rx`
     // from being polled for the duration: the trade channel fills, the
     // websocket read loop behind it stalls, and pongs stop going out. The task
@@ -189,9 +190,26 @@ async fn feed_task(
                                 event_code = "BINANCE_OHLCV_ALREADY_RUNNING",
                                 symbol,
                                 requested_span_ms = span_ms,
-                                action = "ignore_duplicate",
-                                "a candle fetch is already in flight; the running one will answer"
+                                requested_before_ms = before_ms.unwrap_or(0),
+                                action = "answer_empty_and_let_the_running_one_finish",
+                                "a candle fetch is already in flight; this one is refused, not queued"
                             );
+                            // Refused, but *answered*. The caller marked itself
+                            // pending and put its spinner up before this command
+                            // left, so a silent drop leaves that spinner turning
+                            // for the rest of the session and the reach-back
+                            // button disabled behind it — the same reason
+                            // `load_older` never returns silence either. Empty
+                            // and known-short, because that is exactly what this
+                            // is: nothing fetched, and not because the venue had
+                            // nothing.
+                            if ohlcv_tx
+                                .send((Vec::new(), crate::feed::OhlcvSlice::Last { complete: false }))
+                                .await
+                                .is_err()
+                            {
+                                break; // UI gone
+                            }
                         } else {
                             ohlcv_task = Some(spawn_ohlcv(
                                 klines.clone(),

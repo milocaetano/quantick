@@ -1102,9 +1102,11 @@ pub struct QuantickApp {
     /// Whether venue candle history is asked for in slices, newest first
     /// (View → progressive venue history).
     ///
-    /// On by default. Ninety days of one-minute candles is a couple of minutes
-    /// of sequential venue round trips, and fetched whole the chart shows
-    /// nothing at all for the whole of it. Off restores exactly that: one
+    /// On by default. A span of one-minute candles is a run of sequential
+    /// venue round trips — seconds for the opening week, and another such run
+    /// for every span the trader reaches back through — and fetched whole the
+    /// chart shows nothing at all for the whole of it. Off restores exactly
+    /// that: one
     /// request, one reply, one very late frame — kept because a trader on a
     /// metered or rate-limited connection may prefer the smaller number of
     /// requests, and because a setting whose "off" is not the old behaviour is
@@ -2837,7 +2839,7 @@ impl QuantickApp {
             });
         let capabilities = self.active_tab().capabilities(&self.config);
         let candles_held = self.active_tab().venue_candles_held();
-        let can_load_older_candles = self.active_tab().can_load_older_candles(capabilities);
+        let older_candles = self.active_tab().older_candles(capabilities);
         let feed_display_name = self.active_tab().feed_display_name(&self.config).to_owned();
         let heatmap_on = self.active_tab().tape().depth_visible();
         let bubbles_on = self.active_tab().tape().bubbles_enabled();
@@ -2899,7 +2901,7 @@ impl QuantickApp {
             history_step: &mut tab.history_step,
             history_trades: tab.history_trades,
             history_candles: candles_held,
-            can_load_older_candles,
+            older_candles,
             capabilities,
             heatmap_on,
             bubbles_on,
@@ -8278,11 +8280,24 @@ impl QuantickApp {
             return;
         };
         let capabilities = self.active_tab().capabilities(&self.config);
+        if self
+            .active_tab()
+            .loading
+            .is_active(LoadingTask::VenueHistory)
+        {
+            // A span is genuinely being fetched. The trade twin returns here
+            // without spending budget for the same reason: the wait is the
+            // feature working, and charging it to the give-up timer turns a
+            // slow venue into a run that reports it found nothing. A week can
+            // be several slices and well over a hundred frames, so a budget
+            // spent here would never survive the documented thirteen spans.
+            return;
+        }
         if !self.active_tab().can_load_older_candles(capabilities) {
-            // Either the first span has not arrived yet, or one is in flight,
-            // or the venue's record starts here. The first two are worth
-            // waiting for; the third ends the same way — out of budget — and
-            // the log says which by naming what the tab held.
+            // Nothing to reach back *from* yet, or the venue's record starts
+            // here. Both are worth waiting a bounded while for, and both end
+            // the same way; the log names what the tab held so an operator can
+            // tell them apart.
             self.pending_load_older_candles = budget.checked_sub(1).map(|left| (spans, left));
             if self.pending_load_older_candles.is_none() {
                 tracing::warn!(
@@ -8299,9 +8314,15 @@ impl QuantickApp {
             }
             return;
         }
-        self.active_tab_mut()
-            .request_older_ohlcv_history(capabilities);
-        self.pending_load_older_candles = (spans > 1).then_some((spans - 1, budget));
+        // Only a request that actually went out costs a span. A full command
+        // channel is a busy frame, not a span delivered, and counting it would
+        // quietly shorten the reach the operator asked for.
+        if self
+            .active_tab_mut()
+            .request_older_ohlcv_history(capabilities)
+        {
+            self.pending_load_older_candles = (spans > 1).then_some((spans - 1, budget));
+        }
     }
 
     /// The `QUANTICK_DRAWINGS_DEMO` hook: one of every registered drawing on
@@ -23100,34 +23121,59 @@ plot(close)
             .collect()
     }
 
-    /// Every FetchOhlcv sitting in the command channel.
+    /// What one queued `FetchOhlcv` asked for: whether it wanted a progressive
+    /// answer (`slice_ms`) and where its newest edge was (`before_ms`).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct OhlcvAsk {
+        slice_ms: Option<i64>,
+        before_ms: Option<i64>,
+    }
+
+    /// Every FetchOhlcv sitting in the command channel, in order.
+    ///
+    /// One drain, not one per field: a receiver is consumed by reading it, so
+    /// two helpers over the same channel meant the second call always saw an
+    /// empty queue — a trap a test would fail on for the wrong reason.
+    fn drain_ohlcv_fetches(commands: &mut mpsc::Receiver<FeedCommand>) -> Vec<OhlcvAsk> {
+        let mut asked = Vec::new();
+        while let Ok(command) = commands.try_recv() {
+            if let FeedCommand::FetchOhlcv {
+                slice_ms,
+                before_ms,
+                ..
+            } = command
+            {
+                asked.push(OhlcvAsk {
+                    slice_ms,
+                    before_ms,
+                });
+            }
+        }
+        asked
+    }
+
+    /// How many candle requests went out.
     fn drain_ohlcv_requests(commands: &mut mpsc::Receiver<FeedCommand>) -> usize {
-        drain_ohlcv_slice_requests(commands).len()
+        drain_ohlcv_fetches(commands).len()
     }
 
     /// The `slice_ms` every queued FetchOhlcv asked for, in order — what says
     /// whether the tab asked for a progressive answer or the old single one.
     fn drain_ohlcv_slice_requests(commands: &mut mpsc::Receiver<FeedCommand>) -> Vec<Option<i64>> {
-        let mut asked = Vec::new();
-        while let Ok(command) = commands.try_recv() {
-            if let FeedCommand::FetchOhlcv { slice_ms, .. } = command {
-                asked.push(slice_ms);
-            }
-        }
-        asked
+        drain_ohlcv_fetches(commands)
+            .into_iter()
+            .map(|ask| ask.slice_ms)
+            .collect()
     }
 
     /// The `before_ms` every queued FetchOhlcv asked for, in order — what says
     /// whether the tab asked for the opening span or reached back past what it
     /// already holds.
     fn drain_ohlcv_before_requests(commands: &mut mpsc::Receiver<FeedCommand>) -> Vec<Option<i64>> {
-        let mut asked = Vec::new();
-        while let Ok(command) = commands.try_recv() {
-            if let FeedCommand::FetchOhlcv { before_ms, .. } = command {
-                asked.push(before_ms);
-            }
-        }
-        asked
+        drain_ohlcv_fetches(commands)
+            .into_iter()
+            .map(|ask| ask.before_ms)
+            .collect()
     }
 
     /// A split app whose feed reports candle history, with the channel ends
@@ -23294,6 +23340,97 @@ plot(close)
             app.active_tab()
                 .can_load_older_candles(app.active_tab().capabilities(&app.config)),
             "a span that brought something older leaves the door open"
+        );
+    }
+
+    /// A short answer teaches nothing about where the record starts. A venue
+    /// that stopped answering, or a socket that failed, brings back nothing
+    /// older for a reason that has nothing to do with the venue's depth —
+    /// latching on it would retire the control for the session and tell the
+    /// trader their history begins here, which is a lie the data-honesty rule
+    /// exists to prevent.
+    #[test]
+    fn a_short_answer_never_retires_the_candle_reach() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_ohlcv_fetches(&mut commands);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-120, -20),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        assert_eq!(drain_ohlcv_fetches(&mut commands).len(), 1);
+        // The shape of a failed fetch: nothing, and known to be short.
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: Vec::new(),
+                slice: crate::feed::OhlcvSlice::Last { complete: false },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        let capabilities = app.active_tab().capabilities(&app.config);
+        assert_eq!(
+            app.active_tab().older_candles(capabilities),
+            crate::tab::OlderCandles::Available,
+            "a short answer is a reason to try again, not to stop offering"
+        );
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        assert_eq!(
+            drain_ohlcv_fetches(&mut commands).len(),
+            1,
+            "and pressing it again really asks"
+        );
+    }
+
+    /// A reach-back reply at an interval the pane cannot fold from is refused,
+    /// not obeyed. Recording an empty base is right for the *opening* answer —
+    /// it is how "this venue serves nothing this pane can fold" is remembered
+    /// — but doing it here would throw away every span the trader had already
+    /// waited for, over one unusable slice.
+    #[test]
+    fn a_reach_back_at_a_bad_interval_keeps_the_history_already_paged_in() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_ohlcv_fetches(&mut commands);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-120, -20),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+        let held = app.active_tab().venue_candles_held();
+        assert_eq!(held, 100);
+
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        drain_ohlcv_fetches(&mut commands);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: 5 * crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-200, -120),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        assert_eq!(
+            app.active_tab().venue_candles_held(),
+            held,
+            "the week the trader already has survives a slice it cannot fold"
+        );
+        let capabilities = app.active_tab().capabilities(&app.config);
+        assert_eq!(
+            app.active_tab().older_candles(capabilities),
+            crate::tab::OlderCandles::Available,
+            "and the reach is still offered"
         );
     }
 
@@ -23905,7 +24042,7 @@ plot(close)
     }
 
     /// (e) The rebuild an indicator sees spans the prefix, so an average over
-    /// three months of context is a real average and not a warm-up.
+    /// the loaded context is a real average and not a warm-up.
     #[test]
     fn the_indicator_rebuild_covers_the_venue_prefix() {
         let ctx = egui::Context::default();
@@ -24341,9 +24478,9 @@ plot(close)
                 &mut chart_layers::LayerActions::default(),
             );
         }
-        // The view follows the live edge, and three months of venue history is
-        // far behind it, so bring the seam on screen the way a user scrolling
-        // back would.
+        // The view follows the live edge, and the venue history is far behind
+        // it, so bring the seam on screen the way a user scrolling back
+        // would.
         let slots = app.active_tab().pane(PaneSide::Time).slots();
         let width = app
             .active_tab()

@@ -241,9 +241,11 @@ pub struct ToolbarModel<'a> {
     /// feed that serves none.
     pub history_candles: usize,
     /// Whether asking for another span of older candles could get the trader
-    /// anything — see `Tab::can_load_older_candles`. Decided by the tab, which
-    /// is the only thing that knows what it has already asked for.
-    pub can_load_older_candles: bool,
+    /// anything, and when it could not, why — see `Tab::older_candles`.
+    /// Decided by the tab, which is the only thing that knows what it has
+    /// already asked for. Carried as the reason rather than a bool because the
+    /// disabled tooltip is nothing but the reason.
+    pub older_candles: crate::tab::OlderCandles,
     /// What the active source's backend can do.
     pub capabilities: FeedCapabilities,
     /// Whether the L2 depth map is shown. Capture runs regardless.
@@ -646,7 +648,7 @@ fn param_summary(model: &ToolbarModel) -> String {
 /// leave the candle reach behind a control the trader cannot open.
 fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<ToolbarAction>) {
     let paging = model.capabilities.history_paging;
-    let menu = paging || model.capabilities.ohlcv_history;
+    let menu = history_menu_reachable(model);
     let load = ui
         .add_enabled(paging, egui::Button::new(format!("{} older", icons::PLUS)))
         .on_hover_text("fetch older trades and prepend them")
@@ -662,6 +664,17 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
             draw_history_menu(ui, model, actions);
         });
     });
+}
+
+/// Whether the history menu has anything in it — trade paging, candle reach,
+/// or both.
+///
+/// One owner, called by the bar's caret and by the overflow entry. Written
+/// twice it would drift, and the drift would be a feed that offers the candle
+/// reach on the bar and hides it in the overflow — the exact split the caret's
+/// own comment says it exists to prevent.
+fn history_menu_reachable(model: &ToolbarModel) -> bool {
+    model.capabilities.history_paging || model.capabilities.ohlcv_history
 }
 
 /// The history caret/overflow menu body: page size and the running total.
@@ -684,20 +697,50 @@ fn draw_history_menu(
     // deliberate act on a time chart, not a per-minute one.
     if model.capabilities.ohlcv_history {
         ui.separator();
+        // The reach is named from the constant that owns it, never spelled out
+        // beside it: the span was ninety days one release ago, and a sentence
+        // carrying its own copy of that number starts lying the day it moves.
+        let reach = fmt_history_span(crate::feed::TIME_HISTORY_SPAN_MS);
         let older = ui
             .add_enabled(
-                model.can_load_older_candles,
+                model.older_candles.is_available(),
                 egui::Button::new(format!("{} older candles", icons::PLUS)),
             )
-            .on_hover_text("fetch another week of venue candles and prepend it")
-            .on_disabled_hover_text(
-                "nothing older to fetch: a request is already out, the first                  one has not arrived yet, or the venue's record starts here",
-            );
+            .on_hover_text(format!(
+                "fetch another {reach} of venue candles and prepend it"
+            ));
+        // The reason, not a list of reasons: see `Tab::older_candles`.
+        let older = match model.older_candles.why_not() {
+            Some(reason) => older.on_disabled_hover_text(reason),
+            None => older,
+        };
         if older.clicked() {
             actions.push(ToolbarAction::LoadOlderCandles);
             ui.close_menu();
         }
         ui.small(format!("{} venue candles held", model.history_candles));
+    }
+}
+
+/// A candle-history span in the words the menu uses: whole weeks, else days,
+/// else hours. Rendered from the constant so the control and the request can
+/// never disagree about how far one press reaches.
+fn fmt_history_span(span_ms: i64) -> String {
+    const HOUR_MS: i64 = 60 * 60 * 1_000;
+    const DAY_MS: i64 = 24 * HOUR_MS;
+    const WEEK_MS: i64 = 7 * DAY_MS;
+    let plural = |count: i64, unit: &str| {
+        if count == 1 {
+            unit.to_owned()
+        } else {
+            format!("{count} {unit}s")
+        }
+    };
+    match span_ms {
+        span if span >= WEEK_MS && span % WEEK_MS == 0 => plural(span / WEEK_MS, "week"),
+        span if span >= DAY_MS => plural(span / DAY_MS, "day"),
+        span if span >= HOUR_MS => plural(span / HOUR_MS, "hour"),
+        span => format!("{} ms", span.max(0)),
     }
 }
 
@@ -988,7 +1031,7 @@ fn draw_overflow(
                 actions.push(ToolbarAction::LoadOlder);
                 ui.close_menu();
             }
-            if paging || model.capabilities.ohlcv_history {
+            if history_menu_reachable(model) {
                 draw_history_menu(ui, model, actions);
             }
         }
@@ -1235,7 +1278,7 @@ mod tests {
                         history_step: &mut history_step,
                         history_trades: 1_000,
                         history_candles: 0,
-                        can_load_older_candles: false,
+                        older_candles: crate::tab::OlderCandles::NotArrivedYet,
                         capabilities: FeedCapabilities {
                             book_capture: !replaying,
                             history_paging: !replaying,
@@ -1325,7 +1368,7 @@ mod tests {
                     history_step: &mut history_step,
                     history_trades: 1_000,
                     history_candles: 0,
-                    can_load_older_candles: false,
+                    older_candles: crate::tab::OlderCandles::NotArrivedYet,
                     capabilities: FeedCapabilities {
                         book_capture: true,
                         history_paging: true,
@@ -1402,7 +1445,7 @@ mod tests {
                         history_step: &mut history_step,
                         history_trades: 200_000,
                         history_candles: 0,
-                        can_load_older_candles: false,
+                        older_candles: crate::tab::OlderCandles::NotArrivedYet,
                         capabilities: FeedCapabilities {
                             book_capture: false,
                             history_paging: false,
@@ -1474,7 +1517,7 @@ mod tests {
                     history_step: &mut history_step,
                     history_trades: 1_000,
                     history_candles: 0,
-                    can_load_older_candles: false,
+                    older_candles: crate::tab::OlderCandles::NotArrivedYet,
                     capabilities: FeedCapabilities {
                         book_capture: true,
                         history_paging: true,

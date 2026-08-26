@@ -385,14 +385,26 @@ fn context_reply(
         .filter(|bar| bar.open_time >= earliest && bar.open_time <= until_ms)
         .cloned()
         .collect();
+    // Short means "there is more market *before* the first bar returned" —
+    // which is a claim about the old end of the window only. Counting against
+    // the whole file answered that correctly while the filter had one bound;
+    // with an upper bound it does not, because a context that also covers the
+    // recording's own window (one downloaded after the session) has its
+    // trailing bars cut by the filter, and reporting that as short would say
+    // the run-up is missing when it is all there. So the count to beat is the
+    // bars the file holds *at or before* this window's newest edge.
+    let reachable = context
+        .bars
+        .iter()
+        .filter(|bar| bar.open_time <= until_ms)
+        .count();
     FeedEvent::OhlcvHistory {
         interval_ms: context.interval_ms,
         // Short for either of two reasons, and both are the same answer to the
         // caller: the download itself was clipped, or this span does not reach
-        // the whole of what was downloaded. Either way there is more market
-        // before the first bar returned, which is what `complete: false` says.
+        // the whole of what the file has before it.
         slice: crate::feed::OhlcvSlice::Last {
-            complete: context.complete && bars.len() == context.bars.len(),
+            complete: context.complete && bars.len() == reachable,
         },
         bars,
     }
@@ -791,7 +803,10 @@ mod tests {
             "the interval is the file's, not assumed"
         );
         assert_eq!(bars.len(), 90);
-        assert!(complete, "the whole downloaded context fits in 90 days");
+        assert!(
+            complete,
+            "the whole downloaded context fits inside the span asked for"
+        );
         assert!(
             bars.windows(2).all(|w| w[0].open_time < w[1].open_time),
             "candles run forwards"

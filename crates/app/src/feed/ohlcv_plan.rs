@@ -12,11 +12,13 @@
 //!
 //! # Why the newest window is fetched first
 //!
-//! Ninety days of one-minute candles is ~130 sequential Binance pages. Fetched
-//! as one job the chart shows no venue prefix at all for the whole run and
-//! then gains three months in a single frame. Fetched newest-window-first the
-//! trader sees the last few days within a second or two, reads them while the
-//! rest arrives behind, and every later slice lands *left* of what they are
+//! A span of one-minute candles is a run of sequential venue pages — a week
+//! is roughly eleven on Binance, and the reach a trader pages back to over a
+//! session is that many times over. Fetched as one job the chart shows no
+//! venue prefix at all for the whole run and then gains the lot in a single
+//! frame. Fetched newest-window-first the trader sees the most recent part
+//! within a second or two, reads it while the rest arrives behind, and every
+//! later slice lands *left* of what they are
 //! already looking at — which is the one direction new bars can appear without
 //! moving anything under the cursor (see `ChartPane::install_history_prefix`,
 //! which shifts the viewport and every bar-anchored drawing to match).

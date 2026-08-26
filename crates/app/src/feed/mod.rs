@@ -67,23 +67,33 @@ pub const TIME_HISTORY_SPAN_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
 /// interval free — no refetch, just a different fold over bars already held.
 pub const OHLCV_BASE_INTERVAL_MS: i64 = 60_000;
 
-/// How much of the span one progressive slice covers: one day.
+/// How much of the span one progressive slice covers: two days.
 ///
 /// Chosen against [`TIME_HISTORY_SPAN_MS`], not in isolation — and re-derived
-/// when that span became a week. A week cut into days is seven replies, well
-/// inside [`ohlcv_plan::MAX_SLICES`], and the first of them is a seventh of
-/// the venue round trips the whole span costs. That is the number the trader
-/// actually feels: it is how long the chart stays empty before the most recent
-/// day appears and becomes readable while the rest arrives behind it.
+/// when that span became a week. Left at a week it would have been dead
+/// policy: a slice as wide as the span is a single window
+/// ([`ohlcv_plan::plan`]), so every request would go straight back to the
+/// all-at-once wait progressive loading exists to remove.
 ///
-/// Left at a week it would have been dead policy — a slice as wide as the span
-/// is a single window ([`ohlcv_plan::plan`]), so every request would go back to
-/// the all-at-once wait progressive loading exists to remove.
+/// The width is a trade between two costs pulling opposite ways, and a week is
+/// short enough that the second one now dominates:
 ///
-/// Narrower slices would paint sooner and cost more replies, each one a refold
-/// of everything already held (see [`ohlcv_plan`]); wider ones approach that
-/// same all-at-once wait.
-pub const OHLCV_SLICE_SPAN_MS: i64 = 24 * 60 * 60 * 1_000;
+/// - **Time to the first readable frame.** Four windows means the newest two
+///   days land in roughly a quarter of the venue round trips the span costs.
+///   That is the number the trader feels — how long the chart stays empty.
+/// - **Refold work per arrival.** Every slice runs `refold_history_prefix`, a
+///   fold over the *whole* accumulated base plus an indicator rebuild per
+///   pane. That is bounded per request by [`ohlcv_plan::MAX_SLICES`], but not
+///   across requests: a trader paging back thirteen spans to the old quarter
+///   pays it once per slice, against a base growing toward six figures. At one
+///   slice a day that is 91 full refolds for the same final chart; at two days
+///   it is 52, and at a week it would be 13 with no progressive painting at
+///   all.
+///
+/// Two days keeps the opening week painting in four steps while cutting the
+/// deep-chart refold bill by nearly half. Narrower paints marginally sooner
+/// and multiplies that bill; wider approaches the all-at-once wait again.
+pub const OHLCV_SLICE_SPAN_MS: i64 = 2 * 24 * 60 * 60 * 1_000;
 
 /// A message from the feed thread to the UI, tagged by source so the chart can
 /// label backfilled vs live data honestly.
