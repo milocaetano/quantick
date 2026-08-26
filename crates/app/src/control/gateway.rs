@@ -2059,17 +2059,21 @@ fn tab_key(tab: &crate::tab::Tab) -> TabKey {
 }
 
 /// The panes of one tab, in the order both analysis scopes publish them.
-fn analysis_panes(tab: &crate::tab::Tab) -> Vec<(&crate::pane::ChartPane, crate::pane::PaneSide)> {
-    let mut panes = vec![(&tab.flow_pane, crate::pane::PaneSide::Flow)];
-    if let Some(time) = &tab.time_pane {
-        panes.push((time, crate::pane::PaneSide::Time));
-    }
-    panes
+fn analysis_panes(
+    tab: &crate::tab::Tab,
+) -> impl Iterator<Item = (&crate::pane::ChartPane, crate::pane::PaneSide)> {
+    // An iterator and not a `Vec`: this is walked by `analysis_matches` on
+    // every frame, and the version of this comparison #223's review removed
+    // was removed for allocating exactly one vector per frame.
+    std::iter::once((&tab.flow_pane, crate::pane::PaneSide::Flow)).chain(
+        tab.time_pane
+            .as_ref()
+            .map(|time| (time, crate::pane::PaneSide::Time)),
+    )
 }
 
 fn pane_analysis_keys(tab: &crate::tab::Tab) -> Vec<PaneAnalysisKey> {
     analysis_panes(tab)
-        .into_iter()
         .map(|(pane, _side)| PaneAnalysisKey {
             pane_id: pane.id,
             indicators: pane.indicators.all().iter().map(IndicatorKey::of).collect(),
@@ -2084,9 +2088,12 @@ fn pane_analysis_keys(tab: &crate::tab::Tab) -> Vec<PaneAnalysisKey> {
 /// and returns. Only a frame that answers `false` pays for
 /// [`pane_analysis_keys`] and the events below.
 fn analysis_matches(tab: &crate::tab::Tab, stored: &[PaneAnalysisKey]) -> bool {
-    let panes = analysis_panes(tab);
-    panes.len() == stored.len()
-        && panes.iter().zip(stored).all(|((pane, _side), key)| {
+    let mut stored = stored.iter();
+    let matched = analysis_panes(tab).all(|(pane, _side)| {
+        let Some(key) = stored.next() else {
+            return false;
+        };
+        {
             let indicators = pane.indicators.all();
             let drawings = pane.drawings.items();
             pane.id == key.pane_id
@@ -2100,7 +2107,11 @@ fn analysis_matches(tab: &crate::tab::Tab, stored: &[PaneAnalysisKey]) -> bool {
                     .iter()
                     .zip(&key.drawings)
                     .all(|(drawing, stored)| stored.matches(drawing))
-        })
+        }
+    });
+    // Every stored pane must have been consumed too: a closed pane leaves the
+    // iterator short, and a tab that lost one has changed.
+    matched && stored.next().is_none()
 }
 
 fn replay_key(tab: &crate::tab::Tab) -> Option<(bool, bool)> {

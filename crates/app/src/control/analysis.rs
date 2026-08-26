@@ -5,11 +5,26 @@
 //! evaluates an indicator or re-anchors a drawing: they publish what the
 //! application already holds.
 //!
-//! Nothing a human typed crosses this wire. A drawing's name, a script's
-//! diagnostic text and a free-text indicator input are the trader's own words,
-//! and the observer profile reports their *presence* instead — the rule
-//! `observer_resolves_mirrored_drawings_without_leaking_user_text` already
-//! guards for the cursor and selection scopes, extended here to cover these.
+//! Two kinds of trader-authored text meet different rules here, and the line
+//! between them is deliberate.
+//!
+//! *Names* are published: an indicator's title, its plot and input titles, and
+//! the `script.<name>` kind all come from a script the trader wrote, and they
+//! are how an agent addresses the thing at all. Withholding them would leave
+//! the scope answering "there are three indicators" and nothing more, which is
+//! not the descriptor roadmap 5.1 asked for. The scope is gated behind
+//! `observe.indicators` for exactly this reason.
+//!
+//! *Content* is withheld, and only its presence reported: a drawing's own name
+//! (a name like "the 108k shelf" is a private note, not an address), a
+//! script's diagnostic message, and a `string` input the script left
+//! unconstrained. A `string` input the script *did* constrain to a fixed
+//! option set is an enumeration, not prose, so its value is published like any
+//! other name.
+//!
+//! `observer_resolves_mirrored_drawings_without_leaking_user_text` guards the
+//! drawing half, and now captures this module's enumerating scope alongside
+//! the pointer scopes it already covered.
 
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
