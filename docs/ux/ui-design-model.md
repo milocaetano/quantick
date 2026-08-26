@@ -446,9 +446,12 @@ startup-scoped like `default_feed`); the factory default stays Flow.
   pane shrinks) measure that pane's chart rectangle, not the window's, so a
   split half is what decides whether a floating inspector still fits.
 - **Venue history in front of the tape.** The time pane opens on the venue's
-  own candles — ninety days of them, roughly 130 000 1-minute bars and about
-  45 MB per tab, fetched once and folded locally to whatever the header asks
-  for, so a chip click never reaches the network. They stand *in front of* the bars quantick cut
+  own candles — one week of them by default, roughly 10 000 1-minute bars and
+  a few MB per tab, folded locally to whatever the header asks for, so a chip
+  click never reaches the network. The deeper history is *asked for* rather
+  than assumed: HISTORY's `+ older candles` reaches another week further back
+  each press and prepends it, so the quarter that used to be charged to every
+  launch is now paid by the trader who wants it. They stand *in front of* the bars quantick cut
   from prints, never mixed into them: the engine rebuilds its own series from
   retained trades on every spec change, and a prefix living inside it would be
   eaten. Gated on `FeedCapabilities::ohlcv_history`; a recording asks for
@@ -460,7 +463,7 @@ startup-scoped like `default_feed`); the factory default stays Flow.
   status bar's content section counts all three sources in the order they sit
   on the chart (`26000v+240+61 bars`). A block the venue cut short — it stopped
   answering, or the answer hit a cap — belongs beside that count as an amber
-  mark: a chart showing six weeks where ninety days were asked for is making a
+  mark: a chart showing four days where a week was asked for is making a
   claim about the market it cannot support. Logged today (`OHLCV_INCOMPLETE`);
   the badge is deferred rather than half-built. A *short* series is not the
   same thing — an instrument younger than the span has fewer candles, and that

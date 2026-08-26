@@ -115,6 +115,19 @@ const INLINE_TEXT_FRAME_PAD_PX: f32 = 10.0;
 /// hello and shorter than a person's patience with a frozen window.
 const LOAD_OLDER_HOOK_FRAMES: u32 = 600;
 
+/// Frames the `QUANTICK_LOAD_OLDER_CANDLES` hook has for the *whole* run.
+///
+/// Much larger than the trade twin's, and for a reason the trade twin does
+/// not have: a page of prints is one venue round trip, while a span of
+/// candles is several slices of several pages each, and the hook is
+/// documented as reaching the old ninety-day default in thirteen of them.
+/// Every frame spent waiting for a span costs one tick here, so the budget
+/// has to cover the legitimate fetching as well as the hang it exists to
+/// bound. About a minute at 60 fps: longer than thirteen spans take against
+/// a venue that is answering, and far shorter than a capture run's patience
+/// with one that is not.
+const LOAD_OLDER_CANDLES_HOOK_FRAMES: u32 = 3_600;
+
 /// How much of the newest chart the `QUANTICK_DRAWINGS_DEMO` hook spreads its
 /// objects across. Close to what a default viewport shows, so every object
 /// lands on screen — a demo the camera cannot see proves nothing.
@@ -915,6 +928,11 @@ pub struct QuantickApp {
     /// Pages of older history the `QUANTICK_LOAD_OLDER` hook still owes, and
     /// the frame budget it has left to wait for a chart to ask from.
     pending_load_older: Option<(usize, u32)>,
+    /// Spans of older *candles* the `QUANTICK_LOAD_OLDER_CANDLES` hook still
+    /// owes, and the frame budget it has left to wait for a first reply to
+    /// reach back from. The trade twin of this is `pending_load_older`; they
+    /// are two records with two capabilities, so they are two hooks.
+    pending_load_older_candles: Option<(usize, u32)>,
     // Scripted-validation hook: one fixed-range volume profile straddling the
     // venue-prefix seam (when there is one). Consumed once.
     pending_frvp_demo: bool,
@@ -1110,9 +1128,11 @@ pub struct QuantickApp {
     /// Whether venue candle history is asked for in slices, newest first
     /// (View → progressive venue history).
     ///
-    /// On by default. Ninety days of one-minute candles is a couple of minutes
-    /// of sequential venue round trips, and fetched whole the chart shows
-    /// nothing at all for the whole of it. Off restores exactly that: one
+    /// On by default. A span of one-minute candles is a run of sequential
+    /// venue round trips — seconds for the opening week, and another such run
+    /// for every span the trader reaches back through — and fetched whole the
+    /// chart shows nothing at all for the whole of it. Off restores exactly
+    /// that: one
     /// request, one reply, one very late frame — kept because a trader on a
     /// metered or rate-limited connection may prefer the smaller number of
     /// requests, and because a setting whose "off" is not the old behaviour is
@@ -1342,6 +1362,7 @@ impl QuantickApp {
             context_bar: drawings::context_bar::ContextBar::default(),
             pending_drawing_demo: false,
             pending_load_older: None,
+            pending_load_older_candles: None,
             pending_frvp_demo: false,
             pending_avwap_demo: false,
             pending_replay_restart: None,
@@ -1584,6 +1605,15 @@ impl QuantickApp {
             .and_then(|value| value.trim().parse::<usize>().ok())
             .filter(|pages| *pages > 0)
             .map(|pages| (pages, LOAD_OLDER_HOOK_FRAMES));
+        // The same door onto the candle reach. A chart opens on one week
+        // (`feed::TIME_HISTORY_SPAN_MS`) and the quarter is asked for a week at
+        // a time, so "what does a deep chart look like" is a state no capture
+        // could otherwise reach without a hand on the menu.
+        app.pending_load_older_candles = std::env::var("QUANTICK_LOAD_OLDER_CANDLES")
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .filter(|spans| *spans > 0)
+            .map(|spans| (spans, LOAD_OLDER_CANDLES_HOOK_FRAMES));
         // How many anchors of the armed tool are already down when the run
         // opens — the half-placed state a screenshot cannot otherwise reach,
         // because it lives between two clicks. See `apply_drawing_draft`.
@@ -2876,6 +2906,8 @@ impl QuantickApp {
                 ),
             });
         let capabilities = self.active_tab().capabilities(&self.config);
+        let candles_held = self.active_tab().venue_candles_held();
+        let older_candles = self.active_tab().older_candles(capabilities);
         let feed_display_name = self.active_tab().feed_display_name(&self.config).to_owned();
         let heatmap_on = self.heatmap_lamp_on();
         let bubbles_on = self.active_tab().tape().bubbles_enabled();
@@ -2936,6 +2968,8 @@ impl QuantickApp {
             imbalance_unit: &mut pane.imbalance_unit,
             history_step: &mut tab.history_step,
             history_trades: tab.history_trades,
+            history_candles: candles_held,
+            older_candles,
             capabilities,
             heatmap_on,
             bubbles_on,
@@ -2975,6 +3009,14 @@ impl QuantickApp {
     fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
             ToolbarAction::LoadOlder => self.active_tab_mut().request_older_history(),
+            ToolbarAction::LoadOlderCandles => {
+                // Read before the tab is borrowed mutably — and the capability
+                // block rather than the whole config, because that is all the
+                // request needs to know.
+                let capabilities = self.active_tab().capabilities(&self.config);
+                self.active_tab_mut()
+                    .request_older_ohlcv_history(capabilities);
+            }
             ToolbarAction::SetHeatmap(shown) => {
                 self.active_tab_mut().tape_mut().set_depth_visible(shown);
             }
@@ -8429,6 +8471,96 @@ impl QuantickApp {
         self.pending_load_older = (pages > 1).then_some((pages - 1, budget));
     }
 
+    /// The `QUANTICK_LOAD_OLDER_CANDLES` hook: the history menu's "+ older
+    /// candles" entry, pressed without a hand, once per frame at most.
+    ///
+    /// Same shape and same reasons as [`Self::apply_load_older`], against a
+    /// different record: it goes through `Tab::request_older_ohlcv_history`
+    /// rather than the feed command, so a run under this hook exercises the
+    /// trader's own path; it waits, because there is nothing to reach back
+    /// *from* until the opening request has landed; and it gives up rather
+    /// than hanging a capture on a venue that never answers.
+    fn apply_load_older_candles(&mut self) {
+        let Some((spans, budget)) = self.pending_load_older_candles else {
+            return;
+        };
+        let capabilities = self.active_tab().capabilities(&self.config);
+        // Waiting costs budget, but a *slower* budget. A span really being
+        // fetched is the feature working, and charging it at the same rate as
+        // an empty chart would give up around the fourth of the documented
+        // thirteen spans. Charging it nothing, though, is how a venue that
+        // simply never answers hangs a capture run for the life of the
+        // process — which is the exact failure this counter exists to bound,
+        // and what the doc above promises it does. So a fetching frame spends
+        // one tick of a budget scaled to how long fetching legitimately takes.
+        if self
+            .active_tab()
+            .loading
+            .is_active(LoadingTask::VenueHistory)
+        {
+            self.pending_load_older_candles = budget.checked_sub(1).map(|left| (spans, left));
+            if self.pending_load_older_candles.is_none() {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
+                    spans,
+                    frames_waited = LOAD_OLDER_CANDLES_HOOK_FRAMES,
+                    reason = "venue_never_answered",
+                    action = "chart_left_as_it_is",
+                    "QUANTICK_LOAD_OLDER_CANDLES gave up waiting for a span to arrive"
+                );
+            }
+            return;
+        }
+        if !self.active_tab().can_load_older_candles(capabilities) {
+            // Nothing to reach back *from* yet, or the venue's record starts
+            // here. Both are worth waiting a bounded while for, and both end
+            // the same way; the log names what the tab held so an operator can
+            // tell them apart.
+            self.pending_load_older_candles = budget.checked_sub(1).map(|left| (spans, left));
+            if self.pending_load_older_candles.is_none() {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
+                    spans,
+                    frames_waited = LOAD_OLDER_HOOK_FRAMES,
+                    candles_held = self.active_tab().venue_candles_held(),
+                    ohlcv_history = capabilities.ohlcv_history,
+                    action = "chart_left_as_it_is",
+                    "QUANTICK_LOAD_OLDER_CANDLES found nothing to reach back from"
+                );
+            }
+            return;
+        }
+        // Only a request that actually went out costs a *span*. A full command
+        // channel is a busy frame, not a span delivered, and counting it as one
+        // would quietly shorten the reach the operator asked for — but it still
+        // costs a frame of budget, or a permanently saturated channel leaves
+        // the hook armed for the life of the process with nothing ever logged.
+        if self
+            .active_tab_mut()
+            .request_older_ohlcv_history(capabilities)
+        {
+            self.pending_load_older_candles = (spans > 1).then_some((spans - 1, budget));
+        } else {
+            self.pending_load_older_candles = budget.checked_sub(1).map(|left| (spans, left));
+            if self.pending_load_older_candles.is_none() {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
+                    spans,
+                    frames_waited = LOAD_OLDER_CANDLES_HOOK_FRAMES,
+                    reason = "request_never_queued",
+                    action = "chart_left_as_it_is",
+                    "QUANTICK_LOAD_OLDER_CANDLES could not get a request out"
+                );
+            }
+        }
+    }
+
     /// The `QUANTICK_DRAWINGS_DEMO` hook: one of every registered drawing on
     /// the flow pane, spread across the visible bars, the last one selected
     /// so the inspector is on screen too.
@@ -9514,6 +9646,7 @@ impl QuantickApp {
         self.apply_scripted_view();
         self.apply_drawing_demo();
         self.apply_load_older();
+        self.apply_load_older_candles();
         self.apply_drawing_draft();
         self.apply_text_note_hook();
         self.apply_venue_history_demo();
@@ -14827,10 +14960,18 @@ crosshair = false
     /// roomy, so a test about something else is never accidentally a test
     /// about a cramped layout.
     const TEST_WINDOW: egui::Vec2 = egui::vec2(1400.0, 900.0);
-    /// The smallest window the app itself allows (`main.rs`
-    /// `with_min_inner_size`). The layout has to hold here, and this is where
-    /// the pane band is under real pressure.
+    /// The smallest window whose *layout* is still promised: the chrome
+    /// collapses down to here and clips below it (the drawing rail's Minimal
+    /// stage, docs/drawing-toolbar-ux.md §2.8). The window itself has no
+    /// minimum any more — see [`A_DEGENERATE_WINDOW`] — but this is still
+    /// where the pane band is under real pressure while everything is
+    /// expected to read, so the layout tests stay aimed at it.
     const MIN_WINDOW: egui::Vec2 = egui::vec2(900.0, 560.0);
+    /// A window dragged down to nothing. `main.rs` sets no
+    /// `with_min_inner_size`, so this is reachable by a trader with a mouse;
+    /// nothing is promised about what it looks like, only that the app is
+    /// still there when the window is dragged back out.
+    const A_DEGENERATE_WINDOW: egui::Vec2 = egui::vec2(1.0, 1.0);
 
     fn run_frame_with_modifiers(
         app: &mut QuantickApp,
@@ -14857,6 +14998,36 @@ crosshair = false
             ..Default::default()
         };
         ctx.run(input, |ctx| app.draw_frame(ctx, Instant::now()))
+    }
+
+    /// The window has no minimum, so a trader can drag it down to nothing —
+    /// and drag it back. Nothing is promised about the layout in between:
+    /// this asserts only that the frames at a degenerate size are survivable
+    /// and that the chart is whole again on the other side, which is the
+    /// difference between a window that reads badly and a chart that is gone.
+    #[test]
+    fn the_window_drags_down_to_nothing_and_comes_back() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+
+        for size in [
+            A_DEGENERATE_WINDOW,
+            egui::vec2(0.0, 0.0),
+            egui::vec2(1.0, 900.0),
+            egui::vec2(1400.0, 0.0),
+        ] {
+            // Twice each: the first frame is where a cached layout from the
+            // previous size is still around, and the second is the steady
+            // state at this one.
+            run_sized_frame(&mut app, &ctx, size, Vec::new());
+            run_sized_frame(&mut app, &ctx, size, Vec::new());
+        }
+
+        let output = run_sized_frame(&mut app, &ctx, TEST_WINDOW, Vec::new());
+        assert!(
+            has_price_axis(&painted_text(&output)),
+            "the chart paints again once the window has room"
+        );
     }
 
     /// A press-drag-release in a window of `size`.
@@ -23308,21 +23479,59 @@ crosshair = false
             .collect()
     }
 
-    /// Every FetchOhlcv sitting in the command channel.
+    /// What one queued `FetchOhlcv` asked for: whether it wanted a progressive
+    /// answer (`slice_ms`) and where its newest edge was (`before_ms`).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct OhlcvAsk {
+        slice_ms: Option<i64>,
+        before_ms: Option<i64>,
+    }
+
+    /// Every FetchOhlcv sitting in the command channel, in order.
+    ///
+    /// One drain, not one per field: a receiver is consumed by reading it, so
+    /// two helpers over the same channel meant the second call always saw an
+    /// empty queue — a trap a test would fail on for the wrong reason.
+    fn drain_ohlcv_fetches(commands: &mut mpsc::Receiver<FeedCommand>) -> Vec<OhlcvAsk> {
+        let mut asked = Vec::new();
+        while let Ok(command) = commands.try_recv() {
+            if let FeedCommand::FetchOhlcv {
+                slice_ms,
+                before_ms,
+                ..
+            } = command
+            {
+                asked.push(OhlcvAsk {
+                    slice_ms,
+                    before_ms,
+                });
+            }
+        }
+        asked
+    }
+
+    /// How many candle requests went out.
     fn drain_ohlcv_requests(commands: &mut mpsc::Receiver<FeedCommand>) -> usize {
-        drain_ohlcv_slice_requests(commands).len()
+        drain_ohlcv_fetches(commands).len()
     }
 
     /// The `slice_ms` every queued FetchOhlcv asked for, in order — what says
     /// whether the tab asked for a progressive answer or the old single one.
     fn drain_ohlcv_slice_requests(commands: &mut mpsc::Receiver<FeedCommand>) -> Vec<Option<i64>> {
-        let mut asked = Vec::new();
-        while let Ok(command) = commands.try_recv() {
-            if let FeedCommand::FetchOhlcv { slice_ms, .. } = command {
-                asked.push(slice_ms);
-            }
-        }
-        asked
+        drain_ohlcv_fetches(commands)
+            .into_iter()
+            .map(|ask| ask.slice_ms)
+            .collect()
+    }
+
+    /// The `before_ms` every queued FetchOhlcv asked for, in order — what says
+    /// whether the tab asked for the opening span or reached back past what it
+    /// already holds.
+    fn drain_ohlcv_before_requests(commands: &mut mpsc::Receiver<FeedCommand>) -> Vec<Option<i64>> {
+        drain_ohlcv_fetches(commands)
+            .into_iter()
+            .map(|ask| ask.before_ms)
+            .collect()
     }
 
     /// A split app whose feed reports candle history, with the channel ends
@@ -23415,6 +23624,302 @@ crosshair = false
         assert!(
             has_price_axis(&texts),
             "the pane draws its chart: {texts:?}"
+        );
+    }
+
+    /// A chart opens on one week, not a quarter — and the quarter is still
+    /// reachable, a week at a time. "+ older candles" asks for the same span
+    /// again with its right-hand edge moved to just before the oldest bucket
+    /// held, so the two windows meet without overlapping.
+    #[test]
+    fn asking_for_older_candles_reaches_back_past_the_oldest_held() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        assert_eq!(
+            drain_ohlcv_before_requests(&mut commands),
+            vec![None],
+            "the opening request reaches back from the live edge"
+        );
+        assert!(
+            !app.active_tab()
+                .can_load_older_candles(app.active_tab().capabilities(&app.config)),
+            "with nothing held there is nothing to reach back from"
+        );
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-120, -20),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+        let oldest = -120 * crate::feed::OHLCV_BASE_INTERVAL_MS;
+        assert_eq!(app.active_tab().venue_candles_held(), 100);
+        assert!(
+            app.active_tab()
+                .can_load_older_candles(app.active_tab().capabilities(&app.config)),
+            "now there is"
+        );
+
+        let slots_before = app.active_tab().pane(PaneSide::Time).slots();
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        assert_eq!(
+            drain_ohlcv_before_requests(&mut commands),
+            vec![Some(oldest - 1)],
+            "one millisecond before the oldest bucket held, so nothing is fetched twice"
+        );
+        assert!(
+            app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "and the chart says it is waiting again"
+        );
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-200, -120),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        assert_eq!(
+            app.active_tab().venue_candles_held(),
+            180,
+            "the older span went in front of what was already held"
+        );
+        assert!(
+            app.active_tab().pane(PaneSide::Time).slots() > slots_before,
+            "and the chart grew leftwards by it"
+        );
+        assert!(
+            app.active_tab()
+                .can_load_older_candles(app.active_tab().capabilities(&app.config)),
+            "a span that brought something older leaves the door open"
+        );
+    }
+
+    /// The instrument's price grid is a fact about the market, so both panes
+    /// of a split read it the same way — including while the footprint layer
+    /// is hidden on one of them.
+    ///
+    /// This is the bug a trader saw as the same volume profile painting as a
+    /// wash on the time chart and as a slab on the flow chart. The two are one
+    /// object drawn by one function; what differed was the row height under
+    /// it, because the tab propagated the flow pane's capture bucket only
+    /// while the time pane's *footprint layer* was visible. A range profile
+    /// folds those same ladders with the layer hidden, so on WDO one chart
+    /// grouped at 0.01 and the other at 1 — a hundredfold difference in the
+    /// height of every row.
+    #[test]
+    fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden() {
+        let ctx = egui::Context::default();
+        let (mut app, _events, _commands) = history_app(&ctx);
+
+        // The bucket the flow pane's tape publishes for this market. That is
+        // the one answer; the question is whether the other pane reaches it.
+        let market_bucket = app
+            .active_tab()
+            .pane(PaneSide::Flow)
+            .state
+            .footprint_group();
+
+        // The state the defect lived in: the layer off on both panes, and a
+        // range profile on the time pane wanting the ladders anyway.
+        for side in [PaneSide::Time, PaneSide::Flow] {
+            app.active_tab_mut().pane_mut(side).set_layer_visible(
+                ChartLayer::Footprint,
+                false,
+                &mut chart_layers::LayerActions::default(),
+            );
+        }
+        let frvp = crate::drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == crate::frvp::TOOL_ID)
+            .expect("frvp is registered");
+        {
+            let time = app.active_tab_mut().pane_mut(PaneSide::Time);
+            assert!(
+                !time
+                    .drawings
+                    .place(frvp, crate::drawings::ChartPoint::at(1.0, 100.0))
+            );
+            assert!(
+                time.drawings
+                    .place(frvp, crate::drawings::ChartPoint::at(20.0, 105.0))
+            );
+            // And put its ladders deliberately out of step, which is exactly
+            // what a pane with no tape of its own drifts to when nothing hands
+            // it the market's grid.
+            time.state
+                .set_footprint_group(market_bucket * Decimal::from(100));
+        }
+        assert_ne!(
+            app.active_tab()
+                .pane(PaneSide::Time)
+                .state
+                .footprint_group(),
+            market_bucket,
+            "the panes really start out disagreeing, or this proves nothing"
+        );
+
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        let time_group = app
+            .active_tab()
+            .pane(PaneSide::Time)
+            .state
+            .footprint_group();
+        let flow_group = app
+            .active_tab()
+            .pane(PaneSide::Flow)
+            .state
+            .footprint_group();
+        assert_eq!(
+            time_group, flow_group,
+            "one market, one price grid: the two panes must not disagree"
+        );
+        assert_eq!(
+            time_group, market_bucket,
+            "and it is the market's bucket, not either pane's default"
+        );
+    }
+
+    /// A short answer teaches nothing about where the record starts. A venue
+    /// that stopped answering, or a socket that failed, brings back nothing
+    /// older for a reason that has nothing to do with the venue's depth —
+    /// latching on it would retire the control for the session and tell the
+    /// trader their history begins here, which is a lie the data-honesty rule
+    /// exists to prevent.
+    #[test]
+    fn a_short_answer_never_retires_the_candle_reach() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_ohlcv_fetches(&mut commands);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-120, -20),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        assert_eq!(drain_ohlcv_fetches(&mut commands).len(), 1);
+        // The shape of a failed fetch: nothing, and known to be short.
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: Vec::new(),
+                slice: crate::feed::OhlcvSlice::Last { complete: false },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        let capabilities = app.active_tab().capabilities(&app.config);
+        assert_eq!(
+            app.active_tab().older_candles(capabilities),
+            crate::tab::OlderCandles::Available,
+            "a short answer is a reason to try again, not to stop offering"
+        );
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        assert_eq!(
+            drain_ohlcv_fetches(&mut commands).len(),
+            1,
+            "and pressing it again really asks"
+        );
+    }
+
+    /// A reach-back reply at an interval the pane cannot fold from is refused,
+    /// not obeyed. Recording an empty base is right for the *opening* answer —
+    /// it is how "this venue serves nothing this pane can fold" is remembered
+    /// — but doing it here would throw away every span the trader had already
+    /// waited for, over one unusable slice.
+    #[test]
+    fn a_reach_back_at_a_bad_interval_keeps_the_history_already_paged_in() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_ohlcv_fetches(&mut commands);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-120, -20),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+        let held = app.active_tab().venue_candles_held();
+        assert_eq!(held, 100);
+
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        drain_ohlcv_fetches(&mut commands);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: 5 * crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-200, -120),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        assert_eq!(
+            app.active_tab().venue_candles_held(),
+            held,
+            "the week the trader already has survives a slice it cannot fold"
+        );
+        let capabilities = app.active_tab().capabilities(&app.config);
+        assert_eq!(
+            app.active_tab().older_candles(capabilities),
+            crate::tab::OlderCandles::Available,
+            "and the reach is still offered"
+        );
+    }
+
+    /// The venue's record starts somewhere, and the only way to find that out
+    /// is to ask. A provider that answers a *load older* by re-sending what is
+    /// already held is not answering empty — so the test is whether the oldest
+    /// bucket moved, and a run that did not move it stops offering the button.
+    #[test]
+    fn a_load_older_that_brings_nothing_older_stops_offering() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_ohlcv_before_requests(&mut commands);
+        let held = venue_history_range(-120, -20);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: held.clone(),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        assert_eq!(drain_ohlcv_before_requests(&mut commands).len(), 1);
+        // The same candles again — an honest answer from a provider serving
+        // from a block it already holds, and not an empty one.
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: held,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        assert!(
+            !app.active_tab()
+                .can_load_older_candles(app.active_tab().capabilities(&app.config)),
+            "nothing older came back, so there is nothing older to offer"
+        );
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        assert!(
+            drain_ohlcv_before_requests(&mut commands).is_empty(),
+            "and pressing it again asks the venue nothing"
         );
     }
 
@@ -23982,7 +24487,7 @@ crosshair = false
     }
 
     /// (e) The rebuild an indicator sees spans the prefix, so an average over
-    /// three months of context is a real average and not a warm-up.
+    /// the loaded context is a real average and not a warm-up.
     #[test]
     fn the_indicator_rebuild_covers_the_venue_prefix() {
         let ctx = egui::Context::default();
@@ -24418,9 +24923,9 @@ crosshair = false
                 &mut chart_layers::LayerActions::default(),
             );
         }
-        // The view follows the live edge, and three months of venue history is
-        // far behind it, so bring the seam on screen the way a user scrolling
-        // back would.
+        // The view follows the live edge, and the venue history is far behind
+        // it, so bring the seam on screen the way a user scrolling back
+        // would.
         let slots = app.active_tab().pane(PaneSide::Time).slots();
         let width = app
             .active_tab()

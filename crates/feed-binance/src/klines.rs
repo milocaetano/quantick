@@ -38,12 +38,13 @@ pub const ONE_MINUTE_MS: i64 = 60_000;
 
 /// Pause between pages.
 ///
-/// Not a rate limit so much as a manner. Ninety days of one-minute candles is
-/// about 130 pages at weight 2 apiece — 260 of the 6 000 weight per minute
-/// Binance allows, so the budget is never the binding constraint. What this
-/// avoids is the burst: 130 requests fired back to back look like something
-/// worth throttling, and being throttled costs far more than the four seconds
-/// this spends across the whole fetch.
+/// Not a rate limit so much as a manner. A week of one-minute candles is
+/// about 11 pages at weight 2 apiece, and a trader paging back to a quarter
+/// asks for thirteen such runs — still a small fraction of the 6 000 weight
+/// per minute Binance allows, so the budget is never the binding constraint.
+/// What this avoids is the burst: requests fired back to back look like
+/// something worth throttling, and being throttled costs far more than the
+/// second apiece this spends.
 const PAGE_DELAY: Duration = Duration::from_millis(25);
 
 /// How many times one page may be retried after a rate-limit refusal.
@@ -65,8 +66,10 @@ const DEFAULT_RETRY_WAIT: Duration = Duration::from_secs(1);
 
 /// Pages one history fetch may request.
 ///
-/// The span the app asks for is ninety days, which at one-minute buckets and
-/// 1 000 rows a page is ~130 pages. This is four times that, so reaching it is
+/// The span the app asks for is a week (`app`'s `TIME_HISTORY_SPAN_MS`),
+/// which at one-minute buckets and 1 000 rows a page is ~11 pages — and a
+/// *load older* asks for another such span rather than a longer one, so no
+/// single request grows past that. This bound is far above it, so reaching it is
 /// never a sign that the request was ambitious — it means the venue is
 /// answering in a way that does not advance the cursor, and the loop stops
 /// rather than paging forever against it. The `complete` flag carries that out
@@ -758,7 +761,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_page_budget_bounds_a_venue_that_answers_one_candle_at_a_time() {
         // A venue that advances by exactly one bucket per page would need
-        // 129 600 requests for ninety days. The budget is what turns that from
+        // one request per bucket. The budget is what turns that from
         // an unbounded loop into a labelled partial.
         struct Dribble;
         impl KlineSource for Dribble {

@@ -56,7 +56,9 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Pages that may be fetched for one history request.
 ///
-/// Ninety days needs ~26. The bound is what stops a venue that keeps answering
+/// A week needs ~3, and no single request asks for more — a *load older*
+/// repeats the span rather than extending it. The bound is what stops a venue
+/// that keeps answering
 /// with the same bucket from paging forever; it is deliberately far above any
 /// legitimate need, so hitting it means something is wrong, not that the span
 /// was ambitious.
@@ -595,12 +597,12 @@ mod tests {
             MAX_CANDLES_PER_REQUEST,
             "one page covers exactly the cap in buckets"
         );
-        // And ninety days fits inside the page budget with room over.
+        // And a deep reach still fits inside the page budget with room over.
         let span = 90 * 24 * 60 * 60 * 1_000_i64;
         let needed = span / widest + 1;
         assert!(
             needed < i64::from(MAX_PAGES),
-            "ninety days needs {needed} pages of {MAX_PAGES}"
+            "a ninety-day reach needs {needed} pages of {MAX_PAGES}"
         );
     }
 }
