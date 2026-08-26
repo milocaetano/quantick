@@ -19,6 +19,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
+use crate::chart_layers::ChartLayer;
 use crate::config::FeedCapabilities;
 use crate::dock::DockTab;
 use crate::state::{BarKind, ImbalanceUnit};
@@ -709,6 +710,200 @@ fn draw_trade(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolbar
     }
 }
 
+/// The visual layers the LAYERS group toggles, declared once.
+///
+/// The toolbar draws from this list and the semantic scene projects from it,
+/// so a layer cannot wear a button the trader sees and be missing from what an
+/// operator can read, nor the reverse. A hand-kept list beside this one is the
+/// drift this type exists to prevent.
+///
+/// The INDICATORS menu is deliberately not a member: it opens a menu rather
+/// than toggling a layer, and folding it in would give the group two shapes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayerToggle {
+    Bubbles,
+    Heatmap,
+    Footprint,
+    LiveStrip,
+}
+
+impl LayerToggle {
+    /// Every toggle in group order, which is the order the trader reads them
+    /// in. The group draws right-to-left, so the call order is reversed at the
+    /// draw site rather than here.
+    pub const ALL: [Self; 4] = [
+        Self::Bubbles,
+        Self::Heatmap,
+        Self::Footprint,
+        Self::LiveStrip,
+    ];
+
+    /// The canvas layer this button switches.
+    ///
+    /// A toolbar button is a shortcut into the pane's own layer menu, never a
+    /// second switch beside it: the identifier, the label and the state all
+    /// come from [`ChartLayer`], which already resolves each layer to the one
+    /// field that owns it. Restating any of them here is how a button and a
+    /// menu start disagreeing about a pixel.
+    #[must_use]
+    pub(crate) fn layer(self) -> ChartLayer {
+        match self {
+            Self::Bubbles => ChartLayer::Bubbles,
+            Self::Heatmap => ChartLayer::Heatmap,
+            Self::Footprint => ChartLayer::Footprint,
+            Self::LiveStrip => ChartLayer::LiveStrip,
+        }
+    }
+
+    /// The glyph. Where a dock tab configures the layer it lends its own, so
+    /// the toggle and the panel behind it cannot wear two different marks.
+    #[must_use]
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Bubbles => DockTab::Bubbles.icon(),
+            Self::Heatmap => DockTab::L2.icon(),
+            Self::Footprint => LAYER_FOOTPRINT_ICON,
+            Self::LiveStrip => LAYER_STRIP_ICON,
+        }
+    }
+
+    #[must_use]
+    fn accent(self) -> egui::Color32 {
+        match self {
+            Self::Bubbles => theme::BUY,
+            Self::Heatmap | Self::LiveStrip => theme::ACCENT,
+            Self::Footprint => theme::POC,
+        }
+    }
+
+    /// What the source has to be able to do before the layer means anything.
+    #[must_use]
+    pub fn gate(self) -> LayerGate {
+        match self {
+            // A bubble's whole message is its size, and a footprint is a
+            // ladder of buyer-against-seller quantities. Where every print is
+            // one synthetic unit, both draw the same shape forever and say
+            // nothing — so they are withheld rather than drawn empty of
+            // meaning.
+            Self::Bubbles | Self::Footprint => LayerGate::TradedVolume,
+            Self::Heatmap => LayerGate::BookCapture,
+            // Never gated: the aggression histogram runs on the trade stream
+            // every source provides, a recording included, and without book
+            // data the strip honestly degrades to it.
+            Self::LiveStrip => LayerGate::Always,
+        }
+    }
+
+    #[must_use]
+    fn hover_text(self) -> &'static str {
+        match self {
+            Self::Bubbles => {
+                "aggression bubbles: confirmed executions from the trade stream — \
+                 right-click for settings"
+            }
+            Self::Heatmap => {
+                "L2 heatmap: show the recorded depth map — recording never stops, so hiding it \
+                 loses nothing. Right-click for settings"
+            }
+            Self::Footprint => {
+                "candle footprint: the buy/sell split per price inside each bar — detail follows \
+                 the zoom. Right-click for style and thresholds"
+            }
+            Self::LiveStrip => {
+                "live strip: the book's resting depth and the forming bar's aggression, \
+                 beside the price axis — right-click for settings"
+            }
+        }
+    }
+
+    /// Whether the layer is drawn right now, as this frame's model reports it.
+    ///
+    /// The model's four readings come from [`crate::tab::Tab::layer_toggle_on`],
+    /// which the semantic scene reads too — so what the button shows and what
+    /// an operator captures cannot drift apart.
+    #[must_use]
+    fn is_on(self, model: &ToolbarModel<'_>) -> bool {
+        match self {
+            Self::Bubbles => model.bubbles_on,
+            Self::Heatmap => model.heatmap_on,
+            Self::Footprint => model.footprint_on,
+            Self::LiveStrip => model.live_strip_on,
+        }
+    }
+
+    #[must_use]
+    fn toggle_action(self, on: bool) -> ToolbarAction {
+        match self {
+            Self::Bubbles => ToolbarAction::SetBubbles(on),
+            Self::Heatmap => ToolbarAction::SetHeatmap(on),
+            Self::Footprint => ToolbarAction::SetFootprint(on),
+            Self::LiveStrip => ToolbarAction::SetLiveStrip(on),
+        }
+    }
+
+    /// Where a right-click goes: the panel that configures the layer. Looking
+    /// is not enabling, so this never toggles on the way.
+    #[must_use]
+    fn settings_action(self) -> ToolbarAction {
+        match self {
+            Self::Bubbles => ToolbarAction::OpenDockTab(DockTab::Bubbles),
+            // The strip reads the same book the depth map draws, so the same
+            // tab configures both.
+            Self::Heatmap | Self::LiveStrip => ToolbarAction::OpenDockTab(DockTab::L2),
+            Self::Footprint => ToolbarAction::OpenFootprintSettings,
+        }
+    }
+}
+
+/// What a source has to be able to do before a layer toggle opens.
+///
+/// Three things come out of a gate: whether the button is live, the sentence
+/// the trader reads when it is not, and a stable code a control client
+/// branches on. The last is not the first two — a client made to parse that
+/// sentence would break the day it is reworded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayerGate {
+    /// Nothing is required: the layer runs on the trade stream alone.
+    Always,
+    /// The source's prints must carry a volume the venue really traded.
+    TradedVolume,
+    /// The source must stream synchronized L2 depth.
+    BookCapture,
+}
+
+impl LayerGate {
+    /// Whether this frame's source opens the gate.
+    #[must_use]
+    pub fn allows(self, capabilities: FeedCapabilities) -> bool {
+        match self {
+            Self::Always => true,
+            Self::TradedVolume => capabilities.traded_volume,
+            Self::BookCapture => capabilities.book_capture,
+        }
+    }
+
+    /// The sentence a disabled button explains itself with.
+    #[must_use]
+    fn explanation(self) -> &'static str {
+        match self {
+            // Never read: an always-open gate never disables its button.
+            Self::Always => "",
+            Self::TradedVolume => "this source quotes prices but prints no traded volume",
+            Self::BookCapture => "order-book capture is not available for this source",
+        }
+    }
+
+    /// The stable reason code a closed gate reports to a control client.
+    #[must_use]
+    pub fn reason(self) -> Option<&'static str> {
+        match self {
+            Self::Always => None,
+            Self::TradedVolume => Some("source_prints_no_traded_volume"),
+            Self::BookCapture => Some("source_captures_no_order_book"),
+        }
+    }
+}
+
 /// LAYERS: one icon toggle per visual layer. Left-click toggles the layer;
 /// right-click opens its dock tab — looking is not enabling. Drawn inside the
 /// right-to-left layout, so the call order is the reverse of what is seen.
@@ -723,85 +918,22 @@ fn draw_trade(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolbar
 fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
     draw_indicators_menu(ui, model, actions);
 
-    // The glyph comes from the dock tab that configures the layer, so the
-    // toggle and the panel behind it can never wear two different marks.
-    let bubbles = IconButton::new(DockTab::Bubbles.icon(), TOOLBAR_ICON)
-        .active(model.bubbles_on)
-        .accent(theme::BUY)
-        // A bubble's whole message is its size. Where every print is one
-        // synthetic unit, the layer draws one identical circle per tick and
-        // says nothing — so it is withheld rather than drawn empty of meaning.
-        .enabled(model.capabilities.traded_volume)
-        .hover_text(
-            "aggression bubbles: confirmed executions from the trade stream — \
-             right-click for settings",
-        )
-        .disabled_explanation("this source quotes prices but prints no traded volume")
-        .show(ui);
-    if bubbles.clicked() {
-        actions.push(ToolbarAction::SetBubbles(!model.bubbles_on));
-    }
-    if bubbles.secondary_clicked() {
-        actions.push(ToolbarAction::OpenDockTab(DockTab::Bubbles));
-    }
-
-    let heatmap = IconButton::new(DockTab::L2.icon(), TOOLBAR_ICON)
-        .active(model.heatmap_on)
-        .accent(theme::ACCENT)
-        .enabled(model.capabilities.book_capture)
-        .hover_text(
-            "L2 heatmap: show the recorded depth map — recording never stops, so hiding it \
-             loses nothing. Right-click for settings",
-        )
-        .disabled_explanation("order-book capture is not available for this source")
-        .show(ui);
-    if heatmap.clicked() {
-        actions.push(ToolbarAction::SetHeatmap(!model.heatmap_on));
-    }
-    if heatmap.secondary_clicked() {
-        actions.push(ToolbarAction::OpenDockTab(DockTab::L2));
-    }
-
-    // Never capability-gated: the aggression histogram runs on the trade
-    // stream every source provides (replay included), and without book data
-    // the strip honestly degrades to it.
-    // The footprint had lived only in the pane's right-click layer menu — a
-    // representation of the candle itself, reachable only by a gesture two
-    // levels deep, while three lesser layers each had a button. Here it
-    // speaks the group's own language: left-click toggles, right-click opens
-    // its settings.
-    let footprint = IconButton::new(LAYER_FOOTPRINT_ICON, TOOLBAR_ICON)
-        .active(model.footprint_on)
-        .accent(theme::POC)
-        // Same gate as the bubbles, and for the same reason: a ladder of
-        // buyer-against-seller quantities cannot be built from a quote stream
-        // that prints no traded volume.
-        .enabled(model.capabilities.traded_volume)
-        .hover_text(
-            "candle footprint: the buy/sell split per price inside each bar — detail follows the zoom. Right-click for style and thresholds",
-        )
-        .disabled_explanation("this source quotes prices but prints no traded volume")
-        .show(ui);
-    if footprint.clicked() {
-        actions.push(ToolbarAction::SetFootprint(!model.footprint_on));
-    }
-    if footprint.secondary_clicked() {
-        actions.push(ToolbarAction::OpenFootprintSettings);
-    }
-
-    let strip = IconButton::new(LAYER_STRIP_ICON, TOOLBAR_ICON)
-        .active(model.live_strip_on)
-        .accent(theme::ACCENT)
-        .hover_text(
-            "live strip: the book's resting depth and the forming bar's aggression, \
-             beside the price axis — right-click for settings",
-        )
-        .show(ui);
-    if strip.clicked() {
-        actions.push(ToolbarAction::SetLiveStrip(!model.live_strip_on));
-    }
-    if strip.secondary_clicked() {
-        actions.push(ToolbarAction::OpenDockTab(DockTab::L2));
+    for layer in LayerToggle::ALL {
+        let gate = layer.gate();
+        let on = layer.is_on(model);
+        let response = IconButton::new(layer.icon(), TOOLBAR_ICON)
+            .active(on)
+            .accent(layer.accent())
+            .enabled(gate.allows(model.capabilities))
+            .hover_text(layer.hover_text())
+            .disabled_explanation(gate.explanation())
+            .show(ui);
+        if response.clicked() {
+            actions.push(layer.toggle_action(!on));
+        }
+        if response.secondary_clicked() {
+            actions.push(layer.settings_action());
+        }
     }
 }
 

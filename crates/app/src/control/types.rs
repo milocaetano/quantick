@@ -6,7 +6,11 @@ use rust_decimal::prelude::FromPrimitive as _;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{pane::PaneSide, state::BarSpec, tab::CanvasLayout};
+use crate::{
+    pane::{ChartPane, PaneSide},
+    state::BarSpec,
+    tab::{CanvasLayout, Tab},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -93,6 +97,55 @@ impl From<&BarSpec> for BarSpecDto {
         }
     }
 }
+
+/// Whether something is there to be read or acted on, and the coded reason
+/// when it is not.
+///
+/// The reason is a stable identifier, never the sentence an interface shows a
+/// human: a client made to parse that sentence would break the day it is
+/// reworded, and translating the interface would break every such client at
+/// once.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct AvailabilitySnapshot {
+    pub available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+pub(crate) fn available() -> AvailabilitySnapshot {
+    AvailabilitySnapshot {
+        available: true,
+        reason: None,
+    }
+}
+
+pub(crate) fn unavailable(reason: &str) -> AvailabilitySnapshot {
+    AvailabilitySnapshot {
+        available: false,
+        reason: Some(reason.to_owned()),
+    }
+}
+
+/// The panes the active layout actually shows, in the order they are drawn.
+///
+/// One rule for every projection that walks a tab's canvases: a pane the
+/// cursor can resolve against is a pane the scene lists, because both ask
+/// here.
+pub(crate) fn visible_panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {
+    let mut panes = Vec::with_capacity(MAX_PANES_PER_TAB);
+    if tab.layout.shows_time()
+        && let Some(time) = &tab.time_pane
+    {
+        panes.push((time, PaneSide::Time));
+    }
+    if tab.layout.shows_flow() {
+        panes.push((&tab.flow_pane, PaneSide::Flow));
+    }
+    panes
+}
+
+/// A tab shows at most a time pane and a flow pane.
+const MAX_PANES_PER_TAB: usize = 2;
 
 pub(crate) fn canonical_decimal(value: Decimal) -> CanonicalDecimal {
     CanonicalDecimal::new(value.normalize().to_string())

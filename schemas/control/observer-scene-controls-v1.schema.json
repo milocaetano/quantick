@@ -1,0 +1,227 @@
+{
+  "$defs": {
+    "AvailabilitySnapshot": {
+      "description": "Whether something is there to be read or acted on, and the coded reason\nwhen it is not.\n\nThe reason is a stable identifier, never the sentence an interface shows a\nhuman: a client made to parse that sentence would break the day it is\nreworded, and translating the interface would break every such client at\nonce.",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "available"
+      ],
+      "type": "object"
+    },
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "SceneBoundsSnapshot": {
+      "description": "A control's rectangle in window coordinates, in pixels.",
+      "properties": {
+        "height_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels"
+        },
+        "width_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels"
+        },
+        "x_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels"
+        },
+        "y_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels"
+        }
+      },
+      "required": [
+        "x_px",
+        "y_px",
+        "width_px",
+        "height_px"
+      ],
+      "type": "object"
+    },
+    "SceneControlSnapshot": {
+      "description": "One control the trader can see.",
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/AvailabilitySnapshot",
+          "description": "Whether operating it now would do anything, and the reason when not.\n\nThe reason is a stable code, never the sentence the interface shows.\nA client made to parse that sentence would break the day it is\nreworded, and translating it would break every such client at once."
+        },
+        "bounds": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneBoundsSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the control is, when the frame already knows."
+        },
+        "bounds_availability": {
+          "$ref": "#/$defs/AvailabilitySnapshot",
+          "description": "Why there are no bounds, when there are none.\n\nOnly the chart canvases record their rectangle during the frame they\nare drawn. Measuring the chrome would mean writing a rectangle per\ncontrol per frame whether or not anyone is watching, which this module\nrefuses to do — so the answer is an honest \"not recorded\" rather than\na guess assembled from layout constants."
+        },
+        "capability_id": {
+          "description": "The registered capability that operates this control, where one exists.\n\nAbsent for most controls today: reading the screen came before acting\non it, and the cockpit tier that registers a capability per control is\nstill ahead. An absent ID means \"not reachable through the control\nplane yet\", never \"not reachable at all\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "control_id": {
+          "description": "Stable for as long as the control is what it is.\n\nDerived from identity — a tab's ID, a pane's ID, a layer's or a tool's\ndeclared name — never from a position on screen or an index into this\nlist. Two captures a hundred frames apart name the same button the same\nway, which is what makes it possible to point at one, look away, and\npoint at it again.",
+          "type": "string"
+        },
+        "label": {
+          "description": "What the control is called, for a human reading the answer.",
+          "type": "string"
+        },
+        "owner": {
+          "$ref": "#/$defs/SceneOwnerSnapshot"
+        },
+        "role": {
+          "$ref": "#/$defs/SceneRoleDto"
+        },
+        "selected": {
+          "description": "Whether the control is currently the chosen one of its group: the\nactive tab, the armed tool, the open dock tab, a layer that is drawn.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "control_id",
+        "label",
+        "role",
+        "owner",
+        "selected",
+        "availability",
+        "bounds_availability"
+      ],
+      "type": "object"
+    },
+    "SceneOwnerKindDto": {
+      "oneOf": [
+        {
+          "const": "tab_strip",
+          "description": "The strip of open chart tabs.",
+          "type": "string"
+        },
+        {
+          "const": "toolbar",
+          "description": "The context toolbar above the canvas.",
+          "type": "string"
+        },
+        {
+          "const": "tool_rail",
+          "description": "The drawing tool rail.",
+          "type": "string"
+        },
+        {
+          "const": "dock",
+          "description": "The right-hand dock.",
+          "type": "string"
+        },
+        {
+          "const": "tab",
+          "description": "One open chart tab, owning its panes.",
+          "type": "string"
+        }
+      ]
+    },
+    "SceneOwnerSnapshot": {
+      "description": "Which region of the window a control belongs to.",
+      "properties": {
+        "id": {
+          "description": "The owner's own identifier. Where the owner is itself a control in this\nlist — a chart tab owning its panes — this is that control's ID, so the\ntree can be walked without a second vocabulary.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/SceneOwnerKindDto"
+        }
+      },
+      "required": [
+        "kind",
+        "id"
+      ],
+      "type": "object"
+    },
+    "SceneRoleDto": {
+      "description": "What kind of thing a control is, so a client can decide how to talk about\nit without matching on its identifier.",
+      "oneOf": [
+        {
+          "const": "tab",
+          "description": "One of a strip of tabs; selecting it replaces what is below.",
+          "type": "string"
+        },
+        {
+          "const": "toggle",
+          "description": "An on/off switch that stays where it is.",
+          "type": "string"
+        },
+        {
+          "const": "tool",
+          "description": "A mode the pointer enters until another is chosen.",
+          "type": "string"
+        },
+        {
+          "const": "canvas",
+          "description": "A chart surface: the thing the pointer resolves against.",
+          "type": "string"
+        }
+      ]
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What is on screen right now, as controls an operator can name.\n\nThe tree is expressed as a flat list plus [`SceneControlSnapshot::owner`]\nrather than as nested arrays: a client that wants the tree walks the owner\nlinks, and a client that wants one control by ID does not have to descend\ninto anything to find it.",
+  "properties": {
+    "active_tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "complete": {
+      "$ref": "#/$defs/AvailabilitySnapshot",
+      "description": "Whether every control on screen fits in `controls`.\n\nThe scene is bounded like every other projection. It says so rather\nthan truncating in silence, because a client that read a short list as\nthe whole screen would conclude a control does not exist."
+    },
+    "controls": {
+      "items": {
+        "$ref": "#/$defs/SceneControlSnapshot"
+      },
+      "type": "array"
+    },
+    "focused_pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "focused_pane_side": {
+      "$ref": "#/$defs/PaneSideDto"
+    }
+  },
+  "required": [
+    "active_tab_id",
+    "focused_pane_id",
+    "focused_pane_side",
+    "controls",
+    "complete"
+  ],
+  "title": "SceneSnapshot",
+  "type": "object"
+}

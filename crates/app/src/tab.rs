@@ -34,6 +34,7 @@ use crate::state::{BarKind, BarSpec};
 use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
+use crate::toolbar::LayerToggle;
 use crate::toolrail::ToolRail;
 use std::path::PathBuf;
 
@@ -844,6 +845,33 @@ impl Tab {
         match side {
             PaneSide::Time => self.time_pane.as_ref().unwrap_or(&self.flow_pane),
             PaneSide::Flow => &self.flow_pane,
+        }
+    }
+
+    /// Whether the LAYERS button for `toggle` reads as on.
+    ///
+    /// One reading, two callers: the toolbar model built each frame and the
+    /// semantic scene an operator captures on demand. A lamp that told the
+    /// trader one thing and an assistant another would be worse than no scene
+    /// at all, so neither side gets its own copy of the question — both ask
+    /// [`ChartPane::layer_visible`], which resolves every layer to the single
+    /// field that owns it.
+    pub(crate) fn layer_toggle_on(&self, toggle: LayerToggle, style: &ChartStyle) -> bool {
+        let layer = toggle.layer();
+        self.pane(self.layer_toggle_side(layer))
+            .layer_switched_on(layer, style)
+    }
+
+    /// Which pane a LAYERS button speaks for.
+    ///
+    /// The footprint folds the pane's *own* retained trades, so its lamp
+    /// answers for the pane with focus: one lit from the flow pane while the
+    /// time pane has focus would report a layer the trader is not looking at.
+    /// The other three read the tape, and only the flow pane has one.
+    pub(crate) fn layer_toggle_side(&self, layer: ChartLayer) -> PaneSide {
+        match layer {
+            ChartLayer::Footprint => self.focused_side(),
+            _ => PaneSide::Flow,
         }
     }
 

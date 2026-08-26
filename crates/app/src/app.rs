@@ -2371,6 +2371,22 @@ impl QuantickApp {
         &self.config
     }
 
+    /// The window's shared chart style, which owns the layers no pane does.
+    pub(crate) fn control_style(&self) -> &ChartStyle {
+        &self.style
+    }
+
+    /// The drawing tool rail: which tool is armed, and whether it is on
+    /// screen at all.
+    pub(crate) fn control_tool_rail(&self) -> &ToolRail {
+        &self.toolrail
+    }
+
+    /// The right-hand dock: whether it is shown, and which tab is open.
+    pub(crate) fn control_dock(&self) -> &Dock {
+        &self.dock
+    }
+
     pub(crate) fn control_timezone(&self) -> TzOffset {
         self.tz
     }
@@ -2877,8 +2893,22 @@ impl QuantickApp {
             });
         let capabilities = self.active_tab().capabilities(&self.config);
         let feed_display_name = self.active_tab().feed_display_name(&self.config).to_owned();
+        // One reading per lamp, taken through the call the semantic scene
+        // makes too, so the button and what an operator captures cannot
+        // disagree about a layer. Every lamp reports the *switch* rather than
+        // what the source lets through it, which is the rule
+        // `heatmap_lamp_on` names and `ChartPane::layer_switched_on` already
+        // implements for all of them.
         let heatmap_on = self.heatmap_lamp_on();
-        let bubbles_on = self.active_tab().tape().bubbles_enabled();
+        let bubbles_on = self
+            .active_tab()
+            .layer_toggle_on(toolbar::LayerToggle::Bubbles, &self.style);
+        let live_strip_on = self
+            .active_tab()
+            .layer_toggle_on(toolbar::LayerToggle::LiveStrip, &self.style);
+        let footprint_on = self
+            .active_tab()
+            .layer_toggle_on(toolbar::LayerToggle::Footprint, &self.style);
         // The focused pane's slots (§11): the menu lists what a command from
         // it would act on, and never the pane beside it.
         let indicators: Vec<toolbar::IndicatorMenuEntry> = self
@@ -2910,16 +2940,10 @@ impl QuantickApp {
         // the Time layout the group governs the chart actually on screen.
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
-        let live_strip_on = tab.flow_pane.live_strip_visible;
         let pane = match focused {
             PaneSide::Time => tab.time_pane.as_mut().unwrap_or(&mut tab.flow_pane),
             PaneSide::Flow => &mut tab.flow_pane,
         };
-        // The focused pane's, like every other BARS reading: the footprint is
-        // per-pane — each pane folds its own retained trades — so a lamp lit
-        // from the flow pane while the time pane has focus reports a layer the
-        // trader is not looking at.
-        let footprint_on = pane.footprint_visible;
         let mut model = toolbar::ToolbarModel {
             feeds,
             feed_id: &mut tab.feed_id,
@@ -26028,7 +26052,7 @@ crosshair = false
             .descriptors()
             .map(|descriptor| (descriptor.scope_id.clone(), descriptor.schema.clone()))
             .collect::<Vec<_>>();
-        assert_eq!(descriptors.len(), 7, "every initial scope is registered");
+        assert_eq!(descriptors.len(), 8, "every initial scope is registered");
         let scopes = descriptors
             .iter()
             .map(|(scope_id, _)| scope_id.clone())
@@ -26082,7 +26106,7 @@ crosshair = false
             .unwrap()
             .into_serialized()
             .unwrap();
-        assert_eq!(first.omitted_scopes.len(), 5);
+        assert_eq!(first.omitted_scopes.len(), 6);
         let second = registry
             .capture(&app, &instance, &scopes)
             .unwrap()
@@ -28091,6 +28115,238 @@ plot(close)
         assert_eq!(cursor["pointer"]["symbol"], "TESTUSDT");
     }
 
+    /// One capture of the scene scope, as a client would read it.
+    fn observer_scene(app: &QuantickApp) -> serde_json::Value {
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scope = observer_scope("scene.controls");
+        let capture = registry
+            .capture(app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        capture.scopes[&scope].value.clone()
+    }
+
+    /// The scene's control IDs, in the order it reports them.
+    fn scene_control_ids(scene: &serde_json::Value) -> Vec<String> {
+        scene["controls"]
+            .as_array()
+            .expect("the scene reports a control list")
+            .iter()
+            .map(|control| control["control_id"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    fn scene_control<'a>(scene: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
+        scene["controls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|control| control["control_id"] == id)
+            .unwrap_or_else(|| panic!("the scene names {id}"))
+    }
+
+    #[test]
+    fn the_scene_names_the_same_controls_two_frames_running() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(20);
+        run_frame(&mut app, &ctx);
+        let first = observer_scene(&app);
+        run_frame(&mut app, &ctx);
+        let second = observer_scene(&app);
+        assert_eq!(
+            first, second,
+            "a frame passing may not rename anything on screen"
+        );
+
+        // And the identifiers are not positions in disguise. Switching the
+        // dock adds or removes a strip of tabs ahead of the chart canvases,
+        // moving every control after it; one that answered to its index would
+        // be renamed by that alone, and an assistant told to press it a moment
+        // later would press whatever had slid into its place.
+        let before = scene_control_ids(&first);
+        let dock_was_open = app.dock.visible();
+        app.dock.toggle_visible();
+        run_frame(&mut app, &ctx);
+        let after = scene_control_ids(&observer_scene(&app));
+        let dock_now_listed = after.iter().any(|id| id.starts_with("dock."));
+        assert_ne!(
+            dock_now_listed, dock_was_open,
+            "switching the dock changes what is on screen"
+        );
+        assert_ne!(
+            after.len(),
+            before.len(),
+            "so the controls after it have all moved"
+        );
+        let survivors: Vec<&String> = before
+            .iter()
+            .filter(|id| id.starts_with("tool_rail.") || id.starts_with("toolbar."))
+            .collect();
+        assert!(
+            !survivors.is_empty(),
+            "the rail and the layer toggles are on screen in this fixture"
+        );
+        for id in survivors {
+            assert!(
+                after.contains(id),
+                "{id} kept its place on screen and must keep its name"
+            );
+        }
+    }
+
+    #[test]
+    fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (book_tx, book_rx) = mpsc::channel(64);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(16);
+        let app = QuantickApp::new(
+            test_config(),
+            "binance",
+            "TESTUSDT",
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                // A broker-quoted instrument: prices, no traded size, no book.
+                capabilities: feed::fixed_capabilities(FeedCapabilities {
+                    book_capture: false,
+                    history_paging: false,
+                    traded_volume: false,
+                    ohlcv_history: false,
+                    ohlcv_generation: 0,
+                }),
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+        let _ends = (evt_tx, book_tx);
+
+        let scene = observer_scene(&app);
+        let bubbles = scene_control(&scene, "toolbar.layers.bubbles");
+        assert_eq!(bubbles["availability"]["available"], false);
+        assert_eq!(
+            bubbles["availability"]["reason"], "source_prints_no_traded_volume",
+            "the reason is the code the gate declares"
+        );
+        let heatmap = scene_control(&scene, "toolbar.layers.heatmap");
+        assert_eq!(heatmap["availability"]["available"], false);
+        assert_eq!(
+            heatmap["availability"]["reason"],
+            "source_captures_no_order_book"
+        );
+
+        // The contrast: the strip needs nothing of the source, so it is
+        // available with no reason at all rather than a reason saying "fine".
+        let strip = scene_control(&scene, "toolbar.layers.live_strip");
+        assert_eq!(strip["availability"]["available"], true);
+        assert!(strip["availability"]["reason"].is_null());
+
+        // Every reason is a code a client can branch on, never the sentence
+        // the disabled button shows a human — which is the thing a client
+        // would otherwise have to parse, and which translation would break.
+        for control in scene["controls"].as_array().unwrap() {
+            let Some(reason) = control["availability"]["reason"].as_str() else {
+                continue;
+            };
+            assert!(
+                !reason.contains(' '),
+                "{} answered with prose: {reason}",
+                control["control_id"]
+            );
+        }
+        assert_ne!(
+            bubbles["availability"]["reason"],
+            "this source quotes prices but prints no traded volume",
+            "the sentence on the button is not the answer on the wire"
+        );
+    }
+
+    #[test]
+    fn the_control_the_cursor_resolves_to_is_one_the_scene_names() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(40);
+        run_frame(&mut app, &ctx);
+        let position = {
+            let pane = &app.active_tab().flow_pane;
+            let chart = pane.last_chart_area.expect("the pane reported its rect");
+            chart.center()
+        };
+        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(position)]);
+
+        // One capture, so the two scopes cannot describe different moments.
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scopes = [
+            observer_scope("interaction.cursor"),
+            observer_scope("scene.controls"),
+        ];
+        let capture = registry
+            .capture(&app, &observer_instance(), &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let cursor = &capture.scopes[&scopes[0]].value;
+        let scene = &capture.scopes[&scopes[1]].value;
+
+        assert_eq!(cursor["semantic_scene"]["available"], true);
+        assert_eq!(
+            cursor["pointer"]["control_id_availability"]["available"],
+            true
+        );
+        let under_pointer = cursor["pointer"]["control_id"]
+            .as_str()
+            .expect("the pointer resolves to a control");
+        assert!(
+            scene_control_ids(scene).contains(&under_pointer.to_owned()),
+            "the cursor answered {under_pointer}, which the scene does not name"
+        );
+
+        // And it is the canvas of the pane the cursor reports, not merely some
+        // control that happens to exist.
+        let control = scene_control(scene, under_pointer);
+        assert_eq!(control["role"], "canvas");
+        assert_eq!(control["owner"]["kind"], "tab");
+        assert_eq!(
+            control["control_id"],
+            format!(
+                "pane.{}.canvas",
+                cursor["pointer"]["pane_id"].as_str().unwrap()
+            )
+        );
+
+        // A canvas is the one control the frame already measured, so it is the
+        // one that answers with a rectangle instead of saying it has none.
+        assert_eq!(control["bounds_availability"]["available"], true);
+        assert!(control["bounds"]["width_px"].is_string());
+    }
+
+    #[test]
+    fn a_rail_folded_away_puts_no_tools_on_a_screen_that_does_not_show_them() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(12);
+        run_frame(&mut app, &ctx);
+        let visible = scene_control_ids(&observer_scene(&app));
+        assert!(
+            visible.iter().any(|id| id == "tool_rail.tool.pointer"),
+            "the rail opens with the pointer armed"
+        );
+
+        app.toolrail.toggle_visible();
+        run_frame(&mut app, &ctx);
+        let folded = scene_control_ids(&observer_scene(&app));
+        assert!(
+            !folded.iter().any(|id| id.starts_with("tool_rail.")),
+            "a rail nobody can see contributes no controls"
+        );
+        // The scene is what is on screen, so folding the rail away removes its
+        // tools rather than listing them as unavailable — but everything that
+        // is still painted keeps the name it had.
+        for id in folded {
+            assert!(visible.contains(&id), "{id} appeared out of nowhere");
+        }
+    }
+
     #[test]
     fn observer_resolves_mirrored_drawings_without_leaking_user_text() {
         const CANARY: &str = "CANARY_PRIVATE_PATH_C:\\Users\\Trader\\secret";
@@ -28234,7 +28490,7 @@ plot(close)
         // Every published wire type has a committed document, so a breaking
         // change shows up as a diff in review (contract §6). The count is
         // here to make an accidental *removal* visible too.
-        assert_eq!(documents.len(), 31);
+        assert_eq!(documents.len(), 32);
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("schemas/control");
@@ -28280,10 +28536,10 @@ plot(close)
         assert_eq!(catalog["catalog_version"], 1);
         assert_eq!(catalog["profile_id"], "observer");
         let capabilities = catalog["capabilities"].as_array().unwrap();
-        // Six observer reads plus the annotate tier's registered actions.
+        // Seven observer reads plus the annotate tier's registered actions.
         assert_eq!(
             capabilities.len(),
-            6 + crate::control::registered_action_count()
+            7 + crate::control::registered_action_count()
         );
         // Every observe-effect capability is read-only; everything else is an
         // action of the annotate tier — discoverable to any client, reachable

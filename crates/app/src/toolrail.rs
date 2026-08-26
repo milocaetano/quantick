@@ -102,6 +102,19 @@ pub enum Tool {
 }
 
 impl Tool {
+    /// The stable wire name, for the places that name a tool rather than draw
+    /// it. The drawing tools lend their own registered identifier, so a tool
+    /// is called the same thing in the rail, in a saved workspace and in the
+    /// semantic scene.
+    #[must_use]
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Pointer => "pointer",
+            Self::Crosshair => "crosshair",
+            Self::Drawing(tool) => tool.id(),
+        }
+    }
+
     #[must_use]
     pub fn drawing_tool(self) -> Option<DrawingTool> {
         match self {
@@ -136,7 +149,7 @@ impl Tool {
     }
 
     #[must_use]
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Pointer => "Pointer",
             Self::Crosshair => "Crosshair",

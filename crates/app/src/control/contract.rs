@@ -44,6 +44,7 @@ use super::{
     journal::{EventJournal, EventPage},
     notify::{NOTIFY_MODULE_ID, NOTIFY_PERMISSION_ID, NOTIFY_SOUND_PERMISSION_ID},
     registry::{ProjectionRegistry, SerializedSnapshotCapture, SnapshotCapture},
+    scene::CONTROLS_SCOPE_ID as SCENE_CONTROLS_SCOPE_ID,
     script::{SCRIPT_MODULE_ID, SCRIPT_PERMISSION_ID},
     types::known_error,
 };
@@ -53,6 +54,7 @@ pub(crate) const DESCRIBE_CAPABILITY_ID: &str = "control.describe";
 pub(crate) const SNAPSHOT_CAPABILITY_ID: &str = "snapshot.read";
 pub(crate) const CHART_WINDOW_CAPABILITY_ID: &str = "chart.window.read";
 pub(crate) const DIAGNOSTICS_CAPABILITY_ID: &str = "health.diagnostics.read";
+pub(crate) const SCENE_CAPABILITY_ID: &str = "scene.read";
 
 pub(crate) const OBSERVE_PERMISSION_ID: &str = "observe";
 const OBSERVE_EFFECT_ID: &str = "observe";
@@ -784,6 +786,21 @@ impl ObserverContract {
             &mut handlers,
             &mut input_validators,
             &mut output_validators,
+            read_capability::<EmptyInput, SerializedSnapshotCapture, _>(
+                SCENE_CAPABILITY_ID,
+                "scene",
+                "Read semantic scene",
+                "Names every control on screen with a frame-stable ID, its owner, whether it is selected, and the coded reason when it cannot be operated.",
+                [OBSERVE_PERMISSION_ID, "observe.attention"],
+                None,
+            ),
+            prepare_scene,
+        )?;
+        register_capability(
+            &mut registry,
+            &mut handlers,
+            &mut input_validators,
+            &mut output_validators,
             read_capability::<EventsReadInput, EventPage, _>(
                 EVENTS_READ_CAPABILITY_ID,
                 EVENTS_MODULE_ID,
@@ -1148,6 +1165,23 @@ fn prepare_diagnostics(
     })
 }
 
+/// The scene is one scope, so the named tool takes no input beyond the
+/// instance it routes to — exactly like the diagnostics read above.
+fn prepare_scene(
+    _contract: &ObserverContract,
+    payload: &Value,
+) -> Result<PreparedCapability, ControlError> {
+    let _: EmptyInput = decode_payload(payload)?;
+    Ok(PreparedCapability {
+        dispatch: PreparedDispatch::Ui(Box::new(SnapshotInvocation {
+            scopes: vec![
+                SnapshotScopeId::new(SCENE_CONTROLS_SCOPE_ID).expect("static scope ID is valid"),
+            ],
+        })),
+        dynamic_permissions: BTreeSet::new(),
+    })
+}
+
 fn read_capability<I, O, const N: usize>(
     id: &str,
     module_id: &str,
@@ -1290,16 +1324,16 @@ mod tests {
 
     #[test]
     fn observer_registry_contains_only_read_capabilities() {
-        // Six reads with prepare handlers, plus the registered actions, which
-        // have none here: an action is prepared from the action registry and
-        // sits behind annotate permissions the observer ceiling does not
+        // Seven reads with prepare handlers, plus the registered actions,
+        // which have none here: an action is prepared from the action registry
+        // and sits behind annotate permissions the observer ceiling does not
         // hold — discoverable to every client, reachable by none of them
         // until the trader grants the annotator profile.
         let contract = contract();
         let capabilities = contract.registry.capabilities().collect::<Vec<_>>();
         let actions = contract.actions.descriptors().count();
-        assert_eq!(capabilities.len(), 6 + actions);
-        assert_eq!(contract.handlers.len(), 6);
+        assert_eq!(capabilities.len(), 7 + actions);
+        assert_eq!(contract.handlers.len(), 7);
         let observer_ceiling = contract
             .registry
             .permission_ceiling(&profile(OBSERVER_PROFILE_ID))

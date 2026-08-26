@@ -19,7 +19,11 @@ use crate::{
 use super::{
     chart::{self, BarSnapshot, BarStateDto},
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
-    types::{PaneSideDto, canonical_decimal, canonical_f32, canonical_f64, wire_usize},
+    scene,
+    types::{
+        AvailabilitySnapshot, PaneSideDto, available, canonical_decimal, canonical_f32,
+        canonical_f64, unavailable, visible_panes, wire_usize,
+    },
 };
 
 pub(crate) const CURSOR_SCOPE_ID: &str = "interaction.cursor";
@@ -28,7 +32,6 @@ const MODULE_ID: &str = "interaction";
 const SCHEMA_VERSION: u32 = 1;
 const AXIS_DECIMAL_PLACES: u32 = 10;
 const SCREEN_PIXEL_DECIMAL_PLACES: u32 = 3;
-const MAX_PANES_PER_TAB: usize = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct CursorSnapshot {
@@ -125,13 +128,6 @@ pub(crate) struct PaperTradeSelectionSnapshot {
     pub provenance: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct AvailabilitySnapshot {
-    pub available: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct InteractionRevision {
     cursor: CursorSnapshot,
@@ -214,7 +210,7 @@ pub(crate) fn cursor_snapshot(app: &QuantickApp) -> CursorSnapshot {
         focused_pane_side: focused_side.into(),
         pointer,
         pointer_availability,
-        semantic_scene: unavailable("semantic_scene_not_registered_in_this_release"),
+        semantic_scene: available(),
     }
 }
 
@@ -262,8 +258,11 @@ fn pointer_snapshot(
         bar,
         flow_cell: hit.flow_cell.map(flow_cell_snapshot),
         drawing,
-        control_id: None,
-        control_id_availability: unavailable("semantic_scene_not_registered_in_this_release"),
+        // The scene's own identifier for this canvas, produced by the scene:
+        // the control the pointer resolves to and the control the scene lists
+        // are one string from one place, so they cannot drift apart.
+        control_id: Some(scene::pane_canvas_control_id(pane.id)),
+        control_id_availability: available(),
     }
 }
 
@@ -402,19 +401,6 @@ fn drawing_band(band: &DrawingBand) -> String {
     drawing_band_name(band).to_owned()
 }
 
-fn visible_panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {
-    let mut panes = Vec::with_capacity(MAX_PANES_PER_TAB);
-    if tab.layout.shows_time()
-        && let Some(time) = &tab.time_pane
-    {
-        panes.push((time, PaneSide::Time));
-    }
-    if tab.layout.shows_flow() {
-        panes.push((&tab.flow_pane, PaneSide::Flow));
-    }
-    panes
-}
-
 fn active_tab(app: &QuantickApp) -> &Tab {
     &app.control_tabs()[app.control_active_tab_index()]
 }
@@ -449,18 +435,4 @@ fn shared_drawing_hit(
             locked: drawing.locked,
         },
     ))
-}
-
-fn available() -> AvailabilitySnapshot {
-    AvailabilitySnapshot {
-        available: true,
-        reason: None,
-    }
-}
-
-fn unavailable(reason: &str) -> AvailabilitySnapshot {
-    AvailabilitySnapshot {
-        available: false,
-        reason: Some(reason.to_owned()),
-    }
 }
