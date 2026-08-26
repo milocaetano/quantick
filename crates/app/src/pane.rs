@@ -2677,6 +2677,21 @@ impl ChartPane {
 
     /// Take a backfill batch into the series and hand the indicators the bars
     /// it produced.
+    /// Hand the tape's own price grid to the order-flow engine, which sizes
+    /// the capture bucket — and through it the footprint ladder's rows — from
+    /// whichever tick it ends up trusting.
+    ///
+    /// Called after every ingest because the answer can only arrive after
+    /// prints have. The view sends a command only when the answer changes, and
+    /// a running GCD changes it a handful of times per session at most.
+    fn publish_tape_price_step(&mut self) {
+        if let (Some(orderflow), Some(step)) =
+            (self.orderflow.as_mut(), self.state.tape_price_step())
+        {
+            orderflow.observe_tape_price_step(step);
+        }
+    }
+
     pub fn ingest_backfill(&mut self, trades: &[quantick_engine::Trade]) {
         if !trades.is_empty() {
             self.bump_pagination_revision();
@@ -2686,6 +2701,7 @@ impl ChartPane {
             .send(IndicatorCommand::Backfilled(self.closed_bars()));
         let partial = self.partial_command();
         self.indicator_worker.send(partial);
+        self.publish_tape_price_step();
     }
 
     /// Prepend older trades and shift everything anchored to a bar index by the
@@ -2877,6 +2893,7 @@ impl ChartPane {
         }
         let bars_before = self.state.bars().len();
         self.state.ingest_live(trade);
+        self.publish_tape_price_step();
         // At most one bar closes per trade (an atomic market event is never
         // split), so "grew" identifies exactly the bar that closed.
         let bars_after = self.state.bars().len();

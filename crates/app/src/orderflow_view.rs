@@ -121,6 +121,9 @@ pub struct OrderflowView {
     published: BookPublished,
     /// Engine bucket last adopted into the mirror, to detect auto-base moves.
     last_seen_base: Decimal,
+    /// The tape grid last sent to the engine, so the per-trade path sends one
+    /// command per change rather than one per print.
+    last_tape_price_step: Option<Decimal>,
     capture_grouping_draft: f64,
     pending_capture_grouping_previous: Option<Decimal>,
     /// Named bubble looks, loaded from the versionable presets file.
@@ -180,6 +183,7 @@ impl OrderflowView {
             config,
             published: BookPublished::initial(),
             last_seen_base: base_grouping,
+            last_tape_price_step: None,
             capture_grouping_draft: base_grouping.to_f64().unwrap_or(0.01),
             pending_capture_grouping_previous: None,
             presets,
@@ -811,6 +815,27 @@ impl OrderflowView {
             return;
         }
         self.worker.send(BookCommand::Trade(trade.clone()));
+    }
+
+    /// Tell the engine the price grid the tape prints on.
+    ///
+    /// Sent only when the answer changes, which a running GCD makes rare: it
+    /// starts as nothing, names a grid once the tape has shown one, and only
+    /// ever narrows from there. On the trader's own recordings it settles
+    /// within about thirty prints and never moves again, so a session pays for
+    /// one regroup rather than one per trade — which matters, because this is
+    /// called from the per-trade path.
+    ///
+    /// Deliberately *not* gated on a layer being enabled, unlike
+    /// [`record_trade`](Self::record_trade): the grid sizes the footprint
+    /// ladder as well as the liquidity map, and a trader reading a ladder with
+    /// the heatmap switched off needs its rows the right width just the same.
+    pub fn observe_tape_price_step(&mut self, step: Decimal) {
+        if self.last_tape_price_step == Some(step) {
+            return;
+        }
+        self.last_tape_price_step = Some(step);
+        self.worker.send(BookCommand::TapePriceGrid(step));
     }
 
     /// Whether the scripted starvation hook is holding this print back.

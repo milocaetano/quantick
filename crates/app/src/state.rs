@@ -14,7 +14,7 @@
 /// unit next to [`BarSpec`], not off in the engine.
 pub use quantick_engine::ImbalanceUnit;
 use quantick_engine::{
-    Bar, BarBuilder, BarFootprint, BarProgress, DollarBarBuilder, ImbalanceBarBuilder,
+    Bar, BarBuilder, BarFootprint, BarProgress, DollarBarBuilder, ImbalanceBarBuilder, PriceGrid,
     TickBarBuilder, TimeBarBuilder, Trade, VolumeBarBuilder,
 };
 use rust_decimal::Decimal;
@@ -349,6 +349,11 @@ pub struct ChartState {
     /// Per-bar footprint ladders, index-aligned with `bars`; fed the same
     /// trades the bar builder folds (see [`FootprintSeries`]).
     footprints: FootprintSeries,
+    /// The price grid the tape prints on, folded from every trade this chart
+    /// has seen. Unconditional: it is a fact about the market, not about
+    /// whether a layer that draws it is switched on, and a consumer sizing
+    /// rows needs it before anything is drawn.
+    price_grid: PriceGrid,
     /// Whether the ladders are being accumulated at all. Off (the default)
     /// costs nothing per trade and holds nothing per bar — a capability
     /// nobody asked for must not tax every ingest. Enabling refolds the
@@ -373,6 +378,7 @@ impl ChartState {
             partial: None,
             backfill_boundary: None,
             footprints: FootprintSeries::new(footprint_series::default_group()),
+            price_grid: PriceGrid::new(),
             footprint_enabled: false,
         }
     }
@@ -381,6 +387,9 @@ impl ChartState {
     /// trades), then mark the boundary.
     pub fn ingest_backfill(&mut self, trades: &[Trade]) {
         self.trades.extend_from_slice(trades);
+        for trade in trades {
+            self.price_grid.observe(trade.price);
+        }
         self.backfill_trade_count = self.trades.len();
         self.backfill_done = true;
         for trade in trades {
@@ -424,6 +433,7 @@ impl ChartState {
     /// Ingest one live trade, incrementally (no full rebuild).
     pub fn ingest_live(&mut self, trade: &Trade) {
         self.trades.push(trade.clone());
+        self.price_grid.observe(trade.price);
         let closed = self.builder.push(trade);
         if self.footprint_enabled {
             self.footprints.observe(trade, closed.as_ref());
@@ -562,6 +572,18 @@ impl ChartState {
     /// The row width footprints are captured at. Rendering reads the width
     /// off each ladder ([`BarFootprint::group`]); this is the capture side of
     /// that round trip — what the range-profile cache keys on to notice a
+    /// The price grid this chart's tape prints on, once enough prints have
+    /// shown one.
+    ///
+    /// [`None`] means the tape has not said yet — a chart that has seen one
+    /// print, or a run of prints all at one price. It never means "the grid is
+    /// fine": a caller sizing rows from this keeps whatever it had until an
+    /// answer arrives.
+    #[must_use]
+    pub fn tape_price_step(&self) -> Option<Decimal> {
+        self.price_grid.step()
+    }
+
     /// refold, and what the tests assert against.
     #[must_use]
     pub fn footprint_group(&self) -> Decimal {
@@ -821,6 +843,71 @@ mod tests {
             quantity: dec("1.0"),
             side: Side::Buy,
         }
+    }
+
+    /// A print at `price`, with everything else fixed — these tests are about
+    /// the price grid and nothing else.
+    fn print_at(agg_id: u64, price: &str) -> Trade {
+        Trade {
+            agg_id,
+            timestamp_ms: 1000 + agg_id as i64 * 100,
+            price: dec(price),
+            quantity: dec("1.0"),
+            side: Side::Buy,
+        }
+    }
+
+    #[test]
+    fn a_chart_names_the_grid_its_own_tape_prints_on() {
+        // B3's mini index moves in five-point steps. Nothing states that here:
+        // the chart is told only the prints, exactly as a market replay tells
+        // it, and the grid is what it works out.
+        let mut chart = ChartState::new(BarSpec::Tick(1000));
+        for (i, price) in [
+            "174565", "174570", "174560", "174570", "174585", "174580", "174570", "174575",
+            "174590", "174585",
+        ]
+        .iter()
+        .enumerate()
+        {
+            chart.ingest_live(&print_at(i as u64, price));
+        }
+        assert_eq!(chart.tape_price_step(), Some(dec("5")));
+    }
+
+    #[test]
+    fn a_chart_that_has_not_been_told_enough_names_nothing() {
+        // Silence is not an answer of "fine" — a caller sizing rows from this
+        // has to keep what it had, and that only works if it can tell the two
+        // apart.
+        let mut chart = ChartState::new(BarSpec::Tick(1000));
+        assert_eq!(chart.tape_price_step(), None);
+        for i in 0..20 {
+            chart.ingest_live(&print_at(i, "174565"));
+        }
+        assert_eq!(
+            chart.tape_price_step(),
+            None,
+            "a run of prints at one price shows no distance and so no grid",
+        );
+    }
+
+    #[test]
+    fn backfilled_history_names_the_grid_as_well_as_live_prints_do() {
+        // History arrives as one batch before the first live print. A chart
+        // that only learned the grid from live prints would draw its first
+        // screen — the whole backfill — on the wrong rows.
+        let mut chart = ChartState::new(BarSpec::Tick(1000));
+        let history: Vec<Trade> = [
+            "5216.0", "5216.5", "5217.0", "5216.5", "5215.5", "5217.5", "5218.0", "5217.0",
+            "5216.0", "5215.5",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, price)| print_at(i as u64, price))
+        .collect();
+        chart.ingest_backfill(&history);
+        assert_eq!(chart.tape_price_step(), Some(dec("0.5")));
     }
 
     #[test]
