@@ -17,6 +17,7 @@ use tokio::sync::{mpsc, watch};
 
 use quantick_feed_binance::depth::DepthEvent;
 
+use crate::chart_layers::ChartLayer;
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::feed::{
     self, FeedCommand, FeedConnectionState, FeedEvent, FeedHandle, FeedNotice, ReplayLink,
@@ -1020,17 +1021,26 @@ impl Tab {
         // an upside-down market does not turn back over by being given a
         // second view, and the boot's QUANTICK_INVERTED hook fires before
         // this pane exists at all.
-        pane.hidden_layers = self.flow_pane.hidden_layers.clone();
-        // ...and the same is true of every layer that does not live in that
-        // set. `hidden_layers` alone left the footprint behind — a per-pane
-        // field of its own — so the split opened with the ladder on in the
-        // flow pane and off in the time pane, contradicting the paragraph
-        // above and reporting the toolbar's footprint lamp off the moment the
-        // trader clicked into the left chart. Copying the *switches* rather
-        // than a list of field names is what keeps the next per-pane layer
-        // from being forgotten here: `apply_layer_states` drops whatever this
-        // pane does not draw, which is the whole of what §11 asks for.
-        pane.apply_layer_states(&self.flow_pane.layer_states(style));
+        // Copying the *switches* rather than a list of field names: an earlier
+        // version cloned `hidden_layers` alone, which left the footprint
+        // behind — a per-pane field of its own — so the split opened with the
+        // ladder on in the flow pane and off in the time pane, contradicting
+        // the paragraph above and darkening the toolbar's footprint lamp the
+        // moment the trader clicked into the left chart. `apply_layer_states`
+        // drops whatever this pane does not draw, which is the whole of what
+        // §11 asks for, and it covers `hidden_layers` in passing.
+        //
+        // Every layer but one. `Drawings` resolves to `DrawingStore`, whose
+        // setter records an undo entry — right for a click, wrong for a pane
+        // being born: seeded through it, a time pane holding zero objects
+        // opens with a non-empty history, and the trader's first Ctrl+Z there
+        // un-hides drawings rather than doing nothing. It is seeded through
+        // the store's own opening setter instead.
+        let mut states = self.flow_pane.layer_states(style);
+        states.remove(&ChartLayer::Drawings);
+        pane.apply_layer_states(&states);
+        pane.drawings
+            .open_all_hidden(self.flow_pane.drawings.all_hidden());
         pane.price_view
             .set_inverted(self.flow_pane.price_view.is_inverted());
         self.time_pane = Some(pane);

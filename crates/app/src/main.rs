@@ -231,9 +231,14 @@ fn main() -> eframe::Result {
             egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
             cc.egui_ctx.set_fonts(fonts);
             theme::apply(&cc.egui_ctx);
-            Ok(Box::new(app::QuantickApp::new_with_workspace(
+            let mut app = app::QuantickApp::new_with_workspace(
                 config, feed_id, symbol, spec, feed, workspace,
-            )))
+            );
+            // The window itself, which only this closure is handed: the app
+            // measures its real client area through it (see
+            // `crate::window_scale`).
+            app.attach_surface(cc);
+            Ok(Box::new(app))
         }),
     )
 }

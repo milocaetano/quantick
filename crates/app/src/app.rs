@@ -1007,11 +1007,14 @@ pub struct QuantickApp {
     /// panel. A dozen bool reads and an integer compare: cheaper than teaching
     /// four call sites to remember.
     saved_layer_mask: u32,
-    /// The last size [`Self::correct_window_scale`] had to put back into
-    /// points, so the correction is announced when it starts rather than on
-    /// every frame it holds for. `None` while the platform is reporting
-    /// honestly.
-    corrected_window_size: Option<egui::Vec2>,
+    /// Which tab [`Self::saved_layer_mask`] was taken from, so a tab *switch*
+    /// is never mistaken for a switch the trader flipped.
+    saved_layer_tab: u64,
+    /// The window this app is drawing into, kept so the health summary can
+    /// report the client area the platform believes it has — see
+    /// [`crate::window_scale`] for why that number is worth logging, and for
+    /// the defect it was measured chasing.
+    surface: Option<window_scale::SurfaceProbe>,
     /// Whether `QUANTICK_WINDOW_MAXIMIZED=1` still owes the window a maximise.
     /// Drained on the first frame — see [`Self::apply_maximize_hook`].
     pending_maximize: bool,
@@ -1363,7 +1366,8 @@ impl QuantickApp {
             manager_action_rects: Vec::new(),
             chart_layers_path: chart_layers::default_path(),
             saved_layer_mask: 0,
-            corrected_window_size: None,
+            saved_layer_tab: 0,
+            surface: None,
             pending_maximize: std::env::var("QUANTICK_WINDOW_MAXIMIZED")
                 .is_ok_and(|value| value == "1"),
             layer_actions: chart_layers::LayerActions::default(),
@@ -2791,6 +2795,26 @@ impl QuantickApp {
         self.active_tab = next as usize;
     }
 
+    /// Whether the toolbar's heatmap lamp is lit.
+    ///
+    /// The *switch*, not what capture lets through it — the same reading the
+    /// layer file was taught in 848cba0, and for a sibling reason. A lamp lit
+    /// from `depth_visible()` (`enabled && show_depth`) reports the heatmap off
+    /// for as long as book capture is starting, and forever on a source with no
+    /// book: the trader sees an unlit button, presses it, and switches the
+    /// layer they wanted *off*. The button already has an honest way to say a
+    /// source cannot fill it — `.enabled(...)` carrying its
+    /// `disabled_explanation` — so the lamp beside it answers the only other
+    /// question there is.
+    ///
+    /// A named reading rather than an expression inside the toolbar's own
+    /// frame, so the rule can be asserted without painting a toolbar and read
+    /// back by something that is not looking at the screen.
+    #[must_use]
+    fn heatmap_lamp_on(&self) -> bool {
+        self.active_tab().tape().depth_switched_on()
+    }
+
     /// Build the toolbar's model from the app's state, draw it, and carry
     /// out whatever it asked (§6 — the toolbar module owns grouping and the
     /// overflow rule; this method owns the side effects).
@@ -2839,16 +2863,7 @@ impl QuantickApp {
             });
         let capabilities = self.active_tab().capabilities(&self.config);
         let feed_display_name = self.active_tab().feed_display_name(&self.config).to_owned();
-        // The *switch*, not what capture lets through it — the same reading
-        // the layer file was taught in 848cba0, and for a sibling reason. A
-        // lamp lit from `depth_visible()` (`enabled && show_depth`) reports
-        // the heatmap off for as long as book capture is starting, or forever
-        // on a source with no book: the trader sees an unlit button, presses
-        // it, and switches the layer they wanted *off*. The button already has
-        // an honest way to say a source cannot fill it — `.enabled(...)` with
-        // its `disabled_explanation` — so the lamp beside it answers the only
-        // other question: is this layer switched on.
-        let heatmap_on = self.active_tab().tape().depth_switched_on();
+        let heatmap_on = self.heatmap_lamp_on();
         let bubbles_on = self.active_tab().tape().bubbles_enabled();
         // The focused pane's slots (§11): the menu lists what a command from
         // it would act on, and never the pane beside it.
@@ -4094,6 +4109,19 @@ impl QuantickApp {
     /// chances to forget one.
     fn maintain_chart_layers(&mut self) {
         let mask = self.layer_mask();
+        // Layer state is per-pane, and this reads the *active* tab's flow pane
+        // — so activating a tab whose chart is set up differently changes the
+        // mask with nobody having touched a switch. Left alone, Ctrl+Tab
+        // records the other tab's opinion as the trader's choice, thrashes the
+        // file between two of them, and fills the log below with switches no
+        // hand moved. A different chart answering is a re-baseline, not an
+        // edit; the file keeps whatever the last real switch put there.
+        let tab = self.active_tab().id;
+        if tab != self.saved_layer_tab {
+            self.saved_layer_tab = tab;
+            self.saved_layer_mask = mask;
+            return;
+        }
         if mask == self.saved_layer_mask {
             return;
         }
@@ -4143,7 +4171,21 @@ impl QuantickApp {
         // Whatever the file said (including nothing at all) is now on screen;
         // only a change from here is worth another write.
         if defaults.is_empty() {
+            // Only reachable when the *shipped* config failed to parse, since
+            // every other path in `load` falls back to it — a build-time
+            // mistake, and the one launch where saying nothing would be worst:
+            // the chart opens on whatever the code decided and no one is told
+            // the product's own answer never arrived.
+            tracing::error!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "CHART_LAYERS_UNAVAILABLE",
+                path = %self.chart_layers_path.display(),
+                action = "keep_code_defaults",
+                "no layer visibility to apply; the shipped config did not parse"
+            );
             self.saved_layer_mask = self.layer_mask();
+            self.saved_layer_tab = self.active_tab().id;
             return;
         }
         if let Some(grid) = defaults.get(&ChartLayer::Grid) {
@@ -4151,19 +4193,31 @@ impl QuantickApp {
         }
         self.apply_layer_defaults(&defaults);
         self.saved_layer_mask = self.layer_mask();
+        self.saved_layer_tab = self.active_tab().id;
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "CHART_LAYERS_RESTORED",
             path = %self.chart_layers_path.display(),
-            hidden = defaults.values().filter(|visible| !**visible).count(),
+            // `off`, not `hidden`: the map now always speaks for every layer,
+            // the shipped-off `backfill_divider` included, so a count over it
+            // is no longer "how many the trader switched off". Renamed rather
+            // than quietly redefined — a field that keeps its name and changes
+            // its meaning misleads every dashboard already reading it.
+            off = defaults.values().filter(|visible| !**visible).count(),
+            layers = defaults.len(),
             "chart layer visibility restored"
         );
     }
 
-    /// Put every open pane on the saved visibility. Also run when a tab is
-    /// opened later, so a new tab looks like the one beside it rather than
-    /// bringing back layers the user switched off.
+    /// Put every open pane on the saved visibility, once, at startup.
+    ///
+    /// A tab opened later does *not* come through here: it inherits the layers
+    /// the active tab is showing at that moment (`inherited_layers` in
+    /// [`Self::adopt_tab`]), which is the live state rather than the map read
+    /// off disk during boot. The two policies differ on purpose — see the note
+    /// there — so a reader arriving here for new-tab behaviour is in the wrong
+    /// function.
     fn apply_layer_defaults(&mut self, states: &std::collections::BTreeMap<ChartLayer, bool>) {
         for tab in &mut self.tabs {
             tab.flow_pane.apply_layer_states(states);
@@ -5330,19 +5384,17 @@ impl QuantickApp {
         });
     }
 
-    /// Keep the window size the workspace would record, flush a popup the
-    /// trader just re-parked, and take the exit save when the window is
-    /// closing.
+    /// Hand the app the window it is drawing into.
     ///
-    /// **Per-frame cost**: two reads off the frame's own input state, a float
-    /// compare and a `bool` test. No save is on this path — each of the three
-    /// happens on one frame: the frame a drag ends, and the frame the close is
-    /// requested, when the window is going away anyway.
-    ///
-    /// The size is tracked here rather than read at exit because by then the
-    /// viewport has already been asked to close: what a workspace should
-    /// remember is the window the trader was working in, not whatever the
-    /// platform reports on the way out.
+    /// Called once from `main`, which is where eframe offers the handle: the
+    /// hook that needs it (`raw_input_hook`) is given only the input. One
+    /// registration line rather than a constructor argument, because every
+    /// other construction path — every test — wants the `None` this defaults
+    /// to, which is also what every non-Windows target gets.
+    pub fn attach_surface(&mut self, handle: &impl raw_window_handle::HasWindowHandle) {
+        self.surface = window_scale::SurfaceProbe::new(handle);
+    }
+
     /// Take the window manager's own maximise, once, on the first frame.
     ///
     /// Through [`egui::ViewportCommand::Maximized`] rather than the viewport
@@ -5367,61 +5419,19 @@ impl QuantickApp {
         );
     }
 
-    /// Put a wrongly-scaled window size back into points, and say so once.
+    /// Keep the window size the workspace would record, flush a popup the
+    /// trader just re-parked, and take the exit save when the window is
+    /// closing.
     ///
-    /// Both the screen rect and the viewport's inner rect are corrected, and
-    /// they have to move together: the first is what the chart lays out in, and
-    /// the second is what [`Self::maintain_workspace`] writes into the saved
-    /// workspace. Leaving the second alone would bank the pixel count as a
-    /// point count, so the *next* launch would open a window 1.5× too large
-    /// with no scale bug in sight — the defect outliving its cause, which is
-    /// the shape of bug this codebase already learned to distrust in the layer
-    /// file.
+    /// **Per-frame cost**: two reads off the frame's own input state, a float
+    /// compare and a `bool` test. No save is on this path — each of the three
+    /// happens on one frame: the frame a drag ends, and the frame the close is
+    /// requested, when the window is going away anyway.
     ///
-    /// Logged once per corrected size rather than once per frame: the numbers
-    /// are worth having when this is diagnosed again, and sixty identical lines
-    /// a second are not.
-    fn correct_window_scale(&mut self, raw_input: &mut egui::RawInput) {
-        let viewport = raw_input.viewport();
-        let (Some(scale), Some(monitor)) =
-            (viewport.native_pixels_per_point, viewport.monitor_size)
-        else {
-            return;
-        };
-        let Some(screen) = raw_input.screen_rect else {
-            return;
-        };
-        let Some(size) = window_scale::corrected_size(screen.size(), scale, monitor) else {
-            self.corrected_window_size = None;
-            return;
-        };
-        if self.corrected_window_size != Some(size) {
-            self.corrected_window_size = Some(size);
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "WINDOW_SCALE_CORRECTED",
-                reported_w = screen.width(),
-                reported_h = screen.height(),
-                scale,
-                monitor_px_w = monitor.x,
-                monitor_px_h = monitor.y,
-                corrected_w = size.x,
-                corrected_h = size.y,
-                action = "lay_out_in_points",
-                "the platform reported the window in pixels where points were due; corrected"
-            );
-        }
-        raw_input.screen_rect = Some(egui::Rect::from_min_size(screen.min, size));
-        let viewport = raw_input
-            .viewports
-            .entry(raw_input.viewport_id)
-            .or_default();
-        if let Some(inner) = viewport.inner_rect {
-            viewport.inner_rect = Some(egui::Rect::from_min_size(inner.min, size));
-        }
-    }
-
+    /// The size is tracked here rather than read at exit because by then the
+    /// viewport has already been asked to close: what a workspace should
+    /// remember is the window the trader was working in, not whatever the
+    /// platform reports on the way out.
     fn maintain_workspace(&mut self, ctx: &egui::Context) {
         let (size, closing) = ctx.input(|input| {
             let viewport = input.viewport();
@@ -5485,13 +5495,22 @@ impl QuantickApp {
         // The window's own geometry, because a chart that lays out wider than
         // the surface it is painted on loses its right edge — the toolbar's
         // layer group, the price axis, the live strip and the dock all live
-        // there — and nothing else in this line would say so. `screen` is what
-        // egui laid out in, `surface` what the platform gave it, and `scale`
-        // the number between them; when `screen * scale` and `surface`
-        // disagree, the difference is the strip of chart nobody can see.
+        // there — and nothing else in this line would say so.
+        //
+        // `client_px` is the platform's *own* answer, not `screen * scale`:
+        // that product is algebraically the same number as `screen_pt` beside
+        // it and could never contradict anything, which would make the whole
+        // block decoration. Two independent readings, so the line can be read
+        // for whether they agree — and by the time it is written a correction
+        // may already have restored that agreement, which `WINDOW_SCALE_CORRECTED`
+        // is the record of.
         // Read outside the `input` closure: egui holds one lock for the whole
         // of it, and reaching back into the context from inside deadlocks.
         let zoom = ctx.zoom_factor();
+        let client = self
+            .surface
+            .as_ref()
+            .and_then(window_scale::SurfaceProbe::client_size_px);
         let (screen, scale, native_scale) = ctx.input(|input| {
             (
                 input.screen_rect.size(),
@@ -5531,8 +5550,8 @@ impl QuantickApp {
             canvas_layout = ?self.active_tab().layout,
             screen_pt_w = screen.x,
             screen_pt_h = screen.y,
-            surface_px_w = screen.x * scale,
-            surface_px_h = screen.y * scale,
+            client_px_w = client.map(|size| size.x),
+            client_px_h = client.map(|size| size.y),
             scale = scale,
             native_scale = native_scale,
             zoom_factor = zoom,
@@ -8260,12 +8279,6 @@ impl eframe::App for QuantickApp {
     /// the first. So the hook supplies the click itself, on the pane it names,
     /// and every line after that is the code a trader's own click runs.
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        // Before anything reads it: a window size the platform reported in the
-        // wrong unit. First in the hook, and above every early return below,
-        // because a frame that skips this lays the whole chart out at the wrong
-        // size — see `crate::window_scale` for the invariant and its one known
-        // limit.
-        self.correct_window_scale(raw_input);
         // Second frame: the button comes up where it went down, and the menu
         // that opened on the press stays open.
         if let Some(position) = self.scripted_context_menu_release.take() {
@@ -12636,6 +12649,122 @@ plot(close)
             "the new tab brought back a layer the user had switched off"
         );
         std::fs::remove_file(&path).ok();
+    }
+
+    /// The split's second pane opens wearing the same layers as the first.
+    ///
+    /// `apply_pending_layout` used to copy `hidden_layers` and stop, which left
+    /// out every per-pane layer that does not live in that set — the footprint
+    /// being the one that has one. So the shipped `footprint = true` reached
+    /// the flow pane and never the time pane, and the toolbar's footprint lamp
+    /// went dark the moment the trader clicked into the left chart. The
+    /// deferred finding from PR #229, closed here.
+    #[test]
+    fn the_time_pane_opens_on_the_same_layers_as_the_flow_pane() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(120);
+        // The state a shipped default leaves behind: the ladder on, before the
+        // second pane exists at all.
+        app.active_tab_mut().flow_pane.footprint_visible = true;
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        // One frame builds the time pane; that is the frame under test.
+        run_frame(&mut app, &ctx);
+        let time = app
+            .active_tab()
+            .time_pane
+            .as_ref()
+            .expect("the split is what this proof is about");
+        assert!(
+            time.footprint_visible,
+            "the time pane opened without the ladder the flow pane beside it is drawing"
+        );
+    }
+
+    /// A tab opened mid-session inherits what is on screen *now*, not what the
+    /// file said at startup.
+    ///
+    /// `open_tab` used to apply the map read off disk during boot. That was
+    /// harmless only while the map was whatever partial thing the trader's file
+    /// held; now that a file's silence resolves to the shipped answer, it
+    /// speaks for every layer, and applying it here would undo the session's
+    /// own switches on the way past.
+    #[test]
+    fn a_new_tab_inherits_the_live_layers_not_the_startup_file() {
+        let dir = std::env::temp_dir().join(format!("quantick-app-live-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let path = dir.join("chart-layers.toml");
+        let _ = std::fs::remove_file(&path);
+
+        let (mut app, _events, _commands, _book) = test_app();
+        app.chart_layers_path = path.clone();
+        // Boot on a file that says the crosshair is off...
+        std::fs::write(
+            &path,
+            "version = 1
+[layers]
+crosshair = false
+",
+        )
+        .unwrap();
+        app.restore_chart_layers();
+        assert!(!layer_on(&app, ChartLayer::Crosshair), "the file was read");
+        // ...then the trader switches it back on, and opens a second market.
+        switch_layer(&mut app, ChartLayer::Crosshair, true);
+        let (_evt_tx, evt_rx) = mpsc::channel(4);
+        let (_book_tx, book_rx) = mpsc::channel(4);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(4);
+        app.adopt_tab(
+            "binance".to_owned(),
+            "OTHERUSDT".to_owned(),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+                commands: cmd_tx,
+                replay: None,
+            },
+            None,
+        );
+        assert!(
+            layer_on(&app, ChartLayer::Crosshair),
+            "the new tab reached past the session and brought back the startup file's answer"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// The toolbar's heatmap lamp answers "is this switched on", not "is the
+    /// book capture up yet".
+    ///
+    /// `depth_visible()` is `enabled && show_depth`, so a lamp lit from it
+    /// reads dark while capture is starting — and a trader who presses a dark
+    /// button switches *off* the layer they were reaching for. The button
+    /// states a source's inability separately, through `disabled_explanation`.
+    #[test]
+    fn the_heatmap_lamp_reads_the_switch_not_the_capture() {
+        let (mut app, _events, _commands, _book) = test_app();
+        {
+            let tape = app.active_tab_mut().tape_mut();
+            tape.set_depth_visible(true);
+            // Capture not up: exactly the first seconds of every launch, and
+            // permanently on a source with no book.
+            tape.set_enabled(false, 0);
+            assert!(
+                !tape.depth_visible(),
+                "the renderer is right to draw nothing; this test is about the lamp"
+            );
+            assert!(tape.depth_switched_on(), "the switch itself is on");
+        }
+        assert!(
+            app.heatmap_lamp_on(),
+            "the lamp reads the switch, so it stays lit while capture catches up"
+        );
+        // And it goes dark for the one reason it should: the switch itself.
+        app.active_tab_mut().tape_mut().set_depth_visible(false);
+        assert!(
+            !app.heatmap_lamp_on(),
+            "switched off is the only way it darkens"
+        );
     }
 
     /// The menu itself: every layer gets a switch, a layer the feed cannot

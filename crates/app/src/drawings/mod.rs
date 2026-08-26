@@ -1956,6 +1956,17 @@ impl Drawings {
         self.record(before);
     }
 
+    /// The *opening* hidden state, seeded as a pane is built.
+    ///
+    /// Deliberately not [`Self::set_all_hidden`]: that one records an undo
+    /// entry, which is right for a click and wrong for a pane that has just
+    /// come into existence. A time pane seeded through the recording setter
+    /// opens with a non-empty history on a store holding zero objects, so the
+    /// trader's first Ctrl+Z there un-hides drawings instead of doing nothing.
+    pub fn open_all_hidden(&mut self, hidden: bool) {
+        self.all_hidden = hidden;
+    }
+
     pub fn set_all_hidden(&mut self, hidden: bool) {
         let before = self.snapshot();
         self.all_hidden = hidden;

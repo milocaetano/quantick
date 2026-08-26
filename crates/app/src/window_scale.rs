@@ -1,147 +1,152 @@
-//! Correcting a window size the platform reported in the wrong unit.
+//! Reading the window's client area straight from the platform.
 //!
-//! egui is told the window's size in *points* and paints at
-//! `pixels_per_point`; the two multiply out to the surface the platform
-//! actually gave us. On Windows, at a scale factor other than 1, maximising
-//! breaks that identity: the client size arrives in **physical pixels** while
-//! the scale factor stays put, so egui lays out a screen 1.5× too large and
-//! paints a third of the chart outside the window. What falls off is the right
-//! and bottom edge — which on this chart is the toolbar's layer group, the
-//! price axis, the live strip and the dock rail.
+//! This module exists because of a defect it deliberately does **not** try to
+//! correct, and the reason for that restraint is the whole point of the file.
 //!
-//! This is an upstream bug, not ours: `emilk/egui#7648` (still open at 0.33.1)
-//! and `emilk/egui#7095` are the same family, and the jump from the 0.29 we
-//! build against to the current release is 262 compile errors for a version
-//! that still has it. So the size is corrected here, on the way in, and the
-//! rule is written as one pure function with the arithmetic on show.
+//! On Windows, a process whose DPI context has gone stale — the display's
+//! scaling changed without a sign-out, so the session's system DPI is 144 while
+//! the monitor reports 96 — lays the chart out 1.5x too large and paints a
+//! third of it outside the window. What falls off is the right and bottom edge,
+//! which on this chart is the toolbar's layer group, the price axis, the live
+//! strip and the dock rail. Measured: `screen_rect` 2560x1369 points at
+//! `native_pixels_per_point = 1.5`, painting 3840x2054 pixels into a surface
+//! that is really 2560x1369.
 //!
-//! **The invariant.** A window's client area cannot be larger than the screen
-//! it is on: `size_in_points × scale ≤ monitor_in_pixels`. When that fails, the
-//! size we were handed is already in pixels, and dividing by the scale recovers
-//! the points exactly — 2560 px ÷ 1.5 = 1706.7 pt, which paints back to 2560 px.
+//! Three candidate corrections were built and measured, and each failed for its
+//! own reason. They are written down here because the next person to try will
+//! reach for them in this order:
 //!
-//! **The limit, stated rather than hidden.** A window stretched across two
-//! side-by-side monitors is legitimately wider than the monitor egui reports,
-//! so width alone must never trigger a correction. Requiring *both* axes to
-//! overflow is what separates the two: a spanning window is wider without being
-//! taller, and a wrongly-scaled one overflows both by the same factor. A window
-//! spanning monitors stacked vertically *and* horizontally would fool this, and
-//! is left uncorrected on purpose — a rare arrangement, and drawing it small is
-//! worse than drawing it as the platform asked.
+//! 1. **Against `ViewportInfo::monitor_size`** — "a window cannot be bigger
+//!    than its screen". `egui-winit-0.29.1/src/lib.rs:970` builds that field as
+//!    `monitor.size().to_logical(pixels_per_point)`, so it is in **points**.
+//!    Comparing `points * scale` against it condemns every honest window on a
+//!    150% display: 1400x900 points evaluates `2100 > 1707` and `1350 > 961`
+//!    and gets shrunk to 933x600 — a correction far worse than the defect.
+//!    Reading it as points removes the danger and the detection with it, since
+//!    a maximised window legitimately *equals* its monitor in points.
+//! 2. **Against `screen_rect` vs `inner_rect`** — they are wrong together.
+//! 3. **Against the platform's own `GetClientRect`** — the reading this module
+//!    still provides. It comes back **3840x2052** from inside the process, not
+//!    the 2560x1369 the same call returns from a process with a correct DPI
+//!    context: Windows virtualises coordinates into the caller's context, so
+//!    this "independent" reading is wrong in exactly the same way and agrees
+//!    with egui to the pixel.
+//!
+//! The conclusion is the finding: every observable available *inside* the
+//! process is self-consistently wrong, because the thing that is wrong is the
+//! process's own coordinate space. A correction would have to key off something
+//! outside it — the GL framebuffer's real size, or a DPI comparison made in a
+//! different awareness context — and that is a change to how the app declares
+//! its DPI awareness, not a fix-up on the way into a frame.
+//!
+//! Upstream has the same family open and unfixed: `emilk/egui#7648` (0.33.1)
+//! and `emilk/egui#7095`. The jump from the 0.29 we build against is 262
+//! compile errors for a release that still has it.
+//!
+//! So what ships here is the *reading*, wired into the health summary beside
+//! `screen_pt` and `scale`. Those three numbers together are what turned this
+//! from "the buttons are gone" into a measurement, and they are what the next
+//! diagnosis will start from.
 
 use eframe::egui;
 
-/// How far past the monitor a size may sit before we call it wrong. Guards the
-/// float compare against a window that is legitimately flush with the screen
-/// edge, where the two sides land a rounding error apart.
-const OVERFLOW_SLACK_PX: f32 = 1.0;
-
-/// The size egui should lay out in, when the one we were handed cannot be
-/// points. `None` means the size is already right and nothing should change.
+/// A handle to the window, kept so the client area can be read back from the
+/// platform on any frame.
 ///
-/// `size` is what the platform reported, `scale` the pixels-per-point it
-/// reported alongside, and `monitor` the screen size — which eframe gives in
-/// physical pixels, the unit inconsistency this whole module is downstream of.
-#[must_use]
-pub(crate) fn corrected_size(
-    size: egui::Vec2,
-    scale: f32,
-    monitor: egui::Vec2,
-) -> Option<egui::Vec2> {
-    // At scale 1 the two units are the same number and there is nothing to get
-    // wrong. A non-finite or non-positive scale is not something to divide by.
-    if !(scale.is_finite() && scale > 1.0) {
-        return None;
+/// Taken once at startup from the [`eframe::CreationContext`], because that is
+/// where eframe hands out the window handle; `App::raw_input_hook`, where the
+/// correction is applied, has no window of its own.
+pub(crate) struct SurfaceProbe {
+    #[cfg(windows)]
+    hwnd: isize,
+}
+
+impl SurfaceProbe {
+    /// Take the platform handle, or `None` on a platform (or a windowing
+    /// backend) that does not offer the one this reads.
+    #[must_use]
+    pub(crate) fn new(_handle: &impl raw_window_handle::HasWindowHandle) -> Option<Self> {
+        #[cfg(windows)]
+        {
+            let handle = _handle.window_handle().ok()?;
+            match handle.as_raw() {
+                raw_window_handle::RawWindowHandle::Win32(win32) => Some(Self {
+                    hwnd: win32.hwnd.get(),
+                }),
+                _ => None,
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
     }
-    if !(size.x > 0.0 && size.y > 0.0 && monitor.x > 0.0 && monitor.y > 0.0) {
-        return None;
+
+    /// The window's client area in physical pixels, straight from the platform.
+    ///
+    /// This is the reading the whole module exists for: the one number egui's
+    /// own input cannot be wrong about, because it never passes through the
+    /// scale factor that is in doubt.
+    #[must_use]
+    pub(crate) fn client_size_px(&self) -> Option<egui::Vec2> {
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Foundation::{HWND, RECT};
+            use windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect;
+
+            let mut rect = RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            // SAFETY: `hwnd` came from the windowing backend for this process's
+            // own window, and is only read while that window is alive — the app
+            // owns it for the whole of its run. `GetClientRect` writes the
+            // `RECT` it is handed and touches nothing else.
+            let ok = unsafe { GetClientRect(self.hwnd as HWND, &raw mut rect) };
+            if ok == 0 {
+                return None;
+            }
+            let width = (rect.right - rect.left) as f32;
+            let height = (rect.bottom - rect.top) as f32;
+            (width > 0.0 && height > 0.0).then_some(egui::vec2(width, height))
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
     }
-    let overflows = |points: f32, monitor_px: f32| points * scale > monitor_px + OVERFLOW_SLACK_PX;
-    // Both axes, never one — see the module's note on spanning windows.
-    if !(overflows(size.x, monitor.x) && overflows(size.y, monitor.y)) {
-        return None;
-    }
-    Some(size / scale)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The reported bug, in the numbers it was measured with: a 2560×1369
-    /// client on a 2560×1440 screen at scale 1.5, which egui was laying out as
-    /// 2560×1369 *points* and painting as 3840×2054 pixels.
+    /// Off Windows there is no handle of the kind this reads, and the probe
+    /// says so rather than inventing a size — the health summary then reports
+    /// the client area as absent, which is the honest answer.
+    #[cfg(not(windows))]
     #[test]
-    fn a_maximised_window_reported_in_pixels_is_corrected_back_to_points() {
-        let corrected =
-            corrected_size(egui::vec2(2560.0, 1369.33), 1.5, egui::vec2(2560.0, 1440.0))
-                .expect("3840x2054 px of content cannot fit a 2560x1440 screen");
-        // Divided by the scale, and back to exactly the surface we have.
-        assert!((corrected.x - 1706.67).abs() < 0.01, "{corrected:?}");
+    fn a_platform_without_this_handle_reports_no_client_size() {
+        // Nothing to construct: `new` is the only constructor and it returns
+        // `None` on every non-Windows target, so no probe can exist to ask.
         assert!(
-            (corrected.x * 1.5 - 2560.0).abs() < 0.01,
-            "paints back to px"
+            size_of::<SurfaceProbe>() == 0,
+            "the probe carries no handle here"
         );
     }
 
-    /// The same window before it was maximised, which was never wrong.
+    /// On Windows the probe is a plain handle, and reading through a window
+    /// that does not exist fails rather than returning a made-up size.
+    #[cfg(windows)]
     #[test]
-    fn a_window_that_fits_its_screen_is_left_alone() {
+    fn a_dead_window_reports_no_client_size() {
+        let probe = SurfaceProbe { hwnd: 0 };
         assert_eq!(
-            corrected_size(egui::vec2(1400.0, 900.0), 1.5, egui::vec2(2560.0, 1440.0)),
+            probe.client_size_px(),
             None,
-            "1400x1.5 = 2100 px fits a 2560 px screen; nothing to correct"
+            "a handle that names no window has no client area to report"
         );
-    }
-
-    /// Scale 1 is every machine that never sees this bug, and the arithmetic
-    /// there is a no-op — so the rule must not fire on it whatever the sizes.
-    #[test]
-    fn scale_one_is_never_corrected() {
-        assert_eq!(
-            corrected_size(egui::vec2(2560.0, 1369.0), 1.0, egui::vec2(2560.0, 1440.0)),
-            None
-        );
-    }
-
-    /// The false positive this rule is shaped around: a window dragged wide
-    /// across two side-by-side monitors is genuinely wider than the monitor
-    /// egui names, and shrinking it would be the bug rather than the fix.
-    #[test]
-    fn a_window_spanning_two_monitors_is_not_mistaken_for_a_bad_scale() {
-        assert_eq!(
-            corrected_size(egui::vec2(3000.0, 800.0), 1.5, egui::vec2(2560.0, 1440.0)),
-            None,
-            "wider than one screen but not taller: a spanning window, not a unit mix-up"
-        );
-    }
-
-    /// A window flush with the screen edge must not be shaved by a rounding
-    /// error — the reason the compare carries slack at all.
-    #[test]
-    fn a_window_exactly_filling_the_screen_survives_the_float_compare() {
-        assert_eq!(
-            corrected_size(
-                egui::vec2(2560.0 / 1.5, 1440.0 / 1.5),
-                1.5,
-                egui::vec2(2560.0, 1440.0)
-            ),
-            None,
-            "a correctly-reported full-screen window is not an overflow"
-        );
-    }
-
-    /// Nonsense in, nothing out: a zero monitor or a garbage scale must not
-    /// produce a zero-sized or infinite screen for the chart to lay out in.
-    #[test]
-    fn degenerate_input_changes_nothing() {
-        let screen = egui::vec2(2560.0, 1369.0);
-        let monitor = egui::vec2(2560.0, 1440.0);
-        assert_eq!(corrected_size(screen, f32::NAN, monitor), None);
-        assert_eq!(corrected_size(screen, f32::INFINITY, monitor), None);
-        assert_eq!(corrected_size(screen, 0.0, monitor), None);
-        assert_eq!(corrected_size(screen, -1.5, monitor), None);
-        assert_eq!(corrected_size(screen, 1.5, egui::Vec2::ZERO), None);
-        assert_eq!(corrected_size(egui::Vec2::ZERO, 1.5, monitor), None);
     }
 }
