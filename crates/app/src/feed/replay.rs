@@ -533,9 +533,14 @@ fn play(
                 if !apply(control, &mut playhead, trades, &tx, &session) {
                     return;
                 }
-                // A restart or a seek: readers that sample once per frame
-                // learn of it even when the rerun has already advanced past
-                // their last sample, and where it began.
+                // The new position first, the rewind count after it. A reader
+                // that samples between the two must never see the count move
+                // while the position is still the pre-seek one: it would
+                // rewind its walk and then replay everything up to where the
+                // playhead *used* to be, all in one frame. This order can
+                // only be seen the other way round, which the reader's own
+                // "the position went backwards" check already handles.
+                status.publish(&playhead);
                 status.note_rewind(playhead.position_ms());
             }
             reported_finished = false;

@@ -160,7 +160,7 @@ fn draw_dashed_vertical(
 ///
 /// Named for where they sit in the split, because that is how the user picks
 /// one: the time pane is on the left, the flow pane on the right.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum PaneSide {
     #[default]
     Flow,

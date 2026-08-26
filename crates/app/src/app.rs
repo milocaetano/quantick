@@ -882,8 +882,11 @@ pub struct QuantickApp {
     /// first frame, through the panel button's own `enable`.
     pending_control_access_enable: bool,
     /// The indicator slots an operator other than the trader attached — the
-    /// only ones the annotate tier may take back off the chart.
-    operator_slots: std::collections::BTreeSet<u64>,
+    /// only ones the annotate tier may take back off the chart. Keyed by the
+    /// whole [`TabSlot`]: a slot number is allocated per pane and is reused
+    /// by every other pane, so the number alone would mark one tab's slot 0
+    /// as an operator's because another tab's slot 0 was.
+    operator_slots: std::collections::BTreeSet<TabSlot>,
     /// The `QUANTICK_CONTROL_ANNOTATE` hook: an agent-authored label on the
     /// first frame, so every attribution surface can be photographed.
     pending_control_annotation: Option<String>,
@@ -1200,7 +1203,7 @@ struct InspectorEdit {
 /// Slot ids are allocated per pane, so the id alone identifies nothing once
 /// there are two panes, let alone two tabs: without the rest, removing one
 /// tab's slot 0 would drop another's bookkeeping for its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct TabSlot {
     tab: u64,
     side: PaneSide,
@@ -2272,7 +2275,7 @@ impl QuantickApp {
         // Whose slot this is decides who may take it away again: the annotate
         // tier removes what it attached, never what the trader put there.
         if by_operator {
-            self.operator_slots.insert(slot.0);
+            self.operator_slots.insert(owner);
         }
         self.mark_indicator_state_dirty();
         (owner.tab, owner.side.into(), slot)
@@ -2285,19 +2288,29 @@ impl QuantickApp {
     /// takes back its own, and never removes work done by hand (plan §2.6).
     /// `Ok(false)` when there is no such slot at all.
     pub(crate) fn detach_script_indicator(&mut self, slot: u64) -> Result<bool, ()> {
-        let Some(target) = self
-            .slot_kinds
-            .iter()
-            .map(|(owner, _)| *owner)
-            .find(|owner| owner.slot.0 == slot)
-        else {
-            return Ok(false);
-        };
-        if !self.operator_slots.contains(&slot) {
-            return Err(());
+        // A slot number is allocated per pane, so several panes can carry the
+        // same one: the operator's own is the one to take, and matching on the
+        // number alone would remove whichever pane happened to be registered
+        // first — the trader's, as often as not.
+        let mut known = false;
+        let mut target = None;
+        for (owner, _) in &self.slot_kinds {
+            if owner.slot.0 != slot {
+                continue;
+            }
+            known = true;
+            if self.operator_slots.contains(owner) {
+                target = Some(*owner);
+                break;
+            }
         }
+        let Some(target) = target else {
+            // A slot that exists but belongs to the trader is refused; one
+            // that exists nowhere simply was not there.
+            return if known { Err(()) } else { Ok(false) };
+        };
         self.remove_indicator_at(target);
-        self.operator_slots.remove(&slot);
+        self.operator_slots.remove(&target);
         Ok(true)
     }
 
@@ -2743,6 +2756,7 @@ impl QuantickApp {
         // Its slots are gone with its panes; the bookkeeping must not outlive
         // them or a later tab reusing a slot number would inherit its kind.
         self.slot_kinds.retain(|(owner, _)| owner.tab != closed.id);
+        self.operator_slots.retain(|owner| owner.tab != closed.id);
         self.script_files
             .retain(|(owner, ..)| owner.tab != closed.id);
         if self.persisted_tab == Some(closed.id) {
@@ -3124,6 +3138,7 @@ impl QuantickApp {
         pane.indicator_worker
             .send(IndicatorCommand::Remove(target.slot));
         self.slot_kinds.retain(|(owner, _)| *owner != target);
+        self.operator_slots.remove(&target);
         self.script_files.retain(|(owner, ..)| *owner != target);
         self.mark_indicator_state_dirty();
     }
@@ -4700,6 +4715,7 @@ impl QuantickApp {
             }
         }
         self.slot_kinds.clear();
+        self.operator_slots.clear();
         self.script_files.clear();
         self.pending_hidden.clear();
         self.pending_styles.clear();
@@ -26884,6 +26900,104 @@ plot(close)
                 1,
                 crate::control::ActionOrigin::Human,
                 serde_json::json!({ "slot_id": mine.0.to_string() }),
+            )
+            .expect_err("the trader's own indicator is not this tier's to remove");
+        assert_eq!(refused.code.as_str(), codes::PERMISSION_DENIED);
+        assert_eq!(
+            indicator_kinds(&app).len(),
+            1,
+            "and it is still on the pane"
+        );
+    }
+
+    /// The regression the slot-identity fix exists for: slot numbers are
+    /// allocated per pane, so the trader's chart and an operator's second
+    /// chart both hold a slot 0. Keyed by the number alone, the operator's
+    /// detach walked `slot_kinds` and took whichever slot 0 was registered
+    /// first — the trader's.
+    #[test]
+    fn an_operator_detaching_its_own_slot_leaves_the_traders_slot_of_the_same_number() {
+        use quantick_control::error::codes;
+
+        const SCRIPT: &str = "//@version=5
+indicator(\"probe\")
+plot(close)
+";
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(4);
+        run_frame(&mut app, &ctx);
+
+        // The trader's own, on the tab that is already open.
+        let (traders_tab, _, traders_slot) =
+            app.attach_script_indicator("the trader's".to_owned(), SCRIPT.to_owned(), false);
+        for _ in 0..200 {
+            run_frame(&mut app, &ctx);
+            if !indicator_kinds(&app).is_empty() {
+                break;
+            }
+        }
+
+        // A second chart, whose slot numbering starts over from zero.
+        app.open_tab("binance".to_owned(), "ETHUSDT".to_owned(), None);
+        run_frame(&mut app, &ctx);
+        let (operators_tab, _, operators_slot) =
+            app.attach_script_indicator("an assistant's".to_owned(), SCRIPT.to_owned(), true);
+        for _ in 0..200 {
+            run_frame(&mut app, &ctx);
+            if !indicator_kinds(&app).is_empty() {
+                break;
+            }
+        }
+        assert_ne!(traders_tab, operators_tab, "two charts, not one");
+        assert_eq!(
+            traders_slot.0, operators_slot.0,
+            "the numbering starts over per pane, which is what made the bug reachable"
+        );
+
+        // The operator takes back its own. The trader's, wearing the same
+        // number on another chart, must still be there afterwards.
+        assert!(
+            app.control_action(
+                "indicator.script.detach",
+                1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({ "slot_id": operators_slot.0.to_string() }),
+            )
+            .is_ok(),
+            "an operator may take back what it attached"
+        );
+        run_frame(&mut app, &ctx);
+        assert!(
+            indicator_kinds(&app).is_empty(),
+            "the assistant's is off its own chart"
+        );
+
+        let traders_index = app
+            .control_tabs()
+            .iter()
+            .position(|tab| tab.id == traders_tab)
+            .expect("the trader's chart is still open");
+        assert_eq!(
+            app.control_tabs()[traders_index]
+                .focused_pane()
+                .indicators
+                .all()
+                .len(),
+            1,
+            "and the trader's, sharing only a number with it, was never touched"
+        );
+
+        // With its own claim spent, the same number now names only the
+        // trader's slot, and the tier refuses it rather than reaching across.
+        app.active_tab = traders_index;
+        run_frame(&mut app, &ctx);
+        let refused = app
+            .control_action(
+                "indicator.script.detach",
+                1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({ "slot_id": traders_slot.0.to_string() }),
             )
             .expect_err("the trader's own indicator is not this tier's to remove");
         assert_eq!(refused.code.as_str(), codes::PERMISSION_DENIED);
