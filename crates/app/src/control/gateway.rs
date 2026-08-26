@@ -1197,37 +1197,60 @@ impl ControlAccess {
     /// `false`, so the allocation here is paid once per change and never on a
     /// quiet frame. Identity drives the diff: an indicator is its slot, a
     /// drawing is its id, and a list that merely reordered emits nothing.
+    ///
+    /// A slot is an address, not an identity — the pane hands it out again
+    /// after a remove — so a slot whose kind changed is reported as the
+    /// detach and the attach it really is, never as one instance mutating.
     fn record_analysis_changes(
         &mut self,
         tab: &crate::tab::Tab,
         stored: &[PaneAnalysisKey],
         now: i64,
     ) {
+        let tab_id = tab.id.to_string();
         for (pane, side) in analysis_panes(tab) {
             let was = stored.iter().find(|key| key.pane_id == pane.id);
             let previous_indicators = was.map(|key| key.indicators.as_slice()).unwrap_or(&[]);
             let previous_drawings = was.map(|key| key.drawings.as_slice()).unwrap_or(&[]);
             let side = crate::control::PaneSideDto::from(side);
-            let tab_id = tab.id.to_string();
             let pane_id = pane.id.to_string();
 
-            for view in pane.indicators.all() {
+            let indicators = pane.indicators.all();
+            let drawings = pane.drawings.items();
+
+            for view in indicators {
                 match previous_indicators
                     .iter()
                     .find(|key| key.slot == view.slot.0)
                 {
-                    None => self.record_observed(
-                        "analysis",
-                        "analysis.indicator.attached",
-                        json!({
-                            "tab_id": tab_id,
-                            "pane_id": pane_id,
-                            "pane_side": side,
-                            "slot_id": view.slot.0.to_string(),
-                            "kind": view.kind.as_ref(),
-                        }),
+                    None => self.record_indicator_attached(
+                        &tab_id,
+                        &pane_id,
+                        side,
+                        view.slot.0,
+                        view.kind.as_ref(),
                         now,
                     ),
+                    // The pane reused the address for another constructor
+                    // between two frames. Two events, because two instances.
+                    Some(key) if *key.kind != *view.kind => {
+                        self.record_indicator_detached(
+                            &tab_id,
+                            &pane_id,
+                            side,
+                            key.slot,
+                            key.kind.as_ref(),
+                            now,
+                        );
+                        self.record_indicator_attached(
+                            &tab_id,
+                            &pane_id,
+                            side,
+                            view.slot.0,
+                            view.kind.as_ref(),
+                            now,
+                        );
+                    }
                     Some(key) => {
                         let failing = view.error.is_some() || view.stale.is_some();
                         if key.failing != failing {
@@ -1249,28 +1272,19 @@ impl ControlAccess {
                 }
             }
             for key in previous_indicators {
-                if !pane
-                    .indicators
-                    .all()
-                    .iter()
-                    .any(|view| view.slot.0 == key.slot)
-                {
-                    self.record_observed(
-                        "analysis",
-                        "analysis.indicator.detached",
-                        json!({
-                            "tab_id": tab_id,
-                            "pane_id": pane_id,
-                            "pane_side": side,
-                            "slot_id": key.slot.to_string(),
-                            "kind": key.kind.as_ref(),
-                        }),
+                if !indicators.iter().any(|view| view.slot.0 == key.slot) {
+                    self.record_indicator_detached(
+                        &tab_id,
+                        &pane_id,
+                        side,
+                        key.slot,
+                        key.kind.as_ref(),
                         now,
                     );
                 }
             }
 
-            for drawing in pane.drawings.items() {
+            for drawing in drawings {
                 match previous_drawings.iter().find(|key| key.id == drawing.id.0) {
                     None => self.record_observed(
                         "analysis",
@@ -1307,26 +1321,103 @@ impl ControlAccess {
                 }
             }
             for key in previous_drawings {
-                if !pane
-                    .drawings
-                    .items()
-                    .iter()
-                    .any(|drawing| drawing.id.0 == key.id)
-                {
-                    self.record_observed(
-                        "analysis",
-                        "analysis.drawing.removed",
-                        json!({
-                            "tab_id": tab_id,
-                            "pane_id": pane_id,
-                            "pane_side": side,
-                            "drawing_id": key.id.to_string(),
-                        }),
-                        now,
-                    );
+                if !drawings.iter().any(|drawing| drawing.id.0 == key.id) {
+                    self.record_drawing_removed(&tab_id, &pane_id, side, key.id, now);
                 }
             }
         }
+
+        // A pane the layout closed takes its whole arrangement with it. Walked
+        // separately because the loop above only visits panes that still
+        // exist, and a client left holding indicators and marks that are gone
+        // is exactly what this journal is for.
+        for key in stored {
+            if analysis_panes(tab).any(|(pane, _side)| pane.id == key.pane_id) {
+                continue;
+            }
+            let side = crate::control::PaneSideDto::from(key.side);
+            let pane_id = key.pane_id.to_string();
+            for indicator in &key.indicators {
+                self.record_indicator_detached(
+                    &tab_id,
+                    &pane_id,
+                    side,
+                    indicator.slot,
+                    indicator.kind.as_ref(),
+                    now,
+                );
+            }
+            for drawing in &key.drawings {
+                self.record_drawing_removed(&tab_id, &pane_id, side, drawing.id, now);
+            }
+        }
+    }
+
+    fn record_indicator_attached(
+        &mut self,
+        tab_id: &str,
+        pane_id: &str,
+        side: crate::control::PaneSideDto,
+        slot: u64,
+        kind: &str,
+        now: i64,
+    ) {
+        self.record_observed(
+            "analysis",
+            "analysis.indicator.attached",
+            json!({
+                "tab_id": tab_id,
+                "pane_id": pane_id,
+                "pane_side": side,
+                "slot_id": slot.to_string(),
+                "kind": kind,
+            }),
+            now,
+        );
+    }
+
+    fn record_indicator_detached(
+        &mut self,
+        tab_id: &str,
+        pane_id: &str,
+        side: crate::control::PaneSideDto,
+        slot: u64,
+        kind: &str,
+        now: i64,
+    ) {
+        self.record_observed(
+            "analysis",
+            "analysis.indicator.detached",
+            json!({
+                "tab_id": tab_id,
+                "pane_id": pane_id,
+                "pane_side": side,
+                "slot_id": slot.to_string(),
+                "kind": kind,
+            }),
+            now,
+        );
+    }
+
+    fn record_drawing_removed(
+        &mut self,
+        tab_id: &str,
+        pane_id: &str,
+        side: crate::control::PaneSideDto,
+        drawing_id: u64,
+        now: i64,
+    ) {
+        self.record_observed(
+            "analysis",
+            "analysis.drawing.removed",
+            json!({
+                "tab_id": tab_id,
+                "pane_id": pane_id,
+                "pane_side": side,
+                "drawing_id": drawing_id.to_string(),
+            }),
+            now,
+        );
     }
 
     fn record_observed(&mut self, module: &str, kind: &str, payload: Value, now: i64) {
@@ -1964,6 +2055,10 @@ struct TabKey {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PaneAnalysisKey {
     pane_id: u64,
+    /// Which half of the split this was. Kept so a pane the layout *closed*
+    /// can still name its side in the events that retire what it held — by
+    /// then there is no pane left to ask.
+    side: crate::pane::PaneSide,
     indicators: Vec<IndicatorKey>,
     drawings: Vec<DrawingKey>,
 }
@@ -2059,23 +2154,23 @@ fn tab_key(tab: &crate::tab::Tab) -> TabKey {
 }
 
 /// The panes of one tab, in the order both analysis scopes publish them.
+///
+/// [`crate::tab::Tab::panes`] and not a local `Vec`: this is walked by
+/// [`analysis_matches`] on every frame, and the version of this comparison
+/// #223's review removed was removed for allocating exactly one vector per
+/// frame. One walk shared with the scopes also keeps the journal's order and
+/// the wire's order from drifting apart.
 fn analysis_panes(
     tab: &crate::tab::Tab,
 ) -> impl Iterator<Item = (&crate::pane::ChartPane, crate::pane::PaneSide)> {
-    // An iterator and not a `Vec`: this is walked by `analysis_matches` on
-    // every frame, and the version of this comparison #223's review removed
-    // was removed for allocating exactly one vector per frame.
-    std::iter::once((&tab.flow_pane, crate::pane::PaneSide::Flow)).chain(
-        tab.time_pane
-            .as_ref()
-            .map(|time| (time, crate::pane::PaneSide::Time)),
-    )
+    tab.panes()
 }
 
 fn pane_analysis_keys(tab: &crate::tab::Tab) -> Vec<PaneAnalysisKey> {
     analysis_panes(tab)
-        .map(|(pane, _side)| PaneAnalysisKey {
+        .map(|(pane, side)| PaneAnalysisKey {
             pane_id: pane.id,
+            side,
             indicators: pane.indicators.all().iter().map(IndicatorKey::of).collect(),
             drawings: pane.drawings.items().iter().map(DrawingKey::of).collect(),
         })

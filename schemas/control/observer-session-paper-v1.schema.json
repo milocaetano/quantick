@@ -199,6 +199,10 @@
           "maxItems": 256,
           "type": "array"
         },
+        "closed_trades_page_start": {
+          "$ref": "#/$defs/WireU64",
+          "description": "Row of the whole ledger that `closed_trades[0]` stands for. Zero unless\nthe page was cut; published because the page is the ledger's *tail*, so\nwithout it a row number here cannot be placed in the ledger the count\nabove describes."
+        },
         "closed_trades_truncated": {
           "description": "True when `closed_trades` was cut at its page limit. The newest rows\nare kept: a ledger is read from its end.",
           "type": "boolean"
@@ -228,7 +232,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Row of the selected closed trade in the whole ledger — the same\nnumbering as `closed_trade_count`, not a position in the page above.\nSubtract `closed_trades_page_start` to index `closed_trades`; a row\nbelow that start was cut and is not on this page."
         },
         "symbol": {
           "type": "string"
@@ -261,7 +266,8 @@
         "working_orders_truncated",
         "closed_trades",
         "closed_trade_count",
-        "closed_trades_truncated"
+        "closed_trades_truncated",
+        "closed_trades_page_start"
       ],
       "type": "object"
     },

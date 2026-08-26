@@ -41,7 +41,6 @@ use crate::{
     drawings::{Drawing, DrawingScope},
     indicators::IndicatorView,
     pane::{ChartPane, PaneSide},
-    tab::Tab,
 };
 
 use super::{
@@ -197,8 +196,15 @@ pub(crate) struct PaneDrawingsSnapshot {
     pub drawings: Vec<DrawingSnapshot>,
     pub drawing_count: WireU64,
     pub drawings_truncated: bool,
-    /// Position of the selected drawing within this pane's own list, when the
-    /// selection is here.
+    /// The toolrail's "Hide all" is on, so nothing below is drawn whatever its
+    /// own eye says. A separate switch from the per-object `hidden` — "show
+    /// all" restores exactly the per-object visibility it found — and stated
+    /// here rather than folded into each row, so an agent that turns the layer
+    /// back on knows which marks it will get.
+    pub layer_hidden: bool,
+    /// Position of the selected drawing within this pane's own list — which is
+    /// `drawing_count` long and not the possibly truncated `drawings` page
+    /// above. Present only when the selection is on this pane.
     pub selected_index: Option<WireU64>,
 }
 
@@ -214,6 +220,8 @@ pub(crate) struct DrawingSnapshot {
     /// `this_chart` or `all_charts` — whether the tab's other panes show it.
     pub scope: String,
     pub locked: bool,
+    /// This object's own eye. It is not the whole answer to "is it on screen":
+    /// the pane's `layer_hidden` above hides every object regardless.
     pub hidden: bool,
     /// The tab changed the instrument under this mark. Time survives a symbol
     /// switch and price does not, so the anchors still resolve while the level
@@ -278,15 +286,20 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// Readings change on every closed bar, which under a dense tape is many times
 /// a second, and a key holding them would differ at every capture and so would
 /// mark nothing. What this tracks is a change to the *arrangement*: an
-/// indicator added, removed, re-input, hidden or newly failing; a drawing
-/// created, removed, locked, hidden, renamed or re-authored.
+/// indicator added, removed, re-input, hidden, re-declared by a hot reload or
+/// newly failing; a drawing created, removed, locked, hidden, renamed,
+/// re-authored, selected, or left standing over a market it was not drawn on.
+///
+/// Everything either scope publishes and the readings do not carry belongs
+/// here. A field on the wire that no key covers is a client polling a
+/// revision that never moves while the answer underneath it changed.
 fn revision(app: &QuantickApp) -> Vec<AnalysisRevisionKey> {
     app.control_tabs()
         .iter()
         .map(|tab| AnalysisRevisionKey {
             tab_id: tab.id,
-            panes: panes(tab)
-                .into_iter()
+            panes: tab
+                .panes()
                 .map(|(pane, _side)| PaneAnalysisRevisionKey {
                     pane_id: pane.id,
                     indicators: pane
@@ -301,6 +314,10 @@ fn revision(app: &QuantickApp) -> Vec<AnalysisRevisionKey> {
                                 view.error.is_some(),
                                 view.stale.is_some(),
                                 format!("{:?}", view.input_values),
+                                // A hot reload that kept the kind and the
+                                // bound values can still rename a plot or
+                                // declare a new one, and both cross the wire.
+                                format!("{:?}", view.descriptor),
                             )
                         })
                         .collect(),
@@ -315,9 +332,13 @@ fn revision(app: &QuantickApp) -> Vec<AnalysisRevisionKey> {
                                 drawing.hidden,
                                 drawing.name.is_some(),
                                 drawing.author.is_some(),
+                                drawing.foreign_market,
+                                drawing.off_series,
                             )
                         })
                         .collect(),
+                    layer_hidden: pane.drawings.all_hidden(),
+                    selected_drawing: pane.drawings.selected(),
                 })
                 .collect(),
         })
@@ -335,13 +356,19 @@ struct AnalysisRevisionKey {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PaneAnalysisRevisionKey {
     pane_id: u64,
-    /// `(slot, kind, hidden, failing, stale, bound inputs)`. The inputs are
-    /// compared through their `Debug` rendering because `InputValue` holds an
-    /// `f64` and so is `PartialEq` but not `Eq`; the rendering is exact for
-    /// every variant and this value never reaches the wire.
-    indicators: Vec<(u64, String, bool, bool, bool, String)>,
-    /// `(id, locked, hidden, named, authored)` — never the name itself.
-    drawings: Vec<(u64, bool, bool, bool, bool)>,
+    /// `(slot, kind, hidden, failing, stale, bound inputs, declaration)`. The
+    /// inputs and the declaration are compared through their `Debug` rendering
+    /// because both hold `f64`/`f32` fields and so are `PartialEq` but not
+    /// `Eq`; the rendering is exact for every variant and neither value ever
+    /// reaches the wire.
+    indicators: Vec<(u64, String, bool, bool, bool, String, String)>,
+    /// `(id, locked, hidden, named, authored, foreign market, off series)` —
+    /// never the name itself.
+    drawings: Vec<(u64, bool, bool, bool, bool, bool, bool)>,
+    /// The toolrail's "Hide all", which the scope publishes per pane.
+    layer_hidden: bool,
+    /// Which row the selection sits on, which the scope publishes too.
+    selected_drawing: Option<usize>,
 }
 
 fn project_indicators(app: &QuantickApp, _context: CaptureContext) -> IndicatorsSnapshot {
@@ -359,8 +386,8 @@ fn indicators_snapshot(app: &QuantickApp) -> IndicatorsSnapshot {
             .iter()
             .map(|tab| TabIndicatorsSnapshot {
                 tab_id: WireU64::new(tab.id),
-                panes: panes(tab)
-                    .into_iter()
+                panes: tab
+                    .panes()
                     .map(|(pane, side)| pane_indicators(pane, side))
                     .collect(),
             })
@@ -493,8 +520,8 @@ fn drawings_snapshot(app: &QuantickApp) -> DrawingsSnapshot {
             .iter()
             .map(|tab| TabDrawingsSnapshot {
                 tab_id: WireU64::new(tab.id),
-                panes: panes(tab)
-                    .into_iter()
+                panes: tab
+                    .panes()
                     .map(|(pane, side)| pane_drawings(pane, side))
                     .collect(),
             })
@@ -514,6 +541,7 @@ fn pane_drawings(pane: &ChartPane, side: PaneSide) -> PaneDrawingsSnapshot {
             .collect(),
         drawing_count: wire_usize(items.len()),
         drawings_truncated: items.len() > CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE,
+        layer_hidden: pane.drawings.all_hidden(),
         selected_index: pane.drawings.selected().map(wire_usize),
     }
 }
@@ -539,17 +567,6 @@ fn drawing_snapshot(drawing: &Drawing) -> DrawingSnapshot {
             client_name: author.client_name.clone(),
         }),
     }
-}
-
-/// The panes of one tab that hold analysis, focused side first is not required
-/// here: both scopes address panes by id, and a stable order keeps a capture
-/// diffable against the one before it.
-fn panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {
-    let mut panes = vec![(&tab.flow_pane, PaneSide::Flow)];
-    if let Some(time) = &tab.time_pane {
-        panes.push((time, PaneSide::Time));
-    }
-    panes
 }
 
 /// The wire name of a plot style. Owned here rather than on `PlotStyle`: the

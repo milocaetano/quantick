@@ -35,7 +35,7 @@
           "description": "Consecutive imbalanced levels that make a stacked zone."
         },
         "style": {
-          "description": "`bid_ask`, `delta`, `profile` or `auto` — how each ladder is read.",
+          "description": "`split`, `ladder`, `bid_ask`, `cluster` or `auto` — how each ladder is\nread. `auto` is not a look of its own: it picks the richest reading the\nzoom can pay for, again on every frame.",
           "type": "string"
         }
       },

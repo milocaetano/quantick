@@ -46,6 +46,7 @@
           "type": "boolean"
         },
         "hidden": {
+          "description": "This object's own eye. It is not the whole answer to \"is it on screen\":\nthe pane's `layer_hidden` above hides every object regardless.",
           "type": "boolean"
         },
         "locked": {
@@ -96,6 +97,10 @@
         "drawings_truncated": {
           "type": "boolean"
         },
+        "layer_hidden": {
+          "description": "The toolrail's \"Hide all\" is on, so nothing below is drawn whatever its\nown eye says. A separate switch from the per-object `hidden` — \"show\nall\" restores exactly the per-object visibility it found — and stated\nhere rather than folded into each row, so an agent that turns the layer\nback on knows which marks it will get.",
+          "type": "boolean"
+        },
         "pane_id": {
           "$ref": "#/$defs/WireU64"
         },
@@ -108,7 +113,7 @@
               "type": "null"
             }
           ],
-          "description": "Position of the selected drawing within this pane's own list, when the\nselection is here."
+          "description": "Position of the selected drawing within this pane's own list — which is\n`drawing_count` long and not the possibly truncated `drawings` page\nabove. Present only when the selection is on this pane."
         },
         "side": {
           "$ref": "#/$defs/PaneSideDto"
@@ -119,7 +124,8 @@
         "side",
         "drawings",
         "drawing_count",
-        "drawings_truncated"
+        "drawings_truncated",
+        "layer_hidden"
       ],
       "type": "object"
     },

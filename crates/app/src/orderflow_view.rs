@@ -219,6 +219,16 @@ impl OrderflowView {
         )
     }
 
+    /// The live lane's right edge as the last application frame published it,
+    /// under the same no-sync contract as [`Self::cached_health`].
+    ///
+    /// `None` when no flow layer is drawn: a chart with no lane has no edge to
+    /// report, and the newest print the engine happens to have seen is not one.
+    #[must_use]
+    pub(crate) fn cached_live_end_ms(&self) -> Option<i64> {
+        self.published.live_end_ms
+    }
+
     /// The heatmap setup this chart is drawing with, for a control capture.
     #[must_use]
     pub(crate) fn cached_config(&self) -> &HeatmapConfig {

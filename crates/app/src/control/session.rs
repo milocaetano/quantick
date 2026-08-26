@@ -123,6 +123,15 @@ pub(crate) struct TabPaperSnapshot {
     /// True when `closed_trades` was cut at its page limit. The newest rows
     /// are kept: a ledger is read from its end.
     pub closed_trades_truncated: bool,
+    /// Row of the whole ledger that `closed_trades[0]` stands for. Zero unless
+    /// the page was cut; published because the page is the ledger's *tail*, so
+    /// without it a row number here cannot be placed in the ledger the count
+    /// above describes.
+    pub closed_trades_page_start: WireU64,
+    /// Row of the selected closed trade in the whole ledger — the same
+    /// numbering as `closed_trade_count`, not a position in the page above.
+    /// Subtract `closed_trades_page_start` to index `closed_trades`; a row
+    /// below that start was cut and is not on this page.
     pub selected_trade_row: Option<WireU64>,
 }
 
@@ -227,6 +236,9 @@ fn revision(app: &QuantickApp) -> Vec<SessionRevisionKey> {
         .iter()
         .map(|tab| SessionRevisionKey {
             tab_id: tab.id,
+            // The paper scope names the market its rows belong to, and a tab
+            // can be pointed at another one without touching the ledger.
+            symbol: tab.symbol.clone(),
             replay: tab.replay.as_ref().map(|link| ReplayRevisionKey {
                 file_name: file_name(&link.session.path),
                 playing: link.status.is_playing(),
@@ -242,7 +254,7 @@ fn revision(app: &QuantickApp) -> Vec<SessionRevisionKey> {
                 .paper
                 .working_orders()
                 .iter()
-                .map(|order| (order.id.0, order.price, order.quantity))
+                .map(OrderRevisionKey::of)
                 .collect(),
             closed_trades: tab.paper.session_trades().len(),
             selected_trade_row: tab.paper.selected_trade_index(),
@@ -255,11 +267,39 @@ fn revision(app: &QuantickApp) -> Vec<SessionRevisionKey> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SessionRevisionKey {
     tab_id: u64,
+    symbol: String,
     replay: Option<ReplayRevisionKey>,
     position: Option<(&'static str, rust_decimal::Decimal, rust_decimal::Decimal)>,
-    working_orders: Vec<(u64, Option<rust_decimal::Decimal>, rust_decimal::Decimal)>,
+    working_orders: Vec<OrderRevisionKey>,
     closed_trades: usize,
     selected_trade_row: Option<usize>,
+}
+
+/// One resting order as the revision key compares it. Every level the paper
+/// scope publishes beside the order is here: a trader drags a stop or a target
+/// without touching the order's own price, and a key that watched the price
+/// alone would call that no change.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OrderRevisionKey {
+    id: u64,
+    price: Option<rust_decimal::Decimal>,
+    quantity: rust_decimal::Decimal,
+    stop_loss: Option<rust_decimal::Decimal>,
+    take_profit: Option<rust_decimal::Decimal>,
+    cancel_at: Option<rust_decimal::Decimal>,
+}
+
+impl OrderRevisionKey {
+    fn of(order: &Order) -> Self {
+        Self {
+            id: order.id.0,
+            price: order.price,
+            quantity: order.quantity,
+            stop_loss: order.bracket.stop_loss,
+            take_profit: order.bracket.take_profit,
+            cancel_at: order.cancel_at,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -357,6 +397,7 @@ fn tab_paper_snapshot(tab: &Tab) -> TabPaperSnapshot {
             .collect(),
         closed_trade_count: wire_usize(trades.len()),
         closed_trades_truncated: trade_page_start > 0,
+        closed_trades_page_start: wire_usize(trade_page_start),
         selected_trade_row: tab.paper.selected_trade_index().map(wire_usize),
     }
 }

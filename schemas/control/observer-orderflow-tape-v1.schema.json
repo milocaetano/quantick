@@ -112,7 +112,7 @@
     "TapeStateSnapshot": {
       "properties": {
         "age_ms": {
-          "description": "How far behind the newest print the tape is running. Absent when the\ntape has nothing to be behind.",
+          "description": "How far behind the newest print the tape was running at the instant\nthis capture was taken. Absent while replaying — a recording is played\non its own clock and is never late — and before anything has arrived.",
           "format": "int64",
           "type": [
             "integer",
@@ -137,7 +137,7 @@
           "x-unit": "unix_milliseconds"
         },
         "live_end_unix_ms": {
-          "description": "The right edge of the live lane, in venue time.",
+          "description": "The right edge of the live lane, in venue time. Absent when no flow\nlayer is drawn: a chart with no lane has no edge, and the newest print\nthe engine happens to have seen is not one.",
           "format": "int64",
           "type": [
             "integer",

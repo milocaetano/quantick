@@ -31,9 +31,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     app::QuantickApp,
+    footprint_config::FootprintStyle,
     orderflow::{DisplayGrouping, LaneWindow},
     orderflow_view::OrderflowView,
-    pane::{ChartPane, PaneSide},
+    pane::ChartPane,
     tab::Tab,
 };
 
@@ -92,11 +93,14 @@ pub(crate) struct TapeStateSnapshot {
     /// Venue time of the newest print the order-flow engine has seen.
     #[schemars(extend("x-unit" = "unix_milliseconds"))]
     pub last_event_unix_ms: Option<i64>,
-    /// How far behind the newest print the tape is running. Absent when the
-    /// tape has nothing to be behind.
+    /// How far behind the newest print the tape was running at the instant
+    /// this capture was taken. Absent while replaying — a recording is played
+    /// on its own clock and is never late — and before anything has arrived.
     #[schemars(extend("x-unit" = "milliseconds"))]
     pub age_ms: Option<i64>,
-    /// The right edge of the live lane, in venue time.
+    /// The right edge of the live lane, in venue time. Absent when no flow
+    /// layer is drawn: a chart with no lane has no edge, and the newest print
+    /// the engine happens to have seen is not one.
     #[schemars(extend("x-unit" = "unix_milliseconds"))]
     pub live_end_unix_ms: Option<i64>,
     /// The live lane is drawn, and how its window is chosen.
@@ -144,7 +148,9 @@ pub(crate) struct PaneFootprintSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct FootprintSetupSnapshot {
-    /// `bid_ask`, `delta`, `profile` or `auto` — how each ladder is read.
+    /// `split`, `ladder`, `bid_ask`, `cluster` or `auto` — how each ladder is
+    /// read. `auto` is not a look of its own: it picks the richest reading the
+    /// zoom can pay for, again on every frame.
     pub style: String,
     /// A level is imbalanced when one side exceeds the diagonal other side by
     /// this factor.
@@ -222,8 +228,10 @@ pub(crate) struct HeatmapStateSnapshot {
     /// The bucket the engine is capturing at. The auto-base logic can move it
     /// with no user action, so it is mirrored rather than assumed.
     pub capture_price_grouping: CanonicalDecimal,
-    /// How the captured buckets are merged for display: `native` or a
-    /// multiple of the capture bucket.
+    /// How the captured buckets are merged for display: `native`,
+    /// `multiple_<n>` for a fixed multiple of the capture bucket, or
+    /// `adaptive_<rows>` — the default — which picks a multiple near that row
+    /// count for the visible price window.
     pub display_grouping: String,
     #[schemars(extend("x-unit" = "ratio"))]
     pub opacity: Option<CanonicalDecimal>,
@@ -353,8 +361,8 @@ fn revision(app: &QuantickApp) -> Vec<OrderflowRevisionKey> {
         .iter()
         .map(|tab| OrderflowRevisionKey {
             tab_id: tab.id,
-            panes: panes(tab)
-                .into_iter()
+            panes: tab
+                .panes()
                 .map(|(pane, _side)| PaneOrderflowRevisionKey {
                     pane_id: pane.id,
                     footprint_visible: pane.footprint_visible,
@@ -415,20 +423,23 @@ struct EngineRevisionKey {
     config: String,
 }
 
-fn project_tape(app: &QuantickApp, _context: CaptureContext) -> TapeSnapshot {
+fn project_tape(app: &QuantickApp, context: CaptureContext) -> TapeSnapshot {
     TapeSnapshot {
         tabs: app
             .control_tabs()
             .iter()
             .map(|tab| TabTapeSnapshot {
                 tab_id: WireU64::new(tab.id),
-                panes: panes(tab)
-                    .into_iter()
+                panes: tab
+                    .panes()
                     .map(|(pane, side)| PaneTapeSnapshot {
                         pane_id: WireU64::new(pane.id),
                         side: side.into(),
                         engine: engine_availability(pane),
-                        tape: pane.orderflow.as_ref().map(|view| tape_state(tab, view)),
+                        tape: pane
+                            .orderflow
+                            .as_ref()
+                            .map(|view| tape_state(tab, view, context)),
                     })
                     .collect(),
             })
@@ -436,16 +447,17 @@ fn project_tape(app: &QuantickApp, _context: CaptureContext) -> TapeSnapshot {
     }
 }
 
-fn tape_state(tab: &Tab, view: &OrderflowView) -> TapeStateSnapshot {
+fn tape_state(tab: &Tab, view: &OrderflowView, context: CaptureContext) -> TapeStateSnapshot {
     let health = view.cached_health();
     TapeStateSnapshot {
         enabled: health.enabled,
         aggression_provenance: AGGRESSION_PROVENANCE.to_owned(),
         last_event_unix_ms: health.last_event_ms,
-        age_ms: health
-            .last_event_ms
-            .and_then(|newest| tab.tape_age_at(newest).map(|age| age.max(0))),
-        live_end_unix_ms: health.last_event_ms,
+        // Measured against the instant the capture was taken, which is the
+        // only clock an age can be read off. Handing the newest event in as
+        // "now" would compare it with itself and answer zero forever.
+        age_ms: tab.tape_age_at(context.captured_at_unix_ms),
+        live_end_unix_ms: view.cached_live_end_ms(),
         live_lane_enabled: view.lane_enabled(),
         live_lane_window: lane_window(view.live_lane_window()),
     }
@@ -459,8 +471,8 @@ fn project_footprint(app: &QuantickApp, _context: CaptureContext) -> FootprintSn
             .iter()
             .map(|tab| TabFootprintSnapshot {
                 tab_id: WireU64::new(tab.id),
-                panes: panes(tab)
-                    .into_iter()
+                panes: tab
+                    .panes()
                     .map(|(pane, side)| PaneFootprintSnapshot {
                         pane_id: WireU64::new(pane.id),
                         side: side.into(),
@@ -480,7 +492,7 @@ fn footprint_setup(
 ) -> FootprintSetupSnapshot {
     let config = pane.footprint_config(window);
     FootprintSetupSnapshot {
-        style: format!("{:?}", config.style).to_lowercase(),
+        style: footprint_style_name(config.style).to_owned(),
         imbalance_ratio: canonical_decimal(config.imbalance_ratio),
         imbalance_minimum_quantity: config.imbalance_min_qty.map(canonical_decimal),
         stacked_count: wire_usize(config.stacked_count),
@@ -497,8 +509,8 @@ fn project_bubbles(app: &QuantickApp, _context: CaptureContext) -> BubblesSnapsh
             .iter()
             .map(|tab| TabBubblesSnapshot {
                 tab_id: WireU64::new(tab.id),
-                panes: panes(tab)
-                    .into_iter()
+                panes: tab
+                    .panes()
                     .map(|(pane, side)| PaneBubblesSnapshot {
                         pane_id: WireU64::new(pane.id),
                         side: side.into(),
@@ -525,8 +537,8 @@ fn project_heatmap(app: &QuantickApp, _context: CaptureContext) -> HeatmapSnapsh
             .iter()
             .map(|tab| TabHeatmapSnapshot {
                 tab_id: WireU64::new(tab.id),
-                panes: panes(tab)
-                    .into_iter()
+                panes: tab
+                    .panes()
                     .map(|(pane, side)| PaneHeatmapSnapshot {
                         pane_id: WireU64::new(pane.id),
                         side: side.into(),
@@ -561,8 +573,8 @@ fn project_l2(app: &QuantickApp, _context: CaptureContext) -> L2Snapshot {
             .iter()
             .map(|tab| TabL2Snapshot {
                 tab_id: WireU64::new(tab.id),
-                panes: panes(tab)
-                    .into_iter()
+                panes: tab
+                    .panes()
                     .map(|(pane, side)| PaneL2Snapshot {
                         pane_id: WireU64::new(pane.id),
                         side: side.into(),
@@ -631,6 +643,20 @@ fn display_grouping_name(grouping: DisplayGrouping) -> String {
     }
 }
 
+/// The wire name of a footprint style. Owned here rather than derived from
+/// `Debug`: the vocabulary belongs to the control plane's contract, and a
+/// `{:?}` rendering silently republishes every future rename and every new
+/// variant as a name no client was told about.
+const fn footprint_style_name(style: FootprintStyle) -> &'static str {
+    match style {
+        FootprintStyle::Split => "split",
+        FootprintStyle::Ladder => "ladder",
+        FootprintStyle::BidAsk => "bid_ask",
+        FootprintStyle::Cluster => "cluster",
+        FootprintStyle::Auto => "auto",
+    }
+}
+
 fn lane_window(window: LaneWindow) -> LaneWindowSnapshot {
     match window {
         LaneWindow::Auto { zoom } => LaneWindowSnapshot {
@@ -644,14 +670,4 @@ fn lane_window(window: LaneWindow) -> LaneWindowSnapshot {
             fixed_ms: Some(ms),
         },
     }
-}
-
-/// The panes of one tab, in a stable order so a capture is diffable against
-/// the one before it.
-fn panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {
-    let mut panes = vec![(&tab.flow_pane, PaneSide::Flow)];
-    if let Some(time) = &tab.time_pane {
-        panes.push((time, PaneSide::Time));
-    }
-    panes
 }

@@ -223,9 +223,9 @@ pub(crate) fn cursor_snapshot(app: &QuantickApp) -> CursorSnapshot {
             .map(|hit| pointer_snapshot(app, tab, pane, side, hit))
     });
     let pointer_availability = if pointer.is_some() {
-        available()
+        AvailabilitySnapshot::available()
     } else {
-        unavailable("pointer_is_not_over_a_painted_chart")
+        AvailabilitySnapshot::unavailable("pointer_is_not_over_a_painted_chart")
     };
     CursorSnapshot {
         active_tab_id: WireU64::new(tab.id),
@@ -233,7 +233,9 @@ pub(crate) fn cursor_snapshot(app: &QuantickApp) -> CursorSnapshot {
         focused_pane_side: focused_side.into(),
         pointer,
         pointer_availability,
-        semantic_scene: unavailable("semantic_scene_not_registered_in_this_release"),
+        semantic_scene: AvailabilitySnapshot::unavailable(
+            "semantic_scene_not_registered_in_this_release",
+        ),
     }
 }
 
@@ -282,7 +284,9 @@ fn pointer_snapshot(
         flow_cell: hit.flow_cell.map(flow_cell_snapshot),
         drawing,
         control_id: None,
-        control_id_availability: unavailable("semantic_scene_not_registered_in_this_release"),
+        control_id_availability: AvailabilitySnapshot::unavailable(
+            "semantic_scene_not_registered_in_this_release",
+        ),
     }
 }
 
@@ -344,7 +348,7 @@ pub(crate) fn selection_snapshot(app: &QuantickApp) -> SelectionSnapshot {
                 provenance: "paper_trading_session_ledger".to_owned(),
             }
         }),
-        event_row: unavailable("event_stream_selection_is_not_available"),
+        event_row: AvailabilitySnapshot::unavailable("event_stream_selection_is_not_available"),
     }
 }
 
@@ -468,12 +472,4 @@ fn shared_drawing_hit(
             locked: drawing.locked,
         },
     ))
-}
-
-fn available() -> AvailabilitySnapshot {
-    AvailabilitySnapshot::available()
-}
-
-fn unavailable(reason: &str) -> AvailabilitySnapshot {
-    AvailabilitySnapshot::unavailable(reason)
 }

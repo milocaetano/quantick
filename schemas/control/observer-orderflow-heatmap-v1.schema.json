@@ -28,7 +28,7 @@
           "description": "The bucket the engine is capturing at. The auto-base logic can move it\nwith no user action, so it is mirrored rather than assumed."
         },
         "display_grouping": {
-          "description": "How the captured buckets are merged for display: `native` or a\nmultiple of the capture bucket.",
+          "description": "How the captured buckets are merged for display: `native`,\n`multiple_<n>` for a fixed multiple of the capture bucket, or\n`adaptive_<rows>` — the default — which picks a multiple near that row\ncount for the visible price window.",
           "type": "string"
         },
         "gamma": {

@@ -25822,7 +25822,64 @@ plot(close)
             footprint["setup"]["imbalance_ratio"].is_string(),
             "the ratio crosses as an exact decimal string"
         );
-        assert!(footprint["setup"]["style"].is_string());
+        // The style name is the control plane's own vocabulary, spelled the
+        // way the schema declares it. A `{:?}` rendering of the enum would say
+        // "split" here too and "bidask" for the one variant whose name has two
+        // words, which is the spelling no client was ever told about.
+        assert_eq!(
+            footprint["setup"]["style"], "split",
+            "the default style crosses under its wire name"
+        );
+        let mut styled = app;
+        for style in [
+            crate::footprint_config::FootprintStyle::Split,
+            crate::footprint_config::FootprintStyle::Ladder,
+            crate::footprint_config::FootprintStyle::BidAsk,
+            crate::footprint_config::FootprintStyle::Cluster,
+            crate::footprint_config::FootprintStyle::Auto,
+        ] {
+            styled.footprint_config.style = style;
+            let capture = registry
+                .capture(
+                    &styled,
+                    &observer_instance(),
+                    std::slice::from_ref(&scopes[1]),
+                )
+                .unwrap()
+                .into_serialized()
+                .unwrap();
+            let name = capture.scopes[&scopes[1]].value["tabs"][0]["panes"][0]["setup"]["style"]
+                .as_str()
+                .expect("every style has a wire name")
+                .to_owned();
+            assert!(
+                ["split", "ladder", "bid_ask", "cluster", "auto"].contains(&name.as_str()),
+                "{style:?} crossed as `{name}`, which the schema does not declare"
+            );
+        }
+
+        // The tape's age is measured against the capture's own clock. Handing
+        // the newest print in as "now" compares it with itself and answers
+        // zero for every tape, on every capture, forever.
+        let (mut aged, _aged_commands) = app_with_history(8);
+        let a_minute_ago = metrics::wall_clock_ms() - 60_000;
+        aged.active_tab_mut().latest_trade_ms = Some(a_minute_ago);
+        let late = registry
+            .capture(
+                &aged,
+                &observer_instance(),
+                std::slice::from_ref(&scopes[0]),
+            )
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let age = late.scopes[&scopes[0]].value["tabs"][0]["panes"][0]["tape"]["age_ms"]
+            .as_i64()
+            .expect("a tab with a print behind it has an age");
+        assert!(
+            (55_000..70_000).contains(&age),
+            "the tape is a minute behind its market and reports {age} ms"
+        );
 
         // The four engine-backed scopes state the absence rather than
         // reporting an empty book, which would read as a silent venue.
@@ -28050,6 +28107,28 @@ plot(close)
         assert!(
             listed["author"].is_null(),
             "the trader placed it by hand, so it carries no other author"
+        );
+
+        // "Hide all" is a switch of its own, and it decides what is on screen
+        // whatever each object's own eye says. Reporting only the per-object
+        // eye tells an agent every mark is visible on a pane showing none.
+        let pane = &capture.scopes[&scopes[3]].value["tabs"][0]["panes"][0];
+        assert_eq!(pane["layer_hidden"], false, "the layer starts drawn");
+        assert_eq!(listed["hidden"], false, "and so does this object");
+        app.active_tab_mut().flow_pane.drawings.set_all_hidden(true);
+        let hidden = registry
+            .capture(&app, &observer_instance(), &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let pane = &hidden.scopes[&scopes[3]].value["tabs"][0]["panes"][0];
+        assert_eq!(
+            pane["layer_hidden"], true,
+            "the pane says its whole drawing layer is off"
+        );
+        assert_eq!(
+            pane["drawings"][0]["hidden"], false,
+            "without rewriting each object's own eye, which `show all` restores"
         );
     }
 

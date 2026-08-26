@@ -4696,6 +4696,7 @@
                 "type": "boolean"
               },
               "hidden": {
+                "description": "This object's own eye. It is not the whole answer to \"is it on screen\":\nthe pane's `layer_hidden` above hides every object regardless.",
                 "type": "boolean"
               },
               "locked": {
@@ -4746,6 +4747,10 @@
               "drawings_truncated": {
                 "type": "boolean"
               },
+              "layer_hidden": {
+                "description": "The toolrail's \"Hide all\" is on, so nothing below is drawn whatever its\nown eye says. A separate switch from the per-object `hidden` — \"show\nall\" restores exactly the per-object visibility it found — and stated\nhere rather than folded into each row, so an agent that turns the layer\nback on knows which marks it will get.",
+                "type": "boolean"
+              },
               "pane_id": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -4758,7 +4763,7 @@
                     "type": "null"
                   }
                 ],
-                "description": "Position of the selected drawing within this pane's own list, when the\nselection is here."
+                "description": "Position of the selected drawing within this pane's own list — which is\n`drawing_count` long and not the possibly truncated `drawings` page\nabove. Present only when the selection is on this pane."
               },
               "side": {
                 "$ref": "#/$defs/PaneSideDto"
@@ -4769,7 +4774,8 @@
               "side",
               "drawings",
               "drawing_count",
-              "drawings_truncated"
+              "drawings_truncated",
+              "layer_hidden"
             ],
             "type": "object"
           },
@@ -6719,7 +6725,7 @@
                 "description": "Consecutive imbalanced levels that make a stacked zone."
               },
               "style": {
-                "description": "`bid_ask`, `delta`, `profile` or `auto` — how each ladder is read.",
+                "description": "`split`, `ladder`, `bid_ask`, `cluster` or `auto` — how each ladder is\nread. `auto` is not a look of its own: it picks the richest reading the\nzoom can pay for, again on every frame.",
                 "type": "string"
               }
             },
@@ -6848,7 +6854,7 @@
                 "description": "The bucket the engine is capturing at. The auto-base logic can move it\nwith no user action, so it is mirrored rather than assumed."
               },
               "display_grouping": {
-                "description": "How the captured buckets are merged for display: `native` or a\nmultiple of the capture bucket.",
+                "description": "How the captured buckets are merged for display: `native`,\n`multiple_<n>` for a fixed multiple of the capture bucket, or\n`adaptive_<rows>` — the default — which picks a multiple near that row\ncount for the visible price window.",
                 "type": "string"
               },
               "gamma": {
@@ -7304,7 +7310,7 @@
           "TapeStateSnapshot": {
             "properties": {
               "age_ms": {
-                "description": "How far behind the newest print the tape is running. Absent when the\ntape has nothing to be behind.",
+                "description": "How far behind the newest print the tape was running at the instant\nthis capture was taken. Absent while replaying — a recording is played\non its own clock and is never late — and before anything has arrived.",
                 "format": "int64",
                 "type": [
                   "integer",
@@ -7329,7 +7335,7 @@
                 "x-unit": "unix_milliseconds"
               },
               "live_end_unix_ms": {
-                "description": "The right edge of the live lane, in venue time.",
+                "description": "The right edge of the live lane, in venue time. Absent when no flow\nlayer is drawn: a chart with no lane has no edge, and the newest print\nthe engine happens to have seen is not one.",
                 "format": "int64",
                 "type": [
                   "integer",
@@ -7585,6 +7591,10 @@
                 "maxItems": 256,
                 "type": "array"
               },
+              "closed_trades_page_start": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Row of the whole ledger that `closed_trades[0]` stands for. Zero unless\nthe page was cut; published because the page is the ledger's *tail*, so\nwithout it a row number here cannot be placed in the ledger the count\nabove describes."
+              },
               "closed_trades_truncated": {
                 "description": "True when `closed_trades` was cut at its page limit. The newest rows\nare kept: a ledger is read from its end.",
                 "type": "boolean"
@@ -7614,7 +7624,8 @@
                   {
                     "type": "null"
                   }
-                ]
+                ],
+                "description": "Row of the selected closed trade in the whole ledger — the same\nnumbering as `closed_trade_count`, not a position in the page above.\nSubtract `closed_trades_page_start` to index `closed_trades`; a row\nbelow that start was cut and is not on this page."
               },
               "symbol": {
                 "type": "string"
@@ -7647,7 +7658,8 @@
               "working_orders_truncated",
               "closed_trades",
               "closed_trade_count",
-              "closed_trades_truncated"
+              "closed_trades_truncated",
+              "closed_trades_page_start"
             ],
             "type": "object"
           },
