@@ -349,10 +349,13 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
 
 /// The candles to answer one `FetchOhlcv` with, from the session's context.
 ///
-/// The span is measured back from the recording's first print, not from the
-/// wall clock: a session recorded in March is being replayed today, and "the
-/// last 90 days" has to mean 90 days of *the market's* time or the whole
-/// context would fall outside it.
+/// The span is measured back from `until_ms`, and `until_ms` defaults to the
+/// recording's first print rather than the wall clock: a session recorded in
+/// March is being replayed today, and "the last week" has to mean a week of
+/// *the market's* time or the whole context would fall outside it. A *load
+/// older* passes the instant before the oldest candle already held, and gets
+/// another span of the run-up in front of it — as far as the context file
+/// reaches, which is the whole of a recording's past.
 ///
 /// A recording with no context file answers empty and complete — that is the
 /// whole truth about it, not a fetch that came up short.
@@ -365,7 +368,9 @@ fn context_reply(
     context: Option<&quantick_replay::ContextSeries>,
     first_print_ms: i64,
     span_ms: i64,
+    before_ms: Option<i64>,
 ) -> FeedEvent {
+    let until_ms = before_ms.unwrap_or(first_print_ms);
     let Some(context) = context else {
         return FeedEvent::OhlcvHistory {
             interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
@@ -373,11 +378,11 @@ fn context_reply(
             slice: crate::feed::OhlcvSlice::Last { complete: true },
         };
     };
-    let earliest = first_print_ms.saturating_sub(span_ms);
+    let earliest = until_ms.saturating_sub(span_ms);
     let bars: Vec<_> = context
         .bars
         .iter()
-        .filter(|bar| bar.open_time >= earliest)
+        .filter(|bar| bar.open_time >= earliest && bar.open_time <= until_ms)
         .cloned()
         .collect();
     FeedEvent::OhlcvHistory {
@@ -475,8 +480,11 @@ fn play(
                 // Answered from the context file beside the recording, or
                 // answered empty — but always answered exactly once, or the
                 // pane waits for a reply that never comes.
-                Ok(FeedCommand::FetchOhlcv { span_ms, .. }) => {
-                    let reply = context_reply(context.as_ref(), session.start_ms(), span_ms);
+                Ok(FeedCommand::FetchOhlcv {
+                    span_ms, before_ms, ..
+                }) => {
+                    let reply =
+                        context_reply(context.as_ref(), session.start_ms(), span_ms, before_ms);
                     if tx.blocking_send(reply).is_err() {
                         return; // UI gone
                     }
@@ -500,6 +508,7 @@ fn play(
                         context.as_ref(),
                         session.start_ms(),
                         crate::feed::TIME_HISTORY_SPAN_MS,
+                        None,
                     );
                     // Both replies, in this order: the candles, then the empty
                     // trade batch that resolves the loading indicator. A
@@ -772,6 +781,7 @@ mod tests {
             .blocking_send(FeedCommand::FetchOhlcv {
                 span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
                 slice_ms: None,
+                before_ms: None,
             })
             .expect("the worker is listening");
 
@@ -850,6 +860,7 @@ mod tests {
             .blocking_send(FeedCommand::FetchOhlcv {
                 span_ms: 30 * 60_000,
                 slice_ms: None,
+                before_ms: None,
             })
             .expect("the worker is listening");
 
@@ -1061,6 +1072,7 @@ mod tests {
             .blocking_send(FeedCommand::FetchOhlcv {
                 span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
                 slice_ms: None,
+                before_ms: None,
             })
             .expect("the worker is listening");
 

@@ -285,15 +285,7 @@ const REOPEN_FLOOR_PX: [f32; 2] = [320.0, 240.0];
 /// the launch: a malformed env var must not stand between the user and their
 /// chart.
 fn window_size(saved: Option<[f32; 2]>) -> [f32; 2] {
-    // A saved size is floored at [`REOPEN_FLOOR_PX`] — not to protect the
-    // layout, which is free to be cramped, but so a session closed on a
-    // sliver of a window reopens on something the trader can grab.
-    let fallback = saved.map_or(DEFAULT_WINDOW_PX, |[width, height]| {
-        [
-            width.max(REOPEN_FLOOR_PX[0]),
-            height.max(REOPEN_FLOOR_PX[1]),
-        ]
-    });
+    let fallback = restore_size(saved);
     let Ok(raw) = std::env::var("QUANTICK_WINDOW_SIZE") else {
         return fallback;
     };
@@ -321,6 +313,22 @@ fn window_size(saved: Option<[f32; 2]>) -> [f32; 2] {
             fallback
         }
     }
+}
+
+/// The size a saved workspace reopens at, floored at [`REOPEN_FLOOR_PX`].
+///
+/// Not to protect the layout, which is free to be cramped, but so a session
+/// closed on a sliver of a window reopens on something the trader can grab.
+/// Split out from [`window_size`] because it is the whole of the restore
+/// policy and reads no environment, so a test can state it without touching a
+/// process-wide variable other tests are reading at the same time.
+fn restore_size(saved: Option<[f32; 2]>) -> [f32; 2] {
+    saved.map_or(DEFAULT_WINDOW_PX, |[width, height]| {
+        [
+            width.max(REOPEN_FLOOR_PX[0]),
+            height.max(REOPEN_FLOOR_PX[1]),
+        ]
+    })
 }
 
 /// `WIDTHxHEIGHT` in pixels, as asked for. `None` when the text is not two
@@ -358,13 +366,13 @@ mod window_size_tests {
     /// and it is a recovery floor, not a layout one.
     #[test]
     fn a_saved_sliver_reopens_on_something_the_trader_can_grab() {
-        // SAFETY: single-threaded test process; the variable is read by
-        // `window_size` on this thread only.
-        unsafe { std::env::remove_var("QUANTICK_WINDOW_SIZE") };
-        assert_eq!(window_size(Some([0.0, 0.0])), REOPEN_FLOOR_PX);
-        assert_eq!(window_size(Some([4.0, 900.0])), [REOPEN_FLOOR_PX[0], 900.0]);
-        assert_eq!(window_size(Some([1280.0, 720.0])), [1280.0, 720.0]);
-        assert_eq!(window_size(None), DEFAULT_WINDOW_PX);
+        assert_eq!(restore_size(Some([0.0, 0.0])), REOPEN_FLOOR_PX);
+        assert_eq!(
+            restore_size(Some([4.0, 900.0])),
+            [REOPEN_FLOOR_PX[0], 900.0]
+        );
+        assert_eq!(restore_size(Some([1280.0, 720.0])), [1280.0, 720.0]);
+        assert_eq!(restore_size(None), DEFAULT_WINDOW_PX);
     }
 
     #[test]

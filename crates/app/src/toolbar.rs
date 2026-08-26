@@ -237,6 +237,13 @@ pub struct ToolbarModel<'a> {
     pub history_step: &'a mut usize,
     /// Trades backfilled so far, for the history menu readout.
     pub history_trades: usize,
+    /// Venue candles held so far, for the history menu readout. Zero on a
+    /// feed that serves none.
+    pub history_candles: usize,
+    /// Whether asking for another span of older candles could get the trader
+    /// anything — see `Tab::can_load_older_candles`. Decided by the tab, which
+    /// is the only thing that knows what it has already asked for.
+    pub can_load_older_candles: bool,
     /// What the active source's backend can do.
     pub capabilities: FeedCapabilities,
     /// Whether the L2 depth map is shown. Capture runs regardless.
@@ -318,6 +325,13 @@ pub struct IndicatorMenuEntry {
 pub enum ToolbarAction {
     /// Fetch and prepend one page of older trades.
     LoadOlder,
+    /// Fetch and prepend one more span of older venue candles.
+    ///
+    /// The trade twin above and this one are two different records — a page of
+    /// prints and a span of buckets — served by two different venue endpoints
+    /// under two different capabilities. A feed can page one and not the
+    /// other, so they are two actions rather than one with a mode.
+    LoadOlderCandles,
     /// Show or hide the L2 depth map. Display-only: the recorder keeps
     /// running, so reopening the map brings its history back whole.
     SetHeatmap(bool),
@@ -624,9 +638,15 @@ fn param_summary(model: &ToolbarModel) -> String {
 }
 
 /// HISTORY: the `+ older ▾` split button. The page size lives in the caret
-/// menu; the whole group gates on the `history_paging` capability.
+/// menu, and so does the candle reach.
+///
+/// The button gates on `history_paging` — older *trades* — but the caret does
+/// not: a feed can serve candle history without paging its tape (Hyperliquid
+/// is exactly that), and gating the menu on the button's capability would
+/// leave the candle reach behind a control the trader cannot open.
 fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<ToolbarAction>) {
     let paging = model.capabilities.history_paging;
+    let menu = paging || model.capabilities.ohlcv_history;
     let load = ui
         .add_enabled(paging, egui::Button::new(format!("{} older", icons::PLUS)))
         .on_hover_text("fetch older trades and prepend them")
@@ -637,15 +657,19 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
     if load.clicked() {
         actions.push(ToolbarAction::LoadOlder);
     }
-    ui.add_enabled_ui(paging, |ui| {
+    ui.add_enabled_ui(menu, |ui| {
         ui.menu_button(icons::CARET_DOWN, |ui| {
-            draw_history_menu(ui, model);
+            draw_history_menu(ui, model, actions);
         });
     });
 }
 
 /// The history caret/overflow menu body: page size and the running total.
-fn draw_history_menu(ui: &mut egui::Ui, model: &mut ToolbarModel) {
+fn draw_history_menu(
+    ui: &mut egui::Ui,
+    model: &mut ToolbarModel,
+    actions: &mut Vec<ToolbarAction>,
+) {
     ui.label("page size (trades per load)");
     ui.add(
         egui::DragValue::new(model.history_step)
@@ -653,6 +677,28 @@ fn draw_history_menu(ui: &mut egui::Ui, model: &mut ToolbarModel) {
             .speed(100.0),
     );
     ui.small(format!("{} trades backfilled so far", model.history_trades));
+    // Candles are the other record, and the other reach. A chart opens on one
+    // week of them (`feed::TIME_HISTORY_SPAN_MS`) precisely so it opens fast;
+    // this is where the trader who wants the quarter asks for it, a week at a
+    // time. It lives in the menu rather than on the bar because it is a
+    // deliberate act on a time chart, not a per-minute one.
+    if model.capabilities.ohlcv_history {
+        ui.separator();
+        let older = ui
+            .add_enabled(
+                model.can_load_older_candles,
+                egui::Button::new(format!("{} older candles", icons::PLUS)),
+            )
+            .on_hover_text("fetch another week of venue candles and prepend it")
+            .on_disabled_hover_text(
+                "nothing older to fetch: a request is already out, the first                  one has not arrived yet, or the venue's record starts here",
+            );
+        if older.clicked() {
+            actions.push(ToolbarAction::LoadOlderCandles);
+            ui.close_menu();
+        }
+        ui.small(format!("{} venue candles held", model.history_candles));
+    }
 }
 
 /// TRADE: the simulated market entries and, while a position is open, its
@@ -942,8 +988,8 @@ fn draw_overflow(
                 actions.push(ToolbarAction::LoadOlder);
                 ui.close_menu();
             }
-            if paging {
-                draw_history_menu(ui, model);
+            if paging || model.capabilities.ohlcv_history {
+                draw_history_menu(ui, model, actions);
             }
         }
         if !plan.trade_inline {
@@ -1188,6 +1234,8 @@ mod tests {
                         imbalance_unit: &mut imbalance_unit,
                         history_step: &mut history_step,
                         history_trades: 1_000,
+                        history_candles: 0,
+                        can_load_older_candles: false,
                         capabilities: FeedCapabilities {
                             book_capture: !replaying,
                             history_paging: !replaying,
@@ -1276,6 +1324,8 @@ mod tests {
                     imbalance_unit: &mut imbalance_unit,
                     history_step: &mut history_step,
                     history_trades: 1_000,
+                    history_candles: 0,
+                    can_load_older_candles: false,
                     capabilities: FeedCapabilities {
                         book_capture: true,
                         history_paging: true,
@@ -1351,6 +1401,8 @@ mod tests {
                         imbalance_unit: &mut imbalance_unit,
                         history_step: &mut history_step,
                         history_trades: 200_000,
+                        history_candles: 0,
+                        can_load_older_candles: false,
                         capabilities: FeedCapabilities {
                             book_capture: false,
                             history_paging: false,
@@ -1421,6 +1473,8 @@ mod tests {
                     imbalance_unit: &mut imbalance_unit,
                     history_step: &mut history_step,
                     history_trades: 1_000,
+                    history_candles: 0,
+                    can_load_older_candles: false,
                     capabilities: FeedCapabilities {
                         book_capture: true,
                         history_paging: true,

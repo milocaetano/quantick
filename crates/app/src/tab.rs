@@ -317,6 +317,24 @@ pub struct Tab {
     /// part — the slices that had already been thrown away. So they are
     /// dropped, and the closing one re-opens the door for a fresh request.
     ohlcv_stale: bool,
+    /// The oldest candle held when the in-flight request went out, for a
+    /// request that was reaching *back* past it — `None` for the opening one.
+    ///
+    /// Kept so the closing reply can answer the only question the trader has
+    /// after clicking "older": did that get me anything? A reply is not empty
+    /// when the venue has nothing older — a provider serving from a block it
+    /// already holds honestly re-sends the same candles — so the answer is
+    /// "did the oldest bar move", which is a fact rather than an inference.
+    ohlcv_reaching_back: Option<i64>,
+    /// Whether the last *load older* came back with nothing older than what
+    /// was already held: the venue's record starts here, or the provider's
+    /// reach does.
+    ///
+    /// Latched rather than recomputed, because the only way to know is to
+    /// have asked. Cleared by a change of market, and by the opening request
+    /// of a new one — never by time passing, which cannot make a venue's
+    /// record deeper.
+    ohlcv_older_exhausted: bool,
     /// Whether the next candle request asks for slices (View → progressive
     /// venue history). Mirrored from the app each frame rather than read from
     /// it, because the tab is what phrases the request and a tab in a test has
@@ -422,6 +440,8 @@ impl Tab {
             ohlcv_base: None,
             ohlcv_pending: false,
             ohlcv_stale: false,
+            ohlcv_reaching_back: None,
+            ohlcv_older_exhausted: false,
             progressive_history: true,
             ohlcv_generation: 0,
             ohlcv_capable: false,
@@ -457,6 +477,10 @@ impl Tab {
         // The channel carrying any in-flight slices is dropped with the old
         // handle, so nothing survives to be dropped as stale.
         self.ohlcv_stale = false;
+        // A different market has a different record. Whatever this tab
+        // learned about how far back the last one reached says nothing here.
+        self.ohlcv_reaching_back = None;
+        self.ohlcv_older_exhausted = false;
         self.ohlcv_capable = false;
         self.loading.set_active(LoadingTask::VenueHistory, false);
         for pane in std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut()) {
@@ -562,10 +586,15 @@ impl Tab {
         let command = FeedCommand::FetchOhlcv {
             span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
             slice_ms,
+            // The opening request: back from the live edge. Reaching further
+            // than one span is `request_older_ohlcv_history`'s job.
+            before_ms: None,
         };
         match self.commands.try_send(command) {
             Ok(()) => {
                 self.ohlcv_pending = true;
+                self.ohlcv_reaching_back = None;
+                self.ohlcv_older_exhausted = false;
                 self.loading.begin(LoadingTask::VenueHistory);
                 tracing::info!(
                     target: "quantick::app",
@@ -721,6 +750,31 @@ impl Tab {
             "candle history arrived"
         );
         self.take_ohlcv_slice(interval_ms, bars);
+        // A *load older* that closed: did the oldest candle actually move? A
+        // reply that re-sends what is already held is not an empty reply, so
+        // the bar count cannot answer this and the oldest bucket can. Latched
+        // here rather than asked again, because the only way to find out was
+        // to ask.
+        if let Some(was_oldest) = self.ohlcv_reaching_back.take() {
+            let now_oldest = self.oldest_venue_candle_ms();
+            self.ohlcv_older_exhausted = now_oldest.is_none_or(|oldest| oldest >= was_oldest);
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "OHLCV_OLDER_SETTLED",
+                tab = self.id,
+                symbol = %self.symbol,
+                was_oldest_ms = was_oldest,
+                now_oldest_ms = now_oldest.unwrap_or(0),
+                exhausted = self.ohlcv_older_exhausted,
+                action = if self.ohlcv_older_exhausted {
+                    "stop_offering_older"
+                } else {
+                    "older_available"
+                },
+                "a request for older candles settled"
+            );
+        }
     }
 
     /// Merge one slice into the base and rebuild the prefix from it.
@@ -776,6 +830,121 @@ impl Tab {
             self.loading.begin(LoadingTask::VenueHistory);
         }
         self.take_ohlcv_history(interval_ms, bars, slice);
+    }
+
+    /// How many venue candles this tab holds, at the base interval. Zero on a
+    /// feed that serves none, and before the first reply lands.
+    #[must_use]
+    pub fn venue_candles_held(&self) -> usize {
+        self.ohlcv_base.as_ref().map_or(0, Vec::len)
+    }
+
+    /// The oldest venue candle held, by bucket start.
+    fn oldest_venue_candle_ms(&self) -> Option<i64> {
+        self.ohlcv_base.as_ref()?.first().map(|bar| bar.open_time)
+    }
+
+    /// Whether asking for older candles could get the trader anything.
+    ///
+    /// Four ways it cannot: the feed serves no candles at all, nothing has
+    /// been fetched yet (the opening request is what to wait for, not a second
+    /// one), a request is already out, or the last *load older* came back with
+    /// nothing older than what was held. The fourth is the only one that is
+    /// remembered rather than observed, and it is remembered because the only
+    /// way to learn it was to ask.
+    #[must_use]
+    pub fn can_load_older_candles(&self, capabilities: FeedCapabilities) -> bool {
+        capabilities.ohlcv_history
+            && !self.ohlcv_pending
+            && !self.ohlcv_older_exhausted
+            && self.oldest_venue_candle_ms().is_some()
+    }
+
+    /// Reach one more [`crate::feed::TIME_HISTORY_SPAN_MS`] into the past and
+    /// prepend what comes back.
+    ///
+    /// The whole reason a chart opens on a week rather than a quarter: the
+    /// deep history is available, it is simply asked for by the trader who
+    /// wants it. Each call is the same request the opening one was, with its
+    /// right-hand edge moved to just before the oldest candle held — so the
+    /// windows never overlap and the merge on the way back in has nothing to
+    /// reconcile.
+    ///
+    /// Reports whether a request actually went out, so a caller can tell "the
+    /// venue is fetching" from "there was nothing to ask for".
+    pub fn request_older_ohlcv_history(&mut self, capabilities: FeedCapabilities) -> bool {
+        if !self.can_load_older_candles(capabilities) {
+            tracing::debug!(
+                target: "quantick::app",
+                event_code = "OHLCV_OLDER_DECLINED",
+                tab = self.id,
+                pending = self.ohlcv_pending,
+                exhausted = self.ohlcv_older_exhausted,
+                held = self.oldest_venue_candle_ms().is_some(),
+                "nothing older to ask for"
+            );
+            return false;
+        }
+        let Some(oldest) = self.oldest_venue_candle_ms() else {
+            return false;
+        };
+        // One millisecond before the oldest bucket start held. The plan's
+        // windows are closed at both ends, so anything else would re-fetch the
+        // candle already on screen.
+        let before_ms = oldest.saturating_sub(1);
+        let slice_ms = self
+            .progressive_history
+            .then_some(crate::feed::OHLCV_SLICE_SPAN_MS);
+        let command = FeedCommand::FetchOhlcv {
+            span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+            slice_ms,
+            before_ms: Some(before_ms),
+        };
+        match self.commands.try_send(command) {
+            Ok(()) => {
+                self.ohlcv_pending = true;
+                self.ohlcv_reaching_back = Some(oldest);
+                self.loading.begin(LoadingTask::VenueHistory);
+                tracing::info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "OHLCV_OLDER_REQUESTED",
+                    tab = self.id,
+                    symbol = %self.symbol,
+                    span_ms = crate::feed::TIME_HISTORY_SPAN_MS,
+                    before_ms,
+                    slice_ms = slice_ms.unwrap_or(0),
+                    action = "await_prepend",
+                    "asked the venue for another span of older candles"
+                );
+                true
+            }
+            // Same two cases the opening request distinguishes, and for the
+            // same reasons: a busy frame is worth a retry, a dead feed is
+            // worth saying out loud.
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::debug!(
+                    target: "quantick::app",
+                    event_code = "OHLCV_OLDER_BACKPRESSURE",
+                    tab = self.id,
+                    action = "retry_on_next_click",
+                    "older-candle request not queued; channel full"
+                );
+                false
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "OHLCV_OLDER_CHANNEL_CLOSED",
+                    tab = self.id,
+                    symbol = %self.symbol,
+                    action = "no_history_until_feed_restart",
+                    "older-candle request cannot be sent; the feed is gone"
+                );
+                false
+            }
+        }
     }
 
     /// Rebuild every pane's prefix from the base at that pane's interval.

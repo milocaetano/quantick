@@ -169,7 +169,11 @@ async fn feed_task(
             }
             maybe_cmd = cmd_rx.recv() => {
                 match maybe_cmd {
-                    Some(FeedCommand::FetchOhlcv { span_ms, slice_ms }) => {
+                    Some(FeedCommand::FetchOhlcv {
+                        span_ms,
+                        slice_ms,
+                        before_ms,
+                    }) => {
                         if ohlcv_task.as_ref().is_some_and(|task| !task.is_finished()) {
                             // One fetch at a time; the in-flight one answers.
                             warn!(
@@ -186,6 +190,7 @@ async fn feed_task(
                                 symbol.clone(),
                                 span_ms,
                                 slice_ms,
+                                before_ms,
                                 ohlcv_tx.clone(),
                             ));
                         }
@@ -328,11 +333,14 @@ fn spawn_ohlcv(
     symbol: String,
     span_ms: i64,
     slice_ms: Option<i64>,
+    before_ms: Option<i64>,
     reply: mpsc::Sender<(Vec<quantick_engine::Bar>, crate::feed::OhlcvSlice)>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let symbol = symbol.as_str();
-        let now_ms = crate::metrics::wall_clock_ms();
+        // See the Binance twin: the live edge, or the instant a *load older*
+        // wants the reply to end at.
+        let now_ms = before_ms.unwrap_or_else(crate::metrics::wall_clock_ms);
         let windows = crate::feed::ohlcv_plan::plan(now_ms, span_ms, slice_ms);
         info!(
             target: "quantick::app",

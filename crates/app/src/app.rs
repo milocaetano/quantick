@@ -911,6 +911,11 @@ pub struct QuantickApp {
     /// Pages of older history the `QUANTICK_LOAD_OLDER` hook still owes, and
     /// the frame budget it has left to wait for a chart to ask from.
     pending_load_older: Option<(usize, u32)>,
+    /// Spans of older *candles* the `QUANTICK_LOAD_OLDER_CANDLES` hook still
+    /// owes, and the frame budget it has left to wait for a first reply to
+    /// reach back from. The trade twin of this is `pending_load_older`; they
+    /// are two records with two capabilities, so they are two hooks.
+    pending_load_older_candles: Option<(usize, u32)>,
     // Scripted-validation hook: one fixed-range volume profile straddling the
     // venue-prefix seam (when there is one). Consumed once.
     pending_frvp_demo: bool,
@@ -1329,6 +1334,7 @@ impl QuantickApp {
             context_bar: drawings::context_bar::ContextBar::default(),
             pending_drawing_demo: false,
             pending_load_older: None,
+            pending_load_older_candles: None,
             pending_frvp_demo: false,
             pending_avwap_demo: false,
             pending_replay_restart: None,
@@ -1568,6 +1574,15 @@ impl QuantickApp {
             .and_then(|value| value.trim().parse::<usize>().ok())
             .filter(|pages| *pages > 0)
             .map(|pages| (pages, LOAD_OLDER_HOOK_FRAMES));
+        // The same door onto the candle reach. A chart opens on one week
+        // (`feed::TIME_HISTORY_SPAN_MS`) and the quarter is asked for a week at
+        // a time, so "what does a deep chart look like" is a state no capture
+        // could otherwise reach without a hand on the menu.
+        app.pending_load_older_candles = std::env::var("QUANTICK_LOAD_OLDER_CANDLES")
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .filter(|spans| *spans > 0)
+            .map(|spans| (spans, LOAD_OLDER_HOOK_FRAMES));
         // How many anchors of the armed tool are already down when the run
         // opens — the half-placed state a screenshot cannot otherwise reach,
         // because it lives between two clicks. See `apply_drawing_draft`.
@@ -2821,6 +2836,8 @@ impl QuantickApp {
                 ),
             });
         let capabilities = self.active_tab().capabilities(&self.config);
+        let candles_held = self.active_tab().venue_candles_held();
+        let can_load_older_candles = self.active_tab().can_load_older_candles(capabilities);
         let feed_display_name = self.active_tab().feed_display_name(&self.config).to_owned();
         let heatmap_on = self.active_tab().tape().depth_visible();
         let bubbles_on = self.active_tab().tape().bubbles_enabled();
@@ -2881,6 +2898,8 @@ impl QuantickApp {
             imbalance_unit: &mut pane.imbalance_unit,
             history_step: &mut tab.history_step,
             history_trades: tab.history_trades,
+            history_candles: candles_held,
+            can_load_older_candles,
             capabilities,
             heatmap_on,
             bubbles_on,
@@ -2920,6 +2939,14 @@ impl QuantickApp {
     fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
             ToolbarAction::LoadOlder => self.active_tab_mut().request_older_history(),
+            ToolbarAction::LoadOlderCandles => {
+                // Read before the tab is borrowed mutably — and the capability
+                // block rather than the whole config, because that is all the
+                // request needs to know.
+                let capabilities = self.active_tab().capabilities(&self.config);
+                self.active_tab_mut()
+                    .request_older_ohlcv_history(capabilities);
+            }
             ToolbarAction::SetHeatmap(shown) => {
                 self.active_tab_mut().tape_mut().set_depth_visible(shown);
             }
@@ -8237,6 +8264,46 @@ impl QuantickApp {
         self.pending_load_older = (pages > 1).then_some((pages - 1, budget));
     }
 
+    /// The `QUANTICK_LOAD_OLDER_CANDLES` hook: the history menu's "+ older
+    /// candles" entry, pressed without a hand, once per frame at most.
+    ///
+    /// Same shape and same reasons as [`Self::apply_load_older`], against a
+    /// different record: it goes through `Tab::request_older_ohlcv_history`
+    /// rather than the feed command, so a run under this hook exercises the
+    /// trader's own path; it waits, because there is nothing to reach back
+    /// *from* until the opening request has landed; and it gives up rather
+    /// than hanging a capture on a venue that never answers.
+    fn apply_load_older_candles(&mut self) {
+        let Some((spans, budget)) = self.pending_load_older_candles else {
+            return;
+        };
+        let capabilities = self.active_tab().capabilities(&self.config);
+        if !self.active_tab().can_load_older_candles(capabilities) {
+            // Either the first span has not arrived yet, or one is in flight,
+            // or the venue's record starts here. The first two are worth
+            // waiting for; the third ends the same way — out of budget — and
+            // the log says which by naming what the tab held.
+            self.pending_load_older_candles = budget.checked_sub(1).map(|left| (spans, left));
+            if self.pending_load_older_candles.is_none() {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
+                    spans,
+                    frames_waited = LOAD_OLDER_HOOK_FRAMES,
+                    candles_held = self.active_tab().venue_candles_held(),
+                    ohlcv_history = capabilities.ohlcv_history,
+                    action = "chart_left_as_it_is",
+                    "QUANTICK_LOAD_OLDER_CANDLES found nothing to reach back from"
+                );
+            }
+            return;
+        }
+        self.active_tab_mut()
+            .request_older_ohlcv_history(capabilities);
+        self.pending_load_older_candles = (spans > 1).then_some((spans - 1, budget));
+    }
+
     /// The `QUANTICK_DRAWINGS_DEMO` hook: one of every registered drawing on
     /// the flow pane, spread across the visible bars, the last one selected
     /// so the inspector is on screen too.
@@ -9322,6 +9389,7 @@ impl QuantickApp {
         self.apply_scripted_view();
         self.apply_drawing_demo();
         self.apply_load_older();
+        self.apply_load_older_candles();
         self.apply_drawing_draft();
         self.apply_text_note_hook();
         self.apply_venue_history_demo();
@@ -23049,6 +23117,19 @@ plot(close)
         asked
     }
 
+    /// The `before_ms` every queued FetchOhlcv asked for, in order — what says
+    /// whether the tab asked for the opening span or reached back past what it
+    /// already holds.
+    fn drain_ohlcv_before_requests(commands: &mut mpsc::Receiver<FeedCommand>) -> Vec<Option<i64>> {
+        let mut asked = Vec::new();
+        while let Ok(command) = commands.try_recv() {
+            if let FeedCommand::FetchOhlcv { before_ms, .. } = command {
+                asked.push(before_ms);
+            }
+        }
+        asked
+    }
+
     /// A split app whose feed reports candle history, with the channel ends
     /// the test drives.
     fn history_app(
@@ -23139,6 +23220,124 @@ plot(close)
         assert!(
             has_price_axis(&texts),
             "the pane draws its chart: {texts:?}"
+        );
+    }
+
+    /// A chart opens on one week, not a quarter — and the quarter is still
+    /// reachable, a week at a time. "+ older candles" asks for the same span
+    /// again with its right-hand edge moved to just before the oldest bucket
+    /// held, so the two windows meet without overlapping.
+    #[test]
+    fn asking_for_older_candles_reaches_back_past_the_oldest_held() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        assert_eq!(
+            drain_ohlcv_before_requests(&mut commands),
+            vec![None],
+            "the opening request reaches back from the live edge"
+        );
+        assert!(
+            !app.active_tab()
+                .can_load_older_candles(app.active_tab().capabilities(&app.config)),
+            "with nothing held there is nothing to reach back from"
+        );
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-120, -20),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+        let oldest = -120 * crate::feed::OHLCV_BASE_INTERVAL_MS;
+        assert_eq!(app.active_tab().venue_candles_held(), 100);
+        assert!(
+            app.active_tab()
+                .can_load_older_candles(app.active_tab().capabilities(&app.config)),
+            "now there is"
+        );
+
+        let slots_before = app.active_tab().pane(PaneSide::Time).slots();
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        assert_eq!(
+            drain_ohlcv_before_requests(&mut commands),
+            vec![Some(oldest - 1)],
+            "one millisecond before the oldest bucket held, so nothing is fetched twice"
+        );
+        assert!(
+            app.active_tab()
+                .loading
+                .is_active(LoadingTask::VenueHistory),
+            "and the chart says it is waiting again"
+        );
+
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history_range(-200, -120),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        assert_eq!(
+            app.active_tab().venue_candles_held(),
+            180,
+            "the older span went in front of what was already held"
+        );
+        assert!(
+            app.active_tab().pane(PaneSide::Time).slots() > slots_before,
+            "and the chart grew leftwards by it"
+        );
+        assert!(
+            app.active_tab()
+                .can_load_older_candles(app.active_tab().capabilities(&app.config)),
+            "a span that brought something older leaves the door open"
+        );
+    }
+
+    /// The venue's record starts somewhere, and the only way to find that out
+    /// is to ask. A provider that answers a *load older* by re-sending what is
+    /// already held is not answering empty — so the test is whether the oldest
+    /// bucket moved, and a run that did not move it stops offering the button.
+    #[test]
+    fn a_load_older_that_brings_nothing_older_stops_offering() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_ohlcv_before_requests(&mut commands);
+        let held = venue_history_range(-120, -20);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: held.clone(),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        assert_eq!(drain_ohlcv_before_requests(&mut commands).len(), 1);
+        // The same candles again — an honest answer from a provider serving
+        // from a block it already holds, and not an empty one.
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: held,
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        assert!(
+            !app.active_tab()
+                .can_load_older_candles(app.active_tab().capabilities(&app.config)),
+            "nothing older came back, so there is nothing older to offer"
+        );
+        app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
+        assert!(
+            drain_ohlcv_before_requests(&mut commands).is_empty(),
+            "and pressing it again asks the venue nothing"
         );
     }
 
