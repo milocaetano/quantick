@@ -1003,7 +1003,7 @@ impl Tab {
     ///
     /// Runs at the top of the frame after the click, so the overlay armed by
     /// [`Self::set_layout`] has already been painted once.
-    pub fn apply_pending_layout(&mut self, config: &AppConfig) {
+    pub fn apply_pending_layout(&mut self, config: &AppConfig, style: &ChartStyle) {
         if !self.pending_time_pane {
             return;
         }
@@ -1021,6 +1021,16 @@ impl Tab {
         // second view, and the boot's QUANTICK_INVERTED hook fires before
         // this pane exists at all.
         pane.hidden_layers = self.flow_pane.hidden_layers.clone();
+        // ...and the same is true of every layer that does not live in that
+        // set. `hidden_layers` alone left the footprint behind — a per-pane
+        // field of its own — so the split opened with the ladder on in the
+        // flow pane and off in the time pane, contradicting the paragraph
+        // above and reporting the toolbar's footprint lamp off the moment the
+        // trader clicked into the left chart. Copying the *switches* rather
+        // than a list of field names is what keeps the next per-pane layer
+        // from being forgotten here: `apply_layer_states` drops whatever this
+        // pane does not draw, which is the whole of what §11 asks for.
+        pane.apply_layer_states(&self.flow_pane.layer_states(style));
         pane.price_view
             .set_inverted(self.flow_pane.price_view.is_inverted());
         self.time_pane = Some(pane);

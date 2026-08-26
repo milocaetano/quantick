@@ -51,6 +51,7 @@ use crate::toolbar::{self, ToolbarAction};
 use crate::toolrail::{Tool, ToolRail, ToolboxDock};
 use crate::ui_state;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
+use crate::window_scale;
 
 /// Width of the right-hand price-axis gutter, in pixels (§5 zone 9).
 const AXIS_GUTTER: f32 = 64.0;
@@ -1006,8 +1007,14 @@ pub struct QuantickApp {
     /// panel. A dozen bool reads and an integer compare: cheaper than teaching
     /// four call sites to remember.
     saved_layer_mask: u32,
-    /// What the file said at startup, applied to every pane opened since.
-    layer_defaults: std::collections::BTreeMap<ChartLayer, bool>,
+    /// The last size [`Self::correct_window_scale`] had to put back into
+    /// points, so the correction is announced when it starts rather than on
+    /// every frame it holds for. `None` while the platform is reporting
+    /// honestly.
+    corrected_window_size: Option<egui::Vec2>,
+    /// Whether `QUANTICK_WINDOW_MAXIMIZED=1` still owes the window a maximise.
+    /// Drained on the first frame — see [`Self::apply_maximize_hook`].
+    pending_maximize: bool,
     /// Where a pane's layer menu leaves the grid switch and the "an indicator
     /// was hidden" flag; drained right after the canvas is drawn.
     layer_actions: chart_layers::LayerActions,
@@ -1356,7 +1363,9 @@ impl QuantickApp {
             manager_action_rects: Vec::new(),
             chart_layers_path: chart_layers::default_path(),
             saved_layer_mask: 0,
-            layer_defaults: std::collections::BTreeMap::new(),
+            corrected_window_size: None,
+            pending_maximize: std::env::var("QUANTICK_WINDOW_MAXIMIZED")
+                .is_ok_and(|value| value == "1"),
             layer_actions: chart_layers::LayerActions::default(),
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
             footprint_settings_path,
@@ -2671,6 +2680,15 @@ impl QuantickApp {
         // a market opened to compare against the active one is only
         // comparable the same way up. Per pane; a pane the source tab does
         // not have follows its flow chart.
+        // The layers the active tab is *actually showing*, read before the new
+        // tab is pushed. This used to be `self.layer_defaults` — the map read
+        // off the file at startup — which was only harmless while that map was
+        // whatever partial thing the trader's file happened to hold. Now that a
+        // file's silence resolves to the shipped answer (`chart_layers::load`),
+        // that map speaks for every layer, and applying it here would undo the
+        // switches of the session mid-flight. Reading the live state is also
+        // what the comment below has always promised.
+        let inherited_layers = self.active_tab().flow_pane.layer_states(&self.style);
         let flow_inverted = self.active_tab().flow_pane.price_view.is_inverted();
         let time_inverted = self
             .active_tab()
@@ -2689,10 +2707,9 @@ impl QuantickApp {
         // The new tab opens on the layers the user left showing, over the
         // preset it just put on: opening a second market is not a request to
         // bring back the chrome they switched off.
-        let defaults = self.layer_defaults.clone();
         self.active_tab_mut()
             .flow_pane
-            .apply_layer_states(&defaults);
+            .apply_layer_states(&inherited_layers);
         // The scripted footprint/zoom hooks reach tabs opened later too: the
         // replay tab a validation run autostarts is the tab the run means,
         // and it does not exist yet when the boot hooks fire.
@@ -2822,7 +2839,16 @@ impl QuantickApp {
             });
         let capabilities = self.active_tab().capabilities(&self.config);
         let feed_display_name = self.active_tab().feed_display_name(&self.config).to_owned();
-        let heatmap_on = self.active_tab().tape().depth_visible();
+        // The *switch*, not what capture lets through it — the same reading
+        // the layer file was taught in 848cba0, and for a sibling reason. A
+        // lamp lit from `depth_visible()` (`enabled && show_depth`) reports
+        // the heatmap off for as long as book capture is starting, or forever
+        // on a source with no book: the trader sees an unlit button, presses
+        // it, and switches the layer they wanted *off*. The button already has
+        // an honest way to say a source cannot fill it — `.enabled(...)` with
+        // its `disabled_explanation` — so the lamp beside it answers the only
+        // other question: is this layer switched on.
+        let heatmap_on = self.active_tab().tape().depth_switched_on();
         let bubbles_on = self.active_tab().tape().bubbles_enabled();
         // The focused pane's slots (§11): the menu lists what a command from
         // it would act on, and never the pane beside it.
@@ -4071,6 +4097,35 @@ impl QuantickApp {
         if mask == self.saved_layer_mask {
             return;
         }
+        // Name every switch that moved, before writing it down.
+        //
+        // This file is the trader's own answer, and it outranks the shipped
+        // default from the next launch on — so a layer that goes off without a
+        // click is not a display glitch, it is a choice attributed to someone
+        // who never made it, and it lasts. The bug that motivated this line was
+        // exactly that shape and cost a day to chase, because the only record
+        // was the file itself: a trio of `false`s with no timestamp, no
+        // sequence and nothing to say whether a hand had been near them.
+        //
+        // Off the frame path in every sense that matters: the mask compare
+        // above already gates it, so this runs on the frames a switch actually
+        // moves — a handful in a session — and not one of the other 60 a
+        // second.
+        let flipped = mask ^ self.saved_layer_mask;
+        for (bit, layer) in ChartLayer::ALL.into_iter().enumerate() {
+            if flipped & (1 << bit) == 0 {
+                continue;
+            }
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "CHART_LAYER_SWITCHED",
+                layer = layer.id(),
+                on = mask & (1 << bit) != 0,
+                action = "persist_switch",
+                "a chart layer switch moved; recording it as the trader's choice"
+            );
+        }
         chart_layers::save(
             &self.chart_layers_path,
             &self.active_tab().flow_pane.layer_states(&self.style),
@@ -4084,17 +4139,16 @@ impl QuantickApp {
     /// still wins for the run it was set on: a validation session asks for the
     /// heatmap on the command line and gets it, whatever the file remembers.
     fn restore_chart_layers(&mut self) {
-        self.layer_defaults = chart_layers::load(&self.chart_layers_path);
+        let defaults = chart_layers::load(&self.chart_layers_path);
         // Whatever the file said (including nothing at all) is now on screen;
         // only a change from here is worth another write.
-        if self.layer_defaults.is_empty() {
+        if defaults.is_empty() {
             self.saved_layer_mask = self.layer_mask();
             return;
         }
-        if let Some(grid) = self.layer_defaults.get(&ChartLayer::Grid) {
+        if let Some(grid) = defaults.get(&ChartLayer::Grid) {
             self.style.canvas.grid_enabled = *grid;
         }
-        let defaults = self.layer_defaults.clone();
         self.apply_layer_defaults(&defaults);
         self.saved_layer_mask = self.layer_mask();
         tracing::info!(
@@ -5289,6 +5343,85 @@ impl QuantickApp {
     /// viewport has already been asked to close: what a workspace should
     /// remember is the window the trader was working in, not whatever the
     /// platform reports on the way out.
+    /// Take the window manager's own maximise, once, on the first frame.
+    ///
+    /// Through [`egui::ViewportCommand::Maximized`] rather than the viewport
+    /// builder's `with_maximized`: eframe 0.29 does not honour that flag beside
+    /// an `inner_size`, and a hook that silently opens a 1100×650 window while
+    /// reporting success is worse than no hook — a validation run would
+    /// photograph the wrong state and call it a pass. The command is the one
+    /// the platform runs when a hand hits the title bar, which is the state
+    /// this hook exists to reach.
+    fn apply_maximize_hook(&mut self, ctx: &egui::Context) {
+        if !self.pending_maximize {
+            return;
+        }
+        self.pending_maximize = false;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "WINDOW_MAXIMIZE_AUTOSTART",
+            action = "maximize",
+            "QUANTICK_WINDOW_MAXIMIZED asked for the maximised layout"
+        );
+    }
+
+    /// Put a wrongly-scaled window size back into points, and say so once.
+    ///
+    /// Both the screen rect and the viewport's inner rect are corrected, and
+    /// they have to move together: the first is what the chart lays out in, and
+    /// the second is what [`Self::maintain_workspace`] writes into the saved
+    /// workspace. Leaving the second alone would bank the pixel count as a
+    /// point count, so the *next* launch would open a window 1.5× too large
+    /// with no scale bug in sight — the defect outliving its cause, which is
+    /// the shape of bug this codebase already learned to distrust in the layer
+    /// file.
+    ///
+    /// Logged once per corrected size rather than once per frame: the numbers
+    /// are worth having when this is diagnosed again, and sixty identical lines
+    /// a second are not.
+    fn correct_window_scale(&mut self, raw_input: &mut egui::RawInput) {
+        let viewport = raw_input.viewport();
+        let (Some(scale), Some(monitor)) =
+            (viewport.native_pixels_per_point, viewport.monitor_size)
+        else {
+            return;
+        };
+        let Some(screen) = raw_input.screen_rect else {
+            return;
+        };
+        let Some(size) = window_scale::corrected_size(screen.size(), scale, monitor) else {
+            self.corrected_window_size = None;
+            return;
+        };
+        if self.corrected_window_size != Some(size) {
+            self.corrected_window_size = Some(size);
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "WINDOW_SCALE_CORRECTED",
+                reported_w = screen.width(),
+                reported_h = screen.height(),
+                scale,
+                monitor_px_w = monitor.x,
+                monitor_px_h = monitor.y,
+                corrected_w = size.x,
+                corrected_h = size.y,
+                action = "lay_out_in_points",
+                "the platform reported the window in pixels where points were due; corrected"
+            );
+        }
+        raw_input.screen_rect = Some(egui::Rect::from_min_size(screen.min, size));
+        let viewport = raw_input
+            .viewports
+            .entry(raw_input.viewport_id)
+            .or_default();
+        if let Some(inner) = viewport.inner_rect {
+            viewport.inner_rect = Some(egui::Rect::from_min_size(inner.min, size));
+        }
+    }
+
     fn maintain_workspace(&mut self, ctx: &egui::Context) {
         let (size, closing) = ctx.input(|input| {
             let viewport = input.viewport();
@@ -5344,11 +5477,28 @@ impl QuantickApp {
     }
 
     /// Periodically log a perf summary and warn on threshold breaches.
-    fn maybe_emit_summary(&mut self, now: Instant) {
+    fn maybe_emit_summary(&mut self, now: Instant, ctx: &egui::Context) {
         let elapsed = now - self.last_summary;
         if elapsed < SUMMARY_INTERVAL {
             return;
         }
+        // The window's own geometry, because a chart that lays out wider than
+        // the surface it is painted on loses its right edge — the toolbar's
+        // layer group, the price axis, the live strip and the dock all live
+        // there — and nothing else in this line would say so. `screen` is what
+        // egui laid out in, `surface` what the platform gave it, and `scale`
+        // the number between them; when `screen * scale` and `surface`
+        // disagree, the difference is the strip of chart nobody can see.
+        // Read outside the `input` closure: egui holds one lock for the whole
+        // of it, and reaching back into the context from inside deadlocks.
+        let zoom = ctx.zoom_factor();
+        let (screen, scale, native_scale) = ctx.input(|input| {
+            (
+                input.screen_rect.size(),
+                input.pixels_per_point(),
+                input.viewport().native_pixels_per_point,
+            )
+        });
         let rate = self.trades_since_summary as f64 / elapsed.as_secs_f64();
         let lag = self.active_tab().trade_arrival_ms();
         let avg = self.frames.avg_ms().unwrap_or(0.0);
@@ -5379,6 +5529,13 @@ impl QuantickApp {
             live_trades = self.active_tab().live_trades,
             bar_spec = self.active_tab().flow_pane.state.spec().summary(),
             canvas_layout = ?self.active_tab().layout,
+            screen_pt_w = screen.x,
+            screen_pt_h = screen.y,
+            surface_px_w = screen.x * scale,
+            surface_px_h = screen.y * scale,
+            scale = scale,
+            native_scale = native_scale,
+            zoom_factor = zoom,
             time_pane_spec = self.active_tab().time_pane.as_ref().map(|pane| pane.state.spec().summary()),
             // Drawings are a per-frame, O(objects) paint cost, and the shared
             // ones are additionally reprojected on every other pane of the
@@ -8103,6 +8260,12 @@ impl eframe::App for QuantickApp {
     /// the first. So the hook supplies the click itself, on the pane it names,
     /// and every line after that is the code a trader's own click runs.
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        // Before anything reads it: a window size the platform reported in the
+        // wrong unit. First in the hook, and above every early return below,
+        // because a frame that skips this lays the whole chart out at the wrong
+        // size — see `crate::window_scale` for the invariant and its one known
+        // limit.
+        self.correct_window_scale(raw_input);
         // Second frame: the button comes up where it went down, and the menu
         // that opened on the press stays open.
         if let Some(position) = self.scripted_context_menu_release.take() {
@@ -9329,7 +9492,8 @@ impl QuantickApp {
         self.apply_avwap_demo();
         self.apply_strategy_demo();
         self.apply_replay_restart();
-        self.maybe_emit_summary(now);
+        self.apply_maximize_hook(ctx);
+        self.maybe_emit_summary(now, ctx);
         self.maintain_workspace(ctx);
 
         let bg = pane::background_color(&self.style);
@@ -9531,9 +9695,14 @@ impl QuantickApp {
         tab.maybe_switch_feed(config);
         // Both deferrals settle here, a frame after the click that armed
         // them, so the frame carrying the change paints its overlay first.
-        let Self { tabs, config, .. } = self;
+        let Self {
+            tabs,
+            config,
+            style,
+            ..
+        } = self;
         for tab in tabs.iter_mut() {
-            tab.apply_pending_layout(config);
+            tab.apply_pending_layout(config, style);
         }
         self.active_tab_mut().apply_spec_changes();
         self.draw_style_panel(ctx, now);

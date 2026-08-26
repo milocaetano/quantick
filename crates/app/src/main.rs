@@ -76,6 +76,7 @@ mod trade_paint;
 mod ui_state;
 mod viewport;
 mod widgets;
+mod window_scale;
 mod workspace_bundle;
 
 /// The bar type the chart opens on. The type and its parameter are tunable live

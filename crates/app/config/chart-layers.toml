@@ -7,15 +7,18 @@
 #      which the app writes back the moment a switch flips
 #   3. this file, compiled into the binary as the built-in default
 #
-# So a trader who switches a layer off keeps it off: their own file is written
-# on that click and takes precedence from the next launch on. This file only
-# decides what someone who has never touched a switch sees.
+# The trader's file is laid *over* this one, never instead of it: an answer they
+# gave wins, and a layer they never touched opens on the answer here. So
+# switching a layer off keeps it off from the next launch on, while a file
+# written before a layer had a shipped answer does not silently pin it off — the
+# reading that made this file unreachable for everyone who already had a cockpit
+# (see `load` in `crates/app/src/chart_layers.rs`).
 #
-# Ids are `ChartLayer::id` (see `crates/app/src/chart_layers.rs`). An id this
-# build does not know is dropped rather than failing the launch, and an absent
-# id means "whatever the app decided" — the code default, a feed's preset or an
-# autostart env var. `lane_marks` is deliberately absent: it belongs to the
-# order-flow preset, which is its only home.
+# Ids are `ChartLayer::id` (same file). An id this build does not know is dropped
+# rather than failing the launch. An id absent from *both* files means "whatever
+# the app decided" — the code default, a feed's preset or an autostart env var —
+# and `lane_marks` is deliberately the only one: it belongs to the order-flow
+# preset, which is its only home.
 
 version = 1
 
