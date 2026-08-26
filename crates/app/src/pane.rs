@@ -4852,6 +4852,15 @@ impl ChartPane {
         let footprint_on =
             (self.footprint_visible || self.wants_range_profile()) && !footprint_blocked;
         self.state.set_footprint_enabled(footprint_on);
+        // Accumulating is not painting, and the candles answer to the second.
+        // A range profile turns the ladders *on* without ever asking for the
+        // layer, so the switch above cannot be what dresses a candle: doing
+        // that put every bar into the footprint's sidebar lane, or faded its
+        // body down to an outline, for a layer that then drew nothing.
+        // Computed here beside the switch it is so easily confused with, and
+        // before the frame borrows fields out of `self`.
+        let footprint_paints =
+            self.layer_visible(ChartLayer::Footprint, chrome.style) && !footprint_blocked;
         if footprint_on
             && let Some(base) = self
                 .orderflow
@@ -5024,44 +5033,22 @@ impl ChartPane {
             .style;
         let footprint_style = self.footprint_lod.effective_style(requested_style);
         let treatment = footprint_style.candle_treatment();
-        // The lane a sidebar candle keeps at the left of its slot. Zero
-        // otherwise, so nothing moves for the styles that draw in place.
-        let candle_lane = if footprint_on {
-            treatment.content_inset()
-        } else {
-            0.0
-        };
+        // The lane a sidebar candle keeps at the left of its slot, and the
+        // style the layer leaves the candle in. Both from one function, whose
+        // whole point is that they answer to `footprint_paints` and never to
+        // the accumulation switch — see `footprint_render::candle_dressing`.
+        let (candle_lane, faded_candles) = crate::footprint_render::candle_dressing(
+            footprint_paints,
+            treatment,
+            cw,
+            chrome.style.candles,
+        );
         // The half-width the footprint's content actually spans. The lane is
         // cut out of *this*, so the candle placed beside it has to be measured
         // from the same edge — measuring from the candle's own body width put
         // it inside the box the lane was reserved next to, where the opaque
         // plate then painted straight over it.
         let content_half = treatment.content_half_width(cw, half);
-        let mut faded_candles = None;
-        if footprint_on {
-            match treatment {
-                // The candle cedes its interior to the ladder as the zoom
-                // crosses into detail: the body fill fades out and the outline
-                // steps in — the reference charts' outline-box candles.
-                crate::footprint_config::CandleTreatment::Fade => {
-                    let body = crate::footprint_render::candle_body_fade(cw);
-                    if body < 1.0 {
-                        let mut faded = chrome.style.candles;
-                        faded.fill_opacity *= body;
-                        faded.outline_opacity = faded.outline_opacity.max(1.0 - body);
-                        faded_candles = Some(faded);
-                    }
-                }
-                // Beside the box, the candle is a solid sliver again: nothing
-                // is behind anything, so there is nothing to fade *for*, and a
-                // 3 px outline-only bar would read as a scratch.
-                crate::footprint_config::CandleTreatment::Sidebar => {
-                    let mut sidebar = chrome.style.candles;
-                    sidebar.fill_opacity = 1.0;
-                    faded_candles = Some(sidebar);
-                }
-            }
-        }
         let candles = faded_candles.as_ref().unwrap_or(&chrome.style.candles);
 
         // Resting liquidity is the bottom visual layer. Projection is pure with
@@ -5251,11 +5238,7 @@ impl ChartPane {
         // drawn over them: it is a representation of the bars themselves,
         // not an annotation. Prefix (venue) candles carry no tape and draw
         // no ladder — the layer starts where trade-built bars start.
-        if self.layer_visible(ChartLayer::Footprint, chrome.style)
-            && self
-                .layer_blocked(ChartLayer::Footprint, chrome.capabilities)
-                .is_none()
-        {
+        if footprint_paints {
             // The forming bar's ladder is the ~10 Hz snapshot taken with the
             // accumulation switch at the top of the frame, shared with the
             // range-profile drawings.
@@ -7029,6 +7012,51 @@ mod tests {
             !pane.wants_range_profile(),
             "deleting the last profile releases the ladders"
         );
+    }
+
+    /// …and wanting the ladders is *not* asking for the layer. The two were
+    /// one flag once, and the trader saw the result: a profile dropped on a
+    /// fresh chart restyled every candle — sidebar lane, faded body, spacing
+    /// that opened up as they zoomed — for a footprint that never painted.
+    /// The candle dressing reads `layer_visible`, the accumulation switch
+    /// reads this; they must be able to disagree.
+    #[test]
+    fn a_range_profile_wants_the_ladders_without_asking_for_the_layer() {
+        let style = crate::style::ChartStyle::default();
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+        let frvp = crate::drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == crate::frvp::TOOL_ID)
+            .expect("frvp is registered");
+        assert!(
+            !pane
+                .drawings
+                .place(frvp, crate::drawings::ChartPoint::at(1.0, 100.0))
+        );
+        assert!(
+            pane.drawings
+                .place(frvp, crate::drawings::ChartPoint::at(5.0, 105.0))
+        );
+
+        assert!(
+            pane.wants_range_profile(),
+            "the profile folds ladders, so accumulation is on"
+        );
+        assert!(
+            !pane.layer_visible(ChartLayer::Footprint, &style),
+            "and the layer is still hidden, so the candles are not dressed"
+        );
+
+        pane.set_layer_visible(
+            ChartLayer::Footprint,
+            true,
+            &mut crate::chart_layers::LayerActions::default(),
+        );
+        assert!(
+            pane.layer_visible(ChartLayer::Footprint, &style),
+            "turning the layer on is the only thing that dresses a candle"
+        );
+        assert!(pane.wants_range_profile());
     }
 
     /// The tape switch reaches the canvas through one number: the band's

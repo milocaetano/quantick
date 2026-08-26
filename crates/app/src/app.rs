@@ -14513,10 +14513,18 @@ plot(close)
     /// roomy, so a test about something else is never accidentally a test
     /// about a cramped layout.
     const TEST_WINDOW: egui::Vec2 = egui::vec2(1400.0, 900.0);
-    /// The smallest window the app itself allows (`main.rs`
-    /// `with_min_inner_size`). The layout has to hold here, and this is where
-    /// the pane band is under real pressure.
+    /// The smallest window whose *layout* is still promised: the chrome
+    /// collapses down to here and clips below it (the drawing rail's Minimal
+    /// stage, docs/drawing-toolbar-ux.md §2.8). The window itself has no
+    /// minimum any more — see [`A_DEGENERATE_WINDOW`] — but this is still
+    /// where the pane band is under real pressure while everything is
+    /// expected to read, so the layout tests stay aimed at it.
     const MIN_WINDOW: egui::Vec2 = egui::vec2(900.0, 560.0);
+    /// A window dragged down to nothing. `main.rs` sets no
+    /// `with_min_inner_size`, so this is reachable by a trader with a mouse;
+    /// nothing is promised about what it looks like, only that the app is
+    /// still there when the window is dragged back out.
+    const A_DEGENERATE_WINDOW: egui::Vec2 = egui::vec2(1.0, 1.0);
 
     fn run_frame_with_modifiers(
         app: &mut QuantickApp,
@@ -14543,6 +14551,36 @@ plot(close)
             ..Default::default()
         };
         ctx.run(input, |ctx| app.draw_frame(ctx, Instant::now()))
+    }
+
+    /// The window has no minimum, so a trader can drag it down to nothing —
+    /// and drag it back. Nothing is promised about the layout in between:
+    /// this asserts only that the frames at a degenerate size are survivable
+    /// and that the chart is whole again on the other side, which is the
+    /// difference between a window that reads badly and a chart that is gone.
+    #[test]
+    fn the_window_drags_down_to_nothing_and_comes_back() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+
+        for size in [
+            A_DEGENERATE_WINDOW,
+            egui::vec2(0.0, 0.0),
+            egui::vec2(1.0, 900.0),
+            egui::vec2(1400.0, 0.0),
+        ] {
+            // Twice each: the first frame is where a cached layout from the
+            // previous size is still around, and the second is the steady
+            // state at this one.
+            run_sized_frame(&mut app, &ctx, size, Vec::new());
+            run_sized_frame(&mut app, &ctx, size, Vec::new());
+        }
+
+        let output = run_sized_frame(&mut app, &ctx, TEST_WINDOW, Vec::new());
+        assert!(
+            has_price_axis(&painted_text(&output)),
+            "the chart paints again once the window has room"
+        );
     }
 
     /// A press-drag-release in a window of `size`.
