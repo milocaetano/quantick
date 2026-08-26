@@ -206,11 +206,24 @@ impl VolumeProfile {
     /// at a time and expansion stops as soon as the fraction is captured, so
     /// the area is minimal.
     ///
-    /// A side whose pair is entirely inside a gap is only ever chosen when the
-    /// other side is exhausted — the remaining volume then genuinely sits
-    /// beyond the gap, and expansion jumps to that side's next printed row
-    /// (this keeps a `fraction ≥ 1` covering every printed row, and keeps the
-    /// loop bounded by printed rows, not by price distance).
+    /// A side whose pair is entirely inside a gap loses to a side with any
+    /// printed volume in its pair. When **both** pairs are gap the compared
+    /// window is silent on both sides and cannot decide, so the choice falls
+    /// to what actually sits behind each gap: the next **two printed rows**
+    /// on each side — the same two the step will take, and the same two a
+    /// contiguous ladder would have found inside the window. Ties there still
+    /// expand downward. Expansion then jumps straight to those rows, so a
+    /// `fraction ≥ 1` still covers every printed row and the loop stays
+    /// bounded by printed rows, not by price distance.
+    ///
+    /// Because the silent case falls back on the very rows the window would
+    /// have held, the area is a function of the rows that **printed**, not of
+    /// the grouping they are read at: the same tape profiled at the tick and
+    /// at a hundredth of it names the same POC, VAH and VAL. That both-gap
+    /// case is not exotic — any grouping finer than the instrument's tick
+    /// makes most of the ladder gap, and deciding those steps on the silent
+    /// pairs alone would hand nearly every one of them to the tie-break and
+    /// ratchet one edge of the area to the end of the profile.
     ///
     /// [`vah`](ValueArea::vah) and [`val`](ValueArea::val) are always printed
     /// buckets — empty buckets crossed on the way are never reported as edges.
@@ -252,50 +265,78 @@ impl VolumeProfile {
             } else {
                 vol_at(rows[lo].0 - 1).saturating_add(vol_at(rows[lo].0 - 2))
             };
+            // The next two *printed* rows on one side — what that side's step
+            // would take. When the price-adjacent window holds them both this
+            // is the number the pair already carries; when that window is
+            // silent it is what the pair failed to see. Only the silent case
+            // reads it, and this runs per frame, so it stays a closure.
+            let printed_below = || {
+                rows[..lo]
+                    .iter()
+                    .rev()
+                    .take(2)
+                    .fold(Decimal::ZERO, |sum, &(_, v)| sum.saturating_add(v))
+            };
+            let printed_above = || {
+                rows[hi + 1..]
+                    .iter()
+                    .take(2)
+                    .fold(Decimal::ZERO, |sum, &(_, v)| sum.saturating_add(v))
+            };
+
             let take_below = if lo == 0 {
                 false
             } else if above_exhausted {
                 true
-            } else {
+            } else if pair_below > Decimal::ZERO || pair_above > Decimal::ZERO {
                 pair_below >= pair_above
+            } else {
+                // Both pairs are entirely inside a gap: the two-bucket window
+                // the convention compares is silent on both sides, so it
+                // cannot decide. Weigh what actually sits behind each gap
+                // instead. Deciding on the silent pairs alone would hand every
+                // such step to the tie-break, and a sparse ladder is *mostly*
+                // such steps: the area would ratchet one way row after row and
+                // pin that edge to the end of the profile.
+                printed_below() >= printed_above()
             };
-
+            // One step takes up to the two rows its side was weighed on, one
+            // at a time, stopping the moment the fraction is captured — the
+            // same two, whether the pair reached them across printed buckets
+            // or the jump reached them across a gap. That is what keeps the
+            // area a function of the rows that printed rather than of the
+            // grouping they are read at.
             if take_below {
-                if pair_below == Decimal::ZERO {
-                    // Both buckets of the pair are inside a gap: this side was
-                    // only chosen because the other is exhausted, so the
-                    // volume still owed sits beyond the gap — jump to the
-                    // next printed row rather than crawling the price axis.
+                // The window belongs to the step, not to the row last taken:
+                // it is fixed before the first of the two, so a step can never
+                // walk further than the pair it was weighed on. A pair that is
+                // all gap has no window to stay inside — that is the jump.
+                let floor = rows[lo].0 - 2;
+                let bounded = pair_below > Decimal::ZERO;
+                for _ in 0..2 {
+                    if lo == 0 || captured >= target {
+                        break;
+                    }
+                    // Inside the window an unprinted bucket adds nothing and
+                    // is not an edge; below it the step is over.
+                    if bounded && rows[lo - 1].0 < floor {
+                        break;
+                    }
                     lo -= 1;
                     captured = captured.saturating_add(rows[lo].1);
-                } else {
-                    let edge = rows[lo].0;
-                    for want in [edge - 1, edge - 2] {
-                        if lo > 0 && rows[lo - 1].0 == want {
-                            lo -= 1;
-                            captured = captured.saturating_add(rows[lo].1);
-                            if captured >= target {
-                                break;
-                            }
-                        }
-                        // `want` not printed: a gap bucket adds nothing and
-                        // is not an edge; keep scanning the pair.
-                    }
                 }
-            } else if pair_above == Decimal::ZERO {
-                // Mirror of the gap jump below.
-                hi += 1;
-                captured = captured.saturating_add(rows[hi].1);
             } else {
-                let edge = rows[hi].0;
-                for want in [edge + 1, edge + 2] {
-                    if hi + 1 < rows.len() && rows[hi + 1].0 == want {
-                        hi += 1;
-                        captured = captured.saturating_add(rows[hi].1);
-                        if captured >= target {
-                            break;
-                        }
+                let ceiling = rows[hi].0 + 2;
+                let bounded = pair_above > Decimal::ZERO;
+                for _ in 0..2 {
+                    if hi + 1 >= rows.len() || captured >= target {
+                        break;
                     }
+                    if bounded && rows[hi + 1].0 > ceiling {
+                        break;
+                    }
+                    hi += 1;
+                    captured = captured.saturating_add(rows[hi].1);
                 }
             }
         }
@@ -660,6 +701,100 @@ mod tests {
                 val: 0
             }
         );
+    }
+
+    #[test]
+    fn value_area_with_gaps_on_both_sides_weighs_what_sits_behind_them() {
+        // A sparse ladder — a fine grouping over a wide range, the normal
+        // shape of a live order-flow profile — puts *both* two-bucket pairs
+        // inside a gap on nearly every step. Deciding on the pairs alone reads
+        // 0 vs 0 there, so the tie-break picks a side without looking at the
+        // tape: the area then ratchets that way row after row and pins its
+        // edge to the end of the profile. The side that wins must be the one
+        // whose next printed row actually holds more volume.
+        //
+        // 30 units total, 70% needs 21. Above the POC sit 9 and 9; below sit
+        // 1 and 1. Value has to grow upward.
+        let profile = profile_of(&[
+            ("100", "1", "0"),
+            ("110", "1", "0"),
+            ("120", "10", "0"),
+            ("130", "9", "0"),
+            ("140", "9", "0"),
+        ]);
+        let area = profile.value_area(dec("0.70")).unwrap();
+        assert_eq!(
+            area,
+            ValueArea {
+                poc: 120,
+                vah: 140,
+                val: 120
+            }
+        );
+    }
+
+    #[test]
+    fn value_area_across_two_gaps_still_ties_downward() {
+        // Both pairs are gap and what sits behind each gap is equal: the
+        // POC's own tie-toward-lowest rule decides, as it does for printed
+        // neighbours. 12 units total, 70% needs 8.4.
+        let profile = profile_of(&[("100", "3", "0"), ("110", "6", "0"), ("120", "3", "0")]);
+        let area = profile.value_area(dec("0.70")).unwrap();
+        assert_eq!(
+            area,
+            ValueArea {
+                poc: 110,
+                vah: 110,
+                val: 100
+            }
+        );
+    }
+
+    #[test]
+    fn value_area_is_the_same_prices_at_every_grouping_the_tape_prints_on() {
+        // The instrument trades on a 5-wide tick, so a ladder grouped at 5 is
+        // contiguous and one grouped at 1 is the same rows with four empty
+        // buckets between each - same prints, same volumes, two resolutions.
+        // The value area is a read of where volume traded, so it must name the
+        // same prices either way; a profile drawn on a grouping finer than the
+        // tick is otherwise a different answer to the same question.
+        let trades: Vec<Trade> = [
+            ("95", "1"),
+            ("100", "2"),
+            ("105", "8"),
+            ("110", "9"),
+            ("115", "6"),
+            ("120", "2"),
+            ("125", "1"),
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, &(price, qty))| trade(i as u64, price, qty, Side::Buy))
+        .collect();
+
+        let coarse = VolumeProfile::merge([&ladder(&trades, "5")], DEFAULT_LEVEL_CAP).unwrap();
+        let fine = VolumeProfile::merge([&ladder(&trades, "1")], DEFAULT_LEVEL_CAP).unwrap();
+
+        let coarse_area = coarse.value_area(dec("0.70")).unwrap();
+        let fine_area = fine.value_area(dec("0.70")).unwrap();
+
+        assert_eq!(
+            (
+                coarse.bucket_price(coarse_area.poc),
+                coarse.bucket_price(coarse_area.val),
+                coarse.bucket_price(coarse_area.vah),
+            ),
+            (
+                fine.bucket_price(fine_area.poc),
+                fine.bucket_price(fine_area.val),
+                fine.bucket_price(fine_area.vah),
+            ),
+        );
+        // And the area is a two-sided band around the POC, reaching neither
+        // end of the profile: 29 units total, 70% needs 20.3.
+        assert_eq!(coarse.bucket_price(coarse_area.poc), dec("110"));
+        assert_eq!(coarse.bucket_price(coarse_area.val), dec("100"));
+        assert_eq!(coarse.bucket_price(coarse_area.vah), dec("115"));
     }
 
     #[test]
