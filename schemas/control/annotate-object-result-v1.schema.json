@@ -1,0 +1,102 @@
+{
+  "$defs": {
+    "AnnotationAuthor": {
+      "description": "Who placed an object, as the interface shows it.",
+      "properties": {
+        "actor_kind": {
+          "description": "The actor kind on the wire: `agent`, `automation`, `human_ui`.",
+          "type": "string"
+        },
+        "client_name": {
+          "description": "The client's own name from its handshake.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actor_kind",
+        "client_name"
+      ],
+      "type": "object"
+    },
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "ResolvedAnchor": {
+      "properties": {
+        "price": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "slot": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "time_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        }
+      },
+      "required": [
+        "slot",
+        "time_unix_ms",
+        "price"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What an annotation returns: the object's stable id, where it actually\nlanded, and the authorship the trader sees on it.",
+  "properties": {
+    "anchors": {
+      "description": "Where each anchor landed after resolution: the slot it fell on and the\nmarket time of that slot, which is not always the time asked for.",
+      "items": {
+        "$ref": "#/$defs/ResolvedAnchor"
+      },
+      "type": "array"
+    },
+    "annotation_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "author": {
+      "$ref": "#/$defs/AnnotationAuthor"
+    },
+    "label": {
+      "type": "string"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "pane_side": {
+      "$ref": "#/$defs/PaneSideDto"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tool_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "annotation_id",
+    "tab_id",
+    "pane_id",
+    "pane_side",
+    "tool_id",
+    "anchors",
+    "author",
+    "label"
+  ],
+  "title": "AnnotationResult",
+  "type": "object"
+}

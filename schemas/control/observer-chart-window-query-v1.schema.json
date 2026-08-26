@@ -45,7 +45,7 @@
   "properties": {
     "page_size": {
       "format": "uint",
-      "maximum": 2048,
+      "maximum": 32,
       "minimum": 1,
       "type": "integer"
     },

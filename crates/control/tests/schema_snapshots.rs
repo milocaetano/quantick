@@ -64,9 +64,17 @@ fn committed_schema(document: &PublicContractDocument) -> &'static str {
             env!("CARGO_MANIFEST_DIR"),
             "/../../schemas/control/handshake-request-v1.schema.json"
         )),
+        "handshake-reply-v1.schema.json" => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../schemas/control/handshake-reply-v1.schema.json"
+        )),
         "handshake-response-v1.schema.json" => include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../schemas/control/handshake-response-v1.schema.json"
+        )),
+        "instance-descriptor-v1.schema.json" => include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../schemas/control/instance-descriptor-v1.schema.json"
         )),
         "page-cursor-v1.schema.json" => include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),

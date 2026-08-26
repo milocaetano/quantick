@@ -6,10 +6,10 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 use crate::{
-    handshake::{HandshakeRequest, HandshakeResponse, ProtocolLimits},
+    handshake::{HandshakeReply, HandshakeRequest, HandshakeResponse, ProtocolLimits},
     limits::{
-        CONTROL_MAX_JSON_DEPTH, CONTROL_MAX_REQUEST_BYTES, CONTROL_MAX_RESPONSE_BYTES,
-        CONTROL_MAX_STRING_BYTES, CONTROL_PROTOCOL_MAX_FRAME_BYTES,
+        CONTROL_HANDSHAKE_MAX_BYTES, CONTROL_MAX_JSON_DEPTH, CONTROL_MAX_REQUEST_BYTES,
+        CONTROL_MAX_RESPONSE_BYTES, CONTROL_MAX_STRING_BYTES, CONTROL_PROTOCOL_MAX_FRAME_BYTES,
     },
     wire::{RESERVED_ACTOR_FIELDS, RequestEnvelope, ResponseEnvelope},
 };
@@ -44,6 +44,18 @@ impl Default for BoundedCodec {
 }
 
 impl BoundedCodec {
+    /// Pre-authentication codec with a smaller allocation and parsing ceiling.
+    #[must_use]
+    pub const fn handshake() -> Self {
+        Self {
+            max_frame_bytes: CONTROL_HANDSHAKE_MAX_BYTES,
+            max_request_bytes: CONTROL_HANDSHAKE_MAX_BYTES,
+            max_response_bytes: CONTROL_HANDSHAKE_MAX_BYTES,
+            max_json_depth: CONTROL_MAX_JSON_DEPTH,
+            max_string_bytes: CONTROL_HANDSHAKE_MAX_BYTES,
+        }
+    }
+
     pub fn with_limits(
         max_frame_bytes: usize,
         max_request_bytes: usize,
@@ -124,8 +136,10 @@ impl BoundedCodec {
     }
 
     /// First client frame on a connection: the handshake request, read under
-    /// whatever ceiling this codec was built with (a host reads it with a
-    /// pre-authentication codec bounded tighter than the envelope codec).
+    /// whatever ceiling this codec was built with — a host reads it with
+    /// [`Self::handshake`], a pre-authentication codec bounded tighter than the
+    /// envelope codec. Typed on purpose, like [`Self::read_request`]: the
+    /// generic decoder is not a public door.
     pub fn read_handshake_request(
         &self,
         reader: &mut impl Read,
@@ -133,8 +147,20 @@ impl BoundedCodec {
         self.read(FrameRole::Request, reader)
     }
 
-    /// First server frame on an accepted connection: the handshake response.
-    /// The caller checks it against its own request with
+    /// First server frame on a connection: the accepted handshake, or the
+    /// redacted error the gateway sends before closing. A caller that has
+    /// already established the connection is accepted wants
+    /// [`Self::read_handshake_response`] instead.
+    pub fn read_handshake_reply(
+        &self,
+        reader: &mut impl Read,
+    ) -> Result<HandshakeReply, CodecError> {
+        self.read(FrameRole::Response, reader)
+    }
+
+    /// First server frame on an *accepted* connection: the handshake response
+    /// in its direct shape, without the [`HandshakeReply::Rejected`] arm. The
+    /// caller checks it against its own request with
     /// [`HandshakeResponse::validate_for`].
     pub fn read_handshake_response(
         &self,
@@ -226,14 +252,30 @@ impl BoundedCodec {
     }
 
     fn read_payload(&self, role: FrameRole, reader: &mut impl Read) -> Result<Vec<u8>, CodecError> {
+        // The header is read byte-wise rather than with `read_exact` so a
+        // read timeout can be told apart by *when* it fired: before any byte
+        // of the next frame it is an idle connection, which a host keeps;
+        // after the first byte it is a frame that stalled half-way, which a
+        // host must not let hold a connection thread open.
         let mut header = [0u8; FRAME_HEADER_BYTES];
-        reader.read_exact(&mut header).map_err(|error| {
-            if error.kind() == io::ErrorKind::UnexpectedEof {
-                CodecError::TruncatedHeader
-            } else {
-                CodecError::Io(error.to_string())
+        let mut filled = 0usize;
+        while filled < FRAME_HEADER_BYTES {
+            match reader.read(&mut header[filled..]) {
+                Ok(0) => return Err(CodecError::TruncatedHeader),
+                Ok(read) => filled += read,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error)
+                    if filled == 0
+                        && matches!(
+                            error.kind(),
+                            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                        ) =>
+                {
+                    return Err(CodecError::IdleTimeout);
+                }
+                Err(error) => return Err(CodecError::Io(error.to_string())),
             }
-        })?;
+        }
         let declared = u32::from_be_bytes(header) as usize;
 
         // This check intentionally precedes Vec allocation and every payload read.
@@ -451,12 +493,28 @@ impl Write for LimitedWriter {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CodecError {
     InvalidLimits,
+    /// The reader's timeout elapsed before any byte of the next frame arrived:
+    /// an idle peer, not a broken frame. Only a reader with a timeout set can
+    /// observe this.
+    IdleTimeout,
     TruncatedHeader,
-    PayloadTooLarge { declared: usize, limit: usize },
-    TruncatedPayload { declared: usize, available: usize },
+    PayloadTooLarge {
+        declared: usize,
+        limit: usize,
+    },
+    TruncatedPayload {
+        declared: usize,
+        available: usize,
+    },
     TrailingBytes(usize),
-    JsonTooDeep { depth: usize, max_depth: usize },
-    StringTooLarge { bytes: usize, limit: usize },
+    JsonTooDeep {
+        depth: usize,
+        max_depth: usize,
+    },
+    StringTooLarge {
+        bytes: usize,
+        limit: usize,
+    },
     FloatingPointNumber,
     ReservedActorField,
     Json(String),
@@ -467,6 +525,7 @@ pub enum CodecError {
 impl fmt::Display for CodecError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::IdleTimeout => formatter.write_str("no frame arrived before the read timeout"),
             Self::InvalidLimits => {
                 formatter.write_str("codec limits exceed the reviewed control contract")
             }
@@ -539,6 +598,24 @@ mod tests {
             Err(CodecError::PayloadTooLarge {
                 declared: 17,
                 limit: 16
+            })
+        );
+        assert!(!reader.payload_read_attempted);
+    }
+
+    #[test]
+    fn pre_authentication_codec_uses_the_smaller_handshake_ceiling() {
+        let codec = BoundedCodec::handshake();
+        let declared = u32::try_from(CONTROL_HANDSHAKE_MAX_BYTES + 1).unwrap();
+        let mut reader = HeaderThenPanic {
+            header: io::Cursor::new(declared.to_be_bytes()),
+            payload_read_attempted: false,
+        };
+        assert_eq!(
+            codec.read::<Value>(FrameRole::Request, &mut reader),
+            Err(CodecError::PayloadTooLarge {
+                declared: CONTROL_HANDSHAKE_MAX_BYTES + 1,
+                limit: CONTROL_HANDSHAKE_MAX_BYTES,
             })
         );
         assert!(!reader.payload_read_attempted);

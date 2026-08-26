@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What an attach takes: the script, its name, and optionally which pane.",
+  "properties": {
+    "name": {
+      "maxLength": 80,
+      "minLength": 1,
+      "type": "string"
+    },
+    "source": {
+      "description": "Quantick Pine source, exactly as a `.pine` file would hold it.",
+      "maxLength": 65536,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "source"
+  ],
+  "title": "AttachInput",
+  "type": "object"
+}

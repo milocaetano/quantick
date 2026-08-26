@@ -109,6 +109,42 @@
       "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
       "type": "string"
     },
+    "ChartBarPage": {
+      "properties": {
+        "has_more": {
+          "type": "boolean"
+        },
+        "item_count": {
+          "format": "uint",
+          "maximum": 32,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/BarSnapshot"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PageCursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "item_count",
+        "has_more"
+      ],
+      "type": "object"
+    },
     "DecimalRange": {
       "properties": {
         "high": {
@@ -137,42 +173,6 @@
       "minLength": 1,
       "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
       "type": "string"
-    },
-    "Page": {
-      "properties": {
-        "has_more": {
-          "type": "boolean"
-        },
-        "item_count": {
-          "format": "uint",
-          "maximum": 2048,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "items": {
-          "items": {
-            "$ref": "#/$defs/BarSnapshot"
-          },
-          "maxItems": 2048,
-          "type": "array"
-        },
-        "next_cursor": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PageCursor"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "items",
-        "item_count",
-        "has_more"
-      ],
-      "type": "object"
     },
     "PageCursor": {
       "properties": {
@@ -330,7 +330,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "bars": {
-      "$ref": "#/$defs/Page"
+      "$ref": "#/$defs/ChartBarPage"
     },
     "captured_at_unix_ms": {
       "format": "int64",

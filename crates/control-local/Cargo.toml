@@ -1,0 +1,29 @@
+[package]
+name = "quantick-control-local"
+description = "Local transport of the Quantick control plane: private instance-descriptor publication and discovery, and the blocking loopback client that speaks the gateway's framed protocol"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quantick-control = { path = "../control" }
+# Platform-private runtime directory lookup (ADR 0001 §4). Path lookup only;
+# no path is ever invented when the platform reports none.
+dirs = "6"
+serde_json = "1"
+
+[target.'cfg(unix)'.dependencies]
+# Verify descriptor ownership against the effective user on Unix platforms.
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# Verify descriptor ownership, ACLs, and reparse-point safety on Windows.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }

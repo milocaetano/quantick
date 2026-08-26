@@ -12,6 +12,7 @@ use tracing_subscriber::EnvFilter;
 use crate::state::BarSpec;
 
 mod app;
+mod audio;
 mod avwap;
 mod bands;
 mod bubble_presets;
@@ -19,10 +20,6 @@ mod candle_view;
 mod chart;
 mod chart_layers;
 mod config;
-// The projection port is intentionally dormant until the local gateway lands
-// in PR 3. Keeping it disconnected here proves that an idle control plane adds
-// no frame-loop work; its public surface is exercised headlessly in tests.
-#[allow(dead_code)]
 mod control;
 mod dock;
 mod drawings;
