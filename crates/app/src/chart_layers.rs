@@ -403,11 +403,36 @@ pub(crate) fn validate(text: &str) -> Result<(), String> {
     }
 }
 
-/// Load the stored visibility, falling back to [`shipped_default`] when the
-/// file is missing, unreadable or from an unknown version — all three mean
-/// "we do not know what this trader chose", which is the question a first
-/// launch asks. Unknown ids are dropped one by one, so a file from a newer
-/// build still restores the layers this one has.
+/// Load the stored visibility **over** [`shipped_default`], falling back to the
+/// shipped answer alone when the file is missing, unreadable or from an unknown
+/// version — all three mean "we do not know what this trader chose", which is
+/// the question a first launch asks. Unknown ids are dropped one by one, so a
+/// file from a newer build still restores the layers this one has.
+///
+/// The trader's file is laid *on top of* the shipped one rather than replacing
+/// it, and that is the whole difference between this reader and the one that
+/// shipped the defaults. A layer the file does not mention has no answer in it,
+/// and the two candidate readings of that silence are not equal:
+///
+/// - "whatever the code decides" — which for all four flow layers is *off*
+///   ([`crate::pane::ChartPane`]'s field initialisers, and the
+///   `set_depth_visible(false)` at startup), so an older file pins them off
+///   forever;
+/// - "whatever this build ships" — the answer in `config/chart-layers.toml`.
+///
+/// The first reading is why shipping the defaults changed nothing for anyone
+/// who already had a cockpit: their file predated the flow-layer keys, so it
+/// answered "off" to a question it had never been asked. Worse, it then froze:
+/// [`crate::app::QuantickApp::maintain_chart_layers`] rewrites the *whole* map
+/// on the first switch of the session, so one unrelated click turns a silent
+/// file into an explicit `heatmap = false`. A default nobody can receive is not
+/// a default, so silence now means the shipped answer.
+///
+/// What that costs is precise and small: a layer absent from **both** files is
+/// still the app's to decide — `lane_marks` is the one, deliberately, because
+/// the order-flow preset is its home. And an explicit `false` in the trader's
+/// file still outranks everything, which is the promise that makes a shipped
+/// default acceptable at all (`the_traders_own_choice_outranks_the_shipped_default`).
 #[must_use]
 pub(crate) fn load(path: &Path) -> BTreeMap<ChartLayer, bool> {
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -440,7 +465,10 @@ pub(crate) fn load(path: &Path) -> BTreeMap<ChartLayer, bool> {
             return shipped_default();
         }
     };
-    resolve(stored)
+    // The trader's answers over the shipped ones, never instead of them.
+    let mut states = shipped_default();
+    states.extend(resolve(stored));
+    states
 }
 
 /// The built-in opening state, from the config compiled into the binary.
@@ -568,12 +596,67 @@ mod tests {
             Some(&false),
             "an explicit no stays a no"
         );
-        // And the shipped answer does not leak in beside it: a layer the
-        // trader's file never mentions is the app's to decide, exactly as it
-        // was before this file existed.
+        // And the answer they did not give is the shipped one, not the code's
+        // off baseline — see `load`. Switching the heatmap off must not take
+        // the bubbles down with it.
+        assert_eq!(
+            loaded.get(&ChartLayer::Bubbles),
+            Some(&true),
+            "a layer the trader never touched opens on the shipped answer"
+        );
+        // A layer absent from *both* files is still the app's to decide, which
+        // is what keeps the order-flow preset the only home of `lane_marks`.
         assert!(
-            !loaded.contains_key(&ChartLayer::Bubbles),
-            "an absent layer keeps meaning \"whatever the app decided\""
+            !loaded.contains_key(&ChartLayer::LaneMarks),
+            "a layer the shipped file holds no opinion on stays the app's"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// The bug that made shipping the defaults change nothing for the trader
+    /// who reported the bare chart in the first place.
+    ///
+    /// Their `chart-layers.toml` was written by a build from before the flow
+    /// layers had shipped defaults, so it names the chrome and says nothing
+    /// about the four layers the chart is for. Read as "whatever the code
+    /// decides", that silence is *off* on all four — a file that has never
+    /// been asked the question answering it anyway, on every launch, forever.
+    ///
+    /// This is the file, key for key, that `chart-layers.toml.bak` on the
+    /// reporter's machine turned out to hold.
+    #[test]
+    fn a_file_from_before_the_defaults_still_opens_the_flow_layers() {
+        let path = temp_dir().join("pre-defaults.toml");
+        std::fs::write(
+            &path,
+            "version = 1
+[layers]
+             grid = true
+             crosshair = true
+             last_price = true
+             backfill_divider = false
+",
+        )
+        .unwrap();
+        let loaded = load(&path);
+        for layer in [
+            ChartLayer::Heatmap,
+            ChartLayer::Bubbles,
+            ChartLayer::Footprint,
+            ChartLayer::LiveStrip,
+        ] {
+            assert_eq!(
+                loaded.get(&layer),
+                Some(&true),
+                "{} is unanswered in this file, so it opens on the shipped answer",
+                layer.id()
+            );
+        }
+        // What the file *does* say still wins, including its one no.
+        assert_eq!(
+            loaded.get(&ChartLayer::BackfillDivider),
+            Some(&false),
+            "the file's own answers are untouched"
         );
         std::fs::remove_file(&path).ok();
     }
@@ -617,6 +700,16 @@ mod tests {
         );
     }
 
+    /// What `load` must return for a file holding exactly `states`: the
+    /// trader's answers over the shipped ones. Written once because three
+    /// tests need it and a fourth copy of `shipped_default().extend(...)` is
+    /// three chances to encode the *old* contract by accident.
+    fn shipped_with(states: &BTreeMap<ChartLayer, bool>) -> BTreeMap<ChartLayer, bool> {
+        let mut expected = shipped_default();
+        expected.extend(states.iter().filter(|(layer, _)| layer.persisted()));
+        expected
+    }
+
     #[test]
     fn visibility_round_trips_through_disk() {
         let path = temp_dir().join("round-trip.toml");
@@ -627,7 +720,10 @@ mod tests {
             (ChartLayer::Drawings, true),
         ]);
         save(&path, &states);
-        assert_eq!(load(&path), states);
+        // Every answer written comes back, and the layers this file says
+        // nothing about come back as the shipped answer rather than as the
+        // code's off baseline — see `load`.
+        assert_eq!(load(&path), shipped_with(&states));
         std::fs::remove_file(&path).ok();
     }
 
@@ -645,8 +741,12 @@ mod tests {
         );
         assert_eq!(
             load(&path),
-            BTreeMap::from([(ChartLayer::Grid, false)]),
-            "everything else still round-trips"
+            shipped_with(&BTreeMap::from([(ChartLayer::Grid, false)])),
+            "everything else still round-trips, over the shipped answer"
+        );
+        assert!(
+            !load(&path).contains_key(&ChartLayer::LaneMarks),
+            "and the lane marks are in neither file, so they stay the app's"
         );
         std::fs::remove_file(&path).ok();
     }
@@ -676,7 +776,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             load(&path),
-            BTreeMap::from([(ChartLayer::Grid, false)]),
+            shipped_with(&BTreeMap::from([(ChartLayer::Grid, false)])),
             "an id this build does not know is dropped, the rest still restores"
         );
         std::fs::remove_file(&path).ok();

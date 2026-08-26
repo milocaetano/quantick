@@ -2752,6 +2752,7 @@ dependencies = [
  "quantick-replay",
  "quantick-sim",
  "quantick-strategy",
+ "raw-window-handle",
  "rfd",
  "rust_decimal",
  "schemars",
