@@ -42,7 +42,7 @@ use crate::{BarFootprint, FootprintLevel};
 /// another is not the convention any more.
 ///
 /// It counts *rows*, never buckets. The window is this many rows' worth of the
-/// profile's own spacing, which is what lets one ladder be read at two
+/// step's own gap, which is what lets one ladder be read at two
 /// groupings and answer the same; see [`VolumeProfile::value_area`].
 const VALUE_AREA_STEP_ROWS: usize = 2;
 
@@ -217,36 +217,40 @@ impl VolumeProfile {
     ///
     /// A row only counts for its side if it lies within the step's **window**,
     /// and that is where a price gap costs something: a side whose next rows
-    /// sit beyond the window weighs zero and loses to a side with anything
-    /// inside it, so an isolated cluster far above the POC cannot outbid a
-    /// printed row directly below it just because the gap between them is free
-    /// to cross.
+    /// all sit beyond the window weighs nothing and loses to a side with any
+    /// row inside it, however little that row holds. So an isolated cluster
+    /// cannot annex the area just by being bigger than the row next to the
+    /// POC — it has to be close enough to compete at all.
     ///
-    /// The window is `VALUE_AREA_STEP_ROWS` multiplied by the profile's own
-    /// **row spacing** — the tightest distance between two rows the tape
-    /// printed next to each other. That is the detail that makes the rule mean
-    /// *two ticks* rather than *two buckets*: a ladder grouped at the
-    /// instrument's tick and the same ladder grouped a hundred times finer
-    /// have the same rows at the same prices, and scaling the window with the
-    /// spacing keeps both reading it the same way. Measured in buckets
-    /// instead, the finer ladder would find its window empty at nearly every
-    /// step, every step would fall to a tie-break, and the area would ratchet
-    /// one way until an edge hit the end of the profile.
+    /// **Close enough is measured in rows, not in price.** The window is two
+    /// rows' worth of the step's own gap: how far the nearest unclaimed
+    /// neighbour actually is, on whichever side that is. On a ladder printing
+    /// every tick the window is two ticks, the convention's own reading. On
+    /// the same ladder read a hundred times finer — the same rows at the same
+    /// prices, with empty buckets between them — the gap is a hundred times
+    /// wider in buckets and so is the window, and both readings expand the
+    /// same way. A window counted in buckets instead would find nothing on
+    /// either side at nearly every step of the finer ladder, hand every step
+    /// to the tie-break, and ratchet the area one way until an edge reached
+    /// the end of the profile.
     ///
-    /// So the area is a function of the rows that **printed**, not of the
-    /// grouping they are read at — for a tape on a uniform price grid, which
-    /// is what an instrument with a tick size prints. A ladder whose rows are
-    /// irregularly spaced has no single spacing to scale by, and there the
-    /// guarantee is only that the window is never narrower than the tape's own
-    /// tightest step.
+    /// Two things follow, and the second is the limit of the first:
     ///
-    /// When **neither** side has a row inside the window, both are facing a
-    /// real gap and volume cannot decide without reintroducing the very defect
-    /// the window exists to prevent. **Distance** decides instead: expansion
-    /// crosses the nearer gap, one row at a time so the sides are compared
-    /// again before the next, and an exact tie still goes down. That keeps a
-    /// `fraction ≥ 1` covering every printed row, and keeps the loop bounded
-    /// by printed rows rather than by price distance.
+    /// - The area is a function of the rows that **printed**, not of the
+    ///   grouping they are read at, whenever that grouping divides the price
+    ///   grid the tape prints on — which is the case that matters, since a
+    ///   ladder is grouped at the instrument's tick or at a fraction of it. A
+    ///   grouping that cuts across the grid rather than refining it lands the
+    ///   prints on unevenly spaced buckets and is a different ladder, so it
+    ///   may well name a different area.
+    /// - The gap that sets the window is the *step's*, not the profile's, so a
+    ///   print far outside the area cannot move it. That matters because the
+    ///   profile is re-read while a bar forms: a band that shifted because of
+    ///   a trade nowhere near it would be noise on the chart.
+    ///
+    /// Because the window is set by whichever neighbour is nearest, that side
+    /// always has a row inside it — expansion is never stuck, and there is no
+    /// case where neither side can be weighed.
     ///
     /// [`vah`](ValueArea::vah) and [`val`](ValueArea::val) are always printed
     /// buckets — empty buckets crossed on the way are never reported as edges.
@@ -266,40 +270,27 @@ impl VolumeProfile {
         // The POC came from these same rows; position lookup cannot fail.
         let poc_idx = rows.iter().position(|&(bucket, _)| bucket == poc)?;
 
-        // The tightest distance between two rows the tape printed next to each
-        // other — the ladder's own tick, expressed in whatever grouping it is
-        // being read at. Buckets are saturated on ingest, so the subtraction
-        // is too: a corrupt price must not panic a read.
-        let row_spacing = rows
-            .windows(2)
-            .map(|pair| pair[1].0.saturating_sub(pair[0].0))
-            .min()
-            .unwrap_or(1)
-            .max(1);
-        // How far a step may walk from its edge. Scaling it by the spacing is
-        // what makes the window mean *ticks* rather than buckets, so reading
-        // the same tape on a finer grouping does not silently narrow it.
-        let window_span = row_spacing.saturating_mul(VALUE_AREA_STEP_ROWS as i64);
-
-        // How many of the next rows a step may take on each side: up to
-        // `VALUE_AREA_STEP_ROWS`, stopping at the first one further than the
-        // window. Distance decides this, never volume — a row that printed
-        // nothing is still a row, and treating it as absent would let a step
-        // walk straight past the window it was weighed on.
-        let reach_above = |hi: usize| -> usize {
-            let edge = rows[hi].0;
-            (1..=VALUE_AREA_STEP_ROWS)
-                .take_while(|&n| {
-                    rows.get(hi + n)
-                        .is_some_and(|&(bucket, _)| bucket.saturating_sub(edge) <= window_span)
-                })
-                .count()
-        };
-        let reach_below = |lo: usize| -> usize {
-            let edge = rows[lo].0;
-            (1..=VALUE_AREA_STEP_ROWS)
-                .take_while(|&n| n <= lo && edge.saturating_sub(rows[lo - n].0) <= window_span)
-                .count()
+        // How many of the next rows a side may take, and what they hold: up to
+        // `VALUE_AREA_STEP_ROWS`, stopping at the first one further from the
+        // edge than `window`. Reach is decided by distance alone — a row that
+        // traded nothing is still a row, and reading it as absent would let a
+        // step walk past the window it was weighed on.
+        //
+        // `offset` walks outward from the edge, so one closure serves both
+        // sides: `next` hands it the row that many places out, if there is one.
+        let side = |edge: i64, window: i64, next: &dyn Fn(usize) -> Option<(i64, Decimal)>| {
+            let mut reach = 0usize;
+            let mut weight = Decimal::ZERO;
+            for offset in 1..=VALUE_AREA_STEP_ROWS {
+                match next(offset) {
+                    Some((bucket, volume)) if edge.abs_diff(bucket) <= window.unsigned_abs() => {
+                        reach += 1;
+                        weight = weight.saturating_add(volume);
+                    }
+                    _ => break,
+                }
+            }
+            (reach, weight)
         };
 
         let target = self.total_volume().saturating_mul(fraction);
@@ -308,41 +299,69 @@ impl VolumeProfile {
         let mut captured = rows[poc_idx].1;
 
         while captured < target && (lo > 0 || hi + 1 < rows.len()) {
-            let below_reach = reach_below(lo);
-            let above_reach = reach_above(hi);
-            let weight_below =
-                (1..=below_reach).fold(Decimal::ZERO, |sum, n| sum.saturating_add(rows[lo - n].1));
-            let weight_above =
-                (1..=above_reach).fold(Decimal::ZERO, |sum, n| sum.saturating_add(rows[hi + n].1));
+            let below_gap = (lo > 0).then(|| rows[lo].0.abs_diff(rows[lo - 1].0));
+            let above_gap = (hi + 1 < rows.len()).then(|| rows[hi + 1].0.abs_diff(rows[hi].0));
+            // The step's own idea of one row: how far its nearest unclaimed
+            // neighbour actually is, whichever side that is on. Reading it
+            // here rather than once over the whole ladder is what keeps a
+            // print far outside the area from moving the area — the profile
+            // is re-read every frame while a bar forms, and a band that
+            // shifted because of a trade nowhere near it would just be noise.
+            let step_gap = match (below_gap, above_gap) {
+                (Some(below), Some(above)) => below.min(above),
+                (Some(only), None) | (None, Some(only)) => only,
+                // The loop condition leaves at least one neighbour.
+                (None, None) => break,
+            };
+            // Two rows' worth of that step. The nearest side always has a row
+            // inside it, so a step always has somewhere to go.
+            let window = i64::try_from(step_gap.saturating_mul(VALUE_AREA_STEP_ROWS as u64))
+                .unwrap_or(i64::MAX);
 
-            let take_below = if lo == 0 {
-                false
-            } else if hi + 1 >= rows.len() {
-                true
-            } else if below_reach > 0 || above_reach > 0 {
-                // At least one side has rows inside its window. A side with
-                // none weighs zero and loses, which is how a price gap costs
-                // something to cross. An exact tie expands downward.
-                weight_below >= weight_above
-            } else {
-                // Neither side has a row within the window: both are facing a
-                // real gap, and the volume still owed sits beyond one of them.
-                // Distance decides, so a remote cluster never outbids a nearer
-                // row just because it is bigger — the defect that made the
-                // window price-adjacent in the first place. Ties still go down.
-                let below_distance = rows[lo].0.saturating_sub(rows[lo - 1].0);
-                let above_distance = rows[hi + 1].0.saturating_sub(rows[hi].0);
-                below_distance <= above_distance
+            // Only a side that still has rows is weighed, so a one-sided
+            // expansion never pays for the side it has already exhausted.
+            let below = (lo > 0).then(|| {
+                side(rows[lo].0, window, &|offset| {
+                    lo.checked_sub(offset).map(|idx| rows[idx])
+                })
+            });
+            let above = (hi + 1 < rows.len())
+                .then(|| side(rows[hi].0, window, &|offset| rows.get(hi + offset).copied()));
+
+            let (take_below, reach) = match (below, above) {
+                (Some((reach, _)), None) => (true, reach),
+                (None, Some((reach, _))) => (false, reach),
+                (Some((below_reach, below_weight)), Some((above_reach, above_weight))) => {
+                    let take_below = if below_reach == 0 || above_reach == 0 {
+                        // A side with nothing inside the window is across a
+                        // gap, and loses to a side with any row inside it
+                        // however little that row holds. This is what a price
+                        // gap costs, and it is settled before volume so a row
+                        // that traded nothing cannot lose its side the tie.
+                        below_reach > 0
+                    } else {
+                        // Both sides are in reach: the convention's own
+                        // comparison, ties downward like the POC's.
+                        below_weight >= above_weight
+                    };
+                    (
+                        take_below,
+                        if take_below { below_reach } else { above_reach },
+                    )
+                }
+                // The loop condition leaves at least one side.
+                (None, None) => break,
             };
 
             // A step takes the rows it was weighed on, one at a time, stopping
             // the moment the fraction is captured — so the area never grows
-            // past the point that answers the question. A side chosen with an
-            // empty window is crossing a gap: it takes one row and the sides
-            // are compared again, rather than committing to a second row it
-            // was never weighed on.
+            // past the point that answers the question. The nearest side is
+            // always inside the window, so the side chosen over it has a row
+            // in reach too; `max(1)` covers the one case that does not, a side
+            // taken because the other is exhausted, and is what makes every
+            // pass advance an edge.
             if take_below {
-                for _ in 0..below_reach.max(1) {
+                for _ in 0..reach.max(1) {
                     if lo == 0 || captured >= target {
                         break;
                     }
@@ -350,7 +369,7 @@ impl VolumeProfile {
                     captured = captured.saturating_add(rows[lo].1);
                 }
             } else {
-                for _ in 0..above_reach.max(1) {
+                for _ in 0..reach.max(1) {
                     if hi + 1 >= rows.len() || captured >= target {
                         break;
                     }
@@ -723,14 +742,14 @@ mod tests {
     }
 
     #[test]
-    fn value_area_with_gaps_on_both_sides_weighs_what_sits_behind_them() {
-        // A sparse ladder — a fine grouping over a wide range, the normal
-        // shape of a live order-flow profile — puts *both* two-bucket pairs
-        // inside a gap on nearly every step. Deciding on the pairs alone reads
-        // 0 vs 0 there, so the tie-break picks a side without looking at the
-        // tape: the area then ratchets that way row after row and pins its
-        // edge to the end of the profile. The side that wins must be the one
-        // whose next printed row actually holds more volume.
+    fn value_area_on_a_sparse_ladder_grows_toward_the_volume() {
+        // A ladder read on a grouping finer than the tick — the normal shape
+        // of a live order-flow profile, and the app's own default. Every row
+        // is ten buckets from the next, so a window counted in buckets finds
+        // nothing on either side at every step and hands the whole expansion
+        // to the tie-break; the area then ratchets one way until an edge hits
+        // the end of the profile. Scaled to the ladder's own step, the window
+        // sees the rows that are there and the heavier side wins.
         //
         // 30 units total, 70% needs 21. Above the POC sit 9 and 9; below sit
         // 1 and 1. Value has to grow upward.
@@ -784,12 +803,11 @@ mod tests {
     #[test]
     fn value_area_is_the_same_prices_at_every_grouping_the_tape_prints_on() {
         // The instrument trades on a 5-wide tick, so a ladder grouped at 5 is
-        // contiguous and one grouped at 1 is the same rows with four empty
-        // buckets between each - same prints, same volumes, two resolutions.
-        // The value area is a read of where volume traded, so it must name the
-        // same prices either way; a profile drawn on a grouping finer than the
-        // tick is otherwise a different answer to the same question.
-        let trades: Vec<Trade> = [
+        // contiguous and one grouped finer is the same rows with empty buckets
+        // between them — same prints, same volumes, two resolutions. The value
+        // area is a read of where volume traded, so it names the same prices
+        // either way.
+        let prints = [
             ("95", "1"),
             ("100", "2"),
             ("105", "8"),
@@ -797,35 +815,18 @@ mod tests {
             ("115", "6"),
             ("120", "2"),
             ("125", "1"),
-        ]
-        .iter()
-        .enumerate()
-        .map(|(i, &(price, qty))| trade(i as u64, price, qty, Side::Buy))
-        .collect();
-
-        let coarse = VolumeProfile::merge([&ladder(&trades, "5")], DEFAULT_LEVEL_CAP).unwrap();
-        let fine = VolumeProfile::merge([&ladder(&trades, "1")], DEFAULT_LEVEL_CAP).unwrap();
-
-        let coarse_area = coarse.value_area(dec("0.70")).unwrap();
-        let fine_area = fine.value_area(dec("0.70")).unwrap();
-
-        assert_eq!(
-            (
-                coarse.bucket_price(coarse_area.poc),
-                coarse.bucket_price(coarse_area.val),
-                coarse.bucket_price(coarse_area.vah),
-            ),
-            (
-                fine.bucket_price(fine_area.poc),
-                fine.bucket_price(fine_area.val),
-                fine.bucket_price(fine_area.vah),
-            ),
-        );
-        // And the area is a two-sided band around the POC, reaching neither
-        // end of the profile: 29 units total, 70% needs 20.3.
-        assert_eq!(coarse.bucket_price(coarse_area.poc), dec("110"));
-        assert_eq!(coarse.bucket_price(coarse_area.val), dec("100"));
-        assert_eq!(coarse.bucket_price(coarse_area.vah), dec("115"));
+        ];
+        let at_tick = area_prices(&profile_at(&prints, "5"), "0.70");
+        // A two-sided band around the POC, reaching neither end of the
+        // profile: 29 units total, 70% needs 20.3.
+        assert_eq!(at_tick, (dec("110"), dec("100"), dec("115")));
+        for finer in ["1", "0.5", "0.01"] {
+            assert_eq!(
+                area_prices(&profile_at(&prints, finer), "0.70"),
+                at_tick,
+                "grouping {finer} named a different area than the tick did",
+            );
+        }
     }
 
     /// Build a profile from `(price, quantity)` prints read at `group`.
@@ -877,20 +878,36 @@ mod tests {
     #[test]
     fn value_area_never_lets_a_remote_cluster_outbid_a_nearer_row() {
         // Issue #156's defect in the shape that survives a price-adjacent
-        // window: *both* sides are past the window, so neither pair can
-        // decide. Weighing volume alone there sends the area up to a 1-unit
-        // row 1000 buckets away and a 9-unit row 100 000 away while leaving
-        // out the 8-unit row one row below the POC. Distance has to decide.
+        // window. The row below the POC is one step away; the cluster above it
+        // is a hundred times further and holds more. Only the window keeps the
+        // near row from losing, so this is the test that fails if the window
+        // ever stops charging for a gap.
+        //
+        // 28 units total, 70% needs 19.6 — more than the two rows around the
+        // POC hold, so the area does end up crossing both gaps. What it must
+        // not do is cross the far one *first* and leave the near row outside.
         let profile = profile_at(
             &[("0", "8"), ("10", "10"), ("1000", "1"), ("100000", "9")],
             "1",
         );
-        let area = profile.value_area(dec("0.70")).unwrap();
-        // 28 units total, 70% needs 19.6 — more than the two rows around the
-        // POC hold, so the area has to cross a gap. It crosses the near one
-        // first, and the row beside the POC is inside.
-        assert_eq!(area.val, 0, "the row next to the POC was left outside");
-        assert!(area.vah <= 100_000);
+        assert_eq!(
+            profile.value_area(dec("0.70")).unwrap(),
+            ValueArea {
+                poc: 10,
+                vah: 100_000,
+                val: 0
+            }
+        );
+        // And with a fraction the near rows alone can answer, nothing beyond
+        // the window is annexed at all.
+        assert_eq!(
+            profile.value_area(dec("0.60")).unwrap(),
+            ValueArea {
+                poc: 10,
+                vah: 10,
+                val: 0
+            }
+        );
     }
 
     #[test]
@@ -963,7 +980,6 @@ mod tests {
             (seed >> 33) % n
         };
 
-        let mut compared = 0;
         for _ in 0..2000 {
             // A tape on a uniform price grid, which is what an instrument
             // with a tick size prints. Rows land on that grid with gaps of
@@ -983,23 +999,18 @@ mod tests {
 
             let at_tick = profile_at(&prints, &tick.to_string());
             let finer = profile_at(&prints, "0.01");
-            // A ladder the cap had to coarsen is no longer the same tape read
-            // twice, so it proves nothing about the window.
-            if at_tick.is_aggregated() || finer.is_aggregated() {
-                continue;
-            }
-            compared += 1;
+            // These tapes are a dozen rows at most and the cap counts rows, so
+            // neither ladder can coarsen; both really are the same tape read
+            // twice, which is what makes the comparison mean anything.
+            assert!(!at_tick.is_aggregated() && !finer.is_aggregated());
             assert_eq!(
                 area_prices(&at_tick, "0.70"),
                 area_prices(&finer, "0.70"),
                 "tape {prints:?} named a different area at tick {tick} and at 0.01",
             );
         }
-        assert!(
-            compared > 1_000,
-            "the sweep skipped too much to prove anything"
-        );
     }
+
     #[test]
     fn value_area_none_only_on_an_empty_profile() {
         let profile = profile_of(&[("10", "1", "0")]);
