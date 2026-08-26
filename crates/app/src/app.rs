@@ -1496,7 +1496,7 @@ impl QuantickApp {
         // seam when there is one — the partial-coverage honesty label is a
         // surface, and this is how a validation run photographs it.
         app.pending_frvp_demo = std::env::var("QUANTICK_FRVP_DEMO")
-            .is_ok_and(|value| matches!(value.trim(), "1" | "compare"));
+            .is_ok_and(|value| matches!(value.trim(), "1" | "compare" | "stress"));
         // One anchored VWAP, anchored a stretch back so the average and its
         // band stack have room to develop on screen.
         app.pending_avwap_demo =
@@ -8001,6 +8001,9 @@ impl QuantickApp {
     /// left open, which is the mid-load frame progressive delivery exists to
     /// produce and the one no capture could otherwise catch.
     fn apply_venue_history_demo(&mut self) {
+        /// Candles the venue-history scene installs: enough for the seam and
+        /// the divider to read, few enough to stay one screenful of context.
+        const DEMO_PREFIX_CANDLES: i64 = 90;
         let Some(demo) = self.pending_venue_history_demo else {
             return;
         };
@@ -8010,17 +8013,33 @@ impl QuantickApp {
             return;
         }
         self.pending_venue_history_demo = None;
+        let slice = match demo {
+            VenueHistoryDemo::Complete => crate::feed::OhlcvSlice::Last { complete: true },
+            VenueHistoryDemo::Partial => crate::feed::OhlcvSlice::More,
+        };
+        self.deliver_synthetic_prefix(DEMO_PREFIX_CANDLES, slice);
+    }
+
+    /// Deliver `candles` synthetic venue candles for the minutes immediately
+    /// before the first engine bar, so the prefix meets the tape without
+    /// overlapping it.
+    ///
+    /// The wiggle is a fixed function of the minute — the capture has to be
+    /// the same picture every run, or a visual diff means nothing. One
+    /// generator, shared by every hook that needs a prefix: a second one would
+    /// be a second history to keep honest.
+    /// Returns whether the candles were delivered: without a bar to sit them
+    /// in front of there is no seam to anchor on, and a caller that promised a
+    /// long history in its caption had better wait rather than photograph a
+    /// short one.
+    fn deliver_synthetic_prefix(&mut self, candles: i64, slice: crate::feed::OhlcvSlice) -> bool {
         let tab = self.active_tab_mut();
         let Some(first) = tab.flow_pane.state.bars().first() else {
-            return;
+            return false;
         };
         let (first_open, anchor) = (first.open_time, first.open);
         let interval = crate::feed::OHLCV_BASE_INTERVAL_MS;
-        // Candles for the minutes immediately before the first engine bar, so
-        // the prefix meets the tape without overlapping it. The wiggle is a
-        // fixed function of the minute — the capture has to be the same
-        // picture every run, or a visual diff means nothing.
-        let bars: Vec<quantick_engine::Bar> = (-90..0)
+        let bars: Vec<quantick_engine::Bar> = (-candles..0)
             .map(|minute| {
                 let open_time = first_open + minute * interval;
                 let drift = rust_decimal::Decimal::from(minute.rem_euclid(7) - 3);
@@ -8038,11 +8057,8 @@ impl QuantickApp {
                 }
             })
             .collect();
-        let slice = match demo {
-            VenueHistoryDemo::Complete => crate::feed::OhlcvSlice::Last { complete: true },
-            VenueHistoryDemo::Partial => crate::feed::OhlcvSlice::More,
-        };
         tab.deliver_ohlcv_slice(interval, bars, slice);
+        true
     }
 
     /// Arm one instance on a drawing: compile the form, warm the trigger on
@@ -8463,27 +8479,75 @@ impl QuantickApp {
     /// from N of M bars") is on screen — the surface this hook exists to
     /// photograph. Consumed once, like the drawings demo.
     fn apply_frvp_demo(&mut self) {
+        /// One-minute venue candles the `=stress` scene installs behind the
+        /// tape — a time chart's worth of history, and far more than one fold
+        /// pass spends, so the range folds across frames rather than in the one
+        /// that placed it. The time pane folds them to whatever interval it is
+        /// showing, so the slot count is this number only at 1m — the scene is
+        /// about the fold surviving a long history, not about an exact count.
+        const FRVP_STRESS_CANDLES: i64 = 25_000;
         if !self.pending_frvp_demo {
             return;
         }
-        let slots = self.active_tab_mut().flow_pane.slots();
-        if slots < 12 {
-            return;
-        }
-        self.pending_frvp_demo = false;
-        let Some(tool) = drawings::DRAWING_TOOLS
-            .into_iter()
-            .find(|tool| tool.id() == crate::frvp::TOOL_ID)
-        else {
-            return;
-        };
         // `=compare` places two adjacent profiles over the same stretch of
         // map, one in each over-heatmap mode — the before/after of the
         // silhouette decision in a single frame, which no toggle-and-wait
         // pair of screenshots can prove as cleanly.
-        let compare =
-            std::env::var("QUANTICK_FRVP_DEMO").is_ok_and(|value| value.trim() == "compare");
-        let prefix = self.active_tab_mut().flow_pane.history_prefix.len();
+        let mode = std::env::var("QUANTICK_FRVP_DEMO").unwrap_or_default();
+        let compare = mode.trim() == "compare";
+        let stress = mode.trim() == "stress";
+        // The venue's candles land on the **time** pane — that is the chart
+        // whose history runs to tens of thousands of bars, and the one a
+        // trader drops a session profile on. Every other scene stays on the
+        // flow pane, where the tape and the map are.
+        let side = if stress {
+            pane::PaneSide::Time
+        } else {
+            pane::PaneSide::Flow
+        };
+        // The time pane is built the first time the split is shown, and
+        // `pane_mut` answers with the flow pane until it is. Waiting is the
+        // only honest option here: a stress scene photographed on the tape
+        // pane would be a picture of twenty bars captioned as twenty-five
+        // thousand.
+        if stress && self.active_tab_mut().time_pane.is_none() {
+            return;
+        }
+        let slots = self.active_tab_mut().pane_mut(side).slots();
+        if slots < 12 {
+            return;
+        }
+        let Some(tool) = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == crate::frvp::TOOL_ID)
+        else {
+            self.pending_frvp_demo = false;
+            return;
+        };
+        // `=stress` is the scene this object used to freeze the app on: a
+        // venue history longer than any single fold pass, with one profile
+        // over the whole of it. What it photographs is the *filling* state —
+        // a partial histogram and its `loading N of M bars` line — which is
+        // only a state at all because the fold is resumable. Pair it with
+        // QUANTICK_FRVP_FOLD_BUDGET=1 to hold that frame indefinitely.
+        //
+        // The delivery has to land before the range is placed: a scene that
+        // drew "the whole chart" over the handful of bars a pane starts with
+        // would be captioned as twenty-five thousand and be a picture of
+        // twenty. It stays armed and tries again next frame instead.
+        if stress
+            && !self.deliver_synthetic_prefix(
+                FRVP_STRESS_CANDLES,
+                crate::feed::OhlcvSlice::Last { complete: true },
+            )
+        {
+            return;
+        }
+        self.pending_frvp_demo = false;
+        // Re-read after the delivery: the prefix that just landed is part of
+        // the chart the range is about to span.
+        let slots = self.active_tab_mut().pane_mut(side).slots();
+        let prefix = self.active_tab_mut().pane_mut(side).history_prefix.len();
         // The compare scene exists to photograph profiles *over the map*, and
         // the map only covers bars closed after book capture began — the
         // session's earliest bars never get cells. So it waits for enough
@@ -8492,7 +8556,7 @@ impl QuantickApp {
             self.pending_frvp_demo = true;
             return;
         }
-        let pane = &mut self.active_tab_mut().flow_pane;
+        let pane = self.active_tab_mut().pane_mut(side);
         // Straddle the seam when there is one; else the newest stretch.
         let start = if prefix > 0 && prefix < slots {
             prefix.saturating_sub(5)
@@ -8505,7 +8569,12 @@ impl QuantickApp {
             .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
             .unwrap_or(1.0);
         let newest = slots - 1;
-        let ranges: &[(usize, usize, bool)] = if compare {
+        let ranges: &[(usize, usize, bool)] = if stress {
+            // The whole chart, oldest slot to newest: the range a trader
+            // drags when they want the session's own volume-by-price, and the
+            // one that used to take the window with it.
+            &[(0, newest, true)]
+        } else if compare {
             // Two adjacent 25-bar ranges over the newest (map-covered) tape.
             // Left object keeps the honest default; right one is forced to
             // "always fill", the composed-into-the-map look under review.

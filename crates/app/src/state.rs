@@ -336,6 +336,9 @@ pub struct ChartState {
     spec: BarSpec,
     /// O(1) identity of the current temporal bar partition.
     timeline_revision: u64,
+    /// O(1) identity of the closed bars *and their ladders* — see
+    /// [`Self::series_revision`].
+    series_revision: u64,
     builder: Box<dyn BarBuilder>,
     trades: Vec<Trade>,
     backfill_trade_count: usize,
@@ -361,6 +364,7 @@ impl ChartState {
         Self {
             spec,
             timeline_revision: 0,
+            series_revision: 0,
             builder,
             trades: Vec::new(),
             backfill_trade_count: 0,
@@ -390,7 +394,7 @@ impl ChartState {
         }
         self.backfill_boundary = Some(self.bars.len());
         self.refresh_partial();
-        self.bump_timeline_revision();
+        self.bump_series_revision();
     }
 
     /// Prepend older backfilled history to the front of the retained stream.
@@ -428,6 +432,10 @@ impl ChartState {
             self.bars.push(bar);
         }
         self.refresh_partial();
+        // Live ingest only ever *appends*: no bar already closed changes, and
+        // no ladder already built is touched. So the series identity stands
+        // and a consumer folding a fixed set of closed bars keeps its work —
+        // see [`Self::series_revision`].
         self.bump_timeline_revision();
     }
 
@@ -469,7 +477,7 @@ impl ChartState {
         self.builder = builder;
         self.bars = bars;
         self.backfill_boundary = boundary;
-        self.bump_timeline_revision();
+        self.bump_series_revision();
     }
 
     fn refresh_partial(&mut self) {
@@ -480,10 +488,38 @@ impl ChartState {
         self.timeline_revision = self.timeline_revision.saturating_add(1);
     }
 
+    /// The closed bars changed: one closed, history was prepended, or the
+    /// series was rebuilt. Always bumps the timeline too — a change to the
+    /// closed bars is a change to the timeline; never the other way round.
+    fn bump_series_revision(&mut self) {
+        self.series_revision = self.series_revision.saturating_add(1);
+        self.bump_timeline_revision();
+    }
+
     /// Monotonic identity for order-flow projections keyed by these bar bounds.
     #[must_use]
     pub fn timeline_revision(&self) -> u64 {
         self.timeline_revision
+    }
+
+    /// Monotonic identity of the closed bars **and their ladders** — the
+    /// inputs a range fold reads.
+    ///
+    /// It moves when those inputs are *rebuilt or shifted*: a spec change, a
+    /// page of history prepended, a footprint refold, the initial backfill.
+    /// It deliberately does **not** move when a print lands or a bar closes,
+    /// because live ingest only appends: no bar already closed changes, and no
+    /// ladder already built is touched, so a fold over a fixed set of bars is
+    /// still valid.
+    ///
+    /// That is the whole difference from
+    /// [`timeline_revision`](Self::timeline_revision), which answers "did
+    /// anything about the bars move" and steps on every single print. Keying
+    /// a kept fold on *that* is what made a range profile over a long history
+    /// restart tens of times a second and never finish.
+    #[must_use]
+    pub fn series_revision(&self) -> u64 {
+        self.series_revision
     }
 
     /// The current bar spec.
@@ -545,6 +581,7 @@ impl ChartState {
             self.refold_footprints(self.footprints.base_group());
         } else {
             self.footprints.reset(self.footprints.base_group());
+            self.bump_series_revision();
         }
     }
 
@@ -563,6 +600,7 @@ impl ChartState {
             self.refold_footprints(group);
         } else {
             self.footprints.reset(group);
+            self.bump_series_revision();
         }
     }
 
@@ -570,6 +608,9 @@ impl ChartState {
     /// spec, rebuilding the ladders on `group`-wide rows against the very
     /// same bar boundaries the real builder produced.
     fn refold_footprints(&mut self, group: Decimal) {
+        // The ladders are rebuilt wholesale, so anything folding them is
+        // reading different inputs from this point on.
+        self.bump_series_revision();
         self.footprints.reset(group);
         let mut builder = self.spec.build();
         for trade in &self.trades {
@@ -882,6 +923,52 @@ mod tests {
         assert_eq!(state.timeline_revision(), 3, "an unchanged spec is a no-op");
         state.set_spec(BarSpec::Tick(3));
         assert_eq!(state.timeline_revision(), 4);
+    }
+
+    /// The series identity is the *narrow* question — "were the bars and
+    /// ladders a fold reads rebuilt?" — and it has to stay narrow. Live
+    /// ingest only appends, so neither a print nor a bar closing on the right
+    /// edge changes a bar that a range already folded; a consumer keeping that
+    /// fold must not be told otherwise, or a long range restarts on every tick
+    /// and never finishes.
+    #[test]
+    fn series_revision_ignores_prints_and_closes_and_tracks_rebuilds() {
+        let mut state = ChartState::new(BarSpec::Tick(2));
+        assert_eq!(state.series_revision(), 0);
+
+        // Two trades: the first opens the forming bar, the second closes it.
+        // Neither rewrites a bar that was already there.
+        state.ingest_live(&trade(1));
+        state.ingest_live(&trade(2));
+        assert_eq!(state.bars().len(), 1, "a bar did close");
+        assert_eq!(
+            state.series_revision(),
+            0,
+            "appending never rewrites what was already folded"
+        );
+        assert_eq!(
+            state.timeline_revision(),
+            2,
+            "the timeline moved on both prints all the same"
+        );
+
+        // Every way the series is genuinely rebuilt does move it.
+        state.ingest_backfill(&(5..=8).map(trade).collect::<Vec<_>>());
+        assert_eq!(state.series_revision(), 1, "the backfill rebuilt the bars");
+        state.prepend_history(&(3..=4).map(trade).collect::<Vec<_>>());
+        assert_eq!(state.series_revision(), 2, "so does a prepended page");
+        state.set_spec(BarSpec::Tick(3));
+        assert_eq!(state.series_revision(), 3, "and a new bar rule");
+        state.set_spec(BarSpec::Tick(3));
+        assert_eq!(state.series_revision(), 3, "an unchanged spec is a no-op");
+        state.set_footprint_enabled(true);
+        assert_eq!(
+            state.series_revision(),
+            4,
+            "switching the ladders on rebuilds them, which is a fold's inputs"
+        );
+        state.set_footprint_group(dec("2"));
+        assert_eq!(state.series_revision(), 5, "and so does a refold");
     }
 
     #[test]
