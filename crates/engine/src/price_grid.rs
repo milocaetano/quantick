@@ -74,10 +74,19 @@ impl PriceGrid {
             return;
         }
         self.steps_seen = self.steps_seen.saturating_add(1);
-        self.step = Some(match self.step {
-            Some(step) => gcd(step, distance),
-            None => distance,
-        });
+        match self.step {
+            // The settled case, and on a live tape almost every print: the
+            // distance is already a whole number of the grid we named, so the
+            // answer cannot move and one modulo is the entire cost. Running
+            // Euclid here instead would spend several on the per-trade path to
+            // arrive back where it started.
+            Some(step) if (distance % step).is_zero() => {}
+            // Off the grid: the tape has just proved the answer too coarse.
+            // Normalized here rather than on every read, because a reader on
+            // the per-trade path asks far more often than this changes.
+            Some(step) => self.step = Some(gcd(step, distance).normalize()),
+            None => self.step = Some(distance.normalize()),
+        }
     }
 
     /// The grid, once the tape has shown enough of it to name one.
@@ -86,14 +95,15 @@ impl PriceGrid {
     /// caller that gets `None` has learned that the tape has not said, which is
     /// different from learning that the grid is fine.
     ///
-    /// Normalized, so a half-point grid reads `0.5` rather than carrying
-    /// whatever scale the arithmetic left on it — this number is shown to the
-    /// trader on the ladder's status line.
+    /// Already normalized, so a half-point grid reads `0.5` rather than
+    /// carrying whatever scale the arithmetic left on it — this number reaches
+    /// the trader on the ladder's status line. Normalizing happens where the
+    /// answer changes, not here: this is read once per trade and changes a
+    /// handful of times a session.
     #[must_use]
     pub fn step(&self) -> Option<Decimal> {
         self.step
             .filter(|_| self.steps_seen >= STEPS_BEFORE_REPORTING)
-            .map(|step| step.normalize())
     }
 
     /// How many distances have been folded in — what the answer rests on.

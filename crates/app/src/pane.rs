@@ -7677,6 +7677,81 @@ mod tests {
 
     /// A pane carrying one indicator pane of `kind`, with `columns` of
     /// committed values — the fixture every band test starts from.
+
+    #[test]
+    fn ingesting_prints_hands_the_tape_grid_to_the_order_flow_engine() {
+        // The whole fix hangs off this wiring: the detector can be right and
+        // the engine willing, and the ladder still draws the wrong rows if
+        // nothing carries the answer between them. Nothing else in the suite
+        // would notice that call going missing.
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(1000), "WINV26".to_owned());
+        assert!(
+            pane.orderflow.is_some(),
+            "a flow pane is the one that owns the engine under test",
+        );
+        let before = pane
+            .orderflow
+            .as_mut()
+            .map(OrderflowView::base_capture_grouping_for_test)
+            .expect("flow pane has an engine");
+
+        // B3's mini index: every print a multiple of five, and no depth event
+        // anywhere — exactly what a market replay delivers.
+        for (i, price) in [
+            "174565", "174570", "174560", "174570", "174585", "174580", "174570", "174575",
+            "174590", "174585",
+        ]
+        .iter()
+        .enumerate()
+        {
+            pane.ingest_live_trade(&quantick_engine::Trade {
+                agg_id: i as u64,
+                timestamp_ms: 1_000 + i as i64 * 100,
+                price: price.parse::<Decimal>().unwrap(),
+                quantity: Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            });
+        }
+
+        assert_eq!(pane.state.tape_price_step(), Some(Decimal::from(5)));
+        let after = pane
+            .orderflow
+            .as_mut()
+            .map(OrderflowView::base_capture_grouping_for_test)
+            .expect("flow pane has an engine");
+        assert_ne!(after, before, "the engine never heard the tape's grid");
+        assert_eq!(after, Decimal::from(5));
+    }
+
+    #[test]
+    fn backfilled_history_hands_the_tape_grid_over_too() {
+        // History arrives as one batch before the first live print, so a chart
+        // wired only on the live path draws its whole first screen on the
+        // wrong rows and then quietly corrects itself.
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(1000), "WDOU26".to_owned());
+        let history: Vec<quantick_engine::Trade> = [
+            "5216.0", "5216.5", "5217.0", "5216.5", "5215.5", "5217.5", "5218.0", "5217.0",
+            "5216.0", "5215.5",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, price)| quantick_engine::Trade {
+            agg_id: i as u64,
+            timestamp_ms: 1_000 + i as i64 * 100,
+            price: price.parse::<Decimal>().unwrap(),
+            quantity: Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        })
+        .collect();
+        pane.ingest_backfill(&history);
+
+        assert_eq!(
+            pane.orderflow
+                .as_mut()
+                .map(OrderflowView::base_capture_grouping_for_test),
+            Some("0.5".parse::<Decimal>().unwrap()),
+        );
+    }
     fn pane_with_indicator(kind: &str, columns: Vec<Vec<f64>>) -> ChartPane {
         let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
         add_indicator_view(&mut pane, kind, columns);
