@@ -59,6 +59,9 @@ pub fn spawn(symbol: &str) -> FeedHandle {
         // Every aggTrade is an execution carrying its real size, and the venue
         // answers the same for every symbol it lists — nothing to narrow later.
         capabilities: super::fixed_capabilities(ProviderKind::Binance.capabilities()),
+        // A web-socket venue stamps a trade and quantick reads it: there is no
+        // hop between those two to attribute a delay to.
+        latency: super::unsplit_latency(),
         commands: cmd_tx,
         replay: None,
     }

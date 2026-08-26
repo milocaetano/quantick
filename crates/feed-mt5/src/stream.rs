@@ -21,6 +21,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -32,6 +33,7 @@ use quantick_engine::{Bar, Trade};
 use quantick_orderbook::{DepthEvent, DepthResyncReason, DepthStatus};
 
 use crate::depth::BookMapper;
+use crate::latency::{LatencySample, LatencyTracker};
 use crate::map::{MapOutcome, PriceContext, SideMode, TickMapper};
 use crate::protocol::{self, BridgeMsg, FeedMsg, SCHEMA_VERSION, TapeKind};
 use crate::rates::RateMapper;
@@ -54,6 +56,23 @@ pub const MAX_LINE_BYTES: usize = 64 * 1024;
 /// serve, this one only buys the log a line saying *which* EA dialed the wrong
 /// port. The refusal happens either way.
 const BUSY_REFUSAL_WINDOW: Duration = Duration::from_millis(250);
+
+/// Tape delay at or beyond this is reported once, and its return to health is
+/// reported once more.
+///
+/// A second is already far outside what a local socket carrying a local
+/// terminal's ticks should ever cost, and well inside the "delays of seconds
+/// cannot happen" the chart exists to honour. It is an edge-triggered report,
+/// not a per-sample one: a tape that stays late says so once and then stops
+/// filling the log with the same sentence.
+///
+/// **Deliberately lower than the chart's own threshold.** quantick's status bar
+/// colours the cell and names the hop at `metrics::HIGH_LAG_MS` (five seconds),
+/// because a readout a trader glances at mid-session must not cry wolf. A log
+/// nobody watches until something is wrong can afford to start earlier, and a
+/// one-to-five-second spell is exactly the kind that is over before anyone
+/// looks. The two are meant to differ; if either moves, read the other first.
+const LAG_REPORT_MS: i64 = 1_000;
 
 /// Runtime switch controlling whether DOM images are published.
 ///
@@ -347,6 +366,19 @@ pub enum Mt5Event {
     Backfilled(Vec<Trade>),
     /// One live trade.
     Live(Trade),
+    /// Where the tape's delay is being spent, measured at the socket.
+    ///
+    /// Sent at a bounded rate — at most once every
+    /// [`SAMPLE_EVERY_PRINTS`](crate::latency::SAMPLE_EVERY_PRINTS) prints, and
+    /// once per heartbeat so a thin tape still reports. Never once per print:
+    /// the reading costs a system clock read, and a per-print clock read on a
+    /// busy tape is the kind of cost this whole change exists to remove.
+    ///
+    /// The figures are taken where the line is read off the socket, so they
+    /// account for the chain up to this crate and no further. What a consumer
+    /// then spends queueing and drawing is its own to measure — and the
+    /// difference between its arrival figure and this one is exactly that.
+    Latency(LatencySample),
     /// One order-book event, in the provider-neutral depth vocabulary.
     ///
     /// Only produced while [`BookCaptureSwitch`] is enabled and the bridge
@@ -1024,6 +1056,15 @@ async fn serve_connection(
     let mut mapper =
         TickMapper::new(config.side_mode, hello.server_utc_offset_s).with_tape(hello.tape);
     let mut tracker = SeqTracker::new();
+    let mut latency = LatencyTracker::new();
+    // Whether the tape has already been reported late. Edge-triggered, so a
+    // session that stays behind logs the diagnosis once instead of once per
+    // sample, and its recovery is logged too — a report with no matching
+    // recovery is how an operator reads "it never came back".
+    let mut lag_reported = false;
+    // Whether the consumer's queue has already been reported full. Same edge
+    // trigger as the lag report, for the same reason.
+    let mut backpressure_reported = false;
     let mut backfill: Option<Vec<Trade>> = None;
     let mut candles: Option<RatesBlock> = None;
     let mut undecodable: u64 = 0;
@@ -1208,7 +1249,34 @@ async fn serve_connection(
                         }
                         (None, Some(buf)) => buf.push(trade),
                         (None, None) => {
-                            if tx.send(Mt5Event::Live(trade)).await.is_err() {
+                            // Live prints only. A backfill or paged tick is as
+                            // old as the history it belongs to, and measuring
+                            // latency from one would report minutes of delay on
+                            // a chart that is perfectly current.
+                            latency.observe_live(tick.time_ms, tick.sent_ms);
+                            // Sampled *before* the trade is handed downstream,
+                            // never after. `send_live` waits when the consumer
+                            // is not draining, and a clock read on the far side
+                            // of that wait charges the consumer's own queueing
+                            // to the wire — collapsing the very gap the health
+                            // view publishes these two figures to expose.
+                            if latency.due()
+                                && publish_latency(
+                                    &mut latency,
+                                    &mapper,
+                                    &config.symbol,
+                                    &mut lag_reported,
+                                    tx,
+                                )
+                                .await
+                                .is_err()
+                            {
+                                break ConnEnd::UiGone;
+                            }
+                            if send_live(tx, trade, &config.symbol, &mut backpressure_reported)
+                                .await
+                                .is_err()
+                            {
                                 break ConnEnd::UiGone;
                             }
                         }
@@ -1228,6 +1296,17 @@ async fn serve_connection(
                 if let Some(offset) = hb.server_utc_offset_s {
                     mapper.set_server_utc_offset_s(offset);
                     depth.set_server_utc_offset_s(offset);
+                }
+                // The beat a thin tape is measured on: a symbol printing once
+                // a minute never reaches the per-print sampling bound, and
+                // would otherwise never report at all. The figures are still
+                // the newest print's own, so a quiet stretch reports how late
+                // that print was and never how long ago it was.
+                if publish_latency(&mut latency, &mapper, &config.symbol, &mut lag_reported, tx)
+                    .await
+                    .is_err()
+                {
+                    break ConnEnd::UiGone;
                 }
                 // A heartbeat is the natural moment to notice that a consumer
                 // is waiting for depth this bridge cannot send.
@@ -1805,6 +1884,128 @@ impl DepthSession {
             }
         }
     }
+}
+
+/// Publish one live trade, saying so when the consumer's queue is full.
+///
+/// `Err(())` means the consumer is gone.
+///
+/// A full queue here is not a harmless wait. This task is the one reading the
+/// socket, so a blocked publish stops the read, the receive buffer fills, and
+/// the bridge's next `SocketSend` blocks *the terminal's main thread* — the
+/// thread that would otherwise be collecting ticks. One slow consumer therefore
+/// becomes a late tape at the source, and until now it did that in silence:
+/// every hop looked healthy and the chart simply ran behind.
+///
+/// `try_send` first costs nothing on the happy path and is the only way to tell
+/// "the queue was full" from "the send took a while", so the wait is still
+/// taken — never a dropped print — but it is a wait with a name on it.
+async fn send_live(
+    tx: &mpsc::Sender<Mt5Event>,
+    trade: Trade,
+    symbol: &str,
+    reported: &mut bool,
+) -> Result<(), ()> {
+    match tx.try_send(Mt5Event::Live(trade)) {
+        Ok(()) => {
+            if *reported {
+                *reported = false;
+                info!(
+                    target: "quantick::feed",
+                    schema_version = 1_u8,
+                    event_code = "MT5_CONSUMER_KEEPING_UP",
+                    symbol = %symbol,
+                    "the consumer's queue drained; the socket is being read freely again"
+                );
+            }
+            Ok(())
+        }
+        Err(mpsc::error::TrySendError::Full(event)) => {
+            if !*reported {
+                *reported = true;
+                warn!(
+                    target: "quantick::feed",
+                    schema_version = 1_u8,
+                    event_code = "MT5_CONSUMER_BACKPRESSURE",
+                    symbol = %symbol,
+                    action = "wait_for_room",
+                    "the consumer is not draining live trades fast enough; \
+                     this stops the socket read, which stalls the bridge's sends"
+                );
+            }
+            tx.send(event).await.map_err(|_| ())
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => Err(()),
+    }
+}
+
+/// Draw a latency sample, log the diagnosis when it crosses, and publish it.
+///
+/// `Err(())` means the consumer is gone, the same signal every other publish in
+/// this module returns.
+///
+/// This is the one place in the read path that reads a system clock. It is
+/// called at most once every
+/// [`SAMPLE_EVERY_PRINTS`](crate::latency::SAMPLE_EVERY_PRINTS) prints and once
+/// per heartbeat, so a tape printing a thousand times a second pays for
+/// roughly sixteen clock reads to be measurable — not a thousand.
+async fn publish_latency(
+    latency: &mut LatencyTracker,
+    mapper: &TickMapper,
+    symbol: &str,
+    lag_reported: &mut bool,
+    tx: &mpsc::Sender<Mt5Event>,
+) -> Result<(), ()> {
+    let Some(sample) = latency.sample(wall_clock_ms(), mapper.server_utc_offset_ms()) else {
+        // No live print since the last sample: nothing happened to measure, and
+        // republishing the previous window would let a wedged socket show a
+        // healthy split forever.
+        return Ok(());
+    };
+    let late = sample.arrival_lag_ms >= LAG_REPORT_MS;
+    if late != *lag_reported {
+        *lag_reported = late;
+        // Named, not absorbed. A tape that falls behind used to be visible only
+        // as a number drifting up in the corner of the chart, with nothing
+        // anywhere saying which hop was spending the time.
+        if late {
+            warn!(
+                target: "quantick::feed",
+                schema_version = 1_u8,
+                event_code = "MT5_TAPE_LATE",
+                symbol = %symbol,
+                arrival_lag_ms = sample.arrival_lag_ms,
+                terminal_lag_ms = sample.terminal_lag_ms,
+                terminal_lag_peak_ms = sample.terminal_lag_peak_ms,
+                transport_lag_ms = sample.transport_lag_ms,
+                prints = sample.prints,
+                hop = sample.dominant().map(crate::latency::LatencyHop::label),
+                "the tape is running behind; the hop field says where the time went"
+            );
+        } else {
+            info!(
+                target: "quantick::feed",
+                schema_version = 1_u8,
+                event_code = "MT5_TAPE_CAUGHT_UP",
+                symbol = %symbol,
+                arrival_lag_ms = sample.arrival_lag_ms,
+                "the tape is current again"
+            );
+        }
+    }
+    tx.send(Mt5Event::Latency(sample)).await.map_err(|_| ())
+}
+
+/// UTC epoch milliseconds.
+///
+/// The only wall-clock read in this crate, and it exists so a delay can be
+/// named. Everything that turns bridge lines into trades stays a pure function
+/// of what arrived.
+fn wall_clock_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
 }
 
 /// Publish one depth status. `Err(())` means the consumer is gone.

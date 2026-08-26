@@ -20,7 +20,8 @@ use quantick_feed_binance::depth::DepthEvent;
 use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::feed::{
-    self, FeedCommand, FeedConnectionState, FeedEvent, FeedHandle, FeedNotice, ReplayLink,
+    self, FeedCommand, FeedConnectionState, FeedEvent, FeedHandle, FeedLatency, FeedNotice,
+    ReplayLink,
 };
 use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
@@ -287,6 +288,18 @@ pub struct Tab {
     /// What the running feed can really do, read fresh every frame. The feed
     /// narrows it once a session tells it what the symbol actually offers.
     pub feed_capabilities: watch::Receiver<FeedCapabilities>,
+    /// Where this feed's delay is being spent, read fresh every frame.
+    ///
+    /// A reading rather than an event, so a frame that skipped three samples
+    /// sees the newest one instead of a queue. `None` on a provider that
+    /// cannot cut its own chain, and until the first sample arrives.
+    pub feed_latency: watch::Receiver<Option<FeedLatency>>,
+    /// A latency split forced by `QUANTICK_FAKE_LATENCY_SPLIT`, for a scripted
+    /// run that has to photograph the readout without a slow venue.
+    ///
+    /// Overrides the feed's own reading when set, and set only from the hook —
+    /// a live session leaves it `None` and reads the real one.
+    pub forced_latency: Option<FeedLatency>,
     pub commands: mpsc::Sender<FeedCommand>,
 
     // Market Replay. `replay` is `Some` exactly while a recorded session is
@@ -471,6 +484,8 @@ impl Tab {
             notice: FeedNotice::Clear,
             feed_connection: FeedConnectionState::Connecting,
             feed_capabilities: feed.capabilities,
+            feed_latency: feed.latency,
+            forced_latency: crate::feed::forced_latency_split(),
             commands: feed.commands,
             replay: feed.replay,
             history_step: 2000,
@@ -537,6 +552,7 @@ impl Tab {
         self.book_events = handle.book_events;
         self.notices = handle.notices;
         self.feed_capabilities = handle.capabilities;
+        self.feed_latency = handle.latency;
         self.notice = FeedNotice::Clear;
         self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
@@ -593,6 +609,18 @@ impl Tab {
     #[cfg(test)]
     pub fn attach_for_test(&mut self, handle: FeedHandle) {
         self.attach(handle);
+    }
+
+    /// Publish a latency reading as the attached feed would, for a test that
+    /// needs the tab to have read one.
+    #[cfg(test)]
+    pub fn publish_latency_for_test(&mut self, split: Option<FeedLatency>) {
+        let (tx, rx) = watch::channel(split);
+        self.feed_latency = rx;
+        // The sender is dropped on purpose: a `watch` receiver keeps serving
+        // the value it was born with, which is what a test wants and what
+        // `unsplit_latency` relies on in production.
+        drop(tx);
     }
 
     /// Whether any pane on this tab cuts bars by a foldable time interval —
@@ -1467,6 +1495,20 @@ impl Tab {
         *self.feed_capabilities.borrow()
     }
 
+    /// Where this feed's delay is being spent, as far as the provider can tell.
+    ///
+    /// `None` while replaying: a recording's prints are as old as the day they
+    /// were captured and the playback clock decides when they appear, so there
+    /// is no delay here for any hop to own — the same reason
+    /// [`trade_arrival_ms`](Self::trade_arrival_ms) reports nothing there.
+    #[must_use]
+    pub fn feed_latency(&self) -> Option<FeedLatency> {
+        if self.replay.is_some() {
+            return None;
+        }
+        self.forced_latency.or(*self.feed_latency.borrow())
+    }
+
     /// Ask the feed thread to fetch and prepend `history_step` older trades.
     /// Non-blocking: if a request is already queued, this frame's click is
     /// dropped rather than piling up commands.
@@ -2279,6 +2321,13 @@ impl Tab {
         if self.replay.is_some() {
             return None;
         }
+        // Never the forced split's figure. This is a *measurement* — it reaches
+        // the log as APP_HIGH_TRADE_LAG, the control feed scope and the health
+        // view, none of which carry a marker saying a capture run invented it,
+        // and inferred data that is not labelled as such is the one thing this
+        // repo does not ship. The hook drives the readout through the latency
+        // port instead, where every consumer already knows the figure is the
+        // feed's own and not the chart's.
         self.latest_trade_latency_ms
     }
 

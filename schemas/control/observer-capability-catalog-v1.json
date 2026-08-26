@@ -5611,12 +5611,88 @@
               },
               "tab_id": {
                 "$ref": "#/$defs/WireU64"
+              },
+              "tape": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TapeHealthSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "How late this tab's tape is, and where the time is going. `None` while\nreplaying — a recording's prints are as old as the day they were\ncaptured and the playback clock decides when they appear."
               }
             },
             "required": [
               "tab_id",
               "active_loading_tasks",
               "panes"
+            ],
+            "type": "object"
+          },
+          "TapeHealthSnapshot": {
+            "description": "Where a tab's tape delay is being spent.\n\nThe whole point of the breakdown is that \"the chart is eighteen seconds\nbehind\" is not actionable on its own: it reads the same whether the venue's\nadapter was late, the wire was late, or this process drained late, and those\nhave different fixes. An investigation that starts here can name the hop\nwithout a screenshot and without a person watching the corner of a window.",
+            "properties": {
+              "arrival_latency_ms": {
+                "description": "Newest print: venue stamp to this chart drawing it. The end-to-end\nfigure the status bar shows.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "milliseconds"
+              },
+              "dominant_hop": {
+                "description": "The provider's own name for the hop that owns most of the delay.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "feed_arrival_latency_ms": {
+                "description": "The same measurement taken where the feed read the print off the wire,\none hop earlier.\n\nThe gap between this and `arrival_latency_ms` is what quantick's own\nqueue and frame drain cost. It is a *derived* reading, not a measured\none — the two are sampled at different instants — but a gap of seconds\nbetween them is unambiguous, and it is the only way to see that hop at\nall. `None` on a provider that cannot cut its own chain.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "milliseconds"
+              },
+              "sampled_prints": {
+                "$ref": "#/$defs/WireU64",
+                "description": "How many live prints the split covers."
+              },
+              "source_latency_ms": {
+                "description": "Venue stamp to the source handing the print over: everything upstream\nof quantick.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "milliseconds"
+              },
+              "source_latency_peak_ms": {
+                "description": "The worst `source_latency_ms` over the sampled prints.\n\nThe only peak reported, and deliberately: it is two source-side stamps\nsubtracted per print, so every print contributes with no clock involved.\nA peak on the arrival or wire figures would need the reader's clock\napplied to a print that arrived earlier, which measures that print's age\nrather than its delay — on a quiet tape, the sampling interval itself.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "milliseconds"
+              },
+              "transport_latency_ms": {
+                "description": "The source handing it over to quantick reading it: the wire.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "milliseconds"
+              }
+            },
+            "required": [
+              "sampled_prints"
             ],
             "type": "object"
           },

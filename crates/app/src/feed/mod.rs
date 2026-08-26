@@ -30,6 +30,7 @@ pub use quantick_orderbook::DepthEvent;
 
 use crate::config::{FeedCapabilities, ProviderKind};
 
+pub use metatrader::forced_latency_split;
 pub use replay::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 
 /// Default number of recent trades to backfill so the chart opens populated,
@@ -373,6 +374,64 @@ pub fn silent_notices() -> mpsc::Receiver<FeedNotice> {
     rx
 }
 
+/// Where a feed's delay is being spent, as far as the provider can tell.
+///
+/// The chart has always been able to say *how* late a print was — its timestamp
+/// against the local clock, one number. That number cannot be acted on: a tape
+/// running seconds behind looks the same whether the venue's own adapter got it
+/// late, the transport carried it late, or the chart drained it late, and those
+/// have different fixes. This is that number cut into the pieces the provider
+/// can actually measure.
+///
+/// Every split is optional, and the whole struct is absent for a provider that
+/// cannot cut its own chain. That is deliberate: an invented zero would read as
+/// "this hop is instant", which is a measurement nobody took.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FeedLatency {
+    /// Newest print: venue stamp to the provider reading it off the wire.
+    ///
+    /// Measured at the provider, not at the chart. The chart keeps its own
+    /// end-to-end figure (`Tab::trade_arrival_ms`), taken when the print is
+    /// drained into a frame, and the *difference* between the two is what
+    /// quantick's own queueing and drawing cost. Two measurements of two
+    /// different things, and every surface that shows both says which is which.
+    pub arrival_lag_ms: i64,
+    /// Venue stamp to the source handing the print over — everything upstream
+    /// of quantick.
+    pub source_lag_ms: Option<i64>,
+    /// Worst `source_lag_ms` over the sample.
+    ///
+    /// The only peak here, because it is the only one a provider can take
+    /// without a clock: both stamps come from the source, per print. A peak on
+    /// the arrival or wire figures would need the reader's clock applied to a
+    /// print that arrived earlier, which measures that print's *age* rather
+    /// than its delay — and on a quiet tape that is the sampling interval,
+    /// reported as latency.
+    pub source_lag_peak_ms: Option<i64>,
+    /// The source handing it over to quantick reading it: the wire.
+    pub transport_lag_ms: Option<i64>,
+    /// The provider's own name for the hop that owns most of the delay.
+    ///
+    /// A borrowed name rather than a shared enum, because the chains differ:
+    /// MetaTrader's runs venue → terminal → bridge → socket, a web-socket
+    /// venue's does not have a terminal at all, and a recorded session has no
+    /// chain to speak of. One enum covering all of them would either lose the
+    /// detail that makes the reading actionable or grow a variant per provider,
+    /// and this readout exists to be acted on.
+    pub hop: Option<&'static str>,
+    /// How many live prints the sample covers.
+    pub prints: u32,
+}
+
+/// The latency channel of a feed that cannot split its own chain.
+///
+/// The sender is dropped immediately, so the receiver serves `None` forever and
+/// the chart shows the end-to-end figure with no breakdown beside it.
+#[must_use]
+pub fn unsplit_latency() -> watch::Receiver<Option<FeedLatency>> {
+    watch::channel(None).1
+}
+
 /// The capability channel of a feed whose answer is known at spawn and never
 /// changes. The sender is dropped immediately; a `watch` receiver keeps serving
 /// the value it was born with.
@@ -449,6 +508,17 @@ pub struct FeedHandle {
     /// value every frame — exactly as it read the static provider answer
     /// before — so an affordance withdraws itself the moment the truth is known.
     pub capabilities: watch::Receiver<FeedCapabilities>,
+    /// Where this feed's delay is being spent, when the provider can tell.
+    ///
+    /// A `watch` rather than an event, because it is a *current reading* and
+    /// not a thing that happened: a consumer that missed three samples wants
+    /// the newest one, never the backlog. Its own channel for the same reason
+    /// notices have one — a tape that has stopped arriving is exactly when the
+    /// question "who is late" is being asked, and the trade channel is silent.
+    ///
+    /// `None` until the provider has something measured to say, and on every
+    /// provider that cannot cut its own chain.
+    pub latency: watch::Receiver<Option<FeedLatency>>,
     /// UI → feed: on-demand history loading.
     pub commands: mpsc::Sender<FeedCommand>,
     /// Present only while a recorded session is playing: what the transport bar
@@ -505,6 +575,46 @@ pub fn spawn_live(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_provider_that_cannot_split_publishes_nothing_forever() {
+        // The other half of the port, exercised by a second implementation:
+        // three of the four providers in this repo publish exactly this, and a
+        // receiver whose sender is already gone has to keep answering `None`
+        // rather than closing or panicking on the frame that reads it.
+        let unsplit = unsplit_latency();
+        assert_eq!(*unsplit.borrow(), None);
+        assert_eq!(*unsplit.borrow(), None, "and on every frame after");
+    }
+
+    #[test]
+    fn a_provider_that_can_split_publishes_its_newest_reading() {
+        // A `watch`, not a queue: a consumer that missed three samples must
+        // read the newest one, never a backlog of readings that are no longer
+        // true. This is the behaviour the status bar and the health view both
+        // depend on, and the reason the port is a watch at all.
+        let (tx, rx) = watch::channel::<Option<FeedLatency>>(None);
+        let reading = |ms: i64| FeedLatency {
+            arrival_lag_ms: ms,
+            source_lag_ms: Some(ms - 100),
+            source_lag_peak_ms: Some(ms - 100),
+            transport_lag_ms: Some(100),
+            hop: Some("bridge"),
+            prints: 64,
+        };
+        tx.send_replace(Some(reading(9_000)));
+        tx.send_replace(Some(reading(300)));
+        assert_eq!(
+            rx.borrow().map(|split| split.arrival_lag_ms),
+            Some(300),
+            "the newest reading, not the first"
+        );
+
+        // A feed that stops leaves its last reading standing rather than
+        // closing the channel out from under a frame that is mid-draw.
+        drop(tx);
+        assert_eq!(rx.borrow().map(|split| split.arrival_lag_ms), Some(300));
+    }
 
     #[test]
     fn reconnect_loop_lifecycle_uses_explicit_transport_notices() {

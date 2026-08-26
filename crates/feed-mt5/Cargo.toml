@@ -5,6 +5,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+# Dependency-free and self-timed, the way `engine/benches/hot_path.rs` is: the
+# per-print path is what this crate is judged on, and a bench that drags in a
+# framework to say so would cost every build for one number.
+[[bench]]
+name = "tape_burst"
+harness = false
+
 [dependencies]
 quantick-engine = { path = "../engine" }
 quantick-orderbook = { path = "../orderbook" }

@@ -21,7 +21,7 @@
 //| JSON object with an event_code, so logs are machine-readable.      |
 //+------------------------------------------------------------------+
 #property copyright "quantick"
-#property version   "1.001"
+#property version   "1.002"
 #property description "Streams ticks to the quantick chart over a local socket"
 
 input string InpHost             = "127.0.0.1"; // Feed host (quantick listener)
@@ -32,10 +32,11 @@ input int    InpRetrySeconds     = 5;           // Reconnect backoff
 input int    InpSendTimeoutMs    = 5000;        // Max ms one send may block
 input bool   InpStreamBook       = true;        // Stream Depth of Market
 input int    InpBookMinIntervalMs= 20;          // Min ms between book images (0 = every change)
+input int    InpPumpIntervalMs   = 25;          // Safety-net pump interval (OnTick is the fast path)
 
 #define SCHEMA_VERSION 1
 #define BRIDGE_NAME    "quantick-mt5-bridge"
-#define BRIDGE_VERSION "0.3.0"
+#define BRIDGE_VERSION "0.4.0"
 // How far back to look for one executed trade before declaring a symbol
 // tape-less. See DetectTape() for why this errs long.
 #define TAPE_PROBE_DAYS 30
@@ -43,6 +44,29 @@ input int    InpBookMinIntervalMs= 20;          // Min ms between book images (0
 // that a busy second costs a handful of syscalls instead of thousands, small
 // enough that a burst never grows an unbounded string on the terminal's heap.
 #define OUT_BUFFER_FLUSH_CHARS 16384
+// Ticks one CopyTicks call may return. The pump keeps calling while a call
+// comes back full, so this bounds a single request, not a pass: a burst larger
+// than one batch is drained inside the same pass instead of waiting for the
+// next event, which is where whole seconds used to be spent.
+#define PUMP_TICKS_PER_ROUND 4096
+// Hard stop on that loop, in rounds and in time. Rounds alone are not a bound
+// on what matters: sixteen full rounds is sixty-five thousand ticks, as many
+// StringFormat calls, and — at one flush per sixteen thousand characters —
+// hundreds of SocketSend calls, each free to block for InpSendTimeoutMs while
+// making partial progress. That is a pass owning the terminal's main thread for
+// seconds, collecting no ticks and firing no OnBookEvent, which is precisely
+// what this bound exists to prevent. Whichever limit is reached first ends the
+// pass; the remainder is taken by the next one, milliseconds later.
+#define PUMP_MAX_ROUNDS 16
+#define PUMP_MAX_MS 40
+// A flush slower than this is reported. Nothing on loopback should take a
+// millisecond, so this only fires when the reader has stopped reading and the
+// send is blocking the very thread that would otherwise collect ticks.
+#define SEND_STALL_LOG_MS 25
+// Bounds for InpPumpIntervalMs: fast enough that the safety net is a net, slow
+// enough that a mistyped 0 cannot spin the terminal's timer thread.
+#define PUMP_INTERVAL_MIN_MS 5
+#define PUMP_INTERVAL_MAX_MS 1000
 
 int      g_socket           = INVALID_HANDLE;
 ulong    g_seq              = 0; // per-session tick sequence, from 1
@@ -53,6 +77,12 @@ datetime g_last_heartbeat   = 0;
 datetime g_next_retry       = 0;
 string   g_out              = ""; // queued lines, written by FlushOut
 ulong    g_sends            = 0;  // SocketSend batches this session
+// Millisecond server clock, anchored on the second boundary (see NowServerMs).
+long     g_clock_second     = 0;     // last whole second read from TimeTradeServer
+ulong    g_clock_anchor_us  = 0;     // GetMicrosecondCount when that second turned over
+bool     g_clock_anchored   = false;
+ulong    g_pump_limits      = 0;     // passes that ended on a bound, not drained
+ulong    g_send_stalls      = 0;     // flushes slower than SEND_STALL_LOG_MS
 // Whether this symbol prints executed trades (DetectTape). It decides what
 // CopyTicks is asked for: on a printing venue quantick reads `last`/`volume`
 // and discards every quote-only tick, so sending them is pure delay.
@@ -111,6 +141,7 @@ bool FlushOut()
       g_out = "";
       return(false);
      }
+   ulong started_us = GetMicrosecondCount();
    int sent = 0;
    while(sent < len)
      {
@@ -139,6 +170,21 @@ bool FlushOut()
    // the caller turns into a disconnect, and the disconnect clears it.
    g_out = "";
    g_sends++;
+   // A send that blocks is the one delay this bridge can neither shorten nor
+   // hide: SocketSend runs on the terminal's main thread, so every millisecond
+   // it waits for quantick to read is a millisecond no tick is collected. The
+   // tape arrives late and nothing on either side says why — which is exactly
+   // the shape of the bug this reporting exists to end. Named, not absorbed.
+   long blocked_ms = (long)((GetMicrosecondCount() - started_us) / 1000);
+   if(blocked_ms >= SEND_STALL_LOG_MS)
+     {
+      g_send_stalls++;
+      LogEvent("BRIDGE_SEND_STALLED",
+               StringFormat("\"blocked_ms\":%I64d,\"bytes\":%d,\"stalls\":%I64u,"
+                            "\"hint\":\"quantick stopped reading the socket; ticks are "
+                            "not being collected while this blocks\"",
+                            blocked_ms, len, g_send_stalls));
+     }
    return(true);
   }
 
@@ -182,6 +228,68 @@ long ServerUtcOffsetSeconds()
   }
 
 //+------------------------------------------------------------------+
+//| Server time in milliseconds.                                      |
+//|                                                                   |
+//| MQL5 offers no sub-second wall clock: TimeTradeServer() counts    |
+//| whole seconds, and stamping a tick with it reports up to 999 ms   |
+//| of delay that does not exist — the exact error the feed's own     |
+//| lag readout was already fighting (see MaybeHeartbeat).            |
+//|                                                                   |
+//| So the millisecond origin is pinned to the second *boundary*: the |
+//| first read that sees a new second records the monotonic           |
+//| microsecond counter at that instant, and later reads inside the   |
+//| same second add the elapsed monotonic time to it. The remaining   |
+//| error is the gap between two calls — a tick apart on a live tape, |
+//| InpPumpIntervalMs at worst — instead of a full second.            |
+//|                                                                   |
+//| A server clock that jumps (a DST change, an offset re-sync) turns |
+//| the second over early and simply re-anchors, because the anchor   |
+//| is refreshed on *any* change, not on an expected increment.       |
+//+------------------------------------------------------------------+
+long NowServerMs()
+  {
+   long  now_s  = (long)TimeTradeServer();
+   ulong now_us = GetMicrosecondCount();
+   if(!g_clock_anchored || now_s != g_clock_second)
+     {
+      g_clock_second    = now_s;
+      g_clock_anchor_us = now_us;
+      g_clock_anchored  = true;
+      return(now_s * 1000);
+     }
+   long elapsed_ms = (long)((now_us - g_clock_anchor_us) / 1000);
+   // The anchor cannot outlive its own second: without this a quiet tape,
+   // where nothing calls in to notice the turnover, would report a stamp in
+   // the second that has not started yet.
+   if(elapsed_ms > 999)
+      elapsed_ms = 999;
+   return(g_clock_second * 1000 + elapsed_ms);
+  }
+
+//+------------------------------------------------------------------+
+//| Stamp for a book image, in server ms.                             |
+//|                                                                   |
+//| SYMBOL_TIME_MSC is the last quote's instant at millisecond        |
+//| resolution; in a quiet book it stops moving, so the coarse server |
+//| clock stands in and the book timeline never stalls behind the     |
+//| trade timeline.                                                   |
+//|                                                                   |
+//| Deliberately *not* used to measure how far the pump trails. That  |
+//| floor is a wall clock: it advances whether or not a newer tick    |
+//| exists, so subtracting the send cursor from it yields time since  |
+//| the last print, which during a stall equals the delay itself and  |
+//| would blame this pump for all of it. The pump's own health is     |
+//| reported by BRIDGE_PUMP_LIMIT and BRIDGE_SEND_STALLED, which      |
+//| measure things this EA can actually see.                          |
+//+------------------------------------------------------------------+
+long BookStampMs()
+  {
+   long newest = (long)SymbolInfoInteger(_Symbol, SYMBOL_TIME_MSC);
+   long coarse = (long)TimeTradeServer() * 1000;
+   return((coarse > newest) ? coarse : newest);
+  }
+
+//+------------------------------------------------------------------+
 //| Drop the socket and schedule a reconnect attempt.                 |
 //+------------------------------------------------------------------+
 void Disconnect(const string why)
@@ -202,15 +310,27 @@ void Disconnect(const string why)
 
 //+------------------------------------------------------------------+
 //| One tick → one NDJSON line. Prices carry exactly _Digits places.  |
+//|                                                                   |
+//| `sent_ms` is when *this bridge* handed the line over, on the same |
+//| server clock as `time_ms`. The difference between the two is the  |
+//| delay inside the terminal, and the difference between `sent_ms`   |
+//| and the moment quantick sees the line is the delay on the wire.   |
+//| One end-to-end number cannot separate those, and separating them  |
+//| is the whole reason a late tape can be diagnosed at all. The      |
+//| stamp is taken once per pump pass, not once per tick: a pass that |
+//| blocks in SocketSend then shows its cost as wire delay, which is  |
+//| where it belongs.                                                 |
 //+------------------------------------------------------------------+
-bool SendTick(const MqlTick &tick)
+bool SendTick(const MqlTick &tick, const long sent_ms)
   {
    g_seq++;
    string line = StringFormat(
-      "{\"type\":\"tick\",\"seq\":%I64u,\"time_ms\":%I64d,\"bid\":\"%s\",\"ask\":\"%s\","
+      "{\"type\":\"tick\",\"seq\":%I64u,\"time_ms\":%I64d,\"sent_ms\":%I64d,"
+      "\"bid\":\"%s\",\"ask\":\"%s\","
       "\"last\":\"%s\",\"volume\":%I64u,\"flags\":%u}",
       g_seq,
       tick.time_msc,
+      sent_ms,
       DoubleToString(tick.bid, _Digits),
       DoubleToString(tick.ask, _Digits),
       DoubleToString(tick.last, _Digits),
@@ -296,13 +416,10 @@ bool SendBook()
    g_book_last_body = body;
    g_book_last_ms   = now_ms;
 
-   // SYMBOL_TIME_MSC is the last quote's instant; in a quiet book it stops
-   // moving, so the coarser server clock takes over and the book timeline
-   // never stalls behind the trade timeline.
-   long stamp     = (long)SymbolInfoInteger(_Symbol, SYMBOL_TIME_MSC);
-   long server_ms = (long)TimeTradeServer() * 1000;
-   if(server_ms > stamp)
-      stamp = server_ms;
+   // The newest instant the terminal holds, by the one helper that decides
+   // what that means — a book stamped by a different rule than the tape is a
+   // second clock to keep in step with the first.
+   long stamp = BookStampMs();
 
    g_book_seq++;
    string line = StringFormat("{\"type\":\"book\",\"seq\":%I64u,\"time_ms\":%I64d,%s}",
@@ -380,6 +497,8 @@ bool StartSession()
    // by comparing socket_writes to ticks_sent, and a writes count that
    // survived a reconnect while the ticks count restarted inverts the reading.
    g_sends            = 0;
+   g_send_stalls      = 0;
+   g_pump_limits  = 0;
    g_book_seq         = 0;
    g_book_sent        = 0;
    g_book_skipped     = 0;
@@ -432,8 +551,13 @@ bool StartSession()
      }
    if(!SendLine(StringFormat("{\"type\":\"backfill_start\",\"count_hint\":%d}", fetched)))
       return(false);
+   // History is stamped like anything else: `sent_ms` says when the bridge
+   // handed the line over, which for a backfill tick is minutes after it
+   // happened. The feed reads the split from live prints only, so a backfill
+   // stamp is a true statement nobody measures latency with.
+   long backfill_sent_ms = NowServerMs();
    for(int i = 0; i < fetched; i++)
-      if(!SendTick(history[i]))
+      if(!SendTick(history[i], backfill_sent_ms))
          return(false);
    if(!SendLine("{\"type\":\"backfill_end\"}") || !FlushOut())
       return(false);
@@ -493,43 +617,98 @@ void TryConnect()
 //+------------------------------------------------------------------+
 //| Forward every tick newer than the cursor. MT5 ticks can share a   |
 //| millisecond, so the cursor is (msc, count-at-msc), not just msc.  |
+//|                                                                   |
+//| One CopyTicks call returns at most PUMP_TICKS_PER_ROUND ticks, so |
+//| a pass that filled its batch has not necessarily caught up: it    |
+//| asks again from the advanced cursor and keeps asking while the    |
+//| answers come back full. Stopping after one batch left the         |
+//| remainder for the next event, and on a burst that is how a tape   |
+//| falls whole seconds behind a book that never batches at all.      |
 //+------------------------------------------------------------------+
 void Pump()
   {
    if(g_socket == INVALID_HANDLE)
       return;
+   ulong   started_us = GetMicrosecondCount();
+   int     rounds     = 0;
+   bool    drained    = false;
+   // Declared once for the pass: inside the loop this frees and regrows a
+   // quarter-megabyte buffer every round, for nothing.
    MqlTick ticks[];
-   int n = CopyTicks(_Symbol, ticks, TickFlagsWanted(), (ulong)g_last_msc, 4096);
-   if(n <= 0)
-      return;
-   int at_cursor_seen = 0;
-   for(int i = 0; i < n; i++)
+   while(rounds < PUMP_MAX_ROUNDS)
      {
-      if(ticks[i].time_msc < g_last_msc)
-         continue; // older than the cursor: already sent
-      if(ticks[i].time_msc == g_last_msc)
+      rounds++;
+      // Stamped per round, not per pass. A pass may now forward sixteen
+      // batches, which takes long enough that the terminal hands over ticks
+      // *during* it — and those carry a time_msc newer than a stamp taken
+      // before the pass began. The reader would read that as a negative delay
+      // inside the terminal and blame quantick for the wire, during exactly
+      // the burst this loop exists to clear.
+      long sent_ms = NowServerMs();
+      int n = CopyTicks(_Symbol, ticks, TickFlagsWanted(), (ulong)g_last_msc,
+                        PUMP_TICKS_PER_ROUND);
+      if(n <= 0)
         {
-         at_cursor_seen++;
-         if(at_cursor_seen <= g_sent_at_last_msc)
-            continue; // already sent this one
-         if(!SendTick(ticks[i]))
-           {
-            Disconnect("send failed");
-            return;
-           }
-         g_sent_at_last_msc++;
+         drained = true;
+         break;
         }
-      else
+      int at_cursor_seen = 0;
+      int forwarded      = 0;
+      for(int i = 0; i < n; i++)
         {
-         if(!SendTick(ticks[i]))
+         if(ticks[i].time_msc < g_last_msc)
+            continue; // older than the cursor: already sent
+         if(ticks[i].time_msc == g_last_msc)
            {
-            Disconnect("send failed");
-            return;
+            at_cursor_seen++;
+            if(at_cursor_seen <= g_sent_at_last_msc)
+               continue; // already sent this one
+            if(!SendTick(ticks[i], sent_ms))
+              {
+               Disconnect("send failed");
+               return;
+              }
+            g_sent_at_last_msc++;
+            forwarded++;
            }
-         g_last_msc = ticks[i].time_msc;
-         g_sent_at_last_msc = 1;
-         at_cursor_seen = 0;
+         else
+           {
+            if(!SendTick(ticks[i], sent_ms))
+              {
+               Disconnect("send failed");
+               return;
+              }
+            g_last_msc = ticks[i].time_msc;
+            g_sent_at_last_msc = 1;
+            at_cursor_seen = 0;
+            forwarded++;
+           }
         }
+      // A short batch is the terminal saying it has nothing more; a batch that
+      // forwarded nothing means every tick in it was already sent, and asking
+      // again from the same cursor would return the same ticks forever.
+      if(n < PUMP_TICKS_PER_ROUND || forwarded == 0)
+        {
+         drained = true;
+         break;
+        }
+      if((long)((GetMicrosecondCount() - started_us) / 1000) >= PUMP_MAX_MS)
+         break; // the thread is owed back; the rest is the next pass's
+     }
+   if(!drained)
+     {
+      // Not a failure, and not an ordinary catch-up either: the tape is
+      // arriving faster than one bounded pass can forward it, which is the
+      // reading behind a late chart. `drained` is what keeps this honest — a
+      // pass that caught up on its last permitted round must not be counted
+      // here, and README.md promises an operator exactly that.
+      g_pump_limits++;
+      LogEvent("BRIDGE_PUMP_LIMIT",
+               StringFormat("\"rounds\":%d,\"ticks_per_round\":%d,\"max_ms\":%d,"
+                            "\"elapsed_ms\":%I64d,\"passes\":%I64u",
+                            rounds, PUMP_TICKS_PER_ROUND, PUMP_MAX_MS,
+                            (long)((GetMicrosecondCount() - started_us) / 1000),
+                            g_pump_limits));
      }
    // Whatever this pass queued goes out now, in one write. Leaving it for the
    // next event would trade syscalls for exactly the latency this buffer
@@ -551,7 +730,7 @@ void MaybeHeartbeat()
    string line = StringFormat(
       "{\"type\":\"heartbeat\",\"seq_last\":%I64u,\"time_ms\":%I64d,"
       "\"ticks_sent\":%I64u,\"server_utc_offset_s\":%I64d}",
-      g_seq, (long)TimeTradeServer() * 1000, g_ticks_sent, ServerUtcOffsetSeconds());
+      g_seq, NowServerMs(), g_ticks_sent, ServerUtcOffsetSeconds());
    if(!SendLine(line))
      {
       Disconnect("heartbeat send failed");
@@ -565,27 +744,33 @@ void MaybeHeartbeat()
    // below `ticks_sent` is the batching working; the two converging again
    // means the flush threshold is being reached every pass, which is the
    // shape a genuinely overloaded tape has.
-   // Millisecond clock first. TimeTradeServer() is whole seconds, so
-   // subtracting a millisecond cursor from it reports up to 999 ms of lag
-   // that does not exist — and reads negative on a tape that is current.
-   // SYMBOL_TIME_MSC is the same instant at the cursor's own resolution; the
-   // coarse clock only stands in when a quiet book has stalled it, which is
-   // the fallback SendBook makes for the same reason.
-   long now_msc = (long)SymbolInfoInteger(_Symbol, SYMBOL_TIME_MSC);
-   long coarse_msc = (long)TimeTradeServer() * 1000;
-   if(coarse_msc > now_msc)
-      now_msc = coarse_msc;
+   // `quiet_ms` is how long since the last print *this bridge forwarded* — an
+   // honest name for what it measures. It used to be called `tick_lag_ms` and
+   // read as how far the pump trails the terminal, which it never was: the
+   // clock behind it advances whether or not a newer tick exists, so on a
+   // quiet market it counts the quiet and on a stall it counts the stall. The
+   // two figures that really describe this pump are `send_stalls` and
+   // `pump_limits`, both counted from things the EA can see.
    LogEvent("BRIDGE_TAPE_STATS",
             StringFormat("\"tape\":\"%s\",\"ticks_sent\":%I64u,\"socket_writes\":%I64u,"
-                         "\"tick_lag_ms\":%I64d",
+                         "\"quiet_ms\":%I64d,\"send_stalls\":%I64u,\"pump_limits\":%I64u",
                          (g_tape_trades ? "trades" : "quotes"), g_ticks_sent, g_sends,
-                         now_msc - g_last_msc));
+                         NowServerMs() - g_last_msc, g_send_stalls, g_pump_limits));
   }
 
 //+------------------------------------------------------------------+
 int OnInit()
   {
-   EventSetMillisecondTimer(200);
+   // OnTick is the fast path; this timer is the safety net for everything it
+   // does not cover — a symbol whose chart is not receiving ticks, a terminal
+   // that coalesced the callback, a reconnect. It used to be a fifth of a
+   // second, which is a fifth of a second the net itself could cost.
+   int pump_ms = InpPumpIntervalMs;
+   if(pump_ms < PUMP_INTERVAL_MIN_MS)
+      pump_ms = PUMP_INTERVAL_MIN_MS;
+   if(pump_ms > PUMP_INTERVAL_MAX_MS)
+      pump_ms = PUMP_INTERVAL_MAX_MS;
+   EventSetMillisecondTimer(pump_ms);
    if(InpStreamBook)
      {
       // Subscribing before any connection means the terminal is already
@@ -603,9 +788,11 @@ int OnInit()
                                GetLastError()));
      }
    LogEvent("BRIDGE_STARTING",
-            StringFormat("\"host\":\"%s\",\"port\":%d,\"backfill_minutes\":%d,\"stream_book\":%s",
+            StringFormat("\"host\":\"%s\",\"port\":%d,\"backfill_minutes\":%d,\"stream_book\":%s,"
+                         "\"pump_interval_ms\":%d,\"send_timeout_ms\":%d",
                          InpHost, InpPort, InpBackfillMinutes,
-                         (g_book_subscribed ? "true" : "false")));
+                         (g_book_subscribed ? "true" : "false"),
+                         pump_ms, InpSendTimeoutMs));
    return(INIT_SUCCEEDED);
   }
 
