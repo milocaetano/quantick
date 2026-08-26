@@ -33,6 +33,15 @@ use rust_decimal::Decimal;
 
 use crate::{BarFootprint, FootprintLevel};
 
+/// How many rows one value-area expansion step weighs, and takes, per side.
+///
+/// The Sierra Chart / CQG convention expands the area by **two** rows at a
+/// time, and three separate parts of the expansion have to agree on that
+/// number: the pair the two sides are compared on, the price window a step is
+/// not allowed to walk past, and the rows the step actually takes. Kept apart
+/// they drift, and the area ends up weighed on one count and grown by another.
+const VALUE_AREA_STEP_ROWS: usize = 2;
+
 /// The value area of a [`VolumeProfile`]: the contiguous row band around the
 /// point of control holding the requested volume fraction. All three fields
 /// are buckets under the profile's [`group`](VolumeProfile::group), inclusive.
@@ -254,16 +263,25 @@ impl VolumeProfile {
         let mut captured = rows[poc_idx].1;
 
         while captured < target && (lo > 0 || hi + 1 < rows.len()) {
+            // The step's reach in buckets, on either side of an edge.
+            let reach = VALUE_AREA_STEP_ROWS as i64;
+            // Volume printed in the price window a step may take from, gaps
+            // counting zero — the pair the convention compares.
+            let window_volume = |edge: i64, direction: i64| -> Decimal {
+                (1..=reach).fold(Decimal::ZERO, |sum, step| {
+                    sum.saturating_add(vol_at(edge + direction * step))
+                })
+            };
             let above_exhausted = hi + 1 >= rows.len();
             let pair_above = if above_exhausted {
                 Decimal::ZERO
             } else {
-                vol_at(rows[hi].0 + 1).saturating_add(vol_at(rows[hi].0 + 2))
+                window_volume(rows[hi].0, 1)
             };
             let pair_below = if lo == 0 {
                 Decimal::ZERO
             } else {
-                vol_at(rows[lo].0 - 1).saturating_add(vol_at(rows[lo].0 - 2))
+                window_volume(rows[lo].0, -1)
             };
             // The next two *printed* rows on one side — what that side's step
             // would take. When the price-adjacent window holds them both this
@@ -274,13 +292,13 @@ impl VolumeProfile {
                 rows[..lo]
                     .iter()
                     .rev()
-                    .take(2)
+                    .take(VALUE_AREA_STEP_ROWS)
                     .fold(Decimal::ZERO, |sum, &(_, v)| sum.saturating_add(v))
             };
             let printed_above = || {
                 rows[hi + 1..]
                     .iter()
-                    .take(2)
+                    .take(VALUE_AREA_STEP_ROWS)
                     .fold(Decimal::ZERO, |sum, &(_, v)| sum.saturating_add(v))
             };
 
@@ -311,28 +329,28 @@ impl VolumeProfile {
                 // it is fixed before the first of the two, so a step can never
                 // walk further than the pair it was weighed on. A pair that is
                 // all gap has no window to stay inside — that is the jump.
-                let floor = rows[lo].0 - 2;
+                let window_floor = rows[lo].0 - reach;
                 let bounded = pair_below > Decimal::ZERO;
-                for _ in 0..2 {
+                for _ in 0..VALUE_AREA_STEP_ROWS {
                     if lo == 0 || captured >= target {
                         break;
                     }
                     // Inside the window an unprinted bucket adds nothing and
                     // is not an edge; below it the step is over.
-                    if bounded && rows[lo - 1].0 < floor {
+                    if bounded && rows[lo - 1].0 < window_floor {
                         break;
                     }
                     lo -= 1;
                     captured = captured.saturating_add(rows[lo].1);
                 }
             } else {
-                let ceiling = rows[hi].0 + 2;
+                let window_ceiling = rows[hi].0 + reach;
                 let bounded = pair_above > Decimal::ZERO;
-                for _ in 0..2 {
+                for _ in 0..VALUE_AREA_STEP_ROWS {
                     if hi + 1 >= rows.len() || captured >= target {
                         break;
                     }
-                    if bounded && rows[hi + 1].0 > ceiling {
+                    if bounded && rows[hi + 1].0 > window_ceiling {
                         break;
                     }
                     hi += 1;
