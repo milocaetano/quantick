@@ -4360,6 +4360,11 @@
       "title": "Notify"
     },
     {
+      "description": "Recorded-session playback and the paper-trading ledger.",
+      "id": "session",
+      "title": "Session"
+    },
+    {
       "description": "Coherent multi-module semantic captures.",
       "id": "snapshot",
       "title": "Snapshot"
@@ -6036,6 +6041,496 @@
       },
       "schema_version": 1,
       "title": "Current selection"
+    },
+    {
+      "description": "Reports the simulated position, the working orders and the closed-trade ledger, with its provenance declared.",
+      "id": "session.paper",
+      "module_id": "session",
+      "required_permissions": [
+        "observe",
+        "observe.paper"
+      ],
+      "schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "PaperClosedTradeSnapshot": {
+            "properties": {
+              "closed_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              },
+              "entry_aggregate_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Aggregate ids of the prints that opened and closed the position — the\naudit trail back to the tape. Absent only on rows loaded from a\nversion-1 history file, which did not record them."
+              },
+              "entry_price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "exit_aggregate_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "exit_price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "exit_reason": {
+                "type": "string"
+              },
+              "maximum_adverse_excursion_points": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Worst excursion against the average entry while the position was open,\nin points and never negative. Absent for version-1 rows: unknown is\nnot zero.",
+                "x-unit": "points"
+              },
+              "opened_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              },
+              "pnl_points": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "x-unit": "points"
+              },
+              "quantity": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "side": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "side",
+              "quantity",
+              "entry_price",
+              "exit_price",
+              "opened_unix_ms",
+              "closed_unix_ms",
+              "pnl_points",
+              "exit_reason"
+            ],
+            "type": "object"
+          },
+          "PaperOrderSnapshot": {
+            "properties": {
+              "cancel_at": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "flat_only": {
+                "type": "boolean"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "order_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "placed_unix_ms": {
+                "description": "Venue time of the last print seen when the order was placed. The\nsimulator has no clock of its own.",
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              },
+              "price": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Limit price for a limit, trigger price for a stop, absent for a market\norder — which has no price of its own by definition."
+              },
+              "quantity": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "side": {
+                "type": "string"
+              },
+              "stop_loss": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "take_profit": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "order_id",
+              "side",
+              "kind",
+              "quantity",
+              "flat_only",
+              "placed_unix_ms"
+            ],
+            "type": "object"
+          },
+          "PaperPositionSnapshot": {
+            "properties": {
+              "average_entry_price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "open_points": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Open profit in points — price units times quantity, signed. Points and\nnot currency: the workspace knows no per-instrument tick value, and a\nnumber that cannot be computed honestly is not published. Absent\nbefore any mark exists.",
+                "x-unit": "points"
+              },
+              "quantity": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "side": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "side",
+              "quantity",
+              "average_entry_price"
+            ],
+            "type": "object"
+          },
+          "TabPaperSnapshot": {
+            "properties": {
+              "closed_trade_count": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "closed_trades": {
+                "items": {
+                  "$ref": "#/$defs/PaperClosedTradeSnapshot"
+                },
+                "maxItems": 256,
+                "type": "array"
+              },
+              "closed_trades_truncated": {
+                "description": "True when `closed_trades` was cut at its page limit. The newest rows\nare kept: a ledger is read from its end.",
+                "type": "boolean"
+              },
+              "flat": {
+                "type": "boolean"
+              },
+              "position": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PaperPositionSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "provenance": {
+                "description": "Where these rows come from, named rather than implied.",
+                "type": "string"
+              },
+              "selected_trade_row": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "symbol": {
+                "type": "string"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "working_order_count": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "working_orders": {
+                "items": {
+                  "$ref": "#/$defs/PaperOrderSnapshot"
+                },
+                "maxItems": 128,
+                "type": "array"
+              },
+              "working_orders_truncated": {
+                "description": "True when `working_orders` was cut at its page limit; the count above\nstill reports every order the simulator holds.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "tab_id",
+              "symbol",
+              "provenance",
+              "flat",
+              "working_orders",
+              "working_order_count",
+              "working_orders_truncated",
+              "closed_trades",
+              "closed_trade_count",
+              "closed_trades_truncated"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tabs": {
+            "items": {
+              "$ref": "#/$defs/TabPaperSnapshot"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tabs"
+        ],
+        "title": "PaperSnapshot",
+        "type": "object"
+      },
+      "schema_version": 1,
+      "title": "Paper trading"
+    },
+    {
+      "description": "Reports which recording each tab is playing, where the playhead is, and whether a control trace sits beside it.",
+      "id": "session.replay",
+      "module_id": "session",
+      "required_permissions": [
+        "observe",
+        "observe.replay"
+      ],
+      "schema": {
+        "$defs": {
+          "AvailabilitySnapshot": {
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "available"
+            ],
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "ReplaySessionSnapshot": {
+            "properties": {
+              "date": {
+                "description": "Session day as `YYYY-MM-DD`, when the file name followed the\nconvention. Absent is honest: the recording did not say.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "elapsed_ms": {
+                "description": "Wall time spent playing, which a seek resets — not the distance\ntravelled through the recording, which is `position_unix_ms`.",
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "milliseconds"
+              },
+              "end_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              },
+              "file_name": {
+                "description": "The recording's file name only. The absolute path is deliberately not\npublished: it identifies nothing a client needs and would leak the\ntrader's directory layout to every observer.",
+                "type": "string"
+              },
+              "finished": {
+                "type": "boolean"
+              },
+              "played_trades": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "playing": {
+                "type": "boolean"
+              },
+              "position_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              },
+              "progress": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-unit": "ratio"
+              },
+              "rewinds": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "speed": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-unit": "playback_multiple"
+              },
+              "start_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              },
+              "symbol": {
+                "type": "string"
+              },
+              "total_trades": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "trace": {
+                "$ref": "#/$defs/ReplayTraceSnapshot"
+              }
+            },
+            "required": [
+              "symbol",
+              "file_name",
+              "playing",
+              "finished",
+              "position_unix_ms",
+              "start_unix_ms",
+              "end_unix_ms",
+              "elapsed_ms",
+              "played_trades",
+              "total_trades",
+              "rewinds",
+              "trace"
+            ],
+            "type": "object"
+          },
+          "ReplayTraceSnapshot": {
+            "description": "What the capture can honestly say about the control trace beside the\nrecording (contract §11).",
+            "properties": {
+              "complete": {
+                "$ref": "#/$defs/AvailabilitySnapshot",
+                "description": "Whether every recorded intent carries a terminal result — the property\nthat decides if the run is a deterministic fixture.\n\nDeliberately not answered here. Deciding it means reading and parsing\nthe whole sidecar, whose size is unbounded, and a capture runs on the\nUI thread under `CONTROL_UI_BUDGET_US`. A client that needs the verdict\nasks the gateway, which loads each recording's trace once."
+              },
+              "present": {
+                "description": "A sidecar exists next to the recording. One metadata lookup, which is\nbounded work; the file is not opened.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "present",
+              "complete"
+            ],
+            "type": "object"
+          },
+          "TabReplaySnapshot": {
+            "properties": {
+              "replaying": {
+                "description": "A tab playing no recording is live; `session` is then absent rather\nthan a zeroed row, so \"not replaying\" cannot be mistaken for \"at the\nstart of a recording\".",
+                "type": "boolean"
+              },
+              "session": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ReplaySessionSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "replaying"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tabs": {
+            "items": {
+              "$ref": "#/$defs/TabReplaySnapshot"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tabs"
+        ],
+        "title": "ReplaySnapshot",
+        "type": "object"
+      },
+      "schema_version": 1,
+      "title": "Replay state"
     },
     {
       "description": "Reports the Quantick build, target, protocol, and capture budget.",

@@ -19,6 +19,7 @@ use super::{
     notify::{NotifyInput, NotifyResult},
     registry::SerializedSnapshotCapture,
     script::{AttachInput, AttachResult, DetachInput, DetachResult, ScriptDiagnostic},
+    session::{PaperSnapshot, ReplaySnapshot},
     system::SystemSnapshot,
     workspace::WorkspaceSnapshot,
 };
@@ -43,6 +44,8 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<HealthSnapshot>("observer-health-summary-v1.schema.json"),
         document::<CursorSnapshot>("observer-cursor-v1.schema.json"),
         document::<SelectionSnapshot>("observer-selection-v1.schema.json"),
+        document::<ReplaySnapshot>("observer-session-replay-v1.schema.json"),
+        document::<PaperSnapshot>("observer-session-paper-v1.schema.json"),
         document::<ChartWindowQuery>("observer-chart-window-query-v1.schema.json"),
         document::<ChartWindowPage>("observer-chart-window-page-v1.schema.json"),
         document::<EventsReadInput>("observer-events-read-input-v1.schema.json"),

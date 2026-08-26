@@ -1,0 +1,287 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "PaperClosedTradeSnapshot": {
+      "properties": {
+        "closed_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "entry_aggregate_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Aggregate ids of the prints that opened and closed the position — the\naudit trail back to the tape. Absent only on rows loaded from a\nversion-1 history file, which did not record them."
+        },
+        "entry_price": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "exit_aggregate_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exit_price": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "exit_reason": {
+          "type": "string"
+        },
+        "maximum_adverse_excursion_points": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Worst excursion against the average entry while the position was open,\nin points and never negative. Absent for version-1 rows: unknown is\nnot zero.",
+          "x-unit": "points"
+        },
+        "opened_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "pnl_points": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "points"
+        },
+        "quantity": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "side": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "side",
+        "quantity",
+        "entry_price",
+        "exit_price",
+        "opened_unix_ms",
+        "closed_unix_ms",
+        "pnl_points",
+        "exit_reason"
+      ],
+      "type": "object"
+    },
+    "PaperOrderSnapshot": {
+      "properties": {
+        "cancel_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "flat_only": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "order_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "placed_unix_ms": {
+          "description": "Venue time of the last print seen when the order was placed. The\nsimulator has no clock of its own.",
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Limit price for a limit, trigger price for a stop, absent for a market\norder — which has no price of its own by definition."
+        },
+        "quantity": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "side": {
+          "type": "string"
+        },
+        "stop_loss": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "take_profit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "order_id",
+        "side",
+        "kind",
+        "quantity",
+        "flat_only",
+        "placed_unix_ms"
+      ],
+      "type": "object"
+    },
+    "PaperPositionSnapshot": {
+      "properties": {
+        "average_entry_price": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "open_points": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Open profit in points — price units times quantity, signed. Points and\nnot currency: the workspace knows no per-instrument tick value, and a\nnumber that cannot be computed honestly is not published. Absent\nbefore any mark exists.",
+          "x-unit": "points"
+        },
+        "quantity": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "side": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "side",
+        "quantity",
+        "average_entry_price"
+      ],
+      "type": "object"
+    },
+    "TabPaperSnapshot": {
+      "properties": {
+        "closed_trade_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "closed_trades": {
+          "items": {
+            "$ref": "#/$defs/PaperClosedTradeSnapshot"
+          },
+          "maxItems": 256,
+          "type": "array"
+        },
+        "closed_trades_truncated": {
+          "description": "True when `closed_trades` was cut at its page limit. The newest rows\nare kept: a ledger is read from its end.",
+          "type": "boolean"
+        },
+        "flat": {
+          "type": "boolean"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PaperPositionSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "description": "Where these rows come from, named rather than implied.",
+          "type": "string"
+        },
+        "selected_trade_row": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "working_order_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "working_orders": {
+          "items": {
+            "$ref": "#/$defs/PaperOrderSnapshot"
+          },
+          "maxItems": 128,
+          "type": "array"
+        },
+        "working_orders_truncated": {
+          "description": "True when `working_orders` was cut at its page limit; the count above\nstill reports every order the simulator holds.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "tab_id",
+        "symbol",
+        "provenance",
+        "flat",
+        "working_orders",
+        "working_order_count",
+        "working_orders_truncated",
+        "closed_trades",
+        "closed_trade_count",
+        "closed_trades_truncated"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "tabs": {
+      "items": {
+        "$ref": "#/$defs/TabPaperSnapshot"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "tabs"
+  ],
+  "title": "PaperSnapshot",
+  "type": "object"
+}

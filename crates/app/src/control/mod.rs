@@ -21,6 +21,7 @@ mod registry;
 #[cfg(test)]
 pub(crate) mod schema_catalog;
 mod script;
+mod session;
 mod system;
 mod trace;
 mod types;
@@ -58,5 +59,6 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     chart::register(&mut registry)?;
     health::register(&mut registry)?;
     interaction::register(&mut registry)?;
+    session::register(&mut registry)?;
     Ok(registry)
 }

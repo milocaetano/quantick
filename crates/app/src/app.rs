@@ -25554,7 +25554,7 @@ plot(close)
             .descriptors()
             .map(|descriptor| (descriptor.scope_id.clone(), descriptor.schema.clone()))
             .collect::<Vec<_>>();
-        assert_eq!(descriptors.len(), 7, "every initial scope is registered");
+        assert_eq!(descriptors.len(), 9, "every registered scope is projected");
         let scopes = descriptors
             .iter()
             .map(|(scope_id, _)| scope_id.clone())
@@ -25594,6 +25594,117 @@ plot(close)
     }
 
     #[test]
+    fn observer_projects_the_replay_playhead_and_its_trace_sidecar() {
+        let dir =
+            std::env::temp_dir().join(format!("quantick-observer-replay-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (mut app, _commands) = app_with_history(4);
+
+        // A live tab is not replaying, and says so rather than reporting a
+        // playhead parked at zero.
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scope = observer_scope("session.replay");
+        let live = registry
+            .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        assert_eq!(live.scopes[&scope].value["tabs"][0]["replaying"], false);
+        assert!(live.scopes[&scope].value["tabs"][0]["session"].is_null());
+
+        // The same tab, now playing a recording written to disk.
+        app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+        let playing = registry
+            .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let session = &playing.scopes[&scope].value["tabs"][0]["session"];
+        assert_eq!(playing.scopes[&scope].value["tabs"][0]["replaying"], true);
+        assert_eq!(session["symbol"], "TESTUSDT");
+        assert_eq!(session["date"], "2026-03-16");
+        assert_eq!(
+            session["file_name"], "20260316.csv",
+            "the file name identifies the recording without leaking the folder"
+        );
+        assert_eq!(session["total_trades"], "1");
+        assert_eq!(
+            session["trace"]["present"], false,
+            "no action was taken, so no sidecar was written"
+        );
+        assert_eq!(
+            session["trace"]["complete"]["available"], false,
+            "completeness needs the whole sidecar, which a capture must not read"
+        );
+        assert_eq!(
+            session["trace"]["complete"]["reason"],
+            "trace_completeness_requires_reading_the_whole_sidecar"
+        );
+
+        // A mark writes the sidecar; the next capture sees it present.
+        let ctx = egui::Context::default();
+        hover_bar(&mut app, &ctx, 2);
+        app.take_mark(Some("traced".to_owned()));
+        let traced = registry
+            .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        assert_eq!(
+            traced.scopes[&scope].value["tabs"][0]["session"]["trace"]["present"],
+            true
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn observer_projects_the_paper_ledger_with_its_provenance() {
+        let (mut app, _commands) = app_with_history(4);
+        let print = |agg_id: u64, price: i64| quantick_engine::Trade {
+            agg_id,
+            timestamp_ms: i64::try_from(agg_id).expect("small ids") * 1000,
+            price: rust_decimal::Decimal::from(price),
+            quantity: rust_decimal::Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        };
+
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scope = observer_scope("session.paper");
+        let flat = registry
+            .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let before = &flat.scopes[&scope].value["tabs"][0];
+        assert_eq!(before["flat"], true);
+        assert!(before["position"].is_null());
+        assert_eq!(before["provenance"], "paper_trading_session_ledger");
+
+        // Open a position through the simulator's own path.
+        {
+            let paper = &mut app.active_tab_mut().paper;
+            paper.seed(&print(0, 100));
+            paper.market(quantick_engine::Side::Buy);
+            paper.on_trade(&print(1, 100));
+        }
+        let open = registry
+            .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let after = &open.scopes[&scope].value["tabs"][0];
+        assert_eq!(after["flat"], false);
+        assert_eq!(after["position"]["side"], "buy");
+        assert_eq!(
+            after["position"]["quantity"], "1",
+            "quantity crosses as an exact decimal string, never an f64"
+        );
+        assert_eq!(after["position"]["average_entry_price"], "100");
+        assert_eq!(after["closed_trade_count"], "0");
+        assert_eq!(after["working_orders_truncated"], false);
+    }
+
+    #[test]
     fn observer_capture_revisions_are_coherent_and_monotonic() {
         let (mut app, _commands) = app_with_history(4);
         let mut registry = crate::control::standard_registry().unwrap();
@@ -25602,13 +25713,17 @@ plot(close)
             observer_scope("chart.summary"),
         ];
         let instance = observer_instance();
+        // Derived, not a literal: a capture names every scope it did not
+        // project, so registering a new module must not send anyone editing
+        // an arithmetic constant in a test about revisions.
+        let registered = registry.descriptors().count();
 
         let first = registry
             .capture(&app, &instance, &scopes)
             .unwrap()
             .into_serialized()
             .unwrap();
-        assert_eq!(first.omitted_scopes.len(), 5);
+        assert_eq!(first.omitted_scopes.len(), registered - scopes.len());
         let second = registry
             .capture(&app, &instance, &scopes)
             .unwrap()
@@ -27649,7 +27764,7 @@ plot(close)
         // Every published wire type has a committed document, so a breaking
         // change shows up as a diff in review (contract §6). The count is
         // here to make an accidental *removal* visible too.
-        assert_eq!(documents.len(), 31);
+        assert_eq!(documents.len(), 33);
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("schemas/control");

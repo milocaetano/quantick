@@ -132,6 +132,25 @@ pub(crate) struct AvailabilitySnapshot {
     pub reason: Option<String>,
 }
 
+impl AvailabilitySnapshot {
+    /// The capability is there and the value beside it is real.
+    pub(crate) fn available() -> Self {
+        Self {
+            available: true,
+            reason: None,
+        }
+    }
+
+    /// The capability is absent, and the reason is data a client can branch
+    /// on — never rendered prose.
+    pub(crate) fn unavailable(reason: &str) -> Self {
+        Self {
+            available: false,
+            reason: Some(reason.to_owned()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct InteractionRevision {
     cursor: CursorSnapshot,
@@ -452,15 +471,9 @@ fn shared_drawing_hit(
 }
 
 fn available() -> AvailabilitySnapshot {
-    AvailabilitySnapshot {
-        available: true,
-        reason: None,
-    }
+    AvailabilitySnapshot::available()
 }
 
 fn unavailable(reason: &str) -> AvailabilitySnapshot {
-    AvailabilitySnapshot {
-        available: false,
-        reason: Some(reason.to_owned()),
-    }
+    AvailabilitySnapshot::unavailable(reason)
 }
