@@ -7683,7 +7683,6 @@ mod tests {
 
     /// A pane carrying one indicator pane of `kind`, with `columns` of
     /// committed values — the fixture every band test starts from.
-
     #[test]
     fn ingesting_prints_hands_the_tape_grid_to_the_order_flow_engine() {
         // The whole fix hangs off this wiring: the detector can be right and

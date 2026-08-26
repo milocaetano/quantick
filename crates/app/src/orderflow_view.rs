@@ -323,6 +323,14 @@ impl OrderflowView {
     /// what keeps the rows from depending on a diagnostics log having run.
     pub fn capture_grouping_now(&mut self) -> Decimal {
         let base = self.worker.published_base_grouping();
+        // The mirror takes it too. A split's *other* pane is handed the row
+        // width through `base_capture_grouping`, which reads the mirror and
+        // takes `&self` — so leaving the mirror behind here would let the two
+        // panes of one chart draw the same market on different rows, which is
+        // the divergence this whole sizing path exists to prevent. Cheap: the
+        // field is a `Decimal`, and the rest of the published snapshot is
+        // untouched because nothing here has read it.
+        self.published.base_price_grouping = base;
         self.adopt_base(base);
         base
     }
@@ -2436,6 +2444,32 @@ mod tests {
     /// The ask, in one test: the toolbar governs the candles and nothing else.
     /// Every one of the four movements — each layer switched off *and* back on
     /// — has to leave the tape exactly where the trader left it.
+
+    #[test]
+    fn a_direct_read_of_the_capture_bucket_leaves_the_mirror_agreeing() {
+        // Two readers of one number. `capture_grouping_now` takes it straight
+        // from the worker mailbox, because the footprint's row width is needed
+        // on frames where nothing syncs; `base_capture_grouping` reads the
+        // mirror and takes `&self`, and is how a split hands the row width to
+        // its other pane. If the direct read does not leave the mirror behind,
+        // the two panes of one chart draw the same market on different rows.
+        //
+        // The worker is flushed but the view is deliberately NOT synced: a sync
+        // would write the mirror by itself and the test would pass either way.
+        let mut view = OrderflowView::new("WINV26");
+        let before = view.base_capture_grouping();
+        view.observe_tape_price_step(Decimal::from(5));
+        view.worker.flush();
+
+        let direct = view.capture_grouping_now();
+        assert_ne!(direct, before, "the engine never took the tape's grid");
+        assert_eq!(direct, Decimal::from(5));
+        assert_eq!(
+            view.base_capture_grouping(),
+            direct,
+            "the mirror the other pane reads disagrees with the mailbox this one read",
+        );
+    }
     #[test]
     fn the_toolbar_switches_move_the_candles_and_never_the_tape() {
         let mut view = OrderflowView::new("BTCUSDT");
