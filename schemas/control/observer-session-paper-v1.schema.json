@@ -196,7 +196,7 @@
           "items": {
             "$ref": "#/$defs/PaperClosedTradeSnapshot"
           },
-          "maxItems": 256,
+          "maxItems": 64,
           "type": "array"
         },
         "closed_trades_page_start": {

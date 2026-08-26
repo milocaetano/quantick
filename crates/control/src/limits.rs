@@ -50,7 +50,17 @@ pub const CONTROL_SNAPSHOT_MAX_WORKING_ORDERS: usize = 128;
 /// Closed trades one paper-trading tab publishes in a capture. A session
 /// ledger grows all day; a capture carries its newest page and says how many
 /// rows it stands for.
-pub const CONTROL_SNAPSHOT_MAX_CLOSED_TRADES: usize = 256;
+///
+/// Sized by measurement, not by taste. Each row crosses as eight exact
+/// decimals, and every one of those is a `Decimal::normalize().to_string()`.
+/// At 256 rows the paper scope alone cost 43 microseconds of a 250 microsecond
+/// capture budget — more than every other scope put together — and a capture
+/// of every scope exceeded the budget on a modest CI runner. At 64 it costs
+/// about a quarter of that, still covers a full trading session, and the
+/// `closed_trade_count` and `closed_trades_page_start` fields beside the page
+/// keep a longer ledger honest. `observer_per_scope_capture_cost` is the test
+/// that produced those numbers; rerun it before changing this.
+pub const CONTROL_SNAPSHOT_MAX_CLOSED_TRADES: usize = 64;
 pub const CONTROL_REQUEST_QUEUE_CAPACITY: usize = 64;
 pub const CONTROL_MAX_CONNECTIONS: usize = 8;
 pub const CONTROL_MAX_IN_FLIGHT_PER_CONNECTION: usize = 8;

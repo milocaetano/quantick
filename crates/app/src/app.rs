@@ -27421,6 +27421,46 @@ crosshair = false
     const BENCH_BOOK_LEVELS_PER_SIDE: i64 = 128;
     const BENCH_CLOSED_TRADES: usize = 120;
 
+    /// Where a capture's time actually goes, scope by scope.
+    ///
+    /// The whole-capture guard says whether the total fits; it cannot say what
+    /// to shrink when it does not. This times each registered scope on its own
+    /// over the same loaded workspace, so a budget decision is made against
+    /// measurements instead of a guess about which projection is expensive.
+    ///
+    /// Reading only, so it is `#[ignore]`d: it asserts nothing, and the numbers
+    /// it prints are worth having on the record when a scope is added.
+    #[test]
+    #[ignore]
+    fn observer_per_scope_capture_cost() {
+        const MEASURED: usize = 200;
+
+        let (app, _commands) = loaded_observer_workspace(2_000);
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scope_ids = registry
+            .descriptors()
+            .map(|descriptor| descriptor.scope_id.clone())
+            .collect::<Vec<_>>();
+        let instance = observer_instance();
+        for scope in scope_ids {
+            let one = [scope.clone()];
+            for _ in 0..25 {
+                drop(registry.capture(&app, &instance, &one).unwrap());
+            }
+            let mut elapsed = Vec::with_capacity(MEASURED);
+            for _ in 0..MEASURED {
+                drop(registry.capture(&app, &instance, &one).unwrap());
+                elapsed.push(registry.performance().last_capture_us);
+            }
+            elapsed.sort_unstable();
+            let median = elapsed[elapsed.len() / 2];
+            let worst = *elapsed.last().unwrap();
+            println!(
+                "CONTROL_SCOPE_COST {{\"scope\":\"{scope}\",\"median_us\":{median},\"worst_us\":{worst}}}"
+            );
+        }
+    }
+
     fn measure_core_capture_us() -> (u64, u64, u64) {
         const WARMUP_CAPTURES: usize = 25;
         const MEASURED_CAPTURES: usize = 500;
