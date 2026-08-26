@@ -770,6 +770,25 @@ impl Tab {
             return;
         }
         self.ohlcv_pending = false;
+        if slice == crate::feed::OhlcvSlice::Refused {
+            // Nobody looked, so nothing is known. End the wait — the spinner
+            // was raised before the command left — and touch nothing else: no
+            // short-answer warning about a venue that never answered, no
+            // refold of the whole base over an empty vector, and above all no
+            // verdict on a reach-back that was never served.
+            self.ohlcv_reaching_back = None;
+            self.loading.end(LoadingTask::VenueHistory);
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "OHLCV_REFUSED",
+                tab = self.id,
+                symbol = %self.symbol,
+                action = "await_the_running_fetch",
+                "the provider was already fetching; this request was not served"
+            );
+            return;
+        }
         let complete = matches!(slice, crate::feed::OhlcvSlice::Last { complete } if complete);
         if !complete {
             // Known-short, not merely short: a venue that stopped answering

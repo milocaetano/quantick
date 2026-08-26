@@ -5220,14 +5220,22 @@ impl ChartPane {
         // Objects that are *context* rather than annotation go down here,
         // between the liquidity map and the candles: a volume profile is read
         // the way the heatmap is, and drawn over the price it tints every body
-        // it covers. Carved now rather than at the over-candles pass below,
-        // which is free — `last_auto_range` is not written until after both,
-        // so the two passes carve identical bands — and the same buffer serves
-        // both, so no allocation moved.
+        // it covers.
+        //
+        // The **price band only**, and that is a correctness bound rather than
+        // an optimisation. An indicator band's scale is written when its own
+        // curve draws, further down this function, so a band carved here would
+        // be a frame behind the plot it belongs to — which is exactly the
+        // invariant the over-candles carve says it exists to keep. The price
+        // band has no such dependency, so it is the one band that can be
+        // carved this early and still be right. A tool wanting a background
+        // pass on an indicator band would need its own carve after that pane
+        // draws; there is none, and inventing a stale one for it would be
+        // worse than not offering it.
         let mut carved = std::mem::take(&mut self.last_bands);
         self.carve_bands(&areas, &mut carved);
-        for (index, band) in carved.iter().enumerate() {
-            self.draw_drawings(painter, band, index, right, total, DrawPass::UnderCandles);
+        if let Some(price_band) = carved.iter().next() {
+            self.draw_drawings(painter, price_band, 0, right, total, DrawPass::UnderCandles);
         }
         // Asked once for the whole frame: on a chart where no indicator paints
         // — every chart until a script calls `barcolor` — the per-bar lookup
@@ -5494,10 +5502,12 @@ impl ChartPane {
         // Carved *here*, after the panes drew: each band's scale is then the
         // one its own curve was just drawn with, which is the invariant this
         // whole feature rests on.
-        // The same bands the under-candles pass carved, drawn again for
-        // everything that belongs over the price. Into the pane's own buffer:
-        // same geometry as the input pass computed, no container allocated,
-        // and what the tab's shared projection reads afterwards.
+        // Re-carved, not reused: the pass above ran before the indicator panes
+        // drew, and every band's scale is written *by* that draw. Into the
+        // pane's own buffer: same geometry as the input pass computed, no
+        // container allocated, and what the tab's shared projection reads
+        // afterwards.
+        self.carve_bands(&areas, &mut carved);
         for (index, band) in carved.iter().enumerate() {
             self.draw_drawings(painter, band, index, right, total, DrawPass::OverCandles);
         }
@@ -6479,6 +6489,21 @@ impl ChartPane {
                     // render the editor stands the original down to avoid.
                     content_editing: source.content_editing == Some(index),
                 };
+                // Both halves, so a shared object is the same object on both
+                // charts. A tool whose body lives in the background pass —
+                // the volume profile's histogram — would otherwise cross to
+                // the companion pane as two edge lines and a level, with the
+                // volume shape the trader shared missing entirely.
+                //
+                // The mirrored copy paints over the candles rather than under
+                // them: this pass runs after the host pane's own candles are
+                // down, and reaching under them would mean carving a third
+                // time on the far pane's geometry. A shared mark is a
+                // reference to something living on another chart, and reading
+                // as one is the honest outcome.
+                drawing
+                    .tool
+                    .paint_under(&clipped, band.rect, style, &points, &ctxt);
                 // Locked geometry shows no handles on either chart: they would
                 // advertise a drag that is refused.
                 drawing.tool.paint(
@@ -6691,6 +6716,15 @@ impl ChartPane {
                 halo: false,
                 content_editing: false,
             };
+            // Both halves, in order. A tool whose body lives in the
+            // background pass would otherwise preview as an empty outline
+            // while it is being dragged out — the profile's own histogram is
+            // already folded for a draft, so there is data to show.
+            // Over the candles rather than under them: a preview is a thing
+            // in flight, and burying it would hide the gesture.
+            draft
+                .tool
+                .paint_under(&clipped, chart_rect, draft.style, &points, &ctxt);
             draft
                 .tool
                 .paint(&clipped, chart_rect, draft.style, &points, &ctxt, false);

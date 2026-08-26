@@ -191,12 +191,12 @@ async fn feed_task(
                             // left, so a silent drop leaves that spinner turning
                             // for the rest of the session and the reach-back
                             // button disabled behind it — the same reason
-                            // `load_older` never returns silence either. Empty
-                            // and known-short, because that is exactly what this
-                            // is: nothing fetched, and not because the venue had
-                            // nothing.
+                            // `load_older` never returns silence either.
+                            // `Refused` rather than a short answer: nothing was
+                            // fetched because nobody looked, which is not a
+                            // statement about the venue's record.
                             if ohlcv_tx
-                                .send((Vec::new(), crate::feed::OhlcvSlice::Last { complete: false }))
+                                .send((Vec::new(), crate::feed::OhlcvSlice::Refused))
                                 .await
                                 .is_err()
                             {

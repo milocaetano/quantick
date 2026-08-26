@@ -892,9 +892,6 @@ impl DrawingTool {
         self.0.pending_anchor(placed, cursor, constrain)
     }
 
-    /// Paint the object. Selection adds a halo *under* the geometry and, when
-    /// `show_handles` (not locked), white anchor handles on top — the object's
-    /// configured colour keeps carrying meaning either way.
     /// Paint the part of the object that goes under the candles — see
     /// [`DrawingToolImpl::paint_under`]. No halo, no handles.
     pub fn paint_under(
@@ -908,6 +905,9 @@ impl DrawingTool {
         self.0.paint_under(painter, chart_rect, style, points, ctxt);
     }
 
+    /// Paint the object. Selection adds a halo *under* the geometry and, when
+    /// `show_handles` (not locked), white anchor handles on top — the object's
+    /// configured colour keeps carrying meaning either way.
     pub fn paint(
         self,
         painter: &egui::Painter,

@@ -114,6 +114,19 @@ const INLINE_TEXT_FRAME_PAD_PX: f32 = 10.0;
 /// hello and shorter than a person's patience with a frozen window.
 const LOAD_OLDER_HOOK_FRAMES: u32 = 600;
 
+/// Frames the `QUANTICK_LOAD_OLDER_CANDLES` hook has for the *whole* run.
+///
+/// Much larger than the trade twin's, and for a reason the trade twin does
+/// not have: a page of prints is one venue round trip, while a span of
+/// candles is several slices of several pages each, and the hook is
+/// documented as reaching the old ninety-day default in thirteen of them.
+/// Every frame spent waiting for a span costs one tick here, so the budget
+/// has to cover the legitimate fetching as well as the hang it exists to
+/// bound. About a minute at 60 fps: longer than thirteen spans take against
+/// a venue that is answering, and far shorter than a capture run's patience
+/// with one that is not.
+const LOAD_OLDER_CANDLES_HOOK_FRAMES: u32 = 3_600;
+
 /// How much of the newest chart the `QUANTICK_DRAWINGS_DEMO` hook spreads its
 /// objects across. Close to what a default viewport shows, so every object
 /// lands on screen — a demo the camera cannot see proves nothing.
@@ -1584,7 +1597,7 @@ impl QuantickApp {
             .ok()
             .and_then(|value| value.trim().parse::<usize>().ok())
             .filter(|spans| *spans > 0)
-            .map(|spans| (spans, LOAD_OLDER_HOOK_FRAMES));
+            .map(|spans| (spans, LOAD_OLDER_CANDLES_HOOK_FRAMES));
         // How many anchors of the armed tool are already down when the run
         // opens — the half-placed state a screenshot cannot otherwise reach,
         // because it lives between two clicks. See `apply_drawing_draft`.
@@ -8280,17 +8293,32 @@ impl QuantickApp {
             return;
         };
         let capabilities = self.active_tab().capabilities(&self.config);
+        // Waiting costs budget, but a *slower* budget. A span really being
+        // fetched is the feature working, and charging it at the same rate as
+        // an empty chart would give up around the fourth of the documented
+        // thirteen spans. Charging it nothing, though, is how a venue that
+        // simply never answers hangs a capture run for the life of the
+        // process — which is the exact failure this counter exists to bound,
+        // and what the doc above promises it does. So a fetching frame spends
+        // one tick of a budget scaled to how long fetching legitimately takes.
         if self
             .active_tab()
             .loading
             .is_active(LoadingTask::VenueHistory)
         {
-            // A span is genuinely being fetched. The trade twin returns here
-            // without spending budget for the same reason: the wait is the
-            // feature working, and charging it to the give-up timer turns a
-            // slow venue into a run that reports it found nothing. A week can
-            // be several slices and well over a hundred frames, so a budget
-            // spent here would never survive the documented thirteen spans.
+            self.pending_load_older_candles = budget.checked_sub(1).map(|left| (spans, left));
+            if self.pending_load_older_candles.is_none() {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
+                    spans,
+                    frames_waited = LOAD_OLDER_CANDLES_HOOK_FRAMES,
+                    reason = "venue_never_answered",
+                    action = "chart_left_as_it_is",
+                    "QUANTICK_LOAD_OLDER_CANDLES gave up waiting for a span to arrive"
+                );
+            }
             return;
         }
         if !self.active_tab().can_load_older_candles(capabilities) {
@@ -8314,14 +8342,30 @@ impl QuantickApp {
             }
             return;
         }
-        // Only a request that actually went out costs a span. A full command
-        // channel is a busy frame, not a span delivered, and counting it would
-        // quietly shorten the reach the operator asked for.
+        // Only a request that actually went out costs a *span*. A full command
+        // channel is a busy frame, not a span delivered, and counting it as one
+        // would quietly shorten the reach the operator asked for — but it still
+        // costs a frame of budget, or a permanently saturated channel leaves
+        // the hook armed for the life of the process with nothing ever logged.
         if self
             .active_tab_mut()
             .request_older_ohlcv_history(capabilities)
         {
             self.pending_load_older_candles = (spans > 1).then_some((spans - 1, budget));
+        } else {
+            self.pending_load_older_candles = budget.checked_sub(1).map(|left| (spans, left));
+            if self.pending_load_older_candles.is_none() {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
+                    spans,
+                    frames_waited = LOAD_OLDER_CANDLES_HOOK_FRAMES,
+                    reason = "request_never_queued",
+                    action = "chart_left_as_it_is",
+                    "QUANTICK_LOAD_OLDER_CANDLES could not get a request out"
+                );
+            }
         }
     }
 

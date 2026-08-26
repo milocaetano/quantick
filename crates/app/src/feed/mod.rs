@@ -164,6 +164,17 @@ pub enum OhlcvSlice {
     /// An older slice of the same request follows. The wait is not over and
     /// the loading indicator stays up.
     More,
+    /// The request was **refused before it was served**: a fetch for this
+    /// market was already in flight and the provider serves one at a time.
+    ///
+    /// A closing reply, because the caller raised a spinner before the command
+    /// left and a silent drop would leave it turning forever. But a distinct
+    /// one, because "nobody looked" is not "the venue came up short": answered
+    /// as `Last { complete: false }` the tab warns that a venue stopped short
+    /// when none did, refolds the whole accumulated base over an empty vector,
+    /// and consumes the reach-back measurement for a request that was never
+    /// made. This variant ends the wait and changes nothing else.
+    Refused,
     /// The last reply for this request — and the only one a provider that
     /// serves the whole span at once ever sends.
     Last {
@@ -187,7 +198,7 @@ impl OhlcvSlice {
     /// Whether this reply closes its request.
     #[must_use]
     pub fn is_last(self) -> bool {
-        matches!(self, Self::Last { .. })
+        matches!(self, Self::Last { .. } | Self::Refused)
     }
 }
 

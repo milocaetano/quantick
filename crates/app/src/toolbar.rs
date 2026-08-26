@@ -683,13 +683,19 @@ fn draw_history_menu(
     model: &mut ToolbarModel,
     actions: &mut Vec<ToolbarAction>,
 ) {
-    ui.label("page size (trades per load)");
-    ui.add(
-        egui::DragValue::new(model.history_step)
-            .range(500.0..=50_000.0)
-            .speed(100.0),
-    );
-    ui.small(format!("{} trades backfilled so far", model.history_trades));
+    // The trade half of the menu, behind the trade capability. The caret now
+    // opens for a feed that serves candles without paging its tape, and an
+    // enabled page-size box on such a feed is a control that will never be
+    // read — the same honesty the disabled-reason enum below is about.
+    if model.capabilities.history_paging {
+        ui.label("page size (trades per load)");
+        ui.add(
+            egui::DragValue::new(model.history_step)
+                .range(500.0..=50_000.0)
+                .speed(100.0),
+        );
+        ui.small(format!("{} trades backfilled so far", model.history_trades));
+    }
     // Candles are the other record, and the other reach. A chart opens on one
     // week of them (`feed::TIME_HISTORY_SPAN_MS`) precisely so it opens fast;
     // this is where the trader who wants the quarter asks for it, a week at a
@@ -718,7 +724,14 @@ fn draw_history_menu(
             actions.push(ToolbarAction::LoadOlderCandles);
             ui.close_menu();
         }
-        ui.small(format!("{} venue candles held", model.history_candles));
+        // "1-minute", said out loud: the base is always at
+        // `OHLCV_BASE_INTERVAL_MS` while the pane folds it to whatever it
+        // shows, so a 1-hour chart holding a week would otherwise read
+        // "10 080 venue candles held" beside 168 drawn bars.
+        ui.small(format!(
+            "{} 1-minute venue candles held",
+            model.history_candles
+        ));
     }
 }
 
