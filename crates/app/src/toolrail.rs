@@ -256,6 +256,21 @@ enum RailStage {
     Minimal,
 }
 
+/// One control the rail actually paints, as something that is not looking at
+/// the screen would name it.
+///
+/// A family that folded into one slot is *one* control here, not one per
+/// member: the members behind its flyout have no button of their own, and a
+/// scene that named them would be describing a rail nobody is looking at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RailControl {
+    /// The tool's registered id, or the family's — stable either way.
+    pub id: &'static str,
+    pub label: &'static str,
+    /// Whether the armed tool is this control, or a member behind it.
+    pub armed: bool,
+}
+
 /// One leading-cluster slot after family folding: a lone tool, or a family
 /// of consecutive registry entries sharing the slot.
 enum RailSlot {
@@ -450,6 +465,11 @@ fn stage_for(available: f32, tool_slot_count: usize, favorite_count: usize) -> R
 pub struct ToolRail {
     tool: Tool,
     visible: bool,
+    /// The stage the last draw settled on, or `None` before the first.
+    ///
+    /// Read by the semantic scene, never by the draw: the stage is a pure
+    /// function of the extent and is recomputed every frame regardless.
+    last_stage: Option<RailStage>,
     dock: ToolboxDock,
     /// The repeat pin: `true` keeps a drawing tool armed after it completes
     /// an object; the default is one-shot back to Pointer.
@@ -531,6 +551,7 @@ impl Default for ToolRail {
         Self {
             tool: Tool::Pointer,
             visible: true,
+            last_stage: None,
             dock: ToolboxDock::Left,
             repeat: false,
             magnet: false,
@@ -615,6 +636,65 @@ impl ToolRail {
     /// Whether a grip drag is live this frame — the app's escape stack must
     /// yield Esc to the drag while it is.
     #[must_use]
+    /// The controls the rail painted last frame, in rail order.
+    ///
+    /// Folded through the very `tool_slots()` the draw folds through, and cut
+    /// by the stage the draw recorded, so this can never name a button that is
+    /// behind a flyout, off the scrolled run, or inside the More menu. Before
+    /// the first draw there is nothing on screen and nothing to report.
+    pub(crate) fn painted_controls(&self) -> Vec<RailControl> {
+        let Some(stage) = self.last_stage else {
+            return Vec::new();
+        };
+        let armed_drawing = self.tool.drawing_tool();
+        let mut controls = vec![RailControl {
+            id: Tool::Pointer.id(),
+            label: Tool::Pointer.name(),
+            armed: self.tool == Tool::Pointer,
+        }];
+        // Minimal drops the crosshair; every wider stage keeps it.
+        if stage != RailStage::Minimal {
+            controls.push(RailControl {
+                id: Tool::Crosshair.id(),
+                label: Tool::Crosshair.name(),
+                armed: self.tool == Tool::Crosshair,
+            });
+        }
+        match stage {
+            // The whole folded run has buttons. Scroll moves the run between
+            // two chevrons rather than dropping any of it, so it reports the
+            // same controls as Full.
+            RailStage::Full | RailStage::Scroll => {
+                for slot in tool_slots() {
+                    controls.push(match slot {
+                        RailSlot::Single(tool) => RailControl {
+                            id: tool.id(),
+                            label: tool.name(),
+                            armed: armed_drawing == Some(*tool),
+                        },
+                        RailSlot::Family { family, members } => RailControl {
+                            id: family.id,
+                            label: family.title,
+                            armed: armed_drawing.is_some_and(|tool| members.contains(&tool)),
+                        },
+                    });
+                }
+            }
+            // Only the armed tool keeps a button of its own; the rest are
+            // behind More, which is not a control the scene can name yet.
+            RailStage::Compact | RailStage::Minimal => {
+                if let Some(tool) = armed_drawing {
+                    controls.push(RailControl {
+                        id: tool.id(),
+                        label: tool.name(),
+                        armed: true,
+                    });
+                }
+            }
+        }
+        controls
+    }
+
     pub fn drag_active(&self) -> bool {
         self.dragging
     }
@@ -868,6 +948,11 @@ impl ToolRail {
         let slots = tool_slots();
         let favorite_count = self.favorites.len();
         let stage = stage_for(available, slots.len(), favorite_count);
+        // The one thing the rail writes down for a later reader: which stage
+        // it drew. A single enum store per frame, and the only way the
+        // semantic scene can answer "what has a button right now" without
+        // re-deriving a layout it did not measure.
+        self.last_stage = Some(stage);
 
         // Chart-facing hairline: the only stroke the rail paints — a
         // four-sided stroke would draw a seam against the window edge.

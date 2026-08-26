@@ -2842,7 +2842,15 @@ impl QuantickApp {
     /// back by something that is not looking at the screen.
     #[must_use]
     fn heatmap_lamp_on(&self) -> bool {
-        self.active_tab().tape().depth_switched_on()
+        // Through the group's one reading, so this named rule and the lamp the
+        // toolbar actually paints cannot become two answers to one question.
+        self.active_tab()
+            .layer_toggle_state(
+                ChartLayer::Heatmap,
+                &self.style,
+                self.active_tab().capabilities(&self.config),
+            )
+            .0
     }
 
     /// Build the toolbar's model from the app's state, draw it, and carry
@@ -2896,19 +2904,14 @@ impl QuantickApp {
         // One reading per lamp, taken through the call the semantic scene
         // makes too, so the button and what an operator captures cannot
         // disagree about a layer. Every lamp reports the *switch* rather than
-        // what the source lets through it, which is the rule
-        // `heatmap_lamp_on` names and `ChartPane::layer_switched_on` already
-        // implements for all of them.
-        let heatmap_on = self.heatmap_lamp_on();
-        let bubbles_on = self
-            .active_tab()
-            .layer_toggle_on(toolbar::LayerToggle::Bubbles, &self.style);
-        let live_strip_on = self
-            .active_tab()
-            .layer_toggle_on(toolbar::LayerToggle::LiveStrip, &self.style);
-        let footprint_on = self
-            .active_tab()
-            .layer_toggle_on(toolbar::LayerToggle::Footprint, &self.style);
+        // what the source lets through it — the rule `heatmap_lamp_on` names,
+        // now the whole group's.
+        let layers = toolbar::LayerToggle::ALL.map(|toggle| {
+            let (on, blocked) =
+                self.active_tab()
+                    .layer_toggle_state(toggle.layer(), &self.style, capabilities);
+            toolbar::LayerToggleState { on, blocked }
+        });
         // The focused pane's slots (§11): the menu lists what a command from
         // it would act on, and never the pane beside it.
         let indicators: Vec<toolbar::IndicatorMenuEntry> = self
@@ -2961,10 +2964,7 @@ impl QuantickApp {
             history_step: &mut tab.history_step,
             history_trades: tab.history_trades,
             capabilities,
-            heatmap_on,
-            bubbles_on,
-            live_strip_on,
-            footprint_on,
+            layers,
             dock_visible,
             appearance_open: show_style,
             paper: toolbar::PaperTradeModel {
@@ -14006,7 +14006,8 @@ crosshair = false
             ChartLayer::DepthGaps,
         ] {
             assert_eq!(
-                time.layer_blocked(layer, capabilities),
+                time.layer_blocked(layer, capabilities)
+                    .map(|block| block.explanation),
                 Some("the order-flow layers are drawn on the flow pane"),
                 "{} has no machinery on a time pane",
                 layer.id()
@@ -28237,11 +28238,27 @@ plot(close)
             "source_captures_no_order_book"
         );
 
-        // The contrast: the strip needs nothing of the source, so it is
-        // available with no reason at all rather than a reason saying "fine".
+        // The strip takes either a book or traded volume and this source has
+        // neither, so it is blocked too — with its own code, not one of the
+        // two above. A gate declared beside the button instead of read from
+        // `ChartPane::layer_blocked` reported this one available, and the
+        // trader saw a lit switch that reserved no width.
         let strip = scene_control(&scene, "toolbar.layers.live_strip");
-        assert_eq!(strip["availability"]["available"], true);
-        assert!(strip["availability"]["reason"].is_null());
+        assert_eq!(strip["availability"]["available"], false);
+        assert_eq!(
+            strip["availability"]["reason"],
+            "source_publishes_neither_book_nor_traded_volume"
+        );
+
+        // The contrast: a control nothing gates is available with no reason at
+        // all, rather than a reason saying "fine".
+        let tab_id = scene_control_ids(&scene)
+            .into_iter()
+            .find(|id| id.starts_with("tab_strip.tab."))
+            .expect("the open chart has a chip");
+        let tab = scene_control(&scene, &tab_id);
+        assert_eq!(tab["availability"]["available"], true);
+        assert!(tab["availability"]["reason"].is_null());
 
         // Every reason is a code a client can branch on, never the sentence
         // the disabled button shows a human — which is the thing a client
@@ -28318,7 +28335,76 @@ plot(close)
         // A canvas is the one control the frame already measured, so it is the
         // one that answers with a rectangle instead of saying it has none.
         assert_eq!(control["bounds_availability"]["available"], true);
-        assert!(control["bounds"]["width_px"].is_string());
+        assert!(control["bounds"]["width_pt"].is_string());
+    }
+
+    #[test]
+    fn the_layer_toggles_are_listed_the_way_the_trader_reads_them() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(12);
+        run_frame(&mut app, &ctx);
+        let listed: Vec<String> = scene_control_ids(&observer_scene(&app))
+            .into_iter()
+            .filter(|id| id.starts_with("toolbar.layers."))
+            .collect();
+        // The group draws right-to-left from `LayerToggle::ALL`, so the eye
+        // meets them in the reverse of call order. An assistant asked about
+        // "the second button from the left" has to count the way the eye does.
+        assert_eq!(
+            listed,
+            vec![
+                "toolbar.layers.live_strip",
+                "toolbar.layers.footprint",
+                "toolbar.layers.heatmap",
+                "toolbar.layers.bubbles",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_scene_names_the_rails_buttons_and_not_the_tools_behind_them() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(12);
+        run_frame(&mut app, &ctx);
+        let rail: Vec<String> = scene_control_ids(&observer_scene(&app))
+            .into_iter()
+            .filter(|id| id.starts_with("tool_rail."))
+            .collect();
+        assert!(rail.len() < 2 + drawings::DRAWING_TOOLS.len(), "{rail:?}");
+        // A family folds into one slot with a flyout, so its members have no
+        // button of their own and the scene must not name them. `ray` shares
+        // the lines family with `trend-line`; listing it would send an
+        // assistant looking for a button that is not painted.
+        assert!(
+            rail.iter().any(|id| id == "tool_rail.tool.pointer"),
+            "{rail:?}"
+        );
+        assert!(
+            !rail.iter().any(|id| id == "tool_rail.tool.ray"),
+            "a folded family member has no button of its own: {rail:?}"
+        );
+    }
+
+    #[test]
+    fn the_scene_says_which_regions_it_looked_at_rather_than_claiming_the_screen() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(12);
+        run_frame(&mut app, &ctx);
+        let scene = observer_scene(&app);
+        // Whole regions of the window are still unnamed — the SOURCE and BARS
+        // groups, the menus, every dialog. A capture that answered "complete"
+        // would tell a client those controls do not exist.
+        let regions = scene["covered_regions"].as_array().unwrap();
+        assert!(regions.iter().any(|region| region == "toolbar"));
+        assert!(regions.iter().any(|region| region == "tool_rail"));
+        assert_eq!(scene["coverage"]["available"], true);
+        for control in scene["controls"].as_array().unwrap() {
+            assert!(
+                regions.contains(&control["owner"]["kind"]),
+                "{} belongs to a region the capture did not declare",
+                control["control_id"]
+            );
+        }
     }
 
     #[test]

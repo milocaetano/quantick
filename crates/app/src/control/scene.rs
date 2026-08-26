@@ -20,18 +20,34 @@
 //!
 //! ## What is on screen, and only that
 //!
-//! A control that is not painted is not listed. The tool rail folded away
-//! contributes no tools; a hidden dock contributes no tabs. Availability is a
-//! separate question from presence: the L2 heatmap toggle is on screen and
-//! disabled on a source that captures no book, and it says so with a reason
-//! code a client can branch on.
+//! A control that is not painted is not listed. A rail folded away to its
+//! narrow stage contributes only the buttons that stage draws; a hidden dock
+//! contributes no tabs. Availability is a separate question from presence:
+//! the L2 heatmap toggle is on screen and disabled on a source that captures
+//! no book, and it says so with a reason code a client can branch on.
+//!
+//! ## What it does not cover yet
+//!
+//! The scene enumerates the regions listed in [`SceneOwnerKindDto`] and no
+//! others: the SOURCE, BARS, HISTORY and TRADE toolbar groups, the window
+//! menus, the rail's trailing cluster and every dialog are still unnamed. A
+//! capture says so in [`SceneSnapshot::coverage`] rather than reporting a
+//! short list as the whole screen — a client that read this as complete would
+//! conclude those controls do not exist, and inferred or incomplete data is
+//! labelled here as everywhere else.
 //!
 //! ## Cost
 //!
-//! Nothing here runs unless a client asks. The projection reads state the
-//! frame already keeps — no rectangle is recorded, no hit test is run and no
-//! layout is measured for the scene's benefit — so an instance nobody is
-//! observing pays exactly nothing for this module existing.
+//! Nothing here runs unless a client asks, and the frame writes down nothing
+//! for its benefit but the rail's stage — one enum store per frame, which is
+//! what lets the rail be reported honestly instead of guessed at. The
+//! projection then reads state the frame already keeps: no rectangle is
+//! recorded, no hit test is run, no layout is measured. Note that a capture
+//! builds the list *twice* — once for the module revision and once for the
+//! scope — because module revisions are capture-derived across every module
+//! (PR 2's recorded deferral); this is the largest projection in the registry
+//! and the first that would benefit from the journal-driven change counters
+//! that replace it.
 
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
@@ -44,18 +60,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     app::QuantickApp,
+    chart_layers::ChartLayer,
     dock::DockTab,
-    drawings::DRAWING_TOOLS,
     pane::{ChartPane, PaneSide},
     tab::Tab,
     toolbar::LayerToggle,
-    toolrail::Tool,
 };
 
 use super::{
-    contract::CHART_WINDOW_CAPABILITY_ID,
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
-    types::{AvailabilitySnapshot, PaneSideDto, available, canonical_f32, unavailable},
+    types::{
+        AvailabilitySnapshot, PaneSideDto, available, canonical_f32, unavailable, visible_panes,
+    },
 };
 
 pub(crate) const CONTROLS_SCOPE_ID: &str = "scene.controls";
@@ -64,7 +80,7 @@ const SCHEMA_VERSION: u32 = 1;
 /// Screen coordinates are reported to the same precision as the cursor's, so
 /// a bound and a pointer position can be compared without either being
 /// rounded first.
-const SCREEN_PIXEL_DECIMAL_PLACES: u32 = 3;
+const SCREEN_POINT_DECIMAL_PLACES: u32 = 3;
 
 /// The identifier prefix of every control the tab strip owns.
 const TAB_STRIP_OWNER_ID: &str = "tab_strip";
@@ -87,12 +103,18 @@ pub(crate) struct SceneSnapshot {
     pub focused_pane_id: WireU64,
     pub focused_pane_side: PaneSideDto,
     pub controls: Vec<SceneControlSnapshot>,
-    /// Whether every control on screen fits in `controls`.
+    /// The regions this capture enumerated, in the order it walked them.
     ///
-    /// The scene is bounded like every other projection. It says so rather
-    /// than truncating in silence, because a client that read a short list as
-    /// the whole screen would conclude a control does not exist.
-    pub complete: AvailabilitySnapshot,
+    /// The honest bound on everything above: a control belonging to a region
+    /// absent from this list was not looked for, and its absence from
+    /// `controls` says nothing about whether it is on screen.
+    pub covered_regions: Vec<SceneOwnerKindDto>,
+    /// Whether every control of every covered region fits in `controls`.
+    ///
+    /// The scene is bounded like every other projection, and says so rather
+    /// than truncating in silence. This is a statement about the *covered*
+    /// regions only — `covered_regions` is what bounds the rest.
+    pub coverage: AvailabilitySnapshot,
 }
 
 /// One control the trader can see.
@@ -130,12 +152,15 @@ pub(crate) struct SceneControlSnapshot {
     /// refuses to do — so the answer is an honest "not recorded" rather than
     /// a guess assembled from layout constants.
     pub bounds_availability: AvailabilitySnapshot,
-    /// The registered capability that operates this control, where one exists.
+    /// The registered capability that *operates* this control, where one
+    /// exists.
     ///
-    /// Absent for most controls today: reading the screen came before acting
-    /// on it, and the cockpit tier that registers a capability per control is
-    /// still ahead. An absent ID means "not reachable through the control
-    /// plane yet", never "not reachable at all".
+    /// Absent on every control today, and honestly so: reading the screen came
+    /// before acting on it, and the cockpit tier that registers a capability
+    /// per control is still ahead. An absent ID means "not reachable through
+    /// the control plane yet", never "not reachable at all" — and a capability
+    /// that merely *reads about* a control (a page of a canvas's bars) is not
+    /// one that operates it, so it does not go here.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability_id: Option<String>,
 }
@@ -180,17 +205,25 @@ pub(crate) enum SceneOwnerKindDto {
     Tab,
 }
 
-/// A control's rectangle in window coordinates, in pixels.
+/// A control's rectangle in window coordinates, in **logical points**.
+///
+/// Not device pixels: the window lays out in points, and the two differ by the
+/// display's scale factor — a canvas on a 200% display occupies twice these
+/// numbers in the framebuffer. Reported as points anyway, because that is the
+/// unit the pointer is reported in too (`interaction.cursor`), so the two
+/// scopes can be compared without a conversion neither of them knows the
+/// factor for. A client composing these with a screenshot must scale them
+/// itself.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct SceneBoundsSnapshot {
-    #[schemars(extend("x-unit" = "pixels"))]
-    pub x_px: CanonicalDecimal,
-    #[schemars(extend("x-unit" = "pixels"))]
-    pub y_px: CanonicalDecimal,
-    #[schemars(extend("x-unit" = "pixels"))]
-    pub width_px: CanonicalDecimal,
-    #[schemars(extend("x-unit" = "pixels"))]
-    pub height_px: CanonicalDecimal,
+    #[schemars(extend("x-unit" = "logical_points"))]
+    pub x_pt: CanonicalDecimal,
+    #[schemars(extend("x-unit" = "logical_points"))]
+    pub y_pt: CanonicalDecimal,
+    #[schemars(extend("x-unit" = "logical_points"))]
+    pub width_pt: CanonicalDecimal,
+    #[schemars(extend("x-unit" = "logical_points"))]
+    pub height_pt: CanonicalDecimal,
 }
 
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
@@ -227,6 +260,22 @@ fn tab_control_id(tab_id: u64) -> String {
     format!("{TAB_STRIP_OWNER_ID}.tab.{tab_id}")
 }
 
+/// The identifier of one layer toggle in the toolbar's LAYERS group.
+fn layer_control_id(layer: ChartLayer) -> String {
+    format!("{TOOLBAR_LAYERS_OWNER_ID}.{}", layer.id())
+}
+
+/// The identifier of one button on the drawing rail — a tool's, or the
+/// family's where consecutive tools folded into one slot.
+fn rail_control_id(id: &str) -> String {
+    format!("{TOOL_RAIL_OWNER_ID}.tool.{id}")
+}
+
+/// The identifier of one tab on the dock's strip.
+fn dock_tab_control_id(tab: DockTab) -> String {
+    format!("{DOCK_OWNER_ID}.tab.{}", tab.id())
+}
+
 /// The identifier of one pane's chart canvas.
 ///
 /// Public to the control module because the cursor answers with it: the
@@ -242,17 +291,22 @@ pub(crate) fn scene_snapshot(app: &QuantickApp) -> SceneSnapshot {
     let focused_side = active.focused_side();
     let mut controls = Vec::new();
 
-    push_tab_strip(&mut controls, tabs, active.id);
+    // The chart canvases go first, and deliberately: they are what the cursor
+    // resolves to, and the cap below cuts from the end. A workspace large
+    // enough to truncate must not be one where `interaction.cursor` answers
+    // with a control ID this scope no longer contains.
+    push_panes(&mut controls, active, focused_side);
     push_layer_toggles(&mut controls, app, active);
     push_tool_rail(&mut controls, app);
     push_dock(&mut controls, app);
-    push_panes(&mut controls, active, focused_side);
+    push_tab_strip(&mut controls, tabs, active.id);
 
-    // Bounded like every other projection, and honest about it. The registries
-    // behind the scene are all fixed-size but the tab strip is not, so a
-    // trader with an implausible number of charts open truncates rather than
-    // building an unbounded payload on the application thread.
-    let complete = if controls.len() > CONTROL_SCENE_MAX_CONTROLS {
+    // Bounded like every other projection, and honest about it. Every registry
+    // behind the scene is fixed-size except the trader's own tab strip, which
+    // is why the strip is walked last: an implausible number of open charts
+    // costs a truncated list rather than an unbounded payload built on the
+    // application thread.
+    let coverage = if controls.len() > CONTROL_SCENE_MAX_CONTROLS {
         controls.truncate(CONTROL_SCENE_MAX_CONTROLS);
         unavailable("control_count_exceeded_the_scene_limit")
     } else {
@@ -264,16 +318,33 @@ pub(crate) fn scene_snapshot(app: &QuantickApp) -> SceneSnapshot {
         focused_pane_id: WireU64::new(active.pane(focused_side).id),
         focused_pane_side: focused_side.into(),
         controls,
-        complete,
+        covered_regions: COVERED_REGIONS.to_vec(),
+        coverage,
     }
 }
+
+/// The regions [`scene_snapshot`] walks, in the order it walks them.
+///
+/// The list a capture publishes as its own bound. Adding a region here without
+/// adding the walk that fills it would be the one lie this module cannot
+/// tolerate, so the two live one above the other.
+const COVERED_REGIONS: [SceneOwnerKindDto; 5] = [
+    SceneOwnerKindDto::Tab,
+    SceneOwnerKindDto::Toolbar,
+    SceneOwnerKindDto::ToolRail,
+    SceneOwnerKindDto::Dock,
+    SceneOwnerKindDto::TabStrip,
+];
 
 /// The open charts, in strip order.
 fn push_tab_strip(controls: &mut Vec<SceneControlSnapshot>, tabs: &[Tab], active_id: u64) {
     for tab in tabs {
         controls.push(SceneControlSnapshot {
             control_id: tab_control_id(tab.id),
-            label: format!("{} {}", tab.feed_id, tab.symbol),
+            // The string the chip paints, not one assembled here: an
+            // assistant that named a tab something the trader cannot see
+            // would be describing a different screen.
+            label: tab.chip_label().to_owned(),
             role: SceneRoleDto::Tab,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::TabStrip,
@@ -292,25 +363,27 @@ fn push_tab_strip(controls: &mut Vec<SceneControlSnapshot>, tabs: &[Tab], active
 /// for the same field the pane's own layer menu writes.
 fn push_layer_toggles(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp, tab: &Tab) {
     let capabilities = tab.capabilities(app.control_config());
-    for toggle in LayerToggle::ALL {
+    // `LayerToggle::ALL` is call order, which the group's right-to-left layout
+    // turns into right-to-left screen order. Reversed here so the scene lists
+    // them the way the trader reads them: an assistant asked about "the third
+    // button from the left" must count the same direction the eye does.
+    for toggle in LayerToggle::ALL.into_iter().rev() {
         let layer = toggle.layer();
-        let gate = toggle.gate();
+        let (on, blocked) = tab.layer_toggle_state(layer, app.control_style(), capabilities);
         controls.push(SceneControlSnapshot {
-            control_id: format!("{TOOLBAR_LAYERS_OWNER_ID}.{}", layer.id()),
+            control_id: layer_control_id(layer),
             label: layer.label().to_owned(),
             role: SceneRoleDto::Toggle,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::Toolbar,
                 id: TOOLBAR_LAYERS_OWNER_ID.to_owned(),
             },
-            selected: tab.layer_toggle_on(toggle, app.control_style()),
-            availability: if gate.allows(capabilities) {
-                available()
-            } else {
-                unavailable(
-                    gate.reason()
-                        .unwrap_or("source_does_not_support_this_layer"),
-                )
+            selected: on,
+            // The very gate the disabled button reads, in its coded rendering:
+            // one condition, two audiences, no chance of drift.
+            availability: match blocked {
+                None => available(),
+                Some(block) => unavailable(block.code),
             },
             bounds: None,
             bounds_availability: bounds_not_recorded(),
@@ -328,20 +401,20 @@ fn push_tool_rail(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
     if !rail.visible() {
         return;
     }
-    let armed = rail.tool();
-    let tools = [Tool::Pointer, Tool::Crosshair]
-        .into_iter()
-        .chain(DRAWING_TOOLS.into_iter().map(Tool::Drawing));
-    for tool in tools {
+    // What the rail *painted*, folded through the same slots the draw folds
+    // through and cut by the stage the draw recorded. Listing the registry
+    // instead would name thirteen tools that live behind a family flyout and
+    // two more the narrow stages drop entirely.
+    for control in rail.painted_controls() {
         controls.push(SceneControlSnapshot {
-            control_id: format!("{TOOL_RAIL_OWNER_ID}.tool.{}", tool.id()),
-            label: tool.name().to_owned(),
+            control_id: rail_control_id(control.id),
+            label: control.label.to_owned(),
             role: SceneRoleDto::Tool,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::ToolRail,
                 id: TOOL_RAIL_OWNER_ID.to_owned(),
             },
-            selected: tool == armed,
+            selected: control.armed,
             availability: available(),
             bounds: None,
             bounds_availability: bounds_not_recorded(),
@@ -359,7 +432,7 @@ fn push_dock(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
     let open = dock.tab();
     for tab in DockTab::ALL {
         controls.push(SceneControlSnapshot {
-            control_id: format!("{DOCK_OWNER_ID}.tab.{}", tab.id()),
+            control_id: dock_tab_control_id(tab),
             label: tab.title().to_owned(),
             role: SceneRoleDto::Tab,
             owner: SceneOwnerSnapshot {
@@ -392,25 +465,57 @@ fn push_panes(controls: &mut Vec<SceneControlSnapshot>, tab: &Tab, focused: Pane
             },
             selected: side == focused,
             availability: available(),
-            bounds_availability: if bounds.is_some() {
-                available()
-            } else {
-                unavailable("the_pane_has_not_been_drawn_yet")
+            bounds_availability: match &bounds {
+                Bounds::Rect(_) => available(),
+                Bounds::NotDrawn => unavailable("the_pane_has_not_been_drawn_yet"),
+                Bounds::NotFinite => unavailable("the_panes_rectangle_is_not_a_finite_number"),
             },
-            bounds,
-            capability_id: Some(CHART_WINDOW_CAPABILITY_ID.to_owned()),
+            bounds: bounds.into_snapshot(),
+            capability_id: None,
         });
     }
 }
 
-fn pane_bounds(pane: &ChartPane) -> Option<SceneBoundsSnapshot> {
-    let rect = pane.last_chart_area?;
-    Some(SceneBoundsSnapshot {
-        x_px: canonical_f32(rect.min.x, SCREEN_PIXEL_DECIMAL_PLACES)?,
-        y_px: canonical_f32(rect.min.y, SCREEN_PIXEL_DECIMAL_PLACES)?,
-        width_px: canonical_f32(rect.width(), SCREEN_PIXEL_DECIMAL_PLACES)?,
-        height_px: canonical_f32(rect.height(), SCREEN_PIXEL_DECIMAL_PLACES)?,
-    })
+/// Why a pane has no rectangle, kept apart from *having* one so the two
+/// reasons never borrow each other's words: a pane drawn into a degenerate
+/// layout was drawn, and telling a polling client it was not would leave it
+/// waiting for a state that has already arrived.
+enum Bounds {
+    Rect(SceneBoundsSnapshot),
+    NotDrawn,
+    NotFinite,
+}
+
+impl Bounds {
+    fn into_snapshot(self) -> Option<SceneBoundsSnapshot> {
+        match self {
+            Self::Rect(bounds) => Some(bounds),
+            Self::NotDrawn | Self::NotFinite => None,
+        }
+    }
+}
+
+fn pane_bounds(pane: &ChartPane) -> Bounds {
+    let Some(rect) = pane.last_chart_area else {
+        return Bounds::NotDrawn;
+    };
+    let point = |value: f32| canonical_f32(value, SCREEN_POINT_DECIMAL_PLACES);
+    match (
+        point(rect.min.x),
+        point(rect.min.y),
+        point(rect.width()),
+        point(rect.height()),
+    ) {
+        (Some(x_pt), Some(y_pt), Some(width_pt), Some(height_pt)) => {
+            Bounds::Rect(SceneBoundsSnapshot {
+                x_pt,
+                y_pt,
+                width_pt,
+                height_pt,
+            })
+        }
+        _ => Bounds::NotFinite,
+    }
 }
 
 fn side_label(side: PaneSide) -> &'static str {
@@ -418,23 +523,6 @@ fn side_label(side: PaneSide) -> &'static str {
         PaneSide::Flow => "Flow",
         PaneSide::Time => "Time",
     }
-}
-
-/// The panes the active layout actually shows, in the order they are drawn.
-///
-/// The same rule the cursor resolves against, so a pane the pointer can hit
-/// is a pane the scene lists.
-fn visible_panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {
-    let mut panes = Vec::with_capacity(2);
-    if tab.layout.shows_time()
-        && let Some(time) = &tab.time_pane
-    {
-        panes.push((time, PaneSide::Time));
-    }
-    if tab.layout.shows_flow() {
-        panes.push((&tab.flow_pane, PaneSide::Flow));
-    }
-    panes
 }
 
 fn bounds_not_recorded() -> AvailabilitySnapshot {

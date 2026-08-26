@@ -385,7 +385,12 @@ pub fn call(
             DIAGNOSTICS_CAPABILITY,
             Value::Object(arguments),
         ),
-        GET_SCENE => forward(link, instance.as_ref(), SCENE_CAPABILITY, json!({})),
+        GET_SCENE => forward(
+            link,
+            instance.as_ref(),
+            SCENE_CAPABILITY,
+            Value::Object(arguments),
+        ),
         READ_EVENTS => forward(
             link,
             instance.as_ref(),

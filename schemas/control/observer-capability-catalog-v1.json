@@ -6248,30 +6248,30 @@
             "type": "string"
           },
           "SceneBoundsSnapshot": {
-            "description": "A control's rectangle in window coordinates, in pixels.",
+            "description": "A control's rectangle in window coordinates, in **logical points**.\n\nNot device pixels: the window lays out in points, and the two differ by the\ndisplay's scale factor — a canvas on a 200% display occupies twice these\nnumbers in the framebuffer. Reported as points anyway, because that is the\nunit the pointer is reported in too (`interaction.cursor`), so the two\nscopes can be compared without a conversion neither of them knows the\nfactor for. A client composing these with a screenshot must scale them\nitself.",
             "properties": {
-              "height_px": {
+              "height_pt": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "x-unit": "pixels"
+                "x-unit": "logical_points"
               },
-              "width_px": {
+              "width_pt": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "x-unit": "pixels"
+                "x-unit": "logical_points"
               },
-              "x_px": {
+              "x_pt": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "x-unit": "pixels"
+                "x-unit": "logical_points"
               },
-              "y_px": {
+              "y_pt": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "x-unit": "pixels"
+                "x-unit": "logical_points"
               }
             },
             "required": [
-              "x_px",
-              "y_px",
-              "width_px",
-              "height_px"
+              "x_pt",
+              "y_pt",
+              "width_pt",
+              "height_pt"
             ],
             "type": "object"
           },
@@ -6298,7 +6298,7 @@
                 "description": "Why there are no bounds, when there are none.\n\nOnly the chart canvases record their rectangle during the frame they\nare drawn. Measuring the chrome would mean writing a rectangle per\ncontrol per frame whether or not anyone is watching, which this module\nrefuses to do — so the answer is an honest \"not recorded\" rather than\na guess assembled from layout constants."
               },
               "capability_id": {
-                "description": "The registered capability that operates this control, where one exists.\n\nAbsent for most controls today: reading the screen came before acting\non it, and the cockpit tier that registers a capability per control is\nstill ahead. An absent ID means \"not reachable through the control\nplane yet\", never \"not reachable at all\".",
+                "description": "The registered capability that *operates* this control, where one\nexists.\n\nAbsent on every control today, and honestly so: reading the screen came\nbefore acting on it, and the cockpit tier that registers a capability\nper control is still ahead. An absent ID means \"not reachable through\nthe control plane yet\", never \"not reachable at all\" — and a capability\nthat merely *reads about* a control (a page of a canvas's bars) is not\none that operates it, so it does not go here.",
                 "type": [
                   "string",
                   "null"
@@ -6416,13 +6416,20 @@
           "active_tab_id": {
             "$ref": "#/$defs/WireU64"
           },
-          "complete": {
-            "$ref": "#/$defs/AvailabilitySnapshot",
-            "description": "Whether every control on screen fits in `controls`.\n\nThe scene is bounded like every other projection. It says so rather\nthan truncating in silence, because a client that read a short list as\nthe whole screen would conclude a control does not exist."
-          },
           "controls": {
             "items": {
               "$ref": "#/$defs/SceneControlSnapshot"
+            },
+            "type": "array"
+          },
+          "coverage": {
+            "$ref": "#/$defs/AvailabilitySnapshot",
+            "description": "Whether every control of every covered region fits in `controls`.\n\nThe scene is bounded like every other projection, and says so rather\nthan truncating in silence. This is a statement about the *covered*\nregions only — `covered_regions` is what bounds the rest."
+          },
+          "covered_regions": {
+            "description": "The regions this capture enumerated, in the order it walked them.\n\nThe honest bound on everything above: a control belonging to a region\nabsent from this list was not looked for, and its absence from\n`controls` says nothing about whether it is on screen.",
+            "items": {
+              "$ref": "#/$defs/SceneOwnerKindDto"
             },
             "type": "array"
           },
@@ -6438,7 +6445,8 @@
           "focused_pane_id",
           "focused_pane_side",
           "controls",
-          "complete"
+          "covered_regions",
+          "coverage"
         ],
         "title": "SceneSnapshot",
         "type": "object"

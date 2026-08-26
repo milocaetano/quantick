@@ -19,7 +19,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use crate::chart_layers::ChartLayer;
+use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::FeedCapabilities;
 use crate::dock::DockTab;
 use crate::state::{BarKind, ImbalanceUnit};
@@ -240,14 +240,13 @@ pub struct ToolbarModel<'a> {
     pub history_trades: usize,
     /// What the active source's backend can do.
     pub capabilities: FeedCapabilities,
-    /// Whether the L2 depth map is shown. Capture runs regardless.
-    pub heatmap_on: bool,
-    /// Whether the aggression layer is on.
-    pub bubbles_on: bool,
-    /// Whether the live strip is shown.
-    pub live_strip_on: bool,
-    /// Whether the candle footprint is drawn.
-    pub footprint_on: bool,
+    /// The LAYERS group's four lamps, in [`LayerToggle::ALL`] order: whether
+    /// each layer is drawn, and what blocks it where something does. Both
+    /// come from `ChartPane::layer_blocked` / `layer_visible` through
+    /// [`crate::tab::Tab::layer_toggle_state`], which the semantic scene reads
+    /// too — so a button cannot tell the trader one thing and an assistant
+    /// another.
+    pub layers: [LayerToggleState; 4],
     /// Whether the dock (strip included) is shown.
     pub dock_visible: bool,
     /// Whether the appearance dialog is open.
@@ -710,6 +709,13 @@ fn draw_trade(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolbar
     }
 }
 
+/// One LAYERS lamp this frame: drawn or not, and what blocks it if anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayerToggleState {
+    pub on: bool,
+    pub blocked: Option<LayerBlock>,
+}
+
 /// The visual layers the LAYERS group toggles, declared once.
 ///
 /// The toolbar draws from this list and the semantic scene projects from it,
@@ -728,9 +734,11 @@ pub enum LayerToggle {
 }
 
 impl LayerToggle {
-    /// Every toggle in group order, which is the order the trader reads them
-    /// in. The group draws right-to-left, so the call order is reversed at the
-    /// draw site rather than here.
+    /// Every toggle in *call* order, which the right-to-left layout turns
+    /// into right-to-left screen order: the trader reads them the other way
+    /// round. Anything that wants reading order reverses this — the scene
+    /// does, and says so — because the draw order is what the layout needs
+    /// and reordering here would move the buttons under the trader's hand.
     pub const ALL: [Self; 4] = [
         Self::Bubbles,
         Self::Heatmap,
@@ -776,24 +784,6 @@ impl LayerToggle {
         }
     }
 
-    /// What the source has to be able to do before the layer means anything.
-    #[must_use]
-    pub fn gate(self) -> LayerGate {
-        match self {
-            // A bubble's whole message is its size, and a footprint is a
-            // ladder of buyer-against-seller quantities. Where every print is
-            // one synthetic unit, both draw the same shape forever and say
-            // nothing — so they are withheld rather than drawn empty of
-            // meaning.
-            Self::Bubbles | Self::Footprint => LayerGate::TradedVolume,
-            Self::Heatmap => LayerGate::BookCapture,
-            // Never gated: the aggression histogram runs on the trade stream
-            // every source provides, a recording included, and without book
-            // data the strip honestly degrades to it.
-            Self::LiveStrip => LayerGate::Always,
-        }
-    }
-
     #[must_use]
     fn hover_text(self) -> &'static str {
         match self {
@@ -816,18 +806,14 @@ impl LayerToggle {
         }
     }
 
-    /// Whether the layer is drawn right now, as this frame's model reports it.
-    ///
-    /// The model's four readings come from [`crate::tab::Tab::layer_toggle_on`],
-    /// which the semantic scene reads too — so what the button shows and what
-    /// an operator captures cannot drift apart.
+    /// This toggle's slot in [`ToolbarModel::layers`].
     #[must_use]
-    fn is_on(self, model: &ToolbarModel<'_>) -> bool {
+    pub(crate) fn index(self) -> usize {
         match self {
-            Self::Bubbles => model.bubbles_on,
-            Self::Heatmap => model.heatmap_on,
-            Self::Footprint => model.footprint_on,
-            Self::LiveStrip => model.live_strip_on,
+            Self::Bubbles => 0,
+            Self::Heatmap => 1,
+            Self::Footprint => 2,
+            Self::LiveStrip => 3,
         }
     }
 
@@ -855,55 +841,6 @@ impl LayerToggle {
     }
 }
 
-/// What a source has to be able to do before a layer toggle opens.
-///
-/// Three things come out of a gate: whether the button is live, the sentence
-/// the trader reads when it is not, and a stable code a control client
-/// branches on. The last is not the first two — a client made to parse that
-/// sentence would break the day it is reworded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LayerGate {
-    /// Nothing is required: the layer runs on the trade stream alone.
-    Always,
-    /// The source's prints must carry a volume the venue really traded.
-    TradedVolume,
-    /// The source must stream synchronized L2 depth.
-    BookCapture,
-}
-
-impl LayerGate {
-    /// Whether this frame's source opens the gate.
-    #[must_use]
-    pub fn allows(self, capabilities: FeedCapabilities) -> bool {
-        match self {
-            Self::Always => true,
-            Self::TradedVolume => capabilities.traded_volume,
-            Self::BookCapture => capabilities.book_capture,
-        }
-    }
-
-    /// The sentence a disabled button explains itself with.
-    #[must_use]
-    fn explanation(self) -> &'static str {
-        match self {
-            // Never read: an always-open gate never disables its button.
-            Self::Always => "",
-            Self::TradedVolume => "this source quotes prices but prints no traded volume",
-            Self::BookCapture => "order-book capture is not available for this source",
-        }
-    }
-
-    /// The stable reason code a closed gate reports to a control client.
-    #[must_use]
-    pub fn reason(self) -> Option<&'static str> {
-        match self {
-            Self::Always => None,
-            Self::TradedVolume => Some("source_prints_no_traded_volume"),
-            Self::BookCapture => Some("source_captures_no_order_book"),
-        }
-    }
-}
-
 /// LAYERS: one icon toggle per visual layer. Left-click toggles the layer;
 /// right-click opens its dock tab — looking is not enabling. Drawn inside the
 /// right-to-left layout, so the call order is the reverse of what is seen.
@@ -919,14 +856,14 @@ fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolba
     draw_indicators_menu(ui, model, actions);
 
     for layer in LayerToggle::ALL {
-        let gate = layer.gate();
-        let on = layer.is_on(model);
+        let state = model.layers[layer.index()];
+        let on = state.on;
         let response = IconButton::new(layer.icon(), TOOLBAR_ICON)
             .active(on)
             .accent(layer.accent())
-            .enabled(gate.allows(model.capabilities))
+            .enabled(state.blocked.is_none())
             .hover_text(layer.hover_text())
-            .disabled_explanation(gate.explanation())
+            .disabled_explanation(state.blocked.map_or("", |block| block.explanation))
             .show(ui);
         if response.clicked() {
             actions.push(layer.toggle_action(!on));
@@ -1117,6 +1054,12 @@ fn draw_overflow(
 
 #[cfg(test)]
 mod tests {
+    /// Four unblocked lamps from their on/off flags, in [`LayerToggle::ALL`]
+    /// order. A fixture that wants a blocked lamp builds the array itself.
+    fn layer_states(on: [bool; 4]) -> [LayerToggleState; 4] {
+        on.map(|on| LayerToggleState { on, blocked: None })
+    }
+
     use super::*;
 
     /// The flat TRADE pair's width — the old `W_TRADE` constant, kept as the
@@ -1327,10 +1270,7 @@ mod tests {
                             ohlcv_history: !replaying,
                             ohlcv_generation: 0,
                         },
-                        heatmap_on: false,
-                        bubbles_on: true,
-                        footprint_on: false,
-                        live_strip_on: false,
+                        layers: layer_states([true, false, false, false]),
                         dock_visible: true,
                         appearance_open: false,
                         paper: PaperTradeModel::flat(true),
@@ -1415,10 +1355,7 @@ mod tests {
                         ohlcv_history: true,
                         ohlcv_generation: 0,
                     },
-                    heatmap_on: false,
-                    bubbles_on: false,
-                    footprint_on: false,
-                    live_strip_on: false,
+                    layers: layer_states([false, false, false, false]),
                     dock_visible: true,
                     appearance_open: false,
                     paper: PaperTradeModel::flat(true),
@@ -1490,10 +1427,7 @@ mod tests {
                             ohlcv_history: false,
                             ohlcv_generation: 0,
                         },
-                        heatmap_on: false,
-                        bubbles_on: false,
-                        footprint_on: false,
-                        live_strip_on: false,
+                        layers: layer_states([false, false, false, false]),
                         dock_visible: true,
                         appearance_open: false,
                         // Not yet ready: the TRADE pair must lay out in its
@@ -1560,10 +1494,7 @@ mod tests {
                         ohlcv_history: true,
                         ohlcv_generation: 0,
                     },
-                    heatmap_on: false,
-                    bubbles_on: false,
-                    footprint_on: false,
-                    live_strip_on: false,
+                    layers: layer_states([false, false, false, false]),
                     dock_visible: true,
                     appearance_open: false,
                     paper: PaperTradeModel {
