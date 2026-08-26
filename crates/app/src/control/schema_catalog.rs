@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 use super::{
     actions::{MarkInput, MarkResult},
+    analysis::{DrawingsSnapshot, IndicatorsSnapshot},
     annotate::{AnnotationInput, AnnotationResult, RemoveInput, RemoveResult},
     chart::{ChartSnapshot, ChartWindowPage, ChartWindowQuery},
     contract::{
@@ -44,6 +45,8 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<HealthSnapshot>("observer-health-summary-v1.schema.json"),
         document::<CursorSnapshot>("observer-cursor-v1.schema.json"),
         document::<SelectionSnapshot>("observer-selection-v1.schema.json"),
+        document::<IndicatorsSnapshot>("observer-analysis-indicators-v1.schema.json"),
+        document::<DrawingsSnapshot>("observer-analysis-drawings-v1.schema.json"),
         document::<ReplaySnapshot>("observer-session-replay-v1.schema.json"),
         document::<PaperSnapshot>("observer-session-paper-v1.schema.json"),
         document::<ChartWindowQuery>("observer-chart-window-query-v1.schema.json"),

@@ -6,6 +6,7 @@
 //! the local gateway workers.
 
 mod actions;
+mod analysis;
 mod annotate;
 pub(crate) mod chart;
 mod contract;
@@ -58,6 +59,7 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     feed::register(&mut registry)?;
     chart::register(&mut registry)?;
     health::register(&mut registry)?;
+    analysis::register(&mut registry)?;
     interaction::register(&mut registry)?;
     session::register(&mut registry)?;
     Ok(registry)

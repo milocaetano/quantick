@@ -25554,7 +25554,7 @@ plot(close)
             .descriptors()
             .map(|descriptor| (descriptor.scope_id.clone(), descriptor.schema.clone()))
             .collect::<Vec<_>>();
-        assert_eq!(descriptors.len(), 9, "every registered scope is projected");
+        assert_eq!(descriptors.len(), 11, "every registered scope is projected");
         let scopes = descriptors
             .iter()
             .map(|(scope_id, _)| scope_id.clone())
@@ -25590,6 +25590,92 @@ plot(close)
         assert_eq!(
             feed["tabs"][0]["provenance"]["price"],
             "venue_or_broker_trade"
+        );
+    }
+
+    #[test]
+    fn observer_projects_each_pane_indicator_with_its_inputs_and_latest_reading() {
+        let (mut app, _commands) = app_with_history(12);
+
+        // Deliver an indicator the way the worker does: allocate the slot the
+        // UI owns, then apply the rebuild delta the worker sends back.
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            let slot = pane.indicators.allocate_slot("native.ema");
+            let descriptor = quantick_indicators::IndicatorDescriptor {
+                title: "EMA".to_owned(),
+                short_title: Some("ema".to_owned()),
+                overlay: true,
+                plots: vec![quantick_indicators::PlotSpec {
+                    id: quantick_indicators::PlotId::new(0),
+                    title: "EMA".to_owned(),
+                    style: quantick_indicators::PlotStyle::Line,
+                    base_color: quantick_indicators::Rgba8::opaque(1, 2, 3),
+                    width: 1.0,
+                    offset: 0,
+                    marker: None,
+                }],
+                fills: Vec::new(),
+                inputs: vec![quantick_indicators::InputSpec::Int {
+                    name: "len".to_owned(),
+                    title: "Length".to_owned(),
+                    default: 9,
+                    min: Some(1),
+                    max: Some(500),
+                    step: Some(1),
+                    options: Vec::new(),
+                }],
+            };
+            pane.indicators
+                .apply(crate::indicator_worker::IndicatorEvent::rebuilt(
+                    slot,
+                    descriptor,
+                    vec![vec![1.5, 2.25, 3.125]],
+                ));
+        }
+
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scope = observer_scope("analysis.indicators");
+        let capture = registry
+            .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let pane = &capture.scopes[&scope].value["tabs"][0]["panes"][0];
+        assert_eq!(pane["indicator_count"], "1");
+        assert_eq!(pane["indicators_truncated"], false);
+
+        let indicator = &pane["indicators"][0];
+        assert_eq!(indicator["kind"], "native.ema");
+        assert_eq!(
+            indicator["source_kind"], "native",
+            "a native kernel's diagnostics are ours, not the trader's"
+        );
+        assert_eq!(indicator["title"], "EMA");
+        assert_eq!(indicator["short_title"], "ema");
+        assert_eq!(indicator["overlay"], true);
+        assert_eq!(indicator["committed_bar_count"], "3");
+        assert!(
+            indicator["failure"].is_null(),
+            "a clean evaluation reports no failure"
+        );
+
+        let plot = &indicator["plots"][0];
+        assert_eq!(plot["style"], "line");
+        assert_eq!(plot["base_color"], "#010203ff");
+        assert_eq!(
+            plot["latest_value"], "3.125",
+            "the newest committed reading crosses as an exact decimal string"
+        );
+
+        let input = &indicator["inputs"][0];
+        assert_eq!(input["name"], "len");
+        assert_eq!(input["title"], "Length");
+        assert_eq!(input["kind"], "int");
+        assert_eq!(input["default"], "9");
+        assert_eq!(
+            input["text_present"], false,
+            "an int input holds no free text to withhold"
         );
     }
 
@@ -27668,6 +27754,10 @@ plot(close)
             observer_scope("feed.status"),
             observer_scope("interaction.cursor"),
             observer_scope("interaction.selection"),
+            // The enumerating scope is held to the same rule as the pointer
+            // ones: it lists every drawing, so it is the likeliest place for a
+            // trader's own name to escape.
+            observer_scope("analysis.drawings"),
         ];
         let capture = registry
             .capture(&app, &observer_instance(), &scopes)
@@ -27694,6 +27784,19 @@ plot(close)
         assert_eq!(drawing["user_label_present"], true);
         let selection = &capture.scopes[&scopes[2]].value["drawing"];
         assert_eq!(selection["user_label_present"], true);
+
+        let listed = &capture.scopes[&scopes[3]].value["tabs"][0]["panes"][0]["drawings"][0];
+        assert_eq!(listed["tool_id"], "horizontal-line");
+        assert_eq!(listed["scope"], "all_charts");
+        assert_eq!(listed["band"], "price");
+        assert_eq!(
+            listed["user_label_present"], true,
+            "the trader named it, and the wire says so without saying what"
+        );
+        assert!(
+            listed["author"].is_null(),
+            "the trader placed it by hand, so it carries no other author"
+        );
     }
 
     #[test]
@@ -27764,7 +27867,7 @@ plot(close)
         // Every published wire type has a committed document, so a breaking
         // change shows up as a diff in review (contract §6). The count is
         // here to make an accidental *removal* visible too.
-        assert_eq!(documents.len(), 33);
+        assert_eq!(documents.len(), 35);
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("schemas/control");

@@ -34,6 +34,13 @@ pub const CONTROL_MAX_SNAPSHOT_SCOPES: usize = 32;
 /// Working orders one paper-trading tab publishes in a capture. The simulator
 /// holds no more than a trader can place by hand or a strategy can rest, so
 /// this bounds a page rather than a plausible book.
+/// Indicators one pane publishes in a capture. The chart itself caps visible
+/// indicator panes far below this; the limit bounds a hostile or scripted
+/// pane, not an arrangement a trader would build.
+pub const CONTROL_SNAPSHOT_MAX_INDICATORS_PER_PANE: usize = 64;
+/// Drawings one pane publishes in a capture. A working chart carries tens of
+/// marks; a page of this size is a whole session's annotation.
+pub const CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE: usize = 512;
 pub const CONTROL_SNAPSHOT_MAX_WORKING_ORDERS: usize = 128;
 /// Closed trades one paper-trading tab publishes in a capture. A session
 /// ledger grows all day; a capture carries its newest page and says how many

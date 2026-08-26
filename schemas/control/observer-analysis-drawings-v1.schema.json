@@ -1,0 +1,170 @@
+{
+  "$defs": {
+    "DrawingAuthorSnapshot": {
+      "properties": {
+        "actor_kind": {
+          "description": "The wire's actor kind: `agent`, `automation` or `human_ui`.",
+          "type": "string"
+        },
+        "client_name": {
+          "description": "The client's own name, as it introduced itself at the handshake.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actor_kind",
+        "client_name"
+      ],
+      "type": "object"
+    },
+    "DrawingSnapshot": {
+      "properties": {
+        "anchor_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "author": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DrawingAuthorSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set when something other than the trader's hand placed this object.\nAbsent is the trader's own. An object an agent placed must never be\nindistinguishable from one the trader placed."
+        },
+        "band": {
+          "description": "The value axis the anchors were placed against.",
+          "type": "string"
+        },
+        "drawing_id": {
+          "$ref": "#/$defs/WireU64",
+          "description": "Identity, stable while the object lives. Position in the list is not\nidentity: removing an earlier object renumbers positions and never\nthis."
+        },
+        "foreign_market": {
+          "description": "The tab changed the instrument under this mark. Time survives a symbol\nswitch and price does not, so the anchors still resolve while the level\nmeans nothing on the chart it is now over. The object stays and says\nso, rather than pretending to be a level on this market.",
+          "type": "boolean"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "locked": {
+          "type": "boolean"
+        },
+        "off_series": {
+          "description": "This pane's series does not reach the market instant an anchor was\nplaced at — the mark survived a re-cut, a rewind or a symbol switch,\nbut no longer sits on the data it was drawn against.",
+          "type": "boolean"
+        },
+        "scope": {
+          "description": "`this_chart` or `all_charts` — whether the tab's other panes show it.",
+          "type": "string"
+        },
+        "tool_id": {
+          "type": "string"
+        },
+        "user_label_present": {
+          "description": "True when the trader gave the object their own name. The name itself is\ntheir words and is never published.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "drawing_id",
+        "tool_id",
+        "band",
+        "scope",
+        "locked",
+        "hidden",
+        "foreign_market",
+        "off_series",
+        "anchor_count",
+        "user_label_present"
+      ],
+      "type": "object"
+    },
+    "PaneDrawingsSnapshot": {
+      "properties": {
+        "drawing_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "drawings": {
+          "items": {
+            "$ref": "#/$defs/DrawingSnapshot"
+          },
+          "maxItems": 512,
+          "type": "array"
+        },
+        "drawings_truncated": {
+          "type": "boolean"
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "selected_index": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Position of the selected drawing within this pane's own list, when the\nselection is here."
+        },
+        "side": {
+          "$ref": "#/$defs/PaneSideDto"
+        }
+      },
+      "required": [
+        "pane_id",
+        "side",
+        "drawings",
+        "drawing_count",
+        "drawings_truncated"
+      ],
+      "type": "object"
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "TabDrawingsSnapshot": {
+      "properties": {
+        "panes": {
+          "items": {
+            "$ref": "#/$defs/PaneDrawingsSnapshot"
+          },
+          "type": "array"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "tab_id",
+        "panes"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "tabs": {
+      "items": {
+        "$ref": "#/$defs/TabDrawingsSnapshot"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "tabs"
+  ],
+  "title": "DrawingsSnapshot",
+  "type": "object"
+}
