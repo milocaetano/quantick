@@ -41,7 +41,7 @@ pub(crate) enum BookCommand {
     ApplyGroupingNow(Decimal),
     /// The price grid the tape itself prints on, for a chart whose feed never
     /// states an instrument tick. Loses to a venue-stated step; see
-    /// [`OrderFlowEngine::size_from_tape`](crate::orderflow_engine::OrderFlowEngine::size_from_tape).
+    /// [`BookEngine::size_from_tape`](crate::orderflow_engine::BookEngine::size_from_tape).
     TapePriceGrid(Decimal),
     AcceptGroupingRestart {
         grouping: Decimal,

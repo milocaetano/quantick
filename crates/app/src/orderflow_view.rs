@@ -737,6 +737,11 @@ impl OrderflowView {
         self.symbol = symbol.into();
         self.config.enabled = false;
         self.pending_capture_grouping_previous = None;
+        // The send-once cache is keyed on what was *sent*, so a new market
+        // whose tape prints on the same grid would be suppressed — and a grid
+        // the engine refused while the trader had picked a bucket by hand
+        // would never be re-offered once auto sizing is re-armed here.
+        self.last_tape_price_step = None;
         self.published = BookPublished::initial();
         // The starvation clock is per market, like the history it starves.
         // Carrying the old symbol's zero across would open the new one on a

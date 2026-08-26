@@ -583,7 +583,13 @@ impl BookEngine {
         self.symbol = symbol.into();
         self.config.enabled = false;
         // A new market has a new price scale; re-derive the capture bucket.
+        // That means forgetting what the *previous* one said about itself: a
+        // tick the old venue stated would otherwise keep the new chart from
+        // ever sizing itself, and the old instrument's price would size the new
+        // one's rows.
         self.auto_base = true;
+        self.venue_price_step = None;
+        self.reference_price = None;
         self.history = LiquidityHistory::new(self.config.clone());
         self.status = CaptureStatus::Disabled;
         self.generation_floor = 0;
@@ -846,6 +852,11 @@ impl BookEngine {
                 if let Some(step) = price_step.filter(|step| *step > Decimal::ZERO) {
                     self.venue_price_step = Some(step);
                 }
+                // Read once: the helper walks every level on both sides, and a
+                // full Binance snapshot is five thousand a side. Keeping the
+                // last usable price also means a snapshot that arrives with no
+                // levels at all sizes from the one before it rather than from
+                // nothing.
                 self.reference_price = snapshot_reference_price(&snapshot).or(self.reference_price);
                 // Size the capture bucket before the first snapshot of a
                 // capture: from the instrument's tick size when the feed states
@@ -854,8 +865,7 @@ impl BookEngine {
                 // by hand.
                 if self.auto_base
                     && matches!(self.history.status(), HistoryStatus::Empty)
-                    && let Some((base, source)) =
-                        capture_base(price_step, snapshot_reference_price(&snapshot))
+                    && let Some((base, source)) = capture_base(price_step, self.reference_price)
                 {
                     self.apply_auto_base(base, source);
                 }
@@ -1187,11 +1197,28 @@ impl BookEngine {
     /// Goes through `capture_base`, so the ladder and the liquidity map are
     /// sized by one rule rather than by two that have to be kept in step.
     pub fn size_from_tape(&mut self, step: Decimal) {
-        if !self.auto_base || self.venue_price_step.is_some() {
+        // `apply_auto_base` resizes by *discarding* history — the bucket width
+        // is the grid every run and aggression was recorded against, and there
+        // is no reindexing them. Its own doc says "while history is still empty
+        // (so no data is discarded)" and the snapshot caller honours that; this
+        // has to as well. The cost of not doing so is not a wrong number: the
+        // grid only ever narrows, so one later print would resize mid-session,
+        // clear the run store, and leave every delta after it unsynchronized —
+        // a heat map blank until the venue happens to resync. The chart this
+        // exists for has no depth at all, so its history never leaves `Empty`
+        // and the gate costs it nothing.
+        if !self.auto_base
+            || self.venue_price_step.is_some()
+            || !matches!(self.history.status(), HistoryStatus::Empty)
+        {
             return;
         }
-        if let Some((base, source)) = capture_base(Some(step), self.reference_price) {
-            self.apply_auto_base(base, source);
+        // `capture_base`'s own labels both name the instrument as the source.
+        // That is true where a feed stated the tick and a lie here, where the
+        // number was inferred from prints — and this log line is the only place
+        // the provenance is recorded.
+        if let Some((base, _)) = capture_base(Some(step), self.reference_price) {
+            self.apply_auto_base(base, "tape_price_grid");
         }
     }
 

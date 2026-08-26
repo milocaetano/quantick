@@ -421,6 +421,14 @@ impl ChartState {
             return 0;
         }
         let bars_before = self.bars.len();
+        // Older prints are evidence about the grid like any other. Skipping
+        // them would leave a chart that paged left into a busier stretch
+        // drawing wide rows over history visibly trading finer, with only a
+        // future live print able to correct it — and on a paused replay or a
+        // closed market that print never comes.
+        for trade in trades {
+            self.price_grid.observe(trade.price);
+        }
         let mut combined = Vec::with_capacity(trades.len() + self.trades.len());
         combined.extend_from_slice(trades);
         combined.append(&mut self.trades);
@@ -569,9 +577,6 @@ impl ChartState {
         self.footprints.partial()
     }
 
-    /// The row width footprints are captured at. Rendering reads the width
-    /// off each ladder ([`BarFootprint::group`]); this is the capture side of
-    /// that round trip — what the range-profile cache keys on to notice a
     /// The price grid this chart's tape prints on, once enough prints have
     /// shown one.
     ///
@@ -584,6 +589,9 @@ impl ChartState {
         self.price_grid.step()
     }
 
+    /// The row width footprints are captured at. Rendering reads the width
+    /// off each ladder ([`BarFootprint::group`]); this is the capture side of
+    /// that round trip — what the range-profile cache keys on to notice a
     /// refold, and what the tests assert against.
     #[must_use]
     pub fn footprint_group(&self) -> Decimal {

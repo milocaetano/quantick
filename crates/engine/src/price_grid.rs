@@ -60,9 +60,13 @@ impl PriceGrid {
 
     /// Fold one print's price in.
     ///
-    /// Prices arrive in tape order but nothing here depends on that: the GCD of
-    /// a set does not care what order it is folded in, and neither does the
-    /// answer.
+    /// The grid this converges on does not depend on the order prints arrive
+    /// in — a GCD does not care. *When* it is first reported does: the evidence
+    /// counted is the distance between one print and the next, so a tape that
+    /// repeats a price ten times before moving has shown one distance, not ten,
+    /// and the same prices in another order would have shown more. That is the
+    /// tape being quiet rather than the answer being unstable, and it is why
+    /// [`steps_seen`](Self::steps_seen) counts distances rather than prints.
     pub fn observe(&mut self, price: Decimal) {
         let Some(previous) = self.previous.replace(price) else {
             return;
@@ -80,11 +84,17 @@ impl PriceGrid {
             // answer cannot move and one modulo is the entire cost. Running
             // Euclid here instead would spend several on the per-trade path to
             // arrive back where it started.
-            Some(step) if (distance % step).is_zero() => {}
+            Some(step) if distance.checked_rem(step).is_some_and(|r| r.is_zero()) => {}
             // Off the grid: the tape has just proved the answer too coarse.
             // Normalized here rather than on every read, because a reader on
-            // the per-trade path asks far more often than this changes.
-            Some(step) => self.step = Some(gcd(step, distance).normalize()),
+            // the per-trade path asks far more often than this changes. A GCD
+            // this build cannot finish leaves the previous answer standing —
+            // never a finer one nothing proved.
+            Some(step) => {
+                if let Some(narrowed) = gcd(step, distance) {
+                    self.step = Some(narrowed.normalize());
+                }
+            }
             None => self.step = Some(distance.normalize()),
         }
     }
@@ -113,28 +123,43 @@ impl PriceGrid {
     }
 }
 
-/// Greatest common divisor of two positive decimals, by Euclid.
+/// Greatest common divisor of two positive decimals, by Euclid, or [`None`]
+/// when this build of `Decimal` cannot finish the job.
 ///
-/// Both arguments are exact decimals whose scales are bounded by the type, so
-/// the remainder sequence is the integer one in disguise and terminates. The
-/// iteration cap is not a convergence guard but a promise about the per-trade
-/// path: an adversarial pair cannot make one print cost an unbounded loop, and
-/// giving up returns the coarser input rather than a fabricated answer.
-fn gcd(a: Decimal, b: Decimal) -> Decimal {
+/// Two ways it gives up, and both return nothing rather than a number:
+///
+/// - **The remainder does not fit.** `Decimal`'s `%` *panics* when the dividend
+///   cannot be rescaled to the divisor's scale, and a tick file is text a human
+///   or another tool can write, so a price with twenty-five decimal places
+///   beside an index-magnitude one is reachable input. A panic here would be a
+///   panic on the per-trade path; `checked_rem` makes it an answer instead.
+/// - **The sequence is longer than the cap.** The cap bounds what one print may
+///   cost, and it sits below Euclid's worst case on a full mantissa on purpose.
+///
+/// Giving up must not invent a grid. The loop's `a` at that point is a
+/// mid-sequence remainder that divides neither argument, and installing it
+/// would be exactly the too-fine answer this module exists to prevent — so the
+/// caller keeps what it had.
+fn gcd(a: Decimal, b: Decimal) -> Option<Decimal> {
     let (mut a, mut b) = if a >= b { (a, b) } else { (b, a) };
     for _ in 0..GCD_STEPS_CAP {
         if b.is_zero() {
-            return a;
+            return Some(a);
         }
-        let remainder = a % b;
+        let remainder = a.checked_rem(b)?;
         a = b;
         b = remainder;
     }
-    a
+    None
 }
 
-/// Euclid on two decimals converges in far fewer steps than this; the cap is
-/// what keeps a print's cost bounded whatever the tape sends.
+/// What one print may spend on Euclid.
+///
+/// Deliberately below the worst case for two full 28-digit mantissas (Lamé's
+/// bound puts that near 134 steps): a real price grid converges in a handful,
+/// and a pair that needs more is adversarial rather than a market. Exceeding it
+/// keeps the previous answer, so the cap costs precision on input no instrument
+/// produces and buys a bounded cost on the path every trade takes.
 const GCD_STEPS_CAP: u32 = 64;
 
 #[cfg(test)]
@@ -222,15 +247,42 @@ mod tests {
     }
 
     #[test]
-    fn the_order_prints_arrive_in_does_not_change_the_answer() {
-        let forward = grid_of(&[
-            "100", "110", "115", "135", "140", "160", "165", "185", "190", "200",
+    fn the_order_prints_arrive_in_does_not_change_the_grid() {
+        // Reversing a tape is not a shuffle: it preserves every consecutive
+        // distance and their count, so a test that only reverses passes for
+        // any input at all and guards nothing. These are two genuinely
+        // different walks over the same set of prices.
+        let one = grid_of(&[
+            "100", "115", "160", "110", "190", "135", "200", "165", "140", "185",
         ]);
-        let backward = grid_of(&[
-            "200", "190", "185", "165", "160", "140", "135", "115", "110", "100",
+        let other = grid_of(&[
+            "165", "100", "200", "140", "115", "185", "110", "160", "190", "135",
         ]);
-        assert_eq!(forward.step(), backward.step());
-        assert_eq!(forward.step(), Some(dec("5")));
+        assert_eq!(one.step(), other.step());
+        assert_eq!(one.step(), Some(dec("5")));
+    }
+
+    #[test]
+    fn seven_distances_name_nothing_and_the_eighth_names_the_grid() {
+        // This test is where `STEPS_BEFORE_REPORTING` is pinned, so the counts
+        // are written out rather than derived from it. Phrased against the
+        // constant it would hold at any value — including 1, which is the
+        // threshold not existing — and a gate no test can fail is decoration.
+        // Changing the constant deliberately means changing these numbers.
+        let mut grid = PriceGrid::new();
+        for price in ["100", "105", "110", "115", "120", "125", "130", "135"] {
+            grid.observe(dec(price));
+        }
+        assert_eq!(grid.steps_seen(), 7);
+        assert_eq!(
+            grid.step(),
+            None,
+            "named a grid on seven distances, one short of the threshold",
+        );
+
+        grid.observe(dec("140"));
+        assert_eq!(grid.steps_seen(), 8);
+        assert_eq!(grid.step(), Some(dec("5")));
     }
 
     #[test]
@@ -253,10 +305,10 @@ mod tests {
 
     #[test]
     fn gcd_of_exact_decimals_is_exact() {
-        assert_eq!(gcd(dec("5"), dec("5")), dec("5"));
-        assert_eq!(gcd(dec("10"), dec("15")), dec("5"));
-        assert_eq!(gcd(dec("0.5"), dec("1.5")), dec("0.5"));
-        assert_eq!(gcd(dec("0.25"), dec("0.1")), dec("0.05"));
-        assert_eq!(gcd(dec("7"), dec("13")), dec("1"));
+        assert_eq!(gcd(dec("5"), dec("5")), Some(dec("5")));
+        assert_eq!(gcd(dec("10"), dec("15")), Some(dec("5")));
+        assert_eq!(gcd(dec("0.5"), dec("1.5")), Some(dec("0.5")));
+        assert_eq!(gcd(dec("0.25"), dec("0.1")), Some(dec("0.05")));
+        assert_eq!(gcd(dec("7"), dec("13")), Some(dec("1")));
     }
 }
