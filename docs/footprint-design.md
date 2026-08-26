@@ -125,13 +125,12 @@ Explicitly not built (v1): Nelogica progression/sequential factors (false-
 positive generators; stacking covers the useful part), per-candle value area
 (session-profile concept, meaningless on one bar's sample — value area now
 exists, but over a *range*: `engine::VolumeProfile` folds many bars' ladders
-and `value_area(fraction)` expands from the POC two rows at a time,
-Sierra/CQG style, heavier side wins, exact ties expand downward — the same
-tie-toward-lowest rule the POC itself uses. A row only counts for its side if
-it is within two rows' worth of the step's own gap, so a price gap costs
-something to cross and a grouping finer than the tick reads the ladder the
-same way the tick does; the doc comment on `value_area` owns the rule. The
-fixed-range-profile drawing is its consumer), per-cell heatmap /
+and `value_area(fraction)` grows a band from the POC, Sierra/CQG style. That
+method's doc comment is the rule's single owner — how far a step reaches, what
+a price gap costs and why a grouping finer than the tick reads the ladder the
+same way all live there, and restating any of it here would be one more copy
+to keep in step. The fixed-range-profile drawing is its consumer), per-cell
+heatmap /
 delta% coloring everything, trade-count clusters, big-order alerts, financial
 volume unit (dollar bars already give that reading), second simultaneous
 footprint. Deferred to v2: unfinished auction (must be computed on the base
