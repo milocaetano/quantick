@@ -25599,6 +25599,200 @@ plot(close)
         );
     }
 
+    /// Criterion 2 of roadmap 5.1, for the nine new scopes: a split chart
+    /// captures both panes, keeps them apart, and keeps the focus and the
+    /// provenance the trader can see on screen.
+    #[test]
+    fn observer_new_scopes_preserve_two_pane_focus_and_provenance() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 80);
+        let time_point = pane_point(&app, PaneSide::Time);
+        click_chart(&mut app, &ctx, time_point);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scopes = [
+            observer_scope("analysis.indicators"),
+            observer_scope("analysis.drawings"),
+            observer_scope("orderflow.footprint"),
+            observer_scope("session.paper"),
+        ];
+        let capture = registry
+            .capture(&app, &observer_instance(), &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+
+        // The three pane-addressed scopes see both panes, and tell them apart
+        // by id and by side rather than by position.
+        let flow_id = app.active_tab().pane(PaneSide::Flow).id.to_string();
+        let time_id = app.active_tab().pane(PaneSide::Time).id.to_string();
+        for scope in [&scopes[0], &scopes[1], &scopes[2]] {
+            let panes = capture.scopes[scope].value["tabs"][0]["panes"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{scope} publishes a pane list"));
+            assert_eq!(panes.len(), 2, "{scope} captures both panes of a split");
+            let sides = panes
+                .iter()
+                .map(|pane| pane["side"].as_str().unwrap())
+                .collect::<Vec<_>>();
+            assert!(
+                sides.contains(&"flow") && sides.contains(&"time"),
+                "{scope} names each pane's side; got {sides:?}"
+            );
+            let ids = panes
+                .iter()
+                .map(|pane| pane["pane_id"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>();
+            assert!(
+                ids.contains(&flow_id) && ids.contains(&time_id),
+                "{scope} addresses panes by the ids the rest of the capture uses"
+            );
+        }
+
+        // The focus itself stays where the interaction scope reports it: the
+        // new scopes address panes, they do not re-answer which one is focused,
+        // so the two can never disagree.
+        let focus = registry
+            .capture(
+                &app,
+                &observer_instance(),
+                std::slice::from_ref(&observer_scope("interaction.selection")),
+            )
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let selection = &focus.scopes[&observer_scope("interaction.selection")].value;
+        assert_eq!(selection["focused_pane_side"], "time");
+        assert_eq!(selection["focused_pane_id"], time_id);
+
+        // Provenance survives the split: the paper ledger names its source once
+        // per tab, not once per pane, because that is where it lives.
+        let paper = &capture.scopes[&scopes[3]].value["tabs"][0];
+        assert_eq!(paper["provenance"], "paper_trading_session_ledger");
+        assert_eq!(paper["symbol"], "TESTUSDT");
+    }
+
+    #[test]
+    fn observer_journals_indicator_and_drawing_changes_without_the_trader_text() {
+        const CANARY: &str = "CANARY_JOURNAL_secret note";
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(120);
+        let directory = gateway_test_directory("analysis-journal");
+        enable_test_gateway(&mut app, &ctx, &directory, 8);
+        // One quiet frame establishes the baseline: the journal starts when the
+        // door opens and records changes, not the state it found.
+        run_frame(&mut app, &ctx);
+
+        let read = |app: &QuantickApp| {
+            app.control_access
+                .as_ref()
+                .unwrap()
+                .journal()
+                .read(1, 256, 1 << 20)
+                .events
+                .iter()
+                .map(|event| event.kind.as_str().to_owned())
+                .collect::<Vec<_>>()
+        };
+        let baseline = read(&app);
+        assert!(
+            !baseline.iter().any(|kind| kind.starts_with("analysis.")),
+            "a quiet frame journals nothing about analysis; got {baseline:?}"
+        );
+
+        // Attach an indicator the way the worker delivers one.
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            let slot = pane.indicators.allocate_slot("native.cvd");
+            let descriptor = quantick_indicators::IndicatorDescriptor {
+                title: "CVD".to_owned(),
+                short_title: None,
+                overlay: false,
+                plots: Vec::new(),
+                fills: Vec::new(),
+                inputs: Vec::new(),
+            };
+            pane.indicators
+                .apply(crate::indicator_worker::IndicatorEvent::rebuilt(
+                    slot,
+                    descriptor,
+                    Vec::new(),
+                ));
+        }
+        run_frame(&mut app, &ctx);
+        assert!(
+            read(&app).contains(&"analysis.indicator.attached".to_owned()),
+            "attaching an indicator reaches the journal"
+        );
+
+        // Place a drawing, name it with the canary, then lock it.
+        let (time, price) = {
+            let pane = &app.active_tab().flow_pane;
+            let bar = pane.closed_bar(60).expect("fixture bar");
+            (
+                pane.slot_open_time(60).expect("fixture market time"),
+                rust_decimal::prelude::ToPrimitive::to_f64(&bar.close).unwrap(),
+            )
+        };
+        {
+            let flow = &mut app.active_tab_mut().flow_pane;
+            assert!(flow.drawings.place_with(
+                drawing_tool("horizontal-line"),
+                &drawings::DrawingBand::Price,
+                ChartPoint::at_time(60.5, price, Some(time)),
+                |tool| drawings::NewDrawing {
+                    style: drawings::DrawingStyle::default(),
+                    payload: tool.default_payload(),
+                },
+            ));
+            let selected = flow.drawings.selected().expect("placement selects");
+            flow.drawings.rename_at(selected, CANARY);
+        }
+        run_frame(&mut app, &ctx);
+        assert!(
+            read(&app).contains(&"analysis.drawing.created".to_owned()),
+            "placing a drawing reaches the journal"
+        );
+
+        {
+            let flow = &mut app.active_tab_mut().flow_pane;
+            let selected = flow.drawings.selected().expect("still selected");
+            flow.drawings
+                .items_mut()
+                .get_mut(selected)
+                .expect("the drawing is there")
+                .locked = true;
+        }
+        run_frame(&mut app, &ctx);
+        assert!(
+            read(&app).contains(&"analysis.drawing.edited".to_owned()),
+            "locking a drawing reaches the journal"
+        );
+
+        // The whole journal is held to the wire's rule: presence, never text.
+        let encoded = serde_json::to_string(
+            &app.control_access
+                .as_ref()
+                .unwrap()
+                .journal()
+                .read(1, 256, 1 << 20)
+                .events,
+        )
+        .unwrap();
+        assert!(
+            !encoded.contains(CANARY),
+            "the journal redacts the trader's own drawing name"
+        );
+        assert!(
+            encoded.contains("\"user_label_present\":true"),
+            "it reports that a name exists without saying what it is"
+        );
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
     #[test]
     fn observer_projects_order_flow_layers_and_states_the_absent_engine() {
         let (app, _commands) = app_with_history(8);

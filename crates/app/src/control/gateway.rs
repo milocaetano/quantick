@@ -1159,6 +1159,13 @@ impl ControlAccess {
                             now,
                         );
                     }
+                    // One comparison for both analysis scopes: it walks two
+                    // slices per pane and allocates only once it has something
+                    // to say.
+                    if !analysis_matches(tab, &old.panes) {
+                        self.record_analysis_changes(tab, &old.panes, now);
+                        old.panes = pane_analysis_keys(tab);
+                    }
                 }
             }
         }
@@ -1182,6 +1189,144 @@ impl ControlAccess {
             });
         }
         self.semantic_baseline = Some(baseline);
+    }
+
+    /// Journal what changed about one tab's indicators and drawings.
+    ///
+    /// Reached only from a frame where [`analysis_matches`] already answered
+    /// `false`, so the allocation here is paid once per change and never on a
+    /// quiet frame. Identity drives the diff: an indicator is its slot, a
+    /// drawing is its id, and a list that merely reordered emits nothing.
+    fn record_analysis_changes(
+        &mut self,
+        tab: &crate::tab::Tab,
+        stored: &[PaneAnalysisKey],
+        now: i64,
+    ) {
+        for (pane, side) in analysis_panes(tab) {
+            let was = stored.iter().find(|key| key.pane_id == pane.id);
+            let previous_indicators = was.map(|key| key.indicators.as_slice()).unwrap_or(&[]);
+            let previous_drawings = was.map(|key| key.drawings.as_slice()).unwrap_or(&[]);
+            let side = crate::control::PaneSideDto::from(side);
+            let tab_id = tab.id.to_string();
+            let pane_id = pane.id.to_string();
+
+            for view in pane.indicators.all() {
+                match previous_indicators
+                    .iter()
+                    .find(|key| key.slot == view.slot.0)
+                {
+                    None => self.record_observed(
+                        "analysis",
+                        "analysis.indicator.attached",
+                        json!({
+                            "tab_id": tab_id,
+                            "pane_id": pane_id,
+                            "pane_side": side,
+                            "slot_id": view.slot.0.to_string(),
+                            "kind": view.kind.as_ref(),
+                        }),
+                        now,
+                    ),
+                    Some(key) => {
+                        let failing = view.error.is_some() || view.stale.is_some();
+                        if key.failing != failing {
+                            self.record_observed(
+                                "analysis",
+                                "analysis.indicator.compile_state.changed",
+                                json!({
+                                    "tab_id": tab_id,
+                                    "pane_id": pane_id,
+                                    "pane_side": side,
+                                    "slot_id": view.slot.0.to_string(),
+                                    "kind": view.kind.as_ref(),
+                                    "failing": failing,
+                                }),
+                                now,
+                            );
+                        }
+                    }
+                }
+            }
+            for key in previous_indicators {
+                if !pane
+                    .indicators
+                    .all()
+                    .iter()
+                    .any(|view| view.slot.0 == key.slot)
+                {
+                    self.record_observed(
+                        "analysis",
+                        "analysis.indicator.detached",
+                        json!({
+                            "tab_id": tab_id,
+                            "pane_id": pane_id,
+                            "pane_side": side,
+                            "slot_id": key.slot.to_string(),
+                            "kind": key.kind.as_ref(),
+                        }),
+                        now,
+                    );
+                }
+            }
+
+            for drawing in pane.drawings.items() {
+                match previous_drawings.iter().find(|key| key.id == drawing.id.0) {
+                    None => self.record_observed(
+                        "analysis",
+                        "analysis.drawing.created",
+                        json!({
+                            "tab_id": tab_id,
+                            "pane_id": pane_id,
+                            "pane_side": side,
+                            "drawing_id": drawing.id.0.to_string(),
+                            "tool_id": drawing.tool.id(),
+                            "author": author_payload(drawing),
+                        }),
+                        now,
+                    ),
+                    Some(key) if !key.matches(drawing) => self.record_observed(
+                        "analysis",
+                        "analysis.drawing.edited",
+                        json!({
+                            "tab_id": tab_id,
+                            "pane_id": pane_id,
+                            "pane_side": side,
+                            "drawing_id": drawing.id.0.to_string(),
+                            "tool_id": drawing.tool.id(),
+                            "locked": drawing.locked,
+                            "hidden": drawing.hidden,
+                            // Presence, never the text: the journal is held to
+                            // the same rule as the wire.
+                            "user_label_present": drawing.name.is_some(),
+                            "author": author_payload(drawing),
+                        }),
+                        now,
+                    ),
+                    Some(_) => {}
+                }
+            }
+            for key in previous_drawings {
+                if !pane
+                    .drawings
+                    .items()
+                    .iter()
+                    .any(|drawing| drawing.id.0 == key.id)
+                {
+                    self.record_observed(
+                        "analysis",
+                        "analysis.drawing.removed",
+                        json!({
+                            "tab_id": tab_id,
+                            "pane_id": pane_id,
+                            "pane_side": side,
+                            "drawing_id": key.id.to_string(),
+                        }),
+                        now,
+                    );
+                }
+            }
+        }
     }
 
     fn record_observed(&mut self, module: &str, kind: &str, payload: Value, now: i64) {
@@ -1806,6 +1951,100 @@ struct TabKey {
     connection: &'static str,
     /// `(playing, finished)` while a replay is linked.
     replay: Option<(bool, bool)>,
+    /// What the trader has placed on each pane. Rebuilt only when it stops
+    /// matching — see [`analysis_matches`].
+    panes: Vec<PaneAnalysisKey>,
+}
+
+/// One pane's indicators and drawings, as the journal compares them.
+///
+/// This is a baseline, not a projection: it holds the least that can tell a
+/// change apart, so the per-frame comparison touches integers and booleans and
+/// allocates nothing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PaneAnalysisKey {
+    pane_id: u64,
+    indicators: Vec<IndicatorKey>,
+    drawings: Vec<DrawingKey>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct IndicatorKey {
+    slot: u64,
+    kind: std::sync::Arc<str>,
+    /// An evaluation error or a failed hot reload. Either one is what a client
+    /// waiting on a compile is waiting for.
+    failing: bool,
+}
+
+impl IndicatorKey {
+    fn matches(&self, view: &crate::indicators::IndicatorView) -> bool {
+        self.slot == view.slot.0
+            && *self.kind == *view.kind
+            && self.failing == (view.error.is_some() || view.stale.is_some())
+    }
+
+    fn of(view: &crate::indicators::IndicatorView) -> Self {
+        Self {
+            slot: view.slot.0,
+            kind: std::sync::Arc::clone(&view.kind),
+            failing: view.error.is_some() || view.stale.is_some(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DrawingKey {
+    id: u64,
+    locked: bool,
+    hidden: bool,
+    /// Whether the trader gave it a name — never the name, which is their own
+    /// text and does not belong in the journal any more than on the wire.
+    named: bool,
+    /// `(actor kind, client name)` when something other than the trader's hand
+    /// placed it.
+    author: Option<(String, String)>,
+}
+
+impl DrawingKey {
+    fn matches(&self, drawing: &crate::drawings::Drawing) -> bool {
+        self.id == drawing.id.0
+            && self.locked == drawing.locked
+            && self.hidden == drawing.hidden
+            && self.named == drawing.name.is_some()
+            && match (&self.author, &drawing.author) {
+                (None, None) => true,
+                (Some((kind, name)), Some(author)) => {
+                    kind == &author.actor_kind && name == &author.client_name
+                }
+                (None, Some(_)) | (Some(_), None) => false,
+            }
+    }
+
+    fn of(drawing: &crate::drawings::Drawing) -> Self {
+        Self {
+            id: drawing.id.0,
+            locked: drawing.locked,
+            hidden: drawing.hidden,
+            named: drawing.name.is_some(),
+            author: drawing
+                .author
+                .as_ref()
+                .map(|author| (author.actor_kind.clone(), author.client_name.clone())),
+        }
+    }
+}
+
+/// A drawing's author as the journal carries it. Absent is the trader's own
+/// hand; anything else names who acted, under the same rule that labels an
+/// inferred side.
+fn author_payload(drawing: &crate::drawings::Drawing) -> Value {
+    drawing.author.as_ref().map_or(Value::Null, |author| {
+        json!({
+            "actor_kind": author.actor_kind,
+            "client_name": author.client_name,
+        })
+    })
 }
 
 fn tab_key(tab: &crate::tab::Tab) -> TabKey {
@@ -1815,7 +2054,53 @@ fn tab_key(tab: &crate::tab::Tab) -> TabKey {
         symbol: tab.active.1.clone(),
         connection: connection_state(tab.feed_connection),
         replay: replay_key(tab),
+        panes: pane_analysis_keys(tab),
     }
+}
+
+/// The panes of one tab, in the order both analysis scopes publish them.
+fn analysis_panes(tab: &crate::tab::Tab) -> Vec<(&crate::pane::ChartPane, crate::pane::PaneSide)> {
+    let mut panes = vec![(&tab.flow_pane, crate::pane::PaneSide::Flow)];
+    if let Some(time) = &tab.time_pane {
+        panes.push((time, crate::pane::PaneSide::Time));
+    }
+    panes
+}
+
+fn pane_analysis_keys(tab: &crate::tab::Tab) -> Vec<PaneAnalysisKey> {
+    analysis_panes(tab)
+        .into_iter()
+        .map(|(pane, _side)| PaneAnalysisKey {
+            pane_id: pane.id,
+            indicators: pane.indicators.all().iter().map(IndicatorKey::of).collect(),
+            drawings: pane.drawings.items().iter().map(DrawingKey::of).collect(),
+        })
+        .collect()
+}
+
+/// Whether the stored baseline still describes this tab's panes.
+///
+/// Compared in place and allocating nothing: a quiet frame walks two slices
+/// and returns. Only a frame that answers `false` pays for
+/// [`pane_analysis_keys`] and the events below.
+fn analysis_matches(tab: &crate::tab::Tab, stored: &[PaneAnalysisKey]) -> bool {
+    let panes = analysis_panes(tab);
+    panes.len() == stored.len()
+        && panes.iter().zip(stored).all(|((pane, _side), key)| {
+            let indicators = pane.indicators.all();
+            let drawings = pane.drawings.items();
+            pane.id == key.pane_id
+                && indicators.len() == key.indicators.len()
+                && drawings.len() == key.drawings.len()
+                && indicators
+                    .iter()
+                    .zip(&key.indicators)
+                    .all(|(view, stored)| stored.matches(view))
+                && drawings
+                    .iter()
+                    .zip(&key.drawings)
+                    .all(|(drawing, stored)| stored.matches(drawing))
+        })
 }
 
 fn replay_key(tab: &crate::tab::Tab) -> Option<(bool, bool)> {
