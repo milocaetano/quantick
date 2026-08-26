@@ -375,11 +375,19 @@ band is ever asked to give up its four-tool floor.
 - The band's offset is state, not layout: every stage that is not Scroll
   clamps it back to zero, so unstarring down to a rail that fits leaves no
   residue — no stranded scroll position, no leftover chevrons.
-- **Minimum:** 191 px. The app opens at `1100 × 650` and sets no minimum
-  window size; add `with_min_inner_size([900.0, 560.0])` in `main.rs` so a
-  horizontal rail (191 px of a 900 px window) and a vertical rail (191 px of
-  560 px minus the 100 px of menu + toolbar + status bar = 460 px) are both
-  unreachable failure modes rather than clipped chrome.
+- **Minimum:** 191 px, and it is a *layout* minimum, not a window one. The
+  app opens at `1100 × 650`. It once set `with_min_inner_size([900.0, 560.0])`
+  so that a horizontal rail (191 px of a 900 px window) and a vertical rail
+  (191 px of 560 px minus the 100 px of menu + toolbar + status bar = 460 px)
+  were unreachable failure modes rather than clipped chrome. That floor is
+  **gone**: a trader asked to park the chart in a sliver beside another window,
+  and a layout that reads badly is not the same thing as one that breaks. So
+  below roughly `900 × 560` the rail falls past its Minimal stage and clips,
+  and that is now an accepted state rather than a prevented one. What the app
+  still guarantees is that it survives any size and comes back whole when the
+  window is dragged out again (`the_window_drags_down_to_nothing_and_comes_back`),
+  and that a session closed on a sliver reopens on something grabbable
+  (`REOPEN_FLOOR_PX`, `main.rs`). Do not re-add `with_min_inner_size`.
 
 ---
 

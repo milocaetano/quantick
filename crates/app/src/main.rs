@@ -212,9 +212,16 @@ fn main() -> eframe::Result {
         .expect("bundled assets/icon.png is a valid PNG");
 
     let options = eframe::NativeOptions {
+        // No `with_min_inner_size`: the window has no floor. Below roughly
+        // 900x560 the chrome stops collapsing and starts clipping — the
+        // drawing rail falls past its Minimal stage
+        // (docs/drawing-toolbar-ux.md §2.8) — but that is a layout that reads
+        // badly, not one that breaks, and a trader parking the chart in a
+        // sliver beside another window is a real thing to want. The one place
+        // a floor is still kept is what the app *reopens* at; see
+        // [`REOPEN_FLOOR_PX`].
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(window_size(workspace.window))
-            .with_min_inner_size(MIN_WINDOW_PX)
             .with_title("quantick")
             .with_icon(icon),
         ..Default::default()
@@ -245,10 +252,23 @@ fn main() -> eframe::Result {
 
 /// Size the window opens at when nothing asks for another.
 const DEFAULT_WINDOW_PX: [f32; 2] = [1100.0, 650.0];
-/// Smallest the window may be. Below this the drawing rail would fall past its
-/// Minimal stage (191 px of long axis, docs/drawing-toolbar-ux.md §2.8) and
-/// clip chrome instead of collapsing it.
-const MIN_WINDOW_PX: [f32; 2] = [900.0, 560.0];
+/// Smallest window the app will *reopen* at, whatever the last session left
+/// behind.
+///
+/// The window itself has no minimum — it drags down to nothing, which is the
+/// point. But a size is remembered across launches, and a chart squeezed to a
+/// sliver and then closed would come back as a sliver: a window with no title
+/// bar to grab and no edge to find. That is a trap the trader cannot get out
+/// of from inside the app, so the *restore* path floors what it reads.
+///
+/// Small enough to be a deliberately tiny window, large enough to have an edge
+/// and a title bar to drag. It is a recovery floor, not a layout one: nothing
+/// about the chrome is promised at this size.
+///
+/// `QUANTICK_WINDOW_SIZE` is not floored — it is an explicit request for this
+/// one run, made by someone who can unset it, and reaching a degenerate layout
+/// on purpose is exactly what that hook is for.
+const REOPEN_FLOOR_PX: [f32; 2] = [320.0, 240.0];
 
 /// Size the window opens at: `QUANTICK_WINDOW_SIZE=WxH` when it is set, else
 /// the `saved` size from the workspace, else [`DEFAULT_WINDOW_PX`].
@@ -264,17 +284,14 @@ const MIN_WINDOW_PX: [f32; 2] = [900.0, 560.0];
 /// that entire class of defect is invisible to any validation that is not a
 /// human dragging a corner.
 ///
-/// Clamped to the same minimum the window itself enforces, so the hook can
-/// reach the smallest real layout and no smaller. A value that does not parse
-/// is ignored with a warning rather than failing the launch: a malformed
-/// env var must not stand between the user and their chart.
+/// Not clamped: the hook can ask for a window of any positive size, including
+/// one far too small to lay anything out in, because a validation run proving
+/// the app survives a degenerate window has to be able to *ask* for one. A
+/// value that does not parse is ignored with a warning rather than failing
+/// the launch: a malformed env var must not stand between the user and their
+/// chart.
 fn window_size(saved: Option<[f32; 2]>) -> [f32; 2] {
-    // A saved size is clamped to the same minimum the hook and the window
-    // itself enforce: a workspace written on a larger screen must not open a
-    // window below the layout floor on a smaller one.
-    let fallback = saved.map_or(DEFAULT_WINDOW_PX, |[width, height]| {
-        [width.max(MIN_WINDOW_PX[0]), height.max(MIN_WINDOW_PX[1])]
-    });
+    let fallback = restore_size(saved);
     let Ok(raw) = std::env::var("QUANTICK_WINDOW_SIZE") else {
         return fallback;
     };
@@ -304,14 +321,30 @@ fn window_size(saved: Option<[f32; 2]>) -> [f32; 2] {
     }
 }
 
-/// `WIDTHxHEIGHT` in pixels, clamped to the window's own minimum. `None` when
-/// the text is not two positive numbers.
+/// The size a saved workspace reopens at, floored at [`REOPEN_FLOOR_PX`].
+///
+/// Not to protect the layout, which is free to be cramped, but so a session
+/// closed on a sliver of a window reopens on something the trader can grab.
+/// Split out from [`window_size`] because it is the whole of the restore
+/// policy and reads no environment, so a test can state it without touching a
+/// process-wide variable other tests are reading at the same time.
+fn restore_size(saved: Option<[f32; 2]>) -> [f32; 2] {
+    saved.map_or(DEFAULT_WINDOW_PX, |[width, height]| {
+        [
+            width.max(REOPEN_FLOOR_PX[0]),
+            height.max(REOPEN_FLOOR_PX[1]),
+        ]
+    })
+}
+
+/// `WIDTHxHEIGHT` in pixels, as asked for. `None` when the text is not two
+/// positive numbers.
 fn parse_window_size(raw: &str) -> Option<[f32; 2]> {
     let (width, height) = raw.split_once(['x', 'X'])?;
     let width: f32 = width.trim().parse().ok()?;
     let height: f32 = height.trim().parse().ok()?;
     (width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0)
-        .then_some([width.max(MIN_WINDOW_PX[0]), height.max(MIN_WINDOW_PX[1])])
+        .then_some([width, height])
 }
 
 #[cfg(test)]
@@ -319,14 +352,33 @@ mod window_size_tests {
     use super::*;
 
     #[test]
-    fn a_requested_size_is_honoured_and_floored_at_the_windows_own_minimum() {
+    fn a_requested_size_is_honoured_however_small_it_is() {
         assert_eq!(parse_window_size("1280x720"), Some([1280.0, 720.0]));
         assert_eq!(parse_window_size(" 1280 X 720 "), Some([1280.0, 720.0]));
         assert_eq!(
             parse_window_size("200x100"),
-            Some(MIN_WINDOW_PX),
-            "the hook reaches the smallest real layout and no smaller"
+            Some([200.0, 100.0]),
+            "the hook reaches a degenerate layout on purpose"
         );
+        assert_eq!(
+            parse_window_size("1x1"),
+            Some([1.0, 1.0]),
+            "there is no floor left to hit"
+        );
+    }
+
+    /// The window drags to nothing, but a session closed on nothing must not
+    /// reopen on nothing: the restore path is the one place a floor survives,
+    /// and it is a recovery floor, not a layout one.
+    #[test]
+    fn a_saved_sliver_reopens_on_something_the_trader_can_grab() {
+        assert_eq!(restore_size(Some([0.0, 0.0])), REOPEN_FLOOR_PX);
+        assert_eq!(
+            restore_size(Some([4.0, 900.0])),
+            [REOPEN_FLOOR_PX[0], 900.0]
+        );
+        assert_eq!(restore_size(Some([1280.0, 720.0])), [1280.0, 720.0]);
+        assert_eq!(restore_size(None), DEFAULT_WINDOW_PX);
     }
 
     #[test]

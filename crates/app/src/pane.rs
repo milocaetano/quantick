@@ -160,7 +160,7 @@ fn draw_dashed_vertical(
 ///
 /// Named for where they sit in the split, because that is how the user picks
 /// one: the time pane is on the left, the flow pane on the right.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum PaneSide {
     #[default]
     Flow,
@@ -891,6 +891,21 @@ pub struct PaneChrome<'a> {
     /// Where the layer menu leaves the two switches the pane does not own.
     /// Drained by the app once the canvas is done (see [`LayerActions`]).
     pub layers: &'a mut LayerActions,
+}
+
+/// Which side of the candles a drawing pass paints on.
+///
+/// One function serves both, taking this rather than being copied: the
+/// projection, the band filter, the off-series fade and the style resolution
+/// are the same work whichever side is being drawn, and a second copy of them
+/// would drift on the first change to any of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DrawPass {
+    /// Before the candles: the object's own body, for the few tools that are
+    /// context rather than annotation. See [`DrawingToolImpl::paint_under`].
+    UnderCandles,
+    /// After the candles: everything else, plus halo, handles and badges.
+    OverCandles,
 }
 
 /// One chart pane. See the module docs for what does and does not live here.
@@ -4875,6 +4890,15 @@ impl ChartPane {
         let footprint_on =
             (self.footprint_visible || self.wants_range_profile()) && !footprint_blocked;
         self.state.set_footprint_enabled(footprint_on);
+        // Accumulating is not painting, and the candles answer to the second.
+        // A range profile turns the ladders *on* without ever asking for the
+        // layer, so the switch above cannot be what dresses a candle: doing
+        // that put every bar into the footprint's sidebar lane, or faded its
+        // body down to an outline, for a layer that then drew nothing.
+        // Computed here beside the switch it is so easily confused with, and
+        // before the frame borrows fields out of `self`.
+        let footprint_paints =
+            self.layer_visible(ChartLayer::Footprint, chrome.style) && !footprint_blocked;
         if footprint_on
             && let Some(base) = self
                 .orderflow
@@ -5047,44 +5071,22 @@ impl ChartPane {
             .style;
         let footprint_style = self.footprint_lod.effective_style(requested_style);
         let treatment = footprint_style.candle_treatment();
-        // The lane a sidebar candle keeps at the left of its slot. Zero
-        // otherwise, so nothing moves for the styles that draw in place.
-        let candle_lane = if footprint_on {
-            treatment.content_inset()
-        } else {
-            0.0
-        };
+        // The lane a sidebar candle keeps at the left of its slot, and the
+        // style the layer leaves the candle in. Both from one function, whose
+        // whole point is that they answer to `footprint_paints` and never to
+        // the accumulation switch — see `footprint_render::candle_dressing`.
+        let (candle_lane, faded_candles) = crate::footprint_render::candle_dressing(
+            footprint_paints,
+            treatment,
+            cw,
+            chrome.style.candles,
+        );
         // The half-width the footprint's content actually spans. The lane is
         // cut out of *this*, so the candle placed beside it has to be measured
         // from the same edge — measuring from the candle's own body width put
         // it inside the box the lane was reserved next to, where the opaque
         // plate then painted straight over it.
         let content_half = treatment.content_half_width(cw, half);
-        let mut faded_candles = None;
-        if footprint_on {
-            match treatment {
-                // The candle cedes its interior to the ladder as the zoom
-                // crosses into detail: the body fill fades out and the outline
-                // steps in — the reference charts' outline-box candles.
-                crate::footprint_config::CandleTreatment::Fade => {
-                    let body = crate::footprint_render::candle_body_fade(cw);
-                    if body < 1.0 {
-                        let mut faded = chrome.style.candles;
-                        faded.fill_opacity *= body;
-                        faded.outline_opacity = faded.outline_opacity.max(1.0 - body);
-                        faded_candles = Some(faded);
-                    }
-                }
-                // Beside the box, the candle is a solid sliver again: nothing
-                // is behind anything, so there is nothing to fade *for*, and a
-                // 3 px outline-only bar would read as a scratch.
-                crate::footprint_config::CandleTreatment::Sidebar => {
-                    let mut sidebar = chrome.style.candles;
-                    sidebar.fill_opacity = 1.0;
-                    faded_candles = Some(sidebar);
-                }
-            }
-        }
         let candles = faded_candles.as_ref().unwrap_or(&chrome.style.candles);
 
         // Resting liquidity is the bottom visual layer. Projection is pure with
@@ -5238,6 +5240,26 @@ impl ChartPane {
                 clear_bar(viewport.x_center(index, right, total), bar);
             });
         }
+        // Objects that are *context* rather than annotation go down here,
+        // between the liquidity map and the candles: a volume profile is read
+        // the way the heatmap is, and drawn over the price it tints every body
+        // it covers.
+        //
+        // The **price band only**, and that is a correctness bound rather than
+        // an optimisation. An indicator band's scale is written when its own
+        // curve draws, further down this function, so a band carved here would
+        // be a frame behind the plot it belongs to — which is exactly the
+        // invariant the over-candles carve says it exists to keep. The price
+        // band has no such dependency, so it is the one band that can be
+        // carved this early and still be right. A tool wanting a background
+        // pass on an indicator band would need its own carve after that pane
+        // draws; there is none, and inventing a stale one for it would be
+        // worse than not offering it.
+        let mut carved = std::mem::take(&mut self.last_bands);
+        self.carve_bands(&areas, &mut carved);
+        if let Some(price_band) = carved.iter().next() {
+            self.draw_drawings(painter, price_band, 0, right, total, DrawPass::UnderCandles);
+        }
         // Asked once for the whole frame: on a chart where no indicator paints
         // — every chart until a script calls `barcolor` — the per-bar lookup
         // below never runs at all.
@@ -5274,11 +5296,7 @@ impl ChartPane {
         // drawn over them: it is a representation of the bars themselves,
         // not an annotation. Prefix (venue) candles carry no tape and draw
         // no ladder — the layer starts where trade-built bars start.
-        if self.layer_visible(ChartLayer::Footprint, chrome.style)
-            && self
-                .layer_blocked(ChartLayer::Footprint, chrome.capabilities)
-                .is_none()
-        {
+        if footprint_paints {
             // The forming bar's ladder is the ~10 Hz snapshot taken with the
             // accumulation switch at the top of the frame, shared with the
             // range-profile drawings.
@@ -5507,13 +5525,14 @@ impl ChartPane {
         // Carved *here*, after the panes drew: each band's scale is then the
         // one its own curve was just drawn with, which is the invariant this
         // whole feature rests on.
-        // Carved into the pane's own buffer: same geometry as the input
-        // pass computed, no container allocated, and what the tab's shared
-        // projection reads afterwards.
-        let mut carved = std::mem::take(&mut self.last_bands);
+        // Re-carved, not reused: the pass above ran before the indicator panes
+        // drew, and every band's scale is written *by* that draw. Into the
+        // pane's own buffer: same geometry as the input pass computed, no
+        // container allocated, and what the tab's shared projection reads
+        // afterwards.
         self.carve_bands(&areas, &mut carved);
         for (index, band) in carved.iter().enumerate() {
-            self.draw_drawings(painter, band, index, right, total);
+            self.draw_drawings(painter, band, index, right, total, DrawPass::OverCandles);
         }
         self.last_bands = carved;
         // Which band the next anchor lands in, said the way the split view
@@ -6493,6 +6512,21 @@ impl ChartPane {
                     // render the editor stands the original down to avoid.
                     content_editing: source.content_editing == Some(index),
                 };
+                // Both halves, so a shared object is the same object on both
+                // charts. A tool whose body lives in the background pass —
+                // the volume profile's histogram — would otherwise cross to
+                // the companion pane as two edge lines and a level, with the
+                // volume shape the trader shared missing entirely.
+                //
+                // The mirrored copy paints over the candles rather than under
+                // them: this pass runs after the host pane's own candles are
+                // down, and reaching under them would mean carving a third
+                // time on the far pane's geometry. A shared mark is a
+                // reference to something living on another chart, and reading
+                // as one is the honest outcome.
+                drawing
+                    .tool
+                    .paint_under(&clipped, band.rect, style, &points, &ctxt);
                 // Locked geometry shows no handles on either chart: they would
                 // advertise a drag that is refused.
                 drawing.tool.paint(
@@ -6587,6 +6621,7 @@ impl ChartPane {
         band_index: usize,
         history_right: f32,
         total: usize,
+        pass: DrawPass,
     ) {
         let Some(scale) = band.scale.as_ref() else {
             return;
@@ -6632,6 +6667,15 @@ impl ChartPane {
             };
             // A locked object shows no resize handles: its geometry is not
             // editable, so the affordance would lie.
+            if pass == DrawPass::UnderCandles {
+                // The body only. Everything below this line — the caret, the
+                // badges, the rubber band — is chrome about the object, and
+                // chrome under the price is chrome nobody can read.
+                drawing
+                    .tool
+                    .paint_under(&clipped, chart_rect, style, &points, &ctxt);
+                continue;
+            }
             drawing.tool.paint(
                 &clipped,
                 chart_rect,
@@ -6641,6 +6685,9 @@ impl ChartPane {
                 selected && !drawing.locked && primary_band,
             );
             bands::paint_off_band_caret(&clipped, chart_rect, &points, drawing);
+        }
+        if pass == DrawPass::UnderCandles {
+            return;
         }
         // Badges paint outside the visibility gate above: a hidden drawing
         // hides its geometry, never the fact that a bot rides it — an
@@ -6692,6 +6739,15 @@ impl ChartPane {
                 halo: false,
                 content_editing: false,
             };
+            // Both halves, in order. A tool whose body lives in the
+            // background pass would otherwise preview as an empty outline
+            // while it is being dragged out — the profile's own histogram is
+            // already folded for a draft, so there is data to show.
+            // Over the candles rather than under them: a preview is a thing
+            // in flight, and burying it would hide the gesture.
+            draft
+                .tool
+                .paint_under(&clipped, chart_rect, draft.style, &points, &ctxt);
             draft
                 .tool
                 .paint(&clipped, chart_rect, draft.style, &points, &ctxt, false);
@@ -7052,6 +7108,51 @@ mod tests {
             !pane.wants_range_profile(),
             "deleting the last profile releases the ladders"
         );
+    }
+
+    /// …and wanting the ladders is *not* asking for the layer. The two were
+    /// one flag once, and the trader saw the result: a profile dropped on a
+    /// fresh chart restyled every candle — sidebar lane, faded body, spacing
+    /// that opened up as they zoomed — for a footprint that never painted.
+    /// The candle dressing reads `layer_visible`, the accumulation switch
+    /// reads this; they must be able to disagree.
+    #[test]
+    fn a_range_profile_wants_the_ladders_without_asking_for_the_layer() {
+        let style = crate::style::ChartStyle::default();
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+        let frvp = crate::drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == crate::frvp::TOOL_ID)
+            .expect("frvp is registered");
+        assert!(
+            !pane
+                .drawings
+                .place(frvp, crate::drawings::ChartPoint::at(1.0, 100.0))
+        );
+        assert!(
+            pane.drawings
+                .place(frvp, crate::drawings::ChartPoint::at(5.0, 105.0))
+        );
+
+        assert!(
+            pane.wants_range_profile(),
+            "the profile folds ladders, so accumulation is on"
+        );
+        assert!(
+            !pane.layer_visible(ChartLayer::Footprint, &style),
+            "and the layer is still hidden, so the candles are not dressed"
+        );
+
+        pane.set_layer_visible(
+            ChartLayer::Footprint,
+            true,
+            &mut crate::chart_layers::LayerActions::default(),
+        );
+        assert!(
+            pane.layer_visible(ChartLayer::Footprint, &style),
+            "turning the layer on is the only thing that dresses a candle"
+        );
+        assert!(pane.wants_range_profile());
     }
 
     /// The tape switch reaches the canvas through one number: the band's

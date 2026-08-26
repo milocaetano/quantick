@@ -36,15 +36,26 @@ pub use replay::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 /// when `QUANTICK_BACKFILL` is unset. One Binance REST page.
 pub const DEFAULT_BACKFILL_TARGET: usize = 1000;
 
-/// How far back a time pane asks for candle history: 90 days, i.e. "at least
-/// three months".
+/// How far back a time pane asks for candle history in **one** request: seven
+/// days.
 ///
 /// Trade backfill and candle history answer different questions and are sized
 /// differently on purpose. The tape is a recent window — what is happening now,
-/// in full detail. Candles are the context around it, and a quarter is the
-/// shortest span in which a daily or weekly chart says anything at all.
+/// in full detail. Candles are the context around it.
 ///
-pub const TIME_HISTORY_SPAN_MS: i64 = 90 * 24 * 60 * 60 * 1_000;
+/// This used to be ninety days, on the reasoning that a quarter is the
+/// shortest span a weekly chart says anything in. That reasoning was about the
+/// *deepest* chart a trader might open, and it was charged to every chart they
+/// actually open: a quarter of one-minute candles is over a hundred sequential
+/// venue pages, and the trader waits through all of them at every launch to
+/// read the last hour. A week is the span a session starts from — a few
+/// seconds of fetching, and the intraday context already there.
+///
+/// The quarter is not gone, it is asked for: each *load older* request reaches
+/// another span of this size further back and prepends it (see
+/// `Tab::request_older_ohlcv_history`), so the deep chart is thirteen clicks,
+/// paid by the trader who wants it rather than by everyone who does not.
+pub const TIME_HISTORY_SPAN_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
 
 /// The one interval every provider delivers candle history in: one minute.
 ///
@@ -56,19 +67,33 @@ pub const TIME_HISTORY_SPAN_MS: i64 = 90 * 24 * 60 * 60 * 1_000;
 /// interval free — no refetch, just a different fold over bars already held.
 pub const OHLCV_BASE_INTERVAL_MS: i64 = 60_000;
 
-/// How much of the span one progressive slice covers: seven days.
+/// How much of the span one progressive slice covers: two days.
 ///
-/// Chosen against [`TIME_HISTORY_SPAN_MS`], not in isolation — a quarter cut
-/// into weeks is thirteen replies, comfortably inside
-/// [`ohlcv_plan::MAX_SLICES`], and the first of them is roughly a tenth of the
-/// venue round trips the whole span costs. That is the number the trader
-/// actually feels: it is how long the chart stays empty before the most recent
-/// week appears and becomes readable while the rest arrives behind it.
+/// Chosen against [`TIME_HISTORY_SPAN_MS`], not in isolation — and re-derived
+/// when that span became a week. Left at a week it would have been dead
+/// policy: a slice as wide as the span is a single window
+/// ([`ohlcv_plan::plan`]), so every request would go straight back to the
+/// all-at-once wait progressive loading exists to remove.
 ///
-/// Narrower slices would paint sooner and cost more replies, each one a refold
-/// of everything already held (see [`ohlcv_plan`]); wider ones approach the
-/// all-at-once wait this exists to remove.
-pub const OHLCV_SLICE_SPAN_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
+/// The width is a trade between two costs pulling opposite ways, and a week is
+/// short enough that the second one now dominates:
+///
+/// - **Time to the first readable frame.** Four windows means the newest two
+///   days land in roughly a quarter of the venue round trips the span costs.
+///   That is the number the trader feels — how long the chart stays empty.
+/// - **Refold work per arrival.** Every slice runs `refold_history_prefix`, a
+///   fold over the *whole* accumulated base plus an indicator rebuild per
+///   pane. That is bounded per request by [`ohlcv_plan::MAX_SLICES`], but not
+///   across requests: a trader paging back thirteen spans to the old quarter
+///   pays it once per slice, against a base growing toward six figures. At one
+///   slice a day that is 91 full refolds for the same final chart; at two days
+///   it is 52, and at a week it would be 13 with no progressive painting at
+///   all.
+///
+/// Two days keeps the opening week painting in four steps while cutting the
+/// deep-chart refold bill by nearly half. Narrower paints marginally sooner
+/// and multiplies that bill; wider approaches the all-at-once wait again.
+pub const OHLCV_SLICE_SPAN_MS: i64 = 2 * 24 * 60 * 60 * 1_000;
 
 /// A message from the feed thread to the UI, tagged by source so the chart can
 /// label backfilled vs live data honestly.
@@ -139,6 +164,17 @@ pub enum OhlcvSlice {
     /// An older slice of the same request follows. The wait is not over and
     /// the loading indicator stays up.
     More,
+    /// The request was **refused before it was served**: a fetch for this
+    /// market was already in flight and the provider serves one at a time.
+    ///
+    /// A closing reply, because the caller raised a spinner before the command
+    /// left and a silent drop would leave it turning forever. But a distinct
+    /// one, because "nobody looked" is not "the venue came up short": answered
+    /// as `Last { complete: false }` the tab warns that a venue stopped short
+    /// when none did, refolds the whole accumulated base over an empty vector,
+    /// and consumes the reach-back measurement for a request that was never
+    /// made. This variant ends the wait and changes nothing else.
+    Refused,
     /// The last reply for this request — and the only one a provider that
     /// serves the whole span at once ever sends.
     Last {
@@ -162,7 +198,7 @@ impl OhlcvSlice {
     /// Whether this reply closes its request.
     #[must_use]
     pub fn is_last(self) -> bool {
-        matches!(self, Self::Last { .. })
+        matches!(self, Self::Last { .. } | Self::Refused)
     }
 }
 
@@ -225,6 +261,22 @@ pub enum FeedCommand {
         /// How far back to reach, in milliseconds. See
         /// [`TIME_HISTORY_SPAN_MS`].
         span_ms: i64,
+        /// The newest millisecond this request covers, inclusive. `None` means
+        /// *now* — the opening request, reaching back from the live edge.
+        ///
+        /// `Some` is how the chart reaches further into the past than one
+        /// request goes: the caller passes the millisecond just before the
+        /// oldest candle it already holds, and the reply is a span of that
+        /// size older still, to prepend. The two are the same request with a
+        /// different right-hand edge, so a provider that honours the span
+        /// honours this for free — it is the `now_ms` handed to
+        /// [`ohlcv_plan::plan`].
+        ///
+        /// A provider serving from a block it already holds (MetaTrader,
+        /// market replay) reaches as far back as that block does and no
+        /// further, whatever is asked; it answers with what it has rather than
+        /// with silence, and says so in its log.
+        before_ms: Option<i64>,
         /// How much of the span one reply should cover, newest first.
         ///
         /// `None` asks for the whole span in a single reply — what every

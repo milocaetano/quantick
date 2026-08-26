@@ -349,10 +349,13 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
 
 /// The candles to answer one `FetchOhlcv` with, from the session's context.
 ///
-/// The span is measured back from the recording's first print, not from the
-/// wall clock: a session recorded in March is being replayed today, and "the
-/// last 90 days" has to mean 90 days of *the market's* time or the whole
-/// context would fall outside it.
+/// The span is measured back from `until_ms`, and `until_ms` defaults to the
+/// recording's first print rather than the wall clock: a session recorded in
+/// March is being replayed today, and "the last week" has to mean a week of
+/// *the market's* time or the whole context would fall outside it. A *load
+/// older* passes the instant before the oldest candle already held, and gets
+/// another span of the run-up in front of it — as far as the context file
+/// reaches, which is the whole of a recording's past.
 ///
 /// A recording with no context file answers empty and complete — that is the
 /// whole truth about it, not a fetch that came up short.
@@ -365,7 +368,9 @@ fn context_reply(
     context: Option<&quantick_replay::ContextSeries>,
     first_print_ms: i64,
     span_ms: i64,
+    before_ms: Option<i64>,
 ) -> FeedEvent {
+    let until_ms = before_ms.unwrap_or(first_print_ms);
     let Some(context) = context else {
         return FeedEvent::OhlcvHistory {
             interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
@@ -373,21 +378,33 @@ fn context_reply(
             slice: crate::feed::OhlcvSlice::Last { complete: true },
         };
     };
-    let earliest = first_print_ms.saturating_sub(span_ms);
+    let earliest = until_ms.saturating_sub(span_ms);
     let bars: Vec<_> = context
         .bars
         .iter()
-        .filter(|bar| bar.open_time >= earliest)
+        .filter(|bar| bar.open_time >= earliest && bar.open_time <= until_ms)
         .cloned()
         .collect();
+    // Short means "there is more market *before* the first bar returned" —
+    // which is a claim about the old end of the window only. Counting against
+    // the whole file answered that correctly while the filter had one bound;
+    // with an upper bound it does not, because a context that also covers the
+    // recording's own window (one downloaded after the session) has its
+    // trailing bars cut by the filter, and reporting that as short would say
+    // the run-up is missing when it is all there. So the count to beat is the
+    // bars the file holds *at or before* this window's newest edge.
+    let reachable = context
+        .bars
+        .iter()
+        .filter(|bar| bar.open_time <= until_ms)
+        .count();
     FeedEvent::OhlcvHistory {
         interval_ms: context.interval_ms,
         // Short for either of two reasons, and both are the same answer to the
         // caller: the download itself was clipped, or this span does not reach
-        // the whole of what was downloaded. Either way there is more market
-        // before the first bar returned, which is what `complete: false` says.
+        // the whole of what the file has before it.
         slice: crate::feed::OhlcvSlice::Last {
-            complete: context.complete && bars.len() == context.bars.len(),
+            complete: context.complete && bars.len() == reachable,
         },
         bars,
     }
@@ -475,8 +492,11 @@ fn play(
                 // Answered from the context file beside the recording, or
                 // answered empty — but always answered exactly once, or the
                 // pane waits for a reply that never comes.
-                Ok(FeedCommand::FetchOhlcv { span_ms, .. }) => {
-                    let reply = context_reply(context.as_ref(), session.start_ms(), span_ms);
+                Ok(FeedCommand::FetchOhlcv {
+                    span_ms, before_ms, ..
+                }) => {
+                    let reply =
+                        context_reply(context.as_ref(), session.start_ms(), span_ms, before_ms);
                     if tx.blocking_send(reply).is_err() {
                         return; // UI gone
                     }
@@ -500,6 +520,7 @@ fn play(
                         context.as_ref(),
                         session.start_ms(),
                         crate::feed::TIME_HISTORY_SPAN_MS,
+                        None,
                     );
                     // Both replies, in this order: the candles, then the empty
                     // trade batch that resolves the loading indicator. A
@@ -533,9 +554,14 @@ fn play(
                 if !apply(control, &mut playhead, trades, &tx, &session) {
                     return;
                 }
-                // A restart or a seek: readers that sample once per frame
-                // learn of it even when the rerun has already advanced past
-                // their last sample, and where it began.
+                // The new position first, the rewind count after it. A reader
+                // that samples between the two must never see the count move
+                // while the position is still the pre-seek one: it would
+                // rewind its walk and then replay everything up to where the
+                // playhead *used* to be, all in one frame. This order can
+                // only be seen the other way round, which the reader's own
+                // "the position went backwards" check already handles.
+                status.publish(&playhead);
                 status.note_rewind(playhead.position_ms());
             }
             reported_finished = false;
@@ -772,6 +798,7 @@ mod tests {
             .blocking_send(FeedCommand::FetchOhlcv {
                 span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
                 slice_ms: None,
+                before_ms: None,
             })
             .expect("the worker is listening");
 
@@ -781,7 +808,10 @@ mod tests {
             "the interval is the file's, not assumed"
         );
         assert_eq!(bars.len(), 90);
-        assert!(complete, "the whole downloaded context fits in 90 days");
+        assert!(
+            complete,
+            "the whole downloaded context fits inside the span asked for"
+        );
         assert!(
             bars.windows(2).all(|w| w[0].open_time < w[1].open_time),
             "candles run forwards"
@@ -850,6 +880,7 @@ mod tests {
             .blocking_send(FeedCommand::FetchOhlcv {
                 span_ms: 30 * 60_000,
                 slice_ms: None,
+                before_ms: None,
             })
             .expect("the worker is listening");
 
@@ -858,6 +889,37 @@ mod tests {
         assert!(
             !complete,
             "there is more market before the first bar, and the pane must be told"
+        );
+    }
+
+    /// "Load older" on a recording reaches further back into the same context
+    /// file. Nothing in the run-up is a venue call, so this is purely about
+    /// where the window is placed: the first request takes the span ending at
+    /// the recording's first print, and the second takes the span ending just
+    /// before what that returned — meeting it exactly, never overlapping it.
+    #[test]
+    fn asking_for_older_context_reaches_past_the_span_already_answered() {
+        let session = session_with_context(4, 90);
+        let first_print = session.start_ms();
+        let context = session.context.clone();
+        let span = 30 * 60_000;
+
+        let newest = match context_reply(context.as_ref(), first_print, span, None) {
+            FeedEvent::OhlcvHistory { bars, .. } => bars,
+            _ => panic!("a candle request is answered with candles"),
+        };
+        assert_eq!(newest.len(), 30, "the span ending at the first print");
+        let oldest_held = newest.first().expect("30 bars").open_time;
+
+        let older = match context_reply(context.as_ref(), first_print, span, Some(oldest_held - 1))
+        {
+            FeedEvent::OhlcvHistory { bars, .. } => bars,
+            _ => panic!("a candle request is answered with candles"),
+        };
+        assert_eq!(older.len(), 30, "another span of the run-up");
+        assert!(
+            older.iter().all(|bar| bar.open_time < oldest_held),
+            "and every bar of it is older than what was already held"
         );
     }
 
@@ -1061,6 +1123,7 @@ mod tests {
             .blocking_send(FeedCommand::FetchOhlcv {
                 span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
                 slice_ms: None,
+                before_ms: None,
             })
             .expect("the worker is listening");
 

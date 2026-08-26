@@ -361,10 +361,10 @@ fn place(
     };
     // The look a fresh object opens with is read before the pane is borrowed
     // mutably, through the app's own door: an annotation looks like what the
-    // trader would have drawn.
-    let mut fresh: Vec<drawings::NewDrawing> = (0..required)
-        .map(|_| app.control_new_drawing(tool))
-        .collect();
+    // trader would have drawn. One is enough for the whole placement —
+    // `place_with` asks for the opening only when it installs the draft, so
+    // the second anchor of an arrow or a zone never calls for another.
+    let mut fresh = Some(app.control_new_drawing(tool));
     let pane = control_pane_mut(app, tab_id, pane_side)?;
     let pane_id = pane.id;
     // The trader is mid-gesture: `place_with` would push this call's anchor
@@ -399,10 +399,11 @@ fn place(
 
     let mut completed = false;
     for point in points {
-        let opening = fresh.pop().expect("one opening look per anchor");
         completed = pane
             .drawings
-            .place_with(tool, &DrawingBand::Price, point, |_| opening);
+            .place_with(tool, &DrawingBand::Price, point, |_| {
+                fresh.take().expect("one opening look per placement")
+            });
     }
     if !completed {
         // The anchors that did land are sitting in a draft nobody owns. Left

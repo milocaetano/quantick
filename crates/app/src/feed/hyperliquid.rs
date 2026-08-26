@@ -169,7 +169,11 @@ async fn feed_task(
             }
             maybe_cmd = cmd_rx.recv() => {
                 match maybe_cmd {
-                    Some(FeedCommand::FetchOhlcv { span_ms, slice_ms }) => {
+                    Some(FeedCommand::FetchOhlcv {
+                        span_ms,
+                        slice_ms,
+                        before_ms,
+                    }) => {
                         if ohlcv_task.as_ref().is_some_and(|task| !task.is_finished()) {
                             // One fetch at a time; the in-flight one answers.
                             warn!(
@@ -178,14 +182,32 @@ async fn feed_task(
                                 event_code = "HYPERLIQUID_OHLCV_ALREADY_RUNNING",
                                 symbol,
                                 requested_span_ms = span_ms,
-                                action = "ignore_duplicate",
-                                "a candle fetch is already in flight; the running one will answer"
+                                requested_before_ms = before_ms.unwrap_or(0),
+                                action = "answer_empty_and_let_the_running_one_finish",
+                                "a candle fetch is already in flight; this one is refused, not queued"
                             );
+                            // Refused, but *answered*. The caller marked itself
+                            // pending and put its spinner up before this command
+                            // left, so a silent drop leaves that spinner turning
+                            // for the rest of the session and the reach-back
+                            // button disabled behind it — the same reason
+                            // `load_older` never returns silence either.
+                            // `Refused` rather than a short answer: nothing was
+                            // fetched because nobody looked, which is not a
+                            // statement about the venue's record.
+                            if ohlcv_tx
+                                .send((Vec::new(), crate::feed::OhlcvSlice::Refused))
+                                .await
+                                .is_err()
+                            {
+                                break; // UI gone
+                            }
                         } else {
                             ohlcv_task = Some(spawn_ohlcv(
                                 symbol.clone(),
                                 span_ms,
                                 slice_ms,
+                                before_ms,
                                 ohlcv_tx.clone(),
                             ));
                         }
@@ -328,11 +350,14 @@ fn spawn_ohlcv(
     symbol: String,
     span_ms: i64,
     slice_ms: Option<i64>,
+    before_ms: Option<i64>,
     reply: mpsc::Sender<(Vec<quantick_engine::Bar>, crate::feed::OhlcvSlice)>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let symbol = symbol.as_str();
-        let now_ms = crate::metrics::wall_clock_ms();
+        // See the Binance twin: the live edge, or the instant a *load older*
+        // wants the reply to end at.
+        let now_ms = before_ms.unwrap_or_else(crate::metrics::wall_clock_ms);
         let windows = crate::feed::ohlcv_plan::plan(now_ms, span_ms, slice_ms);
         info!(
             target: "quantick::app",
