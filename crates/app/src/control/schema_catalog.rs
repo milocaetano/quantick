@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 use super::{
     actions::{MarkInput, MarkResult},
+    analysis::{DrawingsSnapshot, IndicatorsSnapshot},
     annotate::{AnnotationInput, AnnotationResult, RemoveInput, RemoveResult},
     chart::{ChartSnapshot, ChartWindowPage, ChartWindowQuery},
     contract::{
@@ -17,9 +18,11 @@ use super::{
     interaction::{CursorSnapshot, SelectionSnapshot},
     journal::EventPage,
     notify::{NotifyInput, NotifyResult},
+    orderflow::{BubblesSnapshot, FootprintSnapshot, HeatmapSnapshot, L2Snapshot, TapeSnapshot},
     registry::SerializedSnapshotCapture,
     scene::SceneSnapshot,
     script::{AttachInput, AttachResult, DetachInput, DetachResult, ScriptDiagnostic},
+    session::{PaperSnapshot, ReplaySnapshot},
     system::SystemSnapshot,
     workspace::WorkspaceSnapshot,
 };
@@ -44,6 +47,15 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<HealthSnapshot>("observer-health-summary-v1.schema.json"),
         document::<CursorSnapshot>("observer-cursor-v1.schema.json"),
         document::<SelectionSnapshot>("observer-selection-v1.schema.json"),
+        document::<IndicatorsSnapshot>("observer-analysis-indicators-v1.schema.json"),
+        document::<DrawingsSnapshot>("observer-analysis-drawings-v1.schema.json"),
+        document::<TapeSnapshot>("observer-orderflow-tape-v1.schema.json"),
+        document::<FootprintSnapshot>("observer-orderflow-footprint-v1.schema.json"),
+        document::<BubblesSnapshot>("observer-orderflow-bubbles-v1.schema.json"),
+        document::<HeatmapSnapshot>("observer-orderflow-heatmap-v1.schema.json"),
+        document::<L2Snapshot>("observer-orderflow-l2-v1.schema.json"),
+        document::<ReplaySnapshot>("observer-session-replay-v1.schema.json"),
+        document::<PaperSnapshot>("observer-session-paper-v1.schema.json"),
         document::<SceneSnapshot>("observer-scene-controls-v1.schema.json"),
         document::<ChartWindowQuery>("observer-chart-window-query-v1.schema.json"),
         document::<ChartWindowPage>("observer-chart-window-page-v1.schema.json"),

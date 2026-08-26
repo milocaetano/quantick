@@ -1,0 +1,158 @@
+{
+  "$defs": {
+    "AvailabilitySnapshot": {
+      "description": "Whether something is there to be read or acted on, and the coded reason\nwhen it is not.\n\nThe reason is a stable identifier, never the sentence an interface shows a\nhuman: a client made to parse that sentence would break the day it is\nreworded, and translating the interface would break every such client at\nonce.",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "available"
+      ],
+      "type": "object"
+    },
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "HeatmapStateSnapshot": {
+      "properties": {
+        "capture_price_grouping": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "The bucket the engine is capturing at. The auto-base logic can move it\nwith no user action, so it is mirrored rather than assumed."
+        },
+        "display_grouping": {
+          "description": "How the captured buckets are merged for display: `native`,\n`multiple_<n>` for a fixed multiple of the capture bucket, or\n`adaptive_<rows>` — the default — which picks a multiple near that row\ncount for the visible price window.",
+          "type": "string"
+        },
+        "gamma": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-unit": "ratio"
+        },
+        "lane_visible": {
+          "description": "And over the live lane, which is a separate switch.",
+          "type": "boolean"
+        },
+        "opacity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-unit": "ratio"
+        },
+        "retention_ms": {
+          "description": "How long a resting level stays on the canvas after it leaves the book.",
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "milliseconds"
+        },
+        "show_aggressions": {
+          "type": "boolean"
+        },
+        "visible": {
+          "description": "Depth heat is drawn over the chart.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "visible",
+        "lane_visible",
+        "retention_ms",
+        "capture_price_grouping",
+        "display_grouping",
+        "show_aggressions"
+      ],
+      "type": "object"
+    },
+    "PaneHeatmapSnapshot": {
+      "properties": {
+        "engine": {
+          "$ref": "#/$defs/AvailabilitySnapshot"
+        },
+        "heatmap": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HeatmapStateSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "side": {
+          "$ref": "#/$defs/PaneSideDto"
+        }
+      },
+      "required": [
+        "pane_id",
+        "side",
+        "engine"
+      ],
+      "type": "object"
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "TabHeatmapSnapshot": {
+      "properties": {
+        "panes": {
+          "items": {
+            "$ref": "#/$defs/PaneHeatmapSnapshot"
+          },
+          "type": "array"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "tab_id",
+        "panes"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "tabs": {
+      "items": {
+        "$ref": "#/$defs/TabHeatmapSnapshot"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "tabs"
+  ],
+  "title": "HeatmapSnapshot",
+  "type": "object"
+}

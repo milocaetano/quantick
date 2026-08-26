@@ -29,7 +29,7 @@ use crate::orderflow::{
     lane_window_label, reserved_span_ms, same_lane_window,
 };
 use crate::orderflow_engine::{
-    BookPublished, CaptureStatus, OrderflowHealth, ProjectionRequest, VisibleOrderflow,
+    BookLadder, BookPublished, CaptureStatus, OrderflowHealth, ProjectionRequest, VisibleOrderflow,
 };
 use crate::orderflow_render::{
     OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
@@ -204,6 +204,39 @@ impl OrderflowView {
     #[must_use]
     pub(crate) fn cached_health(&self) -> &OrderflowHealth {
         &self.published.health
+    }
+
+    /// The book frame the last application frame published, for a control
+    /// capture.
+    ///
+    /// Same contract as [`Self::cached_health`], and for the same reason: it
+    /// does not synchronize with the worker, so one requested scope cannot
+    /// advance another scope underneath the capture. The ladder is `None`
+    /// while capture is off or the book has no snapshot yet — an honest
+    /// absence, never an empty book.
+    #[must_use]
+    pub(crate) fn cached_book(&self) -> (&CaptureStatus, Option<&BookLadder>, Decimal) {
+        (
+            &self.published.status,
+            self.published.ladder.as_deref(),
+            self.published.base_price_grouping,
+        )
+    }
+
+    /// The live lane's right edge as the last application frame published it,
+    /// under the same no-sync contract as [`Self::cached_health`].
+    ///
+    /// `None` when no flow layer is drawn: a chart with no lane has no edge to
+    /// report, and the newest print the engine happens to have seen is not one.
+    #[must_use]
+    pub(crate) fn cached_live_end_ms(&self) -> Option<i64> {
+        self.published.live_end_ms
+    }
+
+    /// The heatmap setup this chart is drawing with, for a control capture.
+    #[must_use]
+    pub(crate) fn cached_config(&self) -> &HeatmapConfig {
+        &self.config
     }
 
     /// Resolve the topmost displayed L2 heat cell under `position` from the

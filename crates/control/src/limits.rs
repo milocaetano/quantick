@@ -30,6 +30,37 @@ pub const CONTROL_MAX_PAGE_ITEMS: usize = 2_048;
 /// Calibrated independently from the larger off-thread protocol page ceiling.
 pub const CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS: usize = 32;
 pub const CONTROL_MAX_SNAPSHOT_SCOPES: usize = 32;
+
+/// Book levels one side of one pane publishes in a capture. A host clips its
+/// own ladder to the window the chart drew long before this; the limit is the
+/// wire's own ceiling, so a host that ever widens that clip cannot widen the
+/// page without saying so here.
+pub const CONTROL_SNAPSHOT_MAX_BOOK_LEVELS_PER_SIDE: usize = 256;
+/// Indicators one pane publishes in a capture. The chart itself caps visible
+/// indicator panes far below this; the limit bounds a hostile or scripted
+/// pane, not an arrangement a trader would build.
+pub const CONTROL_SNAPSHOT_MAX_INDICATORS_PER_PANE: usize = 64;
+/// Drawings one pane publishes in a capture. A working chart carries tens of
+/// marks; a page of this size is a whole session's annotation.
+pub const CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE: usize = 512;
+/// Working orders one paper-trading tab publishes in a capture. The simulator
+/// holds no more than a trader can place by hand or a strategy can rest, so
+/// this bounds a page rather than a plausible book.
+pub const CONTROL_SNAPSHOT_MAX_WORKING_ORDERS: usize = 128;
+/// Closed trades one paper-trading tab publishes in a capture. A session
+/// ledger grows all day; a capture carries its newest page and says how many
+/// rows it stands for.
+///
+/// Sized by measurement, not by taste. Each row crosses as eight exact
+/// decimals, and every one of those is a `Decimal::normalize().to_string()`.
+/// At 256 rows the paper scope alone cost 43 microseconds of a 250 microsecond
+/// capture budget — more than every other scope put together — and a capture
+/// of every scope exceeded the budget on a modest CI runner. At 64 it costs
+/// about a quarter of that, still covers a full trading session, and the
+/// `closed_trade_count` and `closed_trades_page_start` fields beside the page
+/// keep a longer ledger honest. `observer_per_scope_capture_cost` is the test
+/// that produced those numbers; rerun it before changing this.
+pub const CONTROL_SNAPSHOT_MAX_CLOSED_TRADES: usize = 64;
 pub const CONTROL_REQUEST_QUEUE_CAPACITY: usize = 64;
 pub const CONTROL_MAX_CONNECTIONS: usize = 8;
 pub const CONTROL_MAX_IN_FLIGHT_PER_CONNECTION: usize = 8;

@@ -2401,6 +2401,12 @@ impl QuantickApp {
         &self.config
     }
 
+    /// The window's footprint setup — the one a pane falls back to when it
+    /// carries no override of its own.
+    pub(crate) fn control_footprint_config(&self) -> &crate::footprint_config::FootprintConfig {
+        &self.footprint_config
+    }
+
     /// The window's shared chart style, which owns the layers no pane does.
     pub(crate) fn control_style(&self) -> &ChartStyle {
         &self.style
@@ -26643,7 +26649,7 @@ crosshair = false
             .descriptors()
             .map(|descriptor| (descriptor.scope_id.clone(), descriptor.schema.clone()))
             .collect::<Vec<_>>();
-        assert_eq!(descriptors.len(), 8, "every initial scope is registered");
+        assert_eq!(descriptors.len(), 17, "every registered scope is projected");
         let scopes = descriptors
             .iter()
             .map(|(scope_id, _)| scope_id.clone())
@@ -26682,6 +26688,523 @@ crosshair = false
         );
     }
 
+    /// Criterion 2 of roadmap 5.1, for the nine new scopes: a split chart
+    /// captures both panes, keeps them apart, and keeps the focus and the
+    /// provenance the trader can see on screen.
+    #[test]
+    fn observer_new_scopes_preserve_two_pane_focus_and_provenance() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 80);
+        let time_point = pane_point(&app, PaneSide::Time);
+        click_chart(&mut app, &ctx, time_point);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scopes = [
+            observer_scope("analysis.indicators"),
+            observer_scope("analysis.drawings"),
+            observer_scope("orderflow.footprint"),
+            observer_scope("session.paper"),
+        ];
+        let capture = registry
+            .capture(&app, &observer_instance(), &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+
+        // The three pane-addressed scopes see both panes, and tell them apart
+        // by id and by side rather than by position.
+        let flow_id = app.active_tab().pane(PaneSide::Flow).id.to_string();
+        let time_id = app.active_tab().pane(PaneSide::Time).id.to_string();
+        for scope in [&scopes[0], &scopes[1], &scopes[2]] {
+            let panes = capture.scopes[scope].value["tabs"][0]["panes"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{scope} publishes a pane list"));
+            assert_eq!(panes.len(), 2, "{scope} captures both panes of a split");
+            let sides = panes
+                .iter()
+                .map(|pane| pane["side"].as_str().unwrap())
+                .collect::<Vec<_>>();
+            assert!(
+                sides.contains(&"flow") && sides.contains(&"time"),
+                "{scope} names each pane's side; got {sides:?}"
+            );
+            let ids = panes
+                .iter()
+                .map(|pane| pane["pane_id"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>();
+            assert!(
+                ids.contains(&flow_id) && ids.contains(&time_id),
+                "{scope} addresses panes by the ids the rest of the capture uses"
+            );
+        }
+
+        // The focus itself stays where the interaction scope reports it: the
+        // new scopes address panes, they do not re-answer which one is focused,
+        // so the two can never disagree.
+        let focus = registry
+            .capture(
+                &app,
+                &observer_instance(),
+                std::slice::from_ref(&observer_scope("interaction.selection")),
+            )
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let selection = &focus.scopes[&observer_scope("interaction.selection")].value;
+        assert_eq!(selection["focused_pane_side"], "time");
+        assert_eq!(selection["focused_pane_id"], time_id);
+
+        // Provenance survives the split: the paper ledger names its source once
+        // per tab, not once per pane, because that is where it lives.
+        let paper = &capture.scopes[&scopes[3]].value["tabs"][0];
+        assert_eq!(paper["provenance"], "paper_trading_session_ledger");
+        assert_eq!(paper["symbol"], "TESTUSDT");
+    }
+
+    #[test]
+    fn observer_journals_indicator_and_drawing_changes_without_the_trader_text() {
+        const CANARY: &str = "CANARY_JOURNAL_secret note";
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(120);
+        let directory = gateway_test_directory("analysis-journal");
+        enable_test_gateway(&mut app, &ctx, &directory, 8);
+        // One quiet frame establishes the baseline: the journal starts when the
+        // door opens and records changes, not the state it found.
+        run_frame(&mut app, &ctx);
+
+        let read = |app: &QuantickApp| {
+            app.control_access
+                .as_ref()
+                .unwrap()
+                .journal()
+                .read(1, 256, 1 << 20)
+                .events
+                .iter()
+                .map(|event| event.kind.as_str().to_owned())
+                .collect::<Vec<_>>()
+        };
+        let baseline = read(&app);
+        assert!(
+            !baseline.iter().any(|kind| kind.starts_with("analysis.")),
+            "a quiet frame journals nothing about analysis; got {baseline:?}"
+        );
+
+        // Attach an indicator the way the worker delivers one.
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            let slot = pane.indicators.allocate_slot("native.cvd");
+            let descriptor = quantick_indicators::IndicatorDescriptor {
+                title: "CVD".to_owned(),
+                short_title: None,
+                overlay: false,
+                plots: Vec::new(),
+                fills: Vec::new(),
+                inputs: Vec::new(),
+            };
+            pane.indicators
+                .apply(crate::indicator_worker::IndicatorEvent::rebuilt(
+                    slot,
+                    descriptor,
+                    Vec::new(),
+                ));
+        }
+        run_frame(&mut app, &ctx);
+        assert!(
+            read(&app).contains(&"analysis.indicator.attached".to_owned()),
+            "attaching an indicator reaches the journal"
+        );
+
+        // Place a drawing, name it with the canary, then lock it.
+        let (time, price) = {
+            let pane = &app.active_tab().flow_pane;
+            let bar = pane.closed_bar(60).expect("fixture bar");
+            (
+                pane.slot_open_time(60).expect("fixture market time"),
+                rust_decimal::prelude::ToPrimitive::to_f64(&bar.close).unwrap(),
+            )
+        };
+        {
+            let flow = &mut app.active_tab_mut().flow_pane;
+            assert!(flow.drawings.place_with(
+                drawing_tool("horizontal-line"),
+                &drawings::DrawingBand::Price,
+                ChartPoint::at_time(60.5, price, Some(time)),
+                |tool| drawings::NewDrawing {
+                    style: drawings::DrawingStyle::default(),
+                    payload: tool.default_payload(),
+                },
+            ));
+            let selected = flow.drawings.selected().expect("placement selects");
+            flow.drawings.rename_at(selected, CANARY);
+        }
+        run_frame(&mut app, &ctx);
+        assert!(
+            read(&app).contains(&"analysis.drawing.created".to_owned()),
+            "placing a drawing reaches the journal"
+        );
+
+        {
+            let flow = &mut app.active_tab_mut().flow_pane;
+            let selected = flow.drawings.selected().expect("still selected");
+            flow.drawings
+                .items_mut()
+                .get_mut(selected)
+                .expect("the drawing is there")
+                .locked = true;
+        }
+        run_frame(&mut app, &ctx);
+        assert!(
+            read(&app).contains(&"analysis.drawing.edited".to_owned()),
+            "locking a drawing reaches the journal"
+        );
+
+        // The whole journal is held to the wire's rule: presence, never text.
+        let encoded = serde_json::to_string(
+            &app.control_access
+                .as_ref()
+                .unwrap()
+                .journal()
+                .read(1, 256, 1 << 20)
+                .events,
+        )
+        .unwrap();
+        assert!(
+            !encoded.contains(CANARY),
+            "the journal redacts the trader's own drawing name"
+        );
+        assert!(
+            encoded.contains("\"user_label_present\":true"),
+            "it reports that a name exists without saying what it is"
+        );
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn observer_projects_order_flow_layers_and_states_the_absent_engine() {
+        let (app, _commands) = app_with_history(8);
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scopes = [
+            observer_scope("orderflow.tape"),
+            observer_scope("orderflow.footprint"),
+            observer_scope("orderflow.bubbles"),
+            observer_scope("orderflow.heatmap"),
+            observer_scope("orderflow.l2"),
+        ];
+        let capture = registry
+            .capture(&app, &observer_instance(), &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+
+        // The footprint scope answers for every pane, engine or not: the layer
+        // and its setup are chart state, not book state.
+        let footprint = &capture.scopes[&scopes[1]].value["tabs"][0]["panes"][0];
+        // Compared against the pane rather than a literal: which layers a
+        // fresh chart opens with is a product decision that lives in
+        // `config/chart-layers.toml`, and a test that pins it here fails the
+        // day someone edits the file. What this asserts is that the scope
+        // reports what the pane actually holds.
+        assert_eq!(
+            footprint["visible"],
+            app.active_tab().flow_pane.footprint_visible,
+            "the scope reports the pane's own layer state"
+        );
+        assert_eq!(
+            footprint["overridden"], false,
+            "a fresh pane follows the window's setup"
+        );
+        assert!(
+            footprint["setup"]["imbalance_ratio"].is_string(),
+            "the ratio crosses as an exact decimal string"
+        );
+        // The style name is the control plane's own vocabulary, spelled the
+        // way the schema declares it. A `{:?}` rendering of the enum would say
+        // "split" here too and "bidask" for the one variant whose name has two
+        // words, which is the spelling no client was ever told about.
+        assert_eq!(
+            footprint["setup"]["style"], "split",
+            "the default style crosses under its wire name"
+        );
+        let mut styled = app;
+        for style in [
+            crate::footprint_config::FootprintStyle::Split,
+            crate::footprint_config::FootprintStyle::Ladder,
+            crate::footprint_config::FootprintStyle::BidAsk,
+            crate::footprint_config::FootprintStyle::Cluster,
+            crate::footprint_config::FootprintStyle::Auto,
+        ] {
+            styled.footprint_config.style = style;
+            let capture = registry
+                .capture(
+                    &styled,
+                    &observer_instance(),
+                    std::slice::from_ref(&scopes[1]),
+                )
+                .unwrap()
+                .into_serialized()
+                .unwrap();
+            let name = capture.scopes[&scopes[1]].value["tabs"][0]["panes"][0]["setup"]["style"]
+                .as_str()
+                .expect("every style has a wire name")
+                .to_owned();
+            assert!(
+                ["split", "ladder", "bid_ask", "cluster", "auto"].contains(&name.as_str()),
+                "{style:?} crossed as `{name}`, which the schema does not declare"
+            );
+        }
+
+        // The tape's age is measured against the capture's own clock. Handing
+        // the newest print in as "now" compares it with itself and answers
+        // zero for every tape, on every capture, forever.
+        let (mut aged, _aged_commands) = app_with_history(8);
+        let a_minute_ago = metrics::wall_clock_ms() - 60_000;
+        aged.active_tab_mut().latest_trade_ms = Some(a_minute_ago);
+        let late = registry
+            .capture(
+                &aged,
+                &observer_instance(),
+                std::slice::from_ref(&scopes[0]),
+            )
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let age = late.scopes[&scopes[0]].value["tabs"][0]["panes"][0]["tape"]["age_ms"]
+            .as_i64()
+            .expect("a tab with a print behind it has an age");
+        assert!(
+            (55_000..70_000).contains(&age),
+            "the tape is a minute behind its market and reports {age} ms"
+        );
+
+        // The four engine-backed scopes state the absence rather than
+        // reporting an empty book, which would read as a silent venue.
+        for scope in [&scopes[0], &scopes[2], &scopes[3], &scopes[4]] {
+            let pane = &capture.scopes[scope].value["tabs"][0]["panes"][0];
+            let available = pane["engine"]["available"].as_bool().expect("declared");
+            if available {
+                continue;
+            }
+            assert_eq!(
+                pane["engine"]["reason"], "order_flow_engine_not_attached_to_this_pane",
+                "{scope} names why it cannot answer"
+            );
+            for payload in ["tape", "bubbles", "heatmap", "book"] {
+                if let Some(value) = pane.get(payload) {
+                    assert!(
+                        value.is_null(),
+                        "{scope} publishes no {payload} without an engine"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn observer_projects_each_pane_indicator_with_its_inputs_and_latest_reading() {
+        let (mut app, _commands) = app_with_history(12);
+
+        // Deliver an indicator the way the worker does: allocate the slot the
+        // UI owns, then apply the rebuild delta the worker sends back.
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            let slot = pane.indicators.allocate_slot("native.ema");
+            let descriptor = quantick_indicators::IndicatorDescriptor {
+                title: "EMA".to_owned(),
+                short_title: Some("ema".to_owned()),
+                overlay: true,
+                plots: vec![quantick_indicators::PlotSpec {
+                    id: quantick_indicators::PlotId::new(0),
+                    title: "EMA".to_owned(),
+                    style: quantick_indicators::PlotStyle::Line,
+                    base_color: quantick_indicators::Rgba8::opaque(1, 2, 3),
+                    width: 1.0,
+                    offset: 0,
+                    marker: None,
+                }],
+                fills: Vec::new(),
+                inputs: vec![quantick_indicators::InputSpec::Int {
+                    name: "len".to_owned(),
+                    title: "Length".to_owned(),
+                    default: 9,
+                    min: Some(1),
+                    max: Some(500),
+                    step: Some(1),
+                    options: Vec::new(),
+                }],
+            };
+            pane.indicators
+                .apply(crate::indicator_worker::IndicatorEvent::rebuilt(
+                    slot,
+                    descriptor,
+                    vec![vec![1.5, 2.25, 3.125]],
+                ));
+        }
+
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scope = observer_scope("analysis.indicators");
+        let capture = registry
+            .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let pane = &capture.scopes[&scope].value["tabs"][0]["panes"][0];
+        assert_eq!(pane["indicator_count"], "1");
+        assert_eq!(pane["indicators_truncated"], false);
+
+        let indicator = &pane["indicators"][0];
+        assert_eq!(indicator["kind"], "native.ema");
+        assert_eq!(
+            indicator["source_kind"], "native",
+            "a native kernel's diagnostics are ours, not the trader's"
+        );
+        assert_eq!(indicator["title"], "EMA");
+        assert_eq!(indicator["short_title"], "ema");
+        assert_eq!(indicator["overlay"], true);
+        assert_eq!(indicator["committed_bar_count"], "3");
+        assert!(
+            indicator["failure"].is_null(),
+            "a clean evaluation reports no failure"
+        );
+
+        let plot = &indicator["plots"][0];
+        assert_eq!(plot["style"], "line");
+        assert_eq!(plot["base_color"], "#010203ff");
+        assert_eq!(
+            plot["latest_value"], "3.125",
+            "the newest committed reading crosses as an exact decimal string"
+        );
+
+        let input = &indicator["inputs"][0];
+        assert_eq!(input["name"], "len");
+        assert_eq!(input["title"], "Length");
+        assert_eq!(input["kind"], "int");
+        assert_eq!(input["default"], "9");
+        assert_eq!(
+            input["text_present"], false,
+            "an int input holds no free text to withhold"
+        );
+    }
+
+    #[test]
+    fn observer_projects_the_replay_playhead_and_its_trace_sidecar() {
+        let dir =
+            std::env::temp_dir().join(format!("quantick-observer-replay-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (mut app, _commands) = app_with_history(4);
+
+        // A live tab is not replaying, and says so rather than reporting a
+        // playhead parked at zero.
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scope = observer_scope("session.replay");
+        let live = registry
+            .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        assert_eq!(live.scopes[&scope].value["tabs"][0]["replaying"], false);
+        assert!(live.scopes[&scope].value["tabs"][0]["session"].is_null());
+
+        // The same tab, now playing a recording written to disk.
+        app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+        let playing = registry
+            .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let session = &playing.scopes[&scope].value["tabs"][0]["session"];
+        assert_eq!(playing.scopes[&scope].value["tabs"][0]["replaying"], true);
+        assert_eq!(session["symbol"], "TESTUSDT");
+        assert_eq!(session["date"], "2026-03-16");
+        assert_eq!(
+            session["file_name"], "20260316.csv",
+            "the file name identifies the recording without leaking the folder"
+        );
+        assert_eq!(session["total_trades"], "1");
+        assert_eq!(
+            session["trace"]["state"]["available"], false,
+            "a capture does no file I/O, so it answers nothing about the trace"
+        );
+        assert_eq!(
+            session["trace"]["state"]["reason"],
+            "trace_state_is_served_by_the_gateway_not_by_a_capture"
+        );
+        assert_eq!(
+            session["trace"]["file_name"], "20260316.csv.control-trace.jsonl",
+            "it still names the file the gateway should be asked about"
+        );
+
+        // A mark writes the sidecar; the next capture sees it present.
+        let ctx = egui::Context::default();
+        hover_bar(&mut app, &ctx, 2);
+        app.take_mark(Some("traced".to_owned()));
+        let traced = registry
+            .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        // The sidecar now exists on disk, and the capture still declines to
+        // look: the answer costs a `stat` this thread must not spend.
+        assert!(
+            crate::control::replay_trace_path_for(&recording_at(&dir).path).is_file(),
+            "the mark wrote the sidecar"
+        );
+        assert_eq!(
+            traced.scopes[&scope].value["tabs"][0]["session"]["trace"]["state"]["available"],
+            false
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn observer_projects_the_paper_ledger_with_its_provenance() {
+        let (mut app, _commands) = app_with_history(4);
+        let print = |agg_id: u64, price: i64| quantick_engine::Trade {
+            agg_id,
+            timestamp_ms: i64::try_from(agg_id).expect("small ids") * 1000,
+            price: rust_decimal::Decimal::from(price),
+            quantity: rust_decimal::Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        };
+
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scope = observer_scope("session.paper");
+        let flat = registry
+            .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let before = &flat.scopes[&scope].value["tabs"][0];
+        assert_eq!(before["flat"], true);
+        assert!(before["position"].is_null());
+        assert_eq!(before["provenance"], "paper_trading_session_ledger");
+
+        // Open a position through the simulator's own path.
+        {
+            let paper = &mut app.active_tab_mut().paper;
+            paper.seed(&print(0, 100));
+            paper.market(quantick_engine::Side::Buy);
+            paper.on_trade(&print(1, 100));
+        }
+        let open = registry
+            .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let after = &open.scopes[&scope].value["tabs"][0];
+        assert_eq!(after["flat"], false);
+        assert_eq!(after["position"]["side"], "buy");
+        assert_eq!(
+            after["position"]["quantity"], "1",
+            "quantity crosses as an exact decimal string, never an f64"
+        );
+        assert_eq!(after["position"]["average_entry_price"], "100");
+        assert_eq!(after["closed_trade_count"], "0");
+        assert_eq!(after["working_orders_truncated"], false);
+    }
+
     #[test]
     fn observer_capture_revisions_are_coherent_and_monotonic() {
         let (mut app, _commands) = app_with_history(4);
@@ -26691,13 +27214,17 @@ crosshair = false
             observer_scope("chart.summary"),
         ];
         let instance = observer_instance();
+        // Derived, not a literal: a capture names every scope it did not
+        // project, so registering a new module must not send anyone editing
+        // an arithmetic constant in a test about revisions.
+        let registered = registry.descriptors().count();
 
         let first = registry
             .capture(&app, &instance, &scopes)
             .unwrap()
             .into_serialized()
             .unwrap();
-        assert_eq!(first.omitted_scopes.len(), 6);
+        assert_eq!(first.omitted_scopes.len(), registered - scopes.len());
         let second = registry
             .capture(&app, &instance, &scopes)
             .unwrap()
@@ -26740,12 +27267,206 @@ crosshair = false
     /// where "best" is the batch with the lowest p99. A noisy neighbour can
     /// only make a batch look slower, never faster, so the best batch is the
     /// honest reading of the capture's own cost.
+    /// A workspace with something in every collection the snapshot scopes walk.
+    ///
+    /// The benchmark below exists to answer "what does a capture cost", and an
+    /// empty workspace cannot answer it: every loop the analysis, order-flow
+    /// and session scopes add runs zero times over `app_with_history` alone —
+    /// no indicators, no drawings, no book ladder, no replay link, no paper
+    /// rows — so a measurement taken there reports the cost of nine empty
+    /// projections and calls it flat. This fills each of them through the path
+    /// the application itself uses, so the number below is the cost of a
+    /// capture over a working chart.
+    fn loaded_observer_workspace(bars: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
+        use quantick_orderbook::{BookCoverage, BookLevel, BookSnapshot, DepthEvent};
+
+        let (mut app, commands) = app_with_history(bars);
+
+        // Indicators: delivered the way the worker delivers them, with a full
+        // committed column so the "latest reading" walk has rows to reach.
+        for index in 0..BENCH_INDICATORS_PER_PANE {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            let slot = pane.indicators.allocate_slot("native.ema");
+            let descriptor = quantick_indicators::IndicatorDescriptor {
+                title: format!("EMA {index}"),
+                short_title: None,
+                overlay: true,
+                plots: vec![quantick_indicators::PlotSpec {
+                    id: quantick_indicators::PlotId::new(0),
+                    title: "EMA".to_owned(),
+                    style: quantick_indicators::PlotStyle::Line,
+                    base_color: quantick_indicators::Rgba8::opaque(1, 2, 3),
+                    width: 1.0,
+                    offset: 0,
+                    marker: None,
+                }],
+                fills: Vec::new(),
+                inputs: vec![quantick_indicators::InputSpec::Int {
+                    name: "len".to_owned(),
+                    title: "Length".to_owned(),
+                    default: 9,
+                    min: Some(1),
+                    max: Some(500),
+                    step: Some(1),
+                    options: Vec::new(),
+                }],
+            };
+            let column = (0..bars).map(|bar| bar as f64).collect::<Vec<_>>();
+            pane.indicators
+                .apply(crate::indicator_worker::IndicatorEvent::rebuilt(
+                    slot,
+                    descriptor,
+                    vec![column],
+                ));
+        }
+
+        // Drawings: placed through the same call the toolrail makes.
+        for index in 0..BENCH_DRAWINGS_PER_PANE {
+            let slot = index % (bars as usize).max(1);
+            let (time, price) = {
+                let pane = &app.active_tab().flow_pane;
+                let Some(bar) = pane.closed_bar(slot) else {
+                    break;
+                };
+                (
+                    pane.slot_open_time(slot),
+                    rust_decimal::prelude::ToPrimitive::to_f64(&bar.close).unwrap_or(0.0),
+                )
+            };
+            let flow = &mut app.active_tab_mut().flow_pane;
+            flow.drawings.place_with(
+                drawing_tool("horizontal-line"),
+                &drawings::DrawingBand::Price,
+                ChartPoint::at_time(slot as f32 + 0.5, price, time),
+                |tool| drawings::NewDrawing {
+                    style: drawings::DrawingStyle::default(),
+                    payload: tool.default_payload(),
+                },
+            );
+        }
+
+        // The book: driven in as a venue snapshot and published, so the L2
+        // scope has a full ladder to render into exact decimal strings.
+        // Priced well above the ladder depth so the bid side never walks a
+        // price down through zero, which the book rightly refuses.
+        const BENCH_MID_PRICE: i64 = 1_000;
+        let level = |offset: i64, side: i64| {
+            BookLevel::new(
+                rust_decimal::Decimal::from(BENCH_MID_PRICE + side * (offset + 1)),
+                rust_decimal::Decimal::from(offset + 1),
+            )
+            .expect("a positive price and quantity is a valid level")
+        };
+        let bids = (0..BENCH_BOOK_LEVELS_PER_SIDE)
+            .map(|offset| level(offset, -1))
+            .collect::<Vec<_>>();
+        let asks = (0..BENCH_BOOK_LEVELS_PER_SIDE)
+            .map(|offset| level(offset, 1))
+            .collect::<Vec<_>>();
+        app.active_tab_mut()
+            .tape_mut()
+            .handle_depth_event(DepthEvent::Snapshot {
+                symbol: "TESTUSDT".to_owned(),
+                generation: 1,
+                observed_at_ms: 1_100,
+                effective_at_ms: 999,
+                price_step: None,
+                snapshot: BookSnapshot::new(
+                    10,
+                    bids,
+                    asks,
+                    BookCoverage::Limited {
+                        levels_per_side: 1_000,
+                    },
+                ),
+            });
+        app.active_tab_mut().tape_mut().flush_for_test();
+
+        // Paper: a closed trade ledger and an open position, through the
+        // simulator's own entry path.
+        let print = |agg_id: u64, price: i64| quantick_engine::Trade {
+            agg_id,
+            timestamp_ms: i64::try_from(agg_id).expect("small ids") * 1_000,
+            price: rust_decimal::Decimal::from(price),
+            quantity: rust_decimal::Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        };
+        {
+            let paper = &mut app.active_tab_mut().paper;
+            paper.seed(&print(0, 100));
+            let mut agg = 1;
+            for round in 0..BENCH_CLOSED_TRADES {
+                paper.market(quantick_engine::Side::Buy);
+                paper.on_trade(&print(agg, 100));
+                agg += 1;
+                paper.close_position();
+                paper.on_trade(&print(agg, 101 + (round % 3) as i64));
+                agg += 1;
+            }
+            // Leave one open, so the position branch is walked too.
+            paper.market(quantick_engine::Side::Buy);
+            paper.on_trade(&print(agg, 100));
+        }
+
+        (app, commands)
+    }
+
+    /// The shape of the loaded benchmark workspace. Chosen to sit at or above
+    /// what a working chart carries, so the measured cost is an upper bound on
+    /// a real one rather than a best case.
+    const BENCH_INDICATORS_PER_PANE: usize = 6;
+    const BENCH_DRAWINGS_PER_PANE: usize = 40;
+    /// The host clips its published ladder to `LADDER_LEVELS_PER_SIDE`, so
+    /// asking for more than that measures the clip, not the wire.
+    const BENCH_BOOK_LEVELS_PER_SIDE: i64 = 128;
+    const BENCH_CLOSED_TRADES: usize = 120;
+
+    /// Where a capture's time actually goes, scope by scope.
+    ///
+    /// The whole-capture guard says whether the total fits; it cannot say what
+    /// to shrink when it does not. This times each registered scope on its own
+    /// over the same loaded workspace, so a budget decision is made against
+    /// measurements instead of a guess about which projection is expensive.
+    ///
+    /// Reading only, so it is `#[ignore]`d: it asserts nothing, and the numbers
+    /// it prints are worth having on the record when a scope is added.
+    #[test]
+    #[ignore]
+    fn observer_per_scope_capture_cost() {
+        const MEASURED: usize = 200;
+
+        let (app, _commands) = loaded_observer_workspace(2_000);
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scope_ids = registry
+            .descriptors()
+            .map(|descriptor| descriptor.scope_id.clone())
+            .collect::<Vec<_>>();
+        let instance = observer_instance();
+        for scope in scope_ids {
+            let one = [scope.clone()];
+            for _ in 0..25 {
+                drop(registry.capture(&app, &instance, &one).unwrap());
+            }
+            let mut elapsed = Vec::with_capacity(MEASURED);
+            for _ in 0..MEASURED {
+                drop(registry.capture(&app, &instance, &one).unwrap());
+                elapsed.push(registry.performance().last_capture_us);
+            }
+            elapsed.sort_unstable();
+            let median = elapsed[elapsed.len() / 2];
+            let worst = *elapsed.last().unwrap();
+            println!(
+                "CONTROL_SCOPE_COST {{\"scope\":\"{scope}\",\"median_us\":{median},\"worst_us\":{worst}}}"
+            );
+        }
+    }
+
     fn measure_core_capture_us() -> (u64, u64, u64) {
         const WARMUP_CAPTURES: usize = 25;
         const MEASURED_CAPTURES: usize = 500;
         const BATCHES: usize = 3;
 
-        let (app, _commands) = app_with_history(2_000);
+        let (app, _commands) = loaded_observer_workspace(2_000);
         let mut registry = crate::control::standard_registry().unwrap();
         let scopes = registry
             .descriptors()
@@ -28810,6 +29531,7 @@ plot(close)
                 }),
                 commands: cmd_tx,
                 replay: None,
+                latency: feed::unsplit_latency(),
             },
         );
         let _ends = (evt_tx, book_tx);
@@ -29161,6 +29883,10 @@ plot(close)
             observer_scope("feed.status"),
             observer_scope("interaction.cursor"),
             observer_scope("interaction.selection"),
+            // The enumerating scope is held to the same rule as the pointer
+            // ones: it lists every drawing, so it is the likeliest place for a
+            // trader's own name to escape.
+            observer_scope("analysis.drawings"),
         ];
         let capture = registry
             .capture(&app, &observer_instance(), &scopes)
@@ -29187,6 +29913,41 @@ plot(close)
         assert_eq!(drawing["user_label_present"], true);
         let selection = &capture.scopes[&scopes[2]].value["drawing"];
         assert_eq!(selection["user_label_present"], true);
+
+        let listed = &capture.scopes[&scopes[3]].value["tabs"][0]["panes"][0]["drawings"][0];
+        assert_eq!(listed["tool_id"], "horizontal-line");
+        assert_eq!(listed["scope"], "all_charts");
+        assert_eq!(listed["band"], "price");
+        assert_eq!(
+            listed["user_label_present"], true,
+            "the trader named it, and the wire says so without saying what"
+        );
+        assert!(
+            listed["author"].is_null(),
+            "the trader placed it by hand, so it carries no other author"
+        );
+
+        // "Hide all" is a switch of its own, and it decides what is on screen
+        // whatever each object's own eye says. Reporting only the per-object
+        // eye tells an agent every mark is visible on a pane showing none.
+        let pane = &capture.scopes[&scopes[3]].value["tabs"][0]["panes"][0];
+        assert_eq!(pane["layer_hidden"], false, "the layer starts drawn");
+        assert_eq!(listed["hidden"], false, "and so does this object");
+        app.active_tab_mut().flow_pane.drawings.set_all_hidden(true);
+        let hidden = registry
+            .capture(&app, &observer_instance(), &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let pane = &hidden.scopes[&scopes[3]].value["tabs"][0]["panes"][0];
+        assert_eq!(
+            pane["layer_hidden"], true,
+            "the pane says its whole drawing layer is off"
+        );
+        assert_eq!(
+            pane["drawings"][0]["hidden"], false,
+            "without rewriting each object's own eye, which `show all` restores"
+        );
     }
 
     #[test]
@@ -29257,7 +30018,7 @@ plot(close)
         // Every published wire type has a committed document, so a breaking
         // change shows up as a diff in review (contract §6). The count is
         // here to make an accidental *removal* visible too.
-        assert_eq!(documents.len(), 32);
+        assert_eq!(documents.len(), 41);
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("schemas/control");

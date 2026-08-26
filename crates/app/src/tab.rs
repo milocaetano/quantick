@@ -1305,6 +1305,18 @@ impl Tab {
         self.pane_mut(self.drawing_side())
     }
 
+    /// Every pane holding this market's bars, on screen or not, each beside
+    /// the side it answers to — flow first, so a walk of one tab is stable and
+    /// a capture stays diffable against the one before it.
+    ///
+    /// An iterator and not a `Vec`: this is walked per frame by the control
+    /// plane's journal comparison, which must not touch the allocator on a
+    /// quiet frame.
+    pub fn panes(&self) -> impl Iterator<Item = (&ChartPane, PaneSide)> {
+        std::iter::once((&self.flow_pane, PaneSide::Flow))
+            .chain(self.time_pane.as_ref().map(|time| (time, PaneSide::Time)))
+    }
+
     /// Every pane holding this market's bars, on screen or not. One tape, and
     /// however many charts the layout has ever shown read off it.
     pub fn panes_mut(&mut self) -> impl Iterator<Item = &mut ChartPane> {

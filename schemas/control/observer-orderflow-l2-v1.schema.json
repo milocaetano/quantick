@@ -1,0 +1,193 @@
+{
+  "$defs": {
+    "AvailabilitySnapshot": {
+      "description": "Whether something is there to be read or acted on, and the coded reason\nwhen it is not.\n\nThe reason is a stable identifier, never the sentence an interface shows a\nhuman: a client made to parse that sentence would break the day it is\nreworded, and translating the interface would break every such client at\nonce.",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "available"
+      ],
+      "type": "object"
+    },
+    "BookLevelSnapshot": {
+      "properties": {
+        "price": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "quantity": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        }
+      },
+      "required": [
+        "price",
+        "quantity"
+      ],
+      "type": "object"
+    },
+    "BookSnapshot": {
+      "properties": {
+        "asks": {
+          "description": "Ask levels best-first, ascending price.",
+          "items": {
+            "$ref": "#/$defs/BookLevelSnapshot"
+          },
+          "maxItems": 256,
+          "type": "array"
+        },
+        "asks_truncated": {
+          "type": "boolean"
+        },
+        "best_ask": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BookLevelSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "best_bid": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BookLevelSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Best bid and ask of the *whole* book, even when they sit outside the\nwindow the ladders below were clipped to."
+        },
+        "bids": {
+          "description": "Bid levels best-first, descending price.",
+          "items": {
+            "$ref": "#/$defs/BookLevelSnapshot"
+          },
+          "maxItems": 256,
+          "type": "array"
+        },
+        "bids_truncated": {
+          "type": "boolean"
+        },
+        "price_grouping": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "The bucket the levels were captured at."
+        },
+        "provenance": {
+          "description": "What these levels are.",
+          "type": "string"
+        },
+        "spread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Distance between the two best prices, when both exist."
+        },
+        "status": {
+          "description": "`disabled`, `connecting`, `buffering`, `syncing`, `live`, `error` — the\ncapture state, as a code rather than the badge's prose.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "provenance",
+        "price_grouping",
+        "bids",
+        "asks",
+        "bids_truncated",
+        "asks_truncated"
+      ],
+      "type": "object"
+    },
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "PaneL2Snapshot": {
+      "properties": {
+        "book": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BookSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "engine": {
+          "$ref": "#/$defs/AvailabilitySnapshot"
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "side": {
+          "$ref": "#/$defs/PaneSideDto"
+        }
+      },
+      "required": [
+        "pane_id",
+        "side",
+        "engine"
+      ],
+      "type": "object"
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "TabL2Snapshot": {
+      "properties": {
+        "panes": {
+          "items": {
+            "$ref": "#/$defs/PaneL2Snapshot"
+          },
+          "type": "array"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "tab_id",
+        "panes"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "tabs": {
+      "items": {
+        "$ref": "#/$defs/TabL2Snapshot"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "tabs"
+  ],
+  "title": "L2Snapshot",
+  "type": "object"
+}

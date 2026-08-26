@@ -1,0 +1,182 @@
+{
+  "$defs": {
+    "AvailabilitySnapshot": {
+      "description": "Whether something is there to be read or acted on, and the coded reason\nwhen it is not.\n\nThe reason is a stable identifier, never the sentence an interface shows a\nhuman: a client made to parse that sentence would break the day it is\nreworded, and translating the interface would break every such client at\nonce.",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "available"
+      ],
+      "type": "object"
+    },
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "ReplaySessionSnapshot": {
+      "properties": {
+        "date": {
+          "description": "Session day as `YYYY-MM-DD`, when the file name followed the\nconvention. Absent is honest: the recording did not say.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "elapsed_ms": {
+          "description": "Wall time spent playing, which a seek resets — not the distance\ntravelled through the recording, which is `position_unix_ms`.",
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "milliseconds"
+        },
+        "end_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "file_name": {
+          "description": "The recording's file name only. The absolute path is deliberately not\npublished: it identifies nothing a client needs and would leak the\ntrader's directory layout to every observer.",
+          "type": "string"
+        },
+        "finished": {
+          "type": "boolean"
+        },
+        "played_trades": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "playing": {
+          "type": "boolean"
+        },
+        "position_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "progress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-unit": "ratio"
+        },
+        "rewinds": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "speed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-unit": "playback_multiple"
+        },
+        "start_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "total_trades": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "trace": {
+          "$ref": "#/$defs/ReplayTraceSnapshot"
+        }
+      },
+      "required": [
+        "symbol",
+        "file_name",
+        "playing",
+        "finished",
+        "position_unix_ms",
+        "start_unix_ms",
+        "end_unix_ms",
+        "elapsed_ms",
+        "played_trades",
+        "total_trades",
+        "rewinds",
+        "trace"
+      ],
+      "type": "object"
+    },
+    "ReplayTraceSnapshot": {
+      "description": "What the capture can honestly say about the control trace beside the\nrecording (contract §11): nothing, and where to ask instead.\n\nBoth halves were tried here and both are wrong on this thread. Reading the\nsidecar to decide completeness is unbounded work. Even a bare existence\ncheck is a `stat`, whose cost is the filesystem's and not this process's —\na recording on a network share or a cold path can take milliseconds, and a\ncapture of every scope already measures a p99 near\n`CONTROL_UI_BUDGET_US`. So the capture does no file I/O at all and names\nthe gateway, which loads each recording's trace once and holds it.",
+      "properties": {
+        "file_name": {
+          "description": "The name the sidecar would carry beside the recording, so a client can\nask the gateway about the right file without deriving the convention\nitself.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/AvailabilitySnapshot",
+          "description": "Whether a sidecar exists, and whether every recorded intent carries a\nterminal result — the property that decides if the run is a\ndeterministic fixture. Both are served by the gateway; see the type\ndoc for why a capture answers neither."
+        }
+      },
+      "required": [
+        "state",
+        "file_name"
+      ],
+      "type": "object"
+    },
+    "TabReplaySnapshot": {
+      "properties": {
+        "replaying": {
+          "description": "A tab playing no recording is live; `session` is then absent rather\nthan a zeroed row, so \"not replaying\" cannot be mistaken for \"at the\nstart of a recording\".",
+          "type": "boolean"
+        },
+        "session": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReplaySessionSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "tab_id",
+        "replaying"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "tabs": {
+      "items": {
+        "$ref": "#/$defs/TabReplaySnapshot"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "tabs"
+  ],
+  "title": "ReplaySnapshot",
+  "type": "object"
+}

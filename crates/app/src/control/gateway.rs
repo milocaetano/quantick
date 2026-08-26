@@ -1163,6 +1163,13 @@ impl ControlAccess {
                             now,
                         );
                     }
+                    // One comparison for both analysis scopes: it walks two
+                    // slices per pane and allocates only once it has something
+                    // to say.
+                    if !analysis_matches(tab, &old.panes) {
+                        self.record_analysis_changes(tab, &old.panes, now);
+                        old.panes = pane_analysis_keys(tab);
+                    }
                 }
             }
         }
@@ -1186,6 +1193,235 @@ impl ControlAccess {
             });
         }
         self.semantic_baseline = Some(baseline);
+    }
+
+    /// Journal what changed about one tab's indicators and drawings.
+    ///
+    /// Reached only from a frame where [`analysis_matches`] already answered
+    /// `false`, so the allocation here is paid once per change and never on a
+    /// quiet frame. Identity drives the diff: an indicator is its slot, a
+    /// drawing is its id, and a list that merely reordered emits nothing.
+    ///
+    /// A slot is an address, not an identity — the pane hands it out again
+    /// after a remove — so a slot whose kind changed is reported as the
+    /// detach and the attach it really is, never as one instance mutating.
+    fn record_analysis_changes(
+        &mut self,
+        tab: &crate::tab::Tab,
+        stored: &[PaneAnalysisKey],
+        now: i64,
+    ) {
+        let tab_id = tab.id.to_string();
+        for (pane, side) in analysis_panes(tab) {
+            let was = stored.iter().find(|key| key.pane_id == pane.id);
+            let previous_indicators = was.map(|key| key.indicators.as_slice()).unwrap_or(&[]);
+            let previous_drawings = was.map(|key| key.drawings.as_slice()).unwrap_or(&[]);
+            let side = crate::control::PaneSideDto::from(side);
+            let pane_id = pane.id.to_string();
+
+            let indicators = pane.indicators.all();
+            let drawings = pane.drawings.items();
+
+            for view in indicators {
+                match previous_indicators
+                    .iter()
+                    .find(|key| key.slot == view.slot.0)
+                {
+                    None => self.record_indicator_attached(
+                        &tab_id,
+                        &pane_id,
+                        side,
+                        view.slot.0,
+                        view.kind.as_ref(),
+                        now,
+                    ),
+                    // The pane reused the address for another constructor
+                    // between two frames. Two events, because two instances.
+                    Some(key) if *key.kind != *view.kind => {
+                        self.record_indicator_detached(
+                            &tab_id,
+                            &pane_id,
+                            side,
+                            key.slot,
+                            key.kind.as_ref(),
+                            now,
+                        );
+                        self.record_indicator_attached(
+                            &tab_id,
+                            &pane_id,
+                            side,
+                            view.slot.0,
+                            view.kind.as_ref(),
+                            now,
+                        );
+                    }
+                    Some(key) => {
+                        let failing = view.error.is_some() || view.stale.is_some();
+                        if key.failing != failing {
+                            self.record_observed(
+                                "analysis",
+                                "analysis.indicator.compile_state.changed",
+                                json!({
+                                    "tab_id": tab_id,
+                                    "pane_id": pane_id,
+                                    "pane_side": side,
+                                    "slot_id": view.slot.0.to_string(),
+                                    "kind": view.kind.as_ref(),
+                                    "failing": failing,
+                                }),
+                                now,
+                            );
+                        }
+                    }
+                }
+            }
+            for key in previous_indicators {
+                if !indicators.iter().any(|view| view.slot.0 == key.slot) {
+                    self.record_indicator_detached(
+                        &tab_id,
+                        &pane_id,
+                        side,
+                        key.slot,
+                        key.kind.as_ref(),
+                        now,
+                    );
+                }
+            }
+
+            for drawing in drawings {
+                match previous_drawings.iter().find(|key| key.id == drawing.id.0) {
+                    None => self.record_observed(
+                        "analysis",
+                        "analysis.drawing.created",
+                        json!({
+                            "tab_id": tab_id,
+                            "pane_id": pane_id,
+                            "pane_side": side,
+                            "drawing_id": drawing.id.0.to_string(),
+                            "tool_id": drawing.tool.id(),
+                            "author": author_payload(drawing),
+                        }),
+                        now,
+                    ),
+                    Some(key) if !key.matches(drawing) => self.record_observed(
+                        "analysis",
+                        "analysis.drawing.edited",
+                        json!({
+                            "tab_id": tab_id,
+                            "pane_id": pane_id,
+                            "pane_side": side,
+                            "drawing_id": drawing.id.0.to_string(),
+                            "tool_id": drawing.tool.id(),
+                            "locked": drawing.locked,
+                            "hidden": drawing.hidden,
+                            // Presence, never the text: the journal is held to
+                            // the same rule as the wire.
+                            "user_label_present": drawing.name.is_some(),
+                            "author": author_payload(drawing),
+                        }),
+                        now,
+                    ),
+                    Some(_) => {}
+                }
+            }
+            for key in previous_drawings {
+                if !drawings.iter().any(|drawing| drawing.id.0 == key.id) {
+                    self.record_drawing_removed(&tab_id, &pane_id, side, key.id, now);
+                }
+            }
+        }
+
+        // A pane the layout closed takes its whole arrangement with it. Walked
+        // separately because the loop above only visits panes that still
+        // exist, and a client left holding indicators and marks that are gone
+        // is exactly what this journal is for.
+        for key in stored {
+            if analysis_panes(tab).any(|(pane, _side)| pane.id == key.pane_id) {
+                continue;
+            }
+            let side = crate::control::PaneSideDto::from(key.side);
+            let pane_id = key.pane_id.to_string();
+            for indicator in &key.indicators {
+                self.record_indicator_detached(
+                    &tab_id,
+                    &pane_id,
+                    side,
+                    indicator.slot,
+                    indicator.kind.as_ref(),
+                    now,
+                );
+            }
+            for drawing in &key.drawings {
+                self.record_drawing_removed(&tab_id, &pane_id, side, drawing.id, now);
+            }
+        }
+    }
+
+    fn record_indicator_attached(
+        &mut self,
+        tab_id: &str,
+        pane_id: &str,
+        side: crate::control::PaneSideDto,
+        slot: u64,
+        kind: &str,
+        now: i64,
+    ) {
+        self.record_observed(
+            "analysis",
+            "analysis.indicator.attached",
+            json!({
+                "tab_id": tab_id,
+                "pane_id": pane_id,
+                "pane_side": side,
+                "slot_id": slot.to_string(),
+                "kind": kind,
+            }),
+            now,
+        );
+    }
+
+    fn record_indicator_detached(
+        &mut self,
+        tab_id: &str,
+        pane_id: &str,
+        side: crate::control::PaneSideDto,
+        slot: u64,
+        kind: &str,
+        now: i64,
+    ) {
+        self.record_observed(
+            "analysis",
+            "analysis.indicator.detached",
+            json!({
+                "tab_id": tab_id,
+                "pane_id": pane_id,
+                "pane_side": side,
+                "slot_id": slot.to_string(),
+                "kind": kind,
+            }),
+            now,
+        );
+    }
+
+    fn record_drawing_removed(
+        &mut self,
+        tab_id: &str,
+        pane_id: &str,
+        side: crate::control::PaneSideDto,
+        drawing_id: u64,
+        now: i64,
+    ) {
+        self.record_observed(
+            "analysis",
+            "analysis.drawing.removed",
+            json!({
+                "tab_id": tab_id,
+                "pane_id": pane_id,
+                "pane_side": side,
+                "drawing_id": drawing_id.to_string(),
+            }),
+            now,
+        );
     }
 
     fn record_observed(&mut self, module: &str, kind: &str, payload: Value, now: i64) {
@@ -1848,6 +2084,104 @@ struct TabKey {
     connection: &'static str,
     /// `(playing, finished)` while a replay is linked.
     replay: Option<(bool, bool)>,
+    /// What the trader has placed on each pane. Rebuilt only when it stops
+    /// matching — see [`analysis_matches`].
+    panes: Vec<PaneAnalysisKey>,
+}
+
+/// One pane's indicators and drawings, as the journal compares them.
+///
+/// This is a baseline, not a projection: it holds the least that can tell a
+/// change apart, so the per-frame comparison touches integers and booleans and
+/// allocates nothing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PaneAnalysisKey {
+    pane_id: u64,
+    /// Which half of the split this was. Kept so a pane the layout *closed*
+    /// can still name its side in the events that retire what it held — by
+    /// then there is no pane left to ask.
+    side: crate::pane::PaneSide,
+    indicators: Vec<IndicatorKey>,
+    drawings: Vec<DrawingKey>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct IndicatorKey {
+    slot: u64,
+    kind: std::sync::Arc<str>,
+    /// An evaluation error or a failed hot reload. Either one is what a client
+    /// waiting on a compile is waiting for.
+    failing: bool,
+}
+
+impl IndicatorKey {
+    fn matches(&self, view: &crate::indicators::IndicatorView) -> bool {
+        self.slot == view.slot.0
+            && *self.kind == *view.kind
+            && self.failing == (view.error.is_some() || view.stale.is_some())
+    }
+
+    fn of(view: &crate::indicators::IndicatorView) -> Self {
+        Self {
+            slot: view.slot.0,
+            kind: std::sync::Arc::clone(&view.kind),
+            failing: view.error.is_some() || view.stale.is_some(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DrawingKey {
+    id: u64,
+    locked: bool,
+    hidden: bool,
+    /// Whether the trader gave it a name — never the name, which is their own
+    /// text and does not belong in the journal any more than on the wire.
+    named: bool,
+    /// `(actor kind, client name)` when something other than the trader's hand
+    /// placed it.
+    author: Option<(String, String)>,
+}
+
+impl DrawingKey {
+    fn matches(&self, drawing: &crate::drawings::Drawing) -> bool {
+        self.id == drawing.id.0
+            && self.locked == drawing.locked
+            && self.hidden == drawing.hidden
+            && self.named == drawing.name.is_some()
+            && match (&self.author, &drawing.author) {
+                (None, None) => true,
+                (Some((kind, name)), Some(author)) => {
+                    kind == &author.actor_kind && name == &author.client_name
+                }
+                (None, Some(_)) | (Some(_), None) => false,
+            }
+    }
+
+    fn of(drawing: &crate::drawings::Drawing) -> Self {
+        Self {
+            id: drawing.id.0,
+            locked: drawing.locked,
+            hidden: drawing.hidden,
+            named: drawing.name.is_some(),
+            author: drawing
+                .author
+                .as_ref()
+                .map(|author| (author.actor_kind.clone(), author.client_name.clone())),
+        }
+    }
+}
+
+/// A drawing's author as the journal carries it. Absent is the trader's own
+/// hand; anything else names who acted, under the same rule that labels an
+/// inferred side.
+fn author_payload(drawing: &crate::drawings::Drawing) -> Value {
+    drawing.author.as_ref().map_or(Value::Null, |author| {
+        json!({
+            "actor_kind": author.actor_kind,
+            "client_name": author.client_name,
+        })
+    })
 }
 
 fn tab_key(tab: &crate::tab::Tab) -> TabKey {
@@ -1857,7 +2191,64 @@ fn tab_key(tab: &crate::tab::Tab) -> TabKey {
         symbol: tab.active.1.clone(),
         connection: connection_state(tab.feed_connection),
         replay: replay_key(tab),
+        panes: pane_analysis_keys(tab),
     }
+}
+
+/// The panes of one tab, in the order both analysis scopes publish them.
+///
+/// [`crate::tab::Tab::panes`] and not a local `Vec`: this is walked by
+/// [`analysis_matches`] on every frame, and the version of this comparison
+/// #223's review removed was removed for allocating exactly one vector per
+/// frame. One walk shared with the scopes also keeps the journal's order and
+/// the wire's order from drifting apart.
+fn analysis_panes(
+    tab: &crate::tab::Tab,
+) -> impl Iterator<Item = (&crate::pane::ChartPane, crate::pane::PaneSide)> {
+    tab.panes()
+}
+
+fn pane_analysis_keys(tab: &crate::tab::Tab) -> Vec<PaneAnalysisKey> {
+    analysis_panes(tab)
+        .map(|(pane, side)| PaneAnalysisKey {
+            pane_id: pane.id,
+            side,
+            indicators: pane.indicators.all().iter().map(IndicatorKey::of).collect(),
+            drawings: pane.drawings.items().iter().map(DrawingKey::of).collect(),
+        })
+        .collect()
+}
+
+/// Whether the stored baseline still describes this tab's panes.
+///
+/// Compared in place and allocating nothing: a quiet frame walks two slices
+/// and returns. Only a frame that answers `false` pays for
+/// [`pane_analysis_keys`] and the events below.
+fn analysis_matches(tab: &crate::tab::Tab, stored: &[PaneAnalysisKey]) -> bool {
+    let mut stored = stored.iter();
+    let matched = analysis_panes(tab).all(|(pane, _side)| {
+        let Some(key) = stored.next() else {
+            return false;
+        };
+        {
+            let indicators = pane.indicators.all();
+            let drawings = pane.drawings.items();
+            pane.id == key.pane_id
+                && indicators.len() == key.indicators.len()
+                && drawings.len() == key.drawings.len()
+                && indicators
+                    .iter()
+                    .zip(&key.indicators)
+                    .all(|(view, stored)| stored.matches(view))
+                && drawings
+                    .iter()
+                    .zip(&key.drawings)
+                    .all(|(drawing, stored)| stored.matches(drawing))
+        }
+    });
+    // Every stored pane must have been consumed too: a closed pane leaves the
+    // iterator short, and a tab that lost one has changed.
+    matched && stored.next().is_none()
 }
 
 fn replay_key(tab: &crate::tab::Tab) -> Option<(bool, bool)> {

@@ -50,6 +50,14 @@ const OBSERVER_SCOPES: &[&str] = &[
     "observe.drawings",
     "observe.orderflow",
     "observe.replay",
+    // Asked for and rarely granted: `observe.paper` is not one of the safe
+    // defaults, so the panel starts with it off. Not asking at all would leave
+    // `session.paper` refused even after the trader ticks it, which reads to a
+    // client as the scope being broken rather than withheld.
+    "observe.paper",
+    // Asking is not granting: the trader still ticks it, and without the ask
+    // the scope is refused even after they do.
+    "observe.user_text",
     "observe.health",
     "observe.attention",
     "observe.events",

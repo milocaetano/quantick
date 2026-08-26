@@ -6,6 +6,7 @@
 //! the local gateway workers.
 
 mod actions;
+mod analysis;
 mod annotate;
 pub(crate) mod chart;
 mod contract;
@@ -16,12 +17,14 @@ mod health;
 mod interaction;
 mod journal;
 mod notify;
+mod orderflow;
 pub(crate) use interaction::drawing_band_name;
 mod registry;
 mod scene;
 #[cfg(test)]
 pub(crate) mod schema_catalog;
 mod script;
+mod session;
 mod system;
 mod trace;
 mod types;
@@ -35,6 +38,13 @@ pub(crate) use gateway::RecordedActor;
 pub(crate) use gateway::{ActionOrigin, ControlAccess, MARK_SHORTCUT};
 pub(crate) use notify::AgentPopup;
 pub(crate) use types::PaneSideDto;
+
+/// Where the control trace sits beside a recording. Re-exported for the tests
+/// that check the file the session scope names is the file the gateway writes.
+#[cfg(test)]
+pub(crate) fn replay_trace_path_for(session_path: &std::path::Path) -> std::path::PathBuf {
+    trace::ReplayTraceFile::path_for(session_path)
+}
 
 use registry::{ProjectionRegistry, ProjectionRegistryError};
 
@@ -58,7 +68,10 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     feed::register(&mut registry)?;
     chart::register(&mut registry)?;
     health::register(&mut registry)?;
+    analysis::register(&mut registry)?;
     interaction::register(&mut registry)?;
+    orderflow::register(&mut registry)?;
+    session::register(&mut registry)?;
     scene::register(&mut registry)?;
     Ok(registry)
 }
