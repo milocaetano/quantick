@@ -2838,12 +2838,17 @@ impl QuantickApp {
     /// question there is.
     ///
     /// A named reading rather than an expression inside the toolbar's own
-    /// frame, so the rule can be asserted without painting a toolbar and read
-    /// back by something that is not looking at the screen.
+    /// frame, so the rule can be asserted without painting a toolbar. What
+    /// reads it back without looking at the screen is the semantic scene,
+    /// which takes the same `Tab::layer_toggle_state` this delegates to.
     #[must_use]
+    #[cfg(test)]
     fn heatmap_lamp_on(&self) -> bool {
         // Through the group's one reading, so this named rule and the lamp the
         // toolbar actually paints cannot become two answers to one question.
+        // `#[cfg(test)]` because the toolbar now takes the group's reading
+        // directly: keeping a second production entry point to the same answer
+        // is how the two drift.
         self.active_tab()
             .layer_toggle_state(
                 ChartLayer::Heatmap,
