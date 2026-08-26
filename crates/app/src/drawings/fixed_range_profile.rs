@@ -177,6 +177,33 @@ impl FrvpCacheKey {
             ..*self
         } == *other
     }
+
+    /// Whether `other` is this same fold with **more closed bars on its right**
+    /// — the range unchanged where it starts, grown at the live edge.
+    ///
+    /// This is the case the type's own doc warns about, arriving through the
+    /// one door it left open. A range whose right anchor sits at or past the
+    /// newest candle has its `end_slot` *clamped* to the live edge, so every
+    /// close moves it, [`same_fold`](Self::same_fold) says no, and a fold that
+    /// had finished is thrown away and restarted from the range's first bar —
+    /// on a rolling replay, faster than it can finish.
+    ///
+    /// A right edge that only grew has invalidated nothing already folded: it
+    /// appended. Telling that apart turns a per-close re-fold of the whole
+    /// range into a per-close push of one ladder.
+    #[must_use]
+    pub fn grown_right(&self, other: &Self) -> bool {
+        other.end_slot > self.end_slot
+            && Self {
+                end_slot: other.end_slot,
+                // The forming bar moves as ever, and `include_partial` flips
+                // with it the first time the range's right edge reaches a bar
+                // that has begun forming.
+                partial_snapshot: other.partial_snapshot,
+                include_partial: other.include_partial,
+                ..*self
+            } == *other
+    }
 }
 
 /// The versioned on-disk shape of a saved preset. Coordinates and cache never

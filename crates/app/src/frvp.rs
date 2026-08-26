@@ -111,6 +111,18 @@ impl FoldJob {
             end,
         }
     }
+
+    /// Carry this fold on to a later last slot, keeping every bar already in
+    /// it.
+    ///
+    /// Legal even once the fold has been sealed: `ProfileFold::seal` only
+    /// collapses the pending spreads, and its contract is that collapsing
+    /// early and collapsing late reach the same rows. So a bar closing under a
+    /// range that reaches the live edge costs one more `push_ladder`, not a
+    /// fold of the whole range from its first bar.
+    fn extend_to(&mut self, end: usize) {
+        self.end = end;
+    }
 }
 
 /// Everything one refresh reads. The partial ladder comes in as the pane's
@@ -296,15 +308,44 @@ fn refresh_one(
     // flickering the histogram and the status line on every tick. The forming
     // bar is not in the fold, so a new snapshot costs a re-read and nothing
     // else — and a fold still running simply carries on where it was.
-    if let Some(cache) = payload.cache.as_mut().filter(|c| c.key.same_fold(&key)) {
+    // ...and the same is true of a right edge that only *grew*. A range whose
+    // right anchor sits at or past the newest candle has its `end_slot`
+    // clamped to the live edge, so every close moves it — and treating that as
+    // a new range restarted the fold from the range's first bar on every bar
+    // close, which on a rolling replay is faster than the fold can finish. The
+    // profile then never leaves its part-built state, and what gets painted is
+    // not a faint version of the answer: it is a fully drawn histogram of the
+    // range's *oldest* bars, normalised against its own busiest row, with its
+    // own POC and value area. That is the flicker. A grown right edge appends
+    // bars; it invalidates none, so the fold carries on and takes them.
+    let carry_on = payload
+        .cache
+        .as_ref()
+        .is_some_and(|c| c.key.same_fold(&key) || c.key.grown_right(&key));
+    if let Some(cache) = payload.cache.as_mut().filter(|_| carry_on) {
         let live_edge_moved = cache.key.partial_snapshot != key.partial_snapshot;
+        let grew = key.end_slot > cache.key.end_slot;
         cache.key = key;
         // Presentation state follows the frame either way — the heatmap's
         // boundary moving must never re-fold or re-read anything.
         cache.heat_first_slot = inputs.heat_first_slot;
+        if grew {
+            // The forming bar is never in the fold, so the last *closed* slot
+            // is what the job runs to.
+            let last_closed = if include_partial {
+                key.end_slot.saturating_sub(1)
+            } else {
+                key.end_slot
+            };
+            cache.bars_total = bars_total;
+            if let Some(job) = cache.job.as_mut() {
+                job.extend_to(last_closed);
+                cache.folding = job.next <= job.end;
+            }
+        }
         if cache.folding {
             advance(cache, payload.value_area_pct, inputs);
-        } else if live_edge_moved {
+        } else if live_edge_moved || grew {
             derive(cache, payload.value_area_pct, inputs);
         }
         return cache.folding;
@@ -547,6 +588,115 @@ mod tests {
         }
     }
 
+    /// A bar closing under a range that reaches the live edge must *extend*
+    /// the fold, never restart it.
+    ///
+    /// This is the flicker a trader reported: on a rolling replay the fold was
+    /// thrown away and rebuilt from the range's first bar on every close, far
+    /// faster than a long range can finish, so the drawing spent its life
+    /// painting a fully-drawn histogram of the range's oldest bars — its own
+    /// POC and value area, normalised against its own busiest row — and
+    /// snapping to a different one the next frame.
+    #[test]
+    fn a_bar_closing_extends_a_live_edge_fold_instead_of_restarting_it() {
+        let mut state = state_with_tape();
+        let mut drawings = Drawings::default();
+        // Right anchor past the newest candle: the ordinary "profile up to
+        // now" drag, which clamps `end_slot` to the live edge.
+        place_frvp(&mut drawings, 0.0, 40.0);
+        // One bar of work per pass, so a fold in flight is observable at all.
+        // With the whole fixture folding in a single pass, a restart and an
+        // append reach the same numbers and the test would pass either way —
+        // which is exactly what it did before the budget was tightened.
+        fn tight(state: &ChartState) -> RefreshInputs<'_> {
+            RefreshInputs {
+                budget: 1,
+                ..inputs(state, false)
+            }
+        }
+        for _ in 0..10 {
+            refresh(&mut drawings, &tight(&state));
+        }
+        let settled = cache_of(&drawings);
+        assert!(!settled.folding, "ten passes at one bar each should finish");
+        let folded_before = settled.bars_folded;
+        assert!(folded_before >= 3, "the fixture folds three closed bars");
+
+        // Two more prints close another bar under the range's right edge.
+        state.ingest_live(&trade(7, "105", "1", Side::Buy));
+        state.ingest_live(&trade(8, "106", "1", Side::Sell));
+        refresh(&mut drawings, &tight(&state));
+        let after = cache_of(&drawings);
+
+        assert!(
+            after.bars_folded >= folded_before,
+            "the fold restarted: {} bars folded on the frame after one bar \
+             closed, {folded_before} before",
+            after.bars_folded,
+        );
+        assert!(
+            !after.folding,
+            "an append of one ladder left the fold in flight",
+        );
+    }
+
+    /// The other half of the same rule: a range that does *not* reach the live
+    /// edge is untouched by a close, and a range whose left edge moved is a
+    /// different range and does start again.
+    #[test]
+    fn only_a_grown_right_edge_carries_a_fold_over() {
+        let a = FrvpCacheKey {
+            start_slot: 0,
+            end_slot: 3,
+            group: dec("1"),
+            series_revision: 1,
+            include_partial: true,
+            partial_snapshot: 7,
+            value_area_pct: 70,
+            blocked: false,
+            side_inferred: false,
+            approximate: false,
+            partly_covered: false,
+        };
+
+        let grown = FrvpCacheKey {
+            end_slot: 4,
+            partial_snapshot: 9,
+            ..a
+        };
+        assert!(a.grown_right(&grown), "a later right edge is an append");
+        assert!(!a.same_fold(&grown));
+
+        assert!(
+            !a.grown_right(&FrvpCacheKey { end_slot: 2, ..a }),
+            "a right edge dragged *back* drops bars, so the fold is not reusable",
+        );
+        assert!(
+            !a.grown_right(&FrvpCacheKey {
+                start_slot: 1,
+                end_slot: 4,
+                ..a
+            }),
+            "a moved left edge is a different range",
+        );
+        assert!(
+            !a.grown_right(&FrvpCacheKey {
+                end_slot: 4,
+                group: dec("5"),
+                ..a
+            }),
+            "a regrouped ladder has to be re-folded",
+        );
+        assert!(
+            !a.grown_right(&FrvpCacheKey {
+                end_slot: 4,
+                series_revision: 2,
+                ..a
+            }),
+            "a re-cut series has to be re-folded",
+        );
+        assert!(!a.grown_right(&a), "an unchanged key is not a growth");
+    }
     /// The fold reads an anchor the way the paint writes one: an integer bar
     /// coordinate is a candle's *centre*. A range dragged from one candle's
     /// centre to another's therefore folds both end candles — the rectangle
