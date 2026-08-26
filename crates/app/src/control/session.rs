@@ -82,20 +82,26 @@ pub(crate) struct ReplaySessionSnapshot {
 }
 
 /// What the capture can honestly say about the control trace beside the
-/// recording (contract §11).
+/// recording (contract §11): nothing, and where to ask instead.
+///
+/// Both halves were tried here and both are wrong on this thread. Reading the
+/// sidecar to decide completeness is unbounded work. Even a bare existence
+/// check is a `stat`, whose cost is the filesystem's and not this process's —
+/// a recording on a network share or a cold path can take milliseconds, and a
+/// capture of every scope already measures a p99 near
+/// `CONTROL_UI_BUDGET_US`. So the capture does no file I/O at all and names
+/// the gateway, which loads each recording's trace once and holds it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct ReplayTraceSnapshot {
-    /// A sidecar exists next to the recording. One metadata lookup, which is
-    /// bounded work; the file is not opened.
-    pub present: bool,
-    /// Whether every recorded intent carries a terminal result — the property
-    /// that decides if the run is a deterministic fixture.
-    ///
-    /// Deliberately not answered here. Deciding it means reading and parsing
-    /// the whole sidecar, whose size is unbounded, and a capture runs on the
-    /// UI thread under `CONTROL_UI_BUDGET_US`. A client that needs the verdict
-    /// asks the gateway, which loads each recording's trace once.
-    pub complete: AvailabilitySnapshot,
+    /// Whether a sidecar exists, and whether every recorded intent carries a
+    /// terminal result — the property that decides if the run is a
+    /// deterministic fixture. Both are served by the gateway; see the type
+    /// doc for why a capture answers neither.
+    pub state: AvailabilitySnapshot,
+    /// The name the sidecar would carry beside the recording, so a client can
+    /// ask the gateway about the right file without deriving the convention
+    /// itself.
+    pub file_name: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -356,10 +362,10 @@ fn replay_session_snapshot(link: &crate::feed::replay::ReplayLink) -> ReplaySess
         speed: canonical_f32(status.speed(), RATIO_DECIMAL_PLACES),
         rewinds: WireU64::new(status.rewinds()),
         trace: ReplayTraceSnapshot {
-            present: ReplayTraceFile::path_for(&link.session.path).is_file(),
-            complete: AvailabilitySnapshot::unavailable(
-                "trace_completeness_requires_reading_the_whole_sidecar",
+            state: AvailabilitySnapshot::unavailable(
+                "trace_state_is_served_by_the_gateway_not_by_a_capture",
             ),
+            file_name: file_name(&ReplayTraceFile::path_for(&link.session.path)),
         },
     }
 }

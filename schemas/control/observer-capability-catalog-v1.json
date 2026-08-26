@@ -4833,7 +4833,8 @@
       "module_id": "analysis",
       "required_permissions": [
         "observe",
-        "observe.indicators"
+        "observe.indicators",
+        "observe.user_text"
       ],
       "schema": {
         "$defs": {
@@ -7812,20 +7813,20 @@
             "type": "object"
           },
           "ReplayTraceSnapshot": {
-            "description": "What the capture can honestly say about the control trace beside the\nrecording (contract §11).",
+            "description": "What the capture can honestly say about the control trace beside the\nrecording (contract §11): nothing, and where to ask instead.\n\nBoth halves were tried here and both are wrong on this thread. Reading the\nsidecar to decide completeness is unbounded work. Even a bare existence\ncheck is a `stat`, whose cost is the filesystem's and not this process's —\na recording on a network share or a cold path can take milliseconds, and a\ncapture of every scope already measures a p99 near\n`CONTROL_UI_BUDGET_US`. So the capture does no file I/O at all and names\nthe gateway, which loads each recording's trace once and holds it.",
             "properties": {
-              "complete": {
-                "$ref": "#/$defs/AvailabilitySnapshot",
-                "description": "Whether every recorded intent carries a terminal result — the property\nthat decides if the run is a deterministic fixture.\n\nDeliberately not answered here. Deciding it means reading and parsing\nthe whole sidecar, whose size is unbounded, and a capture runs on the\nUI thread under `CONTROL_UI_BUDGET_US`. A client that needs the verdict\nasks the gateway, which loads each recording's trace once."
+              "file_name": {
+                "description": "The name the sidecar would carry beside the recording, so a client can\nask the gateway about the right file without deriving the convention\nitself.",
+                "type": "string"
               },
-              "present": {
-                "description": "A sidecar exists next to the recording. One metadata lookup, which is\nbounded work; the file is not opened.",
-                "type": "boolean"
+              "state": {
+                "$ref": "#/$defs/AvailabilitySnapshot",
+                "description": "Whether a sidecar exists, and whether every recorded intent carries a\nterminal result — the property that decides if the run is a\ndeterministic fixture. Both are served by the gateway; see the type\ndoc for why a capture answers neither."
               }
             },
             "required": [
-              "present",
-              "complete"
+              "state",
+              "file_name"
             ],
             "type": "object"
           },

@@ -12,8 +12,10 @@
 //! the `script.<name>` kind all come from a script the trader wrote, and they
 //! are how an agent addresses the thing at all. Withholding them would leave
 //! the scope answering "there are three indicators" and nothing more, which is
-//! not the descriptor roadmap 5.1 asked for. The scope is gated behind
-//! `observe.indicators` for exactly this reason.
+//! not the descriptor roadmap 5.1 asked for. Publishing them is therefore
+//! gated on `observe.user_text` as well as `observe.indicators` — the contract
+//! declares that permission for "user-authored labels, notes, and scripts",
+//! keeps it out of the safe defaults, and until now nothing required it.
 //!
 //! *Content* is withheld, and only its presence reported: a drawing's own name
 //! (a name like "the 108k shelf" is a private note, not an address), a
@@ -266,7 +268,13 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         SCHEMA_VERSION,
         "Indicators",
         "Reports each pane's indicators with their declared plots, effective inputs, latest readings and pending failures.",
-        &["observe", "observe.indicators"],
+        // `observe.user_text` as well as `observe.indicators`: a script's
+        // title, its plot titles and its `script.<name>` kind are prose the
+        // trader wrote, and the contract declares that permission for exactly
+        // "user-authored labels, notes, and scripts". It sits outside the safe
+        // defaults, so this scope answers only once the trader grants it
+        // rather than leaking script prose to a default observer.
+        &["observe", "observe.indicators", "observe.user_text"],
         project_indicators,
     )?;
     registry.register_scope(

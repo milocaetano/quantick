@@ -26026,16 +26026,16 @@ plot(close)
         );
         assert_eq!(session["total_trades"], "1");
         assert_eq!(
-            session["trace"]["present"], false,
-            "no action was taken, so no sidecar was written"
+            session["trace"]["state"]["available"], false,
+            "a capture does no file I/O, so it answers nothing about the trace"
         );
         assert_eq!(
-            session["trace"]["complete"]["available"], false,
-            "completeness needs the whole sidecar, which a capture must not read"
+            session["trace"]["state"]["reason"],
+            "trace_state_is_served_by_the_gateway_not_by_a_capture"
         );
         assert_eq!(
-            session["trace"]["complete"]["reason"],
-            "trace_completeness_requires_reading_the_whole_sidecar"
+            session["trace"]["file_name"], "20260316.csv.control-trace.jsonl",
+            "it still names the file the gateway should be asked about"
         );
 
         // A mark writes the sidecar; the next capture sees it present.
@@ -26047,9 +26047,15 @@ plot(close)
             .unwrap()
             .into_serialized()
             .unwrap();
+        // The sidecar now exists on disk, and the capture still declines to
+        // look: the answer costs a `stat` this thread must not spend.
+        assert!(
+            crate::control::replay_trace_path_for(&recording_at(&dir).path).is_file(),
+            "the mark wrote the sidecar"
+        );
         assert_eq!(
-            traced.scopes[&scope].value["tabs"][0]["session"]["trace"]["present"],
-            true
+            traced.scopes[&scope].value["tabs"][0]["session"]["trace"]["state"]["available"],
+            false
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -26163,12 +26169,166 @@ plot(close)
     /// where "best" is the batch with the lowest p99. A noisy neighbour can
     /// only make a batch look slower, never faster, so the best batch is the
     /// honest reading of the capture's own cost.
+    /// A workspace with something in every collection the snapshot scopes walk.
+    ///
+    /// The benchmark below exists to answer "what does a capture cost", and an
+    /// empty workspace cannot answer it: every loop the analysis, order-flow
+    /// and session scopes add runs zero times over `app_with_history` alone —
+    /// no indicators, no drawings, no book ladder, no replay link, no paper
+    /// rows — so a measurement taken there reports the cost of nine empty
+    /// projections and calls it flat. This fills each of them through the path
+    /// the application itself uses, so the number below is the cost of a
+    /// capture over a working chart.
+    fn loaded_observer_workspace(bars: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
+        use quantick_orderbook::{BookCoverage, BookLevel, BookSnapshot, DepthEvent};
+
+        let (mut app, commands) = app_with_history(bars);
+
+        // Indicators: delivered the way the worker delivers them, with a full
+        // committed column so the "latest reading" walk has rows to reach.
+        for index in 0..BENCH_INDICATORS_PER_PANE {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            let slot = pane.indicators.allocate_slot("native.ema");
+            let descriptor = quantick_indicators::IndicatorDescriptor {
+                title: format!("EMA {index}"),
+                short_title: None,
+                overlay: true,
+                plots: vec![quantick_indicators::PlotSpec {
+                    id: quantick_indicators::PlotId::new(0),
+                    title: "EMA".to_owned(),
+                    style: quantick_indicators::PlotStyle::Line,
+                    base_color: quantick_indicators::Rgba8::opaque(1, 2, 3),
+                    width: 1.0,
+                    offset: 0,
+                    marker: None,
+                }],
+                fills: Vec::new(),
+                inputs: vec![quantick_indicators::InputSpec::Int {
+                    name: "len".to_owned(),
+                    title: "Length".to_owned(),
+                    default: 9,
+                    min: Some(1),
+                    max: Some(500),
+                    step: Some(1),
+                    options: Vec::new(),
+                }],
+            };
+            let column = (0..bars).map(|bar| bar as f64).collect::<Vec<_>>();
+            pane.indicators
+                .apply(crate::indicator_worker::IndicatorEvent::rebuilt(
+                    slot,
+                    descriptor,
+                    vec![column],
+                ));
+        }
+
+        // Drawings: placed through the same call the toolrail makes.
+        for index in 0..BENCH_DRAWINGS_PER_PANE {
+            let slot = index % (bars as usize).max(1);
+            let (time, price) = {
+                let pane = &app.active_tab().flow_pane;
+                let Some(bar) = pane.closed_bar(slot) else {
+                    break;
+                };
+                (
+                    pane.slot_open_time(slot),
+                    rust_decimal::prelude::ToPrimitive::to_f64(&bar.close).unwrap_or(0.0),
+                )
+            };
+            let flow = &mut app.active_tab_mut().flow_pane;
+            flow.drawings.place_with(
+                drawing_tool("horizontal-line"),
+                &drawings::DrawingBand::Price,
+                ChartPoint::at_time(slot as f32 + 0.5, price, time),
+                |tool| drawings::NewDrawing {
+                    style: drawings::DrawingStyle::default(),
+                    payload: tool.default_payload(),
+                },
+            );
+        }
+
+        // The book: driven in as a venue snapshot and published, so the L2
+        // scope has a full ladder to render into exact decimal strings.
+        // Priced well above the ladder depth so the bid side never walks a
+        // price down through zero, which the book rightly refuses.
+        const BENCH_MID_PRICE: i64 = 1_000;
+        let level = |offset: i64, side: i64| {
+            BookLevel::new(
+                rust_decimal::Decimal::from(BENCH_MID_PRICE + side * (offset + 1)),
+                rust_decimal::Decimal::from(offset + 1),
+            )
+            .expect("a positive price and quantity is a valid level")
+        };
+        let bids = (0..BENCH_BOOK_LEVELS_PER_SIDE)
+            .map(|offset| level(offset, -1))
+            .collect::<Vec<_>>();
+        let asks = (0..BENCH_BOOK_LEVELS_PER_SIDE)
+            .map(|offset| level(offset, 1))
+            .collect::<Vec<_>>();
+        app.active_tab_mut()
+            .tape_mut()
+            .handle_depth_event(DepthEvent::Snapshot {
+                symbol: "TESTUSDT".to_owned(),
+                generation: 1,
+                observed_at_ms: 1_100,
+                effective_at_ms: 999,
+                price_step: None,
+                snapshot: BookSnapshot::new(
+                    10,
+                    bids,
+                    asks,
+                    BookCoverage::Limited {
+                        levels_per_side: 1_000,
+                    },
+                ),
+            });
+        app.active_tab_mut().tape_mut().flush_for_test();
+
+        // Paper: a closed trade ledger and an open position, through the
+        // simulator's own entry path.
+        let print = |agg_id: u64, price: i64| quantick_engine::Trade {
+            agg_id,
+            timestamp_ms: i64::try_from(agg_id).expect("small ids") * 1_000,
+            price: rust_decimal::Decimal::from(price),
+            quantity: rust_decimal::Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        };
+        {
+            let paper = &mut app.active_tab_mut().paper;
+            paper.seed(&print(0, 100));
+            let mut agg = 1;
+            for round in 0..BENCH_CLOSED_TRADES {
+                paper.market(quantick_engine::Side::Buy);
+                paper.on_trade(&print(agg, 100));
+                agg += 1;
+                paper.close_position();
+                paper.on_trade(&print(agg, 101 + (round % 3) as i64));
+                agg += 1;
+            }
+            // Leave one open, so the position branch is walked too.
+            paper.market(quantick_engine::Side::Buy);
+            paper.on_trade(&print(agg, 100));
+        }
+
+        (app, commands)
+    }
+
+    /// The shape of the loaded benchmark workspace. Chosen to sit at or above
+    /// what a working chart carries, so the measured cost is an upper bound on
+    /// a real one rather than a best case.
+    const BENCH_INDICATORS_PER_PANE: usize = 6;
+    const BENCH_DRAWINGS_PER_PANE: usize = 40;
+    /// The host clips its published ladder to `LADDER_LEVELS_PER_SIDE`, so
+    /// asking for more than that measures the clip, not the wire.
+    const BENCH_BOOK_LEVELS_PER_SIDE: i64 = 128;
+    const BENCH_CLOSED_TRADES: usize = 120;
+
     fn measure_core_capture_us() -> (u64, u64, u64) {
         const WARMUP_CAPTURES: usize = 25;
         const MEASURED_CAPTURES: usize = 500;
         const BATCHES: usize = 3;
 
-        let (app, _commands) = app_with_history(2_000);
+        let (app, _commands) = loaded_observer_workspace(2_000);
         let mut registry = crate::control::standard_registry().unwrap();
         let scopes = registry
             .descriptors()

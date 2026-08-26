@@ -38,6 +38,13 @@ pub(crate) use gateway::{ActionOrigin, ControlAccess, MARK_SHORTCUT};
 pub(crate) use notify::AgentPopup;
 pub(crate) use types::PaneSideDto;
 
+/// Where the control trace sits beside a recording. Re-exported for the tests
+/// that check the file the session scope names is the file the gateway writes.
+#[cfg(test)]
+pub(crate) fn replay_trace_path_for(session_path: &std::path::Path) -> std::path::PathBuf {
+    trace::ReplayTraceFile::path_for(session_path)
+}
+
 use registry::{ProjectionRegistry, ProjectionRegistryError};
 
 /// How many actions this build registers — what the catalog test counts
