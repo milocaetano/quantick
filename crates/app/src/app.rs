@@ -2342,6 +2342,12 @@ impl QuantickApp {
         &self.config
     }
 
+    /// The window's footprint setup — the one a pane falls back to when it
+    /// carries no override of its own.
+    pub(crate) fn control_footprint_config(&self) -> &crate::footprint_config::FootprintConfig {
+        &self.footprint_config
+    }
+
     pub(crate) fn control_timezone(&self) -> TzOffset {
         self.tz
     }
@@ -25554,7 +25560,7 @@ plot(close)
             .descriptors()
             .map(|descriptor| (descriptor.scope_id.clone(), descriptor.schema.clone()))
             .collect::<Vec<_>>();
-        assert_eq!(descriptors.len(), 11, "every registered scope is projected");
+        assert_eq!(descriptors.len(), 16, "every registered scope is projected");
         let scopes = descriptors
             .iter()
             .map(|(scope_id, _)| scope_id.clone())
@@ -25591,6 +25597,60 @@ plot(close)
             feed["tabs"][0]["provenance"]["price"],
             "venue_or_broker_trade"
         );
+    }
+
+    #[test]
+    fn observer_projects_order_flow_layers_and_states_the_absent_engine() {
+        let (app, _commands) = app_with_history(8);
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scopes = [
+            observer_scope("orderflow.tape"),
+            observer_scope("orderflow.footprint"),
+            observer_scope("orderflow.bubbles"),
+            observer_scope("orderflow.heatmap"),
+            observer_scope("orderflow.l2"),
+        ];
+        let capture = registry
+            .capture(&app, &observer_instance(), &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+
+        // The footprint scope answers for every pane, engine or not: the layer
+        // and its setup are chart state, not book state.
+        let footprint = &capture.scopes[&scopes[1]].value["tabs"][0]["panes"][0];
+        assert_eq!(footprint["visible"], false, "the layer is off by default");
+        assert_eq!(
+            footprint["overridden"], false,
+            "a fresh pane follows the window's setup"
+        );
+        assert!(
+            footprint["setup"]["imbalance_ratio"].is_string(),
+            "the ratio crosses as an exact decimal string"
+        );
+        assert!(footprint["setup"]["style"].is_string());
+
+        // The four engine-backed scopes state the absence rather than
+        // reporting an empty book, which would read as a silent venue.
+        for scope in [&scopes[0], &scopes[2], &scopes[3], &scopes[4]] {
+            let pane = &capture.scopes[scope].value["tabs"][0]["panes"][0];
+            let available = pane["engine"]["available"].as_bool().expect("declared");
+            if available {
+                continue;
+            }
+            assert_eq!(
+                pane["engine"]["reason"], "order_flow_engine_not_attached_to_this_pane",
+                "{scope} names why it cannot answer"
+            );
+            for payload in ["tape", "bubbles", "heatmap", "book"] {
+                if let Some(value) = pane.get(payload) {
+                    assert!(
+                        value.is_null(),
+                        "{scope} publishes no {payload} without an engine"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -27867,7 +27927,7 @@ plot(close)
         // Every published wire type has a committed document, so a breaking
         // change shows up as a diff in review (contract §6). The count is
         // here to make an accidental *removal* visible too.
-        assert_eq!(documents.len(), 35);
+        assert_eq!(documents.len(), 40);
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("schemas/control");

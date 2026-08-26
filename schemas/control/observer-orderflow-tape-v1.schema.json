@@ -1,0 +1,183 @@
+{
+  "$defs": {
+    "AvailabilitySnapshot": {
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "available"
+      ],
+      "type": "object"
+    },
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "LaneWindowSnapshot": {
+      "description": "How wide the live lane's window is, said the way the setting says it. An\n`auto` window follows the recent bars' typical duration, so publishing one\nresolved number would report a measurement as a setting.",
+      "properties": {
+        "fixed_ms": {
+          "description": "Present for `fixed`: the exchange milliseconds shown in the band.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "milliseconds"
+        },
+        "mode": {
+          "description": "`auto` or `fixed`.",
+          "type": "string"
+        },
+        "zoom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present for `auto`: `1.0` fits about one bar's worth of market time.",
+          "x-unit": "ratio"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "PaneTapeSnapshot": {
+      "properties": {
+        "engine": {
+          "$ref": "#/$defs/AvailabilitySnapshot"
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "side": {
+          "$ref": "#/$defs/PaneSideDto"
+        },
+        "tape": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TapeStateSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "pane_id",
+        "side",
+        "engine"
+      ],
+      "type": "object"
+    },
+    "TabTapeSnapshot": {
+      "properties": {
+        "panes": {
+          "items": {
+            "$ref": "#/$defs/PaneTapeSnapshot"
+          },
+          "type": "array"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "tab_id",
+        "panes"
+      ],
+      "type": "object"
+    },
+    "TapeStateSnapshot": {
+      "properties": {
+        "age_ms": {
+          "description": "How far behind the newest print the tape is running. Absent when the\ntape has nothing to be behind.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "milliseconds"
+        },
+        "aggression_provenance": {
+          "description": "Where the aggressor side comes from on this tape.",
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "last_event_unix_ms": {
+          "description": "Venue time of the newest print the order-flow engine has seen.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "live_end_unix_ms": {
+          "description": "The right edge of the live lane, in venue time.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "live_lane_enabled": {
+          "description": "The live lane is drawn, and how its window is chosen.",
+          "type": "boolean"
+        },
+        "live_lane_window": {
+          "$ref": "#/$defs/LaneWindowSnapshot"
+        }
+      },
+      "required": [
+        "enabled",
+        "aggression_provenance",
+        "live_lane_enabled",
+        "live_lane_window"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "tabs": {
+      "items": {
+        "$ref": "#/$defs/TabTapeSnapshot"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "tabs"
+  ],
+  "title": "TapeSnapshot",
+  "type": "object"
+}

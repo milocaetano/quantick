@@ -17,6 +17,7 @@ mod health;
 mod interaction;
 mod journal;
 mod notify;
+mod orderflow;
 pub(crate) use interaction::drawing_band_name;
 mod registry;
 #[cfg(test)]
@@ -61,6 +62,7 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     health::register(&mut registry)?;
     analysis::register(&mut registry)?;
     interaction::register(&mut registry)?;
+    orderflow::register(&mut registry)?;
     session::register(&mut registry)?;
     Ok(registry)
 }

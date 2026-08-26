@@ -37,6 +37,10 @@ pub const CONTROL_MAX_SNAPSHOT_SCOPES: usize = 32;
 /// Indicators one pane publishes in a capture. The chart itself caps visible
 /// indicator panes far below this; the limit bounds a hostile or scripted
 /// pane, not an arrangement a trader would build.
+/// Book levels one side of one pane publishes in a capture. The published
+/// ladder is already clipped to the window the chart drew; this bounds a
+/// venue that quotes far deeper than any chart shows.
+pub const CONTROL_SNAPSHOT_MAX_BOOK_LEVELS_PER_SIDE: usize = 256;
 pub const CONTROL_SNAPSHOT_MAX_INDICATORS_PER_PANE: usize = 64;
 /// Drawings one pane publishes in a capture. A working chart carries tens of
 /// marks; a page of this size is a whole session's annotation.

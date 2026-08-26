@@ -4365,6 +4365,11 @@
       "title": "Notify"
     },
     {
+      "description": "The book, the tape, and the layers drawn over them.",
+      "id": "orderflow",
+      "title": "Order flow"
+    },
+    {
       "description": "Recorded-session playback and the paper-trading ledger.",
       "id": "session",
       "title": "Session"
@@ -6532,6 +6537,844 @@
       },
       "schema_version": 1,
       "title": "Current selection"
+    },
+    {
+      "description": "Reports whether aggression bubbles are drawn over the chart and the lane, and what the display floor keeps off the canvas.",
+      "id": "orderflow.bubbles",
+      "module_id": "orderflow",
+      "required_permissions": [
+        "observe",
+        "observe.orderflow"
+      ],
+      "schema": {
+        "$defs": {
+          "AvailabilitySnapshot": {
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "available"
+            ],
+            "type": "object"
+          },
+          "BubblesStateSnapshot": {
+            "properties": {
+              "aggression_provenance": {
+                "description": "Where the aggression these bubbles draw comes from.",
+                "type": "string"
+              },
+              "enabled": {
+                "description": "Aggression bubbles are drawn over the chart.",
+                "type": "boolean"
+              },
+              "floored_quantity": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "The exact quantity the trader's own display floor keeps off the canvas.\nFloored, not dropped: it is still in the totals."
+              },
+              "lane_enabled": {
+                "description": "And over the live lane, which is a separate switch.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "enabled",
+              "lane_enabled",
+              "aggression_provenance",
+              "floored_quantity"
+            ],
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "PaneBubblesSnapshot": {
+            "properties": {
+              "bubbles": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BubblesStateSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "engine": {
+                "$ref": "#/$defs/AvailabilitySnapshot"
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "side": {
+                "$ref": "#/$defs/PaneSideDto"
+              }
+            },
+            "required": [
+              "pane_id",
+              "side",
+              "engine"
+            ],
+            "type": "object"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "TabBubblesSnapshot": {
+            "properties": {
+              "panes": {
+                "items": {
+                  "$ref": "#/$defs/PaneBubblesSnapshot"
+                },
+                "type": "array"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "panes"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tabs": {
+            "items": {
+              "$ref": "#/$defs/TabBubblesSnapshot"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tabs"
+        ],
+        "title": "BubblesSnapshot",
+        "type": "object"
+      },
+      "schema_version": 1,
+      "title": "Aggression bubbles"
+    },
+    {
+      "description": "Reports whether the candle footprint layer is drawn and the setup it is drawn with.",
+      "id": "orderflow.footprint",
+      "module_id": "orderflow",
+      "required_permissions": [
+        "observe",
+        "observe.chart",
+        "observe.orderflow"
+      ],
+      "schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "FootprintSetupSnapshot": {
+            "properties": {
+              "imbalance_minimum_quantity": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Quantity a level must reach before the ratio is applied at all, so a\none-lot against nothing is not called an imbalance."
+              },
+              "imbalance_ratio": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "A level is imbalanced when one side exceeds the diagonal other side by\nthis factor."
+              },
+              "show_delta_totals": {
+                "type": "boolean"
+              },
+              "show_numbers": {
+                "type": "boolean"
+              },
+              "show_point_of_control": {
+                "type": "boolean"
+              },
+              "stacked_count": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Consecutive imbalanced levels that make a stacked zone."
+              },
+              "style": {
+                "description": "`bid_ask`, `delta`, `profile` or `auto` — how each ladder is read.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "style",
+              "imbalance_ratio",
+              "stacked_count",
+              "show_point_of_control",
+              "show_numbers",
+              "show_delta_totals"
+            ],
+            "type": "object"
+          },
+          "PaneFootprintSnapshot": {
+            "properties": {
+              "overridden": {
+                "description": "True when this chart carries its own footprint setup rather than the\nwindow's shared one.",
+                "type": "boolean"
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "setup": {
+                "$ref": "#/$defs/FootprintSetupSnapshot"
+              },
+              "side": {
+                "$ref": "#/$defs/PaneSideDto"
+              },
+              "visible": {
+                "description": "The candle footprint layer is drawn on this chart.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "pane_id",
+              "side",
+              "visible",
+              "overridden",
+              "setup"
+            ],
+            "type": "object"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "TabFootprintSnapshot": {
+            "properties": {
+              "panes": {
+                "items": {
+                  "$ref": "#/$defs/PaneFootprintSnapshot"
+                },
+                "type": "array"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "panes"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tabs": {
+            "items": {
+              "$ref": "#/$defs/TabFootprintSnapshot"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tabs"
+        ],
+        "title": "FootprintSnapshot",
+        "type": "object"
+      },
+      "schema_version": 1,
+      "title": "Footprint"
+    },
+    {
+      "description": "Reports whether depth heat is drawn, at which capture and display grouping, and with which retention.",
+      "id": "orderflow.heatmap",
+      "module_id": "orderflow",
+      "required_permissions": [
+        "observe",
+        "observe.orderflow"
+      ],
+      "schema": {
+        "$defs": {
+          "AvailabilitySnapshot": {
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "available"
+            ],
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "HeatmapStateSnapshot": {
+            "properties": {
+              "capture_price_grouping": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "The bucket the engine is capturing at. The auto-base logic can move it\nwith no user action, so it is mirrored rather than assumed."
+              },
+              "display_grouping": {
+                "description": "How the captured buckets are merged for display: `native` or a\nmultiple of the capture bucket.",
+                "type": "string"
+              },
+              "gamma": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-unit": "ratio"
+              },
+              "lane_visible": {
+                "description": "And over the live lane, which is a separate switch.",
+                "type": "boolean"
+              },
+              "opacity": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-unit": "ratio"
+              },
+              "retention_ms": {
+                "description": "How long a resting level stays on the canvas after it leaves the book.",
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "milliseconds"
+              },
+              "show_aggressions": {
+                "type": "boolean"
+              },
+              "visible": {
+                "description": "Depth heat is drawn over the chart.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "visible",
+              "lane_visible",
+              "retention_ms",
+              "capture_price_grouping",
+              "display_grouping",
+              "show_aggressions"
+            ],
+            "type": "object"
+          },
+          "PaneHeatmapSnapshot": {
+            "properties": {
+              "engine": {
+                "$ref": "#/$defs/AvailabilitySnapshot"
+              },
+              "heatmap": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/HeatmapStateSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "side": {
+                "$ref": "#/$defs/PaneSideDto"
+              }
+            },
+            "required": [
+              "pane_id",
+              "side",
+              "engine"
+            ],
+            "type": "object"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "TabHeatmapSnapshot": {
+            "properties": {
+              "panes": {
+                "items": {
+                  "$ref": "#/$defs/PaneHeatmapSnapshot"
+                },
+                "type": "array"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "panes"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tabs": {
+            "items": {
+              "$ref": "#/$defs/TabHeatmapSnapshot"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tabs"
+        ],
+        "title": "HeatmapSnapshot",
+        "type": "object"
+      },
+      "schema_version": 1,
+      "title": "Depth heatmap"
+    },
+    {
+      "description": "Reports the published book around the spread: best bid and ask, the clipped ladders, and the capture state.",
+      "id": "orderflow.l2",
+      "module_id": "orderflow",
+      "required_permissions": [
+        "observe",
+        "observe.market",
+        "observe.orderflow"
+      ],
+      "schema": {
+        "$defs": {
+          "AvailabilitySnapshot": {
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "available"
+            ],
+            "type": "object"
+          },
+          "BookLevelSnapshot": {
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "quantity": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "price",
+              "quantity"
+            ],
+            "type": "object"
+          },
+          "BookSnapshot": {
+            "properties": {
+              "asks": {
+                "description": "Ask levels best-first, ascending price.",
+                "items": {
+                  "$ref": "#/$defs/BookLevelSnapshot"
+                },
+                "maxItems": 256,
+                "type": "array"
+              },
+              "asks_truncated": {
+                "type": "boolean"
+              },
+              "best_ask": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BookLevelSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "best_bid": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BookLevelSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Best bid and ask of the *whole* book, even when they sit outside the\nwindow the ladders below were clipped to."
+              },
+              "bids": {
+                "description": "Bid levels best-first, descending price.",
+                "items": {
+                  "$ref": "#/$defs/BookLevelSnapshot"
+                },
+                "maxItems": 256,
+                "type": "array"
+              },
+              "bids_truncated": {
+                "type": "boolean"
+              },
+              "price_grouping": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "The bucket the levels were captured at."
+              },
+              "provenance": {
+                "description": "What these levels are.",
+                "type": "string"
+              },
+              "spread": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Distance between the two best prices, when both exist."
+              },
+              "status": {
+                "description": "`disabled`, `connecting`, `buffering`, `syncing`, `live`, `error` — the\ncapture state, as a code rather than the badge's prose.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "provenance",
+              "price_grouping",
+              "bids",
+              "asks",
+              "bids_truncated",
+              "asks_truncated"
+            ],
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "PaneL2Snapshot": {
+            "properties": {
+              "book": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BookSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "engine": {
+                "$ref": "#/$defs/AvailabilitySnapshot"
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "side": {
+                "$ref": "#/$defs/PaneSideDto"
+              }
+            },
+            "required": [
+              "pane_id",
+              "side",
+              "engine"
+            ],
+            "type": "object"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "TabL2Snapshot": {
+            "properties": {
+              "panes": {
+                "items": {
+                  "$ref": "#/$defs/PaneL2Snapshot"
+                },
+                "type": "array"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "panes"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tabs": {
+            "items": {
+              "$ref": "#/$defs/TabL2Snapshot"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tabs"
+        ],
+        "title": "L2Snapshot",
+        "type": "object"
+      },
+      "schema_version": 1,
+      "title": "Order book"
+    },
+    {
+      "description": "Reports how current each pane's tape is, where its live lane ends, and where its aggressor side comes from.",
+      "id": "orderflow.tape",
+      "module_id": "orderflow",
+      "required_permissions": [
+        "observe",
+        "observe.orderflow"
+      ],
+      "schema": {
+        "$defs": {
+          "AvailabilitySnapshot": {
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "available"
+            ],
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "LaneWindowSnapshot": {
+            "description": "How wide the live lane's window is, said the way the setting says it. An\n`auto` window follows the recent bars' typical duration, so publishing one\nresolved number would report a measurement as a setting.",
+            "properties": {
+              "fixed_ms": {
+                "description": "Present for `fixed`: the exchange milliseconds shown in the band.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "milliseconds"
+              },
+              "mode": {
+                "description": "`auto` or `fixed`.",
+                "type": "string"
+              },
+              "zoom": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Present for `auto`: `1.0` fits about one bar's worth of market time.",
+                "x-unit": "ratio"
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "type": "object"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "PaneTapeSnapshot": {
+            "properties": {
+              "engine": {
+                "$ref": "#/$defs/AvailabilitySnapshot"
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "side": {
+                "$ref": "#/$defs/PaneSideDto"
+              },
+              "tape": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TapeStateSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "pane_id",
+              "side",
+              "engine"
+            ],
+            "type": "object"
+          },
+          "TabTapeSnapshot": {
+            "properties": {
+              "panes": {
+                "items": {
+                  "$ref": "#/$defs/PaneTapeSnapshot"
+                },
+                "type": "array"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "panes"
+            ],
+            "type": "object"
+          },
+          "TapeStateSnapshot": {
+            "properties": {
+              "age_ms": {
+                "description": "How far behind the newest print the tape is running. Absent when the\ntape has nothing to be behind.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "milliseconds"
+              },
+              "aggression_provenance": {
+                "description": "Where the aggressor side comes from on this tape.",
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "last_event_unix_ms": {
+                "description": "Venue time of the newest print the order-flow engine has seen.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "live_end_unix_ms": {
+                "description": "The right edge of the live lane, in venue time.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "live_lane_enabled": {
+                "description": "The live lane is drawn, and how its window is chosen.",
+                "type": "boolean"
+              },
+              "live_lane_window": {
+                "$ref": "#/$defs/LaneWindowSnapshot"
+              }
+            },
+            "required": [
+              "enabled",
+              "aggression_provenance",
+              "live_lane_enabled",
+              "live_lane_window"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tabs": {
+            "items": {
+              "$ref": "#/$defs/TabTapeSnapshot"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tabs"
+        ],
+        "title": "TapeSnapshot",
+        "type": "object"
+      },
+      "schema_version": 1,
+      "title": "Tape"
     },
     {
       "description": "Reports the simulated position, the working orders and the closed-trade ledger, with its provenance declared.",

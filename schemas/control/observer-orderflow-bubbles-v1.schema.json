@@ -1,0 +1,124 @@
+{
+  "$defs": {
+    "AvailabilitySnapshot": {
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "available"
+      ],
+      "type": "object"
+    },
+    "BubblesStateSnapshot": {
+      "properties": {
+        "aggression_provenance": {
+          "description": "Where the aggression these bubbles draw comes from.",
+          "type": "string"
+        },
+        "enabled": {
+          "description": "Aggression bubbles are drawn over the chart.",
+          "type": "boolean"
+        },
+        "floored_quantity": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "The exact quantity the trader's own display floor keeps off the canvas.\nFloored, not dropped: it is still in the totals."
+        },
+        "lane_enabled": {
+          "description": "And over the live lane, which is a separate switch.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled",
+        "lane_enabled",
+        "aggression_provenance",
+        "floored_quantity"
+      ],
+      "type": "object"
+    },
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "PaneBubblesSnapshot": {
+      "properties": {
+        "bubbles": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BubblesStateSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "engine": {
+          "$ref": "#/$defs/AvailabilitySnapshot"
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "side": {
+          "$ref": "#/$defs/PaneSideDto"
+        }
+      },
+      "required": [
+        "pane_id",
+        "side",
+        "engine"
+      ],
+      "type": "object"
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "TabBubblesSnapshot": {
+      "properties": {
+        "panes": {
+          "items": {
+            "$ref": "#/$defs/PaneBubblesSnapshot"
+          },
+          "type": "array"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "tab_id",
+        "panes"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "tabs": {
+      "items": {
+        "$ref": "#/$defs/TabBubblesSnapshot"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "tabs"
+  ],
+  "title": "BubblesSnapshot",
+  "type": "object"
+}
