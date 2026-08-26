@@ -12455,6 +12455,18 @@ plot(close)
         evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
         app.active_tab_mut().drain_feed();
         assert_eq!(app.active_tab().flow_pane.state.bars().len() as u64, count);
+        // Let the tape's price grid land before any caller takes a baseline.
+        //
+        // These prints step by a tenth, so the grid names 0.1 partway through
+        // the backfill and the book worker re-sizes the capture bucket for it —
+        // on its own thread, so *which* frame that lands on is a race. A test
+        // that reads some state, runs a frame and expects it unchanged then
+        // passes or fails on scheduling, which one did, on CI only. Settling it
+        // in the fixture fixes every test built on it rather than each of them
+        // in turn, and it settles the app rather than weakening an assertion.
+        if let Some(orderflow) = app.active_tab_mut().flow_pane.orderflow.as_mut() {
+            orderflow.flush_for_test();
+        }
         (app, cmd_rx)
     }
 
