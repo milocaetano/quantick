@@ -187,6 +187,32 @@ mod tests {
             "exactly one reply ends the request"
         );
     }
+    /// Reaching further back is the same plan with a different right-hand
+    /// edge — which is the whole reason `FetchOhlcv::before_ms` needed no new
+    /// planning code. A *load older* passes the millisecond before the oldest
+    /// bucket it holds, so the two runs must meet exactly: the newest window
+    /// of the older plan ends there, and nothing it covers was already drawn.
+    #[test]
+    fn a_plan_anchored_before_held_history_meets_it_without_overlapping() {
+        let held_oldest = 1_000_000_000_i64;
+        let span = 7 * 24 * 60 * 60 * 1_000;
+        let older = plan(held_oldest - 1, span, Some(24 * 60 * 60 * 1_000));
+
+        assert_eq!(
+            older.first().expect("a plan is never empty").to_ms,
+            held_oldest - 1,
+            "the newest window stops one millisecond short of what is held"
+        );
+        assert_eq!(
+            older.last().expect("a plan is never empty").from_ms,
+            held_oldest - 1 - span,
+            "and the oldest reaches a full span further back"
+        );
+        assert!(
+            older.iter().all(|window| window.to_ms < held_oldest),
+            "no window claims a bucket already on screen"
+        );
+    }
 
     #[test]
     fn the_windows_cover_the_whole_span_without_overlapping() {

@@ -872,6 +872,37 @@ mod tests {
         );
     }
 
+    /// "Load older" on a recording reaches further back into the same context
+    /// file. Nothing in the run-up is a venue call, so this is purely about
+    /// where the window is placed: the first request takes the span ending at
+    /// the recording's first print, and the second takes the span ending just
+    /// before what that returned — meeting it exactly, never overlapping it.
+    #[test]
+    fn asking_for_older_context_reaches_past_the_span_already_answered() {
+        let session = session_with_context(4, 90);
+        let first_print = session.start_ms();
+        let context = session.context.clone();
+        let span = 30 * 60_000;
+
+        let newest = match context_reply(context.as_ref(), first_print, span, None) {
+            FeedEvent::OhlcvHistory { bars, .. } => bars,
+            _ => panic!("a candle request is answered with candles"),
+        };
+        assert_eq!(newest.len(), 30, "the span ending at the first print");
+        let oldest_held = newest.first().expect("30 bars").open_time;
+
+        let older = match context_reply(context.as_ref(), first_print, span, Some(oldest_held - 1))
+        {
+            FeedEvent::OhlcvHistory { bars, .. } => bars,
+            _ => panic!("a candle request is answered with candles"),
+        };
+        assert_eq!(older.len(), 30, "another span of the run-up");
+        assert!(
+            older.iter().all(|bar| bar.open_time < oldest_held),
+            "and every bar of it is older than what was already held"
+        );
+    }
+
     /// Drain events until `want` trades have arrived or the deadline passes.
     fn collect(handle: &mut FeedHandle, want: usize) -> Vec<Trade> {
         let deadline = Instant::now() + Duration::from_secs(5);
