@@ -4462,6 +4462,7 @@ impl QuantickApp {
                 symbol: tab.symbol.clone(),
                 layout: tab.layout.into(),
                 split_fraction: Some(tab.split_fraction),
+                context_collapsed: tab.context_collapsed,
                 focus: Some(tab.focused_side().into()),
                 flow_bars: tab.flow_pane.state.spec().to_config_string(),
                 // Only a pane that exists has an interval worth recording; a
@@ -4604,6 +4605,7 @@ impl QuantickApp {
             self.tabs[target].restore_canvas(
                 CanvasLayout::from(saved.layout),
                 saved.split_fraction,
+                saved.context_collapsed,
                 focus,
                 time_interval,
                 LegendFold {
@@ -5371,6 +5373,7 @@ impl QuantickApp {
             self.tabs[opened].restore_canvas(
                 CanvasLayout::from(saved.layout),
                 saved.split_fraction,
+                saved.context_collapsed,
                 saved.focus.map(Into::into),
                 time_interval,
                 LegendFold {
@@ -11683,6 +11686,7 @@ mod tests {
                     symbol: "TESTUSDT".to_owned(),
                     layout: crate::config::DeclaredLayout::Flow,
                     split_fraction: None,
+                    context_collapsed: false,
                     focus: None,
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
@@ -21876,6 +21880,7 @@ crosshair = false
                 symbol: "TESTUSDT".to_owned(),
                 layout: crate::config::DeclaredLayout::TimeAndFlow,
                 split_fraction: Some(0.4),
+                context_collapsed: false,
                 focus: Some(ui_state::SavedFocus::Flow),
                 flow_bars: "dollar:250000".to_owned(),
                 time_bars: Some("time:5m".to_owned()),
@@ -21965,6 +21970,7 @@ crosshair = false
                 symbol: "TESTUSDT".to_owned(),
                 layout: crate::config::DeclaredLayout::TimeAndFlow,
                 split_fraction: Some(0.5),
+                context_collapsed: false,
                 focus: Some(ui_state::SavedFocus::Flow),
                 flow_bars: "tick:50".to_owned(),
                 time_bars: Some("time:1m".to_owned()),
@@ -22010,6 +22016,7 @@ crosshair = false
                 symbol: "TESTUSDT".to_owned(),
                 layout: crate::config::DeclaredLayout::Flow,
                 split_fraction: None,
+                context_collapsed: false,
                 focus: None,
                 flow_bars: "tick:377".to_owned(),
                 time_bars: None,

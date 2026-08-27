@@ -2071,10 +2071,12 @@ impl Tab {
         &mut self,
         layout: CanvasLayout,
         split_fraction: Option<f32>,
+        context_collapsed: bool,
         focus: Option<PaneSide>,
         time_interval_ms: Option<i64>,
         legends: LegendFold,
     ) {
+        self.context_collapsed = context_collapsed;
         if let Some(ms) = time_interval_ms {
             self.time_pane_opening_interval_ms = ms;
         }

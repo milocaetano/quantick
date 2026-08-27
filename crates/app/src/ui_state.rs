@@ -190,9 +190,17 @@ pub struct SavedTab {
     pub symbol: String,
     /// Which charts the canvas showed.
     pub layout: DeclaredLayout,
-    /// The time pane's share of the canvas width.
+    /// The context column's share of the canvas width.
     #[serde(default)]
     pub split_fraction: Option<f32>,
+    /// Whether the context column was collapsed to its rail.
+    ///
+    /// Additive with a default, per this module's own migration policy: a
+    /// workspace written before the rail existed is a workspace whose column
+    /// was open, not an unreadable one. The width it springs back to is
+    /// `split_fraction`, which such a file already carries.
+    #[serde(default)]
+    pub context_collapsed: bool,
     /// The pane the chrome spoke for.
     #[serde(default)]
     pub focus: Option<SavedFocus>,
@@ -940,6 +948,7 @@ mod tests {
                     symbol: "BTCUSDT".to_owned(),
                     layout: DeclaredLayout::TimeAndFlow,
                     split_fraction: Some(0.5),
+                    context_collapsed: false,
                     focus: Some(SavedFocus::Flow),
                     flow_bars: "tick:50".to_owned(),
                     time_bars: Some("time:1m".to_owned()),
@@ -951,6 +960,7 @@ mod tests {
                     symbol: "ETHUSDT".to_owned(),
                     layout: DeclaredLayout::Flow,
                     split_fraction: None,
+                    context_collapsed: false,
                     focus: None,
                     flow_bars: "dollar:500000".to_owned(),
                     time_bars: None,
@@ -1275,6 +1285,7 @@ mod tests {
             symbol: "BTCUSDT".to_owned(),
             layout: DeclaredLayout::Flow,
             split_fraction: None,
+            context_collapsed: false,
             focus: None,
             flow_bars: "tick:50".to_owned(),
             time_bars: None,
@@ -1286,6 +1297,7 @@ mod tests {
             symbol: "A-SYMBOL-THE-VENUE-DELISTED".to_owned(),
             layout: DeclaredLayout::Flow,
             split_fraction: None,
+            context_collapsed: false,
             focus: None,
             flow_bars: "tick:50".to_owned(),
             time_bars: None,
@@ -1418,6 +1430,7 @@ mod tests {
                     symbol: "BTCUSDT".to_owned(),
                     layout: DeclaredLayout::Flow,
                     split_fraction: None,
+                    context_collapsed: false,
                     focus: None,
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
@@ -1429,6 +1442,7 @@ mod tests {
                     symbol: "ETHUSDT".to_owned(),
                     layout: DeclaredLayout::Flow,
                     split_fraction: None,
+                    context_collapsed: false,
                     focus: None,
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
@@ -1459,6 +1473,7 @@ mod tests {
                 symbol: "BTCUSDT".to_owned(),
                 layout: DeclaredLayout::Flow,
                 split_fraction: None,
+                context_collapsed: false,
                 focus: None,
                 flow_bars: "tick:50".to_owned(),
                 time_bars: None,
@@ -1528,5 +1543,122 @@ mod tests {
         assert!(save(&path, &sample()));
         assert!(forget(&path));
         assert!(load(&path).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    /// A workspace written before the canvas could stack context charts.
+    ///
+    /// Checked in as text rather than built from today's structs, which is the
+    /// whole point: a fixture built from `SavedTab` would gain every new field
+    /// the moment one is added, and would go on passing while a real file from
+    /// last release stopped opening. This is what a trader's own
+    /// `ui-state.toml` looked like, keys and all.
+    const V1_WORKSPACE: &str = r#"
+version = 1
+active_tab = 0
+timezone_offset_minutes = -180
+save_on_exit = true
+
+[[tabs]]
+feed = "binance"
+symbol = "BTCUSDT"
+layout = "time+flow"
+split_fraction = 0.35
+focus = "time"
+flow_bars = "tick:50"
+time_bars = "time:60000"
+"#;
+
+    /// The migration guarantee: an old file opens, and every field the canvas
+    /// has learned since defaults to what that file meant.
+    #[test]
+    fn a_workspace_with_no_context_keys_still_opens() {
+        let workspace: Workspace =
+            toml::from_str(V1_WORKSPACE).expect("a v1 workspace must still parse");
+        assert_eq!(workspace.version, FORMAT_VERSION, "the format is still 1");
+        assert_eq!(workspace.tabs.len(), 1);
+
+        let tab = &workspace.tabs[0];
+        assert_eq!(tab.feed, "binance");
+        assert_eq!(tab.symbol, "BTCUSDT");
+        assert_eq!(
+            tab.layout,
+            DeclaredLayout::TimeAndFlow,
+            "the layout it was saved with"
+        );
+        assert_eq!(tab.split_fraction, Some(0.35));
+        assert_eq!(
+            tab.focus,
+            Some(SavedFocus::Time),
+            "the pane the chrome spoke for"
+        );
+        assert_eq!(tab.flow_bars, "tick:50");
+        assert_eq!(tab.time_bars.as_deref(), Some("time:60000"));
+
+        // The field the rail added. A file written before it existed is a
+        // workspace whose column was open — not an unreadable one, and not one
+        // that opens with its charts put away.
+        assert!(
+            !tab.context_collapsed,
+            "an old workspace must not open with its context column collapsed"
+        );
+    }
+
+    /// The vocabulary grew; the old names still mean what they meant. A file
+    /// naming a layout this build has since added a sibling to must not start
+    /// resolving to the sibling.
+    #[test]
+    fn the_layout_names_a_v1_file_uses_still_resolve_to_the_same_layouts() {
+        for (name, expected) in [
+            ("flow", DeclaredLayout::Flow),
+            ("time", DeclaredLayout::Time),
+            ("time+flow", DeclaredLayout::TimeAndFlow),
+        ] {
+            assert_eq!(
+                DeclaredLayout::parse(name),
+                Some(expected),
+                "the v1 name {name} changed meaning"
+            );
+        }
+    }
+
+    /// A workspace this build writes must read back as itself, collapse
+    /// included — the other half of the same promise.
+    #[test]
+    fn a_collapsed_column_survives_a_round_trip() {
+        let mut workspace = sample_workspace();
+        workspace.tabs[0].context_collapsed = true;
+        workspace.tabs[0].split_fraction = Some(0.42);
+
+        let text = toml::to_string(&workspace).expect("a workspace serialises");
+        let restored: Workspace = toml::from_str(&text).expect("and reads back");
+        assert!(restored.tabs[0].context_collapsed);
+        assert_eq!(
+            restored.tabs[0].split_fraction,
+            Some(0.42),
+            "the width the column springs back to went missing"
+        );
+    }
+
+    fn sample_workspace() -> Workspace {
+        Workspace {
+            tabs: vec![SavedTab {
+                feed: "binance".to_owned(),
+                symbol: "BTCUSDT".to_owned(),
+                layout: DeclaredLayout::TimeAndFlow,
+                split_fraction: Some(0.35),
+                context_collapsed: false,
+                focus: None,
+                flow_bars: "tick:50".to_owned(),
+                time_bars: None,
+                flow_legend_collapsed: false,
+                time_legend_collapsed: false,
+            }],
+            ..Workspace::default()
+        }
     }
 }
