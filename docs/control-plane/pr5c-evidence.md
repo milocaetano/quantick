@@ -20,7 +20,7 @@ On-demand captures. Nothing here runs unless a client asks:
 | --- | --- | --- |
 | Aggregator, tick ingest | per trade | nothing |
 | Book state, depth projection | per depth update | nothing |
-| Renderer, per-frame view | ~60 Hz | one boolean check (`screenshot_armed`) and one `is_empty` on the waiter queue, both in the gateway's own frame service, which only runs while local access is enabled. With none armed, the input scan does not run |
+| Renderer, per-frame view | ~60 Hz | one boolean check (`screenshot_armed`), one `is_empty` on the waiter queue and one `Option` clear, all in the gateway's own frame service, which runs only while local access is enabled. With nothing armed, the input scan does not run and no pixels are touched |
 | Evidence capture and chunk read | one per client call | the work of this change |
 
 `evidence_costs_the_frame_nothing_until_a_client_asks_for_it` runs thirty
@@ -30,11 +30,12 @@ armed.
 **Where the work happens.** The application thread does only what needs
 application state: the projection pass (already budgeted and guarded), a
 bounded journal read, a copy of the effective configuration, and — when one
-was asked for — a move of the frame's pixels. Encoding, PNG compression,
-canonical JSON, hashing, chunking and retention all happen after the capture
-leaves that thread, on the same response worker that already serializes a
-snapshot. That is why the capture is a `DeferredUiRead` like `SnapshotCapture`
-and not a value assembled in place.
+was asked for — a clone of the frame image's handle. The pixel conversion, PNG
+compression, serialization, canonical JSON, hashing, chunking and retention all
+happen after the capture leaves that thread, on the same response worker that
+already serializes a snapshot. That is why the capture is a `DeferredUiRead`
+like `SnapshotCapture` and not a value assembled in place, and why the frame's
+rows travel as a closure rather than as a `Vec`.
 
 Reading a bundle back costs the frame nothing at all: `evidence.read` is a
 *worker* read. Paging a retained resource needs no application state, so a
@@ -52,12 +53,19 @@ in `contract.rs` before this change — a bundle is every granted scope at once
 in one durable object, and a picture of the window is its own decision.
 
 **A bundle cannot launder a scope.** `evidence.capture` requires the two
-permissions above *plus* every permission the scopes it names require, added
-per request as dynamic permissions. Aggregation is not a way in:
-`evidence_capture_is_refused_without_its_own_scope_and_cannot_launder_another`
-proves the first half, and the redaction test's `interaction.selection` attempt
-was refused with `control.scope_denied` naming `observe.paper` — the mechanism
-working on a test that was not written to find it.
+permissions above, *plus* every permission the scopes it names require, *plus*
+the scopes every bundle carries whatever was asked for. That last clause is
+not decoration: a capture always embeds a page of the semantic event journal
+and the effective feed configuration, so it always requires `observe.events`
+and `observe.market`. Without it, a connection refused the journal could read
+it by asking for a bundle of `system.info` — and because the manifest would
+not have recorded the scope either, the read-time recheck would not have been
+looking for it. Three tests hold the boundary:
+`evidence_capture_is_refused_without_its_own_scope_and_cannot_launder_another`,
+`a_bundle_requires_the_scopes_it_always_carries_however_few_were_named`, and
+the redaction test's `interaction.selection` attempt, which was refused with
+`control.scope_denied` naming `observe.paper` — the mechanism working on a
+test that was not written to find it.
 
 **A resource identifier is an address, not an authorization.** Every chunk read
 rechecks the bundle's own `source_scopes`, recorded in its manifest, against
@@ -70,12 +78,12 @@ O-21/O-25).
 | Roadmap 5.4 criterion | Test |
 | --- | --- |
 | 1. An agent explains the running session without a screenshot | `an_evidence_bundle_explains_the_session_without_an_image_and_its_events_keep_reading` — connects over the loopback socket, captures, pages the bundle back, verifies the digest, and reads instance, session, build, host, capture revision and the workspace/feed/chart/health/scene projections out of it |
-| 2. Feed, replay, indicator and connection changes appear through the cursor | same test: the bundle's `events.next_cursor` is fed straight back into `events.read` and continues the same journal |
+| 2. Feed, replay, indicator and connection changes appear through the cursor | same test: the bundle's `events.next_cursor` is fed straight back into `events.read` and continues the same journal. `a_bundle_carries_the_events_around_the_capture_not_the_oldest_it_holds` pins the window itself — the page ends at the newest event the journal held, not at its oldest, which is the difference between "what just happened" and "the application starting up eleven pages ago" |
 | 3. The bundle reports omitted information and coverage gaps | `an_evidence_bundle_names_what_it_omitted_and_why_as_codes_not_prose` — every registered scope the caller did not name is in `omitted_scopes`, the five fixed gaps are present, and every reason is asserted to be a lower-case code rather than a sentence |
 | 4. A bundle with a screenshot maps every named control to a region of the image | `a_bundle_with_a_screenshot_maps_every_named_control_to_a_region_of_the_image` — the image carries the scene's own `capture_revision`, the bytes are a real PNG hashed as the descriptor says, every control the scene gave bounds for has a region `within_image`, and every control without bounds is listed with the scene's own reason. `a_capture_that_wants_an_image_waits_for_the_frame_instead_of_answering_blind` proves the capture waits for the window rather than answering without it |
 | 5. A validation skill reads and asserts through the live control plane | `ui-harness` gained *Reading the running app through the control plane* (driving `quantick-mcp` over STDIO, and what `coverage` and `screenshot.control_regions` mean); `visual-qa` gained §3, *Ask the app what it believes, then look*, which now takes a structured reading before the pixels and treats a scene/image disagreement as a FAIL. The deterministic fixture is `QUANTICK_CONTROL_EVIDENCE`, proved by `the_evidence_launch_hook_captures_through_the_same_read_a_client_calls` |
 | 6. No token, user path, user drawing text or config key in the bundle | `no_token_user_path_user_text_or_redacted_config_key_reaches_an_evidence_bundle` — plants the trader's own note text, a configured journal path, a bridge command naming their home, a routable bind address, and reads the connection's real bearer token out of the published descriptor; then hunts all six through the whole reassembled bundle *and* the manifest |
-| 7. Retention and size bounded by named constants | `retention_evicts_by_the_earlier_of_count_bytes_and_age`, `a_bundle_larger_than_its_own_share_is_refused_instead_of_emptying_the_store` (`control.backpressure`), `a_bundle_is_paged_by_its_cursor_and_a_foreign_cursor_is_refused` (`control.cursor_invalid`), `withdrawing_access_forgets_every_retained_bundle`. An expired or unknown bundle is `control.resource_gone` — every code from the existing vocabulary |
+| 7. Retention and size bounded by named constants | `retention_evicts_by_the_earlier_of_count_bytes_and_age`, `a_bundle_past_its_retention_is_gone_even_when_it_is_not_at_the_front`, `a_bundle_larger_than_its_own_share_is_refused_instead_of_emptying_the_store` (`control.backpressure`), `a_bundle_is_paged_by_its_cursor_and_a_foreign_cursor_is_refused` (`control.cursor_invalid`), `withdrawing_access_forgets_every_retained_bundle`. An expired or unknown bundle is `control.resource_gone` — every code from the existing vocabulary. `a_bundle_too_large_for_one_chunk_still_pages_back_over_the_socket` proves the paging itself against an incompressible image, which is the fixture the deflating one hid |
 
 ## What a bundle carries, against plan §8
 
@@ -127,13 +135,27 @@ that adds a new unavailable field joins the report without touching
 the walk costs no serialization and never traverses a megabyte of image looking
 for a field an image cannot contain.
 
+Each scope gets its *own* share of the bound. One scope can hold hundreds of
+these markers — the scene reports "bounds are not recorded" on nearly every
+control it names — and a single shared budget spent in key order let that one
+scope fill the report and silently drop the real gaps of every scope sorting
+after it, which alphabetically is most of the registry.
+
 The fixed gaps are decisions recorded where a reader meets them, rather than
 silences they would have to interpret: `diagnostic_logs`,
 `user_authored_text`, `configuration_paths`, `disk_export`,
 `chart_bars_beyond_the_visible_window`, plus the screenshot's own reason when
 there is no image (`not_requested`, `frame_not_delivered`,
 `exceeds_evidence_bundle_budget`, `image_encoding_failed`,
-`frame_pixels_inconsistent`, `scene_scope_not_captured`).
+`frame_pixels_inconsistent`, `frame_scale_not_representable`) and the region
+list's own when there is an image but nothing to map onto it
+(`scene_scope_not_captured`, `scene_scope_not_readable`).
+
+Those last two are one distinction and it matters: a scene that is sitting
+populated in the same document but could not be read back is reported as
+unreadable, never as uncaptured. Telling a reader a scope was not captured
+while it is right there would be a false statement made by the very section
+that exists to be honest about what is missing.
 
 ## Redaction: what the configuration section keeps and drops
 
@@ -170,9 +192,35 @@ does not answer without it: the request parks, the window is asked to
 rasterise through `ViewportCommand::Screenshot`, and the next frame harvests
 the reply *before* the drain — so the scene taken beside it describes the frame
 that was photographed, not the one after. The queue is bounded
-(`CONTROL_MAX_SCREENSHOT_WAITERS`), each waiter keeps its own request deadline,
-and a window that never presents produces a bundle with an honest gap rather
-than a hang.
+(`CONTROL_MAX_SCREENSHOT_WAITERS`), and a window that never presents produces a
+bundle with an honest gap rather than a hang.
+
+Three rules keep that honest, each of which the review found missing:
+
+- **An image is worth exactly one frame.** Whatever no capture claimed by the
+  end of `begin_frame` is dropped. A frame harvested for a capture that had
+  already timed out would otherwise sit there and be handed to an arbitrarily
+  later one, which would stamp it with *its* revision and scale *its* scene
+  onto a picture of a different chart — the one thing the capture revision
+  promises cannot happen. It also returns the framebuffer instead of parking
+  tens of megabytes for the rest of the session.
+- **The request is re-sent while anyone waits.** A viewport command the
+  platform swallows — minimised, occluded, between viewport states — used to
+  latch the arming flag, and no command was ever sent again for the rest of
+  the session while every later capture parked until its deadline.
+- **Giving up happens before the deadline, not at it.**
+  `CONTROL_SCREENSHOT_GRACE_MS` is the room the honest answer needs: the
+  dispatcher refuses an expired request before running anything, so a capture
+  that waited to the last millisecond could only ever have answered
+  `control.timeout` — no bundle, no gap, and none of the text it could have
+  collected all along.
+
+**Where the pixels are paid for.** The frame clones the image's handle and
+nothing else; the rows are converted by a closure the response worker calls,
+beside the PNG encoding. Copying a 4K framebuffer element by element on the
+application thread is eight million iterations inside a budget measured in
+microseconds. The conversion unmultiplies alpha, because the toolkit stores
+colours premultiplied and a PNG's are not.
 
 **The visible indicator (threat O-18).** Pixels enter the control plane through
 exactly one function, `ControlAccess::accept_screenshot`, and it raises the
@@ -220,6 +268,41 @@ takes nothing away from the trader. What it creates is the answer itself,
 bounded by its own named limits, expiring on its own, and gone the moment
 access is withdrawn. The threat model already places evidence capture in the
 observer's *Allowed* list for the same reason.
+
+## What the architecture review changed
+
+Step 0 (`code-review` at `max`) ran over the branch and returned fifteen
+findings, every one of them confirmed. Six were things that would have shipped
+broken, and they are worth listing because each was invisible to the tests that
+existed:
+
+1. **No bundle over ~192 KiB could ever be read back.** The chunk size was
+   picked against `CONTROL_MAX_RESPONSE_BYTES` when the bound that binds a
+   chunk is `CONTROL_MAX_STRING_BYTES` — a chunk is one base64 *string*, and
+   the codec prescans every string in every frame. Every page of every real
+   bundle would have come back `control.payload_too_large`. Hidden because the
+   screenshot fixture was a smooth ramp that deflated to a few kilobytes.
+2. **The bundle laundered `observe.events` and `observe.market`**, as above.
+3. **The event page was the wrong page** — the oldest the journal held rather
+   than the newest.
+4. **A picture could be stamped with a later capture's revision**, which is
+   the correlation the whole tier is built on.
+5. **One swallowed viewport command disabled screenshots for the session.**
+6. **The give-up path answered `control.timeout`** where its own comment
+   promised a bundle with a gap.
+
+Two more were inert-by-omission: `serialize_ui_result` discarded the
+`ControlError` the widened `DeferredUiRead` signature exists to carry, so no
+client could ever see `control.backpressure`; and an oversized image failed the
+whole capture instead of being dropped for the text, which is what this
+document, the module and the limits all said happened.
+
+The rest were quality: the coverage budget above, four ways the launch hook
+could misbehave, two second copies of things the repo already owned (the
+`host:port` splitter, and `evidence.read` declared in the adapter with no test
+or fake arm), the double canonicalisation, the published scale not reproducing
+the regions it was used to build, and the framebuffer copy on the application
+thread. Nothing was deferred.
 
 ## Verification
 

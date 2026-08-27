@@ -599,7 +599,7 @@ a hard limit requires a reviewed contract change and threat-model check.
 | `CONTROL_EVIDENCE_MAX_TOTAL_BYTES` | 64 MiB | hard | Bound total in-memory evidence |
 | `CONTROL_EVIDENCE_RETENTION_MS` | 900,000 | default | Retain evidence for 15 minutes |
 | `CONTROL_EVIDENCE_MAX_BUNDLE_BYTES` | 8 MiB | hard | One bundle's own share, so a single capture cannot evict every other one |
-| `CONTROL_EVIDENCE_CHUNK_BYTES` | 512 KiB | hard | One chunk of a retained resource, before transport encoding |
+| `CONTROL_EVIDENCE_CHUNK_BYTES` | 192 KiB | hard | One chunk of a retained resource, before transport encoding; derived from `CONTROL_MAX_STRING_BYTES` |
 | `CONTROL_EVIDENCE_MAX_CHUNKS_PER_PAGE` | 4 | hard | Chunks one page carries, leaving room for base64 and the envelope |
 
 Evidence payloads are resources read in chunks no larger than
@@ -616,6 +616,15 @@ so a client that concatenates them and hashes the result reproduces the
 manifest's `content_digest` without re-canonicalising anything. Each chunk also
 carries its raw-byte digest, and the manifest carries them in order (section 3).
 Bytes on the wire are standard padded base64.
+
+A chunk is sized by `CONTROL_MAX_STRING_BYTES` and not by the response
+ceiling, because the bound that binds it is the single JSON *string* it becomes
+rather than the response it travels in: the codec prescans every string in
+every frame against that limit, and base64 spends four characters on three
+bytes. A chunk sized against the response ceiling is refused as
+`control.payload_too_large` on every page, which would leave a retained
+resource nothing could read for its whole retention. The constant is written as
+that arithmetic so the two cannot drift.
 
 The event journal evicts by the earlier of entry capacity or total encoded
 bytes. A semantic event larger than `CONTROL_EVENT_MAX_BYTES` contains a
