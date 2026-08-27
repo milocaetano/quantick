@@ -4383,8 +4383,11 @@ impl QuantickApp {
     /// function.
     fn apply_layer_defaults(&mut self, states: &std::collections::BTreeMap<ChartLayer, bool>) {
         for tab in &mut self.tabs {
-            tab.flow_pane.apply_layer_states(states);
-            if let Some(pane) = tab.time_pane_mut() {
+            // Every pane, by address: a default applied to "the flow pane and
+            // the time pane" left the second stacked chart on whatever the
+            // previous defaults were, so one canvas drew the same layer two
+            // ways.
+            for pane in tab.panes_mut() {
                 pane.apply_layer_states(states);
             }
         }
@@ -4961,10 +4964,13 @@ impl QuantickApp {
             }
         }
         for tab in &mut self.tabs {
-            strip(&mut tab.flow_pane);
-            // Not `pane_mut(Time)`: that falls back to the flow pane when a
-            // tab was never split, which would strip it twice.
-            if let Some(pane) = tab.time_pane_mut() {
+            // Every pane the tab holds, not the two it used to. `panes_mut`
+            // rather than `pane_mut(Time)`: the latter falls back to the flow
+            // pane when a tab was never split, which would strip it twice, and
+            // it stops at the *first* context chart — so the second stacked
+            // chart kept its indicators while `slot_kinds` was cleared out from
+            // under them, and the imported set stacked on top.
+            for pane in tab.panes_mut() {
                 strip(pane);
             }
         }
@@ -6050,7 +6056,15 @@ impl QuantickApp {
         if ctx.input_mut(|i| i.consume_shortcut(&DOCK_SHORTCUT)) {
             self.dock.toggle_visible();
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&COLLAPSE_CONTEXT_SHORTCUT)) {
+        // Gated on the same condition the View menu's entry is gated on: only
+        // a layout that carves a context column *beside* the flow pane has a
+        // column to put away. Ungated, `Ctrl+0` on the Flow or Timeframe
+        // layout set a flag nothing drew — and swallowed the key besides, so
+        // egui's own "reset zoom" never ran.
+        if self.active_tab().layout.shows_time()
+            && self.active_tab().layout.shows_flow()
+            && ctx.input_mut(|i| i.consume_shortcut(&COLLAPSE_CONTEXT_SHORTCUT))
+        {
             let collapsed = self.active_tab().context_collapsed;
             self.active_tab_mut().set_context_collapsed(!collapsed);
         }

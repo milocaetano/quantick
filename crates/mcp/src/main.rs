@@ -25,6 +25,7 @@ use quantick_mcp::{
 const AVAILABLE_PROFILES: &[&str] = &[
     quantick_control_local::client::OBSERVER_PROFILE_ID,
     quantick_control_local::client::ANNOTATOR_PROFILE_ID,
+    quantick_control_local::client::COCKPIT_PROFILE_ID,
 ];
 
 /// The scopes an annotator connection asks for on top of the observer's:
@@ -37,6 +38,16 @@ const ANNOTATOR_SCOPES: &[&str] = &[
     "annotate.sound",
     "annotate.script",
 ];
+
+/// The scopes a cockpit connection asks for on top of the annotator's:
+/// rearranging the canvas.
+///
+/// The layout capabilities have no named tools of their own — `quantick_invoke`
+/// reaches any registered capability by name, and seven tools for one module
+/// would crowd a list the contract keeps deliberately fixed. What this profile
+/// buys is the *ceiling*: without it the gateway refuses every `layout.*` call
+/// however the trader ticked their panel.
+const COCKPIT_SCOPES: &[&str] = &["cockpit", "cockpit.layout"];
 
 /// The scopes an observer connection asks for. The gateway intersects them
 /// with the user's grant; asking for a scope never grants it.
@@ -64,8 +75,8 @@ const OBSERVER_SCOPES: &[&str] = &[
 ];
 
 const USAGE: &str = "usage:
-  quantick-mcp [serve] [--profile <observer|annotator>] [--instance <instance_id>] [--instances-dir <path>]
-  quantick-mcp setup --client <codex|claude> [--profile <observer|annotator>]
+  quantick-mcp [serve] [--profile <observer|annotator|cockpit>] [--instance <instance_id>] [--instances-dir <path>]
+  quantick-mcp setup --client <codex|claude> [--profile <observer|annotator|cockpit>]
   quantick-mcp --help
 
 serve (default)  run the MCP server over standard input/output; stdout carries
@@ -203,10 +214,16 @@ fn main() -> ExitCode {
 }
 
 fn serve(profile: &str, instance: Option<InstanceId>, instances_dir: Option<PathBuf>) -> ExitCode {
-    let annotator = profile == quantick_control_local::client::ANNOTATOR_PROFILE_ID;
+    // The profiles are a chain, so each ceiling asks for the scopes of the one
+    // below it as well. Asking is not granting: the instance intersects this
+    // with what the trader ticked, so a client that asks for everything and
+    // meets a read-only grant connects as an observer.
+    let cockpit = profile == quantick_control_local::client::COCKPIT_PROFILE_ID;
+    let annotator = cockpit || profile == quantick_control_local::client::ANNOTATOR_PROFILE_ID;
     let scopes: BTreeSet<PermissionId> = OBSERVER_SCOPES
         .iter()
         .chain(if annotator { ANNOTATOR_SCOPES } else { &[] })
+        .chain(if cockpit { COCKPIT_SCOPES } else { &[] })
         .map(|id| PermissionId::new(*id).expect("static scope IDs are valid"))
         .collect();
     let options = ConnectOptions::for_profile(

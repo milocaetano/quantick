@@ -5649,7 +5649,7 @@
     {
       "id": "cockpit",
       "inherits": [
-        "observer"
+        "annotator"
       ],
       "label": "Cockpit",
       "permissions": []

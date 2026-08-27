@@ -626,13 +626,23 @@ impl ObserverContract {
             ProfileDescriptor {
                 id: cockpit.clone(),
                 label: "Cockpit".to_owned(),
-                // Inherits the observer's reads — rearranging a window you
-                // cannot see is not a coherent grant — and deliberately *not*
-                // the annotator's writes. The two tiers answer different
-                // questions: one puts marks on a chart, the other decides
-                // which charts there are. A trader granting either should not
-                // be handed the other.
-                inherits: BTreeSet::from([observer.clone()]),
+                // Inherits the annotator, and through it the observer's reads
+                // — rearranging a window you cannot see is not a coherent
+                // grant. A *ceiling* is not a grant: what a connection may
+                // actually call is the ceiling intersected with the scopes the
+                // trader ticked, so nesting cockpit above annotator hands
+                // nobody a capability they did not tick. What it does buy is
+                // the property the handshake depends on: the profiles are a
+                // chain, so any two of them are comparable.
+                //
+                // Left as a sibling of the annotator, the two ceilings
+                // overlapped without nesting, and `handshake::authorize`
+                // refuses an incomparable pair outright. A trader who ticked
+                // both tiers got the cockpit ceiling on the panel, which drops
+                // every `annotate.*` scope on the way out — and a client asking
+                // for `--profile annotator` against that grant could not
+                // connect at all.
+                inherits: BTreeSet::from([annotator.clone()]),
                 permissions: BTreeSet::new(),
             },
         ];

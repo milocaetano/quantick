@@ -62,6 +62,8 @@ pub const DETACH_SCRIPT_CAPABILITY: &str = "indicator.script.detach";
 
 /// The profile whose ceiling admits the annotate tier.
 pub const ANNOTATOR_PROFILE: &str = "annotator";
+/// The ceiling above the annotator: it may rearrange the canvas as well.
+pub const COCKPIT_PROFILE: &str = "cockpit";
 /// The read-only floor every other ceiling is treated as.
 pub const OBSERVER_PROFILE: &str = "observer";
 /// The routing property that picks which object an annotation places, and
@@ -137,6 +139,19 @@ pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
             open_world_hint: false,
         },
         "annotator" => ToolAnnotations {
+            title: Some("Invoke a registered capability".to_owned()),
+            read_only_hint: false,
+            destructive_hint: false,
+            idempotent_hint: false,
+            open_world_hint: false,
+        },
+        // The cockpit ceiling reaches the annotate tier and the layout module
+        // above it. Still not destructive: the `cockpit` effect declares
+        // `allows_destructive: false`, and it means it — a chart taken off the
+        // canvas keeps its drawings, its indicators and its bars, and comes
+        // back with them. Falling through to the catch-all below would have
+        // told every client that rearranging a window might delete something.
+        "cockpit" => ToolAnnotations {
             title: Some("Invoke a registered capability".to_owned()),
             read_only_hint: false,
             destructive_hint: false,
@@ -225,7 +240,11 @@ pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
             annotations: invoke_annotations,
         },
     ];
-    if profile_ceiling == ANNOTATOR_PROFILE {
+    // Every ceiling that *contains* the annotator, not the annotator alone.
+    // The profiles are a chain, so a client that moves up a tier must never
+    // lose a tool it had — matched by name, the cockpit ceiling silently
+    // dropped `quantick_annotate` and the rest of the write tier.
+    if matches!(profile_ceiling, ANNOTATOR_PROFILE | COCKPIT_PROFILE) {
         tools.extend(annotate_tools());
     }
     tools
@@ -1049,5 +1068,47 @@ mod tests {
         assert_eq!(take_instance_id(&mut arguments).unwrap(), Some(id));
         assert!(!arguments.contains_key("instance_id"));
         assert!(arguments.contains_key("scopes"));
+    }
+}
+
+#[cfg(test)]
+mod cockpit_ceiling_tests {
+    use super::*;
+
+    /// Rearranging a canvas is not destructive, and the tool list has to say
+    /// so. An unknown ceiling falls to the conservative catch-all, which marks
+    /// `quantick_invoke` destructive — right for a ceiling nobody has reasoned
+    /// about, wrong for this one: the `cockpit` effect declares
+    /// `allows_destructive: false`, and a chart taken off the canvas keeps its
+    /// drawings, its indicators and its bars.
+    #[test]
+    fn the_cockpit_ceiling_does_not_promise_a_destructive_invoke() {
+        let invoke = tools("cockpit")
+            .into_iter()
+            .find(|tool| tool.name == INVOKE)
+            .expect("every ceiling lists quantick_invoke");
+        let annotations = invoke.annotations;
+        assert!(
+            !annotations.destructive_hint,
+            "the cockpit ceiling fell through to the catch-all, telling every \
+             client that rearranging a window might delete something"
+        );
+        assert!(!annotations.read_only_hint, "it does write");
+        assert!(!annotations.open_world_hint);
+    }
+
+    /// The cockpit ceiling is a superset of the annotator's, so it must offer
+    /// at least the same tools — a client that moves up a tier never loses a
+    /// capability it had.
+    #[test]
+    fn the_cockpit_ceiling_offers_every_tool_the_annotator_has() {
+        let annotator: Vec<String> = tools("annotator").into_iter().map(|t| t.name).collect();
+        let cockpit: Vec<String> = tools("cockpit").into_iter().map(|t| t.name).collect();
+        for name in &annotator {
+            assert!(
+                cockpit.contains(name),
+                "the cockpit ceiling dropped {name}, which the tier below it has"
+            );
+        }
     }
 }

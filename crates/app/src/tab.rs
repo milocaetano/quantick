@@ -1368,11 +1368,20 @@ impl Tab {
         // see is worse than useless: `paper_owns_input` goes false for the one
         // pane that *is* drawn, so order entry, the ladder and the trade HUD
         // all go dead on the heatmap until the trader expands again.
-        if !self.has_time_pane() || !self.layout.shows_time() || self.context_collapsed {
+        if !self.has_time_pane() || !self.layout.shows_time() {
             return PaneSide::Flow;
         }
         if !self.layout.shows_flow() {
+            // A layout with no flow pane has nothing to fall back *to*: the
+            // context chart is the only pane drawn, and the collapse flag
+            // names a column this layout does not carve. Read before the flag,
+            // or `Ctrl+0` on the Timeframe layout sent focus to a pane nobody
+            // draws — order entry, the ladder and the trade HUD all dead on
+            // the one chart on screen, with no rail to click to undo it.
             return PaneSide::Time;
+        }
+        if self.context_collapsed {
+            return PaneSide::Flow;
         }
         self.focus
     }
@@ -1583,14 +1592,17 @@ impl Tab {
     /// Time + Flow) keeps the focus where it was.
     pub fn set_layout(&mut self, layout: CanvasLayout) {
         let previous = self.layout;
+        // A layout chosen from the picker shows the panes its thumbnail drew.
+        // Leaving the column collapsed meant the cell lit, two panes were
+        // promised, and an 8 px rail arrived instead. Before the early return,
+        // because picking the arrangement that is *already* selected is
+        // exactly how a trader asks for the charts they can see promised in a
+        // lit cell — and a return above this line answered that with the rail.
+        self.context_collapsed = false;
         if layout == previous {
             return;
         }
         self.layout = layout;
-        // A layout chosen from the picker shows the panes its thumbnail drew.
-        // Leaving the column collapsed meant the cell lit, two panes were
-        // promised, and an 8 px rail arrived instead.
-        self.context_collapsed = false;
         let wanted = layout
             .kinds()
             .iter()
@@ -2144,11 +2156,17 @@ impl Tab {
         time_interval_ms: Option<i64>,
         legends: LegendFold,
     ) {
-        self.context_collapsed = context_collapsed;
         if let Some(ms) = time_interval_ms {
             self.time_pane_opening_interval_ms = ms;
         }
         self.set_layout(layout);
+        // *After* `set_layout`, for the reason the focus below is: a switch
+        // opens the column it just revealed, which is right for a menu click
+        // and wrong for a restore, where the saved state is the answer.
+        // Assigned before, a workspace saved with its charts put away reopened
+        // with them out — and the next `capture_arrangement` wrote that over
+        // the trader's choice.
+        self.context_collapsed = context_collapsed;
         if let Some(fraction) = split_fraction {
             self.split_fraction = clamp_pane_fraction(fraction);
         }
@@ -3659,6 +3677,79 @@ mod collapse_path_tests {
         assert_eq!(
             tab.split_fraction, 0.42,
             "the column came back at a width the trader never chose"
+        );
+    }
+
+    /// A workspace saved with its charts put away reopens with them put away.
+    ///
+    /// The order inside `restore_canvas` is the whole test: `set_layout` opens
+    /// the column it reveals, which is right for a menu click and wrong for a
+    /// restore. Assigned before that call, the flag was overwritten every
+    /// time — and the next `capture_arrangement` wrote the wrong answer back
+    /// over the trader's file.
+    #[test]
+    fn a_restored_workspace_keeps_its_collapsed_column() {
+        let mut tab = tab();
+        tab.restore_canvas(
+            CanvasLayout::TimeAndFlow,
+            Some(0.42),
+            true,
+            Some(PaneSide::Flow),
+            None,
+            LegendFold {
+                flow: false,
+                time: false,
+            },
+        );
+        assert!(
+            tab.context_collapsed,
+            "the workspace recorded a collapsed column and it opened expanded"
+        );
+        assert_eq!(
+            tab.split_fraction, 0.42,
+            "and the width it springs back to is the saved one"
+        );
+    }
+
+    /// Picking the arrangement that is already showing brings the column back.
+    ///
+    /// The picker lights a cell for the current layout; a trader who put the
+    /// column away and then clicked that lit cell is asking for the charts the
+    /// thumbnail draws. Answering with the 8 px rail is the chrome lying.
+    #[test]
+    fn re_picking_the_current_layout_brings_the_column_back() {
+        let mut tab = tab();
+        tab.set_layout(CanvasLayout::TimeAndFlow);
+        assert!(tab.set_context_collapsed(true));
+
+        tab.set_layout(CanvasLayout::TimeAndFlow);
+        assert!(
+            !tab.context_collapsed,
+            "the lit cell promised two panes and handed back a rail"
+        );
+    }
+
+    /// A layout with no flow pane has no column to put away, so the collapse
+    /// flag must not decide its focus.
+    ///
+    /// Read the other way round, `Ctrl+0` on the Timeframe layout pointed
+    /// focus at a pane nobody draws: `paper_owns_input` went false for the one
+    /// chart on screen, so order entry, the ladder and the trade HUD all went
+    /// dead — and with no split there is no rail to click to undo it.
+    #[test]
+    fn collapsing_never_takes_focus_off_the_only_chart_on_screen() {
+        let mut tab = tab();
+        tab.time_panes.push(ChartPane::time(
+            300,
+            crate::time_header::DEFAULT_INTERVAL_MS,
+        ));
+        tab.layout = CanvasLayout::Time;
+        tab.context_collapsed = true;
+
+        assert_eq!(
+            tab.focused_side(),
+            PaneSide::Time,
+            "the only chart drawn has to be the one the chrome speaks for"
         );
     }
 }

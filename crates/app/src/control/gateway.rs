@@ -4036,4 +4036,62 @@ mod cockpit_tier_tests {
         );
         assert_eq!(access.configured_profile().as_str(), ANNOTATOR_PROFILE_ID);
     }
+
+    /// The tiers have to **nest**, not merely coexist.
+    ///
+    /// `handshake::authorize` intersects the requested and the granted ceiling
+    /// and then demands that one of the two *be* that intersection — "profiles
+    /// are built nested" is the comment it says so under. Two sibling write
+    /// tiers overlap without nesting, and an incomparable pair is refused
+    /// outright: a client asking for `--profile annotator` against a cockpit
+    /// grant could not connect at all.
+    #[test]
+    fn the_cockpit_ceiling_contains_the_annotator_ceiling() {
+        use quantick_control::handshake::ProfileAuthority;
+
+        let access = ControlAccess::new();
+        let registry = access.contract.registry();
+        let ceiling = |id: &str| {
+            registry
+                .permission_ceiling(&ProfileId::new(id).expect("static profile ID is valid"))
+                .expect("the profile is registered")
+        };
+        assert!(
+            ceiling(ANNOTATOR_PROFILE_ID).is_subset(&ceiling(COCKPIT_PROFILE_ID)),
+            "the two write tiers are siblings, so the handshake refuses any \
+             connection that names one against a grant holding the other"
+        );
+    }
+
+    /// A trader who grants both tiers keeps both.
+    ///
+    /// The connection takes one ceiling, and every scope the human ticked has
+    /// to survive it — `authorize` drops a granted scope the ceiling does not
+    /// hold. Under a cockpit ceiling that was a sibling of the annotator, that
+    /// meant ticking "rearrange my charts" silently switched off "answer on
+    /// the chart".
+    #[test]
+    fn granting_both_tiers_keeps_every_scope_the_trader_ticked() {
+        use quantick_control::handshake::ProfileAuthority;
+
+        let mut access = ControlAccess::new();
+        access
+            .configure_scopes("annotate,annotate.chart,cockpit,cockpit.layout")
+            .expect("registered permissions");
+        assert!(access.grants_annotate());
+        assert!(access.grants_cockpit());
+
+        let profile = access.configured_profile();
+        let ceiling = access
+            .contract
+            .registry()
+            .permission_ceiling(&profile)
+            .expect("the configured profile is registered");
+        for scope in &access.configured_scopes {
+            assert!(
+                ceiling.contains(scope),
+                "the {profile} ceiling drops the granted scope {scope}"
+            );
+        }
+    }
 }

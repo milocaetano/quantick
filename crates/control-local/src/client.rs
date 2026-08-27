@@ -92,6 +92,11 @@ impl ConnectOptions {
 pub const OBSERVER_PROFILE_ID: &str = "observer";
 /// The profile that may also answer on the chart.
 pub const ANNOTATOR_PROFILE_ID: &str = "annotator";
+/// The ceiling that may rearrange the trader's canvas: which charts are on
+/// screen, where they sit and how wide they are. Above the annotator, because
+/// the profiles are a chain — the handshake refuses a pair of ceilings that
+/// merely overlap.
+pub const COCKPIT_PROFILE_ID: &str = "cockpit";
 
 /// One authenticated connection to one running instance.
 #[derive(Debug)]
