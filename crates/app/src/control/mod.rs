@@ -11,6 +11,7 @@ mod annotate;
 pub(crate) mod chart;
 mod contract;
 mod events;
+mod evidence;
 mod feed;
 mod gateway;
 mod health;
@@ -34,6 +35,21 @@ mod workspace;
 pub(crate) use actions::{MARK_CAPABILITY_ID, MARK_CAPABILITY_VERSION};
 #[cfg(test)]
 pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID};
+#[cfg(test)]
+pub(crate) use evidence::{RawScreenshot, ScreenshotPixels};
+
+/// One journal entry a test can record, so a test about *how many* events a
+/// read returns does not have to reach into the journal's own vocabulary.
+#[cfg(test)]
+pub(crate) fn journal_test_event(index: usize) -> journal::NewEvent {
+    journal::NewEvent {
+        module_id: quantick_control::id::ModuleId::new("test").expect("static module ID is valid"),
+        kind: quantick_control::id::EventKind::new("test.recorded")
+            .expect("static event kind is valid"),
+        actor: None,
+        payload: serde_json::json!({ "index": index }),
+    }
+}
 #[cfg(test)]
 pub(crate) use gateway::RecordedActor;
 pub(crate) use gateway::{ActionOrigin, ControlAccess, MARK_SHORTCUT};

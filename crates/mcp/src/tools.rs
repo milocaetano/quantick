@@ -27,6 +27,7 @@ pub const GET_SNAPSHOT: &str = "quantick_get_snapshot";
 pub const GET_CHART_WINDOW: &str = "quantick_get_chart_window";
 pub const GET_DIAGNOSTICS: &str = "quantick_get_diagnostics";
 pub const GET_SCENE: &str = "quantick_get_scene";
+pub const CAPTURE_EVIDENCE: &str = "quantick_capture_evidence";
 pub const READ_EVENTS: &str = "quantick_read_events";
 pub const WAIT_FOR_CHANGE: &str = "quantick_wait_for_change";
 pub const SEARCH_CAPABILITIES: &str = "quantick_search_capabilities";
@@ -48,6 +49,12 @@ pub const SNAPSHOT_CAPABILITY: &str = "snapshot.read";
 pub const CHART_WINDOW_CAPABILITY: &str = "chart.window.read";
 pub const DIAGNOSTICS_CAPABILITY: &str = "health.diagnostics.read";
 pub const SCENE_CAPABILITY: &str = "scene.read";
+pub const EVIDENCE_CAPTURE_CAPABILITY: &str = "evidence.capture";
+/// Reading a bundle back is deliberately long-tail: contract section 8 names
+/// `quantick_capture_evidence` and no companion, and a chunk read is not a
+/// path a client walks constantly. It is reached through `quantick_invoke`,
+/// which enforces the same permissions a named tool would.
+pub const EVIDENCE_READ_CAPABILITY: &str = "evidence.read";
 pub const EVENTS_READ_CAPABILITY: &str = "events.read";
 pub const EVENTS_WAIT_CAPABILITY: &str = "events.wait";
 pub const LABEL_CAPABILITY: &str = "annotate.label.create";
@@ -98,6 +105,10 @@ const CHART_WINDOW_PAGE_SCHEMA: &str =
 /// `structuredContent` whenever it is present, error or not.
 const CONTROL_ERROR_SCHEMA: &str =
     include_str!("../../../schemas/control/control-error-v1.schema.json");
+const EVIDENCE_CAPTURE_INPUT_SCHEMA: &str =
+    include_str!("../../../schemas/control/evidence-capture-input-v1.schema.json");
+const EVIDENCE_MANIFEST_SCHEMA: &str =
+    include_str!("../../../schemas/control/evidence-manifest-v1.schema.json");
 const EVENTS_READ_INPUT_SCHEMA: &str =
     include_str!("../../../schemas/control/observer-events-read-input-v1.schema.json");
 const EVENTS_WAIT_INPUT_SCHEMA: &str =
@@ -206,6 +217,14 @@ pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
             input_schema: instance_only_schema(),
             output_schema: Some(capability_output_schema(parse_schema(SNAPSHOT_CAPTURE_SCHEMA))),
             annotations: ToolAnnotations::observer_read("Scene"),
+        },
+        Tool {
+            name: CAPTURE_EVIDENCE.to_owned(),
+            title: "Capture an investigation bundle".to_owned(),
+            description: "Freeze the named snapshot scopes, the semantic events around them and the effective configuration into one hashed, redacted bundle held in memory for a bounded time, and answer with its manifest: an evidence_id, an integrity digest, how many chunks it takes, what it covers and — as codes, never prose — what it does not. Ask for screenshot: true (needs the observe.screenshot scope) to include a picture of the window stamped with the same capture revision as the scene, so every named control maps to a rectangle of that image; the window tells the trader when one is taken. Read the bundle back with quantick_invoke on evidence.capture's companion capability evidence.read, page by page, concatenating the chunks into the canonical JSON the digest attests. Nothing is written to disk.".to_owned(),
+            input_schema: with_instance_routing(parse_schema(EVIDENCE_CAPTURE_INPUT_SCHEMA)),
+            output_schema: Some(capability_output_schema(parse_schema(EVIDENCE_MANIFEST_SCHEMA))),
+            annotations: ToolAnnotations::observer_read("Capture evidence"),
         },
         Tool {
             name: READ_EVENTS.to_owned(),
@@ -408,6 +427,12 @@ pub fn call(
             link,
             instance.as_ref(),
             SCENE_CAPABILITY,
+            Value::Object(arguments),
+        ),
+        CAPTURE_EVIDENCE => forward(
+            link,
+            instance.as_ref(),
+            EVIDENCE_CAPTURE_CAPABILITY,
             Value::Object(arguments),
         ),
         READ_EVENTS => forward(
@@ -1045,11 +1070,45 @@ mod tests {
                 GET_CHART_WINDOW,
                 GET_DIAGNOSTICS,
                 GET_SCENE,
+                CAPTURE_EVIDENCE,
                 READ_EVENTS,
                 WAIT_FOR_CHANGE,
                 SEARCH_CAPABILITIES,
                 INVOKE
             ]
+        );
+    }
+
+    /// The half of the evidence tier that has no named tool still has to be
+    /// reachable, or a client can take a bundle and never read it.
+    ///
+    /// Contract section 8 names `quantick_capture_evidence` and no companion,
+    /// so the chunk read is long tail — which makes `quantick_invoke` the
+    /// whole of its surface, and worth a test rather than an assumption.
+    #[test]
+    fn a_bundle_is_read_back_through_invoke_since_the_contract_names_no_tool_for_it() {
+        let mut link = crate::fake::FakeLink::default();
+        let instance = InstanceId::from_bytes([6; 16]);
+        link.add_instance(instance.clone());
+        let result = call(
+            &mut link,
+            INVOKE,
+            json!({
+                "instance_id": instance.to_string(),
+                "capability_id": EVIDENCE_READ_CAPABILITY,
+                "capability_version": FIRST_CAPABILITY_VERSION,
+                "input": { "evidence_id": "AAAAAAAAAAAAAAAAAAAAAA" },
+            }),
+        )
+        .expect("invoke forwards");
+        assert!(
+            !result.is_error,
+            "the chunk read is refused through invoke: {:?}",
+            result.structured_content
+        );
+        assert_eq!(
+            link.calls[0].capability_id, EVIDENCE_READ_CAPABILITY,
+            "and it reaches the capability the application registers"
         );
     }
 

@@ -64,6 +64,7 @@ is the source of truth, this table is the index):
 | `QUANTICK_CONTROL_SCOPES=<ids>` | which scopes the next connection is granted, by ID — the panel's own checkboxes without a hand on the mouse, through the same `configure_scopes` call they write. `all-reads` is the safe default grant, `annotate-tier` the whole annotate tier (chart objects, notifications, sound, scripts), and any comma-separated list of registered permission IDs is honoured (`all-reads,annotate,annotate.chart`). An unregistered ID is refused with a `CONTROL_SCOPE_HOOK_REFUSED` log rather than silently dropped. Pair with `QUANTICK_CONTROL_ACCESS=1`: the profile follows the scopes, so a grant with any annotate scope raises the ceiling to `annotator` and the panel's status line says "reading, and answering on the chart" |
 | `QUANTICK_CONTROL_ANNOTATE=<text>` | one **agent-authored label** placed on the first frame at the newest bar, through `annotate.label.create` with an agent actor — the object every attribution surface is photographed from: the "assistant" chip in the object manager row, the `Placed by …` line in the inspector, the robot chip on the context bar, and the "Remove N object(s) placed for you" button the sweep gesture lives on. Pair with `QUANTICK_DRAWING_MANAGER=1` for the list, or select the object for the context bar |
 | `QUANTICK_CONTROL_NOTIFY=<popup\|toast\|sound>:<message>` | one **notification** raised on the first frame through `notify.*` with an agent actor: `popup` opens the assistant's window over the chart (title, message, `Sent by …`, Dismiss), `toast` posts to the acknowledgement lane, `sound` asks the platform for its alert (and reports honestly when the build has no audio backend). The rate limit applies to the hook exactly as to a client, so a third call in a burst is refused |
+| `QUANTICK_CONTROL_EVIDENCE=<all\|1\|scope,…>[,screenshot]` | one **evidence bundle** captured on the first frame through `evidence.capture` — the very read a connected client calls, via `ControlAccess::invoke_local_read`, so a hooked run and a client run exercise one door. `all` (or `1`) means every registered snapshot scope the configured grant already reaches, taken from the registry rather than a list in the hook; anything else is a scope ID; adding `screenshot` asks for the window to be rasterised as well, which needs `observe.screenshot` in `QUANTICK_CONTROL_SCOPES` and raises the **screenshot notice** in the acknowledgement lane (the visible indicator threat-model O-18 requires, and the surface a capture run photographs). A capture that asked for an image waits up to `CONTROL_EVIDENCE_HOOK_FRAMES` (~2 s) for the window to present, then captures without one and says so in its coverage. The manifest goes to the log as `CONTROL_EVIDENCE_CAPTURED` with the evidence ID, content digest, byte and chunk counts, and how many scopes were captured, omitted, not captured and unavailable — which is what a scripted validation run asserts on. Nothing is written to disk |
 | `QUANTICK_TRADES_DIR` | paper-trading journal location (point at scratch — and note the absent-default is now the user's documents folder, `Documents/Quantick/paper-trades`, so an unhooked run touches real history) |
 | `QUANTICK_PAPER_STATE=<toml>` | the paper sidecar: the picked journal folder and the cmd-trading settings. **Point at a scratchpad file** — an unhooked run reads and rewrites the trader's real `paper-state.toml`, and startup consolidation may clear their stored folder pick. |
 | `QUANTICK_DOCK_TAB=<l2\|bubbles\|session\|trading\|trades>` | the dock open on that tab — `trading` is the ticket (with the CMD TRADING block), `trades` the ledger |
@@ -112,6 +113,15 @@ Landing with the strategy anchors goal (`feat/strategy-anchors`):
 | `QUANTICK_STRATEGY_DEMO=1` | a named rectangle over the recent tape (spanning past the newest bar) with a force-bar strategy armed on it — the on-chart state badge, in `armed`. The rectangle covers the chart's middle on purpose: pair with `QUANTICK_CONTEXT_MENU=chart` and the scripted right-click lands *on* it, opening the per-drawing menu (name, rename, the strategy seat, lock/hide/delete) instead of the bare layer menu |
 | `QUANTICK_STRATEGY_DEMO=popup` | the same rectangle with the **arming dialog** open over it — preset picker, side, quantity, the force band, the projection multipliers, re-arm, save-preset. The form is the surface a screenshot of "how do I configure the bot" needs |
 | `QUANTICK_STRATEGY_PRESETS=<path>` | relocates the strategy bank (`quantick-strategies.toml`), so a validation run seeds or inspects presets without touching the trader's own bank |
+
+Once merged, move these into the table above.
+
+Landing with the signal-alarm goal (`feat/strategy-signal-alarm`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_STRATEGY_DEMO=alarm` | the arming dialog with its **alarm section unfolded** — the checkbox, the on-close/share choice and its share spinner, the once-per-bar/cooldown choice and its seconds, the sound picker with its Test button, and alarm-only. The section folds itself away while the checkbox is clear (right for a trader, useless for a capture), so `popup` alone can never photograph it; the scene also picks the share gate *and* the cooldown, so the controls that exist only under a choice are all on screen at once |
+| `QUANTICK_STRATEGY_DEMO=alarm-badge` | an **alarm-only** instance armed on the region wearing a standing `signal (preview)` mark — the badge that says "this places nothing" and the provisional label together. Both are states a real tape reaches only when a force bar happens to be half-formed, which no capture can wait for, so the scene stages the mark rather than hoping for one. The drawing is left **unselected** on purpose: placing one selects it, and a selection raises the context bar across the region's top edge, which is exactly where the badge paints. **Caveat for photography**: the badge paints at the region's top-left corner and is not clamped into view, while the shared demo region is ±3 % of price — far wider than the few hundred points a tick chart shows — so at the default zoom that corner, and with it the badge, sits off the top of the canvas. The hook reaches the *state* (assert it through the instance, or pan to the corner); it does not frame the badge on its own |
 
 Once merged, move these into the table above.
 
@@ -283,6 +293,82 @@ Landing with the one-week candle default (`fix/frvp-candles-window-and-history`)
 | `QUANTICK_LOAD_OLDER_CANDLES=<spans>` | the history menu's `+ older candles` entry **pressed**, that many times, once the opening span has landed. A chart now opens on one week of venue candles (`feed::TIME_HISTORY_SPAN_MS`) and reaches the quarter a week at a time, so "what does a deep chart look like" is a state no capture reaches without a hand on the menu. Goes through `Tab::request_older_ohlcv_history`, the function the menu entry calls, so a hooked run drives the loading indicator and the prepend too. One span per frame, and it waits: the tab serves one candle request at a time. Spends `LOAD_OLDER_CANDLES_HOOK_FRAMES` (~60 s at 60 fps) across the whole run — much larger than the trade twin's, because a span is several slices of several pages and the reach is documented in thirteen of them — and every waiting frame costs a tick, so a venue that never answers gives up and logs `LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP` with the reason rather than hanging the run. The trade twin is `QUANTICK_LOAD_OLDER` — two records, two capabilities, two hooks: a feed can serve candle history without paging its tape |
 
 Once merged, move it into the table above.
+
+## Reading the running app through the control plane
+
+A screenshot shows what a window looks like. It does not say what the
+application *believes* — which market, which revision, how late the tape is,
+whether a control is disabled and why. The control plane answers that in
+structured data, and an assertion against it is worth more than an assertion
+against pixels: it does not move when a colour does.
+
+Prefer this over reading a capture whenever the question has a structured
+answer. Keep the screenshot for the questions only pixels can answer — clipping,
+font, composition, "does this read".
+
+**The fixture.** Launch with local access enabled and the scopes the read
+needs, per the table above:
+
+```powershell
+$env:QUANTICK_CONTROL_ACCESS = "1"
+$env:QUANTICK_CONTROL_SCOPES = "all-reads,observe.evidence,observe.screenshot"
+```
+
+**The client.** `quantick-mcp` is a STDIO MCP server; feeding it JSON-RPC lines
+is a complete client, no extra tooling. It discovers the running instance
+itself and never starts one.
+
+Build it first — step 1 of the launch workflow builds `quantick-app` only, and
+the adapter is a separate binary in the same target directory:
+
+```powershell
+$target = "D:\quantick-agent-target"     # the same one the launch used
+cargo build -p quantick-mcp
+$mcp = Join-Path $target "debug\quantick-mcp.exe"
+```
+
+```powershell
+$lines = @(
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ui-harness","version":"1"}}}',
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}',
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"quantick_get_scene","arguments":{}}}'
+) -join "`n"
+$lines | & $mcp --profile observer
+```
+
+Every answer is one JSON line on stdout; `result.structuredContent` is the
+capability's own result, and `result.isError` with a `control.*` code is a
+refusal you can branch on. Useful calls:
+
+| Ask | Call |
+| --- | --- |
+| What is on screen, by name | `quantick_get_scene` |
+| Which market, which bars, which layout | `quantick_get_snapshot` with the scopes |
+| Is the frame healthy, is the tape late | `quantick_get_diagnostics` |
+| What changed since I looked | `quantick_read_events` / `quantick_wait_for_change` |
+| Everything at one instant, hashed | `quantick_capture_evidence` |
+
+**Evidence bundles.** `quantick_capture_evidence` freezes the named scopes, the
+events around them and the effective configuration into one hashed bundle and
+answers with a manifest. Read it back with `quantick_invoke` on
+`evidence.read`, page by page, and concatenate the base64 chunks: the bytes are
+the bundle's canonical JSON and their SHA-256 is the manifest's
+`content_digest`. Two fields decide whether an assertion is sound:
+
+- `coverage` — what the capture left out, and why, as codes. A scope you did
+  not name is in `omitted_scopes`; a field the application could not fill is in
+  `unavailable_fields` with the JSON Pointer that finds it. `complete` is never
+  true, and a capture never pretends to be the whole session.
+- `screenshot.capture_revision` — equal to the bundle's own `capture_revision`,
+  which is what makes `screenshot.control_regions` trustworthy: each named
+  control's rectangle in the image, in physical pixels, with `within_image`
+  saying whether the window was clipping it. That is the pair a visual defect
+  is diagnosed from — the picture plus the names.
+
+Without a client on the socket, `QUANTICK_CONTROL_EVIDENCE` takes the same
+capture from a launch and logs the manifest as `CONTROL_EVIDENCE_CAPTURED`.
+Bundles live in memory for fifteen minutes, are cleared when access is turned
+off, and are never written to disk.
 
 ## Adding a new hook
 

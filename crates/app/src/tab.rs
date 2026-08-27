@@ -380,6 +380,16 @@ pub struct Tab {
     pub latest_trade_ms: Option<i64>,
     pub live_trades: u64,
 
+    /// Alarm sounds this tab's armed instances asked for, oldest first,
+    /// drained by the app once per frame.
+    ///
+    /// A queue rather than a direct call to the platform: the judgement is
+    /// made deep in the per-trade sweep, where a tab must stay testable
+    /// without a build machine making noise, and where blocking on an
+    /// operating-system call would be on the tape's path. The app plays
+    /// them through the [`AlertSink`](crate::audio::AlertSink) port.
+    pub pending_alarm_sounds: Vec<crate::audio::AlertSound>,
+
     /// Paper trading for this market: the deterministic simulator plus its
     /// journal, chart layer, dock tab and report.
     ///
@@ -669,6 +679,7 @@ impl Tab {
             latest_trade_latency_ms: None,
             latest_trade_ms: None,
             live_trades: 0,
+            pending_alarm_sounds: Vec::new(),
             paper: PaperTrading::with_trades_dir(trades_dir),
             flow_pane: ChartPane::flow(flow_pane_id, spec, symbol.clone()),
             chip_label: String::new(),
@@ -2432,6 +2443,37 @@ impl Tab {
     /// no instances — the pane queues no bars and the paper host buffers no
     /// events.
     fn run_strategies(&mut self) {
+        // The clock is read only when something is listening for it. This
+        // runs once per print and `SystemTime::now` is a syscall: a chart
+        // with no alarm armed — which is every chart that existed before
+        // this feature — must not start paying for one per trade.
+        let now_ms = if self.any_alarm_armed() {
+            metrics::wall_clock_ms()
+        } else {
+            0
+        };
+        self.run_strategies_at(now_ms);
+    }
+
+    /// Whether any instance on this tab carries an alarm. Usually a walk
+    /// over an empty `Vec`.
+    fn any_alarm_armed(&self) -> bool {
+        self.panes().any(|(pane, _side)| {
+            pane.strategies
+                .instances
+                .iter()
+                .any(|instance| instance.alarm.is_some())
+        })
+    }
+
+    /// The sweep with its clock handed in.
+    ///
+    /// Only the alarm's repeat rule reads it — a cooldown is the one thing
+    /// here measured in seconds a human waits rather than in prints — and
+    /// the kernel never reads a clock of its own, so the reading enters
+    /// through this one door and the tests drive it from a fixture.
+    fn run_strategies_at(&mut self, now_ms: i64) {
+        let now_ms = u64::try_from(now_ms).unwrap_or(0);
         let print_events = self.paper.drain_bot_events();
         let Self {
             paper,
@@ -2440,6 +2482,11 @@ impl Tab {
             ..
         } = self;
         let mut watching = 0;
+        let mut sounds: Vec<crate::audio::AlertSound> = Vec::new();
+        // The alarm's sounds come from `main`; walking every pane in the
+        // context stack rather than a single time pane comes from this branch.
+        // Both are wanted: a strategy armed on the second stacked chart has to
+        // ring like one armed on the first.
         for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
             if pane.strategies.is_empty() {
                 continue;
@@ -2497,6 +2544,13 @@ impl Tab {
                     let commands = pane.strategies.instances[index]
                         .armed
                         .on_closed_bar(bar, &region, active, flat);
+                    // The alarm judges the same bar, from the kernel's own
+                    // reading of it rather than from whether an order went
+                    // out — a busy account and a spent one shot silence the
+                    // order, never the signal. Every closed bar is offered,
+                    // qualifying or not: a preview that failed to hold is
+                    // reported here, and this bar's repeat budget resets.
+                    sounds.extend(pane.strategies.instances[index].alarm_on_closed_bar(now_ms));
                     for command in commands {
                         let events = paper.apply_strategy_command(command);
                         let _ = pane.strategies.instances[index]
@@ -2505,9 +2559,53 @@ impl Tab {
                     }
                 }
             }
+            // The bar still forming, judged for the alarm only. Nothing
+            // here can place an order or move a state machine: the kernel's
+            // preview path is `&self` all the way down, and this is the one
+            // caller of it.
+            //
+            // This whole block is per *print*, so it opens with the question
+            // that costs least: does any instance on this pane even carry an
+            // alarm? A pane full of ordinary strategies answers no and pays
+            // nothing further — not the partial bar's copy, not the
+            // progress read.
+            let any_alarm = pane
+                .strategies
+                .instances
+                .iter()
+                .any(|instance| instance.alarm.is_some());
+            if let Some(partial) = any_alarm.then(|| pane.state.partial().cloned()).flatten() {
+                let progress = pane.state.progress().map(|(progress, _unit)| progress);
+                let slot = pane.closed_slots();
+                for index in 0..pane.strategies.instances.len() {
+                    // Cheapest gate next, before the region is resolved: on
+                    // all but a handful of prints the alarm answers "not
+                    // yet" and this costs one comparison.
+                    let wants = pane.strategies.instances[index]
+                        .alarm
+                        .as_ref()
+                        .is_some_and(|alarm| alarm.wants_forming_check(progress, now_ms));
+                    if !wants {
+                        continue;
+                    }
+                    let drawing = pane.strategies.instances[index].drawing;
+                    let (region, active) = pane.strategy_region(drawing, slot).unwrap_or((
+                        quantick_strategy::Region::new(
+                            rust_decimal::Decimal::ZERO,
+                            rust_decimal::Decimal::ZERO,
+                        ),
+                        false,
+                    ));
+                    sounds.extend(
+                        pane.strategies.instances[index]
+                            .alarm_on_forming_bar(&partial, &region, active, progress, now_ms),
+                    );
+                }
+            }
             watching += pane.strategies.watching();
         }
         paper.set_bot_listening(watching > 0);
+        self.pending_alarm_sounds.extend(sounds);
     }
 
     /// Apply the cleanup commands the panes' drawing menus queued this

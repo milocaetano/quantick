@@ -3,7 +3,7 @@
 **Status:** Living document. Updated when a control-plane pull request opens,
 merges, or is retired.
 
-**Date:** 2026-08-24
+**Date:** 2026-08-26
 
 **Owner document:** the [development plan](../mcp-control-plane-development-plan.md)
 owns scope and ordering; the [control contract](control-contract.md), ADR 0001
@@ -17,15 +17,15 @@ gaps carried forward. It adds no new decisions.
 | --- | --- | --- | --- |
 | PR 0: contract and inventory | `docs/mcp-control-plane-plan`, `docs/mcp-control-plane-contract` | merged | done |
 | PR 1: `quantick-control` crate | `feat/control-contract` | merged | done |
-| PR 1 hardening (handshake, idempotency, codec, schema guards) | `fix/control-contract-hardening` | [#220](https://github.com/milocaetano/quantick/pull/220) | open, base `main` |
-| PR 2: projection registry, core scopes, cursor, chart window | `feat/control-observer` | [#213](https://github.com/milocaetano/quantick/pull/213) | open, base `main` |
-| PR 3: local gateway, `quantick-control-local` | `feat/control-gateway` | [#221](https://github.com/milocaetano/quantick/pull/221) | open, stacked on #213 |
-| PR 4: `quantick-mcp` STDIO adapter | `feat/mcp-observer` | [#222](https://github.com/milocaetano/quantick/pull/222) | open, stacked on #221 |
-| PR 5a: events, cursor, human mark, action registry, control trace | `feat/control-events` | [#223](https://github.com/milocaetano/quantick/pull/223) | open, stacked on #222 |
-| Snapshot modules: analysis, order flow, session | `feat/control-snapshots-*` | — | not started |
-| 5.2: semantic scene, `quantick_get_scene` | `feat/control-scene` | [#235](https://github.com/milocaetano/quantick/pull/235) | open, base `main` |
-| PR 5b: annotate and notify tier, `attach_script` | `feat/control-annotate` | — | not started |
-| PR 5c: evidence bundles | `feat/control-evidence` | — | not started |
+| PR 1 hardening (handshake, idempotency, codec, schema guards) | `fix/control-contract-hardening` | [#220](https://github.com/milocaetano/quantick/pull/220) | merged |
+| PR 2: projection registry, core scopes, cursor, chart window | `feat/control-observer` | [#213](https://github.com/milocaetano/quantick/pull/213) | merged |
+| PR 3: local gateway, `quantick-control-local` | `feat/control-gateway` | [#233](https://github.com/milocaetano/quantick/pull/233) | merged, landed with the stack |
+| PR 4: `quantick-mcp` STDIO adapter | `feat/mcp-observer` | [#233](https://github.com/milocaetano/quantick/pull/233) | merged, landed with the stack |
+| PR 5a: events, cursor, human mark, action registry, control trace | `feat/control-events` | [#233](https://github.com/milocaetano/quantick/pull/233) | merged, landed with the stack |
+| PR 5b: annotate and notify tier, `attach_script` | `feat/control-annotate` | [#233](https://github.com/milocaetano/quantick/pull/233) | merged, landed with the stack |
+| Snapshot modules: analysis, order flow, session | `feat/control-snapshots` | [#236](https://github.com/milocaetano/quantick/pull/236) | merged (one pull request, not three) |
+| 5.2: semantic scene, `quantick_get_scene` | `feat/control-scene` | [#235](https://github.com/milocaetano/quantick/pull/235) | merged |
+| PR 5c: evidence bundles | `feat/control-evidence` | — | open, base `main` |
 | PR 6: cockpit tier | `feat/control-actions` | — | not started; gated on the owner's §9.2 authority decision |
 | PR 7: paper trading and strategies | one branch per module | — | not started |
 | PR 8: public API, further adapters | — | — | not started |
@@ -34,6 +34,13 @@ The MVP definition of done (plan §18) closes with PR 5c. Everything from PR 6
 on is post-MVP.
 
 ## 2. Merge order for the open stack
+
+**Closed on 2026-08-26.** The stack landed: #213 on its own, then #220, then
+the rest of it through #233, which merged `feat/control-gateway`,
+`feat/mcp-observer`, `feat/control-events` and `feat/control-annotate` onto
+`main` together. What follows is the record of how it was sequenced, kept
+because the re-stacking rule at the end of it is the one to reach for the next
+time a base is rewritten.
 
 The four application pull requests are stacked and GitHub retargets each one to
 `main` when its base lands, so they merge in order:
@@ -142,6 +149,10 @@ area picks them up instead of rediscovering them.
   the action.
 
 ## 4. Base for the next work
+
+**Exception over, as it said it would be.** The stack is on `main`, so every
+branch is cut from updated `origin/main` again — 5.1, 5.2, 5.3 and 5.4 all
+were. The paragraph below is the record of the exception while it ran.
 
 CLAUDE.md cuts every branch from updated `origin/main`. While the stack is
 open, the remaining MVP work has nothing to build on there, so this is a
@@ -382,9 +393,10 @@ market write.
 
 ### 5.4 PR 5c: evidence bundles
 
-Branch: `feat/control-evidence`.
+Branch: `feat/control-evidence`. **Open**; its acceptance is recorded in
+[PR 5c evidence](pr5c-evidence.md).
 
-Depends on 5.1, 5.2 and 5.3. Rate class: on-demand captures.
+Depends on 5.1, 5.2 and 5.3, all merged. Rate class: on-demand captures.
 
 What it is (plan §8): a coherent capture — `evidence_id` plus integrity hash,
 version/commit/protocol, OS and graphics backend, instance and session IDs, a

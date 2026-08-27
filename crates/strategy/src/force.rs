@@ -154,6 +154,11 @@ impl ForceWindow {
 
     /// Fold one closed bar in and judge it.
     pub fn classify(&mut self, bar: &Bar) -> BarVerdict {
+        // Read the verdict *before* folding, out of the arithmetic the fold
+        // is about to perform. The closed bar's answer and the forming
+        // bar's provisional one then come from one ruler rather than two
+        // that agree today — see [`Self::weigh`].
+        let verdict = self.weigh(bar);
         let body = (bar.close - bar.open).abs();
         self.bodies.push_back(body);
         self.sum = self.sum.saturating_add(body);
@@ -162,14 +167,39 @@ impl ForceWindow {
         {
             self.sum -= evicted;
         }
+        verdict
+    }
 
-        if self.bodies.len() < self.params.window {
+    /// Judge a bar **without** folding it in.
+    ///
+    /// This is how the bar still forming is read. The alarm needs a verdict
+    /// on a bar that has not closed, and folding one in would drop a body
+    /// that is still moving into the average every later bar is measured
+    /// against — the ruler would be judging against its own unfinished
+    /// readings. The answer is deliberately the *same* one
+    /// [`Self::classify`] gives, because that method is written in terms of
+    /// this one: a provisional reading from a second ruler would be a
+    /// different signal wearing the same name.
+    #[must_use]
+    pub fn weigh(&self, bar: &Bar) -> BarVerdict {
+        let body = (bar.close - bar.open).abs();
+        // What the window would hold with this bar folded in: one body
+        // longer, capped at the window, oldest evicted once it is full.
+        let filled = (self.bodies.len() + 1).min(self.params.window);
+        let mut sum = self.sum.saturating_add(body);
+        if self.bodies.len() + 1 > self.params.window
+            && let Some(oldest) = self.bodies.front()
+        {
+            sum -= *oldest;
+        }
+
+        if filled < self.params.window {
             return BarVerdict::Warmup {
-                seen: self.bodies.len(),
+                seen: filled,
                 window: self.params.window,
             };
         }
-        let average = self.sum / Decimal::from(self.params.window as u64);
+        let average = sum / Decimal::from(self.params.window as u64);
         if average <= Decimal::ZERO {
             return BarVerdict::FlatAverage;
         }
@@ -399,6 +429,41 @@ mod tests {
         let mut straight = window(3, "1.5", "2.5");
         for b in [bar("100", "101"), bar("101", "102"), bar("102", "106")] {
             assert_eq!(swapped.classify(&b), straight.classify(&b));
+        }
+    }
+
+    /// One ruler, two ways of asking it. Weighing a bar must give the
+    /// verdict folding it in would give — through the warmup, across the
+    /// eviction boundary, and on every verdict the band can return —
+    /// because the alarm reads the forming bar through `weigh` and the
+    /// strategy reads the closed one through `classify`. A trader must
+    /// never hear an alarm the bar's own close then denies for a reason
+    /// no chart shows.
+    #[test]
+    fn weighing_a_bar_answers_exactly_what_folding_it_in_would() {
+        // Bodies 1, 1, 4, 1, 1, 20 (exhaustion), 0 (doji), 2: a walk
+        // through warmup, force, quiet, exhaustion, no-side, and well past
+        // the point the window starts evicting.
+        let tape = [
+            bar("100", "101"),
+            bar("101", "102"),
+            bar("102", "106"),
+            bar("106", "107"),
+            bar("107", "108"),
+            bar("108", "128"),
+            bar("128", "128"),
+            bar("128", "130"),
+        ];
+        let mut window = window(3, "1.5", "2.5");
+        for (index, bar) in tape.iter().enumerate() {
+            let weighed = window.weigh(bar);
+            // Weighing twice must also be idempotent: nothing was folded.
+            assert_eq!(weighed, window.weigh(bar), "weigh mutated the ruler");
+            assert_eq!(
+                weighed,
+                window.classify(bar),
+                "the two readings of bar {index} disagree"
+            );
         }
     }
 }

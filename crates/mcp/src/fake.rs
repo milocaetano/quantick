@@ -21,7 +21,8 @@ use crate::{
     link::{ControlLink, InstanceSummary, Instances},
     tools::{
         CHART_WINDOW_CAPABILITY, DESCRIBE_CAPABILITY, DIAGNOSTICS_CAPABILITY,
-        EVENTS_READ_CAPABILITY, EVENTS_WAIT_CAPABILITY, SCENE_CAPABILITY, SNAPSHOT_CAPABILITY,
+        EVENTS_READ_CAPABILITY, EVENTS_WAIT_CAPABILITY, EVIDENCE_CAPTURE_CAPABILITY,
+        EVIDENCE_READ_CAPABILITY, SCENE_CAPABILITY, SNAPSHOT_CAPABILITY,
     },
 };
 
@@ -129,6 +130,8 @@ impl ControlLink for FakeLink {
             | DIAGNOSTICS_CAPABILITY
             | CHART_WINDOW_CAPABILITY
             | SCENE_CAPABILITY
+            | EVIDENCE_CAPTURE_CAPABILITY
+            | EVIDENCE_READ_CAPABILITY
             | EVENTS_READ_CAPABILITY
             | EVENTS_WAIT_CAPABILITY => ResponseOutcome::Success {
                 result: json!({ "echo": payload, "capability": capability_id }),

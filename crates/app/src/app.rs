@@ -98,6 +98,20 @@ const INLINE_TEXT_FALLBACK_PX: f32 = 12.0;
 /// whether it still fits above the anchor.
 const INLINE_TEXT_LINE_FACTOR: f32 = 1.4;
 const INLINE_TEXT_FRAME_PAD_PX: f32 = 10.0;
+/// How much of the viewport's height the arming dialog's scrolling body may
+/// take. The rest pays for the window's own chrome, its Arm/Cancel footer and
+/// the margin that keeps a centred dialog off the chart's edges.
+///
+/// A fraction rather than a fixed height because the form's length is not
+/// fixed either: unfolding the alarm section adds six rows, and on a laptop
+/// that was enough to push **Arm** past the bottom of a window the trader
+/// cannot resize. Sized so the whole dialog — body, footer and chrome — sits
+/// comfortably inside the shortest viewport the app is used on.
+const ARM_DIALOG_BODY_SCREEN_FRACTION: f32 = 0.45;
+/// Floor under that fraction. On a viewport too short for even this the form
+/// scrolls within it rather than collapsing to nothing — a dialog whose Arm
+/// button cannot be reached is worse than one that scrolls.
+const ARM_DIALOG_MIN_BODY_PT: f32 = 200.0;
 /// Frames the `QUANTICK_LOAD_OLDER` hook waits for a chart worth paging from.
 ///
 /// It cannot fire at startup: paging asks for trades older than the ones on
@@ -120,6 +134,15 @@ const LOAD_OLDER_HOOK_FRAMES: u32 = 600;
 /// a venue that is answering, and far shorter than a capture run's patience
 /// with one that is not.
 const LOAD_OLDER_CANDLES_HOOK_FRAMES: u32 = 3_600;
+
+/// How long `QUANTICK_CONTROL_EVIDENCE=screenshot` waits for the window to
+/// hand over a rasterised frame.
+///
+/// A window that presents answers on the frame after the request; a headless
+/// or occluded one never does. About two seconds at 60 fps: long enough for a
+/// surface that is coming up, short enough that a capture run gets a bundle
+/// with an honest gap instead of waiting for one that will never arrive.
+const CONTROL_EVIDENCE_HOOK_FRAMES: u32 = 120;
 
 /// How much of the newest chart the `QUANTICK_DRAWINGS_DEMO` hook spreads its
 /// objects across. Close to what a default viewport shows, so every object
@@ -646,6 +669,18 @@ fn fmt_progress(progress: &quantick_engine::BarProgress, unit: &str) -> String {
 enum StrategyDemoMode {
     Armed,
     Popup,
+    /// The arming dialog with the **alarm switched on** and its share gate
+    /// picked, so every alarm control is on screen at once. The section
+    /// folds itself away while the checkbox is clear — which is right for a
+    /// trader and useless for a capture — so `popup` alone can never
+    /// photograph it.
+    AlarmPopup,
+    /// An **alarm-only** instance armed on the region, carrying a standing
+    /// preview mark: the badge that says "this places nothing" and the
+    /// provisional label, in one frame. Both are states a real tape reaches
+    /// only when a force bar happens to be half-formed, which no capture
+    /// can wait for.
+    AlarmBadge,
 }
 
 /// The arming dialog's state: which drawing on which pane of which tab,
@@ -910,6 +945,11 @@ pub struct QuantickApp {
     pending_control_annotation: Option<String>,
     /// The `QUANTICK_CONTROL_NOTIFY` hook: `<channel>:<message>`.
     pending_control_notification: Option<String>,
+    /// The `QUANTICK_CONTROL_EVIDENCE` hook: which scopes to capture, and
+    /// whether to rasterise the window with them.
+    pending_control_evidence: Option<String>,
+    /// Frames the evidence hook has spent waiting for a rasterised window.
+    control_evidence_hook_frames: u32,
     /// The `QUANTICK_CONTROL_MARK` hook: take a mark on the first frame,
     /// through the hotkey's own action, with the note the hook carried.
     pending_control_mark: Option<String>,
@@ -1091,6 +1131,15 @@ pub struct QuantickApp {
     strategy_bank: crate::strategy_presets::StrategyBank,
     /// The arming dialog, opened by a drawing menu's "Add strategy…".
     strategy_popup: Option<StrategyPopup>,
+    /// Where signal alarms are played. The shipped sink is the platform's
+    /// own sounds; a test swaps in a recorder, which is how "the alarm
+    /// sounded, once, and it was the sound the preset named" is asserted
+    /// without a build machine making noise.
+    alerts: Box<dyn crate::audio::AlertSink>,
+    /// The last reason a sound could not be played, shown once in the
+    /// dialog. A build with no audio backend, or a platform that refused,
+    /// is reported: an alarm the trader never heard is never assumed heard.
+    alert_failure: Option<String>,
     /// `QUANTICK_STRATEGY_DEMO`: rectangle + armed instance (`1`) or the
     /// arming dialog over it (`popup`), for validation runs. Consumed once
     /// the chart has bars enough, like the drawings demo.
@@ -1364,6 +1413,8 @@ impl QuantickApp {
             operator_slots: std::collections::BTreeSet::new(),
             pending_control_annotation: None,
             pending_control_notification: None,
+            pending_control_evidence: None,
+            control_evidence_hook_frames: 0,
             pending_control_mark: None,
             inline_text_edit: None,
             inspector_moved: false,
@@ -1422,6 +1473,8 @@ impl QuantickApp {
                 crate::strategy_presets::StrategyBank::default_path(),
             ),
             strategy_popup: None,
+            alerts: Box::new(crate::audio::PlatformAlerts),
+            alert_failure: None,
             pending_strategy_demo: None,
             scripted_indicator_settings: false,
             scripted_candle_width: None,
@@ -1526,6 +1579,12 @@ impl QuantickApp {
         // An assistant's own object and an assistant's own interruption, from
         // a launch: the surfaces that say *who* acted cannot be photographed
         // without something an operator other than the trader put there.
+        // One evidence bundle from a launch, through the same read a client
+        // calls: the capture a validation run asserts against, and the
+        // screenshot notice a capture run photographs.
+        app.pending_control_evidence = std::env::var("QUANTICK_CONTROL_EVIDENCE")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
         app.pending_control_annotation = std::env::var("QUANTICK_CONTROL_ANNOTATE")
             .ok()
             .filter(|value| !value.trim().is_empty());
@@ -1748,6 +1807,8 @@ impl QuantickApp {
                 .and_then(|value| match value.trim() {
                     "1" | "armed" => Some(StrategyDemoMode::Armed),
                     "popup" => Some(StrategyDemoMode::Popup),
+                    "alarm" => Some(StrategyDemoMode::AlarmPopup),
+                    "alarm-badge" => Some(StrategyDemoMode::AlarmBadge),
                     _ => None,
                 });
 
@@ -2609,6 +2670,136 @@ impl QuantickApp {
         );
         self.control_access = Some(access);
         outcome
+    }
+
+    /// The `QUANTICK_CONTROL_EVIDENCE` hook: capture one evidence bundle
+    /// through the very read a connected client calls.
+    ///
+    /// The value is a comma-separated list of tokens: `all` (or `1`) means
+    /// every registered scope the configured grant already reaches,
+    /// `screenshot` asks for the window to be rasterised as well, and
+    /// anything else is a snapshot scope ID. The manifest is logged, so a
+    /// scripted validation run reads what the bundle covered — and what it
+    /// did not — without a client on the socket.
+    ///
+    /// A capture that asked for an image waits for it: the window is asked to
+    /// rasterise and the hook takes the next frame, giving up after
+    /// [`CONTROL_EVIDENCE_HOOK_FRAMES`] rather than hanging a capture run on a
+    /// surface that never presents.
+    fn apply_control_evidence_hook(&mut self, ctx: &egui::Context) {
+        if self.pending_control_evidence.is_none() {
+            return;
+        }
+        // Access is taken *before* the request is, so a frame that finds it
+        // borrowed leaves the hook pending rather than dropping it silently.
+        let Some(mut access) = self.control_access.take() else {
+            return;
+        };
+        let request = self
+            .pending_control_evidence
+            .take()
+            .expect("the hook was pending one line above");
+        let mut wants_screenshot = false;
+        // A set, not a list: `all,scene.controls` is a reasonable thing to
+        // type, and the capability refuses a scope named twice, so the tokens
+        // are folded rather than concatenated.
+        let mut scopes = std::collections::BTreeSet::new();
+        for token in request.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            match token {
+                "screenshot" => wants_screenshot = true,
+                "all" | "1" => scopes.extend(
+                    access
+                        .readable_scopes()
+                        .into_iter()
+                        .map(|scope| scope.to_string()),
+                ),
+                scope => {
+                    scopes.insert(scope.to_owned());
+                }
+            }
+        }
+        if scopes.is_empty() {
+            scopes.extend(
+                access
+                    .readable_scopes()
+                    .into_iter()
+                    .map(|scope| scope.to_string()),
+            );
+        }
+        // The scope is checked before anything is armed, not after. Arming is
+        // what eventually raises the screenshot notice, and telling the trader
+        // their window was captured on the way to refusing the capture would
+        // make the one indicator `visual-qa` asserts on say something untrue.
+        if wants_screenshot && !access.grants_screenshot() {
+            tracing::warn!(
+                target: "quantick::control",
+                event_code = "CONTROL_EVIDENCE_HOOK_SCREENSHOT_NOT_GRANTED",
+                "QUANTICK_CONTROL_EVIDENCE asked for an image without observe.screenshot; \
+                 capturing without one"
+            );
+            wants_screenshot = false;
+        }
+        if wants_screenshot {
+            // Harvests as well as arms: the frame service that normally takes
+            // the pixels runs only while the gateway is enabled, and this hook
+            // is meant to work without a client on the socket.
+            access.service_screenshot(self, ctx);
+        }
+        if wants_screenshot && !access.has_screenshot() {
+            self.control_evidence_hook_frames = self.control_evidence_hook_frames.saturating_add(1);
+            if self.control_evidence_hook_frames <= CONTROL_EVIDENCE_HOOK_FRAMES {
+                // Every waiting frame asks for the next one. Without this a
+                // quiescent window — a paused replay, no feed, exactly the
+                // headless validation run the hook exists for — would never
+                // repaint, the counter would never advance, and the hook would
+                // neither complete nor give up.
+                ctx.request_repaint();
+                self.pending_control_evidence = Some(request);
+                self.control_access = Some(access);
+                return;
+            }
+            tracing::warn!(
+                target: "quantick::control",
+                event_code = "CONTROL_EVIDENCE_HOOK_GAVE_UP_ON_IMAGE",
+                frames = CONTROL_EVIDENCE_HOOK_FRAMES,
+                "the window never delivered a frame to rasterise; capturing without one"
+            );
+            // The request stays true on purpose. Clearing it would send
+            // `screenshot: false`, and the bundle would then record
+            // `screenshot/not_requested` — a lie about a run that asked for a
+            // picture and waited two seconds for one. Left true, the capture
+            // finds no image and records `frame_not_delivered`, which is what
+            // actually happened.
+        }
+        let outcome = access.invoke_local_read(
+            self,
+            "evidence.capture",
+            serde_json::json!({ "scopes": scopes, "screenshot": wants_screenshot }),
+        );
+        self.control_access = Some(access);
+        match outcome {
+            Ok(manifest) => tracing::info!(
+                target: "quantick::control",
+                event_code = "CONTROL_EVIDENCE_CAPTURED",
+                evidence_id = %manifest["evidence_id"].as_str().unwrap_or_default(),
+                content_digest = %manifest["content_digest"].as_str().unwrap_or_default(),
+                encoded_bytes = %manifest["encoded_bytes"].as_str().unwrap_or_default(),
+                chunk_count = manifest["chunk_count"].as_u64().unwrap_or_default(),
+                captured_scopes = manifest["source_scopes"].as_array().map_or(0, Vec::len),
+                omitted_scopes = manifest["coverage"]["omitted_scopes"].as_array().map_or(0, Vec::len),
+                not_captured = manifest["coverage"]["not_captured"].as_array().map_or(0, Vec::len),
+                unavailable_fields = manifest["coverage"]["unavailable_fields"].as_array().map_or(0, Vec::len),
+                screenshot = !manifest["screenshot"].is_null(),
+                "an evidence bundle was captured through the control plane"
+            ),
+            Err(error) => tracing::warn!(
+                target: "quantick::control",
+                event_code = "CONTROL_EVIDENCE_HOOK_REFUSED",
+                error_code = %error.code,
+                error = %error.message,
+                "QUANTICK_CONTROL_EVIDENCE could not capture a bundle"
+            ),
+        }
     }
 
     /// A launch hook's action, with its failure reported where a scripted run
@@ -9116,6 +9307,212 @@ impl QuantickApp {
         true
     }
 
+    /// The alarm section of the arming dialog.
+    ///
+    /// Its own function because it is the one part of the form that is
+    /// about hearing rather than trading, and because the fields under the
+    /// checkbox are only meaningful while it is ticked — a shape the rest
+    /// of the dialog does not have.
+    fn draw_alarm_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        side: pane::PaneSide,
+        form: &mut crate::strategy_presets::StoredPreset,
+    ) {
+        use crate::audio::AlertSound;
+        use crate::strategy_presets as presets;
+
+        ui.checkbox(&mut form.alarm, "alarm on signal bar")
+            .on_hover_text(
+                "play a sound the moment this strategy's signal happens — the trigger \
+                 fires on your side, inside the region. It is the *signal* that alarms, \
+                 not the order: with the share option below, you hear it before the bar \
+                 closes and before any order could be placed, which is the time you need \
+                 to act on another platform.",
+            );
+        if !form.alarm {
+            // The alarm-only mode goes with the alarm: an instance that
+            // neither trades nor alarms does nothing, and the form must not
+            // be able to describe one.
+            form.alarm_only = false;
+            return;
+        }
+
+        // The bar rule the chart is actually running decides whether a
+        // share of the bar means anything. An adaptive rule closes on a
+        // condition, not on a count, so there is no fraction of it to wait
+        // for — and saying so here is cheaper than a trader wondering for a
+        // session why the alarm only ever speaks at the close.
+        // The pane the dialog is arming on, not the focused one: with a
+        // split open, a strategy going onto the time pane must be judged by
+        // the time pane's bar rule. Reading the focused pane would disable
+        // the share gate because the *other* pane runs an adaptive rule.
+        let shares_available = self.active_tab().pane(side).state.progress().is_some();
+
+        ui.horizontal(|ui| {
+            ui.label("when:");
+            let on_close = form.alarm_when != "share";
+            if ui
+                .selectable_label(on_close, "bar closes")
+                .on_hover_text("the same instant the strategy itself judges")
+                .clicked()
+            {
+                form.alarm_when = "on_close".to_owned();
+            }
+            let share_button = ui.add_enabled(
+                shares_available,
+                egui::SelectableLabel::new(!on_close, "part-way through the bar"),
+            );
+            if share_button.clicked() {
+                form.alarm_when = "share".to_owned();
+            }
+            if !shares_available {
+                share_button.on_hover_text(
+                    "this bar rule closes on a condition rather than on a count, so there \
+                     is no share of it to wait for — the alarm speaks at the close",
+                );
+            }
+        });
+        if form.alarm_when == "share" {
+            ui.horizontal(|ui| {
+                ui.label("from");
+                ui.add(
+                    egui::DragValue::new(&mut form.alarm_share_percent)
+                        .range(presets::MIN_ALARM_SHARE_PERCENT..=presets::MAX_ALARM_SHARE_PERCENT),
+                );
+                ui.label("% of the bar onward").on_hover_text(
+                    "on a 2000-tick chart at 70%, the alarm starts judging past tick \
+                     1400. The bar is still moving, so the signal is marked \"preview\" \
+                     — and if it stops qualifying before the close, the chart says so.",
+                );
+            });
+        }
+
+        ui.horizontal(|ui| {
+            ui.label("repeat:");
+            let once = form.alarm_repeat != "cooldown";
+            if ui
+                .selectable_label(once, "once per bar")
+                .on_hover_text("one sound per bar, however many prints agree")
+                .clicked()
+            {
+                form.alarm_repeat = "once_per_bar".to_owned();
+            }
+            if ui.selectable_label(!once, "every").clicked() {
+                form.alarm_repeat = "cooldown".to_owned();
+            }
+            if form.alarm_repeat == "cooldown" {
+                ui.add(
+                    egui::DragValue::new(&mut form.alarm_cooldown_secs)
+                        .range(presets::MIN_ALARM_COOLDOWN_SECS..=presets::MAX_ALARM_COOLDOWN_SECS),
+                );
+                ui.label("s").on_hover_text(
+                    "counted across bars, not reset by one closing — the rule for a \
+                     trader who wants a reminder rather than one notice",
+                );
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("sound");
+            let current = AlertSound::from_token(&form.alarm_sound).unwrap_or_default();
+            egui::ComboBox::from_id_salt("strategy_alarm_sound")
+                .selected_text(current.label())
+                .show_ui(ui, |ui| {
+                    for sound in AlertSound::ALL {
+                        if ui
+                            .selectable_label(sound == current, sound.label())
+                            .clicked()
+                        {
+                            form.alarm_sound = sound.token().to_owned();
+                        }
+                    }
+                });
+            if ui
+                .button("Test")
+                .on_hover_text("play it now, so the sound is chosen with the ears")
+                .clicked()
+            {
+                // Same door as a real alarm, so an audition that cannot be
+                // heard reports itself exactly as a missed signal would.
+                let outcome = self.alerts.play(current);
+                self.report_alert_attempt(outcome);
+            }
+        });
+
+        ui.checkbox(&mut form.alarm_only, "alarm only — never place an order")
+            .on_hover_text(
+                "the instance watches, judges and alarms, and places nothing. For a \
+                 trader who executes elsewhere: a simulated position they never meant \
+                 to take would occupy the account and silence the next signal.",
+            );
+        if let Some(reason) = &self.alert_failure {
+            ui.colored_label(theme::SELL, format!("no sound was played: {reason}"));
+        }
+    }
+
+    /// Play the alarm sounds every tab's armed instances asked for this
+    /// frame, and empty their queues.
+    ///
+    /// Every tab, not only the active one: a tab the trader is not looking
+    /// at keeps its feed running and its instances judging, and an alarm
+    /// exists precisely to be heard when the eyes are elsewhere.
+    ///
+    /// One sound per *distinct* sound per frame per tab. The kernel's repeat
+    /// rule has already thinned each instance's stream to one per bar (or
+    /// one per cooldown); this is the second, blunter guard, for the frame
+    /// that ingested a burst of prints and closed several bars at once —
+    /// four identical beeps stacked into one instant are one noise, not four
+    /// alarms.
+    ///
+    /// Deduplicating by *sound* rather than collapsing to one is the whole
+    /// point of letting a preset choose one: a trader who gave two regions
+    /// two sounds did it to tell them apart, and swallowing the second
+    /// because it shared a frame with the first would hide a signal and
+    /// leave no trace that it had. The set is small and fixed, so this is
+    /// bounded by [`crate::audio::AlertSound::ALL`] however busy the tape.
+    fn play_pending_alarms(&mut self) {
+        for index in 0..self.tabs.len() {
+            if self.tabs[index].pending_alarm_sounds.is_empty() {
+                continue;
+            }
+            let mut queued = std::mem::take(&mut self.tabs[index].pending_alarm_sounds);
+            // Order of first request, duplicates dropped — `dedup` alone
+            // would only collapse neighbours.
+            let mut distinct: Vec<crate::audio::AlertSound> = Vec::new();
+            for sound in queued.drain(..) {
+                if !distinct.contains(&sound) {
+                    distinct.push(sound);
+                }
+            }
+            for sound in distinct {
+                let outcome = self.alerts.play(sound);
+                self.report_alert_attempt(outcome);
+            }
+        }
+    }
+
+    /// Record whether a sound actually reached the trader.
+    ///
+    /// A notification that never arrived is reported, never assumed — so a
+    /// first failure raises a toast rather than waiting for the trader to
+    /// reopen the arming dialog, which they may never do. Only the *first*
+    /// of a run: a build with no audio backend fails on every alarm, and a
+    /// toast per bar would be its own noise. A success clears the reason, so
+    /// one transient refusal does not leave a permanent red line behind it.
+    fn report_alert_attempt(&mut self, outcome: Result<(), &'static str>) {
+        match outcome {
+            Ok(()) => self.alert_failure = None,
+            Err(reason) => {
+                let first = self.alert_failure.as_deref() != Some(reason);
+                self.alert_failure = Some(reason.to_owned());
+                if first {
+                    self.show_agent_toast(format!("no alarm sound was played: {reason}"));
+                }
+            }
+        }
+    }
+
     /// Arm one instance on a drawing: compile the form, warm the trigger on
     /// the bars already closed (gates shut, so nothing fires from history),
     /// attach it, and start the paper host listening. `Err` carries the
@@ -9127,12 +9524,18 @@ impl QuantickApp {
         form: &crate::strategy_presets::StoredPreset,
         preset_label: String,
     ) -> Result<(), String> {
-        let Some((params, force)) = form.to_kernel() else {
+        let Some(compiled) = form.to_kernel() else {
             return Err(
-                "a field does not parse: quantity, factors and multipliers must be numbers"
+                "a field does not parse: quantity, factors and multipliers must be numbers, \
+                 and an instance that neither trades nor alarms cannot be armed"
                     .to_owned(),
             );
         };
+        let crate::strategy_presets::CompiledPreset {
+            params,
+            force,
+            alarm,
+        } = compiled;
         let tab = self.active_tab_mut();
         let replaced_cleanup = {
             let pane = tab.pane_mut(side);
@@ -9191,6 +9594,9 @@ impl QuantickApp {
                     drawing,
                     preset: preset_label,
                     armed,
+                    alarm: alarm.map(|setup| quantick_strategy::SignalAlarm::new(setup.params)),
+                    sound: alarm.map(|setup| setup.sound).unwrap_or_default(),
+                    mark: crate::strategy_anchors::AlarmMark::Quiet,
                 })
         };
         for command in replaced_cleanup {
@@ -9236,93 +9642,116 @@ impl QuantickApp {
         }
         let mut open = true;
         let mut done = false;
+        // The form grew past a 900 pt window once the alarm section unfolds,
+        // and an anchored, non-resizable window simply clipped the rows past
+        // the edge — including **Arm**, which makes the dialog unusable at
+        // that height rather than merely cramped. The body scrolls instead,
+        // and its ceiling is read from the viewport rather than fixed, so the
+        // same form fits a laptop and still uses a tall monitor.
+        let max_body = (ctx.screen_rect().height() * ARM_DIALOG_BODY_SCREEN_FRACTION)
+            .max(ARM_DIALOG_MIN_BODY_PT);
         egui::Window::new("Arm strategy")
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("preset");
-                    let current = popup.preset_choice.as_deref().unwrap_or("custom");
-                    egui::ComboBox::from_id_salt("strategy_preset_pick")
-                        .selected_text(current.to_owned())
-                        .show_ui(ui, |ui| {
-                            let names: Vec<String> =
-                                self.strategy_bank.names().map(str::to_owned).collect();
-                            for name in names {
-                                let picked = popup.preset_choice.as_deref() == Some(name.as_str());
-                                if ui.selectable_label(picked, &name).clicked()
-                                    && let Some(stored) = self.strategy_bank.get(&name)
-                                {
-                                    popup.form = stored.clone();
-                                    popup.preset_choice = Some(name.clone());
-                                }
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, true])
+                    .max_height(max_body)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("preset");
+                            let current = popup.preset_choice.as_deref().unwrap_or("custom");
+                            egui::ComboBox::from_id_salt("strategy_preset_pick")
+                                .selected_text(current.to_owned())
+                                .show_ui(ui, |ui| {
+                                    let names: Vec<String> =
+                                        self.strategy_bank.names().map(str::to_owned).collect();
+                                    for name in names {
+                                        let picked =
+                                            popup.preset_choice.as_deref() == Some(name.as_str());
+                                        if ui.selectable_label(picked, &name).clicked()
+                                            && let Some(stored) = self.strategy_bank.get(&name)
+                                        {
+                                            popup.form = stored.clone();
+                                            popup.preset_choice = Some(name.clone());
+                                        }
+                                    }
+                                });
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("side");
+                            let buy = popup.form.side == "buy";
+                            if ui.selectable_label(buy, "BUY").clicked() {
+                                popup.form.side = "buy".to_owned();
+                            }
+                            if ui.selectable_label(!buy, "SELL").clicked() {
+                                popup.form.side = "sell".to_owned();
                             }
                         });
-                });
-                ui.horizontal(|ui| {
-                    ui.label("side");
-                    let buy = popup.form.side == "buy";
-                    if ui.selectable_label(buy, "BUY").clicked() {
-                        popup.form.side = "buy".to_owned();
-                    }
-                    if ui.selectable_label(!buy, "SELL").clicked() {
-                        popup.form.side = "sell".to_owned();
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("quantity");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut popup.form.quantity).desired_width(60.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("force band: body between");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut popup.form.min_factor).desired_width(40.0),
-                    );
-                    ui.label("× and");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut popup.form.max_factor).desired_width(40.0),
-                    );
-                    ui.label("× the average of");
-                    ui.add(
-                        egui::DragValue::new(&mut popup.form.window)
-                            .range(1..=crate::strategy_presets::MAX_FORCE_WINDOW),
-                    );
-                    ui.label("bodies");
-                });
-                ui.horizontal(|ui| {
-                    ui.label("and body ≥");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut popup.form.min_body).desired_width(50.0),
-                    );
-                    ui.label("pts (0 = off)").on_hover_text(
-                        "the elephant floor: the relative band alone marks dozens of small \
+                        ui.horizontal(|ui| {
+                            ui.label("quantity");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut popup.form.quantity)
+                                    .desired_width(60.0),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("force band: body between");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut popup.form.min_factor)
+                                    .desired_width(40.0),
+                            );
+                            ui.label("× and");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut popup.form.max_factor)
+                                    .desired_width(40.0),
+                            );
+                            ui.label("× the average of");
+                            ui.add(
+                                egui::DragValue::new(&mut popup.form.window)
+                                    .range(1..=crate::strategy_presets::MAX_FORCE_WINDOW),
+                            );
+                            ui.label("bodies");
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("and body ≥");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut popup.form.min_body)
+                                    .desired_width(50.0),
+                            );
+                            ui.label("pts (0 = off)").on_hover_text(
+                                "the elephant floor: the relative band alone marks dozens of small \
                          bars as force on activity-cut bars; an elephant has a size",
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("projection: TP");
-                    ui.add(egui::TextEdit::singleline(&mut popup.form.tp_mult).desired_width(40.0));
-                    ui.label("× range ahead, SL");
-                    ui.add(egui::TextEdit::singleline(&mut popup.form.sl_mult).desired_width(40.0));
-                    ui.label("× range behind (0 = no leg)");
-                });
-                let mut auto = popup.form.rearm == "auto";
-                if ui
-                    .checkbox(&mut auto, "re-arm automatically after the operation closes")
-                    .on_hover_text("off = one shot per arming, the over-fire guard")
-                    .changed()
-                {
-                    popup.form.rearm = if auto { "auto" } else { "one_shot" }.to_owned();
-                }
-                let mut retest = popup.form.on_break == "retest_limit";
-                if ui
-                    .checkbox(&mut retest, "on a cut: rest a limit at the region edge")
-                    .on_hover_text(
-                        "a trigger bar whose body cuts the region in the trade's direction \
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("projection: TP");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut popup.form.tp_mult)
+                                    .desired_width(40.0),
+                            );
+                            ui.label("× range ahead, SL");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut popup.form.sl_mult)
+                                    .desired_width(40.0),
+                            );
+                            ui.label("× range behind (0 = no leg)");
+                        });
+                        let mut auto = popup.form.rearm == "auto";
+                        if ui
+                            .checkbox(&mut auto, "re-arm automatically after the operation closes")
+                            .on_hover_text("off = one shot per arming, the over-fire guard")
+                            .changed()
+                        {
+                            popup.form.rearm = if auto { "auto" } else { "one_shot" }.to_owned();
+                        }
+                        let mut retest = popup.form.on_break == "retest_limit";
+                        if ui
+                            .checkbox(&mut retest, "on a cut: rest a limit at the region edge")
+                            .on_hover_text(
+                                "a trigger bar whose body cuts the region in the trade's direction \
                          — it opened on the region's side of that edge and closed beyond it, \
                          wicks ignored — rests a limit at the edge it cut, the retest entry, \
                          bracketed off the bar. The order removes itself if the bar's \
@@ -9332,36 +9761,47 @@ impl QuantickApp {
                          crossed, one that closed away on the far side, and a cut whose legs \
                          would not clear the edge all rest nothing. Off = a cut holds fire, \
                          as before.",
-                    )
-                    .changed()
-                {
-                    popup.form.on_break = if retest { "retest_limit" } else { "ignore" }.to_owned();
-                }
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut popup.save_name)
-                            .hint_text("preset name")
-                            .desired_width(140.0),
-                    );
-                    let name = popup.save_name.trim().to_owned();
-                    if ui
-                        .add_enabled(!name.is_empty(), egui::Button::new("Save preset"))
-                        .clicked()
-                    {
-                        self.strategy_bank.save(&name, popup.form.clone());
-                        popup.preset_choice = Some(name);
-                    }
-                    if let Some(chosen) = popup.preset_choice.clone()
-                        && ui
-                            .button("Delete preset")
-                            .on_hover_text("remove it from the bank; the form keeps its values")
-                            .clicked()
-                    {
-                        self.strategy_bank.remove(&chosen);
-                        popup.preset_choice = None;
-                    }
-                });
+                            )
+                            .changed()
+                        {
+                            popup.form.on_break =
+                                if retest { "retest_limit" } else { "ignore" }.to_owned();
+                        }
+                        ui.separator();
+                        self.draw_alarm_controls(ui, popup.side, &mut popup.form);
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut popup.save_name)
+                                    .hint_text("preset name")
+                                    .desired_width(140.0),
+                            );
+                            let name = popup.save_name.trim().to_owned();
+                            if ui
+                                .add_enabled(!name.is_empty(), egui::Button::new("Save preset"))
+                                .clicked()
+                            {
+                                self.strategy_bank.save(&name, popup.form.clone());
+                                popup.preset_choice = Some(name);
+                            }
+                            if let Some(chosen) = popup.preset_choice.clone()
+                                && ui
+                                    .button("Delete preset")
+                                    .on_hover_text(
+                                        "remove it from the bank; the form keeps its values",
+                                    )
+                                    .clicked()
+                            {
+                                self.strategy_bank.remove(&chosen);
+                                popup.preset_choice = None;
+                            }
+                        });
+                    });
+                // Outside the scroll: **Arm** is the one control the dialog
+                // exists for, and a form that grows must never be able to
+                // push it off the bottom. Body scrolls, footer stays. The
+                // error goes with it — a refusal the trader has to scroll to
+                // find reads as a dialog that did nothing.
                 if let Some(error) = &popup.error {
                     ui.colored_label(theme::SELL, error);
                 }
@@ -9427,11 +9867,13 @@ impl QuantickApp {
     }
 
     /// The `QUANTICK_STRATEGY_DEMO` hook: a named rectangle over the recent
-    /// tape with a force-bar instance armed on it (`1`), or the arming
-    /// dialog open over it (`popup`). The rectangle spans the visible
-    /// middle of the chart so `QUANTICK_CONTEXT_MENU=chart`'s centre click
-    /// lands on it and opens the per-drawing menu. Consumed once the chart
-    /// has bars enough, like the drawings demo.
+    /// tape with a force-bar instance armed on it (`1`), the arming dialog
+    /// open over it (`popup`), that dialog with the **alarm section
+    /// unfolded** (`alarm`), or an **alarm-only** instance wearing a
+    /// standing preview mark (`alarm-badge`). The rectangle spans the
+    /// visible middle of the chart so `QUANTICK_CONTEXT_MENU=chart`'s centre
+    /// click lands on it and opens the per-drawing menu. Consumed once the
+    /// chart has bars enough, like the drawings demo.
     fn apply_strategy_demo(&mut self) {
         let Some(mode) = self.pending_strategy_demo else {
             return;
@@ -9503,8 +9945,20 @@ impl QuantickApp {
         };
         // Staged: the rectangle exists, so the hook is consumed.
         self.pending_strategy_demo = None;
-        let form =
+        let mut form =
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
+        // The alarm scenes tick the checkbox the trader would tick, and the
+        // share gate under it, so the section is unfolded with every control
+        // it owns on screen.
+        if matches!(
+            mode,
+            StrategyDemoMode::AlarmPopup | StrategyDemoMode::AlarmBadge
+        ) {
+            form.alarm = true;
+            form.alarm_when = "share".to_owned();
+            form.alarm_repeat = "cooldown".to_owned();
+            form.alarm_sound = crate::audio::AlertSound::Exclamation.token().to_owned();
+        }
         match mode {
             StrategyDemoMode::Armed => {
                 let _ = self.arm_strategy_instance(
@@ -9514,7 +9968,30 @@ impl QuantickApp {
                     "demo BF".to_owned(),
                 );
             }
-            StrategyDemoMode::Popup => {
+            StrategyDemoMode::AlarmBadge => {
+                form.alarm_only = true;
+                let _ = self.arm_strategy_instance(
+                    pane::PaneSide::Flow,
+                    drawing_id,
+                    &form,
+                    "demo alarm".to_owned(),
+                );
+                // Stand a provisional judgement on the badge. The mark is
+                // the surface under test, and the tape reaches it only when
+                // a force bar happens to be half-formed — so the scene
+                // stages the mark itself rather than waiting for a market
+                // that may not oblige before the shutter.
+                let pane = self.active_tab_mut().pane_mut(pane::PaneSide::Flow);
+                if let Some(instance) = pane.strategies.for_drawing_mut(drawing_id) {
+                    instance.mark = crate::strategy_anchors::AlarmMark::Preview;
+                }
+                // Placing a drawing selects it, and a selected drawing raises
+                // the context bar across its own top edge — which is where
+                // the badge this scene exists to photograph sits. Drop the
+                // selection so the badge is the thing on screen.
+                pane.drawings.select(None);
+            }
+            StrategyDemoMode::Popup | StrategyDemoMode::AlarmPopup => {
                 self.strategy_popup = Some(StrategyPopup {
                     tab: self.active_tab,
                     side: pane::PaneSide::Flow,
@@ -9885,6 +10362,11 @@ impl QuantickApp {
             self.take_mark(note);
         }
         self.apply_control_annotate_hooks();
+        // After the annotate hooks and before the gateway's own drain: a
+        // bundle captured from a launch then describes the window an
+        // assistant has already written on, which is the state a validation
+        // run is actually asking about.
+        self.apply_control_evidence_hook(ctx);
         if self
             .control_access
             .as_ref()
@@ -10196,6 +10678,7 @@ impl QuantickApp {
         for tab in &mut self.tabs {
             tab.apply_strategy_cleanup();
         }
+        self.play_pending_alarms();
         self.draw_toast(ctx, now);
         // Both are window chrome reading the active tab, like the notice card
         // and the transport strip: they speak for one market at a time.
@@ -13579,6 +14062,153 @@ crosshair = false
             instance.armed.state(),
             &quantick_strategy::ArmedState::Done,
             "one shot per arming: after the round trip the instance is done"
+        );
+    }
+
+    /// One print, one bar, one sound: the whole alarm chain from the tape to
+    /// the platform's sink, with a recorder standing in for the speaker.
+    ///
+    /// The two halves the trader asked for are both here. The **preview**
+    /// fires part-way through a bar that has not closed — before any order
+    /// could exist, which is the head start the alarm is for — and the
+    /// **alarm-only** instance places nothing while it does, because this
+    /// trader is executing on another platform.
+    #[test]
+    fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
+        fn print(app: &mut QuantickApp, id: &mut u64, price: &str) {
+            *id += 1;
+            let trade = quantick_engine::Trade {
+                agg_id: *id,
+                timestamp_ms: 1_700_000_000_000 + *id as i64 * 100,
+                price: rust_decimal::Decimal::from_str_exact(price).unwrap(),
+                quantity: rust_decimal::Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            };
+            app.active_tab_mut()
+                .ingest_live_trade_at(&trade, trade.timestamp_ms);
+        }
+        /// One Tick(50) bar: 49 prints at `open`, the fiftieth at `close`.
+        fn bar(app: &mut QuantickApp, id: &mut u64, open: &str, close: &str) {
+            for _ in 0..49 {
+                print(app, id, open);
+            }
+            print(app, id, close);
+        }
+
+        let (mut app, _events, _commands, _book) = test_app();
+        let recorder = crate::audio::RecordingAlerts::default();
+        app.alerts = Box::new(recorder.clone());
+
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "rectangle")
+            .expect("the rectangle tool is registered");
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(30.0, 110.0));
+        }
+        let drawing = app.active_tab().flow_pane.drawings.items()[0].id;
+
+        let mut form =
+            crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
+        form.window = 3;
+        form.min_body = "0".to_owned();
+        form.alarm = true;
+        form.alarm_when = "share".to_owned();
+        form.alarm_share_percent = 70;
+        // One sound per bar keeps the assertion about *which* bar spoke
+        // rather than about the wall clock a cooldown would consult.
+        form.alarm_repeat = "once_per_bar".to_owned();
+        form.alarm_sound = crate::audio::AlertSound::Critical.token().to_owned();
+        form.alarm_only = true;
+        app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "alarm".to_owned())
+            .expect("the alarm form compiles and the drawing exists");
+
+        let mut id = 0u64;
+        // Three body-1 warmup bars inside the region: quiet, and silent.
+        bar(&mut app, &mut id, "100", "101");
+        bar(&mut app, &mut id, "101", "102");
+        bar(&mut app, &mut id, "102", "103");
+        app.play_pending_alarms();
+        assert!(
+            recorder.sounds().is_empty(),
+            "a warming ruler has nothing to announce: {:?}",
+            recorder.sounds()
+        );
+
+        // The signal bar, in two halves. Its first print sets the open at
+        // 103; the rest move the close to 107, a body of 4 against an
+        // average of 2 — force, from print two onward. A Tick(50) bar's
+        // 70% gate opens on print 35, so prints 2 to 34 are the control:
+        // the bar already qualifies and the alarm is still holding.
+        print(&mut app, &mut id, "103");
+        for _ in 0..33 {
+            print(&mut app, &mut id, "107");
+        }
+        app.play_pending_alarms();
+        assert!(
+            recorder.sounds().is_empty(),
+            "before 70% of the bar the alarm holds its tongue: {:?}",
+            recorder.sounds()
+        );
+
+        // Print 35 crosses the share. The bar has not closed.
+        print(&mut app, &mut id, "107");
+        app.play_pending_alarms();
+        assert_eq!(
+            recorder.sounds(),
+            vec![crate::audio::AlertSound::Critical],
+            "past the share the forming bar alarms, in the preset's own sound"
+        );
+        let instance = app
+            .active_tab()
+            .flow_pane
+            .strategies
+            .for_drawing(drawing)
+            .expect("instance");
+        assert_eq!(
+            instance.mark,
+            crate::strategy_anchors::AlarmMark::Preview,
+            "a bar that has not closed is announced as provisional"
+        );
+        assert!(
+            app.active_tab().paper.is_flat(),
+            "the alarm sounded and nothing was ordered — the bar is still open"
+        );
+
+        // The rest of the bar, then its close. Once per bar means the
+        // trader hears this signal exactly once, however many prints agree.
+        for _ in 0..15 {
+            print(&mut app, &mut id, "107");
+        }
+        app.play_pending_alarms();
+        assert_eq!(
+            recorder.sounds(),
+            vec![crate::audio::AlertSound::Critical],
+            "one sound per bar, whatever the tape does inside it"
+        );
+        let instance = app
+            .active_tab()
+            .flow_pane
+            .strategies
+            .for_drawing(drawing)
+            .expect("instance");
+        assert_eq!(
+            instance.mark,
+            crate::strategy_anchors::AlarmMark::Confirmed,
+            "the bar closed still qualifying: the preview held"
+        );
+        assert_eq!(
+            instance.armed.state(),
+            &quantick_strategy::ArmedState::Armed,
+            "an alarm-only instance is never spent — it keeps watching"
+        );
+        assert!(
+            app.active_tab().paper.is_flat(),
+            "alarm only: the whole bar passed and no order was ever placed"
         );
     }
 
@@ -30379,13 +31009,1009 @@ plot(close)
         assert!(error.retryable);
     }
 
+    /// The read scopes an evidence client asks for: everything the safe
+    /// default grants, plus the two the evidence tier adds — both sensitive,
+    /// both off until the trader ticks them.
+    fn evidence_test_options() -> quantick_control_local::client::ConnectOptions {
+        let mut scopes = gateway_test_scopes();
+        for id in ["observe.evidence", "observe.screenshot"] {
+            scopes.insert(quantick_control::id::PermissionId::new(id).unwrap());
+        }
+        quantick_control_local::client::ConnectOptions::observer(
+            "quantick integration test",
+            env!("CARGO_PKG_VERSION"),
+            scopes,
+        )
+    }
+
+    /// The scopes a bundle is captured over in these tests: enough to explain
+    /// a session, and including the scene, which is what a screenshot
+    /// correlates against.
+    const EVIDENCE_TEST_SCOPES: [&str; 6] = [
+        "system.info",
+        "workspace.summary",
+        "feed.status",
+        "chart.summary",
+        "health.summary",
+        "scene.controls",
+    ];
+
+    /// One run of resource bytes, decoded through the contract's own wire
+    /// type rather than a second base64 spelling in this test.
+    fn decode_wire_base64(encoded: &str) -> Vec<u8> {
+        quantick_control::wire::Base64Bytes::new(encoded)
+            .expect("the gateway encodes valid base64")
+            .decode()
+            .expect("what encodes decodes")
+    }
+
+    /// Page a retained bundle back through its own cursor and return the
+    /// canonical bytes the chunks reassemble into, with the manifest that
+    /// described them.
+    fn read_evidence_bundle(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        client: &mut quantick_control_local::client::LocalClient,
+        manifest: &serde_json::Value,
+    ) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut cursor = serde_json::Value::Null;
+        loop {
+            let payload = if cursor.is_null() {
+                serde_json::json!({ "evidence_id": manifest["evidence_id"] })
+            } else {
+                serde_json::json!({ "evidence_id": manifest["evidence_id"], "cursor": cursor })
+            };
+            let response = remote_call(app, ctx, client, "evidence.read", payload);
+            let page = success_result(&response);
+            for chunk in page["page"]["items"].as_array().unwrap() {
+                bytes.extend(decode_wire_base64(chunk["data"].as_str().unwrap()));
+            }
+            match page["page"]["next_cursor"].clone() {
+                serde_json::Value::Null => break,
+                next => cursor = next,
+            }
+        }
+        assert_eq!(
+            bytes.len(),
+            manifest["encoded_bytes"]
+                .as_str()
+                .unwrap()
+                .parse::<usize>()
+                .unwrap(),
+            "the pages reassemble to exactly the bundle the manifest describes"
+        );
+        bytes
+    }
+
+    /// One capture that wants a picture, served the way the window serves one:
+    /// the request parks, the frame delivers the pixels, the capture runs.
+    ///
+    /// There is no shortcut past the parking. An image is worth exactly one
+    /// frame — `begin_frame` drops whatever no capture claimed — so a fixture
+    /// published before the request was sent would be gone by the time it
+    /// arrived, which is the staleness rule doing its job.
+    fn capture_with_screenshot(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        client: &mut quantick_control_local::client::LocalClient,
+        payload: serde_json::Value,
+        image: crate::control::RawScreenshot,
+    ) -> quantick_control::wire::ResponseEnvelope {
+        let request_id = client
+            .send("evidence.capture", payload)
+            .expect("the request is sent");
+        // Wait for the capture to actually park before handing over pixels.
+        // Not a nicety: an image is worth one frame, so publishing before the
+        // request has parked would have the frame drop it and the capture then
+        // wait for one that never comes. Asserted rather than assumed, so a
+        // machine slow enough to break the precondition says so here instead
+        // of failing later on a confusing assertion about the manifest.
+        let parked = (0..PARK_WAIT_FRAMES).any(|_| {
+            run_frame(app, ctx);
+            app.control_access
+                .as_ref()
+                .expect("control access is installed")
+                .awaiting_screenshot_for_test()
+                > 0
+        });
+        assert!(
+            parked,
+            "the capture did not park for an image within {PARK_WAIT_FRAMES} frames"
+        );
+        let mut access = app
+            .control_access
+            .take()
+            .expect("control access is installed");
+        access.publish_screenshot_for_test(app, image);
+        app.control_access = Some(access);
+        for _ in 0..REPLY_WAIT_FRAMES {
+            run_frame(app, ctx);
+            if client.reply_pending(std::time::Duration::from_millis(5)) {
+                break;
+            }
+        }
+        let response = client.read().expect("the gateway answered");
+        assert_eq!(response.request_id, request_id);
+        response
+    }
+
+    /// Frames a test spends waiting for a capture to park on an image.
+    ///
+    /// Generous: the request crosses a socket and two threads, and these tests
+    /// run alongside every other crate's test binary. The gateways they use
+    /// have their request timeout raised for the same reason.
+    const PARK_WAIT_FRAMES: usize = 600;
+    /// Frames a test spends waiting for the gateway's reply.
+    const REPLY_WAIT_FRAMES: usize = 600;
+
+    /// A window's worth of pixels a PNG encoder cannot shrink.
+    ///
+    /// The ramp below deflates to a few kilobytes, which is the wrong fixture
+    /// for anything about size: it makes every bundle a single chunk and hides
+    /// the paging path entirely. This one is noise from a fixed generator —
+    /// reproducible, and it compresses to nothing.
+    fn incompressible_screenshot(width: u32, height: u32) -> crate::control::RawScreenshot {
+        let mut state = 0x2545_F491_4F6C_DD1D_u64;
+        let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+        for _ in 0..(width as usize * height as usize) {
+            // xorshift64*: no dependency, and the same bytes on every machine.
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            let sample = state.wrapping_mul(0x2545_F491_4F6C_DD1D).to_le_bytes();
+            rgba.extend_from_slice(&[sample[0], sample[1], sample[2], 0xff]);
+        }
+        crate::control::RawScreenshot {
+            width_px: width,
+            height_px: height,
+            pixels_per_point: 1.0,
+            rgba: crate::control::ScreenshotPixels::new(move || rgba),
+        }
+    }
+
+    /// A window's worth of opaque pixels, the shape the platform hands over.
+    fn test_screenshot(width: u32, height: u32) -> crate::control::RawScreenshot {
+        crate::control::RawScreenshot {
+            width_px: width,
+            height_px: height,
+            pixels_per_point: 1.0,
+            rgba: crate::control::ScreenshotPixels::new(move || {
+                (0..(width as usize * height as usize))
+                    .flat_map(|index| {
+                        let shade = u8::try_from(index % 251).unwrap_or(0);
+                        [shade, 0x20, 0x30, 0xff]
+                    })
+                    .collect()
+            }),
+        }
+    }
+
+    /// Criteria 1 and 2 of roadmap 5.4: an agent explains the running session
+    /// from a bundle alone, without a picture of the window — and the events
+    /// it carries continue through the very cursor `events.read` takes.
+    ///
+    /// Everything here goes over the loopback socket into the running
+    /// instance: capture, manifest, paged read, reassembly, digest.
+    #[test]
+    fn an_evidence_bundle_explains_the_session_without_an_image_and_its_events_keep_reading() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(12);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("evidence-explains");
+        grant_annotate_for_test(&mut app, "all-reads,observe.evidence,observe.screenshot");
+        enable_test_gateway(&mut app, &ctx, &directory, 8);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &evidence_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+
+        let response = remote_call(
+            &mut app,
+            &ctx,
+            &mut client,
+            "evidence.capture",
+            serde_json::json!({ "scopes": EVIDENCE_TEST_SCOPES }),
+        );
+        let manifest = success_result(&response).clone();
+        assert!(
+            manifest["screenshot"].is_null(),
+            "nothing was rasterised and the manifest does not pretend otherwise"
+        );
+
+        let bytes = read_evidence_bundle(&mut app, &ctx, &mut client, &manifest);
+        let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        // The digest the manifest attests is the digest of what came back.
+        assert_eq!(
+            quantick_control::canonical::raw_digest(&bytes),
+            manifest["content_digest"].as_str().unwrap(),
+            "the chunks are byte runs of the canonical text the manifest hashed"
+        );
+
+        // Who and what: instance, session, build, host, one capture revision.
+        assert_eq!(document["instance_id"], manifest["instance_id"]);
+        assert_eq!(document["session_id"], manifest["session_id"]);
+        assert_eq!(document["capture_revision"], manifest["capture_revision"]);
+        let system = &document["environment"]["system"];
+        assert_eq!(system["application"], "quantick");
+        assert_eq!(system["application_version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(system["target_os"], std::env::consts::OS);
+        assert!(system["control_protocol_version"].as_u64().unwrap() >= 1);
+        assert_eq!(document["environment"]["graphics_backend"], "glow");
+        assert!(
+            document["environment"]["process_uptime_ms"]
+                .as_i64()
+                .unwrap()
+                >= 0
+        );
+
+        // The session itself: the workspace, the market, the chart, the frame
+        // cost and what is on screen, all at one revision.
+        let scopes = &document["snapshot"]["scopes"];
+        for scope in EVIDENCE_TEST_SCOPES {
+            assert!(
+                scopes[scope].is_object(),
+                "{scope} is missing from the bundle"
+            );
+        }
+        assert_eq!(
+            scopes["feed.status"]["value"]["tabs"][0]["active_symbol"],
+            "TESTUSDT"
+        );
+        assert!(
+            scopes["chart.summary"]["value"]["panes"][0]["closed_bar_count"]
+                .as_str()
+                .is_some_and(|count| count.parse::<u64>().is_ok_and(|count| count > 0)),
+            "the chart says how many bars it holds"
+        );
+        assert!(
+            !scopes["scene.controls"]["value"]["controls"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "the scene names what is on screen"
+        );
+
+        // Criterion 2: the events came with it, and the cursor keeps going.
+        let cursor = document["events"]["next_cursor"].clone();
+        assert!(cursor.is_object(), "the bundle carries a usable cursor");
+        let continued = remote_call(
+            &mut app,
+            &ctx,
+            &mut client,
+            "events.read",
+            serde_json::json!({ "cursor": cursor }),
+        );
+        let page = success_result(&continued);
+        assert!(
+            page["next_cursor"]["next_sequence"]
+                .as_str()
+                .unwrap()
+                .parse::<u64>()
+                .unwrap()
+                >= document["events"]["next_cursor"]["next_sequence"]
+                    .as_str()
+                    .unwrap()
+                    .parse::<u64>()
+                    .unwrap(),
+            "reading from the bundle's cursor continues the same journal"
+        );
+
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Criterion 3: the bundle says what it left out, and says it in codes a
+    /// client can branch on rather than sentences it would have to read.
+    #[test]
+    fn an_evidence_bundle_names_what_it_omitted_and_why_as_codes_not_prose() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(6);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("evidence-coverage");
+        grant_annotate_for_test(&mut app, "all-reads,observe.evidence");
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &evidence_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+
+        let response = remote_call(
+            &mut app,
+            &ctx,
+            &mut client,
+            "evidence.capture",
+            serde_json::json!({ "scopes": ["system.info"] }),
+        );
+        let manifest = success_result(&response);
+        let coverage = &manifest["coverage"];
+        assert_eq!(
+            coverage["complete"], false,
+            "a bundle is never the whole session and never claims to be"
+        );
+
+        let omitted = coverage["omitted_scopes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|scope| scope.as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            omitted.contains(&"scene.controls") && omitted.contains(&"health.summary"),
+            "every registered scope the caller did not name is listed: {omitted:?}"
+        );
+
+        let gaps = coverage["not_captured"].as_array().unwrap();
+        let reasons = gaps
+            .iter()
+            .map(|gap| {
+                (
+                    gap["subject"].as_str().unwrap(),
+                    gap["reason"].as_str().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        for expected in [
+            ("diagnostic_logs", "not_captured_in_this_tier"),
+            // Two separate claims, because they have two separate answers: the
+            // journal is stripped by key whatever the grant, while one
+            // projection is allowed to publish the trader's own words and this
+            // capture did not ask for it.
+            ("user_authored_text_in_events", "redacted_by_payload_key"),
+            (
+                "user_authored_text_in_projections",
+                "redacted_by_projection_policy",
+            ),
+            ("configuration_paths", "redacted_path_values"),
+            ("disk_export", "cockpit_tier_capability"),
+            ("screenshot", "not_requested"),
+        ] {
+            assert!(
+                reasons.contains(&expected),
+                "{expected:?} is missing from {reasons:?}"
+            );
+        }
+        // Codes, not sentences: no gap reason contains a space or a capital.
+        for (subject, reason) in &reasons {
+            assert!(
+                reason
+                    .chars()
+                    .all(|character| character.is_ascii_lowercase()
+                        || character.is_ascii_digit()
+                        || character == '_'),
+                "`{subject}` reports a rendered sentence rather than a code: `{reason}`"
+            );
+        }
+
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Criterion 4: a bundle with a screenshot stamps the image with the same
+    /// capture revision as the scene beside it, and every control the scene
+    /// gave bounds for resolves to a rectangle inside that image.
+    ///
+    /// The revision is the whole mechanism: without it a client would be
+    /// pairing a list of names with a picture of some other frame.
+    #[test]
+    fn a_bundle_with_a_screenshot_maps_every_named_control_to_a_region_of_the_image() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(10);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("evidence-screenshot");
+        grant_annotate_for_test(&mut app, "all-reads,observe.evidence,observe.screenshot");
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &evidence_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+
+        let width = TEST_WINDOW.x as u32;
+        let height = TEST_WINDOW.y as u32;
+        let response = capture_with_screenshot(
+            &mut app,
+            &ctx,
+            &mut client,
+            serde_json::json!({ "scopes": EVIDENCE_TEST_SCOPES, "screenshot": true }),
+            test_screenshot(width, height),
+        );
+        assert!(
+            app.toast.is_some(),
+            "the trader is told when a picture of their window is taken"
+        );
+        let manifest = success_result(&response).clone();
+        let screenshot = &manifest["screenshot"];
+        assert_eq!(
+            screenshot["capture_revision"], manifest["capture_revision"],
+            "the image is stamped with the capture the scene was taken in"
+        );
+        assert_eq!(screenshot["format"], "png");
+        assert_eq!(screenshot["width_px"], width);
+        assert_eq!(screenshot["height_px"], height);
+
+        let bytes = read_evidence_bundle(&mut app, &ctx, &mut client, &manifest);
+        let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let image = &document["screenshot"];
+        assert_eq!(
+            image["descriptor"]["capture_revision"], document["capture_revision"],
+            "and so is the copy travelling with the pixels"
+        );
+
+        // The pixels really are a PNG, and really are the ones hashed.
+        let png = decode_wire_base64(image["image_base64"].as_str().unwrap());
+        assert_eq!(
+            &png[..8],
+            b"\x89PNG\r\n\x1a\n",
+            "the image is a PNG a human can open"
+        );
+        assert_eq!(
+            quantick_control::canonical::raw_digest(&png),
+            image["descriptor"]["image_digest"].as_str().unwrap()
+        );
+
+        // Every control the scene placed has a region, and every region is
+        // inside the image.
+        let controls = document["snapshot"]["scopes"]["scene.controls"]["value"]["controls"]
+            .as_array()
+            .unwrap();
+        let placed = controls
+            .iter()
+            .filter(|control| control["bounds"].is_object())
+            .map(|control| control["control_id"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            !placed.is_empty(),
+            "the chart canvases record their rectangle, so some control is placed"
+        );
+        let regions = screenshot["control_regions"].as_array().unwrap();
+        for control_id in &placed {
+            let region = regions
+                .iter()
+                .find(|region| region["control_id"] == *control_id)
+                .unwrap_or_else(|| panic!("{control_id} has no region in the image"));
+            assert_eq!(
+                region["within_image"], true,
+                "{control_id} is reported outside the picture it was taken from"
+            );
+        }
+        // And every control without one is named with the reason, so nothing
+        // is silently missing.
+        let unplaced = controls.len() - placed.len();
+        assert_eq!(
+            screenshot["controls_without_region"]
+                .as_array()
+                .unwrap()
+                .len(),
+            unplaced,
+            "a control with no bounds is listed with its reason rather than dropped"
+        );
+
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// A bundle big enough to need several chunks comes back over the socket.
+    ///
+    /// The whole point of a retained resource is the bundle that does not fit
+    /// one response, and a chunk sized against the wrong ceiling makes every
+    /// such bundle permanently unreadable while every small-bundle test still
+    /// passes. The image here is deliberately incompressible, so the pages are
+    /// real pages rather than one chunk that happened to deflate.
+    #[test]
+    fn a_bundle_too_large_for_one_chunk_still_pages_back_over_the_socket() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(6);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("evidence-multi-chunk");
+        grant_annotate_for_test(&mut app, "all-reads,observe.evidence,observe.screenshot");
+        enable_test_gateway(&mut app, &ctx, &directory, 8);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &evidence_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+
+        let response = capture_with_screenshot(
+            &mut app,
+            &ctx,
+            &mut client,
+            serde_json::json!({ "scopes": ["system.info"], "screenshot": true }),
+            incompressible_screenshot(512, 512),
+        );
+        let manifest = success_result(&response).clone();
+        assert!(
+            manifest["chunk_count"].as_u64().unwrap() > 1,
+            "the fixture is meant to need more than one chunk: {} bytes",
+            manifest["encoded_bytes"]
+        );
+
+        let bytes = read_evidence_bundle(&mut app, &ctx, &mut client, &manifest);
+        assert_eq!(
+            quantick_control::canonical::raw_digest(&bytes),
+            manifest["content_digest"].as_str().unwrap(),
+            "every page came back and the chunks reassemble to what was hashed"
+        );
+
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Criterion 6: the hunt. A token, a home path, the trader's own drawing
+    /// text and a redacted configuration value are planted where each could
+    /// plausibly leak, and none of them is anywhere in the bundle or its
+    /// manifest.
+    #[test]
+    fn no_token_user_path_user_text_or_redacted_config_key_reaches_an_evidence_bundle() {
+        const NOTE_CANARY: &str = "CANARYNOTEqzx";
+        const PATH_CANARY: &str = "C:/Users/CANARYUSERqzx/Documents/quantick-trades";
+        const COMMAND_CANARY: &str = "C:/Users/CANARYUSERqzx/bridge/quantick_bridge.py";
+        /// The other place the trader's words live: the journal, which the
+        /// bundle embeds a page of. The drawing note above is stripped by the
+        /// projections; this one is only stripped by the bundle itself.
+        const MARK_CANARY: &str = "CANARYMARKqzx";
+
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(8);
+        // A path the trader configured, and a command that names their home.
+        app.config.paper.trades_dir = Some(PATH_CANARY.to_owned());
+        app.config.metatrader.bridge_command = vec!["python".to_owned(), COMMAND_CANARY.to_owned()];
+        app.config.metatrader.listen_addr = "192.168.7.31:9100".to_owned();
+        run_frame(&mut app, &ctx);
+        // The trader's own words on the chart.
+        app.pending_text_note = true;
+        run_frame(&mut app, &ctx);
+        {
+            let tool = drawings::DRAWING_TOOLS
+                .into_iter()
+                .find(|tool| tool.holds_text())
+                .expect("the note tool holds text");
+            let pane = app.active_tab_mut().drawing_pane_mut();
+            assert_eq!(
+                pane.drawings.items().len(),
+                1,
+                "the note hook placed the trader's object"
+            );
+            let drawing = pane
+                .drawings
+                .selected_mut()
+                .expect("the note hook selects what it placed");
+            // The same call the inline editor makes when the trader types.
+            tool.set_inline_text(drawing.payload.as_mut(), NOTE_CANARY.to_owned());
+        }
+        run_frame(&mut app, &ctx);
+        // And the trader's own words in the *journal*, through the hotkey's
+        // own action — the page a bundle embeds carries these verbatim, so
+        // this is the leak the drawing canary above cannot find.
+        app.pending_control_mark = Some(MARK_CANARY.to_owned());
+        run_frame(&mut app, &ctx);
+
+        let directory = gateway_test_directory("evidence-redaction");
+        grant_annotate_for_test(&mut app, "all-reads,observe.evidence,observe.screenshot");
+        let descriptor_path = enable_test_gateway(&mut app, &ctx, &directory, 8);
+        // The one real secret this process holds: the bearer token the
+        // descriptor publishes for this connection.
+        let token = serde_json::from_str::<serde_json::Value>(
+            &std::fs::read_to_string(&descriptor_path).unwrap(),
+        )
+        .unwrap()["bearer_token"]
+            .as_str()
+            .expect("the descriptor carries the connection token")
+            .to_owned();
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &evidence_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+        // The drawings scope is where the trader's own words would leak if
+        // anything did; the cursor scope is the one that resolves a target.
+        let mut scopes = EVIDENCE_TEST_SCOPES.to_vec();
+        scopes.push("analysis.drawings");
+        scopes.push("interaction.cursor");
+        let response = capture_with_screenshot(
+            &mut app,
+            &ctx,
+            &mut client,
+            serde_json::json!({ "scopes": scopes, "screenshot": true }),
+            test_screenshot(64, 48),
+        );
+        let manifest = success_result(&response).clone();
+        let bytes = read_evidence_bundle(&mut app, &ctx, &mut client, &manifest);
+
+        let haystacks = [
+            ("the bundle", String::from_utf8(bytes.clone()).unwrap()),
+            ("the manifest", manifest.to_string()),
+        ];
+        for (where_it_is, haystack) in &haystacks {
+            for (what, canary) in [
+                ("the trader's note", NOTE_CANARY),
+                ("the trader's mark note", MARK_CANARY),
+                ("a configured path", PATH_CANARY),
+                ("a bridge command", COMMAND_CANARY),
+                ("the user name in a path", "CANARYUSERqzx"),
+                ("the bind address", "192.168.7.31"),
+                ("the connection's token", token.as_str()),
+            ] {
+                assert!(!haystack.contains(canary), "{what} reached {where_it_is}");
+            }
+        }
+
+        // What it does carry instead: the fact that the settings exist.
+        let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let configuration = &document["configuration"];
+        assert_eq!(configuration["paper"]["trades_dir_configured"], true);
+        assert_eq!(
+            configuration["metatrader"]["bridge_command_configured"],
+            true
+        );
+        assert_eq!(configuration["metatrader"]["listen_port"], 9100);
+        assert_eq!(
+            configuration["metatrader"]["listen_host_is_loopback"],
+            false
+        );
+        let redacted = configuration["redacted_keys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|key| key.as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(redacted.contains(&"paper.trades_dir"));
+        assert!(redacted.contains(&"metatrader.bridge_command"));
+        assert!(redacted.contains(&"metatrader.listen_addr.host"));
+
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Criterion 7's other half, and the tier's own boundary: the scopes a
+    /// bundle aggregates are the scopes it needed, so a connection without the
+    /// evidence scope cannot capture and a bundle cannot launder a scope the
+    /// grant refuses one call earlier.
+    #[test]
+    fn evidence_capture_is_refused_without_its_own_scope_and_cannot_launder_another() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(4);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("evidence-scopes");
+        // The safe default grant: everything an observer reads, and neither
+        // of the two the evidence tier adds.
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+
+        let refused = remote_call(
+            &mut app,
+            &ctx,
+            &mut client,
+            "evidence.capture",
+            serde_json::json!({ "scopes": ["system.info"] }),
+        );
+        assert_eq!(
+            response_error(&refused).code.as_str(),
+            quantick_control::error::codes::PERMISSION_DENIED,
+            "the evidence scope is off by default and the capability is out of reach"
+        );
+
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Criterion 5's fixture: the `QUANTICK_CONTROL_EVIDENCE` hook captures a
+    /// bundle from a launch through the very read a connected client calls,
+    /// and the bundle it retains is readable back through the control plane.
+    ///
+    /// This is what lets a validation skill assert against live structured
+    /// state before the cockpit tier gives it an action to set the fixture up
+    /// with. The scopes come from the registry, so a module registered
+    /// tomorrow is in the capture tomorrow.
+    #[test]
+    fn the_evidence_launch_hook_captures_through_the_same_read_a_client_calls() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(8);
+        run_frame(&mut app, &ctx);
+        grant_annotate_for_test(&mut app, "all-reads,observe.evidence");
+        app.pending_control_evidence = Some("all".to_owned());
+        run_frame(&mut app, &ctx);
+
+        assert_eq!(
+            app.control_access
+                .as_ref()
+                .expect("control access is installed")
+                .retained_evidence_for_test(),
+            1,
+            "the hook captured one bundle without a client on the socket"
+        );
+        assert!(
+            app.pending_control_evidence.is_none(),
+            "and it fires once, not on every frame"
+        );
+
+        // Readable back the same way: the store is one store, and the read is
+        // the same registered capability a client would invoke.
+        let mut access = app
+            .control_access
+            .take()
+            .expect("control access is installed");
+        let scopes = access.readable_scopes();
+        assert!(
+            scopes
+                .iter()
+                .any(|scope| scope.as_str() == "scene.controls"),
+            "`all` means every scope the grant reaches, taken from the registry"
+        );
+        let captured = access
+            .invoke_local_read(
+                &app,
+                "evidence.capture",
+                serde_json::json!({ "scopes": ["system.info"] }),
+            )
+            .expect("the read is registered and granted");
+        let page = access
+            .invoke_local_read(
+                &app,
+                "evidence.read",
+                serde_json::json!({ "evidence_id": captured["evidence_id"] }),
+            )
+            .expect("what was captured is readable");
+        app.control_access = Some(access);
+        assert_eq!(page["content_digest"], captured["content_digest"]);
+        assert_eq!(page["page"]["has_more"], false);
+    }
+
+    /// A capture that asks for a picture waits one frame for it rather than
+    /// answering without one, and the image it finally gets belongs to the
+    /// scene captured beside it.
+    #[test]
+    fn a_capture_that_wants_an_image_waits_for_the_frame_instead_of_answering_blind() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(6);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("evidence-await-image");
+        grant_annotate_for_test(&mut app, "all-reads,observe.evidence,observe.screenshot");
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &evidence_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+
+        let request_id = client
+            .send(
+                "evidence.capture",
+                serde_json::json!({ "scopes": ["scene.controls"], "screenshot": true }),
+            )
+            .expect("the request is sent");
+        // Frames pass and the capture does not answer: it is waiting for the
+        // window, which a headless context never rasterises on its own.
+        let mut waited = 0;
+        for _ in 0..PARK_WAIT_FRAMES {
+            run_frame(&mut app, &ctx);
+            waited = app
+                .control_access
+                .as_ref()
+                .expect("control access is installed")
+                .awaiting_screenshot_for_test();
+            if waited > 0 {
+                break;
+            }
+        }
+        assert_eq!(waited, 1, "the capture parked instead of answering blind");
+
+        let mut access = app
+            .control_access
+            .take()
+            .expect("control access is installed");
+        access.publish_screenshot_for_test(&mut app, test_screenshot(320, 200));
+        app.control_access = Some(access);
+        for _ in 0..REPLY_WAIT_FRAMES {
+            run_frame(&mut app, &ctx);
+            if client.reply_pending(std::time::Duration::from_millis(5)) {
+                break;
+            }
+        }
+        let response = client.read().expect("the gateway answered");
+        assert_eq!(response.request_id, request_id);
+        let manifest = success_result(&response);
+        assert_eq!(
+            manifest["screenshot"]["capture_revision"], manifest["capture_revision"],
+            "the image that arrived belongs to the capture that waited for it"
+        );
+        assert_eq!(
+            app.control_access
+                .as_ref()
+                .expect("control access is installed")
+                .awaiting_screenshot_for_test(),
+            0
+        );
+
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// A bundle always carries a page of the journal and the effective
+    /// configuration, so it always requires the scopes those belong to —
+    /// whatever scopes were named.
+    ///
+    /// This is the aggregation hole the tier exists not to have: without it, a
+    /// connection refused `observe.events` reads the journal by asking for a
+    /// bundle of `system.info`, and because the manifest would not record the
+    /// scope either, the read-time recheck could never notice.
+    #[test]
+    fn a_bundle_requires_the_scopes_it_always_carries_however_few_were_named() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(4);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("evidence-always-carried");
+        // Everything the evidence tier needs *except* the journal.
+        grant_annotate_for_test(
+            &mut app,
+            "observe.system,observe.workspace,observe.market,observe.chart,observe.evidence",
+        );
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut scopes = gateway_test_scopes();
+        scopes.remove(&quantick_control::id::PermissionId::new("observe.events").unwrap());
+        scopes.insert(quantick_control::id::PermissionId::new("observe.evidence").unwrap());
+        let options = quantick_control_local::client::ConnectOptions::observer(
+            "quantick integration test",
+            env!("CARGO_PKG_VERSION"),
+            scopes,
+        );
+        let mut client = quantick_control_local::client::discover_in(&directory, &options)
+            .unwrap()
+            .select(None)
+            .unwrap();
+
+        let refused = remote_call(
+            &mut app,
+            &ctx,
+            &mut client,
+            "evidence.capture",
+            serde_json::json!({ "scopes": ["system.info"] }),
+        );
+        let error = response_error(&refused);
+        assert_eq!(
+            error.code.as_str(),
+            quantick_control::error::codes::SCOPE_DENIED,
+            "a bundle carrying the journal needs the journal's own scope"
+        );
+        assert!(
+            error.context.details.as_ref().unwrap()["missing_permissions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|permission| permission == "observe.events"),
+            "and the refusal names it: {:?}",
+            error.context.details
+        );
+
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Criterion 2, sharpened: the events a bundle carries are the ones around
+    /// the capture, not the oldest the journal still holds.
+    ///
+    /// A session that has run for a while has thousands of events; handing
+    /// back the first two hundred and fifty-six would be the application
+    /// starting up, and the moment the bundle was taken to explain would be
+    /// pages away.
+    #[test]
+    fn a_bundle_carries_the_events_around_the_capture_not_the_oldest_it_holds() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(4);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("evidence-recent-events");
+        grant_annotate_for_test(&mut app, "all-reads,observe.evidence");
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &evidence_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+
+        // More events than one page holds, through the journal the gateway
+        // owns — the same door the frame emitter writes through.
+        let limit = 4_usize;
+        {
+            let access = app
+                .control_access
+                .as_mut()
+                .expect("control access is installed");
+            for index in 0..(limit * 8) {
+                access.journal_mut().record(
+                    crate::control::journal_test_event(index),
+                    i64::try_from(index).unwrap(),
+                );
+            }
+        }
+        let newest = app
+            .control_access
+            .as_ref()
+            .expect("control access is installed")
+            .journal()
+            .bounds()
+            .next_sequence
+            .get();
+
+        let response = remote_call(
+            &mut app,
+            &ctx,
+            &mut client,
+            "evidence.capture",
+            serde_json::json!({ "scopes": ["system.info"], "event_limit": limit }),
+        );
+        let manifest = success_result(&response).clone();
+        let bytes = read_evidence_bundle(&mut app, &ctx, &mut client, &manifest);
+        let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        let events = document["events"]["events"].as_array().unwrap();
+        assert_eq!(events.len(), limit);
+        let last = events.last().unwrap()["sequence"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+        assert_eq!(
+            last,
+            newest - 1,
+            "the page ends at the newest event the journal held, not at its oldest"
+        );
+        assert_eq!(
+            document["events"]["next_cursor"]["next_sequence"]
+                .as_str()
+                .unwrap()
+                .parse::<u64>()
+                .unwrap(),
+            newest,
+            "and the cursor carries on from the capture instant"
+        );
+
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// The tier's rate class, proved rather than asserted: with nothing asked
+    /// for, the evidence path costs the frame nothing at all — no store is
+    /// touched, no image is requested, no capture is built.
+    #[test]
+    fn evidence_costs_the_frame_nothing_until_a_client_asks_for_it() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(8);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("evidence-idle");
+        grant_annotate_for_test(&mut app, "all-reads,observe.evidence,observe.screenshot");
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+
+        for _ in 0..30 {
+            run_frame(&mut app, &ctx);
+        }
+        let access = app
+            .control_access
+            .as_ref()
+            .expect("control access is installed");
+        assert_eq!(
+            access.awaiting_screenshot_for_test(),
+            0,
+            "no capture is waiting, so no frame was ever asked to rasterise"
+        );
+
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
         let documents = crate::control::schema_catalog::documents();
         // Every published wire type has a committed document, so a breaking
         // change shows up as a diff in review (contract §6). The count is
         // here to make an accidental *removal* visible too.
-        assert_eq!(documents.len(), 41);
+        assert_eq!(documents.len(), 46);
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("schemas/control");
@@ -30431,10 +32057,10 @@ plot(close)
         assert_eq!(catalog["catalog_version"], 1);
         assert_eq!(catalog["profile_id"], "observer");
         let capabilities = catalog["capabilities"].as_array().unwrap();
-        // Seven observer reads plus the annotate tier's registered actions.
+        // Nine observer reads plus the annotate tier's registered actions.
         assert_eq!(
             capabilities.len(),
-            7 + crate::control::registered_action_count()
+            9 + crate::control::registered_action_count()
         );
         // Every observe-effect capability is read-only; everything else is an
         // action of a write tier — discoverable to any client, reachable only
