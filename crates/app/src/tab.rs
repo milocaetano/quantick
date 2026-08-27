@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, watch};
 
 use quantick_feed_binance::depth::DepthEvent;
 
-use crate::canvas_layout::{self, LayoutPreset, MAX_CONTEXT_PANES, PaneKind};
+use crate::canvas_layout::{self, LayoutPreset, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneKind};
 use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::feed::{
@@ -28,8 +28,9 @@ use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
 use crate::orderflow_view::OrderflowView;
 use crate::pane::{
-    CANVAS_DIVIDER_HANDLE_PX, ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneChrome, PaneSide,
-    SharedEdit, SharedInteraction, SharedPick, clamp_pane_fraction, split_canvas, split_time_pane,
+    CANVAS_DIVIDER_HANDLE_PX, ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneChrome, PaneIndex,
+    PaneSide, SharedEdit, SharedInteraction, SharedPick, clamp_pane_fraction, split_canvas,
+    split_time_pane,
 };
 use crate::paper_trading::PaperTrading;
 use crate::state::{BarKind, BarSpec};
@@ -271,18 +272,17 @@ impl OlderCandles {
 ///
 /// A pair rather than a per-pane field because the question can only be asked
 /// while both panes are in hand, and it is asked once for the frame.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct SharedPicks {
-    time: Option<SharedPick>,
-    flow: Option<SharedPick>,
+    /// One entry per pane, in [`PaneIndex`] order: `0` is the flow pane, `1..`
+    /// the context stack. A pair would only answer for two panes, and the
+    /// question is asked of however many the layout holds.
+    by_pane: SmallVec<[Option<SharedPick>; MAX_CANVAS_PANES]>,
 }
 
 impl SharedPicks {
-    const fn for_side(self, side: PaneSide) -> Option<SharedPick> {
-        match side {
-            PaneSide::Time => self.time,
-            PaneSide::Flow => self.flow,
-        }
+    fn for_pane(&self, pane: PaneIndex) -> Option<SharedPick> {
+        self.by_pane.get(pane).copied().flatten()
     }
 }
 
@@ -497,6 +497,29 @@ pub struct Tab {
 }
 
 impl Tab {
+    /// How many panes this tab holds, drawn or not.
+    #[must_use]
+    pub fn pane_count(&self) -> PaneIndex {
+        1 + self.time_panes.len()
+    }
+
+    /// The pane at `index`: `0` is the flow pane, `1..` the context stack.
+    #[must_use]
+    pub fn pane_at(&self, index: PaneIndex) -> Option<&ChartPane> {
+        match index {
+            0 => Some(&self.flow_pane),
+            other => self.time_panes.get(other - 1),
+        }
+    }
+
+    /// The pane at `index`, mutably.
+    pub fn pane_at_mut(&mut self, index: PaneIndex) -> Option<&mut ChartPane> {
+        match index {
+            0 => Some(&mut self.flow_pane),
+            other => self.time_panes.get_mut(other - 1),
+        }
+    }
+
     /// The first context pane, if this tab has built one.
     ///
     /// Most of the chrome speaks about *the* context chart because most
@@ -2645,9 +2668,15 @@ impl Tab {
         // panes at once, and the loop below holds them one at a time.
         let picks = self.shared_picks(ui);
 
-        let mut edits: SmallVec<[(PaneSide, SharedInteraction); 2]> = SmallVec::new();
+        let mut edits: SmallVec<[(PaneIndex, SharedInteraction); MAX_CANVAS_PANES]> =
+            SmallVec::new();
         {
-            let focused = self.focused_side();
+            // Focus as an address, so the loop below compares like with
+            // like however many panes it walks.
+            let focused = match self.focused_side() {
+                PaneSide::Flow => 0,
+                PaneSide::Time => 1,
+            };
             let Self {
                 flow_pane,
                 time_panes,
@@ -2701,9 +2730,11 @@ impl Tab {
             // same order — which is what keeps the split honest: the second
             // pane cannot drift from the first, and one pane is this same
             // loop with one entry in it.
+            // Context panes carry addresses `1..`, the flow pane `0` — the
+            // order `Tab::pane_at` uses, never the order they sit in.
             let time =
-                time_chart.and_then(|chart| Some((time_panes.first_mut()?, chart, PaneSide::Time)));
-            let flow = show_flow.then_some((&mut *flow_pane, flow_area, PaneSide::Flow));
+                time_chart.and_then(|chart| Some((time_panes.first_mut()?, chart, 1 as PaneIndex)));
+            let flow = show_flow.then_some((&mut *flow_pane, flow_area, 0 as PaneIndex));
             for (pane, rect, side) in time.into_iter().chain(flow) {
                 // Order entry follows the focused pane (§11): both charts are
                 // trading surfaces — a level is as true on the time pane as on
@@ -2711,7 +2742,7 @@ impl Tab {
                 // the first click already trades where the accent rule is.
                 // Unsplit, the flow pane is the only pane and nothing changes.
                 chrome.paper_owns_input = side == focused;
-                chrome.shared_pick = picks.for_side(side);
+                chrome.shared_pick = picks.for_pane(side);
                 chrome.shared = SharedInteraction::default();
                 pane.handle_navigation(ui, rect, &mut chrome);
                 pane.draw_chart(ui.painter(), rect, &mut chrome);
@@ -2767,34 +2798,52 @@ impl Tab {
     /// does not hold. Nothing to answer on an unsplit tab: one pane has no
     /// other pane to mirror.
     fn shared_picks(&self, ui: &egui::Ui) -> SharedPicks {
-        let Some(time_pane) = self.time_pane() else {
-            return SharedPicks::default();
+        let count = self.pane_count();
+        let mut picks = SharedPicks {
+            by_pane: SmallVec::from_elem(None, count),
         };
+        if count < 2 {
+            // One pane has no other pane to mirror.
+            return picks;
+        }
         let Some(position) = ui.input(|input| input.pointer.latest_pos()) else {
-            return SharedPicks::default();
+            return picks;
         };
-        let pick = |pane: &ChartPane, source: &ChartPane| {
+
+        for viewer in 0..count {
+            let Some(pane) = self.pane_at(viewer) else {
+                continue;
+            };
             // Only the pane the pointer is actually over is asked. Besides
-            // halving the work, it is what stops a horizontal line — which
+            // saving the work, it is what stops a horizontal line — which
             // spans a whole chart — from reporting a hit on the pane beside
             // the one the pointer is in, at the same height.
             if !pane
                 .last_chart_area
                 .is_some_and(|chart| chart.contains(position))
             {
-                return None;
+                continue;
             }
-            pane.shared_pick(source, position)
-                .map(|(index, anchor)| SharedPick {
-                    index,
-                    anchor,
-                    locked: source.drawings.items()[index].locked,
-                })
-        };
-        SharedPicks {
-            time: pick(time_pane, &self.flow_pane),
-            flow: pick(&self.flow_pane, time_pane),
+            // The mark may belong to any other pane. First owner in address
+            // order wins, which is stable frame to frame: a pick that
+            // depended on iteration luck would move an object between charts
+            // between frames.
+            for owner in (0..count).filter(|owner| *owner != viewer) {
+                let Some(source) = self.pane_at(owner) else {
+                    continue;
+                };
+                if let Some((index, anchor)) = pane.shared_pick(source, position) {
+                    picks.by_pane[viewer] = Some(SharedPick {
+                        owner,
+                        index,
+                        anchor,
+                        locked: source.drawings.items()[index].locked,
+                    });
+                    break;
+                }
+            }
         }
+        picks
     }
 
     /// Land what each pane did to the other's marks on the store that holds
@@ -2805,20 +2854,41 @@ impl Tab {
     /// coalescing the object gets on its own chart, because it is the same
     /// gesture on the same object. A selection taken on one pane is dropped on
     /// the other, so the tab never holds two.
-    fn apply_shared_interactions(&mut self, edits: &[(PaneSide, SharedInteraction)]) {
-        for (side, interaction) in edits {
-            let owner = side.other();
+    fn apply_shared_interactions(&mut self, edits: &[(PaneIndex, SharedInteraction)]) {
+        for (actor, interaction) in edits {
+            // No owner means no mark was ever taken hold of, so there is
+            // nothing to land. Refused rather than guessed: landing it on a
+            // neighbour chosen by arithmetic would move an object the trader
+            // drew onto a chart they were not working on.
+            let Some(owner) = interaction.owner else {
+                continue;
+            };
+            if self.pane_at(owner).is_none() {
+                continue;
+            }
             if interaction.begin_gesture {
-                self.pane_mut(owner).drawings.begin_gesture();
+                self.pane_at_mut(owner)
+                    .expect("owner checked above")
+                    .drawings
+                    .begin_gesture();
             }
             if let Some(edit) = interaction.edit {
-                if matches!(edit, SharedEdit::Select(_)) {
-                    self.pane_mut(*side).drawings.select(None);
+                if matches!(edit, SharedEdit::Select(_))
+                    && let Some(pane) = self.pane_at_mut(*actor)
+                {
+                    // A selection taken on a mirror is dropped on the pane
+                    // that took it, so the tab never holds two.
+                    pane.drawings.select(None);
                 }
-                self.pane_mut(owner).apply_shared_edit(edit);
+                self.pane_at_mut(owner)
+                    .expect("owner checked above")
+                    .apply_shared_edit(edit);
             }
             if interaction.commit_gesture {
-                self.pane_mut(owner).drawings.commit_gesture();
+                self.pane_at_mut(owner)
+                    .expect("owner checked above")
+                    .drawings
+                    .commit_gesture();
             }
         }
     }
@@ -2831,12 +2901,20 @@ impl Tab {
     /// one feed, which is what makes a price level mean the same thing on
     /// both (`docs/ux/drawing-tools-2026-08.md` §D7).
     fn paint_shared_drawings(&self, painter: &egui::Painter) {
-        let Some(time_pane) = self.time_pane() else {
+        let count = self.pane_count();
+        if count < 2 {
             return;
-        };
-        let flow_pane = &self.flow_pane;
-        flow_pane.paint_shared_from(painter, time_pane);
-        time_pane.paint_shared_from(painter, flow_pane);
+        }
+        for viewer in 0..count {
+            let Some(pane) = self.pane_at(viewer) else {
+                continue;
+            };
+            for owner in (0..count).filter(|owner| *owner != viewer) {
+                if let Some(source) = self.pane_at(owner) {
+                    pane.paint_shared_from(painter, source);
+                }
+            }
+        }
     }
 
     /// Clicking a pane focuses it (§11). Read from the raw pointer press
@@ -2893,6 +2971,156 @@ impl Tab {
         if handle.dragged() && canvas_width > 0.0 {
             let moved = self.split_fraction + handle.drag_delta().x / canvas_width;
             self.split_fraction = clamp_pane_fraction(moved);
+        }
+    }
+}
+
+#[cfg(test)]
+mod shared_routing_tests {
+    use super::*;
+    use crate::feed;
+    use crate::state::BarSpec;
+    use tokio::sync::mpsc;
+
+    /// A tab with `context` context panes stacked beside its flow pane.
+    fn tab_with_context_panes(context: usize) -> Tab {
+        let (_evt_tx, evt_rx) = mpsc::channel(8);
+        let (_book_tx, book_rx) = mpsc::channel(8);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(8);
+        let mut tab = Tab::new(
+            0,
+            (0, 1),
+            "binance".to_owned(),
+            "BTCUSDT".to_owned(),
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(
+                    crate::config::ProviderKind::Binance.capabilities(),
+                ),
+                latency: feed::unsplit_latency(),
+                commands: cmd_tx,
+                replay: None,
+            },
+            std::env::temp_dir(),
+        );
+        for slot in 0..context {
+            tab.time_panes.push(ChartPane::time(
+                100 + slot as u64,
+                crate::time_header::DEFAULT_INTERVAL_MS,
+            ));
+        }
+        tab
+    }
+
+    /// The flow pane is address `0` and the context stack follows it, whatever
+    /// order they are drawn in. A reader who took this for a left-to-right
+    /// order would mirror every edit, so it is pinned.
+    #[test]
+    fn panes_are_addressed_flow_first_then_the_context_stack() {
+        let tab = tab_with_context_panes(2);
+        assert_eq!(tab.pane_count(), 3);
+        assert_eq!(
+            tab.pane_at(0).map(|pane| pane.id),
+            Some(tab.flow_pane.id),
+            "address 0 is the flow pane"
+        );
+        assert_eq!(tab.pane_at(1).map(|pane| pane.id), Some(100));
+        assert_eq!(tab.pane_at(2).map(|pane| pane.id), Some(101));
+        assert!(tab.pane_at(3).is_none(), "there is no fourth pane");
+    }
+
+    /// A shared mark belongs to the pane whose store holds it, and an edit
+    /// made on a mirror has to land *there* — not on "the other pane".
+    ///
+    /// With two panes those two phrases mean the same thing, which is why the
+    /// routing this replaced (`side.other()`) was correct and why nothing
+    /// caught it losing that meaning. With a stack beside the flow pane there
+    /// is more than one other pane. The owner named here is address 2, which
+    /// is neither the actor nor the actor's single counterpart, so this fails
+    /// against the arithmetic it replaced rather than merely passing beside
+    /// it.
+    #[test]
+    fn a_shared_gesture_opens_on_the_pane_the_interaction_names() {
+        let mut tab = tab_with_context_panes(2);
+        tab.apply_shared_interactions(&[(
+            0,
+            SharedInteraction {
+                owner: Some(2),
+                edit: None,
+                begin_gesture: true,
+                commit_gesture: false,
+            },
+        )]);
+
+        assert!(
+            tab.pane_at(2)
+                .expect("the named pane exists")
+                .drawings
+                .in_gesture(),
+            "the gesture must open on the pane the interaction named"
+        );
+        for bystander in [0usize, 1] {
+            assert!(
+                !tab.pane_at(bystander)
+                    .expect("pane exists")
+                    .drawings
+                    .in_gesture(),
+                "pane {bystander} took a gesture it was never named for"
+            );
+        }
+    }
+
+    /// An interaction with no owner is refused rather than guessed. Landing it
+    /// on a neighbour chosen by arithmetic would move an object the trader
+    /// drew onto a chart they were not working on.
+    #[test]
+    fn an_unowned_interaction_lands_nowhere() {
+        let mut tab = tab_with_context_panes(2);
+        tab.apply_shared_interactions(&[(
+            0,
+            SharedInteraction {
+                owner: None,
+                edit: None,
+                begin_gesture: true,
+                commit_gesture: false,
+            },
+        )]);
+        for pane in 0..tab.pane_count() {
+            assert!(
+                !tab.pane_at(pane)
+                    .expect("pane exists")
+                    .drawings
+                    .in_gesture(),
+                "pane {pane} opened a gesture for an interaction that named no owner"
+            );
+        }
+    }
+
+    /// An owner address past the end of the stack is ignored, not panicked on:
+    /// a saved workspace or a control-plane call can name a pane that has
+    /// since gone.
+    #[test]
+    fn an_owner_that_no_longer_exists_is_ignored() {
+        let mut tab = tab_with_context_panes(1);
+        tab.apply_shared_interactions(&[(
+            0,
+            SharedInteraction {
+                owner: Some(7),
+                edit: None,
+                begin_gesture: true,
+                commit_gesture: false,
+            },
+        )]);
+        for pane in 0..tab.pane_count() {
+            assert!(
+                !tab.pane_at(pane)
+                    .expect("pane exists")
+                    .drawings
+                    .in_gesture()
+            );
         }
     }
 }

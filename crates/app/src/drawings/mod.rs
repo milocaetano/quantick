@@ -1515,6 +1515,18 @@ impl Drawings {
 
     /// Start coalescing: the next [`Self::commit_gesture`] records everything
     /// mutated in between as a single undo entry. Idempotent within a gesture.
+    /// Whether a coalescing gesture is open on this store.
+    ///
+    /// Test-only, and it exists for one question: when a pane edits a mark it
+    /// does not own, did the gesture open on the store that holds the mark?
+    /// The answer is invisible from outside otherwise — the baseline is
+    /// private, as it should be.
+    #[cfg(test)]
+    #[must_use]
+    pub fn in_gesture(&self) -> bool {
+        self.gesture_baseline.is_some()
+    }
+
     pub fn begin_gesture(&mut self) {
         if self.gesture_baseline.is_none() {
             self.gesture_baseline = Some(self.snapshot());

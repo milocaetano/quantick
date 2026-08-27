@@ -721,6 +721,13 @@ pub enum SharedEdit {
 /// A shared mark under the pointer, as the tab resolved it for one pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SharedPick {
+    /// Which pane's store holds it, as a [`PaneIndex`].
+    ///
+    /// Explicit rather than "the other pane": with a context stack beside the
+    /// flow pane there is more than one other, and a mark shared across three
+    /// panes has two panes mirroring it. An edit that guessed its owner would
+    /// land on whichever chart the guess named.
+    pub owner: PaneIndex,
     /// Its index in the owning pane's store.
     pub index: usize,
     /// Which handle was grabbed, or `None` for the body.
@@ -766,6 +773,13 @@ pub(crate) struct ControlPointerHit {
 /// chart gets, because it is the same gesture on the same object.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SharedInteraction {
+    /// The pane whose store this lands on.
+    ///
+    /// Carried rather than recomputed: a drag outlives the pick that started
+    /// it — `commit_gesture` fires on release, by which time the pointer may
+    /// be nowhere near the mark — so the owner is remembered with the gesture
+    /// or it is lost exactly when it is needed.
+    pub owner: Option<PaneIndex>,
     pub edit: Option<SharedEdit>,
     pub begin_gesture: bool,
     pub commit_gesture: bool,
@@ -799,6 +813,14 @@ struct SharedPointer {
     total: usize,
     magnet: bool,
 }
+
+/// Where a pane sits in its tab: `0` is the flow pane, `1..` the context
+/// stack, top to bottom.
+///
+/// An address, never a position on screen — the context stack is drawn left of
+/// the flow pane, and a reader who took this for a left-to-right order would
+/// mirror every edit.
+pub type PaneIndex = usize;
 
 /// A gesture a pane is running on another pane's mark.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1187,6 +1209,9 @@ pub struct ChartPane {
     /// drag threshold is still unmet, and the market instant and price the
     /// pointer was last over — what a body drag sends its deltas against.
     shared_drag: SharedDrag,
+    /// The pane whose mark [`Self::shared_drag`] is moving, for as long as it
+    /// is moving it.
+    shared_drag_owner: Option<PaneIndex>,
     shared_drag_pending_from: Option<egui::Pos2>,
     shared_pointer_mark: Option<(i64, f64)>,
     /// A re-anchor owed to the drawings, holding the slot count of the series
@@ -1323,6 +1348,7 @@ impl ChartPane {
             drawing_drag_pending_from: None,
             drawing_drag: DrawingDrag::None,
             shared_drag: SharedDrag::None,
+            shared_drag_owner: None,
             shared_drag_pending_from: None,
             shared_pointer_mark: None,
             pending_reanchor: None,
@@ -3143,7 +3169,9 @@ impl ChartPane {
         {
             // Selecting is not moving (§D9): the press takes the object
             // whether or not the drag that may follow is allowed.
+            chrome.shared.owner = Some(pick.owner);
             chrome.shared.edit = Some(SharedEdit::Select(pick.index));
+            self.shared_drag_owner = Some(pick.owner);
             self.shared_drag_pending_from = Some(position);
             self.shared_pointer_mark = mark(self, position);
             self.shared_drag = if pick.locked {
@@ -3180,8 +3208,10 @@ impl ChartPane {
         }
 
         if pointer.released {
+            chrome.shared.owner = self.shared_drag_owner;
             chrome.shared.commit_gesture = true;
             self.shared_drag = SharedDrag::None;
+            self.shared_drag_owner = None;
             self.shared_drag_pending_from = None;
             self.shared_pointer_mark = None;
             return;
@@ -3217,6 +3247,9 @@ impl ChartPane {
         let Some((time_ms, price)) = mark(self, position) else {
             return;
         };
+        // Every edit this gesture emits belongs to the pane the gesture took
+        // hold of, whatever the pointer is over now.
+        chrome.shared.owner = self.shared_drag_owner;
         match self.shared_drag {
             SharedDrag::Anchor { index, anchor } => {
                 chrome.shared.edit = Some(SharedEdit::MoveAnchor {
