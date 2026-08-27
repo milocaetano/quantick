@@ -14,7 +14,7 @@ use egui_phosphor::regular as icons;
 
 use crate::canvas_layout::{LAYOUT_PRESETS, LayoutPreset, PaneKind};
 use crate::theme;
-use crate::widgets::{IconButton, TOOLBAR_ICON};
+use crate::widgets::{CORNER_RADIUS, IconButton, TOOLBAR_ICON};
 
 /// Width of the popover, in pixels.
 const POPOVER_WIDTH_PX: f32 = 268.0;
@@ -45,6 +45,12 @@ const POPOVER_PADDING_PX: f32 = 10.0;
 const SHORTCUT_KEYS: usize = 9;
 /// Font size of a cell's label.
 const LABEL_SIZE_PX: f32 = 11.0;
+/// Gap between a cell's thumbnail and the label under it.
+const LABEL_GAP_PX: f32 = 5.0;
+/// Space above a cell's thumbnail, as a share of the popover's own padding.
+/// Derived rather than a second number, so tightening the popover tightens the
+/// cell with it.
+const THUMBNAIL_TOP_PAD: f32 = 0.6;
 /// How much of a cell's width the label gives up on each side before it wraps.
 /// Keeps a wrapped line clear of the selection ring drawn on the cell's edge.
 const LABEL_INSET_PX: f32 = 5.0;
@@ -163,12 +169,12 @@ fn draw_cell(
     let painter = ui.painter();
 
     if response.hovered() {
-        painter.rect_filled(rect, 4.0, theme::CONTROL);
+        painter.rect_filled(rect, CORNER_RADIUS, theme::CONTROL);
     }
     if selected {
         painter.rect_stroke(
             rect,
-            4.0,
+            CORNER_RADIUS,
             egui::Stroke::new(SELECTED_STROKE_PX, theme::ACCENT),
         );
     }
@@ -176,7 +182,7 @@ fn draw_cell(
     let thumbnail = egui::Rect::from_min_size(
         egui::pos2(
             rect.center().x - THUMBNAIL_SIZE.x / 2.0,
-            rect.top() + POPOVER_PADDING_PX * 0.6,
+            rect.top() + POPOVER_PADDING_PX * THUMBNAIL_TOP_PAD,
         ),
         THUMBNAIL_SIZE,
     );
@@ -203,7 +209,7 @@ fn draw_cell(
     job.halign = egui::Align::Center;
     let galley = painter.layout_job(job);
     painter.galley(
-        egui::pos2(rect.center().x, thumbnail.bottom() + 5.0),
+        egui::pos2(rect.center().x, thumbnail.bottom() + LABEL_GAP_PX),
         galley,
         label_colour,
     );

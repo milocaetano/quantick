@@ -3375,3 +3375,137 @@ mod shared_routing_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod move_pane_tests {
+    use super::*;
+    use crate::feed;
+    use crate::state::BarSpec;
+    use tokio::sync::mpsc;
+
+    static NEXT_DIR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1000);
+
+    fn tab_with(context: usize) -> Tab {
+        let (_evt_tx, evt_rx) = mpsc::channel(8);
+        let (_book_tx, book_rx) = mpsc::channel(8);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(8);
+        let mut tab = Tab::new(
+            0,
+            0,
+            "binance".to_owned(),
+            "BTCUSDT".to_owned(),
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(
+                    crate::config::ProviderKind::Binance.capabilities(),
+                ),
+                latency: feed::unsplit_latency(),
+                commands: cmd_tx,
+                replay: None,
+            },
+            std::env::temp_dir().join(format!(
+                "quantick-move-test-{}",
+                NEXT_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            )),
+        );
+        for slot in 0..context {
+            tab.time_panes.push(ChartPane::time(
+                200 + slot as u64,
+                crate::time_header::DEFAULT_INTERVAL_MS,
+            ));
+        }
+        tab
+    }
+
+    /// The order the stack draws in is the order it holds, so moving a chart
+    /// moves the pane rather than swapping what is inside two of them: the
+    /// drawings, indicators and bars travel with the chart the trader moved.
+    #[test]
+    fn moving_a_chart_carries_the_pane_rather_than_its_contents() {
+        let mut tab = tab_with(3);
+        let ids: Vec<u64> = tab.time_panes.iter().map(|pane| pane.id).collect();
+        assert_eq!(ids, vec![200, 201, 202]);
+
+        assert!(
+            tab.move_context_pane(3, 1),
+            "the bottom chart moves to the top"
+        );
+        let after: Vec<u64> = tab.time_panes.iter().map(|pane| pane.id).collect();
+        assert_eq!(
+            after,
+            vec![202, 200, 201],
+            "the pane moved and the others closed up behind it"
+        );
+    }
+
+    #[test]
+    fn moving_a_chart_one_slot_swaps_it_with_its_neighbour() {
+        let mut tab = tab_with(2);
+        assert!(tab.move_context_pane(1, 2));
+        let after: Vec<u64> = tab.time_panes.iter().map(|pane| pane.id).collect();
+        assert_eq!(after, vec![201, 200]);
+    }
+
+    /// The flow pane is address `0` and does not move: its column is the one
+    /// thing every preset agrees on, and a caller that asked to move the
+    /// heatmap meant something this cannot do.
+    #[test]
+    fn the_flow_pane_refuses_to_move() {
+        let mut tab = tab_with(2);
+        let before: Vec<u64> = tab.time_panes.iter().map(|pane| pane.id).collect();
+        assert!(!tab.move_context_pane(0, 1), "address 0 is the flow pane");
+        assert!(!tab.move_context_pane(1, 0), "and it is not a destination");
+        assert_eq!(
+            tab.time_panes
+                .iter()
+                .map(|pane| pane.id)
+                .collect::<Vec<_>>(),
+            before,
+            "a refused move must leave the stack exactly as it was"
+        );
+    }
+
+    /// An address past the end is refused rather than clamped. A control-plane
+    /// call or a stale menu naming a chart that has gone means something this
+    /// cannot do, and moving a different chart would be worse than saying no.
+    #[test]
+    fn an_address_the_stack_does_not_have_is_refused() {
+        let mut tab = tab_with(2);
+        let before: Vec<u64> = tab.time_panes.iter().map(|pane| pane.id).collect();
+        for (from, to) in [(1_usize, 9_usize), (9, 1), (7, 8)] {
+            assert!(
+                !tab.move_context_pane(from, to),
+                "moving {from} to {to} names a chart that is not there"
+            );
+        }
+        assert_eq!(
+            tab.time_panes
+                .iter()
+                .map(|pane| pane.id)
+                .collect::<Vec<_>>(),
+            before
+        );
+    }
+
+    /// Moving a chart onto itself changes nothing, and says so. A caller that
+    /// retried a dropped call needs "nothing happened" to be distinguishable
+    /// from "it worked".
+    #[test]
+    fn moving_a_chart_onto_itself_reports_no_change() {
+        let mut tab = tab_with(2);
+        assert!(!tab.move_context_pane(1, 1));
+        assert!(!tab.move_context_pane(2, 2));
+    }
+
+    /// A single context chart has nowhere to go.
+    #[test]
+    fn a_lone_context_chart_cannot_be_reordered() {
+        let mut tab = tab_with(1);
+        assert!(!tab.move_context_pane(1, 1));
+        assert!(!tab.move_context_pane(1, 2));
+        assert_eq!(tab.time_panes.len(), 1);
+    }
+}
