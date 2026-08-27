@@ -159,7 +159,10 @@ struct Args {
     /// "Cutting through" is read off the bar's **body**: it opened on the
     /// region's side of the edge the trade leaves by and closed beyond it.
     /// A bar that merely finished past an edge its body never crossed cut
-    /// nothing and rests nothing, however far its wick reached.
+    /// nothing and rests nothing, however far its wick reached. A cut whose
+    /// projected legs would not clear the edge is refused too — an entry is
+    /// never armed unprotected — so a run can report fewer entries than the
+    /// cuts on the chart suggest.
     retest_limit: bool,
     quantity: Decimal,
     protection: Protection,
@@ -218,7 +221,8 @@ fn usage() -> String {
                            region — open on the region's side of the edge,
                            close beyond it, wicks ignored — rests a limit at
                            the cut edge, cancelled if the bar's projected
-                           target trades first
+                           target trades first; a cut whose legs would not
+                           clear that edge is refused, never armed bare
   --quantity <n>           contracts per entry (default {DEFAULT_QUANTITY})
   --stop <points>          protective stop distance from the entry mark
   --target <points>        protective target distance from the entry mark

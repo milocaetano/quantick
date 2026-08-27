@@ -29,18 +29,21 @@
 //! the band is the level being probed and refused, not cut. That scope is
 //! deliberate and it is only the region test: the **projection** that
 //! prices both protective legs is still the bar's full range, wicks
-//! included, so a long-shadowed force bar brackets wide while its body
-//! decides whether to trade at all. The body says *whether*, the range
-//! says *how wide*.
+//! included, so a long-shadowed force bar brackets wide. The body decides
+//! whether the bar *reached* the region; the range then decides how wide
+//! the bracket sits — and because a retest limit whose legs do not clear
+//! the edge is refused rather than fired bare, the range has a say in
+//! whether that entry happens at all. Two gates, not one.
 //!
 //! A bar that closes *inside* the region fires a market entry, whatever
 //! its open did. One that cut **through** the region — opening on the
 //! region's side of the edge the trade leaves by and closing beyond it —
 //! follows [`BreakPolicy`]: hold fire (the default), or rest a limit at
 //! the cut edge, bracketed off the trigger bar and cancelled if the tape
-//! reaches the bar's projected target before returning for the retest. A
-//! body that finished beyond an edge it never crossed cut nothing, and
-//! rests nothing.
+//! reaches the bar's projected target before returning for the retest —
+//! or refused outright when those legs would not clear the edge, since a
+//! resting entry is never armed unprotected. A body that finished beyond
+//! an edge it never crossed cut nothing, and rests nothing.
 
 mod armed;
 mod force;

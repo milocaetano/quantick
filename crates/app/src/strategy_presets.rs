@@ -70,7 +70,9 @@ pub struct StoredPreset {
     /// `retest_limit` (rest a limit at the cut edge, cancelled at the
     /// bar's projected target). A cut is read off the bar's body — open on
     /// the region's side of the edge, close beyond it, wicks ignored — so
-    /// a bar that never crossed the edge rests nothing under either value.
+    /// a bar that never crossed the edge rests nothing under either value,
+    /// and neither does a cut whose projected legs would not clear the
+    /// edge — an entry is never armed unprotected.
     /// Optional for the same vintage reason as `min_body`, which is why
     /// the version does not move.
     #[serde(default = "ignore_break")]

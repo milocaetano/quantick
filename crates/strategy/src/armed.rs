@@ -14,7 +14,7 @@ use quantick_sim::{Bracket, Command, OrderId, RejectReason, SimEvent};
 use rust_decimal::Decimal;
 
 use crate::region::{BodyCut, Region};
-use crate::trigger::Trigger;
+use crate::trigger::{Signal, Trigger};
 
 /// What the instance does after its operation closes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -257,18 +257,11 @@ impl ArmedStrategy {
             self.note = Some("trigger held: account not flat");
             return Vec::new();
         }
-        let Some(bracket) = project_bracket(
-            self.params.side,
-            signal.reference,
-            signal.projection,
-            self.params.tp_mult,
-            self.params.sl_mult,
-        ) else {
-            // A promised protective leg that cannot be priced is a reason
-            // not to fire, never a reason to fire unprotected.
-            self.note = Some("projection invalid — held fire");
-            return Vec::new();
-        };
+        // The geometry is judged before the projection: a bar whose body
+        // never came near the region could not have traded under any
+        // multiplier, and blaming an unpriceable leg there sends the
+        // trader tuning numbers that were never the reason.
+        //
         // The geometry is the bar's own body — open to close, wicks
         // ignored — because that is what "the force bar cut the region"
         // means to the trader reading the chart. `signal.reference` keeps
@@ -282,6 +275,9 @@ impl ArmedStrategy {
         // simply off.
         let edge = match region.body_cut(self.params.side, bar) {
             BodyCut::ClosedInside => {
+                let Some(bracket) = self.project(&signal) else {
+                    return Vec::new();
+                };
                 self.note = None;
                 self.state = ArmedState::Fired {
                     order_id: None,
@@ -317,6 +313,9 @@ impl ArmedStrategy {
                 self.note = Some("trigger held: closed outside region");
                 return Vec::new();
             }
+        };
+        let Some(bracket) = self.project(&signal) else {
+            return Vec::new();
         };
         // The projected legs anchor on the trigger bar, but the entry now
         // prices at the edge: a leg that does not clear the edge would be
@@ -357,6 +356,25 @@ impl ArmedStrategy {
             // resting window, not just the trigger bar.
             flat_only: true,
         }]
+    }
+
+    /// The protective bracket for this signal, or `None` with the reason
+    /// already on the badge. A promised leg that cannot be priced is a
+    /// reason not to fire, never a reason to fire unprotected — and one
+    /// definition of that refusal serves both the market entry and the
+    /// retest limit.
+    fn project(&mut self, signal: &Signal) -> Option<Bracket> {
+        let bracket = project_bracket(
+            self.params.side,
+            signal.reference,
+            signal.projection,
+            self.params.tp_mult,
+            self.params.sl_mult,
+        );
+        if bracket.is_none() {
+            self.note = Some("projection invalid — held fire");
+        }
+        bracket
     }
 
     /// Feed simulator events back in, and apply whatever the instance
@@ -1212,7 +1230,8 @@ mod tests {
         assert_eq!(
             instance.status_line(),
             "armed · trigger held: cut the region, retest option off",
-            "the bar did its part; the option is what held fire, and the              badge blames the option rather than the bar"
+            "the bar did its part; the option is what held fire, and the \
+             badge blames the option rather than the bar"
         );
     }
 
@@ -1220,6 +1239,10 @@ mod tests {
     /// bar closing above the region has not cut anything downward. Its note
     /// is pinned here so it cannot silently become the same sentence a real
     /// cut produces — the two mean opposite things to a trader.
+    ///
+    /// Like the market-path test above, this holds on both sides of the
+    /// fix: it guards against over-correction and against the note drifting,
+    /// not against the reported bug.
     #[test]
     fn a_cut_beyond_the_opposite_edge_never_arms_a_retest() {
         let region = Region::new(dec("90"), dec("100"));
@@ -1233,6 +1256,29 @@ mod tests {
         assert_eq!(
             instance.status_line(),
             "armed · trigger held: closed outside region"
+        );
+    }
+
+    /// The geometry outranks the projection. A crash bar whose body never
+    /// came near the region also prices an impossible take profit; before
+    /// the gates were reordered the badge blamed the projection, sending
+    /// the trader to tune multipliers that were never the reason this bar
+    /// did not trade.
+    #[test]
+    fn a_bar_that_cut_nothing_blames_the_geometry_not_the_projection() {
+        // Region far above the tape: nothing here could ever have traded.
+        let region = Region::new(dec("300"), dec("320"));
+        let mut instance = retest_instance(Side::Sell);
+        instance.on_closed_bar(&bar("102", "101"), &region, true, true);
+        instance.on_closed_bar(&bar("101", "100"), &region, true, true);
+        // Close 90 with range 110 prices the take profit at -20: invalid.
+        let commands =
+            instance.on_closed_bar(&wicked("100", "96", "200", "90"), &region, true, true);
+        assert!(commands.is_empty());
+        assert_eq!(
+            instance.status_line(),
+            "armed · trigger held: the body never cut the region",
+            "the bar's geometry is the honest reason, not a leg it would never have used"
         );
     }
 
@@ -1292,6 +1338,11 @@ mod tests {
     /// that opened clear above a sell region and closed inside it sells at
     /// market, because where it opened does not matter once it finished in
     /// the band.
+    ///
+    /// This one passes against the old rule too, deliberately — it does not
+    /// guard the reported bug, it guards the *over-correction*: a fix that
+    /// started demanding something of the open on the market path would
+    /// turn this green test red, which is the point of keeping it.
     #[test]
     fn an_open_outside_the_region_never_blocks_a_close_inside_it() {
         let region = Region::new(dec("100"), dec("110"));

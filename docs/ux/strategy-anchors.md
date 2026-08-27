@@ -61,7 +61,7 @@ headless over recorded sessions. Never fork strategy logic per consumer.
   | Geometry | What happens |
   | --- | --- |
   | `c` inside `[low, high]`, whatever `o` did | market sell |
-  | `c < low` and `o >= low` — the body cut the lower edge | a limit rests at `low` if **on-break** is `retest_limit`; otherwise the bar is reported as a cut the option declined |
+  | `c < low` and `o >= low` — the body cut the lower edge | a limit rests at `low` if **on-break** is `retest_limit` *and* the projected legs clear that edge; otherwise the bar is reported as a cut the option declined |
   | `c < low` and `o < low` — the body finished past an edge it never crossed | nothing |
   | `c > high` — closed away, above the band | nothing |
 
@@ -76,6 +76,22 @@ headless over recorded sessions. Never fork strategy logic per consumer.
   before the return. The order also stands down at its own fill moment if
   a position is open by then: a bot never trades against a hand. `ignore`
   holds fire and says so on the instance's status line.
+
+  Two cases the option cannot deliver, both narrated on the status line
+  rather than silently:
+
+  - **The legs do not clear the edge.** The bracket is projected off the
+    trigger bar's close, but the entry prices at the *edge*. A leg landing
+    on the wrong side of that edge would be dropped at fill time, and an
+    entry is never armed unprotected — so the instance refuses the cut
+    instead ("retest bracket does not clear the edge — held fire"). A
+    tight `sl_mult` on a bar that closed just past the edge is the usual
+    way to meet this.
+  - **No take-profit leg means no expiry.** The cancel-at level *is* the
+    projected target, so with `tp_mult` at `0` the order carries none and
+    rests until it fills or the instance is disarmed. The status line says
+    "until filled or disarmed" rather than "cancels at target" — believe
+    the badge over the checkbox.
 - **Projection**: measured on the trigger bar's **full range, wicks
   included** — the body decides *whether* to trade, the range decides
   *how wide*. TP = close + `tp_mult` × range(trigger bar) in the

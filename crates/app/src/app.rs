@@ -9119,18 +9119,17 @@ impl QuantickApp {
                 }
                 let mut retest = popup.form.on_break == "retest_limit";
                 if ui
-                    .checkbox(
-                        &mut retest,
-                        "on a cut: rest a limit at the region edge until the target",
-                    )
+                    .checkbox(&mut retest, "on a cut: rest a limit at the region edge")
                     .on_hover_text(
                         "a trigger bar whose body cuts the region in the trade's direction \
                          — it opened on the region's side of that edge and closed beyond it, \
                          wicks ignored — rests a limit at the edge it cut, the retest entry, \
-                         bracketed off the bar; the order removes itself if the bar's \
-                         projected target trades first. A bar that closed past an edge its \
-                         body never crossed, or closed away on the far side of the region, \
-                         cut nothing and rests nothing either way. Off = a cut holds fire, \
+                         bracketed off the bar. The order removes itself if the bar's \
+                         projected target trades first; with the TP multiplier at 0 there is \
+                         no such level, so it rests until it fills or you disarm it — the \
+                         badge says which. A bar that closed past an edge its body never \
+                         crossed, one that closed away on the far side, and a cut whose legs \
+                         would not clear the edge all rest nothing. Off = a cut holds fire, \
                          as before.",
                     )
                     .changed()
@@ -13804,6 +13803,25 @@ crosshair = false
         bar_with_wick(&mut app, &mut id, "100", "106", "96");
 
         let tab = app.active_tab();
+        // The premise, pinned: if the bar spec or the print counts ever
+        // drift, the 106 print lands in a neighbouring bar and this test
+        // silently stops testing wick-versus-body — the only thing it is
+        // here for.
+        assert_eq!(
+            tab.flow_pane.closed_slots(),
+            3,
+            "the three fixture bars closed as three bars"
+        );
+        let trigger = tab.flow_pane.closed_bar(2).expect("the trigger bar closed");
+        assert_eq!(
+            (trigger.open, trigger.high, trigger.close),
+            (
+                rust_decimal::Decimal::from(100),
+                rust_decimal::Decimal::from(106),
+                rust_decimal::Decimal::from(96)
+            ),
+            "the shadow reaches into the 105-115 band while the body stays below it"
+        );
         assert!(
             tab.paper.working_orders().is_empty(),
             "a bar whose body never cut the region rests no order in it: {:?}",
