@@ -79,6 +79,22 @@ impl CanvasLayout {
         canvas_layout::preset(id).expect("every canvas layout names a registered preset")
     }
 
+    /// The layout a registry entry names, if the canvas can draw it.
+    ///
+    /// The inverse of [`Self::preset`], and deliberately partial: the registry
+    /// is allowed to describe an arrangement the canvas has not learned to
+    /// draw yet, and answering `None` is how that stays visible instead of
+    /// being approximated into the nearest layout that happens to exist.
+    #[must_use]
+    pub fn from_preset(preset: &LayoutPreset) -> Option<Self> {
+        match preset.id {
+            "flow" => Some(CanvasLayout::Single),
+            "time" => Some(CanvasLayout::Time),
+            "time+flow" => Some(CanvasLayout::TimeAndFlow),
+            _ => None,
+        }
+    }
+
     /// The panes this layout draws, left to right.
     #[must_use]
     pub fn kinds(self) -> &'static [PaneKind] {

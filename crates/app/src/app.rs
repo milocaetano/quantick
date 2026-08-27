@@ -776,6 +776,8 @@ pub struct QuantickApp {
     /// Handed out to new tabs and never reused, so a closed tab's ids can
     /// never be mistaken for a living one's.
     next_tab_id: u64,
+    /// Whether the toolbar's layout popover is open.
+    layout_picker_open: bool,
     /// The window's one source of pane ids. Pane ids namespace egui
     /// interaction state across the whole window rather than within a tab, so
     /// this may not be per-tab state: two panes sharing an id share a drag.
@@ -1314,6 +1316,7 @@ impl QuantickApp {
             tabs: vec![tab],
             active_tab: 0,
             next_tab_id: FIRST_TAB_ID + 1,
+            layout_picker_open: false,
             pane_ids,
             persisted_tab: Some(FIRST_TAB_ID),
             source_picker: None,
@@ -2984,6 +2987,9 @@ impl QuantickApp {
         // indicator command lands on (§11) — so the three chrome surfaces
         // can never disagree about which chart a command describes, and in
         // the Time layout the group governs the chart actually on screen.
+        // Split off the picker's flag before the tab borrow: the model wants
+        // both, and they live on the same struct.
+        let mut layout_picker_open = self.layout_picker_open;
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
         let pane = match focused {
@@ -2991,6 +2997,8 @@ impl QuantickApp {
             PaneSide::Flow => &mut tab.flow_pane,
         };
         let mut model = toolbar::ToolbarModel {
+            layout_preset: Some(tab.layout.preset()),
+            layout_picker_open: &mut layout_picker_open,
             feeds,
             feed_id: &mut tab.feed_id,
             feed_display_name,
@@ -3024,6 +3032,10 @@ impl QuantickApp {
             scripts,
         };
         let actions = toolbar::draw(ctx, &mut model);
+        // The popover's own state, back where it lives. Without this the flag
+        // resets every frame and the button never reads as open.
+        drop(model);
+        self.layout_picker_open = layout_picker_open;
         // A newly picked feed may not offer the current symbol. Never during
         // a replay: the recorded instrument belongs to no live feed's menu,
         // and snapping it away would relabel the whole session — the status
@@ -3036,6 +3048,30 @@ impl QuantickApp {
         for action in actions {
             self.apply_toolbar_action(action);
         }
+    }
+
+    /// Switch the active tab to `preset`.
+    ///
+    /// **The one path.** The toolbar's picker, the `View → Layout` menu and
+    /// the keyboard all arrive here, so none of them can grow its own idea of
+    /// what applying a layout does. A control-plane capability joins them by
+    /// calling this, never by repeating it.
+    fn apply_layout_preset(&mut self, preset: &'static crate::canvas_layout::LayoutPreset) {
+        let Some(layout) = CanvasLayout::from_preset(preset) else {
+            // A preset the canvas cannot draw yet is refused rather than
+            // approximated: switching to the nearest arrangement would be the
+            // picker showing one layout and the canvas drawing another.
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "LAYOUT_PRESET_UNSUPPORTED",
+                preset = %preset.id,
+                action = "layout_left_as_is",
+                "the layout registry names an arrangement the canvas cannot draw yet"
+            );
+            return;
+        };
+        self.active_tab_mut().set_layout(layout);
     }
 
     /// One toolbar side effect. Layer toggles reuse the same code paths the
@@ -3071,6 +3107,7 @@ impl QuantickApp {
             }
             ToolbarAction::OpenFootprintSettings => self.show_footprint_settings = true,
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
+            ToolbarAction::SetLayout(preset) => self.apply_layout_preset(preset),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
             ToolbarAction::ToggleAppearance => self.show_style = !self.show_style,
             // Every indicator command lands on the focused pane (§11), which
@@ -6044,16 +6081,16 @@ impl QuantickApp {
                         // entry names the charts it shows — "Timeframe", not
                         // layout jargon (audit §3).
                         ui.menu_button("Layout", |ui| {
-                            for (layout, label) in [
-                                (CanvasLayout::Single, "Flow"),
-                                (CanvasLayout::Time, "Timeframe"),
-                                (CanvasLayout::TimeAndFlow, "Timeframe + Flow"),
-                            ] {
+                            // Read from the registry, like the picker: a menu
+                            // holding its own list of layouts is the second
+                            // opinion that goes stale the day one is added.
+                            let current = self.active_tab().layout.preset();
+                            for preset in crate::canvas_layout::LAYOUT_PRESETS {
                                 if ui
-                                    .selectable_label(self.active_tab().layout == layout, label)
+                                    .selectable_label(current.id == preset.id, preset.label)
                                     .clicked()
                                 {
-                                    self.active_tab_mut().set_layout(layout);
+                                    self.apply_layout_preset(preset);
                                     ui.close_menu();
                                 }
                             }

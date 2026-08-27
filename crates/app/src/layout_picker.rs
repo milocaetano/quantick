@@ -1,0 +1,278 @@
+//! The layout picker: the toolbar's door to every arrangement the canvas can
+//! draw.
+//!
+//! `View → Layout` is kept — a menu is where a feature is *discovered* — but a
+//! trader who changes layout mid-session should not have to walk a menu for
+//! it. This is the icon that opens a grid of pictures instead.
+//!
+//! The grid is drawn from [`canvas_layout::LAYOUT_PRESETS`] and nothing else,
+//! so an arrangement added to that table appears here without this file being
+//! edited. That is the whole reason the registry exists.
+
+use eframe::egui;
+use egui_phosphor::regular as icons;
+
+use crate::canvas_layout::{LAYOUT_PRESETS, LayoutPreset, PaneKind};
+use crate::theme;
+use crate::widgets::{IconButton, TOOLBAR_ICON};
+
+/// Width of the popover, in pixels.
+const POPOVER_WIDTH_PX: f32 = 248.0;
+/// One preset cell: the thumbnail plus its label.
+const CELL_SIZE: egui::Vec2 = egui::vec2(72.0, 72.0);
+/// The miniature layout diagram inside a cell.
+const THUMBNAIL_SIZE: egui::Vec2 = egui::vec2(64.0, 40.0);
+/// Gap between cells, both axes.
+const CELL_GAP_PX: f32 = 8.0;
+/// Corner radius of a thumbnail's outer box.
+const THUMBNAIL_RADIUS_PX: f32 = 2.0;
+/// Stroke width of the rules inside a thumbnail.
+const THUMBNAIL_STROKE_PX: f32 = 1.0;
+/// Stroke width of the ring around the selected cell. Two pixels at 3:1 or
+/// better is the accessible floor for a selection indicator; one pixel of
+/// accent against chrome is legible but not *findable*.
+const SELECTED_STROKE_PX: f32 = 1.5;
+/// Padding inside the popover frame.
+const POPOVER_PADDING_PX: f32 = 10.0;
+
+/// What the picker needs to know about the canvas it is switching.
+pub struct PickerModel<'a> {
+    /// The preset the canvas is showing, if it still matches one. `None` is a
+    /// real state: a row the trader rearranged by hand is a custom layout, and
+    /// lighting a preset it no longer is would be the chrome lying.
+    pub current: Option<&'static LayoutPreset>,
+    /// Whether the popover is open. Owned by the caller so the toolbar's own
+    /// collapse logic can close it.
+    pub open: &'a mut bool,
+}
+
+/// Draw the picker button, and its popover when it is open.
+///
+/// Returns the preset the trader picked this frame, if any.
+pub fn draw(ui: &mut egui::Ui, model: PickerModel<'_>) -> Option<&'static LayoutPreset> {
+    let button = IconButton::new(icons::LAYOUT, TOOLBAR_ICON)
+        .active(*model.open)
+        .hover_text("chart layout (Ctrl+1…)")
+        .show(ui);
+
+    let popup_id = ui.make_persistent_id("layout_picker_popup");
+    if button.clicked() {
+        *model.open = !*model.open;
+        ui.memory_mut(|memory| memory.toggle_popup(popup_id));
+    }
+    // The two have to agree in both directions: egui closes the popup on a
+    // click elsewhere without telling us, and a stale `open` flag would leave
+    // the button lit over a popover that is gone.
+    if !ui.memory(|memory| memory.is_popup_open(popup_id)) {
+        *model.open = false;
+    }
+
+    let mut picked = None;
+    egui::popup::popup_below_widget(
+        ui,
+        popup_id,
+        &button,
+        egui::PopupCloseBehavior::CloseOnClick,
+        |ui| {
+            ui.set_min_width(POPOVER_WIDTH_PX);
+            picked = draw_grid(ui, model.current);
+        },
+    );
+    if picked.is_some() {
+        *model.open = false;
+    }
+    picked
+}
+
+/// The grid of preset cells, wrapped to the popover's width.
+fn draw_grid(
+    ui: &mut egui::Ui,
+    current: Option<&'static LayoutPreset>,
+) -> Option<&'static LayoutPreset> {
+    let mut picked = None;
+    ui.spacing_mut().item_spacing = egui::vec2(CELL_GAP_PX, CELL_GAP_PX);
+    ui.add_space(POPOVER_PADDING_PX - ui.spacing().item_spacing.y);
+
+    let per_row = ((POPOVER_WIDTH_PX - POPOVER_PADDING_PX * 2.0 + CELL_GAP_PX)
+        / (CELL_SIZE.x + CELL_GAP_PX))
+        .floor()
+        .max(1.0) as usize;
+
+    for chunk in LAYOUT_PRESETS.chunks(per_row) {
+        ui.horizontal(|ui| {
+            ui.add_space(POPOVER_PADDING_PX);
+            for preset in chunk {
+                let selected = current.is_some_and(|entry| entry.id == preset.id);
+                if draw_cell(ui, preset, selected).clicked() {
+                    picked = Some(preset);
+                }
+            }
+        });
+    }
+    ui.add_space(POPOVER_PADDING_PX);
+    picked
+}
+
+/// One preset: its thumbnail and its name, as a single click target.
+fn draw_cell(ui: &mut egui::Ui, preset: &'static LayoutPreset, selected: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(CELL_SIZE, egui::Sense::click());
+    let response = response.on_hover_text(preset.label);
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+    let painter = ui.painter();
+
+    if response.hovered() {
+        painter.rect_filled(rect, 4.0, theme::CONTROL);
+    }
+    if selected {
+        painter.rect_stroke(
+            rect,
+            4.0,
+            egui::Stroke::new(SELECTED_STROKE_PX, theme::ACCENT),
+        );
+    }
+
+    let thumbnail = egui::Rect::from_min_size(
+        egui::pos2(
+            rect.center().x - THUMBNAIL_SIZE.x / 2.0,
+            rect.top() + POPOVER_PADDING_PX * 0.6,
+        ),
+        THUMBNAIL_SIZE,
+    );
+    draw_thumbnail(painter, thumbnail, preset);
+
+    // The label carries the selection in weight as well as in colour: a ring
+    // alone asks the reader to discriminate a hue against a busy chrome.
+    let label_colour = if selected || response.hovered() {
+        theme::TEXT_PRIMARY
+    } else {
+        theme::TEXT_MUTED
+    };
+    painter.text(
+        egui::pos2(rect.center().x, thumbnail.bottom() + 5.0),
+        egui::Align2::CENTER_TOP,
+        preset.label,
+        egui::FontId::proportional(11.0),
+        label_colour,
+    );
+    response
+}
+
+/// The miniature: one block per pane, left to right, with the flow pane
+/// filled.
+///
+/// Filling the flow block is what teaches the rule the registry enforces —
+/// the heatmap is the protagonist, and the picture says where it will be
+/// before the trader commits to the layout.
+fn draw_thumbnail(painter: &egui::Painter, rect: egui::Rect, preset: &LayoutPreset) {
+    painter.rect_filled(rect, THUMBNAIL_RADIUS_PX, theme::INSET);
+
+    let count = preset.kinds.len().max(1);
+    // The flow pane is drawn wider than the context panes for the same reason
+    // it is wider on the canvas. An even miniature would promise a layout the
+    // canvas does not open on.
+    let flow_weight = 2.0_f32;
+    let total_weight: f32 = preset
+        .kinds
+        .iter()
+        .map(|kind| match kind {
+            PaneKind::Flow => flow_weight,
+            _ => 1.0,
+        })
+        .sum::<f32>()
+        .max(1.0);
+
+    let mut left = rect.left();
+    for (index, kind) in preset.kinds.iter().enumerate() {
+        let weight = match kind {
+            PaneKind::Flow => flow_weight,
+            _ => 1.0,
+        };
+        let width = rect.width() * (weight / total_weight);
+        let block = egui::Rect::from_min_max(
+            egui::pos2(left, rect.top()),
+            egui::pos2((left + width).min(rect.right()), rect.bottom()),
+        );
+        if matches!(kind, PaneKind::Flow) {
+            painter.rect_filled(
+                block.shrink(1.0),
+                THUMBNAIL_RADIUS_PX,
+                theme::active_tint(theme::ACCENT),
+            );
+            painter.rect_stroke(
+                block.shrink(1.0),
+                THUMBNAIL_RADIUS_PX,
+                egui::Stroke::new(THUMBNAIL_STROKE_PX, theme::ACCENT),
+            );
+        }
+        if index + 1 < count {
+            painter.line_segment(
+                [
+                    egui::pos2(block.right(), rect.top()),
+                    egui::pos2(block.right(), rect.bottom()),
+                ],
+                egui::Stroke::new(THUMBNAIL_STROKE_PX, theme::TEXT_FAINT),
+            );
+        }
+        left = block.right();
+    }
+    painter.rect_stroke(
+        rect,
+        THUMBNAIL_RADIUS_PX,
+        egui::Stroke::new(THUMBNAIL_STROKE_PX, theme::TEXT_FAINT),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The picker draws the registry, not a list of its own. A preset added to
+    /// the table must reach the popover without this file being edited — which
+    /// is only true while nothing here enumerates layouts.
+    #[test]
+    fn the_grid_offers_every_registered_preset() {
+        let source = include_str!("layout_picker.rs");
+        for preset in LAYOUT_PRESETS {
+            assert!(
+                !source.contains(&format!("\"{}\"", preset.id)),
+                "the picker names the preset {} instead of reading the registry",
+                preset.id
+            );
+        }
+    }
+
+    /// The popover has to stay a popover as the registry grows.
+    ///
+    /// A property of the *table*, not of the constants: adding presets adds
+    /// rows, and a grid that outgrows the screen is a layout nobody can pick.
+    /// This is the test that fails when the registry gets ambitious.
+    #[test]
+    fn the_grid_stays_a_reasonable_size_for_every_registered_preset() {
+        let usable = POPOVER_WIDTH_PX - POPOVER_PADDING_PX * 2.0;
+        let per_row = ((usable + CELL_GAP_PX) / (CELL_SIZE.x + CELL_GAP_PX)).floor() as usize;
+        assert!(per_row >= 1, "not one cell fits the popover width");
+
+        let rows = LAYOUT_PRESETS.len().div_ceil(per_row);
+        let height = rows as f32 * CELL_SIZE.y
+            + (rows.saturating_sub(1)) as f32 * CELL_GAP_PX
+            + POPOVER_PADDING_PX * 2.0;
+        assert!(
+            height <= 420.0,
+            "{} presets need {rows} rows and {height}px of popover; either the              grid wraps wider or the registry has outgrown a popover",
+            LAYOUT_PRESETS.len()
+        );
+    }
+
+    /// A cell is a click target before it is a picture, so it has to clear the
+    /// 24px minimum a pointer target is held to.
+    #[test]
+    fn a_preset_cell_is_a_large_enough_click_target() {
+        let smallest = CELL_SIZE.x.min(CELL_SIZE.y);
+        assert!(
+            smallest >= 24.0,
+            "a {smallest}px cell is under the minimum target size"
+        );
+    }
+}

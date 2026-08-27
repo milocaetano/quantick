@@ -37,6 +37,7 @@ mod indicator_render;
 mod indicator_style;
 mod indicator_worker;
 mod indicators;
+mod layout_picker;
 mod live_strip;
 mod loading;
 mod metrics;
