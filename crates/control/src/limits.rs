@@ -104,3 +104,34 @@ pub const CONTROL_AUDIT_RETENTION_MS: u64 = 86_400_000;
 pub const CONTROL_EVIDENCE_MAX_BUNDLES: usize = 8;
 pub const CONTROL_EVIDENCE_MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 pub const CONTROL_EVIDENCE_RETENTION_MS: u64 = 900_000;
+/// The largest one retained bundle may encode to.
+///
+/// The store's own share of its total, so a single capture cannot evict every
+/// other one to make room for itself. A bundle that would exceed it is refused
+/// with `control.backpressure`, and a screenshot that would take it over
+/// reports itself as not captured rather than costing the bundle its text.
+pub const CONTROL_EVIDENCE_MAX_BUNDLE_BYTES: usize =
+    CONTROL_EVIDENCE_MAX_TOTAL_BYTES / CONTROL_EVIDENCE_MAX_BUNDLES;
+/// One chunk of a retained evidence resource, in raw bytes before transport
+/// encoding.
+///
+/// Derived from `CONTROL_MAX_STRING_BYTES`, and deliberately not from the
+/// response ceiling: the binding constraint on a chunk is not the size of the
+/// response it travels in but the size of the single JSON *string* it becomes.
+/// The codec prescans every string in every frame against that limit before it
+/// leaves the process, and base64 spends four characters on every three bytes.
+/// A chunk sized against the 8 MiB response ceiling encodes to 699 KB of text
+/// and is refused as `control.payload_too_large` — which would leave a bundle
+/// retained for fifteen minutes that nothing could ever read.
+///
+/// Written as the arithmetic rather than as the answer so the two cannot
+/// drift: `evidence_chunk_encodes_within_the_codecs_string_ceiling` fails if
+/// either constant moves out from under the other.
+pub const CONTROL_EVIDENCE_CHUNK_BYTES: usize = (CONTROL_MAX_STRING_BYTES / 4) * 3;
+/// Chunks one page of a retained evidence resource may carry.
+///
+/// The page bound that pairs with the chunk size: four chunks is a mebibyte of
+/// base64, which leaves ample room for the envelope inside the response
+/// ceiling while still letting a client pull a large bundle in few round
+/// trips.
+pub const CONTROL_EVIDENCE_MAX_CHUNKS_PER_PAGE: usize = 4;

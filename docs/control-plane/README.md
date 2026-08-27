@@ -30,6 +30,10 @@ testable.
 - [PR 5b annotate evidence](pr5b-annotate-evidence.md) records the annotate
   and notify tier: what the trader grants, the acceptance table, the resolve
   step the trace needed, and the blast radius.
+- [PR 5c evidence bundles](pr5c-evidence.md) records the last MVP item: the
+  coherent hashed capture, its retained-resource pagination, what it redacts
+  and what it admits it does not carry, and the revision that ties a
+  screenshot to the scene captured beside it.
 
 ## Precedence
 

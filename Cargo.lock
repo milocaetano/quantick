@@ -2740,6 +2740,7 @@ dependencies = [
  "eframe",
  "egui-phosphor",
  "getrandom 0.3.4",
+ "png",
  "quantick-control",
  "quantick-control-local",
  "quantick-engine",

@@ -1,6 +1,6 @@
 ---
 name: visual-qa
-description: Autonomous visual QA of the quantick desktop app — drive every affected surface via ui-harness hooks, capture screenshots across a state matrix, read the images against an objective defect checklist, and report PASS/FAIL with evidence. Use when a change touches UI, when the user asks "how does it look", or as a goal acceptance criterion for any visual work.
+description: Autonomous visual QA of the quantick desktop app — drive every affected surface via ui-harness hooks, ask the live control plane what the application believes is on screen, capture screenshots across a state matrix, read the images against an objective defect checklist, and report PASS/FAIL with evidence. Use when a change touches UI, when the user asks "how does it look", or as a goal acceptance criterion for any visual work.
 ---
 
 # Visual QA — the agent looks so the human doesn't have to
@@ -36,7 +36,44 @@ be reproducible: deterministic tape → the same screen twice, so a defect
 found once can be re-captured after the fix. Presets come from
 `config/bubbles.toml` — never bare defaults.
 
-## 3. Read the captures — defect checklist
+## 3. Ask the app what it believes, then look
+
+A screenshot shows what was painted. It cannot say what the application
+*meant*, and half the defects this pass exists to catch are disagreements
+between the two: a control that looks enabled and is not, a price that is
+stale rather than quiet, a panel that looks empty because there is nothing to
+show or because something failed.
+
+Before reading pixels, read the live control plane — the mechanics are in
+`ui-harness` under *Reading the running app through the control plane*; the
+launch needs `QUANTICK_CONTROL_ACCESS=1` and the scopes the reads use. For
+each in-scope surface:
+
+- `quantick_get_scene` — every control on screen by name, with `selected`, and
+  the **coded reason** when it cannot be operated. A control the image shows
+  greyed while the scene reports it available is a defect in one of them;
+  finding out which is the point of asking both.
+- `quantick_get_diagnostics` — the frame and tape numbers behind the picture,
+  which is where the performance check below gets its evidence in structured
+  form rather than grepped out of a log line.
+- `quantick_capture_evidence` with `screenshot` — one bundle carrying the
+  scene, the health, the market state *and* the image, all at one capture
+  revision, with `screenshot.control_regions` giving each named control its
+  rectangle in that image. That pair turns "something is clipped" into
+  "`toolbar.layers.heatmap` sits at x=1284..1372 in a 1280-pixel window".
+
+Then look at the pixels with the names already in hand. Two rules:
+
+- A structured assertion beats a pixel assertion whenever both can answer: it
+  survives a colour change, a font change and a layout nudge.
+- A disagreement between the scene and the image is a FAIL of *this* pass,
+  whichever half is wrong. Say which you believe and why.
+
+Bundles are in memory only, expire in fifteen minutes and are cleared when
+access is turned off, so quote the evidence ID and the numbers in the report
+rather than treating a bundle as an artefact someone can open later.
+
+## 4. Read the captures — defect checklist
 
 Look at each image and answer explicitly. "It renders" is not a verdict.
 
@@ -68,14 +105,18 @@ Look at each image and answer explicitly. "It renders" is not a verdict.
 Verify by pixel where the eye is unreliable (counting marks, dash
 signatures, colour checks) — the technique is in `ui-harness`.
 
-## 4. Report
+## 5. Report
 
 One verdict per surface × state, most severe first:
 
 - **FAIL** — defect, with the screenshot path, what is wrong in one
-  sentence, and the crop/coordinates that show it.
-- **PASS** — with the screenshot path that proves it. A PASS without
-  evidence is an unproven claim, treat it as not run.
+  sentence, and the crop/coordinates that show it. Where the control plane
+  can name the control, name it: a region and an ID reproduce; a crop does
+  not.
+- **PASS** — with the screenshot path that proves it, and the structured
+  reading beside it where one was taken (the scene entry, the diagnostics
+  figure, the evidence ID). A PASS without evidence is an unproven claim,
+  treat it as not run.
 - **BLOCKED** — could not observe (desktop idle, no live feed); say what is
   missing and what was validated by other means (headless frame, pixel
   test). Never report BLOCKED as PASS.

@@ -256,3 +256,56 @@ fn the_handshake_frames_have_typed_doors_of_their_own() {
         response
     );
 }
+
+/// The constant that sizes an evidence chunk and the constant the codec
+/// enforces on a JSON string are one decision, not two.
+///
+/// A chunk travels the wire as a single base64 string, so the ceiling that
+/// binds it is the string limit and not the response limit. Sized against the
+/// wrong one, every page of every bundle over a chunk comes back
+/// `control.payload_too_large` and the retained resource is unreadable for its
+/// whole retention. This fails the moment either constant moves.
+#[test]
+fn an_evidence_chunk_encodes_within_the_codecs_string_ceiling() {
+    use quantick_control::{
+        limits::{
+            CONTROL_EVIDENCE_CHUNK_BYTES, CONTROL_EVIDENCE_MAX_CHUNKS_PER_PAGE,
+            CONTROL_MAX_RESPONSE_BYTES, CONTROL_MAX_STRING_BYTES,
+        },
+        wire::Base64Bytes,
+    };
+
+    let chunk = vec![0xA5_u8; CONTROL_EVIDENCE_CHUNK_BYTES];
+    let encoded = Base64Bytes::from_bytes(&chunk);
+    assert!(
+        encoded.as_str().len() <= CONTROL_MAX_STRING_BYTES,
+        "one chunk encodes to {} characters, over the {CONTROL_MAX_STRING_BYTES} the codec \
+         prescans every string against",
+        encoded.as_str().len()
+    );
+    // And the codec agrees, over the shape a page actually sends.
+    let page = ResponseEnvelope {
+        protocol_version: 1,
+        request_id: RequestId::new("evidence-page").unwrap(),
+        instance_id: InstanceId::from_bytes([4; 16]),
+        capture_revision: None,
+        module_revisions: Vec::new(),
+        warnings: Vec::new(),
+        outcome: ResponseOutcome::Success {
+            result: json!({
+                "items": (0..CONTROL_EVIDENCE_MAX_CHUNKS_PER_PAGE)
+                    .map(|_| json!({ "data": encoded.as_str() }))
+                    .collect::<Vec<_>>(),
+            }),
+        },
+    };
+    let codec = BoundedCodec::default();
+    let frame = codec
+        .encode(FrameRole::Response, &page)
+        .expect("a full page of chunks encodes");
+    assert!(
+        frame.len() <= CONTROL_MAX_RESPONSE_BYTES,
+        "a full page is {} bytes on the wire",
+        frame.len()
+    );
+}

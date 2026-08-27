@@ -1,0 +1,766 @@
+{
+  "$defs": {
+    "ActorKind": {
+      "enum": [
+        "human_ui",
+        "automation",
+        "agent"
+      ],
+      "type": "string"
+    },
+    "Base64Bytes": {
+      "contentEncoding": "base64",
+      "description": "One run of opaque bytes on the wire: standard base64 with padding.\n\nResources are the only place the control plane carries bytes rather than\nvalues — a chunk of a retained evidence bundle today — and they need one\nspelling, declared here beside the rest of the transport vocabulary rather\nthan invented by whichever module happens to page bytes first. Padded\nstandard alphabet, because a chunk is decoded by an ordinary reader in\nwhatever language the client is written in; the unpadded URL-safe alphabet\nstays where it belongs, on the runtime identifiers that travel in\nidentifiers and file names.\n\nThe digest of a chunk is taken over the *raw* bytes, never over this text\n(contract section 3), so re-encoding can never change what a manifest\nattests.",
+      "pattern": "^[A-Za-z0-9+/]*={0,2}$",
+      "type": "string"
+    },
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "EventActor": {
+      "description": "Who caused an event, as the journal retains it: the kind and a display\nname, never a principal that could be mistaken for an identity.",
+      "properties": {
+        "client_name": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ActorKind"
+        }
+      },
+      "required": [
+        "kind",
+        "client_name"
+      ],
+      "type": "object"
+    },
+    "EventCursor": {
+      "properties": {
+        "instance_id": {
+          "$ref": "#/$defs/InstanceId"
+        },
+        "next_sequence": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "instance_id",
+        "next_sequence"
+      ],
+      "type": "object"
+    },
+    "EventKind": {
+      "description": "A namespaced semantic event kind.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "EventPage": {
+      "description": "A page of events as the UI-thread read returns it, before the envelope.",
+      "properties": {
+        "dropped_before": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EventCursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present when the requested position had already been evicted; the\npage then begins at the oldest retained event."
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/SemanticEvent"
+          },
+          "type": "array"
+        },
+        "has_more": {
+          "type": "boolean"
+        },
+        "instance_id": {
+          "$ref": "#/$defs/InstanceId"
+        },
+        "next_cursor": {
+          "$ref": "#/$defs/EventCursor",
+          "description": "One past the last returned event, or the resolved start when empty."
+        },
+        "timed_out": {
+          "description": "Set by `wait_for_change` when its timeout elapsed and the page is\nempty; a change that landed between the deadline and the read is\nreported as a change.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "instance_id",
+        "events",
+        "next_cursor",
+        "has_more",
+        "timed_out"
+      ],
+      "type": "object"
+    },
+    "EvidenceConfiguration": {
+      "description": "The effective configuration with everything that names the user's machine\nremoved.\n\nA path is the one configuration value that is never about Quantick: it is\nabout whose computer this is. Ports, provider kinds and flags explain a\nfailure; a home directory only identifies a person. What is dropped is\nlisted by key in [`Self::redacted_keys`], so a reader is told a setting\nexists and was withheld rather than left to conclude it is unset.",
+      "properties": {
+        "default_feed_id": {
+          "type": "string"
+        },
+        "default_symbol": {
+          "type": "string"
+        },
+        "feeds": {
+          "items": {
+            "$ref": "#/$defs/EvidenceFeedConfiguration"
+          },
+          "type": "array"
+        },
+        "metatrader": {
+          "$ref": "#/$defs/EvidenceMetaTraderConfiguration"
+        },
+        "paper": {
+          "$ref": "#/$defs/EvidencePaperConfiguration"
+        },
+        "redacted_keys": {
+          "description": "Configuration keys this bundle deliberately does not carry.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "default_feed_id",
+        "default_symbol",
+        "feeds",
+        "metatrader",
+        "paper",
+        "redacted_keys"
+      ],
+      "type": "object"
+    },
+    "EvidenceControlRegion": {
+      "description": "One control's rectangle in the captured image, in physical pixels.",
+      "properties": {
+        "control_id": {
+          "type": "string"
+        },
+        "height_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels"
+        },
+        "width_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels"
+        },
+        "within_image": {
+          "description": "Whether the rectangle lies wholly inside the image. A control the\nwindow is clipping is exactly what a screenshot gets asked about, so it\nis reported with its real numbers and this flag rather than trimmed.",
+          "type": "boolean"
+        },
+        "x_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels"
+        },
+        "y_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels"
+        }
+      },
+      "required": [
+        "control_id",
+        "x_px",
+        "y_px",
+        "width_px",
+        "height_px",
+        "within_image"
+      ],
+      "type": "object"
+    },
+    "EvidenceCoverage": {
+      "description": "The honest bound on everything else in the bundle.\n\nAbsence is reported here; qualification is reported in place. A value that\nis inferred rather than measured carries its own provenance where it lives\n— the aggressor side under `feed.status`, the tick-rule delta under\n`orderflow.tape` — because a label separated from its value is a label that\ndrifts. What this section answers is the other question: what is *not*\nhere, and why.",
+      "properties": {
+        "complete": {
+          "description": "True only when every list above is empty. It is never true today, and\nsays so rather than letting a reader take a bundle for the session.",
+          "type": "boolean"
+        },
+        "not_captured": {
+          "description": "What this bundle does not carry at all, and why.",
+          "items": {
+            "$ref": "#/$defs/EvidenceGap"
+          },
+          "type": "array"
+        },
+        "omitted_scopes": {
+          "description": "Registered scopes this capture did not include, because the caller did\nnot name them.",
+          "items": {
+            "$ref": "#/$defs/SnapshotScopeId"
+          },
+          "type": "array"
+        },
+        "unavailable_fields": {
+          "description": "Fields the captured projections themselves reported as unavailable,\nwith the pointer that finds each one in the document and the coded\nreason it gave. Derived by walking the capture, never hand-kept.",
+          "items": {
+            "$ref": "#/$defs/EvidenceUnavailableField"
+          },
+          "maxItems": 256,
+          "type": "array"
+        }
+      },
+      "required": [
+        "omitted_scopes",
+        "unavailable_fields",
+        "not_captured",
+        "complete"
+      ],
+      "type": "object"
+    },
+    "EvidenceEnvironment": {
+      "description": "The build and the machine the capture was taken on.",
+      "properties": {
+        "graphics_backend": {
+          "type": "string"
+        },
+        "process_started_at_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "process_uptime_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "milliseconds"
+        },
+        "system": {
+          "$ref": "#/$defs/SystemSnapshot",
+          "description": "The application's own identity projection, verbatim: version, commit\nand its provenance, target triple, build profile, protocol version.\nTaken from the same function `system.info` publishes, so a bundle and a\nsnapshot can never disagree about what build produced them."
+        }
+      },
+      "required": [
+        "system",
+        "graphics_backend",
+        "process_started_at_unix_ms",
+        "process_uptime_ms"
+      ],
+      "type": "object"
+    },
+    "EvidenceFeedConfiguration": {
+      "properties": {
+        "bubble_preset_configured": {
+          "type": "boolean"
+        },
+        "default_bars": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default_layout": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "symbol_bubble_preset_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "symbol_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "symbols": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "provider",
+        "symbol_count",
+        "symbols",
+        "bubble_preset_configured",
+        "symbol_bubble_preset_count"
+      ],
+      "type": "object"
+    },
+    "EvidenceGap": {
+      "description": "One thing the bundle does not carry.",
+      "properties": {
+        "reason": {
+          "description": "Why, as a stable code — never the sentence an interface shows a human.\nA client made to parse that sentence would break the day it is\nreworded, and translating it would break every such client at once.",
+          "type": "string"
+        },
+        "subject": {
+          "description": "What is missing, as a stable name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "EvidenceId": {
+      "description": "A retained evidence-bundle identity.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "EvidenceImage": {
+      "description": "A captured frame and its pixels.",
+      "properties": {
+        "descriptor": {
+          "$ref": "#/$defs/EvidenceScreenshot"
+        },
+        "image_base64": {
+          "$ref": "#/$defs/Base64Bytes"
+        }
+      },
+      "required": [
+        "descriptor",
+        "image_base64"
+      ],
+      "type": "object"
+    },
+    "EvidenceMetaTraderConfiguration": {
+      "properties": {
+        "bridge_autostart": {
+          "type": "boolean"
+        },
+        "bridge_command_configured": {
+          "description": "Whether a bridge command is configured. The command itself is a program\npath into the user's machine and never travels.",
+          "type": "boolean"
+        },
+        "listen_host_is_loopback": {
+          "type": "boolean"
+        },
+        "listen_port": {
+          "description": "The port a bridge dials, without the address it is bound to.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "side_source": {
+          "type": "string"
+        },
+        "symbol_port_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "listen_host_is_loopback",
+        "symbol_port_count",
+        "side_source",
+        "bridge_autostart",
+        "bridge_command_configured"
+      ],
+      "type": "object"
+    },
+    "EvidencePaperConfiguration": {
+      "properties": {
+        "trades_dir_configured": {
+          "description": "Whether the trade journal has been pointed somewhere other than its\ndefault home. Where, is a path.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "trades_dir_configured"
+      ],
+      "type": "object"
+    },
+    "EvidenceScreenshot": {
+      "description": "The geometry and integrity of a captured frame, without its pixels.",
+      "properties": {
+        "capture_revision": {
+          "$ref": "#/$defs/WireU64",
+          "description": "The capture this image belongs to — the same revision as the scene in\nthe same bundle. That equality is the whole point: it is what turns a\nrectangle of pixels into the name of a control.\n\nIt ties the image to the *scene*, and to nothing stronger. The pixels\nare of the frame that was painted; the projections are taken at the top\nof the next frame, after it has drained whatever the feed delivered in\nbetween. Controls do not move in a drain, so every region below still\nnames what is under it — but a price or a bar count elsewhere in the\nbundle can be one drain newer than the picture, and\n`coverage.not_captured` says so rather than leaving a reader to assume\notherwise."
+        },
+        "control_regions": {
+          "description": "Where each named control sits in this image.",
+          "items": {
+            "$ref": "#/$defs/EvidenceControlRegion"
+          },
+          "maxItems": 512,
+          "type": "array"
+        },
+        "controls_without_region": {
+          "description": "Controls the scene named that have no region here, each with the reason\nthe scene itself gave for having no bounds. Listed rather than dropped:\na reader must be able to tell \"not on screen\" from \"not measured\".",
+          "items": {
+            "$ref": "#/$defs/EvidenceGap"
+          },
+          "type": "array"
+        },
+        "format": {
+          "type": "string"
+        },
+        "height_px": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "image_bytes": {
+          "$ref": "#/$defs/WireU64",
+          "x-unit": "bytes"
+        },
+        "image_digest": {
+          "$ref": "#/$defs/Sha256Digest",
+          "description": "Digest of the raw image bytes, not of their transport encoding."
+        },
+        "pixels_per_point": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Physical pixels per logical point: the factor the scene's own\npoint-valued bounds were multiplied by to reach the regions below."
+        },
+        "width_px": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "capture_revision",
+        "width_px",
+        "height_px",
+        "pixels_per_point",
+        "format",
+        "image_digest",
+        "image_bytes",
+        "control_regions",
+        "controls_without_region"
+      ],
+      "type": "object"
+    },
+    "EvidenceUnavailableField": {
+      "description": "One field a projection reported it could not fill.",
+      "properties": {
+        "pointer": {
+          "description": "JSON Pointer (RFC 6901) into the bundle document.",
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pointer",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "InstanceId": {
+      "description": "The identity of one running Quantick instance.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "ModuleId": {
+      "description": "A module contributing control-plane behavior.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "ModuleRevision": {
+      "properties": {
+        "module_id": {
+          "$ref": "#/$defs/ModuleId"
+        },
+        "revision": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "module_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "ProcessNonce": {
+      "description": "A nonce distinguishing one application process.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "SemanticEvent": {
+      "description": "One semantic event as a client reads it.",
+      "properties": {
+        "actor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EventActor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present when a human or an agent caused the event; absent for a\nchange the application observed on its own."
+        },
+        "kind": {
+          "$ref": "#/$defs/EventKind"
+        },
+        "module_id": {
+          "$ref": "#/$defs/ModuleId"
+        },
+        "payload": true,
+        "recorded_at_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "sequence": {
+          "$ref": "#/$defs/WireU64",
+          "description": "Monotonic, instance-scoped; the cursor token."
+        }
+      },
+      "required": [
+        "sequence",
+        "recorded_at_unix_ms",
+        "module_id",
+        "kind",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "SerializedScope": {
+      "properties": {
+        "module_id": {
+          "$ref": "#/$defs/ModuleId"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "value": true
+      },
+      "required": [
+        "module_id",
+        "schema_version",
+        "value"
+      ],
+      "type": "object"
+    },
+    "SerializedSnapshotCapture": {
+      "description": "Transport-ready form produced after the owned capture leaves the UI\nthread.",
+      "properties": {
+        "capture_budget_us": {
+          "$ref": "#/$defs/WireU64",
+          "x-unit": "microseconds"
+        },
+        "capture_elapsed_us": {
+          "$ref": "#/$defs/WireU64",
+          "x-unit": "microseconds"
+        },
+        "capture_revision": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "capture_within_budget": {
+          "type": "boolean"
+        },
+        "captured_at_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "instance_id": {
+          "$ref": "#/$defs/InstanceId"
+        },
+        "module_revisions": {
+          "items": {
+            "$ref": "#/$defs/ModuleRevision"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "omitted_scopes": {
+          "items": {
+            "$ref": "#/$defs/SnapshotScopeId"
+          },
+          "type": "array"
+        },
+        "scopes": {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$": {
+              "$ref": "#/$defs/SerializedScope"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "instance_id",
+        "capture_revision",
+        "captured_at_unix_ms",
+        "module_revisions",
+        "capture_elapsed_us",
+        "capture_budget_us",
+        "capture_within_budget",
+        "omitted_scopes",
+        "scopes"
+      ],
+      "type": "object"
+    },
+    "Sha256Digest": {
+      "maxLength": 71,
+      "minLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "SnapshotScopeId": {
+      "description": "A namespaced semantic snapshot projection.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "SystemSnapshot": {
+      "properties": {
+        "application": {
+          "type": "string"
+        },
+        "application_version": {
+          "type": "string"
+        },
+        "build_profile": {
+          "type": "string"
+        },
+        "control_protocol_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "git_commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "git_commit_provenance": {
+          "type": "string"
+        },
+        "target_arch": {
+          "type": "string"
+        },
+        "target_family": {
+          "type": "string"
+        },
+        "target_os": {
+          "type": "string"
+        },
+        "ui_capture_budget_us": {
+          "$ref": "#/$defs/WireU64",
+          "x-unit": "microseconds"
+        }
+      },
+      "required": [
+        "application",
+        "application_version",
+        "control_protocol_version",
+        "target_os",
+        "target_arch",
+        "target_family",
+        "build_profile",
+        "git_commit_provenance",
+        "ui_capture_budget_us"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The bundle itself: what the chunks reassemble into.",
+  "properties": {
+    "bundle_version": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "capture_revision": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "captured_at_unix_ms": {
+      "format": "int64",
+      "type": "integer",
+      "x-unit": "unix_milliseconds"
+    },
+    "configuration": {
+      "$ref": "#/$defs/EvidenceConfiguration"
+    },
+    "coverage": {
+      "$ref": "#/$defs/EvidenceCoverage"
+    },
+    "environment": {
+      "$ref": "#/$defs/EvidenceEnvironment"
+    },
+    "events": {
+      "$ref": "#/$defs/EventPage",
+      "description": "The semantic events around the capture, and the cursor that continues\nthem through `events.read`."
+    },
+    "evidence_id": {
+      "$ref": "#/$defs/EvidenceId"
+    },
+    "instance_id": {
+      "$ref": "#/$defs/InstanceId"
+    },
+    "screenshot": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EvidenceImage"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "session_id": {
+      "$ref": "#/$defs/ProcessNonce"
+    },
+    "snapshot": {
+      "$ref": "#/$defs/SerializedSnapshotCapture",
+      "description": "The coherent projection pass: every scope the caller named, at one\nrevision. Health and scene are ordinary scopes and live here."
+    }
+  },
+  "required": [
+    "evidence_id",
+    "bundle_version",
+    "instance_id",
+    "session_id",
+    "capture_revision",
+    "captured_at_unix_ms",
+    "environment",
+    "configuration",
+    "coverage",
+    "snapshot",
+    "events"
+  ],
+  "title": "EvidenceDocument",
+  "type": "object"
+}
