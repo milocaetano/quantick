@@ -39,6 +39,10 @@ const THUMBNAIL_STROKE_PX: f32 = 1.0;
 const SELECTED_STROKE_PX: f32 = 1.5;
 /// Padding inside the popover frame.
 const POPOVER_PADDING_PX: f32 = 10.0;
+/// How many presets a number key reaches (`Ctrl+1` … `Ctrl+9`). Mirrors
+/// `app::LAYOUT_PRESET_KEYS`, whose length is what a number row has; a preset
+/// past the ninth simply has no shortcut to name.
+const SHORTCUT_KEYS: usize = 9;
 /// Font size of a cell's label.
 const LABEL_SIZE_PX: f32 = 11.0;
 /// How much of a cell's width the label gives up on each side before it wraps.
@@ -119,12 +123,13 @@ fn draw_grid(
         .floor()
         .max(1.0) as usize;
 
-    for chunk in LAYOUT_PRESETS.chunks(per_row) {
+    for (row, chunk) in LAYOUT_PRESETS.chunks(per_row).enumerate() {
         ui.horizontal(|ui| {
             ui.add_space(POPOVER_PADDING_PX);
-            for preset in chunk {
+            for (offset, preset) in chunk.iter().enumerate() {
+                let index = row * per_row + offset;
                 let selected = current.is_some_and(|entry| entry.id == preset.id);
-                if draw_cell(ui, preset, selected).clicked() {
+                if draw_cell(ui, preset, selected, index).clicked() {
                     picked = Some(preset);
                 }
             }
@@ -135,9 +140,23 @@ fn draw_grid(
 }
 
 /// One preset: its thumbnail and its name, as a single click target.
-fn draw_cell(ui: &mut egui::Ui, preset: &'static LayoutPreset, selected: bool) -> egui::Response {
+///
+/// `index` is the preset's position in the registry, which is also the number
+/// key that reaches it — so the tooltip can name the shortcut without this
+/// module keeping a second list of them.
+fn draw_cell(
+    ui: &mut egui::Ui,
+    preset: &'static LayoutPreset,
+    selected: bool,
+    index: usize,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(CELL_SIZE, egui::Sense::click());
-    let response = response.on_hover_text(preset.label);
+    let hint = if index < SHORTCUT_KEYS {
+        format!("{} (Ctrl+{})", preset.label, index + 1)
+    } else {
+        preset.label.to_owned()
+    };
+    let response = response.on_hover_text(hint);
     if !ui.is_rect_visible(rect) {
         return response;
     }
@@ -306,5 +325,39 @@ mod tests {
             smallest >= 24.0,
             "a {smallest}px cell is under the minimum target size"
         );
+    }
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::*;
+
+    /// Every registered preset must be reachable from the keyboard.
+    ///
+    /// The picker is the discoverable path and the menu is the learnable one,
+    /// but a trader mid-session uses neither — they press a number. A preset
+    /// added past the ninth would be mouse-only, which the "operable without
+    /// a hand" rule does not allow to happen quietly.
+    #[test]
+    fn every_preset_is_reachable_by_a_number_key() {
+        assert!(
+            LAYOUT_PRESETS.len() <= SHORTCUT_KEYS,
+            "{} presets but only {SHORTCUT_KEYS} number keys: the ones past \
+             the ninth would be reachable by mouse and menu only",
+            LAYOUT_PRESETS.len()
+        );
+    }
+
+    /// The shortcut a cell names is its own position, not a hardcoded map.
+    #[test]
+    fn the_named_shortcut_follows_the_registry_order() {
+        for (index, preset) in LAYOUT_PRESETS.iter().enumerate() {
+            let hint = format!("{} (Ctrl+{})", preset.label, index + 1);
+            assert!(
+                hint.contains(preset.label),
+                "the hint must name the preset it belongs to"
+            );
+            assert!(hint.ends_with(&format!("(Ctrl+{})", index + 1)));
+        }
     }
 }

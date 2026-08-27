@@ -5927,6 +5927,33 @@ impl QuantickApp {
 const REPLAY_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::R);
 /// Shows/hides the panels dock (§10).
+/// `Ctrl+1` … `Ctrl+9` apply the layout registry's presets, in table order.
+///
+/// The keys are listed; which preset each one reaches is not. A preset added
+/// to `LAYOUT_PRESETS` gets its shortcut from its position without this array
+/// or its dispatch being edited — the same rule the picker and the View menu
+/// follow. Nine is what a number row has; `MAX_CANVAS_PANES` keeps the
+/// registry far below that.
+const LAYOUT_PRESET_KEYS: [egui::Key; 9] = [
+    egui::Key::Num1,
+    egui::Key::Num2,
+    egui::Key::Num3,
+    egui::Key::Num4,
+    egui::Key::Num5,
+    egui::Key::Num6,
+    egui::Key::Num7,
+    egui::Key::Num8,
+    egui::Key::Num9,
+];
+
+/// The shortcut that reaches the preset at `index` in the registry, if a
+/// number key still reaches that far.
+fn layout_preset_shortcut(index: usize) -> Option<egui::KeyboardShortcut> {
+    LAYOUT_PRESET_KEYS
+        .get(index)
+        .map(|key| egui::KeyboardShortcut::new(egui::Modifiers::CTRL, *key))
+}
+
 const DOCK_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::B);
 /// Folds the focused pane's on-chart indicator legend to its count puck, or
@@ -5992,6 +6019,17 @@ impl QuantickApp {
         }
         if ctx.input_mut(|i| i.consume_shortcut(&DOCK_SHORTCUT)) {
             self.dock.toggle_visible();
+        }
+        // Layout by number, straight off the registry. The same
+        // `apply_layout_preset` the picker and the menu call — three doors,
+        // one room.
+        for (index, preset) in crate::canvas_layout::LAYOUT_PRESETS.iter().enumerate() {
+            let Some(shortcut) = layout_preset_shortcut(index) else {
+                break;
+            };
+            if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
+                self.apply_layout_preset(preset);
+            }
         }
         if ctx.input_mut(|i| i.consume_shortcut(&LEGEND_SHORTCUT)) {
             let collapsed = self.focused_legend_collapsed();
@@ -6096,9 +6134,21 @@ impl QuantickApp {
                             // holding its own list of layouts is the second
                             // opinion that goes stale the day one is added.
                             let current = self.active_tab().layout.preset();
-                            for preset in crate::canvas_layout::LAYOUT_PRESETS {
+                            for (index, preset) in
+                                crate::canvas_layout::LAYOUT_PRESETS.iter().enumerate()
+                            {
+                                // The menu is where a shortcut is learned, so
+                                // it carries the binding beside the name.
+                                let label = match layout_preset_shortcut(index) {
+                                    Some(shortcut) => format!(
+                                        "{}	{}",
+                                        preset.label,
+                                        ui.ctx().format_shortcut(&shortcut)
+                                    ),
+                                    None => preset.label.to_owned(),
+                                };
                                 if ui
-                                    .selectable_label(current.id == preset.id, preset.label)
+                                    .selectable_label(current.id == preset.id, label)
                                     .clicked()
                                 {
                                     self.apply_layout_preset(preset);
