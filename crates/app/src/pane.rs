@@ -23,6 +23,7 @@ use smallvec::SmallVec;
 use crate::app::{PlotAreas, fmt_time_as, plot_split, split_time_strip};
 use crate::bands::{self, Band, BandLabel, Bands};
 use crate::candle_view::draw_candle;
+use crate::canvas_layout;
 use crate::chart::{self, PriceScale};
 use crate::chart_layers::{ChartLayer, LayerActions, LayerBlock, blocks};
 use crate::config::FeedCapabilities;
@@ -179,8 +180,6 @@ impl PaneSide {
     }
 }
 
-/// Width of the draggable divider between the two panes, in pixels.
-pub const CANVAS_DIVIDER_PX: f32 = 4.0;
 /// Half-width of the divider's grab area, which reaches a little into both
 /// panes so the handle is catchable without widening the rule itself.
 pub const CANVAS_DIVIDER_HANDLE_PX: f32 = 5.0;
@@ -215,18 +214,25 @@ pub struct TimePaneAreas {
 /// `time_fraction` is the time pane's share of the width, clamped so neither
 /// pane can be squeezed below [`MIN_PANE_FRACTION`] — a pane too narrow to
 /// read is not a layout, it is a lost pane.
+///
+/// A two-pane row carved by [`canvas_layout::split_row`], named for the two
+/// panes this layout happens to hold. The general splitter is the one that
+/// decides where the seam lands, so a two-pane canvas and a three-pane canvas
+/// can never start disagreeing about what a divider drag means.
 #[must_use]
 pub fn split_canvas(area: egui::Rect, time_fraction: f32) -> CanvasAreas {
     let fraction = clamp_pane_fraction(time_fraction);
-    let divider_x = area.left() + area.width() * fraction;
-    let half = CANVAS_DIVIDER_PX / 2.0;
+    let row = canvas_layout::split_row(
+        area,
+        &[
+            canvas_layout::PaneWidth::Manual(fraction),
+            canvas_layout::PaneWidth::Auto,
+        ],
+    );
     CanvasAreas {
-        time: egui::Rect::from_min_max(area.min, egui::pos2(divider_x - half, area.bottom())),
-        divider: egui::Rect::from_min_max(
-            egui::pos2(divider_x - half, area.top()),
-            egui::pos2(divider_x + half, area.bottom()),
-        ),
-        flow: egui::Rect::from_min_max(egui::pos2(divider_x + half, area.top()), area.max),
+        time: row.panes[0],
+        divider: row.dividers[0],
+        flow: row.panes[1],
     }
 }
 
@@ -6994,6 +7000,7 @@ fn magnet_price_of(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::canvas_layout::CANVAS_DIVIDER_PX;
     use crate::indicator_worker::IndicatorEvent;
 
     /// A frame nobody builds is a surface nobody draws. The strip and the

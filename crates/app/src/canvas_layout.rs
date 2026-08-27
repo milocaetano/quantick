@@ -10,6 +10,9 @@
 //! a third pane on tab 0 would have taken id 2, which is tab 1's flow pane,
 //! and the two would have shared every gesture egui keys by id.
 
+use eframe::egui;
+use smallvec::SmallVec;
+
 /// Hands out pane ids that are unique for the lifetime of the window.
 ///
 /// Two rules, and the type exists to make both true by construction rather
@@ -65,6 +68,295 @@ impl PaneIdAllocator {
     pub const fn spent(&self) -> u64 {
         self.next
     }
+}
+
+/// Most panes one tab's canvas may hold at once.
+///
+/// A cap rather than a policy: every pane is a second `ChartState` cut from
+/// the one tape, so the per-trade cost is linear in this number. Four is what
+/// the shipped presets need with one spare; raising it is a deliberate act
+/// that should come with the measurement that justifies it.
+pub const MAX_CANVAS_PANES: usize = 4;
+
+/// Width of the draggable divider between two panes, in pixels.
+pub const CANVAS_DIVIDER_PX: f32 = 4.0;
+
+/// Width of a collapsed pane, in pixels.
+///
+/// **Never zero.** The vertical axis already settled this question — see
+/// `indicators::COLLAPSED_PANE_HEIGHT_PX`, "a pane that vanished would be an
+/// indicator the user added and the chart silently dropped" — and the answer
+/// is the same here: a pane with no width has no handle, and a pane with no
+/// handle cannot be brought back from the canvas it left.
+///
+/// The two axes differ in pixels because they differ in what they must hold. A
+/// collapsed indicator pane keeps a readable row of text, so it needs 20 px of
+/// height; a collapsed chart pane keeps only a grip, so 8 px of width is
+/// enough. What they share — and what may not drift — is the rule that
+/// collapse leaves something to click.
+pub const COLLAPSED_PANE_WIDTH_PX: f32 = 8.0;
+
+/// Narrowest a pane may be squeezed to while it is still open.
+///
+/// Below this a chart stops being one: the price axis alone claims most of it.
+/// A trader who wants less than this wants the pane collapsed, which is a
+/// different request with a different affordance.
+pub const MIN_PANE_WIDTH_PX: f32 = 120.0;
+
+/// What decides one pane's width.
+///
+/// Deliberately the same shape as `indicators::PaneSizing`, which solves this
+/// problem on the vertical axis. Two different vocabularies for "how big is
+/// this pane" is how the two axes would start disagreeing about what a drag
+/// means.
+//
+// `Collapsed` and the two methods that move a pane in and out of it are
+// constructed by the canvas UI, which lands in the commit that draws the
+// collapsed rail. The model is written first so that the splitter, the width
+// arithmetic and their tests are settled before anything paints — and this
+// allow goes away in that commit, not later.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PaneWidth {
+    /// The layout decides: share what the explicit panes left over, evenly.
+    Auto,
+    /// The trader dragged a divider to this share of the canvas.
+    Manual(f32),
+    /// Collapsed by hand. Takes [`COLLAPSED_PANE_WIDTH_PX`] however much room
+    /// there is, and springs back to `restore` when it is expanded — so a
+    /// pane returns to the width it had rather than to a default that would
+    /// silently discard the trader's own sizing.
+    Collapsed { restore: f32 },
+}
+
+#[allow(dead_code)]
+impl PaneWidth {
+    /// Whether this pane is collapsed to its rail.
+    #[must_use]
+    pub const fn is_collapsed(self) -> bool {
+        matches!(self, Self::Collapsed { .. })
+    }
+
+    /// The share this pane returns to when expanded.
+    #[must_use]
+    pub fn restored(self) -> Self {
+        match self {
+            Self::Collapsed { restore } => Self::Manual(restore),
+            other => other,
+        }
+    }
+
+    /// This pane, collapsed, remembering `current` as the share to come back
+    /// to. An already-collapsed pane keeps the width it first remembered: two
+    /// collapses in a row must not overwrite the trader's size with a rail.
+    #[must_use]
+    pub fn collapsed(self, current: f32) -> Self {
+        match self {
+            Self::Collapsed { restore } => Self::Collapsed { restore },
+            _ => Self::Collapsed { restore: current },
+        }
+    }
+}
+
+/// One row of the canvas, carved.
+///
+/// `panes[i]` is the area of the `i`th pane; `dividers[i]` is the draggable
+/// rule between pane `i` and pane `i + 1`, so there are always exactly one
+/// fewer dividers than panes.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RowAreas {
+    /// Left to right, as drawn.
+    pub panes: SmallVec<[egui::Rect; MAX_CANVAS_PANES]>,
+    /// One per seam. `dividers[i]` sits between `panes[i]` and `panes[i + 1]`.
+    pub dividers: SmallVec<[egui::Rect; MAX_CANVAS_PANES]>,
+}
+
+/// What the dividers around the pane at `index` will take out of its share.
+///
+/// A pane's share buys the span between two divider *centres*, and each
+/// divider is painted half inside each neighbour. An interior pane therefore
+/// pays a full divider, an edge pane half of one. A collapsed pane has to buy
+/// that back, or its rail would come out narrower than the grip it carries.
+fn divider_cost_px(index: usize, count: usize) -> f32 {
+    let half = CANVAS_DIVIDER_PX / 2.0;
+    let before = if index > 0 { half } else { 0.0 };
+    let after = if index + 1 < count { half } else { 0.0 };
+    before + after
+}
+
+/// Resolve `widths` into the share of `total_px` each pane asks for.
+///
+/// Shares sum to one. Collapsed panes are converted to the share their rail
+/// costs, `Auto` panes divide what is left evenly, and `Manual` panes keep
+/// what they were dragged to.
+fn resolve_shares(widths: &[PaneWidth], total_px: f32) -> SmallVec<[f32; MAX_CANVAS_PANES]> {
+    let mut shares: SmallVec<[f32; MAX_CANVAS_PANES]> = SmallVec::with_capacity(widths.len());
+    let count = widths.len();
+    let collapsed_share = |index: usize| {
+        if total_px > 0.0 {
+            (COLLAPSED_PANE_WIDTH_PX + divider_cost_px(index, count)) / total_px
+        } else {
+            0.0
+        }
+    };
+
+    // Pass one: the panes that named a size get served first, exactly as
+    // `indicators::split_panes` serves explicit heights before automatic ones.
+    let mut claimed = 0.0_f32;
+    let mut auto_count = 0_usize;
+    for (index, width) in widths.iter().enumerate() {
+        match *width {
+            PaneWidth::Collapsed { .. } => claimed += collapsed_share(index),
+            PaneWidth::Manual(share) => claimed += share.clamp(0.0, 1.0),
+            PaneWidth::Auto => auto_count += 1,
+        }
+    }
+
+    // Pass two: whatever is left is divided evenly among the rest.
+    let auto_share = if auto_count == 0 {
+        0.0
+    } else {
+        ((1.0 - claimed) / auto_count as f32).max(0.0)
+    };
+    for (index, width) in widths.iter().enumerate() {
+        shares.push(match *width {
+            PaneWidth::Collapsed { .. } => collapsed_share(index),
+            PaneWidth::Manual(share) => share.clamp(0.0, 1.0),
+            PaneWidth::Auto => auto_share,
+        });
+    }
+
+    // The shares must spend the row exactly once. Renormalising rather than
+    // trusting the arithmetic is what keeps a saved fraction from a different
+    // window size — or a preset whose manual shares do not add up — from
+    // leaving a strip of the canvas unpainted.
+    let sum: f32 = shares.iter().sum();
+    if sum > f32::EPSILON {
+        for share in &mut shares {
+            *share /= sum;
+        }
+    } else if !shares.is_empty() {
+        let even = 1.0 / shares.len() as f32;
+        shares.iter_mut().for_each(|share| *share = even);
+    }
+
+    apply_min_width(&mut shares, widths, total_px);
+    shares
+}
+
+/// Raise any open pane that fell below [`MIN_PANE_WIDTH_PX`] back to it,
+/// taking the difference from the panes that have room to give.
+///
+/// Skipped entirely when the row cannot afford every pane its floor: a window
+/// dragged narrower than its panes need is a real state, and the honest answer
+/// is thin panes rather than a layout that overflows the canvas it was given.
+/// Collapsed panes are never raised — a rail is a deliberate width, not a pane
+/// that lost an argument with the arithmetic.
+fn apply_min_width(shares: &mut [f32], widths: &[PaneWidth], total_px: f32) {
+    if total_px <= 0.0 || shares.len() < 2 {
+        return;
+    }
+    let floor = MIN_PANE_WIDTH_PX / total_px;
+    let open = |index: usize| !widths[index].is_collapsed();
+
+    let mut committed = 0.0_f32;
+    let mut open_count = 0_usize;
+    for (index, share) in shares.iter().enumerate() {
+        if open(index) {
+            open_count += 1;
+        } else {
+            committed += *share;
+        }
+    }
+    if open_count == 0 || committed + floor * open_count as f32 > 1.0 {
+        return;
+    }
+
+    // One pass, not a loop: everyone under the floor is raised to it, and
+    // everyone above pays in proportion to how far above they are. The sum is
+    // preserved by construction, so the row still spends the canvas once.
+    let mut deficit = 0.0_f32;
+    let mut surplus = 0.0_f32;
+    for (index, share) in shares.iter().enumerate() {
+        if !open(index) {
+            continue;
+        }
+        if *share < floor {
+            deficit += floor - *share;
+        } else {
+            surplus += *share - floor;
+        }
+    }
+    if deficit <= f32::EPSILON || surplus <= f32::EPSILON {
+        return;
+    }
+    let levy = (deficit / surplus).min(1.0);
+    for (index, share) in shares.iter_mut().enumerate() {
+        if !open(index) {
+            continue;
+        }
+        if *share < floor {
+            *share = floor;
+        } else {
+            *share -= (*share - floor) * levy;
+        }
+    }
+}
+
+/// Carve `area` into one pane per entry in `widths`, with a draggable divider
+/// on every seam.
+///
+/// The divider sits **on** the split rather than beside it, so a pane spans
+/// from one divider's inner edge to the next and the row spends the canvas
+/// exactly once. Panes keep the full height: this splits one axis only.
+///
+/// Per-frame, and allocation-free — the areas live in `SmallVec`s sized for
+/// [`MAX_CANVAS_PANES`], because this runs inside `draw_canvas` on every tab
+/// on every frame.
+#[must_use]
+pub fn split_row(area: egui::Rect, widths: &[PaneWidth]) -> RowAreas {
+    let mut areas = RowAreas::default();
+    if widths.is_empty() {
+        return areas;
+    }
+    if widths.len() == 1 {
+        areas.panes.push(area);
+        return areas;
+    }
+
+    let shares = resolve_shares(widths, area.width());
+    let half = CANVAS_DIVIDER_PX / 2.0;
+
+    // Boundaries are cumulative shares of the *whole* width, so the divider
+    // centres land where the trader dragged them. Widths fall out of the
+    // boundaries rather than the other way round, which is what keeps the
+    // arithmetic from leaving a sliver of canvas unspent.
+    let mut boundaries: SmallVec<[f32; MAX_CANVAS_PANES]> = SmallVec::new();
+    let mut cumulative = 0.0_f32;
+    for share in shares.iter().take(widths.len() - 1) {
+        cumulative += share;
+        boundaries.push(area.left() + area.width() * cumulative);
+    }
+
+    let mut left = area.left();
+    for (index, boundary) in boundaries.iter().enumerate() {
+        let boundary = boundary.clamp(area.left(), area.right());
+        areas.panes.push(egui::Rect::from_min_max(
+            egui::pos2(left, area.top()),
+            egui::pos2((boundary - half).max(left), area.bottom()),
+        ));
+        areas.dividers.push(egui::Rect::from_min_max(
+            egui::pos2(boundary - half, area.top()),
+            egui::pos2(boundary + half, area.bottom()),
+        ));
+        left = boundary + half;
+        debug_assert!(index < widths.len(), "one divider per seam, never more");
+    }
+    areas.panes.push(egui::Rect::from_min_max(
+        egui::pos2(left.min(area.right()), area.top()),
+        area.max,
+    ));
+    areas
 }
 
 #[cfg(test)]
@@ -130,5 +422,192 @@ mod tests {
             first_tab.0 * 2,
             "an id that is a function of the tab index is the bug this replaced"
         );
+    }
+}
+
+#[cfg(test)]
+mod row_tests {
+    use super::*;
+
+    fn canvas() -> egui::Rect {
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0))
+    }
+
+    /// The row spends the canvas exactly once, whatever it holds. A sliver of
+    /// unpainted canvas between two panes reads as a rendering fault.
+    fn assert_spends_the_canvas(area: egui::Rect, areas: &RowAreas) {
+        let spent: f32 = areas.panes.iter().map(|pane| pane.width()).sum::<f32>()
+            + areas
+                .dividers
+                .iter()
+                .map(|divider| divider.width())
+                .sum::<f32>();
+        assert!(
+            (spent - area.width()).abs() < 1e-3,
+            "the row spent {spent} of a {} canvas",
+            area.width()
+        );
+        assert_eq!(areas.panes.first().map(egui::Rect::left), Some(area.left()));
+        assert_eq!(
+            areas.panes.last().map(egui::Rect::right),
+            Some(area.right())
+        );
+        for pane in &areas.panes {
+            assert_eq!(pane.top(), area.top(), "the split is vertical only");
+            assert_eq!(pane.bottom(), area.bottom());
+        }
+    }
+
+    #[test]
+    fn a_lone_pane_takes_the_whole_canvas_and_needs_no_divider() {
+        let area = canvas();
+        let areas = split_row(area, &[PaneWidth::Auto]);
+        assert_eq!(areas.panes.as_slice(), &[area]);
+        assert!(areas.dividers.is_empty(), "one pane has no seam");
+    }
+
+    #[test]
+    fn there_is_always_one_fewer_divider_than_pane() {
+        for count in 1..=MAX_CANVAS_PANES {
+            let widths = vec![PaneWidth::Auto; count];
+            let areas = split_row(canvas(), &widths);
+            assert_eq!(areas.panes.len(), count);
+            assert_eq!(
+                areas.dividers.len(),
+                count - 1,
+                "{count} panes must have {} seams",
+                count - 1
+            );
+        }
+    }
+
+    #[test]
+    fn every_pane_count_spends_the_canvas_exactly_once() {
+        for count in 1..=MAX_CANVAS_PANES {
+            let widths = vec![PaneWidth::Auto; count];
+            let area = canvas();
+            assert_spends_the_canvas(area, &split_row(area, &widths));
+        }
+    }
+
+    /// The two-pane row must land where the old fixed splitter did, or every
+    /// saved workspace would open on a canvas that shifted under it.
+    #[test]
+    fn a_two_pane_row_puts_the_divider_on_the_share_it_was_given() {
+        let area = canvas();
+        for asked in [0.25_f32, 0.35, 0.5, 0.65, 0.75] {
+            let areas = split_row(area, &[PaneWidth::Manual(asked), PaneWidth::Auto]);
+            let split = (areas.dividers[0].center().x - area.left()) / area.width();
+            assert!(
+                (split - asked).abs() < 1e-3,
+                "asked for {asked}, divider landed at {split}"
+            );
+            assert_eq!(areas.dividers[0].width(), CANVAS_DIVIDER_PX);
+            assert_eq!(areas.panes[0].right(), areas.dividers[0].left());
+            assert_eq!(areas.dividers[0].right(), areas.panes[1].left());
+            assert_spends_the_canvas(area, &areas);
+        }
+    }
+
+    /// The shape the old model could not express at all: two context panes
+    /// beside the flow pane.
+    #[test]
+    fn a_three_pane_row_carves_two_seams_in_order() {
+        let area = canvas();
+        let areas = split_row(
+            area,
+            &[
+                PaneWidth::Manual(0.175),
+                PaneWidth::Manual(0.175),
+                PaneWidth::Auto,
+            ],
+        );
+        assert_eq!(areas.panes.len(), 3);
+        assert_eq!(areas.dividers.len(), 2);
+        assert!(areas.panes[0].right() <= areas.panes[1].left());
+        assert!(areas.panes[1].right() <= areas.panes[2].left());
+        assert!(
+            areas.panes[2].width() > areas.panes[0].width() + areas.panes[1].width(),
+            "the flow pane keeps the majority of the canvas"
+        );
+        assert_spends_the_canvas(area, &areas);
+    }
+
+    #[test]
+    fn a_collapsed_pane_takes_its_rail_and_no_more() {
+        let area = canvas();
+        let areas = split_row(
+            area,
+            &[PaneWidth::Collapsed { restore: 0.35 }, PaneWidth::Auto],
+        );
+        assert!(
+            (areas.panes[0].width() - COLLAPSED_PANE_WIDTH_PX).abs() < 1.0,
+            "a collapsed pane is a rail, got {} px",
+            areas.panes[0].width()
+        );
+        assert!(
+            areas.panes[0].width() > 0.0,
+            "a collapsed pane is never zero — there would be nothing left to click"
+        );
+        assert_spends_the_canvas(area, &areas);
+    }
+
+    #[test]
+    fn expanding_returns_the_pane_to_the_width_it_had() {
+        let dragged = PaneWidth::Manual(0.42);
+        let collapsed = dragged.collapsed(0.42);
+        assert!(collapsed.is_collapsed());
+        assert_eq!(collapsed.restored(), PaneWidth::Manual(0.42));
+    }
+
+    #[test]
+    fn collapsing_twice_keeps_the_first_remembered_width() {
+        // The second collapse must not record the rail as the width to
+        // return to, or the trader's own sizing is lost to a double click.
+        let once = PaneWidth::Manual(0.42).collapsed(0.42);
+        let twice = once.collapsed(COLLAPSED_PANE_WIDTH_PX / 1000.0);
+        assert_eq!(twice.restored(), PaneWidth::Manual(0.42));
+    }
+
+    #[test]
+    fn every_pane_collapsed_still_spends_the_canvas() {
+        let area = canvas();
+        let widths = vec![PaneWidth::Collapsed { restore: 0.25 }; 3];
+        let areas = split_row(area, &widths);
+        assert_eq!(areas.panes.len(), 3);
+        assert_spends_the_canvas(area, &areas);
+    }
+
+    /// A window dragged narrower than the panes' floors is a real state, and
+    /// the row must degrade rather than overflow: the panes get thin, the
+    /// canvas is still spent once, and nothing is painted outside it.
+    #[test]
+    fn a_canvas_too_narrow_for_its_panes_degrades_instead_of_overflowing() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(60.0, 600.0));
+        let areas = split_row(area, &[PaneWidth::Auto, PaneWidth::Auto, PaneWidth::Auto]);
+        assert_eq!(areas.panes.len(), 3);
+        for pane in &areas.panes {
+            assert!(pane.left() >= area.left() - 1e-3);
+            assert!(pane.right() <= area.right() + 1e-3);
+            assert!(pane.width() >= 0.0, "a pane never has negative width");
+        }
+        assert_spends_the_canvas(area, &areas);
+    }
+
+    #[test]
+    fn a_zero_width_canvas_is_survived_rather_than_panicked_on() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(0.0, 600.0));
+        let areas = split_row(area, &[PaneWidth::Auto, PaneWidth::Auto]);
+        assert_eq!(areas.panes.len(), 2);
+        for pane in &areas.panes {
+            assert!(pane.width() >= 0.0);
+        }
+    }
+
+    #[test]
+    fn an_empty_row_draws_nothing() {
+        let areas = split_row(canvas(), &[]);
+        assert!(areas.panes.is_empty());
+        assert!(areas.dividers.is_empty());
     }
 }

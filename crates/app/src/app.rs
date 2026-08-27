@@ -10234,11 +10234,12 @@ mod tests {
 
     use quantick_feed_binance::depth::DepthEvent;
 
+    use crate::canvas_layout::CANVAS_DIVIDER_PX;
     use crate::config::{AppConfig, FeedCapabilities, FeedConfig, ProviderKind};
     use crate::drawings::{ChartPoint, PresetHost};
     use crate::feed::{FeedConnectionState, FeedEvent, FeedNotice};
     use crate::pane::DrawingDrag;
-    use crate::pane::{CANVAS_DIVIDER_PX, DEFAULT_PANE_FRACTION, MIN_PANE_FRACTION};
+    use crate::pane::{DEFAULT_PANE_FRACTION, MIN_PANE_FRACTION};
     use crate::tab::BOOK_GENERATION_STRIDE;
     use crate::time_header;
 
