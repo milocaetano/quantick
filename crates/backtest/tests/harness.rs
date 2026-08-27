@@ -149,6 +149,59 @@ fn tape_of(prices: &[&str]) -> String {
 /// consumers. The tape mirrors the strategy crate's own golden walk
 /// (`crates/strategy/tests/full_operation.rs`), so any divergence between
 /// the live chart and this harness has nowhere to hide.
+/// The body rule reaches the *second* consumer, proved through the fill
+/// path rather than asserted. A sell region sits at 105–115 and the force
+/// bar's shadow reaches 106, inside the band, while its body runs 100 → 96
+/// entirely below it. Under the old close-only rule this rested a retest
+/// limit at 105 and the later print at 105 filled it; under the body rule
+/// nothing rests, so nothing fills.
+///
+/// The chart proves the same walk in `crates/app/src/app.rs`. One kernel,
+/// two consumers, one geometry — this is the test that would catch them
+/// drifting apart.
+#[test]
+fn a_body_that_never_cut_the_region_rests_nothing_under_the_harness() {
+    use quantick_strategy::{ForceParams, Rearm, Region, StrategyParams};
+
+    // Tick(3) bars: two body-1 warmup bars, the force bar with its shadow
+    // in the band and its body under it, then a bar printing back at 105 —
+    // the price a wrongly rested limit would have filled at.
+    let session = synthetic(&tape_of(&[
+        "102", "102", "101", //
+        "101", "101", "100", //
+        "100", "106", "96", //
+        "100", "105", "100",
+    ]));
+    let mut strategy = ForceRegion::new(
+        Region::new(Decimal::from(105), Decimal::from(115)),
+        StrategyParams {
+            side: Side::Sell,
+            quantity: Decimal::ONE,
+            tp_mult: Decimal::ONE,
+            sl_mult: Decimal::ONE,
+            rearm: Rearm::OneShot,
+            on_break: quantick_strategy::BreakPolicy::RetestLimit,
+        },
+        ForceParams {
+            window: 3,
+            min_factor: "1.5".parse().expect("fixture factor"),
+            max_factor: "2.5".parse().expect("fixture factor"),
+            min_body: Decimal::ZERO,
+        },
+    );
+    let run = run_session(&session, BarSpec::Tick(3), &mut strategy);
+
+    assert!(
+        run.trades.is_empty(),
+        "a body that never cut the region rests no limit, so the print back          at the edge fills nothing: {:?}",
+        run.trades
+    );
+    assert_eq!(
+        run.open_at_end, None,
+        "and the recording ends flat, with nothing resting"
+    );
+}
+
 #[test]
 fn the_force_region_kernel_walks_a_full_operation_under_the_harness() {
     use quantick_strategy::{ForceParams, Rearm, Region, StrategyParams};

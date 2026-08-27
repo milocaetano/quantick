@@ -27,7 +27,10 @@ headless over recorded sessions. Never fork strategy logic per consumer.
 4. On every **closed** bar: is it a force bar of the armed side, closing
    inside the region, with the account flat? Then a market order with its
    projected bracket goes to the simulator, filling on the next print —
-   like the hand would, minus the seconds the hand needs.
+   like the hand would, minus the seconds the hand needs. A bar that
+   instead **cut clean through** the region may rest a limit at the edge
+   it cut, if the instance was armed with that option — see **Region**
+   below for what counts as a cut.
 5. The operation runs to its bracket (or to a manual close — the human
    always outranks the bot). One-shot instances are then `done`; auto
    instances re-arm and hunt the next qualifying bar.
@@ -46,11 +49,36 @@ headless over recorded sessions. Never fork strategy logic per consumer.
   is **exhaustion and does not fire** — too big to chase, by design.
   Dojis have no side. The window must be full; warmup is a badge state,
   not a silent zero.
-- **Region**: the rectangle's price band, inclusive of its edges; the
-  bar's *close* must sit inside it, and the bar's slot inside the
-  rectangle's span of the tape. A rectangle that ended in the past is an
-  expired region — stretch it to re-live it.
-- **Projection**: TP = close + `tp_mult` × range(trigger bar) in the
+- **Region**: the rectangle's price band, inclusive of its edges, with
+  the bar's slot inside the rectangle's span of the tape. A rectangle
+  that ended in the past is an expired region — stretch it to re-live it.
+
+  The band is judged against the trigger bar's **body — its open and its
+  close. The wicks are not consulted**: a shadow poking into the band is
+  the level being probed and refused, not cut. Reading the bar's open `o`
+  and close `c` against a band `[low, high]`, for a **sell** instance:
+
+  | Geometry | What happens |
+  | --- | --- |
+  | `c` inside `[low, high]`, whatever `o` did | market sell |
+  | `c < low` and `o >= low` — the body cut the lower edge | a limit rests at `low` if **on-break** is `retest_limit`; otherwise the bar is reported as a cut the option declined |
+  | `c < low` and `o < low` — the body finished past an edge it never crossed | nothing |
+  | `c > high` — closed away, above the band | nothing |
+
+  A **buy** instance is the same rule mirrored around `high`. The kernel
+  answers this as `Region::body_cut` (`crates/strategy/src/region.rs`),
+  one definition for the chart and the backtest both.
+
+- **On break** (`on_break`, default `ignore`): what a bar that *cut* the
+  region does. `retest_limit` rests a limit at the edge the body cut —
+  the price the tape must revisit for the retest — bracketed off the
+  trigger bar and cancelling itself if the bar's projected target trades
+  before the return. The order also stands down at its own fill moment if
+  a position is open by then: a bot never trades against a hand. `ignore`
+  holds fire and says so on the instance's status line.
+- **Projection**: measured on the trigger bar's **full range, wicks
+  included** — the body decides *whether* to trade, the range decides
+  *how wide*. TP = close + `tp_mult` × range(trigger bar) in the
   trade's favour; SL = close − `sl_mult` × range against it (defaults
   1.0 / 1.0; `0` = no leg). A promised leg that cannot be priced holds
   fire — never fires unprotected.

@@ -155,6 +155,11 @@ struct Args {
     /// Force-region only: on a bar cutting through the region, rest a limit
     /// at the cut edge (cancelled at the bar's target) instead of holding
     /// fire — the chart's "retest limit" option, measured headless.
+    ///
+    /// "Cutting through" is read off the bar's **body**: it opened on the
+    /// region's side of the edge the trade leaves by and closed beyond it.
+    /// A bar that merely finished past an edge its body never crossed cut
+    /// nothing and rests nothing, however far its wick reached.
     retest_limit: bool,
     quantity: Decimal,
     protection: Protection,
@@ -209,9 +214,11 @@ fn usage() -> String {
   --region <low:high:side> the force-region strategy's price band and the
                            side it hunts (buy|sell); auto re-arms so every
                            qualifying bar in the recording is measured
-  --retest-limit           force-region: a bar cutting through the region
-                           rests a limit at the cut edge, cancelled if the
-                           bar's projected target trades first
+  --retest-limit           force-region: a bar whose body cuts through the
+                           region — open on the region's side of the edge,
+                           close beyond it, wicks ignored — rests a limit at
+                           the cut edge, cancelled if the bar's projected
+                           target trades first
   --quantity <n>           contracts per entry (default {DEFAULT_QUANTITY})
   --stop <points>          protective stop distance from the entry mark
   --target <points>        protective target distance from the entry mark

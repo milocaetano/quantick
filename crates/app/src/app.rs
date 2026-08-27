@@ -9124,13 +9124,14 @@ impl QuantickApp {
                         "on a cut: rest a limit at the region edge until the target",
                     )
                     .on_hover_text(
-                        "a trigger bar whose body cuts the region \
-                         — open on the region's side of the edge, close beyond it, \
-                         wicks ignored — rests a limit at the edge it cut, the \
-                         retest entry, bracketed off the bar; the order removes \
-                         itself if the bar's projected target trades first. A bar \
-                         that closed past an edge it never crossed rests nothing. \
-                         Off = a cut holds fire, as before.",
+                        "a trigger bar whose body cuts the region in the trade's direction \
+                         — it opened on the region's side of that edge and closed beyond it, \
+                         wicks ignored — rests a limit at the edge it cut, the retest entry, \
+                         bracketed off the bar; the order removes itself if the bar's \
+                         projected target trades first. A bar that closed past an edge its \
+                         body never crossed, or closed away on the far side of the region, \
+                         cut nothing and rests nothing either way. Off = a cut holds fire, \
+                         as before.",
                     )
                     .changed()
                 {
@@ -13734,10 +13735,14 @@ crosshair = false
     }
 
     /// The bug the trader reported, walked through the real chart path: a
-    /// sell region drawn above the market, and a force bar that opens below
-    /// its lower edge and closes lower still. The bar never crossed into
-    /// the band, so nothing may rest on it — before the body rule this left
-    /// a limit order sitting inside a region the bar had not touched.
+    /// sell region drawn above the market, and a force bar whose *shadow*
+    /// reaches into the band while its body stays entirely below it. The
+    /// body never crossed the edge, so nothing may rest on it.
+    ///
+    /// The numbers make the test bite: range 10 puts the projected SL at
+    /// 106 and the TP at 86, both clear of the 105 edge, so the old
+    /// close-only rule really did rest a sell limit at 105 — an order
+    /// inside a band the bar's body never entered.
     #[test]
     fn a_force_bar_that_never_crossed_the_region_leaves_no_order_in_it() {
         fn print(app: &mut QuantickApp, id: &mut u64, price: &str) {
@@ -13756,6 +13761,15 @@ crosshair = false
             for _ in 0..49 {
                 print(app, id, open);
             }
+            print(app, id, close);
+        }
+        /// Fifty prints again, but one of them reaches `wick` — so the bar
+        /// carries a shadow its body never covers.
+        fn bar_with_wick(app: &mut QuantickApp, id: &mut u64, open: &str, wick: &str, close: &str) {
+            for _ in 0..48 {
+                print(app, id, open);
+            }
+            print(app, id, wick);
             print(app, id, close);
         }
 
@@ -13784,14 +13798,15 @@ crosshair = false
         bar(&mut app, &mut id, "102", "101");
         bar(&mut app, &mut id, "101", "100");
         // Body 4 over average (1+1+4)/3 = 2: a genuine force bar. It opens
-        // at 100, already below the region's 105 edge, and closes at 96 —
-        // the whole body sits under a band it never entered.
-        bar(&mut app, &mut id, "100", "96");
+        // at 100, already below the region's 105 edge, prints once at 106
+        // inside the band, and closes at 96. The shadow visited the region;
+        // the body never did.
+        bar_with_wick(&mut app, &mut id, "100", "106", "96");
 
         let tab = app.active_tab();
         assert!(
             tab.paper.working_orders().is_empty(),
-            "a bar that never cut the region rests no order in it: {:?}",
+            "a bar whose body never cut the region rests no order in it: {:?}",
             tab.paper.working_orders()
         );
         assert!(tab.paper.is_flat(), "and takes no position either");
@@ -13807,7 +13822,7 @@ crosshair = false
         assert_eq!(
             instance.armed.status_line(),
             "armed · trigger held: the body never cut the region",
-            "the badge names the gate rather than showing a bare armed"
+            "the instance names the gate it held on rather than reporting a bare armed"
         );
     }
 

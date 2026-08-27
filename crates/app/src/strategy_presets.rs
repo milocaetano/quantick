@@ -68,8 +68,11 @@ pub struct StoredPreset {
     /// What a trigger bar cutting through the region does: `ignore`
     /// (default — hold fire, the behaviour before the option existed) or
     /// `retest_limit` (rest a limit at the cut edge, cancelled at the
-    /// bar's projected target). Optional for the same vintage reason as
-    /// `min_body`, which is why the version does not move.
+    /// bar's projected target). A cut is read off the bar's body — open on
+    /// the region's side of the edge, close beyond it, wicks ignored — so
+    /// a bar that never crossed the edge rests nothing under either value.
+    /// Optional for the same vintage reason as `min_body`, which is why
+    /// the version does not move.
     #[serde(default = "ignore_break")]
     pub on_break: String,
 }
