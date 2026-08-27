@@ -46,7 +46,7 @@ impl AlarmMark {
             Self::Quiet => None,
             Self::Preview => Some("signal (preview)"),
             Self::Confirmed => Some("signal"),
-            Self::Faded => Some("preview faded"),
+            Self::Faded => Some("preview did not hold"),
         }
     }
 }
@@ -74,6 +74,19 @@ impl AnchoredInstance {
         self.armed.params().execution == Execution::AlarmOnly
     }
 
+    /// Whether this instance is still *listening*.
+    ///
+    /// The alarm deliberately outlives the states that only mean the
+    /// instance cannot trade right now — a busy account, a pending entry, a
+    /// spent one shot — because the setup still happened and the trader is
+    /// acting on it elsewhere. It does **not** outlive a disarm. Every
+    /// [`DisarmReason`] is either the trader saying "stop watching" or the
+    /// series being rebuilt underneath the ruler, and a badge that reads
+    /// `disarmed` over a chart that keeps beeping is the button lying.
+    fn listening(&self) -> bool {
+        !matches!(self.armed.state(), ArmedState::Disarmed { .. })
+    }
+
     /// Judge the bar that just closed, and answer with the sound to play.
     ///
     /// The opportunity comes from the kernel's own reading of that bar
@@ -82,6 +95,14 @@ impl AnchoredInstance {
     /// to draw: the trader is told their setup happened, not that this
     /// simulator acted on it.
     pub fn alarm_on_closed_bar(&mut self, now_ms: u64) -> Option<AlertSound> {
+        if !self.listening() {
+            // Silence *and* forget: a preview raised before the disarm has
+            // no close coming that could withdraw it, so leaving the mark
+            // standing would strand "signal (preview)" on the badge for the
+            // rest of the session.
+            self.reset_alarm();
+            return None;
+        }
         let qualifies = self.armed.last_close_opportunity().is_some();
         let event = self.alarm.as_mut()?.on_closed(qualifies, now_ms);
         self.apply(event)
@@ -102,6 +123,9 @@ impl AnchoredInstance {
         progress: Option<BarProgress>,
         now_ms: u64,
     ) -> Option<AlertSound> {
+        if !self.listening() {
+            return None;
+        }
         if !self.alarm.as_ref()?.wants_forming_check(progress, now_ms) {
             return None;
         }
@@ -262,25 +286,29 @@ impl StrategyAnchors {
 /// decided here so every surface says the same thing.
 #[must_use]
 pub fn badge_text(instance: &AnchoredInstance) -> String {
-    // An alarm-only instance never leaves `Armed`, so its state alone would
-    // read as an ordinary bot the trader is still waiting on an order from.
-    // It says what it is instead.
-    let state = if instance.alarm_only() {
-        "alarm only".to_owned()
+    // An alarm-only instance says so, because an idle `Armed` badge reads as
+    // an ordinary bot the trader is still waiting on an order from. It is a
+    // clause *beside* the state, never instead of it: such an instance is
+    // not pinned to `Armed` — a hand on the Disarm entry, a timeline reset,
+    // a bar-spec change or a market switch all move it — and the badge is
+    // the one surface that would tell the trader their watcher is dead.
+    let mode = if instance.alarm_only() {
+        "alarm only"
     } else {
-        match instance.armed.state() {
-            ArmedState::Armed => String::new(),
-            ArmedState::Fired { retest: false, .. } => "fired".to_owned(),
-            ArmedState::Fired { retest: true, .. } => "retest resting".to_owned(),
-            ArmedState::InPosition => "in position".to_owned(),
-            ArmedState::Done => "done".to_owned(),
-            ArmedState::Disarmed { reason } => reason.label().to_owned(),
-        }
+        ""
+    };
+    let state = match instance.armed.state() {
+        ArmedState::Armed => "",
+        ArmedState::Fired { retest: false, .. } => "fired",
+        ArmedState::Fired { retest: true, .. } => "retest resting",
+        ArmedState::InPosition => "in position",
+        ArmedState::Done => "done",
+        ArmedState::Disarmed { reason } => reason.label(),
     };
     // The alarm's own word comes last, where the eye lands after the name:
     // it is the most recent thing that happened, and the one a trader who
     // heard a sound is looking for.
-    let parts = [state.as_str(), instance.mark.label().unwrap_or_default()];
+    let parts = [mode, state, instance.mark.label().unwrap_or_default()];
     let mut badge = format!("⚡ {}", instance.preset);
     for part in parts.into_iter().filter(|part| !part.is_empty()) {
         badge.push_str(" · ");
@@ -654,7 +682,7 @@ mod tests {
             "withdrawing a signal is shown, never played"
         );
         assert_eq!(instance.mark, AlarmMark::Faded);
-        assert_eq!(badge_text(&instance), "⚡ test · preview faded");
+        assert_eq!(badge_text(&instance), "⚡ test · preview did not hold");
     }
 
     /// An alarm-only instance says so on its badge. Its state never leaves
@@ -678,6 +706,61 @@ mod tests {
         assert_eq!(badge_text(&instance), "⚡ test · alarm only");
         instance.mark = AlarmMark::Confirmed;
         assert_eq!(badge_text(&instance), "⚡ test · alarm only · signal");
+
+        // "alarm only" is a clause beside the state, never instead of it:
+        // such an instance is not pinned to `Armed`, and the badge is the
+        // one surface that would tell the trader their watcher is dead.
+        let _ = instance.armed.disarm(DisarmReason::User);
+        assert_eq!(
+            badge_text(&instance),
+            "⚡ test · alarm only · disarmed · signal"
+        );
+    }
+
+    /// The Disarm entry says "stop watching", and the alarm is bound by
+    /// that word. Every other silence in this feature is about capacity —
+    /// a busy account, a spent one shot — and deliberately does not
+    /// silence the alarm; a disarm is the trader saying stop, and a chart
+    /// that keeps beeping under a badge reading `disarmed` is the button
+    /// lying to them.
+    #[test]
+    fn a_disarmed_instance_stops_alarming_on_every_path() {
+        let region = Region::new(Decimal::from(100), Decimal::from(110));
+        let mut instance = alarming_instance(
+            quantick_strategy::AlarmWhen::at_share(Decimal::new(70, 2)),
+            quantick_strategy::RepeatPolicy::OncePerBar,
+            AlertSound::Critical,
+        );
+        for warm in [test_bar(100, 101), test_bar(101, 102)] {
+            instance.armed.on_closed_bar(&warm, &region, true, true);
+            let _ = instance.alarm_on_closed_bar(0);
+        }
+        // It speaks while it is armed — so the silence below is the disarm
+        // and not a fixture that never qualified.
+        let forming = test_bar(102, 106);
+        assert_eq!(
+            instance.alarm_on_forming_bar(&forming, &region, true, test_progress(1400, 2000), 0),
+            Some(AlertSound::Critical)
+        );
+        assert_eq!(instance.mark, AlarmMark::Preview);
+
+        let _ = instance.armed.disarm(DisarmReason::User);
+        // The standing preview goes with it: no close is coming that could
+        // withdraw it, so leaving the word on the badge would strand it.
+        assert_eq!(instance.alarm_on_closed_bar(1), None);
+        assert_eq!(instance.mark, AlarmMark::Quiet);
+
+        // And it stays silent on both paths, however well the tape qualifies.
+        instance
+            .armed
+            .on_closed_bar(&test_bar(106, 107), &region, true, true);
+        assert_eq!(instance.alarm_on_closed_bar(2), None);
+        let second = test_bar(107, 111);
+        assert_eq!(
+            instance.alarm_on_forming_bar(&second, &region, true, test_progress(1900, 2000), 3),
+            None
+        );
+        assert_eq!(instance.mark, AlarmMark::Quiet);
     }
 
     /// A rebuilt series takes the alarm's cooldown and its outstanding

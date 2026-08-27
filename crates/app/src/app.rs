@@ -105,6 +105,20 @@ const INLINE_TEXT_FALLBACK_PX: f32 = 12.0;
 /// whether it still fits above the anchor.
 const INLINE_TEXT_LINE_FACTOR: f32 = 1.4;
 const INLINE_TEXT_FRAME_PAD_PX: f32 = 10.0;
+/// How much of the viewport's height the arming dialog's scrolling body may
+/// take. The rest pays for the window's own chrome, its Arm/Cancel footer and
+/// the margin that keeps a centred dialog off the chart's edges.
+///
+/// A fraction rather than a fixed height because the form's length is not
+/// fixed either: unfolding the alarm section adds six rows, and on a laptop
+/// that was enough to push **Arm** past the bottom of a window the trader
+/// cannot resize. Sized so the whole dialog — body, footer and chrome — sits
+/// comfortably inside the shortest viewport the app is used on.
+const ARM_DIALOG_BODY_SCREEN_FRACTION: f32 = 0.45;
+/// Floor under that fraction. On a viewport too short for even this the form
+/// scrolls within it rather than collapsing to nothing — a dialog whose Arm
+/// button cannot be reached is worse than one that scrolls.
+const ARM_DIALOG_MIN_BODY_PT: f32 = 200.0;
 /// Frames the `QUANTICK_LOAD_OLDER` hook waits for a chart worth paging from.
 ///
 /// It cannot fire at startup: paging asks for trades older than the ones on
@@ -8949,6 +8963,7 @@ impl QuantickApp {
     fn draw_alarm_controls(
         &mut self,
         ui: &mut egui::Ui,
+        side: pane::PaneSide,
         form: &mut crate::strategy_presets::StoredPreset,
     ) {
         use crate::audio::AlertSound;
@@ -8975,7 +8990,11 @@ impl QuantickApp {
         // condition, not on a count, so there is no fraction of it to wait
         // for — and saying so here is cheaper than a trader wondering for a
         // session why the alarm only ever speaks at the close.
-        let shares_available = self.drawing_pane().state.progress().is_some();
+        // The pane the dialog is arming on, not the focused one: with a
+        // split open, a strategy going onto the time pane must be judged by
+        // the time pane's bar rule. Reading the focused pane would disable
+        // the share gate because the *other* pane runs an adaptive rule.
+        let shares_available = self.active_tab().pane(side).state.progress().is_some();
 
         ui.horizontal(|ui| {
             ui.label("when:");
@@ -9061,7 +9080,10 @@ impl QuantickApp {
                 .on_hover_text("play it now, so the sound is chosen with the ears")
                 .clicked()
             {
-                self.alert_failure = self.alerts.play(current).err().map(ToOwned::to_owned);
+                // Same door as a real alarm, so an audition that cannot be
+                // heard reports itself exactly as a missed signal would.
+                let outcome = self.alerts.play(current);
+                self.report_alert_attempt(outcome);
             }
         });
 
@@ -9083,21 +9105,57 @@ impl QuantickApp {
     /// at keeps its feed running and its instances judging, and an alarm
     /// exists precisely to be heard when the eyes are elsewhere.
     ///
-    /// At most one sound per frame per tab. The kernel's repeat rule has
-    /// already thinned the stream to at most one per bar (or one per
-    /// cooldown); this is the second, blunter guard, for the case a single
-    /// frame ingested a burst of prints that closed several bars at once —
-    /// four beeps stacked into one instant are one noise, not four alarms.
+    /// One sound per *distinct* sound per frame per tab. The kernel's repeat
+    /// rule has already thinned each instance's stream to one per bar (or
+    /// one per cooldown); this is the second, blunter guard, for the frame
+    /// that ingested a burst of prints and closed several bars at once —
+    /// four identical beeps stacked into one instant are one noise, not four
+    /// alarms.
+    ///
+    /// Deduplicating by *sound* rather than collapsing to one is the whole
+    /// point of letting a preset choose one: a trader who gave two regions
+    /// two sounds did it to tell them apart, and swallowing the second
+    /// because it shared a frame with the first would hide a signal and
+    /// leave no trace that it had. The set is small and fixed, so this is
+    /// bounded by [`crate::audio::AlertSound::ALL`] however busy the tape.
     fn play_pending_alarms(&mut self) {
         for index in 0..self.tabs.len() {
-            let Some(sound) = self.tabs[index].pending_alarm_sounds.first().copied() else {
+            if self.tabs[index].pending_alarm_sounds.is_empty() {
                 continue;
-            };
-            self.tabs[index].pending_alarm_sounds.clear();
-            if let Err(reason) = self.alerts.play(sound) {
-                // A notification that never reached the trader is reported,
-                // never assumed. The dialog shows it the next time it opens.
+            }
+            let mut queued = std::mem::take(&mut self.tabs[index].pending_alarm_sounds);
+            // Order of first request, duplicates dropped — `dedup` alone
+            // would only collapse neighbours.
+            let mut distinct: Vec<crate::audio::AlertSound> = Vec::new();
+            for sound in queued.drain(..) {
+                if !distinct.contains(&sound) {
+                    distinct.push(sound);
+                }
+            }
+            for sound in distinct {
+                let outcome = self.alerts.play(sound);
+                self.report_alert_attempt(outcome);
+            }
+        }
+    }
+
+    /// Record whether a sound actually reached the trader.
+    ///
+    /// A notification that never arrived is reported, never assumed — so a
+    /// first failure raises a toast rather than waiting for the trader to
+    /// reopen the arming dialog, which they may never do. Only the *first*
+    /// of a run: a build with no audio backend fails on every alarm, and a
+    /// toast per bar would be its own noise. A success clears the reason, so
+    /// one transient refusal does not leave a permanent red line behind it.
+    fn report_alert_attempt(&mut self, outcome: Result<(), &'static str>) {
+        match outcome {
+            Ok(()) => self.alert_failure = None,
+            Err(reason) => {
+                let first = self.alert_failure.as_deref() != Some(reason);
                 self.alert_failure = Some(reason.to_owned());
+                if first {
+                    self.show_agent_toast(format!("no alarm sound was played: {reason}"));
+                }
             }
         }
     }
@@ -9231,93 +9289,116 @@ impl QuantickApp {
         }
         let mut open = true;
         let mut done = false;
+        // The form grew past a 900 pt window once the alarm section unfolds,
+        // and an anchored, non-resizable window simply clipped the rows past
+        // the edge — including **Arm**, which makes the dialog unusable at
+        // that height rather than merely cramped. The body scrolls instead,
+        // and its ceiling is read from the viewport rather than fixed, so the
+        // same form fits a laptop and still uses a tall monitor.
+        let max_body = (ctx.screen_rect().height() * ARM_DIALOG_BODY_SCREEN_FRACTION)
+            .max(ARM_DIALOG_MIN_BODY_PT);
         egui::Window::new("Arm strategy")
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("preset");
-                    let current = popup.preset_choice.as_deref().unwrap_or("custom");
-                    egui::ComboBox::from_id_salt("strategy_preset_pick")
-                        .selected_text(current.to_owned())
-                        .show_ui(ui, |ui| {
-                            let names: Vec<String> =
-                                self.strategy_bank.names().map(str::to_owned).collect();
-                            for name in names {
-                                let picked = popup.preset_choice.as_deref() == Some(name.as_str());
-                                if ui.selectable_label(picked, &name).clicked()
-                                    && let Some(stored) = self.strategy_bank.get(&name)
-                                {
-                                    popup.form = stored.clone();
-                                    popup.preset_choice = Some(name.clone());
-                                }
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, true])
+                    .max_height(max_body)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("preset");
+                            let current = popup.preset_choice.as_deref().unwrap_or("custom");
+                            egui::ComboBox::from_id_salt("strategy_preset_pick")
+                                .selected_text(current.to_owned())
+                                .show_ui(ui, |ui| {
+                                    let names: Vec<String> =
+                                        self.strategy_bank.names().map(str::to_owned).collect();
+                                    for name in names {
+                                        let picked =
+                                            popup.preset_choice.as_deref() == Some(name.as_str());
+                                        if ui.selectable_label(picked, &name).clicked()
+                                            && let Some(stored) = self.strategy_bank.get(&name)
+                                        {
+                                            popup.form = stored.clone();
+                                            popup.preset_choice = Some(name.clone());
+                                        }
+                                    }
+                                });
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("side");
+                            let buy = popup.form.side == "buy";
+                            if ui.selectable_label(buy, "BUY").clicked() {
+                                popup.form.side = "buy".to_owned();
+                            }
+                            if ui.selectable_label(!buy, "SELL").clicked() {
+                                popup.form.side = "sell".to_owned();
                             }
                         });
-                });
-                ui.horizontal(|ui| {
-                    ui.label("side");
-                    let buy = popup.form.side == "buy";
-                    if ui.selectable_label(buy, "BUY").clicked() {
-                        popup.form.side = "buy".to_owned();
-                    }
-                    if ui.selectable_label(!buy, "SELL").clicked() {
-                        popup.form.side = "sell".to_owned();
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("quantity");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut popup.form.quantity).desired_width(60.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("force band: body between");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut popup.form.min_factor).desired_width(40.0),
-                    );
-                    ui.label("× and");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut popup.form.max_factor).desired_width(40.0),
-                    );
-                    ui.label("× the average of");
-                    ui.add(
-                        egui::DragValue::new(&mut popup.form.window)
-                            .range(1..=crate::strategy_presets::MAX_FORCE_WINDOW),
-                    );
-                    ui.label("bodies");
-                });
-                ui.horizontal(|ui| {
-                    ui.label("and body ≥");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut popup.form.min_body).desired_width(50.0),
-                    );
-                    ui.label("pts (0 = off)").on_hover_text(
-                        "the elephant floor: the relative band alone marks dozens of small \
+                        ui.horizontal(|ui| {
+                            ui.label("quantity");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut popup.form.quantity)
+                                    .desired_width(60.0),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("force band: body between");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut popup.form.min_factor)
+                                    .desired_width(40.0),
+                            );
+                            ui.label("× and");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut popup.form.max_factor)
+                                    .desired_width(40.0),
+                            );
+                            ui.label("× the average of");
+                            ui.add(
+                                egui::DragValue::new(&mut popup.form.window)
+                                    .range(1..=crate::strategy_presets::MAX_FORCE_WINDOW),
+                            );
+                            ui.label("bodies");
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("and body ≥");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut popup.form.min_body)
+                                    .desired_width(50.0),
+                            );
+                            ui.label("pts (0 = off)").on_hover_text(
+                                "the elephant floor: the relative band alone marks dozens of small \
                          bars as force on activity-cut bars; an elephant has a size",
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("projection: TP");
-                    ui.add(egui::TextEdit::singleline(&mut popup.form.tp_mult).desired_width(40.0));
-                    ui.label("× range ahead, SL");
-                    ui.add(egui::TextEdit::singleline(&mut popup.form.sl_mult).desired_width(40.0));
-                    ui.label("× range behind (0 = no leg)");
-                });
-                let mut auto = popup.form.rearm == "auto";
-                if ui
-                    .checkbox(&mut auto, "re-arm automatically after the operation closes")
-                    .on_hover_text("off = one shot per arming, the over-fire guard")
-                    .changed()
-                {
-                    popup.form.rearm = if auto { "auto" } else { "one_shot" }.to_owned();
-                }
-                let mut retest = popup.form.on_break == "retest_limit";
-                if ui
-                    .checkbox(&mut retest, "on a cut: rest a limit at the region edge")
-                    .on_hover_text(
-                        "a trigger bar whose body cuts the region in the trade's direction \
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("projection: TP");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut popup.form.tp_mult)
+                                    .desired_width(40.0),
+                            );
+                            ui.label("× range ahead, SL");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut popup.form.sl_mult)
+                                    .desired_width(40.0),
+                            );
+                            ui.label("× range behind (0 = no leg)");
+                        });
+                        let mut auto = popup.form.rearm == "auto";
+                        if ui
+                            .checkbox(&mut auto, "re-arm automatically after the operation closes")
+                            .on_hover_text("off = one shot per arming, the over-fire guard")
+                            .changed()
+                        {
+                            popup.form.rearm = if auto { "auto" } else { "one_shot" }.to_owned();
+                        }
+                        let mut retest = popup.form.on_break == "retest_limit";
+                        if ui
+                            .checkbox(&mut retest, "on a cut: rest a limit at the region edge")
+                            .on_hover_text(
+                                "a trigger bar whose body cuts the region in the trade's direction \
                          — it opened on the region's side of that edge and closed beyond it, \
                          wicks ignored — rests a limit at the edge it cut, the retest entry, \
                          bracketed off the bar. The order removes itself if the bar's \
@@ -9327,38 +9408,47 @@ impl QuantickApp {
                          crossed, one that closed away on the far side, and a cut whose legs \
                          would not clear the edge all rest nothing. Off = a cut holds fire, \
                          as before.",
-                    )
-                    .changed()
-                {
-                    popup.form.on_break = if retest { "retest_limit" } else { "ignore" }.to_owned();
-                }
-                ui.separator();
-                self.draw_alarm_controls(ui, &mut popup.form);
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut popup.save_name)
-                            .hint_text("preset name")
-                            .desired_width(140.0),
-                    );
-                    let name = popup.save_name.trim().to_owned();
-                    if ui
-                        .add_enabled(!name.is_empty(), egui::Button::new("Save preset"))
-                        .clicked()
-                    {
-                        self.strategy_bank.save(&name, popup.form.clone());
-                        popup.preset_choice = Some(name);
-                    }
-                    if let Some(chosen) = popup.preset_choice.clone()
-                        && ui
-                            .button("Delete preset")
-                            .on_hover_text("remove it from the bank; the form keeps its values")
-                            .clicked()
-                    {
-                        self.strategy_bank.remove(&chosen);
-                        popup.preset_choice = None;
-                    }
-                });
+                            )
+                            .changed()
+                        {
+                            popup.form.on_break =
+                                if retest { "retest_limit" } else { "ignore" }.to_owned();
+                        }
+                        ui.separator();
+                        self.draw_alarm_controls(ui, popup.side, &mut popup.form);
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut popup.save_name)
+                                    .hint_text("preset name")
+                                    .desired_width(140.0),
+                            );
+                            let name = popup.save_name.trim().to_owned();
+                            if ui
+                                .add_enabled(!name.is_empty(), egui::Button::new("Save preset"))
+                                .clicked()
+                            {
+                                self.strategy_bank.save(&name, popup.form.clone());
+                                popup.preset_choice = Some(name);
+                            }
+                            if let Some(chosen) = popup.preset_choice.clone()
+                                && ui
+                                    .button("Delete preset")
+                                    .on_hover_text(
+                                        "remove it from the bank; the form keeps its values",
+                                    )
+                                    .clicked()
+                            {
+                                self.strategy_bank.remove(&chosen);
+                                popup.preset_choice = None;
+                            }
+                        });
+                    });
+                // Outside the scroll: **Arm** is the one control the dialog
+                // exists for, and a form that grows must never be able to
+                // push it off the bottom. Body scrolls, footer stays. The
+                // error goes with it — a refusal the trader has to scroll to
+                // find reads as a dialog that did nothing.
                 if let Some(error) = &popup.error {
                     ui.colored_label(theme::SELL, error);
                 }
@@ -9531,21 +9621,22 @@ impl QuantickApp {
                     pane::PaneSide::Flow,
                     drawing_id,
                     &form,
-                    "demo alarme".to_owned(),
+                    "demo alarm".to_owned(),
                 );
                 // Stand a provisional judgement on the badge. The mark is
                 // the surface under test, and the tape reaches it only when
                 // a force bar happens to be half-formed — so the scene
                 // stages the mark itself rather than waiting for a market
                 // that may not oblige before the shutter.
-                if let Some(instance) = self
-                    .active_tab_mut()
-                    .pane_mut(pane::PaneSide::Flow)
-                    .strategies
-                    .for_drawing_mut(drawing_id)
-                {
+                let pane = self.active_tab_mut().pane_mut(pane::PaneSide::Flow);
+                if let Some(instance) = pane.strategies.for_drawing_mut(drawing_id) {
                     instance.mark = crate::strategy_anchors::AlarmMark::Preview;
                 }
+                // Placing a drawing selects it, and a selected drawing raises
+                // the context bar across its own top edge — which is where
+                // the badge this scene exists to photograph sits. Drop the
+                // selection so the badge is the thing on screen.
+                pane.drawings.select(None);
             }
             StrategyDemoMode::Popup | StrategyDemoMode::AlarmPopup => {
                 self.strategy_popup = Some(StrategyPopup {
@@ -13673,7 +13764,7 @@ crosshair = false
         form.alarm_repeat = "once_per_bar".to_owned();
         form.alarm_sound = crate::audio::AlertSound::Critical.token().to_owned();
         form.alarm_only = true;
-        app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "alarme".to_owned())
+        app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "alarm".to_owned())
             .expect("the alarm form compiles and the drawing exists");
 
         let mut id = 0u64;

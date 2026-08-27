@@ -609,7 +609,7 @@ mod tests {
         std::fs::write(
             &path,
             "version = 1\n\
-             [presets.\"BF antiga\"]\n\
+             [presets.\"pre-alarm force bar\"]\n\
              trigger = \"force_bar\"\n\
              side = \"sell\"\n\
              quantity = \"1\"\n\
@@ -622,7 +622,9 @@ mod tests {
         )
         .unwrap();
         let bank = StrategyBank::load_from(&path);
-        let preset = bank.get("BF antiga").expect("the old row still reads");
+        let preset = bank
+            .get("pre-alarm force bar")
+            .expect("the old row still reads");
         assert!(!preset.alarm, "an old row is silent");
         let compiled = preset.to_kernel().expect("and still compiles");
         assert_eq!(compiled.alarm, None);
@@ -651,12 +653,12 @@ mod tests {
         saved.alarm_only = true;
 
         let mut bank = StrategyBank::load_from(&path);
-        bank.save("BF alarme", saved.clone());
+        bank.save("force bar alarm", saved.clone());
         let reloaded = StrategyBank::load_from(&path);
-        assert_eq!(reloaded.get("BF alarme"), Some(&saved));
+        assert_eq!(reloaded.get("force bar alarm"), Some(&saved));
 
         let compiled = reloaded
-            .get("BF alarme")
+            .get("force bar alarm")
             .expect("saved preset")
             .to_kernel()
             .expect("the alarm row compiles");

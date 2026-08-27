@@ -1147,6 +1147,47 @@ mod tests {
         assert!(instance.status_line().starts_with("fired"));
     }
 
+    /// The other half of the port's new method: a ruler with no honest
+    /// provisional reading keeps the default and is simply never previewed.
+    ///
+    /// The fake below fires on *every* closed bar and declines to preview,
+    /// which is exactly the pair that would expose a consumer guessing. An
+    /// alarm that fell back to the closed-bar path for a trigger saying "I
+    /// cannot judge a bar that has not finished" would announce a signal
+    /// that ruler never made.
+    #[test]
+    fn a_trigger_that_declines_to_preview_is_never_previewed() {
+        struct EveryClosedBar;
+        impl Trigger for EveryClosedBar {
+            fn on_closed_bar(&mut self, bar: &Bar) -> Option<Signal> {
+                Some(Signal {
+                    side: Side::Buy,
+                    reference: bar.close,
+                    projection: Decimal::ONE,
+                })
+            }
+            fn status(&self) -> String {
+                "always".to_owned()
+            }
+        }
+        let region = Region::new(dec("100"), dec("110"));
+        let mut instance = ArmedStrategy::new(params(Side::Buy), Box::new(EveryClosedBar));
+        let forming = bar("100", "105");
+        assert_eq!(
+            instance.preview_opportunity(&forming, &region, true),
+            None,
+            "the default preview says nothing, and nothing is what the caller hears"
+        );
+        // The same bar, closed, is a signal — so the silence above is the
+        // port's default speaking, not the fixture failing to qualify.
+        assert!(
+            !instance
+                .on_closed_bar(&forming, &region, true, true)
+                .is_empty()
+        );
+        assert_eq!(instance.last_close_opportunity(), Some(Opportunity::Market));
+    }
+
     /// "Never fire unprotected" extends past the fill: a bracket the
     /// simulator dropped at fill time closes the operation at the next
     /// print and disarms by name.

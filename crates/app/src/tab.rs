@@ -2275,13 +2275,24 @@ impl Tab {
             // here can place an order or move a state machine: the kernel's
             // preview path is `&self` all the way down, and this is the one
             // caller of it.
-            if let Some(partial) = pane.state.partial().cloned() {
+            //
+            // This whole block is per *print*, so it opens with the question
+            // that costs least: does any instance on this pane even carry an
+            // alarm? A pane full of ordinary strategies answers no and pays
+            // nothing further — not the partial bar's copy, not the
+            // progress read.
+            let any_alarm = pane
+                .strategies
+                .instances
+                .iter()
+                .any(|instance| instance.alarm.is_some());
+            if let Some(partial) = any_alarm.then(|| pane.state.partial().cloned()).flatten() {
                 let progress = pane.state.progress().map(|(progress, _unit)| progress);
                 let slot = pane.closed_slots();
                 for index in 0..pane.strategies.instances.len() {
-                    // Cheapest gate first, before the region is even
-                    // resolved: on all but a handful of prints the alarm
-                    // answers "not yet" and this costs one comparison.
+                    // Cheapest gate next, before the region is resolved: on
+                    // all but a handful of prints the alarm answers "not
+                    // yet" and this costs one comparison.
                     let wants = pane.strategies.instances[index]
                         .alarm
                         .as_ref()
