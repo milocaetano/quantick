@@ -2619,14 +2619,23 @@ impl QuantickApp {
     /// [`CONTROL_EVIDENCE_HOOK_FRAMES`] rather than hanging a capture run on a
     /// surface that never presents.
     fn apply_control_evidence_hook(&mut self, ctx: &egui::Context) {
-        let Some(request) = self.pending_control_evidence.take() else {
+        if self.pending_control_evidence.is_none() {
             return;
-        };
+        }
+        // Access is taken *before* the request is, so a frame that finds it
+        // borrowed leaves the hook pending rather than dropping it silently.
         let Some(mut access) = self.control_access.take() else {
             return;
         };
+        let request = self
+            .pending_control_evidence
+            .take()
+            .expect("the hook was pending one line above");
         let mut wants_screenshot = false;
-        let mut scopes: Vec<serde_json::Value> = Vec::new();
+        // A set, not a list: `all,scene.controls` is a reasonable thing to
+        // type, and the capability refuses a scope named twice, so the tokens
+        // are folded rather than concatenated.
+        let mut scopes = std::collections::BTreeSet::new();
         for token in request.split(',').map(str::trim).filter(|t| !t.is_empty()) {
             match token {
                 "screenshot" => wants_screenshot = true,
@@ -2634,9 +2643,11 @@ impl QuantickApp {
                     access
                         .readable_scopes()
                         .into_iter()
-                        .map(|scope| serde_json::Value::String(scope.to_string())),
+                        .map(|scope| scope.to_string()),
                 ),
-                scope => scopes.push(serde_json::Value::String(scope.to_owned())),
+                scope => {
+                    scopes.insert(scope.to_owned());
+                }
             }
         }
         if scopes.is_empty() {
@@ -2644,13 +2655,24 @@ impl QuantickApp {
                 access
                     .readable_scopes()
                     .into_iter()
-                    .map(|scope| serde_json::Value::String(scope.to_string())),
+                    .map(|scope| scope.to_string()),
             );
+        }
+        if wants_screenshot {
+            // Harvests as well as arms: the frame service that normally takes
+            // the pixels runs only while the gateway is enabled, and this hook
+            // is meant to work without a client on the socket.
+            access.service_screenshot(self, ctx);
         }
         if wants_screenshot && !access.has_screenshot() {
             self.control_evidence_hook_frames = self.control_evidence_hook_frames.saturating_add(1);
             if self.control_evidence_hook_frames <= CONTROL_EVIDENCE_HOOK_FRAMES {
-                access.request_screenshot(ctx);
+                // Every waiting frame asks for the next one. Without this a
+                // quiescent window — a paused replay, no feed, exactly the
+                // headless validation run the hook exists for — would never
+                // repaint, the counter would never advance, and the hook would
+                // neither complete nor give up.
+                ctx.request_repaint();
                 self.pending_control_evidence = Some(request);
                 self.control_access = Some(access);
                 return;

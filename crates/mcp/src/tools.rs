@@ -1060,6 +1060,39 @@ mod tests {
         );
     }
 
+    /// The half of the evidence tier that has no named tool still has to be
+    /// reachable, or a client can take a bundle and never read it.
+    ///
+    /// Contract section 8 names `quantick_capture_evidence` and no companion,
+    /// so the chunk read is long tail — which makes `quantick_invoke` the
+    /// whole of its surface, and worth a test rather than an assumption.
+    #[test]
+    fn a_bundle_is_read_back_through_invoke_since_the_contract_names_no_tool_for_it() {
+        let mut link = crate::fake::FakeLink::default();
+        let instance = InstanceId::from_bytes([6; 16]);
+        link.add_instance(instance.clone());
+        let result = call(
+            &mut link,
+            INVOKE,
+            json!({
+                "instance_id": instance.to_string(),
+                "capability_id": EVIDENCE_READ_CAPABILITY,
+                "capability_version": FIRST_CAPABILITY_VERSION,
+                "input": { "evidence_id": "AAAAAAAAAAAAAAAAAAAAAA" },
+            }),
+        )
+        .expect("invoke forwards");
+        assert!(
+            !result.is_error,
+            "the chunk read is refused through invoke: {:?}",
+            result.structured_content
+        );
+        assert_eq!(
+            link.calls[0].capability_id, EVIDENCE_READ_CAPABILITY,
+            "and it reaches the capability the application registers"
+        );
+    }
+
     #[test]
     fn the_routing_id_is_validated_and_removed_before_forwarding() {
         let mut arguments = Map::new();

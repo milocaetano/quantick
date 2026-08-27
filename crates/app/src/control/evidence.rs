@@ -1243,6 +1243,16 @@ fn encode_png(raw: &RawScreenshot) -> Result<Vec<u8>, png::EncodingError> {
 fn collect_unavailable_fields(
     snapshot: &SerializedSnapshotCapture,
 ) -> (Vec<EvidenceUnavailableField>, bool) {
+    // Every scope gets its own share, and a scope that spends it is cut off
+    // rather than allowed to eat the report. One scope can hold hundreds of
+    // these markers — the scene reports "bounds are not recorded" on nearly
+    // every control it names — and a single shared budget walked in key order
+    // would let that scope alone fill the list and silently drop the real
+    // gaps of every scope sorting after it.
+    let budget = MAX_UNAVAILABLE_FIELDS
+        .checked_div(snapshot.scopes.len().max(1))
+        .unwrap_or(MAX_UNAVAILABLE_FIELDS)
+        .max(1);
     let mut found = Vec::new();
     let mut truncated = false;
     for (scope_id, scope) in &snapshot.scopes {
@@ -1250,10 +1260,15 @@ fn collect_unavailable_fields(
             "/snapshot/scopes/{}/value",
             escape_pointer(scope_id.as_str())
         );
-        walk_unavailable(&prefix, &scope.value, &mut found, &mut truncated);
-        if truncated {
-            break;
-        }
+        let mut of_this_scope = Vec::new();
+        walk_unavailable(
+            &prefix,
+            &scope.value,
+            budget,
+            &mut of_this_scope,
+            &mut truncated,
+        );
+        found.append(&mut of_this_scope);
     }
     found.sort();
     found.dedup();
@@ -1263,12 +1278,13 @@ fn collect_unavailable_fields(
 fn walk_unavailable(
     prefix: &str,
     root: &Value,
+    budget: usize,
     found: &mut Vec<EvidenceUnavailableField>,
     truncated: &mut bool,
 ) {
     let mut pending = vec![(prefix.to_owned(), root)];
     while let Some((pointer, value)) = pending.pop() {
-        if found.len() >= MAX_UNAVAILABLE_FIELDS {
+        if found.len() >= budget {
             *truncated = true;
             return;
         }
@@ -1373,16 +1389,18 @@ fn redact_feed(feed: &FeedConfig, gaps: &mut Vec<EvidenceGap>) -> EvidenceFeedCo
 /// names the user's network, and the port plus this flag is everything an
 /// investigation into a bridge that will not connect actually needs.
 fn split_listen_addr(addr: &str) -> (Option<u16>, bool) {
-    let (host, port) = match addr.rsplit_once(':') {
-        Some((host, port)) => (host, port.parse::<u16>().ok()),
-        None => (addr, None),
+    // Through the configuration's own splitter, not a second one: two parsers
+    // of one format disagree the first time either is touched, and these two
+    // already disagreed about an empty host.
+    let Some((host, port)) = crate::config::split_host_port(addr) else {
+        return (None, false);
     };
     let host = host.trim_matches(['[', ']']);
     let loopback = host.parse::<std::net::IpAddr>().map_or_else(
         |_| host.eq_ignore_ascii_case("localhost"),
         |ip| ip.is_loopback(),
     );
-    (port, loopback)
+    (Some(port), loopback)
 }
 
 /// The configuration file's own name for a provider.
@@ -1467,6 +1485,8 @@ fn permission(id: &str) -> PermissionId {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     fn instance() -> InstanceId {
@@ -1701,6 +1721,7 @@ mod tests {
         walk_unavailable(
             "/snapshot/scopes/scene.controls/value",
             &scope,
+            MAX_UNAVAILABLE_FIELDS,
             &mut found,
             &mut truncated,
         );
@@ -1732,8 +1753,67 @@ mod tests {
         );
         let mut found = Vec::new();
         let mut truncated = false;
-        walk_unavailable("/snapshot", &scope, &mut found, &mut truncated);
+        walk_unavailable(
+            "/snapshot",
+            &scope,
+            MAX_UNAVAILABLE_FIELDS,
+            &mut found,
+            &mut truncated,
+        );
         assert!(truncated);
         assert_eq!(found.len(), MAX_UNAVAILABLE_FIELDS);
+    }
+
+    /// One noisy scope does not cost the others their coverage.
+    ///
+    /// The scene reports "bounds are not recorded" on nearly every control it
+    /// names, so a shared budget spent in key order would fill the whole
+    /// report from that one scope and drop the real gaps of everything sorting
+    /// after it — which, alphabetically, is most of the registry.
+    #[test]
+    fn a_noisy_scope_cannot_spend_another_scopes_share_of_the_coverage_report() {
+        let noisy = Value::Array(
+            (0..MAX_UNAVAILABLE_FIELDS * 4)
+                .map(|index| json!({ "available": false, "reason": format!("noise_{index}") }))
+                .collect(),
+        );
+        let snapshot = SerializedSnapshotCapture {
+            instance_id: instance(),
+            capture_revision: WireU64::new(1),
+            captured_at_unix_ms: 0,
+            module_revisions: Vec::new(),
+            capture_elapsed_us: WireU64::new(0),
+            capture_budget_us: WireU64::new(0),
+            capture_within_budget: true,
+            omitted_scopes: Vec::new(),
+            scopes: BTreeMap::from([
+                (
+                    SnapshotScopeId::new("aaa.noisy").unwrap(),
+                    scope_value(noisy),
+                ),
+                (
+                    SnapshotScopeId::new("zzz.quiet").unwrap(),
+                    scope_value(json!({ "available": false, "reason": "the_one_that_matters" })),
+                ),
+            ]),
+        };
+
+        let (found, truncated) = collect_unavailable_fields(&snapshot);
+        assert!(truncated, "the noisy scope spent its share and says so");
+        assert!(
+            found
+                .iter()
+                .any(|field| field.reason == "the_one_that_matters"),
+            "and the quiet scope's own gap survived: {found:?}"
+        );
+        assert!(found.len() <= MAX_UNAVAILABLE_FIELDS);
+    }
+
+    fn scope_value(value: Value) -> super::super::registry::SerializedScope {
+        super::super::registry::SerializedScope {
+            module_id: quantick_control::id::ModuleId::new("test").unwrap(),
+            schema_version: 1,
+            value,
+        }
     }
 }

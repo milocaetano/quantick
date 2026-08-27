@@ -273,7 +273,12 @@ pub struct Mt5Endpoint {
 
 /// Split `host:port`, rejecting anything that is not both. The bracketed IPv6
 /// form (`[::1]:9100`) splits correctly: only the last colon is a separator.
-fn split_host_port(addr: &str) -> Option<(&str, u16)> {
+/// The host and port of a `host:port` bind address.
+///
+/// One splitter, shared: the evidence bundle reduces the same address to the
+/// port it publishes and the loopback flag it derives, and two parsers of one
+/// format disagree the first time either is touched.
+pub(crate) fn split_host_port(addr: &str) -> Option<(&str, u16)> {
     let (host, port) = addr.rsplit_once(':')?;
     if host.is_empty() {
         return None;

@@ -1114,10 +1114,23 @@ impl ControlAccess {
         self.contract.readable_scopes(&self.configured_scopes)
     }
 
-    /// Ask the window to rasterise itself for the next read that wants it.
-    /// The same arming a deferred remote capture does.
-    pub(crate) fn request_screenshot(&mut self, ctx: &eframe::egui::Context) {
-        self.arm_screenshot(ctx);
+    /// Ask the window to rasterise itself for the next read that wants it,
+    /// and take the frame if one has already arrived.
+    ///
+    /// The same arming and the same harvest a deferred remote capture gets.
+    /// Both halves, because a local read runs whether or not the gateway is
+    /// enabled while the frame service that normally harvests runs only when
+    /// it is — so a hook that armed but could not harvest would wait out its
+    /// whole budget for a frame sitting in the input queue.
+    pub(crate) fn service_screenshot(
+        &mut self,
+        app: &mut QuantickApp,
+        ctx: &eframe::egui::Context,
+    ) {
+        self.harvest_screenshot(app, ctx);
+        if self.screenshot.is_none() {
+            self.arm_screenshot(ctx);
+        }
     }
 
     /// One request on the application thread: the authority checks the
