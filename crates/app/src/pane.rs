@@ -185,8 +185,14 @@ impl PaneSide {
 pub const CANVAS_DIVIDER_HANDLE_PX: f32 = 5.0;
 /// Neither pane may be squeezed below this share of the canvas (§11).
 pub const MIN_PANE_FRACTION: f32 = 0.25;
-/// Where the divider sits when the split is first shown (§11).
-pub const DEFAULT_PANE_FRACTION: f32 = 0.5;
+/// Where the divider sits when the split is first shown.
+///
+/// Roughly a third to the context pane, the rest to the flow pane. An even
+/// split says the two charts matter equally, and in quantick they do not: the
+/// heatmap is what the product is for, and the timeframe chart beside it is
+/// context. The opening canvas should say so before the trader touches
+/// anything — a default is an argument about what matters.
+pub const DEFAULT_PANE_FRACTION: f32 = 0.35;
 
 /// The canvas carved for the Time + Flow layout.
 ///
