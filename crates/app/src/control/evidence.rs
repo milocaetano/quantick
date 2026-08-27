@@ -45,8 +45,8 @@ use std::{
 };
 
 use quantick_control::{
-    canonical::{Sha256Digest, canonical_json, canonical_sha256, raw_digest},
-    cursor::{Page, PageContext, PageCursor, PaginationConsistency},
+    canonical::{Sha256Digest, canonical_json, raw_digest},
+    cursor::{EventCursor, Page, PageContext, PageCursor, PaginationConsistency},
     error::{ControlError, codes},
     id::{EvidenceId, InstanceId, PermissionId, ProcessNonce, ResourceId, SnapshotScopeId},
     limits::{
@@ -64,6 +64,9 @@ use serde_json::{Value, json};
 use crate::config::{AppConfig, DeclaredLayout, FeedConfig, Mt5SideSource, ProviderKind};
 
 use super::{
+    contract::UiReadContext,
+    events::read_page,
+    gateway::runtime_id_bytes,
     journal::EventPage,
     registry::{SerializedSnapshotCapture, SnapshotCapture},
     scene::{CONTROLS_SCOPE_ID as SCENE_CONTROLS_SCOPE_ID, SceneBoundsSnapshot, SceneSnapshot},
@@ -95,6 +98,11 @@ const BUNDLE_MEDIA_TYPE: &str = "application/json; charset=utf-8";
 /// manifest selects. Reported so a defect that reproduces on one backend can
 /// be told apart from one that does not.
 const GRAPHICS_BACKEND: &str = "glow";
+/// The subject every screenshot gap is filed under, so a client branching on
+/// "is there an image" matches one name whatever the reason is.
+const SCREENSHOT_GAP_SUBJECT: &str = "screenshot";
+/// The image format a bundle carries.
+const SCREENSHOT_FORMAT: &str = "png";
 const BUNDLE_VERSION: u32 = 1;
 const MANIFEST_VERSION: u32 = 1;
 
@@ -742,6 +750,91 @@ pub(crate) struct EvidenceCapture {
     pub captured_at_unix_ms: i64,
 }
 
+/// Collect one bundle's ingredients on the application thread.
+///
+/// The module's own assembly, called by the registered capability the way
+/// `chart::chart_window_prevalidated` is: the dispatch layer decides *whether*
+/// a read may run, and this decides *what* it reads, so neither has to know
+/// the other's business. Everything expensive is left to
+/// [`EvidenceCapture::into_manifest`], which runs off this thread.
+///
+/// `source_scopes` arrives already checked against the connection's grant —
+/// the capability's prepare step computed it, and the dispatcher refused the
+/// request if it exceeded the grant. It is carried into the bundle so every
+/// later chunk read can recheck it against a grant that may since have
+/// changed.
+pub(crate) fn capture_prevalidated(
+    context: UiReadContext<'_>,
+    input: &EvidenceCaptureInput,
+    source_scopes: BTreeSet<PermissionId>,
+) -> Result<EvidenceCapture, ControlError> {
+    let snapshot = context
+        .projections
+        .capture(context.app, context.instance_id, &input.scopes)?;
+    let events = recent_events(context.journal, context.instance_id, input.event_limit)?;
+    let (configuration, mut pending_gaps) = redact_configuration(context.app.control_config());
+    let screenshot = if input.screenshot {
+        let taken = context.screenshot.take();
+        if taken.is_none() {
+            pending_gaps.push(screenshot_gap("frame_not_delivered"));
+        }
+        taken
+    } else {
+        pending_gaps.push(screenshot_gap("not_requested"));
+        None
+    };
+    Ok(EvidenceCapture {
+        evidence_id: EvidenceId::from_bytes(runtime_id_bytes()?),
+        resource_id: ResourceId::from_bytes(runtime_id_bytes()?),
+        instance_id: context.instance_id.clone(),
+        session: context.session.clone(),
+        snapshot,
+        events,
+        configuration,
+        screenshot,
+        pending_gaps,
+        source_scopes,
+        store: context.evidence.clone(),
+        captured_at_unix_ms: crate::metrics::wall_clock_ms(),
+    })
+}
+
+/// The events *around* the capture: the newest page the journal holds, and the
+/// cursor that carries on from there.
+///
+/// The newest, not the oldest. A session that has emitted three thousand
+/// events would otherwise hand back the first two hundred and fifty-six — the
+/// application starting up — while the moment the bundle was taken to explain
+/// sits eleven pages further on. What an investigation wants is what just
+/// happened, and what a client wants next is to keep reading forward from
+/// there, which is what `next_cursor` then gives it.
+fn recent_events(
+    journal: &super::journal::EventJournal,
+    instance_id: &InstanceId,
+    limit: Option<usize>,
+) -> Result<EventPage, ControlError> {
+    let bounds = journal.bounds();
+    let limit = limit
+        .unwrap_or(CONTROL_DEFAULT_PAGE_ITEMS)
+        .clamp(1, CONTROL_DEFAULT_PAGE_ITEMS);
+    let start = bounds
+        .next_sequence
+        .get()
+        .saturating_sub(limit as u64)
+        .max(bounds.oldest_sequence.get());
+    read_page(
+        journal,
+        instance_id,
+        Some(&EventCursor {
+            instance_id: instance_id.clone(),
+            next_sequence: WireU64::new(start),
+        }),
+        None,
+        Some(limit),
+        false,
+    )
+}
+
 impl EvidenceCapture {
     /// Encode, hash, chunk, retain, and answer with the manifest.
     ///
@@ -760,20 +853,36 @@ impl EvidenceCapture {
         })?;
         let capture_revision = snapshot.capture_revision;
 
-        let scene = snapshot
-            .scopes
-            .get(&SnapshotScopeId::new(SCENE_CONTROLS_SCOPE_ID).expect("static scope ID is valid"))
-            .and_then(|scope| serde_json::from_value::<SceneSnapshot>(scope.value.clone()).ok());
-
         let mut gaps = fixed_gaps();
         gaps.extend(self.pending_gaps);
+
+        // Three outcomes, and the bundle has to be able to tell them apart:
+        // the scene was not captured, the scene was captured and read, or the
+        // scene is sitting right there and could not be read. Reporting the
+        // third as the first would be a false statement about a scope
+        // populated in the same document — the one thing the coverage section
+        // exists not to do. Borrowed, not cloned: `SceneSnapshot` can be
+        // deserialized straight out of the value the capture already built.
+        let scene = match snapshot
+            .scopes
+            .get(&SnapshotScopeId::new(SCENE_CONTROLS_SCOPE_ID).expect("static scope ID is valid"))
+        {
+            None => {
+                gaps.push(region_gap("scene_scope_not_captured"));
+                None
+            }
+            Some(scope) => match SceneSnapshot::deserialize(&scope.value) {
+                Ok(scene) => Some(scene),
+                Err(_) => {
+                    gaps.push(region_gap("scene_scope_not_readable"));
+                    None
+                }
+            },
+        };
         let image = match self.screenshot {
             None => None,
             Some(raw) => match encode_screenshot(&raw, capture_revision, scene.as_ref()) {
-                Ok((image, region_gap)) => {
-                    gaps.extend(region_gap);
-                    Some(image)
-                }
+                Ok(image) => Some(image),
                 Err(gap) => {
                     gaps.push(gap);
                     None
@@ -828,33 +937,28 @@ impl EvidenceCapture {
             && document.coverage.unavailable_fields.is_empty()
             && document.coverage.not_captured.is_empty();
 
+        let mut canonical = canonical_bytes(&document)?;
+        // The image is the one part of a bundle worth dropping to save the
+        // rest. A capture that overflows with a picture in it is re-encoded
+        // without one and says why, which is what this module and the contract
+        // both promise; a capture that overflows *without* one has nothing left
+        // to give up and is refused below.
+        if canonical.len() > CONTROL_EVIDENCE_MAX_BUNDLE_BYTES && document.screenshot.is_some() {
+            document.screenshot = None;
+            let gap = screenshot_gap("exceeds_evidence_bundle_budget");
+            if !document.coverage.not_captured.contains(&gap) {
+                document.coverage.not_captured.push(gap);
+                document.coverage.not_captured.sort();
+            }
+            canonical = canonical_bytes(&document)?;
+        }
+
         let screenshot = document
             .screenshot
             .as_ref()
             .map(|image| image.descriptor.clone());
-
-        let value = serde_json::to_value(&document).map_err(|error| {
-            known_error(
-                codes::CAPABILITY_UNAVAILABLE,
-                format!("the evidence bundle could not be encoded: {error}"),
-                false,
-            )
-        })?;
-        let content_digest = canonical_sha256(&value).map_err(|error| {
-            known_error(
-                codes::CAPABILITY_UNAVAILABLE,
-                format!("the evidence bundle could not be hashed: {error}"),
-                false,
-            )
-        })?;
-        let canonical = canonical_json(&value).map_err(|error| {
-            known_error(
-                codes::CAPABILITY_UNAVAILABLE,
-                format!("the evidence bundle is not canonicalizable: {error}"),
-                false,
-            )
-        })?;
-        let bytes = canonical.into_bytes();
+        let content_digest = raw_sha256(&canonical);
+        let bytes = canonical;
         let encoded_bytes = bytes.len();
         let chunks = bytes
             .chunks(CONTROL_EVIDENCE_CHUNK_BYTES)
@@ -911,6 +1015,48 @@ impl EvidenceCapture {
     }
 }
 
+/// The document as the bytes a client will reassemble: Quantick Canonical
+/// JSON v1, built once.
+///
+/// Once matters. `canonical_sha256` *is* `canonical_json` followed by a
+/// digest, so asking for both would materialise the whole text twice — up to
+/// eight mebibytes of `String` built and thrown away for a hash the bytes
+/// about to be chunked give for free.
+fn canonical_bytes(document: &EvidenceDocument) -> Result<Vec<u8>, ControlError> {
+    let value = serde_json::to_value(document).map_err(|error| {
+        known_error(
+            codes::CAPABILITY_UNAVAILABLE,
+            format!("the evidence bundle could not be encoded: {error}"),
+            false,
+        )
+    })?;
+    canonical_json(&value)
+        .map(String::into_bytes)
+        .map_err(|error| {
+            known_error(
+                codes::CAPABILITY_UNAVAILABLE,
+                format!("the evidence bundle is not canonicalizable: {error}"),
+                false,
+            )
+        })
+}
+
+/// Why this bundle has no image, in the one vocabulary that reports it.
+fn screenshot_gap(reason: &str) -> EvidenceGap {
+    EvidenceGap {
+        subject: SCREENSHOT_GAP_SUBJECT.to_owned(),
+        reason: reason.to_owned(),
+    }
+}
+
+/// What `bytes` bytes cost once base64 has had them.
+///
+/// The size that actually matters for anything travelling the wire or sitting
+/// inside the document: four characters for every three bytes, rounded up.
+const fn base64_len(bytes: usize) -> usize {
+    bytes.div_ceil(3).saturating_mul(4)
+}
+
 /// What no bundle in this tier carries, whatever was asked for.
 ///
 /// Each entry is a decision recorded where a reader will meet it, rather than
@@ -955,38 +1101,44 @@ fn encode_screenshot(
     raw: &RawScreenshot,
     capture_revision: WireU64,
     scene: Option<&SceneSnapshot>,
-) -> Result<(EvidenceImage, Option<EvidenceGap>), EvidenceGap> {
+) -> Result<EvidenceImage, EvidenceGap> {
     let expected = (raw.width_px as usize)
         .saturating_mul(raw.height_px as usize)
         .saturating_mul(4);
-    if raw.width_px == 0 || raw.height_px == 0 || raw.rgba.len() != expected {
-        return Err(EvidenceGap {
-            subject: "screenshot".to_owned(),
-            reason: "frame_pixels_inconsistent".to_owned(),
-        });
+    if raw.width_px == 0
+        || raw.height_px == 0
+        || !raw.pixels_per_point.is_finite()
+        || raw.pixels_per_point <= 0.0
+        || raw.rgba.len() != expected
+    {
+        return Err(screenshot_gap("frame_pixels_inconsistent"));
     }
-    let png = encode_png(raw).map_err(|_| EvidenceGap {
-        subject: "screenshot".to_owned(),
-        reason: "image_encoding_failed".to_owned(),
-    })?;
-    if png.len() > CONTROL_EVIDENCE_MAX_BUNDLE_BYTES {
-        return Err(EvidenceGap {
-            subject: "screenshot".to_owned(),
-            reason: "exceeds_evidence_bundle_budget".to_owned(),
-        });
+    let png = encode_png(raw).map_err(|_| screenshot_gap("image_encoding_failed"))?;
+    // Against the size the image costs *inside the document*, not the size it
+    // is on its own: it travels as base64, and comparing the raw length would
+    // admit an image a third larger than the ceiling admits.
+    if base64_len(png.len()) > CONTROL_EVIDENCE_MAX_BUNDLE_BYTES {
+        return Err(screenshot_gap("exceeds_evidence_bundle_budget"));
     }
 
-    let scale = f64::from(raw.pixels_per_point);
+    // The factor is rounded *before* it is used, not after, so the number the
+    // descriptor publishes is the number the regions were actually built with.
+    // A client that redoes the arithmetic the field's own doc describes lands
+    // on the same pixel; publishing full precision and reporting two places
+    // would put it several pixels out at the right-hand edge.
+    let pixels_per_point = canonical_f32(raw.pixels_per_point, REGION_DECIMAL_PLACES)
+        .ok_or_else(|| screenshot_gap("frame_scale_not_representable"))?;
+    let scale = pixels_per_point
+        .as_str()
+        .parse::<f64>()
+        .map_err(|_| screenshot_gap("frame_scale_not_representable"))?;
     let mut control_regions = Vec::new();
     let mut controls_without_region = Vec::new();
-    let mut region_gap = None;
+    // A missing scene is reported by the caller, which is the only place that
+    // knows *why* it is missing — never captured, or captured and unreadable.
+    // Here it simply means there is nothing to map.
     match scene {
-        None => {
-            region_gap = Some(EvidenceGap {
-                subject: "screenshot.control_regions".to_owned(),
-                reason: "scene_scope_not_captured".to_owned(),
-            });
-        }
+        None => {}
         Some(scene) => {
             for control in &scene.controls {
                 let Some(bounds) = &control.bounds else {
@@ -1015,21 +1167,25 @@ fn encode_screenshot(
         capture_revision,
         width_px: raw.width_px,
         height_px: raw.height_px,
-        pixels_per_point: canonical_f32(raw.pixels_per_point, REGION_DECIMAL_PLACES)
-            .unwrap_or_else(|| CanonicalDecimal::new("1").expect("static decimal is canonical")),
-        format: "png".to_owned(),
+        pixels_per_point,
+        format: SCREENSHOT_FORMAT.to_owned(),
         image_digest: raw_sha256(&png),
         image_bytes: wire_usize(png.len()),
         control_regions,
         controls_without_region,
     };
-    Ok((
-        EvidenceImage {
-            image_base64: Base64Bytes::from_bytes(&png),
-            descriptor,
-        },
-        region_gap,
-    ))
+    Ok(EvidenceImage {
+        image_base64: Base64Bytes::from_bytes(&png),
+        descriptor,
+    })
+}
+
+/// Why this bundle's image carries no control regions.
+fn region_gap(reason: &str) -> EvidenceGap {
+    EvidenceGap {
+        subject: "screenshot.control_regions".to_owned(),
+        reason: reason.to_owned(),
+    }
 }
 
 fn region_of(
@@ -1265,9 +1421,27 @@ fn layout_id(layout: DeclaredLayout) -> Option<String> {
 // Scope aggregation
 // ---------------------------------------------------------------------------
 
+/// What a bundle *always* carries, whatever scopes were named.
+///
+/// Every capture embeds a page of the semantic event journal and the effective
+/// feed configuration, and each of those is somebody's scope: the journal is
+/// what `events.read` is gated on, and the configuration names the markets the
+/// trader has set up. A bundle that carried them while requiring neither would
+/// be exactly the aggregation-as-a-way-in this module says it refuses — and
+/// the read-time recheck could never catch it, because a scope missing from
+/// the manifest is a scope the recheck is not looking for.
+const ALWAYS_AGGREGATED_PERMISSION_IDS: &[&str] = &[
+    // The event page, and its cursor.
+    "observe.events",
+    // The effective configuration: feed IDs, symbol catalogues, the
+    // MetaTrader port.
+    "observe.market",
+];
+
 /// The scopes a bundle over these snapshot scopes aggregates.
 ///
-/// The evidence scope itself plus every permission the named scopes require: a
+/// The evidence scope itself, every permission the named scopes require, what
+/// a bundle always carries, and the screenshot scope when one was asked for. A
 /// bundle may not become a way to read something the connection was refused
 /// one call earlier.
 pub(crate) fn source_scopes<'a>(
@@ -1276,6 +1450,11 @@ pub(crate) fn source_scopes<'a>(
 ) -> BTreeSet<PermissionId> {
     let mut scopes: BTreeSet<PermissionId> = scope_permissions.flatten().cloned().collect();
     scopes.insert(permission(EVIDENCE_PERMISSION_ID));
+    scopes.extend(
+        ALWAYS_AGGREGATED_PERMISSION_IDS
+            .iter()
+            .map(|id| permission(id)),
+    );
     if screenshot {
         scopes.insert(permission(SCREENSHOT_PERMISSION_ID));
     }

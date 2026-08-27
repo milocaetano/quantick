@@ -107,6 +107,15 @@ const CONTROL_MAX_SCREENSHOT_WAITERS: usize = CONTROL_UI_MAX_REQUESTS_PER_FRAME;
 /// that copies the screen itself, and the person at it is told every time
 /// (threat model O-18).
 const SCREENSHOT_NOTICE: &str = "Your assistant captured a picture of this window.";
+/// How long before its own deadline a waiting capture gives up on the window.
+///
+/// `execute_on_ui` refuses an expired request before it runs anything, so a
+/// capture that waited to the last millisecond could only ever answer
+/// `control.timeout`. This is the room the honest answer needs: a bundle with
+/// the text, the events and the configuration it could collect, and a coded
+/// gap saying the frame never arrived. Generous next to the microseconds a
+/// capture costs, and small next to the five-second request timeout.
+const CONTROL_SCREENSHOT_GRACE_MS: u64 = 250;
 
 /// The identity a human action in this window is attributed with. One
 /// principal and one "connection" per process, generated with the instance
@@ -1238,6 +1247,14 @@ impl ControlAccess {
             let _ = request.response.try_send(result);
         });
         self.last_drain = drain;
+        // A rasterised frame is worth exactly one frame. Whatever is still
+        // holding it here was not claimed by any capture this pass — the
+        // capture that asked timed out, or the hook gave up — and a picture
+        // kept past its frame is a picture of some other chart, which is the
+        // one thing the capture revision promises it is not. Dropping it also
+        // returns the framebuffer instead of parking tens of megabytes for the
+        // rest of the session.
+        self.screenshot = None;
         if statuses_have_more
             || self.last_drain.queue_has_more
             || !self.awaiting_screenshot.is_empty()
@@ -1288,24 +1305,45 @@ impl ControlAccess {
     }
 
     /// Run the captures that were waiting for an image, or give up on them.
+    ///
+    /// Returns before touching anything when none is waiting, which is every
+    /// frame of every session where no client asked for a picture.
     fn serve_awaiting_screenshot(
         &mut self,
         app: &mut QuantickApp,
         generation: u64,
         ctx: &eframe::egui::Context,
     ) {
+        if self.awaiting_screenshot.is_empty() {
+            return;
+        }
+        let now = Instant::now();
         let mut waiting = std::mem::take(&mut self.awaiting_screenshot);
         while let Some(request) = waiting.pop_front() {
-            // An expired request runs anyway: the capture then reports the
-            // image as not delivered, which is a better answer than a timeout
-            // that says nothing about the session.
-            if self.screenshot.is_none() && request.deadline > Instant::now() {
+            // Given up on *before* the deadline, not at it. `execute_on_ui`
+            // refuses an expired request with `control.timeout` as its very
+            // first act, so waiting to the last moment would answer a window
+            // that never presented with a bare timeout — no bundle, no
+            // `screenshot: frame_not_delivered`, and none of the text, events
+            // and configuration that were collectable all along. The grace is
+            // what buys the honest answer room to be built.
+            let give_up_at = request
+                .deadline
+                .checked_sub(Duration::from_millis(CONTROL_SCREENSHOT_GRACE_MS))
+                .unwrap_or(request.deadline);
+            if self.screenshot.is_none() && now < give_up_at {
                 self.arm_screenshot(ctx);
                 self.awaiting_screenshot.push_back(request);
                 continue;
             }
             let result = self.execute_on_ui(app, generation, &request);
             let _ = request.response.try_send(result);
+        }
+        // Nothing is waiting any more, so nothing is owed a rasterise. Left
+        // set, the flag would suppress every future arming for the rest of the
+        // session (see `arm_screenshot`).
+        if self.awaiting_screenshot.is_empty() {
+            self.screenshot_armed = false;
         }
     }
 
@@ -1322,13 +1360,32 @@ impl ControlAccess {
         true
     }
 
+    /// Ask the window to rasterise itself, and keep asking while someone is
+    /// waiting.
+    ///
+    /// The command is sent every time rather than once per arming. A window
+    /// that is minimised, occluded, or between viewport states can swallow the
+    /// request and produce no event; an arming that latched would then park
+    /// every future capture behind a command nobody would ever send again, for
+    /// the rest of the session. Repeating it costs one viewport command per
+    /// frame, and only while a capture is actually waiting for a picture.
     fn arm_screenshot(&mut self, ctx: &eframe::egui::Context) {
-        if self.screenshot_armed {
-            return;
-        }
         self.screenshot_armed = true;
         ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Screenshot);
         ctx.request_repaint();
+    }
+
+    /// Forget every retained bundle and everything staged around one.
+    ///
+    /// One function, called by both teardown paths, so the two cannot disagree
+    /// about what a withdrawal clears — which is exactly the kind of omission
+    /// nobody notices until a screenshot flag outlives the door it came
+    /// through.
+    fn forget_evidence(&mut self) {
+        self.evidence.clear();
+        self.screenshot = None;
+        self.screenshot_armed = false;
+        self.awaiting_screenshot.clear();
     }
 
     /// Record the semantic changes since the last frame: tab, focus,
@@ -2076,11 +2133,8 @@ impl ControlAccess {
         self.semantic_baseline = None;
         // Evidence does not outlive the door it came through: a bundle is
         // every granted scope at once, and the grant is what has just been
-        // withdrawn. The pending image goes with it.
-        self.evidence.clear();
-        self.screenshot = None;
-        self.screenshot_armed = false;
-        self.awaiting_screenshot.clear();
+        // withdrawn.
+        self.forget_evidence();
         let previous = std::mem::replace(&mut self.state, AccessState::Disabled);
         self.grant_generation = self.grant_generation.saturating_add(1).max(1);
         self.revoked_connections
@@ -2240,8 +2294,7 @@ impl ControlAccess {
         }
         // Before the early return below: a disabled gateway holds no bundles,
         // and one that is still running must not leave any behind.
-        self.evidence.clear();
-        self.screenshot = None;
+        self.forget_evidence();
         match &self.state {
             AccessState::Enabled(runtime) => runtime.request_shutdown(),
             AccessState::Disabling(Some(runtime)) => runtime.request_shutdown(),
@@ -3785,14 +3838,12 @@ fn serialize_ui_result(
                 serialized.module_revisions,
                 serialized.result,
             ),
-            Err(_) => failure_response(
-                request,
-                known_error(
-                    codes::CAPABILITY_UNAVAILABLE,
-                    "observer result serialization failed",
-                    false,
-                ),
-            ),
+            // The reason travels: work that happens after the application
+            // thread can refuse for a reason the client can act on — a bundle
+            // that does not fit its store answers `control.backpressure`, and
+            // whether to retry is a different answer from "serialization
+            // failed".
+            Err(error) => failure_response(request, error),
         },
     }
 }

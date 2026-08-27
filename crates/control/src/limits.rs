@@ -115,14 +115,23 @@ pub const CONTROL_EVIDENCE_MAX_BUNDLE_BYTES: usize =
 /// One chunk of a retained evidence resource, in raw bytes before transport
 /// encoding.
 ///
-/// Sized so a whole page of chunks, base64 expansion and envelope included,
-/// stays well inside `CONTROL_MAX_RESPONSE_BYTES`, and so the ordered chunk
-/// digests of a maximum-size bundle stay a short list rather than a payload of
-/// their own.
-pub const CONTROL_EVIDENCE_CHUNK_BYTES: usize = 512 * 1024;
+/// Derived from `CONTROL_MAX_STRING_BYTES`, and deliberately not from the
+/// response ceiling: the binding constraint on a chunk is not the size of the
+/// response it travels in but the size of the single JSON *string* it becomes.
+/// The codec prescans every string in every frame against that limit before it
+/// leaves the process, and base64 spends four characters on every three bytes.
+/// A chunk sized against the 8 MiB response ceiling encodes to 699 KB of text
+/// and is refused as `control.payload_too_large` — which would leave a bundle
+/// retained for fifteen minutes that nothing could ever read.
+///
+/// Written as the arithmetic rather than as the answer so the two cannot
+/// drift: `evidence_chunk_encodes_within_the_codecs_string_ceiling` fails if
+/// either constant moves out from under the other.
+pub const CONTROL_EVIDENCE_CHUNK_BYTES: usize = (CONTROL_MAX_STRING_BYTES / 4) * 3;
 /// Chunks one page of a retained evidence resource may carry.
 ///
-/// The page bound that pairs with the chunk size: four chunks is two mebibytes
-/// of payload, which leaves room for base64 expansion and the envelope inside
-/// the response ceiling.
+/// The page bound that pairs with the chunk size: four chunks is a mebibyte of
+/// base64, which leaves ample room for the envelope inside the response
+/// ceiling while still letting a client pull a large bundle in few round
+/// trips.
 pub const CONTROL_EVIDENCE_MAX_CHUNKS_PER_PAGE: usize = 4;

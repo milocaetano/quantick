@@ -177,7 +177,7 @@
   "properties": {
     "chunk_count": {
       "format": "uint",
-      "maximum": 16,
+      "maximum": 43,
       "minimum": 0,
       "type": "integer"
     },

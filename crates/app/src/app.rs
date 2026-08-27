@@ -30318,6 +30318,77 @@ plot(close)
         bytes
     }
 
+    /// One capture that wants a picture, served the way the window serves one:
+    /// the request parks, the frame delivers the pixels, the capture runs.
+    ///
+    /// There is no shortcut past the parking. An image is worth exactly one
+    /// frame — `begin_frame` drops whatever no capture claimed — so a fixture
+    /// published before the request was sent would be gone by the time it
+    /// arrived, which is the staleness rule doing its job.
+    fn capture_with_screenshot(
+        app: &mut QuantickApp,
+        ctx: &egui::Context,
+        client: &mut quantick_control_local::client::LocalClient,
+        payload: serde_json::Value,
+        image: crate::control::RawScreenshot,
+    ) -> quantick_control::wire::ResponseEnvelope {
+        let request_id = client
+            .send("evidence.capture", payload)
+            .expect("the request is sent");
+        for _ in 0..80 {
+            run_frame(app, ctx);
+            if app
+                .control_access
+                .as_ref()
+                .expect("control access is installed")
+                .awaiting_screenshot_for_test()
+                > 0
+            {
+                break;
+            }
+        }
+        let mut access = app
+            .control_access
+            .take()
+            .expect("control access is installed");
+        access.publish_screenshot_for_test(app, image);
+        app.control_access = Some(access);
+        for _ in 0..400 {
+            run_frame(app, ctx);
+            if client.reply_pending(std::time::Duration::from_millis(5)) {
+                break;
+            }
+        }
+        let response = client.read().expect("the gateway answered");
+        assert_eq!(response.request_id, request_id);
+        response
+    }
+
+    /// A window's worth of pixels a PNG encoder cannot shrink.
+    ///
+    /// The ramp below deflates to a few kilobytes, which is the wrong fixture
+    /// for anything about size: it makes every bundle a single chunk and hides
+    /// the paging path entirely. This one is noise from a fixed generator —
+    /// reproducible, and it compresses to nothing.
+    fn incompressible_screenshot(width: u32, height: u32) -> crate::control::RawScreenshot {
+        let mut state = 0x2545_F491_4F6C_DD1D_u64;
+        let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+        for _ in 0..(width as usize * height as usize) {
+            // xorshift64*: no dependency, and the same bytes on every machine.
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            let sample = state.wrapping_mul(0x2545_F491_4F6C_DD1D).to_le_bytes();
+            rgba.extend_from_slice(&[sample[0], sample[1], sample[2], 0xff]);
+        }
+        crate::control::RawScreenshot {
+            width_px: width,
+            height_px: height,
+            pixels_per_point: 1.0,
+            rgba,
+        }
+    }
+
     /// A window's worth of opaque pixels, the shape the platform hands over.
     fn test_screenshot(width: u32, height: u32) -> crate::control::RawScreenshot {
         crate::control::RawScreenshot {
@@ -30550,23 +30621,16 @@ plot(close)
 
         let width = TEST_WINDOW.x as u32;
         let height = TEST_WINDOW.y as u32;
-        let mut access = app
-            .control_access
-            .take()
-            .expect("control access is installed");
-        access.publish_screenshot_for_test(&mut app, test_screenshot(width, height));
-        app.control_access = Some(access);
-        assert!(
-            app.toast.is_some(),
-            "the trader is told when a picture of their window is taken"
-        );
-
-        let response = remote_call(
+        let response = capture_with_screenshot(
             &mut app,
             &ctx,
             &mut client,
-            "evidence.capture",
             serde_json::json!({ "scopes": EVIDENCE_TEST_SCOPES, "screenshot": true }),
+            test_screenshot(width, height),
+        );
+        assert!(
+            app.toast.is_some(),
+            "the trader is told when a picture of their window is taken"
         );
         let manifest = success_result(&response).clone();
         let screenshot = &manifest["screenshot"];
@@ -30639,6 +30703,52 @@ plot(close)
         std::fs::remove_dir_all(directory).unwrap();
     }
 
+    /// A bundle big enough to need several chunks comes back over the socket.
+    ///
+    /// The whole point of a retained resource is the bundle that does not fit
+    /// one response, and a chunk sized against the wrong ceiling makes every
+    /// such bundle permanently unreadable while every small-bundle test still
+    /// passes. The image here is deliberately incompressible, so the pages are
+    /// real pages rather than one chunk that happened to deflate.
+    #[test]
+    fn a_bundle_too_large_for_one_chunk_still_pages_back_over_the_socket() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(6);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("evidence-multi-chunk");
+        grant_annotate_for_test(&mut app, "all-reads,observe.evidence,observe.screenshot");
+        enable_test_gateway(&mut app, &ctx, &directory, 8);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &evidence_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+
+        let response = capture_with_screenshot(
+            &mut app,
+            &ctx,
+            &mut client,
+            serde_json::json!({ "scopes": ["system.info"], "screenshot": true }),
+            incompressible_screenshot(512, 512),
+        );
+        let manifest = success_result(&response).clone();
+        assert!(
+            manifest["chunk_count"].as_u64().unwrap() > 1,
+            "the fixture is meant to need more than one chunk: {} bytes",
+            manifest["encoded_bytes"]
+        );
+
+        let bytes = read_evidence_bundle(&mut app, &ctx, &mut client, &manifest);
+        assert_eq!(
+            quantick_control::canonical::raw_digest(&bytes),
+            manifest["content_digest"].as_str().unwrap(),
+            "every page came back and the chunks reassemble to what was hashed"
+        );
+
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
     /// Criterion 6: the hunt. A token, a home path, the trader's own drawing
     /// text and a redacted configuration value are planted where each could
     /// plausibly leak, and none of them is anywhere in the bundle or its
@@ -30696,24 +30806,17 @@ plot(close)
                 .unwrap()
                 .select(None)
                 .unwrap();
-        let mut access = app
-            .control_access
-            .take()
-            .expect("control access is installed");
-        access.publish_screenshot_for_test(&mut app, test_screenshot(64, 48));
-        app.control_access = Some(access);
-
         // The drawings scope is where the trader's own words would leak if
         // anything did; the cursor scope is the one that resolves a target.
         let mut scopes = EVIDENCE_TEST_SCOPES.to_vec();
         scopes.push("analysis.drawings");
         scopes.push("interaction.cursor");
-        let response = remote_call(
+        let response = capture_with_screenshot(
             &mut app,
             &ctx,
             &mut client,
-            "evidence.capture",
             serde_json::json!({ "scopes": scopes, "screenshot": true }),
+            test_screenshot(64, 48),
         );
         let manifest = success_result(&response).clone();
         let bytes = read_evidence_bundle(&mut app, &ctx, &mut client, &manifest);
@@ -30924,6 +31027,148 @@ plot(close)
                 .expect("control access is installed")
                 .awaiting_screenshot_for_test(),
             0
+        );
+
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// A bundle always carries a page of the journal and the effective
+    /// configuration, so it always requires the scopes those belong to —
+    /// whatever scopes were named.
+    ///
+    /// This is the aggregation hole the tier exists not to have: without it, a
+    /// connection refused `observe.events` reads the journal by asking for a
+    /// bundle of `system.info`, and because the manifest would not record the
+    /// scope either, the read-time recheck could never notice.
+    #[test]
+    fn a_bundle_requires_the_scopes_it_always_carries_however_few_were_named() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(4);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("evidence-always-carried");
+        // Everything the evidence tier needs *except* the journal.
+        grant_annotate_for_test(
+            &mut app,
+            "observe.system,observe.workspace,observe.market,observe.chart,observe.evidence",
+        );
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut scopes = gateway_test_scopes();
+        scopes.remove(&quantick_control::id::PermissionId::new("observe.events").unwrap());
+        scopes.insert(quantick_control::id::PermissionId::new("observe.evidence").unwrap());
+        let options = quantick_control_local::client::ConnectOptions::observer(
+            "quantick integration test",
+            env!("CARGO_PKG_VERSION"),
+            scopes,
+        );
+        let mut client = quantick_control_local::client::discover_in(&directory, &options)
+            .unwrap()
+            .select(None)
+            .unwrap();
+
+        let refused = remote_call(
+            &mut app,
+            &ctx,
+            &mut client,
+            "evidence.capture",
+            serde_json::json!({ "scopes": ["system.info"] }),
+        );
+        let error = response_error(&refused);
+        assert_eq!(
+            error.code.as_str(),
+            quantick_control::error::codes::SCOPE_DENIED,
+            "a bundle carrying the journal needs the journal's own scope"
+        );
+        assert!(
+            error.context.details.as_ref().unwrap()["missing_permissions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|permission| permission == "observe.events"),
+            "and the refusal names it: {:?}",
+            error.context.details
+        );
+
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Criterion 2, sharpened: the events a bundle carries are the ones around
+    /// the capture, not the oldest the journal still holds.
+    ///
+    /// A session that has run for a while has thousands of events; handing
+    /// back the first two hundred and fifty-six would be the application
+    /// starting up, and the moment the bundle was taken to explain would be
+    /// pages away.
+    #[test]
+    fn a_bundle_carries_the_events_around_the_capture_not_the_oldest_it_holds() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(4);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("evidence-recent-events");
+        grant_annotate_for_test(&mut app, "all-reads,observe.evidence");
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut client =
+            quantick_control_local::client::discover_in(&directory, &evidence_test_options())
+                .unwrap()
+                .select(None)
+                .unwrap();
+
+        // More events than one page holds, through the journal the gateway
+        // owns — the same door the frame emitter writes through.
+        let limit = 4_usize;
+        {
+            let access = app
+                .control_access
+                .as_mut()
+                .expect("control access is installed");
+            for index in 0..(limit * 8) {
+                access.journal_mut().record(
+                    crate::control::journal_test_event(index),
+                    i64::try_from(index).unwrap(),
+                );
+            }
+        }
+        let newest = app
+            .control_access
+            .as_ref()
+            .expect("control access is installed")
+            .journal()
+            .bounds()
+            .next_sequence
+            .get();
+
+        let response = remote_call(
+            &mut app,
+            &ctx,
+            &mut client,
+            "evidence.capture",
+            serde_json::json!({ "scopes": ["system.info"], "event_limit": limit }),
+        );
+        let manifest = success_result(&response).clone();
+        let bytes = read_evidence_bundle(&mut app, &ctx, &mut client, &manifest);
+        let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        let events = document["events"]["events"].as_array().unwrap();
+        assert_eq!(events.len(), limit);
+        let last = events.last().unwrap()["sequence"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+        assert_eq!(
+            last,
+            newest - 1,
+            "the page ends at the newest event the journal held, not at its oldest"
+        );
+        assert_eq!(
+            document["events"]["next_cursor"]["next_sequence"]
+                .as_str()
+                .unwrap()
+                .parse::<u64>()
+                .unwrap(),
+            newest,
+            "and the cursor carries on from the capture instant"
         );
 
         disable_test_gateway(&mut app, &ctx);

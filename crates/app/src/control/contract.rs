@@ -47,9 +47,9 @@ use super::{
     evidence::{
         CAPTURE_CAPABILITY_ID as EVIDENCE_CAPTURE_CAPABILITY_ID, EVIDENCE_MODULE_ID,
         EVIDENCE_PERMISSION_ID, EvidenceCapture, EvidenceCaptureInput, EvidenceChunkPage,
-        EvidenceGap, EvidenceManifest, EvidenceReadInput, EvidenceStore,
+        EvidenceManifest, EvidenceReadInput, EvidenceStore,
         READ_CAPABILITY_ID as EVIDENCE_READ_CAPABILITY_ID, RawScreenshot, SessionIdentity,
-        redact_configuration, source_scopes,
+        capture_prevalidated, source_scopes,
     },
     journal::{EventJournal, EventPage},
     notify::{NOTIFY_MODULE_ID, NOTIFY_PERMISSION_ID, NOTIFY_SOUND_PERMISSION_ID},
@@ -516,52 +516,8 @@ struct EvidenceCaptureInvocation {
 
 impl PreparedUiRead for EvidenceCaptureInvocation {
     fn execute(&self, context: UiReadContext<'_>) -> Result<UiReadExecution, ControlError> {
-        let snapshot =
-            context
-                .projections
-                .capture(context.app, context.instance_id, &self.input.scopes)?;
-        // The journal read shares the capture's instant: the events a client
-        // reads out of the bundle are the ones that were there when the
-        // projections were taken, and its cursor continues from exactly there.
-        let events = read_page(
-            context.journal,
-            context.instance_id,
-            None,
-            Some(quantick_control::cursor::EventStart::Oldest),
-            self.input.event_limit,
-            false,
-        )?;
-        let (configuration, mut pending_gaps) = redact_configuration(context.app.control_config());
-        let screenshot = if self.input.screenshot {
-            let taken = context.screenshot.take();
-            if taken.is_none() {
-                pending_gaps.push(EvidenceGap {
-                    subject: "screenshot".to_owned(),
-                    reason: "frame_not_delivered".to_owned(),
-                });
-            }
-            taken
-        } else {
-            pending_gaps.push(EvidenceGap {
-                subject: "screenshot".to_owned(),
-                reason: "not_requested".to_owned(),
-            });
-            None
-        };
-        Ok(Box::new(EvidenceCapture {
-            evidence_id: new_evidence_id()?,
-            resource_id: new_resource_id()?,
-            instance_id: context.instance_id.clone(),
-            session: context.session.clone(),
-            snapshot,
-            events,
-            configuration,
-            screenshot,
-            pending_gaps,
-            source_scopes: self.source_scopes.clone(),
-            store: context.evidence.clone(),
-            captured_at_unix_ms: crate::metrics::wall_clock_ms(),
-        }))
+        capture_prevalidated(context, &self.input, self.source_scopes.clone())
+            .map(|capture| Box::new(capture) as UiReadExecution)
     }
 
     fn needs_screenshot(&self) -> bool {
@@ -609,18 +565,6 @@ impl PreparedWorkerRead for EvidenceReadInvocation {
         )?;
         serde_json::to_value(page).map_err(|_| serialization_failed("an evidence page"))
     }
-}
-
-fn new_evidence_id() -> Result<quantick_control::id::EvidenceId, ControlError> {
-    Ok(quantick_control::id::EvidenceId::from_bytes(
-        super::gateway::runtime_id_bytes()?,
-    ))
-}
-
-fn new_resource_id() -> Result<quantick_control::id::ResourceId, ControlError> {
-    Ok(quantick_control::id::ResourceId::from_bytes(
-        super::gateway::runtime_id_bytes()?,
-    ))
 }
 
 struct PreparedCapability {

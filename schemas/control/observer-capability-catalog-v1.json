@@ -3898,7 +3898,7 @@
           },
           "chunk_count": {
             "format": "uint",
-            "maximum": 16,
+            "maximum": 43,
             "minimum": 0,
             "type": "integer"
           },
@@ -3907,7 +3907,7 @@
             "items": {
               "$ref": "#/$defs/Sha256Digest"
             },
-            "maxItems": 16,
+            "maxItems": 43,
             "type": "array"
           },
           "content_digest": {
@@ -4326,7 +4326,7 @@
         "properties": {
           "chunk_count": {
             "format": "uint",
-            "maximum": 16,
+            "maximum": 43,
             "minimum": 0,
             "type": "integer"
           },
