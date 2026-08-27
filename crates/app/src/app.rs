@@ -3364,8 +3364,12 @@ impl QuantickApp {
     /// trap, avoided by construction).
     fn draw_indicator_legends(&mut self, ctx: &egui::Context) {
         let tab_id = self.active_tab().id;
-        let split = self.active_tab().layout == CanvasLayout::TimeAndFlow
-            && self.active_tab().has_time_pane();
+        // Whether a context chart is on screen — from what the layout holds
+        // and whether the column is collapsed, never from one variant. Matched
+        // against `TimeAndFlow` alone, this drew no legend at all on the
+        // stacked charts of `time+time+flow`, and drew one over the flow chart
+        // against a stale rect while the column was put away.
+        let split = self.active_tab().shows_context_charts();
         let mut pending: Vec<(PaneSide, indicator_legend::LegendAction)> = Vec::new();
         for side in [PaneSide::Flow, PaneSide::Time] {
             if side == PaneSide::Time && !split {
@@ -6268,8 +6272,7 @@ impl QuantickApp {
                         // and a trader reading "Collapse indicator legend"
                         // over two charts has no way to know which corner is
                         // about to change.
-                        let split = self.active_tab().layout == CanvasLayout::TimeAndFlow
-                            && self.active_tab().has_time_pane();
+                        let split = self.active_tab().shows_context_charts();
                         let pane_name = match self.active_tab().focused_side() {
                             PaneSide::Flow => "Flow",
                             PaneSide::Time => "Timeframe",

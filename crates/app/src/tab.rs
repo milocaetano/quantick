@@ -500,6 +500,9 @@ pub struct Tab {
     pub split_fraction: f32,
     /// Whether the context column is collapsed to its rail.
     pub context_collapsed: bool,
+    /// The canvas width the last drawn frame used. See
+    /// [`Self::last_canvas_width`].
+    last_canvas_width: f32,
     /// The pane the chrome speaks for while this tab is active: status bar,
     /// indicator targeting and the keyboard's drawing grammar (§11).
     /// Meaningless while the canvas is Single — read it through
@@ -685,6 +688,7 @@ impl Tab {
             split_fraction: DEFAULT_PANE_FRACTION,
             context_collapsed: std::env::var("QUANTICK_PANE_COLLAPSED")
                 .is_ok_and(|value| value == "1"),
+            last_canvas_width: 0.0,
             focus: PaneSide::Flow,
             symbol,
             #[cfg(test)]
@@ -1327,6 +1331,30 @@ impl Tab {
                 || matches!(self.notice, FeedNotice::Attention { .. }))
     }
 
+    /// The canvas width the last drawn frame used, for callers that have to
+    /// reason in pixels without a frame in hand — the control plane's resize,
+    /// which must honour the same floor a drag does.
+    ///
+    /// Zero before the first frame, which callers read as "no opinion" rather
+    /// than as a canvas of no width.
+    #[must_use]
+    pub fn last_canvas_width(&self) -> f32 {
+        self.last_canvas_width
+    }
+
+    /// Whether any context chart is actually on screen.
+    ///
+    /// The layout has to *hold* one, the tab has to have *built* one, and the
+    /// column must not be collapsed. Three conditions that chrome kept
+    /// re-deriving one variant at a time — and got wrong twice: the legend
+    /// gate matched `TimeAndFlow` alone, so the stacked charts drew no legend
+    /// and a collapsed column drew one over the flow chart against a stale
+    /// rect.
+    #[must_use]
+    pub fn shows_context_charts(&self) -> bool {
+        self.layout.shows_time() && self.has_time_pane() && !self.context_collapsed
+    }
+
     /// The pane the chrome speaks for. Only a split canvas has a choice to
     /// make: a single-pane layout *is* its one visible pane, whatever the
     /// last split left `focus` set to. Time falls back to the flow pane for
@@ -1336,7 +1364,11 @@ impl Tab {
         // Matching one variant is how the three-pane canvas shipped with dead
         // focus: a click set `self.focus` and every reader threw it away,
         // because `TimeTimeAndFlow` was not in the arm.
-        if !self.has_time_pane() || !self.layout.shows_time() {
+        // A collapsed column is not on screen, and focus on a pane nobody can
+        // see is worse than useless: `paper_owns_input` goes false for the one
+        // pane that *is* drawn, so order entry, the ladder and the trade HUD
+        // all go dead on the heatmap until the trader expands again.
+        if !self.has_time_pane() || !self.layout.shows_time() || self.context_collapsed {
             return PaneSide::Flow;
         }
         if !self.layout.shows_flow() {
@@ -1555,6 +1587,10 @@ impl Tab {
             return;
         }
         self.layout = layout;
+        // A layout chosen from the picker shows the panes its thumbnail drew.
+        // Leaving the column collapsed meant the cell lit, two panes were
+        // promised, and an 8 px rail arrived instead.
+        self.context_collapsed = false;
         let wanted = layout
             .kinds()
             .iter()
@@ -2750,6 +2786,7 @@ impl Tab {
         // has actually built. The lower of the two is what gets drawn: a
         // layout may name a pane the tab is still building, and half a canvas
         // is better than a frame of nothing.
+        self.last_canvas_width = area.width();
         let context_wanted = self
             .layout
             .kinds()

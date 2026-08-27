@@ -346,11 +346,31 @@ fn resize(
     let tab = app
         .control_tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    // Through the drag's own clamp, never a second copy of its range: two
-    // answers for one domain is how they drift.
-    let wanted = crate::pane::clamp_pane_fraction(input.fraction as f32);
-    let changed = (tab.split_fraction - wanted).abs() > f32::EPSILON;
-    tab.split_fraction = wanted;
+    // The descriptor promises a call cannot reach a width a hand could not,
+    // and that promise moved when the floor did: `clamp_pane_fraction` is a
+    // 0..1 sanity clamp now, and the width floor lives in the splitter, which
+    // a stored fraction never passes through. Left as it was, `fraction: 0.0`
+    // stored a zero the canvas did not draw — and the trader's next divider
+    // nudge, computing from that zero, collapsed the column instead of
+    // widening it.
+    //
+    // A width the trader could not drag to is refused rather than clamped: a
+    // caller that asked for a fifth of a pane meant something, and silently
+    // giving them a different width is how a client and a canvas come to
+    // disagree about what is on screen.
+    let asked = crate::pane::clamp_pane_fraction(input.fraction as f32);
+    let floor = canvas_layout::MIN_PANE_WIDTH_PX;
+    let canvas = tab.last_canvas_width();
+    if canvas > 0.0 {
+        let wanted_px = asked * canvas;
+        if wanted_px < floor || canvas - wanted_px < floor {
+            return Err(ControlError::invalid_request(format!(
+                "a share of {asked} leaves a pane under the {floor}px floor on this                  {canvas}px canvas; collapse the column instead of squeezing it away"
+            )));
+        }
+    }
+    let changed = (tab.split_fraction - asked).abs() > f32::EPSILON;
+    tab.split_fraction = asked;
     result(app, index, changed)
 }
 
