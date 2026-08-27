@@ -175,6 +175,49 @@ pub const CANVAS_DIVIDER_PX: f32 = 4.0;
 /// collapse leaves something to click.
 pub const COLLAPSED_PANE_WIDTH_PX: f32 = 8.0;
 
+/// How narrow a divider drag has to get before the pane is dismissed rather
+/// than squeezed.
+///
+/// **In pixels, deliberately, and below [`MIN_PANE_WIDTH_PX`].** A share of
+/// the canvas cannot be both: a fraction that sits under the floor on a
+/// trading monitor sits over it on a laptop, and over it the floor never
+/// binds — the pane would be dismissed while it still had room to be a chart,
+/// and every width between the threshold and the floor would be unreachable.
+///
+/// Half the floor is the gesture: drag to the minimum and the pane holds
+/// there; keep going, well past the point it stopped narrowing, and it is
+/// dismissed. The travel past the floor is what makes the dismissal
+/// deliberate.
+pub const COLLAPSE_AT_PX: f32 = MIN_PANE_WIDTH_PX / 2.0;
+
+/// How wide the collapsed rail's *hit* area is, against the
+/// [`COLLAPSED_PANE_WIDTH_PX`] it paints.
+///
+/// The rail gives up almost all its width and keeps all of its reachability:
+/// the extra reaches into the neighbouring chart, where it costs nothing but
+/// the pointer's first few pixels. 24 px is the floor a pointer target is held
+/// to, and a rail that photographed well but could not be hit would be a
+/// picture of an affordance rather than one.
+pub const COLLAPSED_HIT_PX: f32 = 24.0;
+
+/// The floor a pointer target is held to, checked where it cannot be missed.
+///
+/// A compile error rather than a failing test: this is a property of the
+/// constant above, and a reader lowering it should be stopped by the build
+/// rather than by a test run they might not reach.
+const _: () = assert!(
+    COLLAPSED_HIT_PX >= 24.0,
+    "the collapsed rail's hit area is under the minimum size a pointer target is held to"
+);
+const _: () = assert!(
+    COLLAPSE_AT_PX > 0.0,
+    "a collapse threshold at zero can never be crossed, so the pane could never be dismissed"
+);
+const _: () = assert!(
+    COLLAPSE_AT_PX < MIN_PANE_WIDTH_PX,
+    "a collapse threshold at or above the pane's own floor makes the floor unreachable:      the pane would be dismissed while it still had room to be a chart"
+);
+
 /// Narrowest a pane may be squeezed to while it is still open.
 ///
 /// Below this a chart stops being one: the price axis alone claims most of it.
@@ -188,13 +231,6 @@ pub const MIN_PANE_WIDTH_PX: f32 = 120.0;
 /// problem on the vertical axis. Two different vocabularies for "how big is
 /// this pane" is how the two axes would start disagreeing about what a drag
 /// means.
-//
-// `Collapsed` and the two methods that move a pane in and out of it are
-// constructed by the canvas UI, which lands in the commit that draws the
-// collapsed rail. The model is written first so that the splitter, the width
-// arithmetic and their tests are settled before anything paints — and this
-// allow goes away in that commit, not later.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PaneWidth {
     /// The layout decides: share what the explicit panes left over, evenly.
@@ -208,32 +244,11 @@ pub enum PaneWidth {
     Collapsed { restore: f32 },
 }
 
-#[allow(dead_code)]
 impl PaneWidth {
     /// Whether this pane is collapsed to its rail.
     #[must_use]
     pub const fn is_collapsed(self) -> bool {
         matches!(self, Self::Collapsed { .. })
-    }
-
-    /// The share this pane returns to when expanded.
-    #[must_use]
-    pub fn restored(self) -> Self {
-        match self {
-            Self::Collapsed { restore } => Self::Manual(restore),
-            other => other,
-        }
-    }
-
-    /// This pane, collapsed, remembering `current` as the share to come back
-    /// to. An already-collapsed pane keeps the width it first remembered: two
-    /// collapses in a row must not overwrite the trader's size with a rail.
-    #[must_use]
-    pub fn collapsed(self, current: f32) -> Self {
-        match self {
-            Self::Collapsed { restore } => Self::Collapsed { restore },
-            _ => Self::Collapsed { restore: current },
-        }
     }
 }
 
@@ -413,13 +428,11 @@ pub fn split_row(area: egui::Rect, widths: &[PaneWidth]) -> RowAreas {
 /// because two would drift and a trader would find a divider that behaved one
 /// way horizontally and another way vertically.
 #[must_use]
-#[allow(dead_code, reason = "wired by the commit that draws the context stack")]
 pub fn split_column(area: egui::Rect, heights: &[PaneWidth]) -> RowAreas {
     split_axis(area, heights, Axis::Vertical)
 }
 
 /// Which way a split runs.
-#[allow(dead_code, reason = "Vertical is reached through `split_column`")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Axis {
     Horizontal,
@@ -699,23 +712,6 @@ mod row_tests {
     }
 
     #[test]
-    fn expanding_returns_the_pane_to_the_width_it_had() {
-        let dragged = PaneWidth::Manual(0.42);
-        let collapsed = dragged.collapsed(0.42);
-        assert!(collapsed.is_collapsed());
-        assert_eq!(collapsed.restored(), PaneWidth::Manual(0.42));
-    }
-
-    #[test]
-    fn collapsing_twice_keeps_the_first_remembered_width() {
-        // The second collapse must not record the rail as the width to
-        // return to, or the trader's own sizing is lost to a double click.
-        let once = PaneWidth::Manual(0.42).collapsed(0.42);
-        let twice = once.collapsed(COLLAPSED_PANE_WIDTH_PX / 1000.0);
-        assert_eq!(twice.restored(), PaneWidth::Manual(0.42));
-    }
-
-    #[test]
     fn every_pane_collapsed_still_spends_the_canvas() {
         let area = canvas();
         let widths = vec![PaneWidth::Collapsed { restore: 0.25 }; 3];
@@ -969,5 +965,71 @@ mod column_tests {
             "a stacked rail came out {} px",
             areas.panes[0].height()
         );
+    }
+}
+
+#[cfg(test)]
+mod collapse_tests {
+    use super::*;
+
+    /// The rail is near-zero without being zero, and that gap is the whole
+    /// design: a pane with no width has no handle, and a pane with no handle
+    /// cannot be brought back from the canvas it left.
+    #[test]
+    fn a_collapsed_pane_is_a_sliver_of_the_canvas_but_never_none_of_it() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1920.0, 1080.0));
+        let areas = split_row(
+            area,
+            &[PaneWidth::Collapsed { restore: 0.35 }, PaneWidth::Auto],
+        );
+        let share = areas.panes[0].width() / area.width();
+        assert!(
+            share < 0.01,
+            "a rail taking {share} of the canvas is not a rail"
+        );
+        assert!(
+            areas.panes[0].width() > 0.0,
+            "a rail with no width is the bug this exists to prevent"
+        );
+    }
+
+    /// The hit area is bigger than the paint, and by enough to clear the floor
+    /// a pointer target is held to.
+    #[test]
+    fn the_rail_can_be_hit_even_though_it_is_thin() {
+        // Read off a rail the splitter actually produced, rather than
+        // comparing two literals: what matters is how far the hit area has to
+        // reach past the paint that exists.
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1920.0, 1080.0));
+        let painted = split_row(
+            area,
+            &[PaneWidth::Collapsed { restore: 0.35 }, PaneWidth::Auto],
+        )
+        .panes[0]
+            .width();
+        assert!(
+            COLLAPSED_HIT_PX > painted,
+            "the hit area must reach past the {painted}px it paints"
+        );
+    }
+
+    /// The gesture that dismisses a pane has to be reachable before the pane's
+    /// own minimum stops the drag, or a trader could never reach it.
+    #[test]
+    fn the_collapse_threshold_is_inside_the_range_a_drag_can_reach() {
+        // The threshold is in pixels and so is the floor, which is the whole
+        // reason it stopped being a share of the canvas: as a share it sat
+        // under the floor on a trading monitor and over it on a laptop, and
+        // over it the floor never binds. Read at the widths a real window
+        // takes, so the test says what it protects.
+        for width in [1024.0_f32, 1280.0, 1600.0, 1920.0, 2560.0] {
+            let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(width, 900.0));
+            let floor_share = MIN_PANE_WIDTH_PX / area.width();
+            let threshold_share = COLLAPSE_AT_PX / area.width();
+            assert!(
+                threshold_share < floor_share,
+                "on a {width}px canvas the pane is dismissed at {threshold_share}                  while its floor is {floor_share}, so every width between them                  is unreachable"
+            );
+        }
     }
 }

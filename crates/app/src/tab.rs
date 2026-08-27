@@ -31,8 +31,7 @@ use crate::metrics;
 use crate::orderflow_view::OrderflowView;
 use crate::pane::{
     CANVAS_DIVIDER_HANDLE_PX, ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneChrome, PaneIndex,
-    PaneSide, SharedEdit, SharedInteraction, SharedPick, clamp_pane_fraction, split_canvas,
-    split_time_pane,
+    PaneSide, SharedEdit, SharedInteraction, SharedPick, clamp_pane_fraction, split_time_pane,
 };
 use crate::paper_trading::PaperTrading;
 use crate::state::{BarKind, BarSpec};
@@ -50,6 +49,11 @@ const BOOK_DRAIN_BUDGET: usize = 2_048;
 /// Thickness of the rule marking the focused pane (§11: an accent under the
 /// pane's top edge, never a box drawn around market data).
 const FOCUS_RULE_PX: f32 = 1.0;
+/// Width of the grip bar on a collapsed column's rail.
+const RAIL_GRIP_WIDTH_PX: f32 = 2.0;
+/// Height of that grip bar. Long enough to read as a handle at a glance,
+/// short enough that it is a mark on the rail rather than the rail itself.
+const RAIL_GRIP_HEIGHT_PX: f32 = 24.0;
 
 /// How many charts a tab's canvas shows for its market (§11), and which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -488,8 +492,14 @@ pub struct Tab {
     /// and this field with `split_fraction` and `focus` is what it would
     /// write.
     pub layout: CanvasLayout,
-    /// The time pane's share of the canvas width while the split is shown.
+    /// The context column's share of the canvas width while it is shown.
+    ///
+    /// Kept while the column is collapsed, which is what it springs back to.
+    /// One number and one flag rather than two numbers: a separate "restore"
+    /// field would be a second opinion about the same width.
     pub split_fraction: f32,
+    /// Whether the context column is collapsed to its rail.
+    pub context_collapsed: bool,
     /// The pane the chrome speaks for while this tab is active: status bar,
     /// indicator targeting and the keyboard's drawing grammar (§11).
     /// Meaningless while the canvas is Single — read it through
@@ -500,6 +510,8 @@ pub struct Tab {
     time_header_chips: [egui::Rect; crate::time_header::PRESETS.len()],
     #[cfg(test)]
     canvas_divider: Option<egui::Rect>,
+    #[cfg(test)]
+    collapsed_rail: Option<egui::Rect>,
 }
 
 impl Tab {
@@ -607,12 +619,16 @@ impl Tab {
             pending_context_panes: 0,
             layout: CanvasLayout::Single,
             split_fraction: DEFAULT_PANE_FRACTION,
+            context_collapsed: std::env::var("QUANTICK_PANE_COLLAPSED")
+                .is_ok_and(|value| value == "1"),
             focus: PaneSide::Flow,
             symbol,
             #[cfg(test)]
             time_header_chips: [egui::Rect::NOTHING; crate::time_header::PRESETS.len()],
             #[cfg(test)]
             canvas_divider: None,
+            #[cfg(test)]
+            collapsed_rail: None,
         }
     }
 
@@ -2668,12 +2684,30 @@ impl Tab {
         // reduces to nothing: no divider, no focus rule — though a lone time
         // pane keeps its header.
         let (time_area, divider, flow_area) = if split {
-            let areas = split_canvas(area, self.split_fraction);
-            (Some(areas.time), Some(areas.divider), areas.flow)
+            let width = if self.context_collapsed {
+                canvas_layout::PaneWidth::Collapsed {
+                    restore: self.split_fraction,
+                }
+            } else {
+                canvas_layout::PaneWidth::Manual(self.split_fraction)
+            };
+            let row = canvas_layout::split_row(area, &[width, canvas_layout::PaneWidth::Auto]);
+            (Some(row.panes[0]), Some(row.dividers[0]), row.panes[1])
         } else if show_time {
             (Some(area), None, area)
         } else {
             (None, None, area)
+        };
+        // A collapsed column paints a rail, not charts: eight pixels is a
+        // handle, not a chart, and laying one out there would draw a price
+        // axis and nothing else.
+        let collapsed_rail = (split && self.context_collapsed)
+            .then_some(time_area)
+            .flatten();
+        let time_area = if collapsed_rail.is_some() {
+            None
+        } else {
+            time_area
         };
 
         // The context column, carved into one band per chart it shows, top to
@@ -2826,6 +2860,9 @@ impl Tab {
             crate::paper_hud::draw(ui.ctx(), rect, &mut self.paper, &scale);
         }
 
+        if let Some(rail) = collapsed_rail {
+            self.draw_collapsed_rail(ui, rail);
+        }
         let (Some(time_area), Some(divider)) = (time_area, divider) else {
             return;
         };
@@ -3004,6 +3041,74 @@ impl Tab {
     /// Registered after both panes so it takes the drag that would otherwise
     /// pan the chart behind its grab area, exactly as the live lane's own
     /// divider does inside a pane.
+    /// The collapsed context column: a rail with a grip, and the way back.
+    ///
+    /// A pane dragged to nothing has to leave something behind. Blender's
+    /// manual puts the rule plainly — a hidden region leaves a little arrow to
+    /// click — and the vertical axis in this app already refuses zero for the
+    /// same reason (`indicators::COLLAPSED_PANE_HEIGHT_PX`). Eight pixels of a
+    /// 1920 px canvas is four tenths of one percent: near enough to the "size
+    /// zero" a trader asks for, and not so near that the chart is gone for
+    /// good.
+    ///
+    /// The paint is 8 px wide; the *hit* area is 24 px, reaching into the
+    /// chart beside it where it costs nothing but the pointer's first few
+    /// pixels. A rail that photographed well but could not be hit would be a
+    /// picture of an affordance rather than one.
+    fn draw_collapsed_rail(&mut self, ui: &egui::Ui, rail: egui::Rect) {
+        #[cfg(test)]
+        {
+            self.collapsed_rail = Some(rail);
+        }
+        let painter = ui.painter();
+        painter.rect_filled(rail, egui::Rounding::ZERO, theme::CHROME);
+        // The inner edge, so the rail reads as chrome against the chart rather
+        // than as a stripe the chart happens to start after.
+        painter.line_segment(
+            [
+                egui::pos2(rail.right(), rail.top()),
+                egui::pos2(rail.right(), rail.bottom()),
+            ],
+            egui::Stroke::new(1.0_f32, theme::BORDER),
+        );
+
+        let hit = egui::Rect::from_min_max(
+            rail.min,
+            egui::pos2(
+                rail.left() + canvas_layout::COLLAPSED_HIT_PX.max(rail.width()),
+                rail.bottom(),
+            ),
+        );
+        let response = ui
+            .interact(
+                hit,
+                egui::Id::new(("collapsed_context_rail", self.id)),
+                egui::Sense::click(),
+            )
+            .on_hover_text("show the timeframe charts again");
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+
+        // The grip: a short bar at the rail's middle, in the colour a reader
+        // already knows means "chrome you can take hold of".
+        let grip_colour = if response.hovered() {
+            theme::ACCENT
+        } else {
+            theme::TEXT_MUTED
+        };
+        let grip = egui::Rect::from_center_size(
+            rail.center(),
+            egui::vec2(RAIL_GRIP_WIDTH_PX, RAIL_GRIP_HEIGHT_PX),
+        );
+        ui.painter()
+            .rect_filled(grip, egui::Rounding::same(1.0), grip_colour);
+
+        if response.clicked() {
+            self.context_collapsed = false;
+        }
+    }
+
     fn draw_canvas_divider(&mut self, ui: &egui::Ui, divider: egui::Rect, canvas_width: f32) {
         #[cfg(test)]
         {
@@ -3025,7 +3130,15 @@ impl Tab {
         }
         if handle.dragged() && canvas_width > 0.0 {
             let moved = self.split_fraction + handle.drag_delta().x / canvas_width;
-            self.split_fraction = clamp_pane_fraction(moved);
+            if moved * canvas_width < canvas_layout::COLLAPSE_AT_PX {
+                // Dismissed, not squeezed. `split_fraction` is left where it
+                // was, so the rail springs back to the width the trader chose
+                // rather than to a default that would discard it.
+                self.context_collapsed = true;
+            } else {
+                self.context_collapsed = false;
+                self.split_fraction = clamp_pane_fraction(moved);
+            }
         }
     }
 }
@@ -3036,6 +3149,11 @@ mod shared_routing_tests {
     use crate::feed;
     use crate::state::BarSpec;
     use tokio::sync::mpsc;
+
+    /// Hands each test tab its own trades directory. A tab opens a
+    /// paper-trading ledger, and two tabs pointed at one folder read each
+    /// other's trades — which shows up as unrelated ledger tests failing.
+    static NEXT_TEST_DIR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
     /// A tab with `context` context panes stacked beside its flow pane.
     fn tab_with_context_panes(context: usize) -> Tab {
@@ -3062,7 +3180,10 @@ mod shared_routing_tests {
             // Its own directory, never the shared temp root: a tab opens a
             // paper-trading ledger, and pointing every test tab at one folder
             // makes them read each other's trades.
-            std::env::temp_dir().join(format!("quantick-tab-test-{context}")),
+            std::env::temp_dir().join(format!(
+                "quantick-tab-test-{context}-{}",
+                NEXT_TEST_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            )),
         );
         for slot in 0..context {
             tab.time_panes.push(ChartPane::time(
@@ -3071,6 +3192,34 @@ mod shared_routing_tests {
             ));
         }
         tab
+    }
+
+    /// Collapsing must not spend the width it collapses.
+    ///
+    /// `split_fraction` is the trader's own sizing and the only thing that can
+    /// restore the column. A collapse that overwrote it — with a rail's width,
+    /// or with a default — would hand back a different chart from the one that
+    /// was put away.
+    #[test]
+    fn collapsing_a_column_keeps_the_width_it_springs_back_to() {
+        let mut tab = tab_with_context_panes(1);
+        tab.split_fraction = 0.42;
+
+        tab.context_collapsed = true;
+        assert_eq!(
+            tab.split_fraction, 0.42,
+            "the collapse spent the width it was supposed to remember"
+        );
+
+        // And again: a second collapse must not overwrite it either.
+        tab.context_collapsed = true;
+        assert_eq!(tab.split_fraction, 0.42);
+
+        tab.context_collapsed = false;
+        assert_eq!(
+            tab.split_fraction, 0.42,
+            "the column came back at a width the trader never chose"
+        );
     }
 
     /// The flow pane is address `0` and the context stack follows it, whatever
