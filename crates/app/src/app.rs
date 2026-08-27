@@ -30370,25 +30370,31 @@ plot(close)
         let request_id = client
             .send("evidence.capture", payload)
             .expect("the request is sent");
-        for _ in 0..80 {
+        // Wait for the capture to actually park before handing over pixels.
+        // Not a nicety: an image is worth one frame, so publishing before the
+        // request has parked would have the frame drop it and the capture then
+        // wait for one that never comes. Asserted rather than assumed, so a
+        // machine slow enough to break the precondition says so here instead
+        // of failing later on a confusing assertion about the manifest.
+        let parked = (0..PARK_WAIT_FRAMES).any(|_| {
             run_frame(app, ctx);
-            if app
-                .control_access
+            app.control_access
                 .as_ref()
                 .expect("control access is installed")
                 .awaiting_screenshot_for_test()
                 > 0
-            {
-                break;
-            }
-        }
+        });
+        assert!(
+            parked,
+            "the capture did not park for an image within {PARK_WAIT_FRAMES} frames"
+        );
         let mut access = app
             .control_access
             .take()
             .expect("control access is installed");
         access.publish_screenshot_for_test(app, image);
         app.control_access = Some(access);
-        for _ in 0..400 {
+        for _ in 0..REPLY_WAIT_FRAMES {
             run_frame(app, ctx);
             if client.reply_pending(std::time::Duration::from_millis(5)) {
                 break;
@@ -30398,6 +30404,15 @@ plot(close)
         assert_eq!(response.request_id, request_id);
         response
     }
+
+    /// Frames a test spends waiting for a capture to park on an image.
+    ///
+    /// Generous: the request crosses a socket and two threads, and these tests
+    /// run alongside every other crate's test binary. The gateways they use
+    /// have their request timeout raised for the same reason.
+    const PARK_WAIT_FRAMES: usize = 600;
+    /// Frames a test spends waiting for the gateway's reply.
+    const REPLY_WAIT_FRAMES: usize = 600;
 
     /// A window's worth of pixels a PNG encoder cannot shrink.
     ///
@@ -31036,7 +31051,7 @@ plot(close)
         // Frames pass and the capture does not answer: it is waiting for the
         // window, which a headless context never rasterises on its own.
         let mut waited = 0;
-        for _ in 0..40 {
+        for _ in 0..PARK_WAIT_FRAMES {
             run_frame(&mut app, &ctx);
             waited = app
                 .control_access
@@ -31055,7 +31070,7 @@ plot(close)
             .expect("control access is installed");
         access.publish_screenshot_for_test(&mut app, test_screenshot(320, 200));
         app.control_access = Some(access);
-        for _ in 0..400 {
+        for _ in 0..REPLY_WAIT_FRAMES {
             run_frame(&mut app, &ctx);
             if client.reply_pending(std::time::Duration::from_millis(5)) {
                 break;
