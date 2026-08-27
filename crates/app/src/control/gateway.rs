@@ -1632,7 +1632,7 @@ impl ControlAccess {
         ui.add_space(CONTROL_PANEL_SECTION_SPACING_PX);
         ui.strong("Let an assistant answer on the chart");
         ui.small(
-            "Objects an assistant places are labelled with its name wherever you see them, and \"Remove objects placed for you\" in the object manager takes them all back at once. Nothing here can delete your own drawings, change your layout, or touch a position.",
+            "Objects an assistant places are labelled with its name wherever you see them, and \"Remove objects placed for you\" in the object manager takes them all back at once. Nothing here can delete your own drawings or touch a position. Rearranging your charts is a separate grant, below.",
         );
         for descriptor in self
             .contract

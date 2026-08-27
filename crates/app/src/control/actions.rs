@@ -50,11 +50,11 @@ pub(crate) const ANNOTATE_ATTENTION_PERMISSION_ID: &str = "annotate.attention";
 pub(crate) const ANNOTATE_EFFECT_ID: &str = "annotate";
 pub(crate) const ANNOTATOR_PROFILE_ID: &str = "annotator";
 
-const CAPABILITY_VERSION: u32 = 1;
+pub(crate) const CAPABILITY_VERSION: u32 = 1;
 /// The version of `attention.mark.create` the hotkey and the hook invoke.
 pub(crate) const MARK_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
-const NO_CONFIRMATION_ID: &str = "none";
-const UI_BOUNDED_COST_ID: &str = "ui_bounded";
+pub(crate) const NO_CONFIRMATION_ID: &str = "none";
+pub(crate) const UI_BOUNDED_COST_ID: &str = "ui_bounded";
 
 /// One action's handler. It receives the application and the control access
 /// it lives in (the journal, the trace), the trusted actor, and the resolved
@@ -189,6 +189,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     )?;
     super::annotate::register(&mut registry)?;
     super::notify::register(&mut registry)?;
+    super::layout::register(&mut registry)?;
     super::script::register(&mut registry)?;
     Ok(registry)
 }

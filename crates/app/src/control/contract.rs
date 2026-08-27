@@ -50,6 +50,20 @@ use super::{
 };
 
 pub(crate) const OBSERVER_PROFILE_ID: &str = "observer";
+/// The tier that may rearrange the trader's window.
+///
+/// Its own profile rather than a permission inside `annotator`, because the
+/// annotate tier's consent text makes a promise it would otherwise break: it
+/// tells the trader that nothing they grant there can change their layout.
+/// A capability that arrives under a grant whose own words deny it is a trust
+/// bug, and the trader has no way to find it.
+pub(crate) const COCKPIT_PROFILE_ID: &str = "cockpit";
+/// Rearranging the window: which charts are shown, where, and how wide.
+pub(crate) const COCKPIT_PERMISSION_ID: &str = "cockpit";
+/// The permission for the canvas layout specifically.
+pub(crate) const COCKPIT_LAYOUT_PERMISSION_ID: &str = "cockpit.layout";
+/// The effect every cockpit capability declares.
+pub(crate) const COCKPIT_EFFECT_ID: &str = "cockpit";
 pub(crate) const DESCRIBE_CAPABILITY_ID: &str = "control.describe";
 pub(crate) const SNAPSHOT_CAPABILITY_ID: &str = "snapshot.read";
 pub(crate) const CHART_WINDOW_CAPABILITY_ID: &str = "chart.window.read";
@@ -497,6 +511,7 @@ impl ObserverContract {
     ) -> Result<Self, RegistryError> {
         let observer = profile(OBSERVER_PROFILE_ID);
         let annotator = profile(ANNOTATOR_PROFILE_ID);
+        let cockpit = profile(COCKPIT_PROFILE_ID);
         let mut permissions = vec![
             PermissionDescriptor {
                 id: permission(OBSERVE_PERMISSION_ID),
@@ -517,6 +532,22 @@ impl ObserverContract {
                 sensitive: false,
                 default_grant: DefaultGrant::Prompt,
                 profile_ceilings: BTreeSet::from([annotator.clone()]),
+            },
+            PermissionDescriptor {
+                id: permission(COCKPIT_PERMISSION_ID),
+                label: "Rearrange the window".to_owned(),
+                description: "Change which charts are on screen, where they sit and how wide they are. Never places or removes an object, and never touches a position.".to_owned(),
+                sensitive: false,
+                default_grant: DefaultGrant::Prompt,
+                profile_ceilings: BTreeSet::from([cockpit.clone()]),
+            },
+            PermissionDescriptor {
+                id: permission(COCKPIT_LAYOUT_PERMISSION_ID),
+                label: "Change the chart layout".to_owned(),
+                description: "Apply a layout preset, move a chart within the stack, resize a column, collapse it to its rail or expand it again, and move focus between charts.".to_owned(),
+                sensitive: false,
+                default_grant: DefaultGrant::Prompt,
+                profile_ceilings: BTreeSet::from([cockpit.clone()]),
             },
             PermissionDescriptor {
                 id: permission(ANNOTATE_ATTENTION_PERMISSION_ID),
@@ -592,6 +623,18 @@ impl ObserverContract {
                 inherits: BTreeSet::from([observer.clone()]),
                 permissions: BTreeSet::new(),
             },
+            ProfileDescriptor {
+                id: cockpit.clone(),
+                label: "Cockpit".to_owned(),
+                // Inherits the observer's reads — rearranging a window you
+                // cannot see is not a coherent grant — and deliberately *not*
+                // the annotator's writes. The two tiers answer different
+                // questions: one puts marks on a chart, the other decides
+                // which charts there are. A trader granting either should not
+                // be handed the other.
+                inherits: BTreeSet::from([observer.clone()]),
+                permissions: BTreeSet::new(),
+            },
         ];
 
         let mut registry = ControlRegistry::new();
@@ -622,6 +665,12 @@ impl ObserverContract {
             id: module(ANNOTATE_MODULE_ID),
             title: "Annotate".to_owned(),
             description: "Objects an operator places on the chart, attributed and removable."
+                .to_owned(),
+        })?;
+        registry.register_module(ModuleDescriptor {
+            id: module(super::layout::LAYOUT_MODULE_ID),
+            title: "Layout".to_owned(),
+            description: "The canvas: which charts are on screen, where they sit, and how wide."
                 .to_owned(),
         })?;
         registry.register_module(ModuleDescriptor {
@@ -659,6 +708,34 @@ impl ObserverContract {
             required_risk_flags: BTreeSet::new(),
             constraints: EffectConstraints {
                 required_read_only: Some(false),
+                allows_destructive: false,
+                durable_requires_reversible: true,
+                irreversible_transient_risk: None,
+                allows_risk_reducing: false,
+            },
+        })?;
+        registry.register_effect(EffectPolicy {
+            id: effect(COCKPIT_EFFECT_ID),
+            permission_floor: permission(COCKPIT_PERMISSION_ID),
+            profile_ceilings: BTreeSet::from([cockpit.clone()]),
+            confirmation_class: confirmation(NO_CONFIRMATION_ID),
+            risk_reducing_confirmation_class: None,
+            mcp_hint_floor: McpHintFloor {
+                read_only: false,
+                destructive: false,
+                // Applying the same layout twice leaves the same layout, which
+                // is what lets a client retry a dropped call without wondering
+                // what it did the first time.
+                idempotent: true,
+                open_world: false,
+            },
+            required_risk_flags: BTreeSet::new(),
+            constraints: EffectConstraints {
+                required_read_only: Some(false),
+                // Nothing here removes the trader's work. A layout that hides
+                // a pane keeps its drawings and its indicators, which is why
+                // rearranging is not destructive even when it takes a chart
+                // off the screen.
                 allows_destructive: false,
                 durable_requires_reversible: true,
                 irreversible_transient_risk: None,

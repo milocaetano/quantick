@@ -515,6 +515,48 @@ pub struct Tab {
 }
 
 impl Tab {
+    /// Move the context pane at `from` to `to`, keeping the rest in order.
+    ///
+    /// **The one reposition path.** The View menu, the keyboard and the
+    /// control plane all arrive here, so none of them can grow its own idea of
+    /// what moving a pane does; a drag gesture, when it lands, is sugar over
+    /// this call rather than a second implementation of it.
+    ///
+    /// Addresses are [`PaneIndex`]es, so `0` names the flow pane. The flow
+    /// pane does not move: it is the protagonist and its column is the one
+    /// thing every preset agrees on. Refused rather than clamped — a caller
+    /// that asked to move the heatmap meant something this cannot do, and
+    /// quietly moving a different pane would be worse than saying no.
+    ///
+    /// Returns whether anything moved.
+    pub fn move_context_pane(&mut self, from: PaneIndex, to: PaneIndex) -> bool {
+        let (Some(from_slot), Some(to_slot)) = (from.checked_sub(1), to.checked_sub(1)) else {
+            return false;
+        };
+        if from_slot >= self.time_panes.len() || to_slot >= self.time_panes.len() {
+            return false;
+        }
+        if from_slot == to_slot {
+            return false;
+        }
+        let pane = self.time_panes.remove(from_slot);
+        self.time_panes.insert(to_slot, pane);
+        // Focus follows the pane the trader just moved, so the next command
+        // lands on the chart they were working with rather than on whichever
+        // one slid into its place.
+        self.focus = PaneSide::Time;
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "LAYOUT_PANE_MOVED",
+            tab_id = self.id,
+            from = from,
+            to = to,
+            "a context pane was moved within the stack"
+        );
+        true
+    }
+
     /// How many panes this tab holds, drawn or not.
     #[must_use]
     pub fn pane_count(&self) -> PaneIndex {

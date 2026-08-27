@@ -2258,6 +2258,20 @@ impl QuantickApp {
     /// Read-only application roots available to the on-demand control
     /// projections. The gateway never receives `QuantickApp`; it receives the
     /// owned DTOs built from these narrow views.
+    /// One tab by position, for a control capability that resolved an id.
+    pub(crate) fn control_tab_at(&self, index: usize) -> Option<&Tab> {
+        self.tabs.get(index)
+    }
+
+    /// The mutable twin, for the cockpit tier.
+    ///
+    /// Narrow on purpose: the layout capabilities need to *change* a tab, and
+    /// handing them the whole application would let a later one reach past the
+    /// canvas into the feed or the simulator.
+    pub(crate) fn control_tab_at_mut(&mut self, index: usize) -> Option<&mut Tab> {
+        self.tabs.get_mut(index)
+    }
+
     pub(crate) fn control_tabs(&self) -> &[Tab] {
         &self.tabs
     }
@@ -6148,6 +6162,37 @@ impl QuantickApp {
                                 }
                             }
                         });
+                        // Reposition without a drag. WCAG 2.2's dragging rule
+                        // wants a single-pointer alternative to every drag, and
+                        // TradingView — the reference the trader named — moves
+                        // charts by a menu command rather than by dragging at
+                        // all. Both go through `Tab::move_context_pane`.
+                        let context_panes = self.active_tab().pane_count().saturating_sub(1);
+                        if context_panes > 1 {
+                            ui.menu_button("Move chart", |ui| {
+                                for slot in 1..=context_panes {
+                                    let up = ui
+                                        .add_enabled(slot > 1, egui::Button::new(format!(
+                                            "Chart {slot} up"
+                                        )))
+                                        .on_disabled_hover_text("already the top chart");
+                                    if up.clicked() {
+                                        self.active_tab_mut().move_context_pane(slot, slot - 1);
+                                        ui.close_menu();
+                                    }
+                                    let down = ui
+                                        .add_enabled(
+                                            slot < context_panes,
+                                            egui::Button::new(format!("Chart {slot} down")),
+                                        )
+                                        .on_disabled_hover_text("already the bottom chart");
+                                    if down.clicked() {
+                                        self.active_tab_mut().move_context_pane(slot, slot + 1);
+                                        ui.close_menu();
+                                    }
+                                }
+                            });
+                        }
                         ui.separator();
                         let panels_label = if self.dock.visible() {
                             "Hide panels"
@@ -30257,14 +30302,22 @@ plot(close)
             7 + crate::control::registered_action_count()
         );
         // Every observe-effect capability is read-only; everything else is an
-        // action of the annotate tier — discoverable to any client, reachable
-        // only under a profile the trader granted.
+        // action of a write tier — discoverable to any client, reachable only
+        // under a profile the trader granted.
+        //
+        // The list of write tiers is named rather than open on purpose. A
+        // capability arriving under an effect nobody added here is a capability
+        // whose consent text nobody wrote, and the trader has no surface on
+        // which to find it. Adding an effect is a deliberate act, and this is
+        // where it is acknowledged.
         for capability in capabilities {
             if capability["effect"] == "observe" {
                 assert_eq!(capability["read_only"], true, "{}", capability["id"]);
             } else {
                 assert!(
-                    capability["effect"] == "annotate" || capability["effect"] == "notify",
+                    capability["effect"] == "annotate"
+                        || capability["effect"] == "notify"
+                        || capability["effect"] == "cockpit",
                     "{} has an unexpected effect {}",
                     capability["id"],
                     capability["effect"]
