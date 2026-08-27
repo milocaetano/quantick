@@ -1310,11 +1310,17 @@ impl Tab {
     /// last split left `focus` set to. Time falls back to the flow pane for
     /// the frame between asking for the layout and the pane being built.
     pub fn focused_side(&self) -> PaneSide {
-        match (self.layout, self.has_time_pane()) {
-            (CanvasLayout::TimeAndFlow, true) => self.focus,
-            (CanvasLayout::Time, true) => PaneSide::Time,
-            _ => PaneSide::Flow,
+        // Read from what the layout *holds*, never from which variant it is.
+        // Matching one variant is how the three-pane canvas shipped with dead
+        // focus: a click set `self.focus` and every reader threw it away,
+        // because `TimeTimeAndFlow` was not in the arm.
+        if !self.has_time_pane() || !self.layout.shows_time() {
+            return PaneSide::Flow;
         }
+        if !self.layout.shows_flow() {
+            return PaneSide::Time;
+        }
+        self.focus
     }
 
     /// The pane on `side`, falling back to the flow pane when the time pane
@@ -1532,6 +1538,11 @@ impl Tab {
             .iter()
             .filter(|kind| matches!(kind, PaneKind::Time))
             .count();
+        // Set, never raised: switching to a three-pane layout and back before
+        // the next frame used to leave the count where the wider layout put
+        // it, and the tab then built a pane no layout had asked for — seeded
+        // from the whole retained tape and fed every trade thereafter.
+        self.pending_context_panes = wanted.saturating_sub(self.time_panes.len());
         if wanted > self.time_panes.len() {
             // Seeding replays every retained trade, which on a deep history
             // holds the render thread long enough to notice. Armed here and
@@ -1539,7 +1550,6 @@ impl Tab {
             // frame carrying the menu click paints the loading overlay first,
             // so the wait reads as the chart working rather than the app
             // hanging.
-            self.pending_context_panes = wanted - self.time_panes.len();
             self.loading.begin(LoadingTask::BarRebuild);
         }
         self.focus = match layout {
@@ -2104,14 +2114,15 @@ impl Tab {
     /// Let every pane's selectors settle, then mirror the result onto the
     /// rebuild indicator: it is up while *any* pane has a rebuild pending.
     pub fn apply_spec_changes(&mut self) {
-        self.apply_spec_change(PaneSide::Flow);
-        if self.has_time_pane() {
-            self.apply_spec_change(PaneSide::Time);
+        // Every pane, by address. Settling "the flow pane and the time pane"
+        // left the second stacked chart's selector armed for ever: its header
+        // chip lit, its interval changed, and its bars never rebuilt.
+        for pane in 0..self.pane_count() {
+            self.apply_spec_change_at(pane);
         }
-        let rebuilding = self.flow_pane.pending_spec.is_some()
-            || self
-                .time_pane()
-                .is_some_and(|pane| pane.pending_spec.is_some());
+        let rebuilding = self
+            .panes()
+            .any(|(pane, _side)| pane.pending_spec.is_some());
         self.loading.set_active(LoadingTask::BarRebuild, rebuilding);
     }
 
@@ -2129,9 +2140,13 @@ impl Tab {
     /// The two panes run this independently: the toolbar's BARS group governs
     /// the focused pane and the time pane's own header governs the time pane
     /// (§11), so a change to one pane must not rebuild the chart beside it.
-    fn apply_spec_change(&mut self, side: PaneSide) {
-        let desired = self.pane(side).current_spec();
-        let pane = self.pane_mut(side);
+    fn apply_spec_change_at(&mut self, index: PaneIndex) {
+        let Some(desired) = self.pane_at(index).map(ChartPane::current_spec) else {
+            return;
+        };
+        let Some(pane) = self.pane_at_mut(index) else {
+            return;
+        };
         if desired == *pane.state.spec() {
             // Selection and chart agree — nothing is pending any more (a feed
             // switch or reset may have rebuilt the state under a pending spec).
@@ -2169,10 +2184,12 @@ impl Tab {
                 // frame, with no coalescing in the worker, is the cost of
                 // sending both.
                 let refolded = self.refold_history_prefix();
-                if !refolded {
-                    self.pane_mut(side).send_indicator_rebuild();
+                if !refolded && let Some(pane) = self.pane_at_mut(index) {
+                    pane.send_indicator_rebuild();
                 }
-                let pane = self.pane_mut(side);
+                let Some(pane) = self.pane_at_mut(index) else {
+                    return;
+                };
                 let slot = anchor.and_then(|ms| pane.slot_at_time(ms));
                 let slots = pane.slots();
                 pane.viewport.reanchor(slot, slots);
@@ -3080,11 +3097,6 @@ impl Tab {
         }
     }
 
-    /// The divider between the panes, as a resize handle.
-    ///
-    /// Registered after both panes so it takes the drag that would otherwise
-    /// pan the chart behind its grab area, exactly as the live lane's own
-    /// divider does inside a pane.
     /// The collapsed context column: a rail with a grip, and the way back.
     ///
     /// A pane dragged to nothing has to leave something behind. Blender's
@@ -3153,6 +3165,11 @@ impl Tab {
         }
     }
 
+    /// The divider between the panes, as a resize handle.
+    ///
+    /// Registered after both panes so it takes the drag that would otherwise
+    /// pan the chart behind its grab area, exactly as the live lane's own
+    /// divider does inside a pane.
     fn draw_canvas_divider(&mut self, ui: &egui::Ui, divider: egui::Rect, canvas_width: f32) {
         #[cfg(test)]
         {
@@ -3173,15 +3190,21 @@ impl Tab {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
         if handle.dragged() && canvas_width > 0.0 {
-            let moved = self.split_fraction + handle.drag_delta().x / canvas_width;
-            if moved * canvas_width < canvas_layout::COLLAPSE_AT_PX {
+            // In pixels, because the gesture is in pixels and the floor is
+            // too. `split_fraction` carries the *asked-for* width rather than
+            // a floored one, so a hand that keeps pushing left keeps
+            // travelling: the splitter floors what it draws, and this is what
+            // makes "drag past the floor to dismiss it" a gesture a hand can
+            // finish rather than one that needs a single impossible frame.
+            let wanted_px = self.split_fraction * canvas_width + handle.drag_delta().x;
+            if wanted_px < canvas_layout::COLLAPSE_AT_PX {
                 // Dismissed, not squeezed. `split_fraction` is left where it
                 // was, so the rail springs back to the width the trader chose
                 // rather than to a default that would discard it.
                 self.context_collapsed = true;
             } else {
                 self.context_collapsed = false;
-                self.split_fraction = clamp_pane_fraction(moved);
+                self.split_fraction = clamp_pane_fraction(wanted_px / canvas_width);
             }
         }
     }

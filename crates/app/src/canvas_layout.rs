@@ -220,10 +220,17 @@ const _: () = assert!(
 
 /// Narrowest a pane may be squeezed to while it is still open.
 ///
-/// Below this a chart stops being one: the price axis alone claims most of it.
+/// A pane is not all chart. The price axis takes `app::AXIS_GUTTER` (64 px)
+/// off its right edge before a single candle is drawn, and the flow pane's
+/// tape takes more. This was 120 px and the doc said "below this a chart stops
+/// being one" — which was true of 120 px itself: a floored pane came out with
+/// **22 px** of chart on a 1124 px canvas, the axis having claimed the rest.
+/// The number has to leave a chart behind, not just a pane.
+///
 /// A trader who wants less than this wants the pane collapsed, which is a
-/// different request with a different affordance.
-pub const MIN_PANE_WIDTH_PX: f32 = 120.0;
+/// different request with a different affordance — and, at half this width,
+/// one the same drag reaches by carrying on.
+pub const MIN_PANE_WIDTH_PX: f32 = 240.0;
 
 /// What decides one pane's width.
 ///

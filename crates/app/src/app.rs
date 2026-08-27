@@ -2129,7 +2129,15 @@ impl QuantickApp {
                     event_code = "LAYOUT_AUTOSTART_UNKNOWN",
                     layout = %name,
                     action = "layout_left_as_is",
-                    "QUANTICK_LAYOUT names no canvas layout (flow, time, time+flow)"
+                    accepted = %crate::canvas_layout::LAYOUT_PRESETS
+                        .iter()
+                        .map(|preset| preset.id)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    // Built from the registry rather than spelled out: a
+                    // hand-written list goes stale the day a preset is added,
+                    // and a run that mistypes an id deserves the real one.
+                    "QUANTICK_LAYOUT names no canvas layout"
                 ),
             }
         }
@@ -2484,10 +2492,9 @@ impl QuantickApp {
         self.tabs
             .iter()
             .map(|tab| {
-                tab.flow_pane.drawings.authored_count()
-                    + tab
-                        .time_pane()
-                        .map_or(0, |pane| pane.drawings.authored_count())
+                tab.panes()
+                    .map(|(pane, _side)| pane.drawings.authored_count())
+                    .sum::<usize>()
             })
             .sum()
     }
@@ -2498,11 +2505,11 @@ impl QuantickApp {
     fn remove_every_authored_object(&mut self) -> usize {
         let mut removed = 0;
         for tab in &mut self.tabs {
-            for side in [crate::pane::PaneSide::Flow, crate::pane::PaneSide::Time] {
-                if side == crate::pane::PaneSide::Time && tab.time_panes.is_empty() {
-                    continue;
-                }
-                let pane = tab.pane_mut(side);
+            // Every pane the tab holds, not the two it used to. "Remove
+            // objects placed for you" promises to take them *all* back, and a
+            // sweep that skipped the second stacked chart would leave an
+            // assistant's marks behind while reporting the job done.
+            for pane in tab.panes_mut() {
                 let taken = pane.drawings.remove_authored();
                 if taken > 0 {
                     pane.sweep_strategy_orphans();
@@ -10377,8 +10384,8 @@ mod tests {
     use crate::config::{AppConfig, FeedCapabilities, FeedConfig, ProviderKind};
     use crate::drawings::{ChartPoint, PresetHost};
     use crate::feed::{FeedConnectionState, FeedEvent, FeedNotice};
+    use crate::pane::DEFAULT_PANE_FRACTION;
     use crate::pane::DrawingDrag;
-    use crate::pane::{DEFAULT_PANE_FRACTION, MIN_PANE_FRACTION};
     use crate::tab::BOOK_GENERATION_STRIDE;
     use crate::time_header;
 
@@ -23352,18 +23359,83 @@ crosshair = false
             drag_chart(&mut app, &ctx, grab, egui::pos2(grab.x + 400.0, grab.y));
             run_frame(&mut app, &ctx);
         }
+        // Asserted on what is *drawn*, not on the stored share. The floor
+        // moved: it is a width in pixels applied by the splitter every frame,
+        // rather than a quarter of the canvas held on the field. A trader is
+        // promised a readable flow pane, not a particular fraction, and the
+        // fraction was the wrong thing to pin — holding it as a second floor
+        // is what made collapse-by-drag unreachable.
+        let flow_width = app
+            .active_tab()
+            .flow_pane
+            .last_chart_area
+            .expect("laid out")
+            .width();
+        // "Stops at the minimum" is the claim, so the test is that it stops:
+        // shove it further still and the pane must not move. Asserted this way
+        // rather than against the floor in pixels, because the floor governs
+        // the *pane* while the only rect a test can read is the chart inside
+        // it — the price axis and the tape both take a slice first, and a test
+        // that re-derives their widths is a second copy of the layout.
+        let settled = flow_width;
+        for _ in 0..4 {
+            let grab = app
+                .active_tab()
+                .canvas_divider_rect()
+                .expect("registered")
+                .center();
+            drag_chart(&mut app, &ctx, grab, egui::pos2(grab.x + 400.0, grab.y));
+            run_frame(&mut app, &ctx);
+        }
+        let after = app
+            .active_tab()
+            .flow_pane
+            .last_chart_area
+            .expect("laid out")
+            .width();
         assert!(
-            (app.active_tab().split_fraction - (1.0 - MIN_PANE_FRACTION)).abs() < 1e-3,
-            "the flow pane keeps its quarter, got {}",
-            app.active_tab().split_fraction
+            (after - settled).abs() < 1.0,
+            "the flow pane kept shrinking past its floor: {settled}px then {after}px"
         );
+        assert!(after > 0.0, "the flow pane was squeezed away entirely");
+    }
+
+    /// Collapse has to be reachable by the hand that asks for it.
+    ///
+    /// The rail was verified through `QUANTICK_PANE_COLLAPSED`, which sets the
+    /// flag directly and proves only that the rail *renders*. The gesture was
+    /// unreachable: `split_fraction` was re-floored to a quarter of the canvas
+    /// every frame, so a drag restarted at ~400px each time and crossing the
+    /// 120px threshold needed one impossible frame. A capability a trader
+    /// cannot reach is not a capability, so this drives the divider the way a
+    /// hand does — repeatedly, leftward — and asserts the column gives way.
+    #[test]
+    fn dragging_the_divider_to_the_edge_collapses_the_column() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
         assert!(
-            app.active_tab()
-                .flow_pane
-                .last_chart_area
-                .expect("laid out")
-                .width()
-                > 0.0
+            !app.active_tab().context_collapsed,
+            "the split opens with its context column shown"
+        );
+
+        for _ in 0..8 {
+            let Some(divider) = app.active_tab().canvas_divider_rect() else {
+                break;
+            };
+            let grab = divider.center();
+            drag_chart(&mut app, &ctx, grab, egui::pos2(grab.x - 400.0, grab.y));
+            run_frame(&mut app, &ctx);
+        }
+
+        assert!(
+            app.active_tab().context_collapsed,
+            "dragging the divider to the edge must dismiss the column, not              stall against a floor the gesture can never cross"
+        );
+        // And the width it springs back to survived the gesture that put it
+        // away, which is the whole promise of the rail.
+        assert!(
+            app.active_tab().split_fraction > 0.0,
+            "the collapse spent the width it was meant to remember"
         );
     }
 
