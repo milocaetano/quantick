@@ -13733,6 +13733,84 @@ crosshair = false
         assert!(app.active_tab().flow_pane.strategies.is_empty());
     }
 
+    /// The bug the trader reported, walked through the real chart path: a
+    /// sell region drawn above the market, and a force bar that opens below
+    /// its lower edge and closes lower still. The bar never crossed into
+    /// the band, so nothing may rest on it — before the body rule this left
+    /// a limit order sitting inside a region the bar had not touched.
+    #[test]
+    fn a_force_bar_that_never_crossed_the_region_leaves_no_order_in_it() {
+        fn print(app: &mut QuantickApp, id: &mut u64, price: &str) {
+            *id += 1;
+            let trade = quantick_engine::Trade {
+                agg_id: *id,
+                timestamp_ms: 1_700_000_000_000 + *id as i64 * 100,
+                price: rust_decimal::Decimal::from_str_exact(price).unwrap(),
+                quantity: rust_decimal::Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            };
+            app.active_tab_mut()
+                .ingest_live_trade_at(&trade, trade.timestamp_ms);
+        }
+        fn bar(app: &mut QuantickApp, id: &mut u64, open: &str, close: &str) {
+            for _ in 0..49 {
+                print(app, id, open);
+            }
+            print(app, id, close);
+        }
+
+        let (mut app, _events, _commands, _book) = test_app();
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "rectangle")
+            .expect("the rectangle tool is registered");
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(0.0, 105.0));
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(30.0, 115.0));
+        }
+        let drawing = app.active_tab().flow_pane.drawings.items()[0].id;
+        let mut form =
+            crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell);
+        form.window = 3;
+        form.min_body = "0".to_owned();
+        form.on_break = "retest_limit".to_owned();
+        app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF no cut".to_owned())
+            .expect("the retest form compiles");
+
+        let mut id = 0u64;
+        bar(&mut app, &mut id, "102", "101");
+        bar(&mut app, &mut id, "101", "100");
+        // Body 4 over average (1+1+4)/3 = 2: a genuine force bar. It opens
+        // at 100, already below the region's 105 edge, and closes at 96 —
+        // the whole body sits under a band it never entered.
+        bar(&mut app, &mut id, "100", "96");
+
+        let tab = app.active_tab();
+        assert!(
+            tab.paper.working_orders().is_empty(),
+            "a bar that never cut the region rests no order in it: {:?}",
+            tab.paper.working_orders()
+        );
+        assert!(tab.paper.is_flat(), "and takes no position either");
+        let instance = tab
+            .flow_pane
+            .strategies
+            .for_drawing(drawing)
+            .expect("instance");
+        assert_eq!(
+            instance.armed.state(),
+            &quantick_strategy::ArmedState::Armed
+        );
+        assert_eq!(
+            instance.armed.status_line(),
+            "armed · trigger held: the body never cut the region",
+            "the badge names the gate rather than showing a bare armed"
+        );
+    }
+
     /// The user's retest flow end to end in the app: a sell preset with the
     /// retest option armed on a region, a force bar cutting below it, the
     /// limit resting at the cut edge — then the tape reaching the target
