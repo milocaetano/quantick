@@ -24,12 +24,16 @@
 //! the expected next tenant — dock beside it without surgery on the state
 //! machine.
 //!
-//! A trigger bar that closes *inside* the region fires a market entry. One
-//! that cuts **through** the region — closing beyond its edge in the
-//! trade's own direction — follows [`BreakPolicy`]: hold fire (the
-//! default), or rest a limit at the cut edge, bracketed off the trigger
-//! bar and cancelled if the tape reaches the bar's projected target before
-//! returning for the retest.
+//! The geometry is read off the trigger bar's **body** — open to close, its
+//! wicks ignored ([`BodyCut`]) — because a shadow poking into the band is
+//! the level being probed and refused, not cut. A bar that closes *inside*
+//! the region fires a market entry, whatever its open did. One that cut
+//! **through** the region — opening on the region's side of the edge the
+//! trade leaves by and closing beyond it — follows [`BreakPolicy`]: hold
+//! fire (the default), or rest a limit at the cut edge, bracketed off the
+//! trigger bar and cancelled if the tape reaches the bar's projected target
+//! before returning for the retest. A body that finished beyond an edge it
+//! never crossed cut nothing, and rests nothing.
 
 mod armed;
 mod force;
@@ -38,5 +42,5 @@ mod trigger;
 
 pub use armed::{ArmedState, ArmedStrategy, BreakPolicy, DisarmReason, Rearm, StrategyParams};
 pub use force::{BarVerdict, ForceBar, ForceParams, ForceWindow};
-pub use region::Region;
+pub use region::{BodyCut, Region};
 pub use trigger::{ForceTrigger, Signal, Trigger};

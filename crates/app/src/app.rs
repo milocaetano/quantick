@@ -9124,10 +9124,13 @@ impl QuantickApp {
                         "on a cut: rest a limit at the region edge until the target",
                     )
                     .on_hover_text(
-                        "a trigger bar closing beyond the region in the trade's direction \
-                         rests a limit at the edge it cut — the retest entry — bracketed \
-                         off the bar; the order removes itself if the bar's projected \
-                         target trades first. Off = a cut holds fire, as before.",
+                        "a trigger bar whose body cuts the region \
+                         — open on the region's side of the edge, close beyond it, \
+                         wicks ignored — rests a limit at the edge it cut, the \
+                         retest entry, bracketed off the bar; the order removes \
+                         itself if the bar's projected target trades first. A bar \
+                         that closed past an edge it never crossed rests nothing. \
+                         Off = a cut holds fire, as before.",
                     )
                     .changed()
                 {

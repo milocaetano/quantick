@@ -13,7 +13,7 @@ use quantick_engine::{Bar, Side};
 use quantick_sim::{Bracket, Command, OrderId, RejectReason, SimEvent};
 use rust_decimal::Decimal;
 
-use crate::region::Region;
+use crate::region::{BodyCut, Region};
 use crate::trigger::Trigger;
 
 /// What the instance does after its operation closes.
@@ -28,9 +28,10 @@ pub enum Rearm {
 }
 
 /// What the instance does when the trigger bar cuts *through* the region —
-/// same side, region active, but the close beyond the region's edge in the
-/// trade's direction. Closing inside still fires at market; closing beyond
-/// the *opposite* edge never fires at all.
+/// same side, region active, and a body ([`Region::body_cut`]) that opened
+/// on the region's side of the edge the trade leaves by and closed beyond
+/// it. Closing inside still fires at market; closing beyond the *opposite*
+/// edge, or beyond an edge the body never crossed, never fires at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BreakPolicy {
     /// Hold fire, exactly as before this option existed. The default.
@@ -268,27 +269,40 @@ impl ArmedStrategy {
             self.note = Some("projection invalid — held fire");
             return Vec::new();
         };
-        if region.contains(signal.reference) {
-            self.note = None;
-            self.state = ArmedState::Fired {
-                order_id: None,
-                retest: false,
-            };
-            return vec![Command::PlaceMarket {
-                side: self.params.side,
-                quantity: self.params.quantity,
-                bracket,
-            }];
-        }
-        // The close sits outside the region. A cut — beyond the edge in the
-        // trade's own direction — may still become a retest limit at that
-        // edge; beyond the opposite edge it is just a miss.
-        let edge = match self.params.side {
-            Side::Sell if signal.reference < region.low() => Some(region.low()),
-            Side::Buy if signal.reference > region.high() => Some(region.high()),
-            _ => None,
+        // The geometry is the bar's own body — open to close, wicks
+        // ignored — because that is what "the force bar cut the region"
+        // means to the trader reading the chart. `signal.reference` keeps
+        // its separate job: the price the bracket projects from.
+        let edge = match region.body_cut(self.params.side, bar.open, bar.close) {
+            BodyCut::ClosedInside => {
+                self.note = None;
+                self.state = ArmedState::Fired {
+                    order_id: None,
+                    retest: false,
+                };
+                return vec![Command::PlaceMarket {
+                    side: self.params.side,
+                    quantity: self.params.quantity,
+                    bracket,
+                }];
+            }
+            // The body crossed the edge and finished beyond it. Under the
+            // retest policy that edge is where the limit rests.
+            BodyCut::CutThrough { edge } => edge,
+            BodyCut::NoCut => {
+                // The bar closed past the edge but opened past it too: it
+                // travelled beyond a region it never crossed into. Resting
+                // a limit on that edge would put an order in a band this
+                // bar has no claim on.
+                self.note = Some("trigger held: the body never cut the region");
+                return Vec::new();
+            }
+            BodyCut::ClosedAway => {
+                self.note = Some("trigger held: closed outside region");
+                return Vec::new();
+            }
         };
-        let (BreakPolicy::RetestLimit, Some(edge)) = (self.params.on_break, edge) else {
+        let BreakPolicy::RetestLimit = self.params.on_break else {
             self.note = Some("trigger held: closed outside region");
             return Vec::new();
         };
@@ -1167,6 +1181,68 @@ mod tests {
         let commands = instance.on_closed_bar(&bar("108", "104"), &region, true, true);
         assert!(commands.is_empty());
         assert_eq!(instance.state(), &ArmedState::Armed);
+    }
+
+    /// The reported bug. A sell force bar whose whole body sits below the
+    /// region — it opened under the low and closed lower still — never cut
+    /// anything: the region is above it, untouched. Resting a limit on the
+    /// low there puts an order in a band the bar never crossed, which is
+    /// exactly what the trader saw on the chart.
+    #[test]
+    fn a_body_wholly_below_the_region_is_no_cut_and_rests_nothing() {
+        let region = Region::new(dec("105"), dec("115"));
+        let mut instance = retest_instance(Side::Sell);
+        instance.on_closed_bar(&bar("102", "101"), &region, true, true);
+        instance.on_closed_bar(&bar("101", "100"), &region, true, true);
+        // Body 4, ratio 2 — a genuine force bar, opening at 100 (below the
+        // 105 edge) and closing at 96. It cut nothing.
+        let commands = instance.on_closed_bar(&bar("100", "96"), &region, true, true);
+        assert!(
+            commands.is_empty(),
+            "a body that never crossed the edge rests no limit: {commands:?}"
+        );
+        assert_eq!(instance.state(), &ArmedState::Armed);
+        assert_eq!(
+            instance.status_line(),
+            "armed · trigger held: the body never cut the region"
+        );
+    }
+
+    /// The buy mirror: a body wholly above a buy region cut nothing either.
+    #[test]
+    fn a_body_wholly_above_the_region_is_no_cut_and_rests_nothing() {
+        let region = Region::new(dec("90"), dec("100"));
+        let mut instance = retest_instance(Side::Buy);
+        instance.on_closed_bar(&bar("101", "102"), &region, true, true);
+        instance.on_closed_bar(&bar("102", "103"), &region, true, true);
+        let commands = instance.on_closed_bar(&bar("103", "107"), &region, true, true);
+        assert!(
+            commands.is_empty(),
+            "a body that never crossed the edge rests no limit: {commands:?}"
+        );
+        assert_eq!(
+            instance.status_line(),
+            "armed · trigger held: the body never cut the region"
+        );
+    }
+
+    /// The open is read for the *cut*, never for the market entry: a bar
+    /// that opened clear above a sell region and closed inside it sells at
+    /// market, because where it opened does not matter once it finished in
+    /// the band.
+    #[test]
+    fn an_open_outside_the_region_never_blocks_a_close_inside_it() {
+        let region = Region::new(dec("100"), dec("110"));
+        let mut instance = retest_instance(Side::Sell);
+        instance.on_closed_bar(&bar("120", "119"), &region, true, true);
+        instance.on_closed_bar(&bar("119", "118"), &region, true, true);
+        // Body 4, ratio 2: opens at 112 above the 110 edge, closes at 108
+        // inside the band.
+        let commands = instance.on_closed_bar(&bar("112", "108"), &region, true, true);
+        assert!(
+            matches!(commands.as_slice(), [Command::PlaceMarket { .. }]),
+            "a close inside fires at market whatever the open did: {commands:?}"
+        );
     }
 
     /// The option only changes what a *cut* does: a close inside the region
