@@ -17,6 +17,7 @@ mod avwap;
 mod bands;
 mod bubble_presets;
 mod candle_view;
+mod canvas_layout;
 mod chart;
 mod chart_layers;
 mod config;

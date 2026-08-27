@@ -18,6 +18,7 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use crate::candle_view::draw_style_window;
+use crate::canvas_layout::PaneIdAllocator;
 use crate::chart_layers::{self, ChartLayer};
 use crate::config::AppConfig;
 use crate::dock::{Dock, DockEnv, DockTab};
@@ -60,14 +61,6 @@ const TIME_STRIP: f32 = 24.0;
 /// Id of the tab the window opens with.
 const FIRST_TAB_ID: u64 = 0;
 
-/// The (flow, time) pane ids for tab `id`.
-///
-/// Pane ids namespace every egui interaction a pane registers, so they have to
-/// be unique across the whole window, not just within a tab — two tabs sharing
-/// them would share a drag the moment both had been on screen.
-const fn pane_ids(tab: u64) -> (u64, u64) {
-    (tab * 2, tab * 2 + 1)
-}
 /// The note being typed on the chart: which object, and how it looked before
 /// the first keystroke.
 ///
@@ -783,6 +776,10 @@ pub struct QuantickApp {
     /// Handed out to new tabs and never reused, so a closed tab's ids can
     /// never be mistaken for a living one's.
     next_tab_id: u64,
+    /// The window's one source of pane ids. Pane ids namespace egui
+    /// interaction state across the whole window rather than within a tab, so
+    /// this may not be per-tab state: two panes sharing an id share a drag.
+    pane_ids: PaneIdAllocator,
     /// The tab the indicator state file describes — the one opened from the
     /// config defaults at startup, which is the workspace the file was written
     /// for. Cleared when that tab closes: the set it recorded is gone, and
@@ -1296,9 +1293,10 @@ impl QuantickApp {
             paper_state.trades_dir.as_deref(),
             &state_path,
         );
+        let mut pane_ids = PaneIdAllocator::new();
         let mut tab = Tab::new(
             FIRST_TAB_ID,
-            pane_ids(FIRST_TAB_ID),
+            pane_ids.alloc_pair(),
             feed_id.into(),
             symbol.into(),
             spec,
@@ -1316,6 +1314,7 @@ impl QuantickApp {
             tabs: vec![tab],
             active_tab: 0,
             next_tab_id: FIRST_TAB_ID + 1,
+            pane_ids,
             persisted_tab: Some(FIRST_TAB_ID),
             source_picker: None,
             added_symbols: symbols_file::load(&symbols_file::default_path()),
@@ -2764,7 +2763,8 @@ impl QuantickApp {
             .time_pane
             .as_ref()
             .map_or(flow_inverted, |pane| pane.price_view.is_inverted());
-        let mut tab = Tab::new(id, pane_ids(id), feed_id, symbol, spec, feed, trades_dir);
+        let ids = self.pane_ids.alloc_pair();
+        let mut tab = Tab::new(id, ids, feed_id, symbol, spec, feed, trades_dir);
         tab.paper.set_cmd_trading(cmd_trading);
         self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
