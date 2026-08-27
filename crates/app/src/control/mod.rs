@@ -35,7 +35,7 @@ pub(crate) use actions::{MARK_CAPABILITY_ID, MARK_CAPABILITY_VERSION};
 #[cfg(test)]
 pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID};
 #[cfg(test)]
-pub(crate) use evidence::RawScreenshot;
+pub(crate) use evidence::{RawScreenshot, ScreenshotPixels};
 
 /// One journal entry a test can record, so a test about *how many* events a
 /// read returns does not have to reach into the journal's own vocabulary.

@@ -30407,7 +30407,7 @@ plot(close)
             width_px: width,
             height_px: height,
             pixels_per_point: 1.0,
-            rgba,
+            rgba: crate::control::ScreenshotPixels::new(move || rgba),
         }
     }
 
@@ -30417,12 +30417,14 @@ plot(close)
             width_px: width,
             height_px: height,
             pixels_per_point: 1.0,
-            rgba: (0..(width as usize * height as usize))
-                .flat_map(|index| {
-                    let shade = u8::try_from(index % 251).unwrap_or(0);
-                    [shade, 0x20, 0x30, 0xff]
-                })
-                .collect(),
+            rgba: crate::control::ScreenshotPixels::new(move || {
+                (0..(width as usize * height as usize))
+                    .flat_map(|index| {
+                        let shade = u8::try_from(index % 251).unwrap_or(0);
+                        [shade, 0x20, 0x30, 0xff]
+                    })
+                    .collect()
+            }),
         }
     }
 

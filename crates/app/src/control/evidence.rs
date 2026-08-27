@@ -97,6 +97,11 @@ const BUNDLE_MEDIA_TYPE: &str = "application/json; charset=utf-8";
 /// The renderer this build links, from the `eframe` feature the application
 /// manifest selects. Reported so a defect that reproduces on one backend can
 /// be told apart from one that does not.
+///
+/// A `const`, because the feature it names is not visible to this crate as a
+/// `cfg` — so `the_reported_graphics_backend_is_the_one_the_manifest_selects`
+/// reads the manifest and fails if the two ever part company. A bundle that
+/// named the wrong renderer would send an investigation after the wrong bug.
 const GRAPHICS_BACKEND: &str = "glow";
 /// The subject every screenshot gap is filed under, so a client branching on
 /// "is there an image" matches one name whatever the reason is.
@@ -455,18 +460,48 @@ pub(crate) struct EvidenceChunk {
 // The screenshot, before it is encoded
 // ---------------------------------------------------------------------------
 
-/// One frame's pixels as the application thread hands them over.
+/// One frame as the application thread hands it over: its geometry now, and
+/// its bytes when somebody is ready to pay for them.
 ///
-/// Plain rows of bytes, deliberately: the interface toolkit's own image type
-/// stops at the gateway, so nothing downstream of here — the bundle, the
-/// store, the wire — has an opinion about how the window is drawn.
-#[derive(Clone, Debug, PartialEq)]
+/// The interface toolkit's own image type stops at the gateway — nothing
+/// downstream of here has an opinion about how the window is drawn — but the
+/// *copy* out of it does not belong on the application thread either. A 4K
+/// framebuffer is eight million pixels, and converting them between two frames
+/// is a visible hitch the moment an agent asks for a picture, inside a budget
+/// measured in microseconds. So the geometry travels eagerly and the rows
+/// travel as a closure the response worker calls, beside the PNG encoding it
+/// was always going to pay for.
 pub(crate) struct RawScreenshot {
     pub width_px: u32,
     pub height_px: u32,
     pub pixels_per_point: f32,
-    /// Eight-bit RGBA, row-major, `width_px * height_px * 4` bytes.
-    pub rgba: Vec<u8>,
+    /// Eight-bit straight-alpha RGBA, row-major,
+    /// `width_px * height_px * 4` bytes — produced on demand, once.
+    pub rgba: ScreenshotPixels,
+}
+
+/// The rows of one frame, still unpaid for.
+pub(crate) struct ScreenshotPixels(Box<dyn FnOnce() -> Vec<u8> + Send>);
+
+impl ScreenshotPixels {
+    pub fn new(produce: impl FnOnce() -> Vec<u8> + Send + 'static) -> Self {
+        Self(Box::new(produce))
+    }
+
+    fn take(self) -> Vec<u8> {
+        (self.0)()
+    }
+}
+
+impl std::fmt::Debug for RawScreenshot {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RawScreenshot")
+            .field("width_px", &self.width_px)
+            .field("height_px", &self.height_px)
+            .field("pixels_per_point", &self.pixels_per_point)
+            .finish_non_exhaustive()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -881,7 +916,7 @@ impl EvidenceCapture {
         };
         let image = match self.screenshot {
             None => None,
-            Some(raw) => match encode_screenshot(&raw, capture_revision, scene.as_ref()) {
+            Some(raw) => match encode_screenshot(raw, capture_revision, scene.as_ref()) {
                 Ok(image) => Some(image),
                 Err(gap) => {
                     gaps.push(gap);
@@ -1098,22 +1133,29 @@ fn fixed_gaps() -> Vec<EvidenceGap> {
 /// two have to share a capture revision: a scene from another frame would name
 /// controls that have since moved.
 fn encode_screenshot(
-    raw: &RawScreenshot,
+    raw: RawScreenshot,
     capture_revision: WireU64,
     scene: Option<&SceneSnapshot>,
 ) -> Result<EvidenceImage, EvidenceGap> {
-    let expected = (raw.width_px as usize)
-        .saturating_mul(raw.height_px as usize)
+    let (width_px, height_px) = (raw.width_px, raw.height_px);
+    let expected = (width_px as usize)
+        .saturating_mul(height_px as usize)
         .saturating_mul(4);
-    if raw.width_px == 0
-        || raw.height_px == 0
+    if width_px == 0
+        || height_px == 0
         || !raw.pixels_per_point.is_finite()
         || raw.pixels_per_point <= 0.0
-        || raw.rgba.len() != expected
     {
         return Err(screenshot_gap("frame_pixels_inconsistent"));
     }
-    let png = encode_png(raw).map_err(|_| screenshot_gap("image_encoding_failed"))?;
+    // The rows are produced here, on the response worker, and checked against
+    // the geometry that travelled with them before anything is encoded.
+    let rgba = raw.rgba.take();
+    if rgba.len() != expected {
+        return Err(screenshot_gap("frame_pixels_inconsistent"));
+    }
+    let png = encode_png(width_px, height_px, &rgba)
+        .map_err(|_| screenshot_gap("image_encoding_failed"))?;
     // Against the size the image costs *inside the document*, not the size it
     // is on its own: it travels as base64, and comparing the raw length would
     // admit an image a third larger than the ceiling admits.
@@ -1152,7 +1194,7 @@ fn encode_screenshot(
                     });
                     continue;
                 };
-                match region_of(&control.control_id, bounds, scale, raw) {
+                match region_of(&control.control_id, bounds, scale, width_px, height_px) {
                     Some(region) => control_regions.push(region),
                     None => controls_without_region.push(EvidenceGap {
                         subject: control.control_id.clone(),
@@ -1165,8 +1207,8 @@ fn encode_screenshot(
 
     let descriptor = EvidenceScreenshot {
         capture_revision,
-        width_px: raw.width_px,
-        height_px: raw.height_px,
+        width_px,
+        height_px,
         pixels_per_point,
         format: SCREENSHOT_FORMAT.to_owned(),
         image_digest: raw_sha256(&png),
@@ -1192,7 +1234,8 @@ fn region_of(
     control_id: &str,
     bounds: &SceneBoundsSnapshot,
     scale: f64,
-    raw: &RawScreenshot,
+    image_width_px: u32,
+    image_height_px: u32,
 ) -> Option<EvidenceControlRegion> {
     let x = bounds.x_pt.as_str().parse::<f64>().ok()? * scale;
     let y = bounds.y_pt.as_str().parse::<f64>().ok()? * scale;
@@ -1202,8 +1245,8 @@ fn region_of(
         && y >= 0.0
         && width >= 0.0
         && height >= 0.0
-        && x + width <= f64::from(raw.width_px)
-        && y + height <= f64::from(raw.height_px);
+        && x + width <= f64::from(image_width_px)
+        && y + height <= f64::from(image_height_px);
     Some(EvidenceControlRegion {
         control_id: control_id.to_owned(),
         x_px: canonical_f64(x, REGION_DECIMAL_PLACES)?,
@@ -1214,14 +1257,14 @@ fn region_of(
     })
 }
 
-fn encode_png(raw: &RawScreenshot) -> Result<Vec<u8>, png::EncodingError> {
+fn encode_png(width_px: u32, height_px: u32, rgba: &[u8]) -> Result<Vec<u8>, png::EncodingError> {
     let mut buffer = Vec::new();
     {
-        let mut encoder = png::Encoder::new(&mut buffer, raw.width_px, raw.height_px);
+        let mut encoder = png::Encoder::new(&mut buffer, width_px, height_px);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder.write_header()?;
-        writer.write_image_data(&raw.rgba)?;
+        writer.write_image_data(rgba)?;
     }
     Ok(buffer)
 }
@@ -1691,6 +1734,36 @@ mod tests {
         store.insert(bundle(1, 32, 0, 60_000), 0).unwrap();
         store.clear();
         assert_eq!(store.retained(), 0);
+    }
+
+    /// The renderer a bundle names is the renderer the build links.
+    ///
+    /// The feature is chosen in the manifest and is invisible to this crate as
+    /// a `cfg`, so the constant is checked against the manifest itself — the
+    /// repo's own answer for a rule the compiler cannot see. Switching to
+    /// `wgpu` without touching the constant would have every bundle blame the
+    /// wrong backend.
+    #[test]
+    fn the_reported_graphics_backend_is_the_one_the_manifest_selects() {
+        let manifest = include_str!("../../Cargo.toml");
+        let eframe = manifest
+            .split("eframe = ")
+            .nth(1)
+            .expect("the manifest depends on eframe");
+        let features = eframe
+            .split_once(']')
+            .expect("the eframe dependency lists features")
+            .0;
+        assert!(
+            features.contains(&format!("\"{GRAPHICS_BACKEND}\"")),
+            "the bundle reports `{GRAPHICS_BACKEND}` but the manifest selects: {features}"
+        );
+        // And only that one, or a bundle naming a single renderer is guessing.
+        assert!(
+            !features.contains("\"wgpu\""),
+            "the manifest selects a second renderer, so the reported backend is \
+             ambiguous: {features}"
+        );
     }
 
     /// The bind address explains a bridge failure without naming the network

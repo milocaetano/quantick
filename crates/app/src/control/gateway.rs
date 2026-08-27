@@ -1286,18 +1286,33 @@ impl ControlAccess {
         if !self.screenshot_armed {
             return;
         }
+        // Inside the input lock: clone the image's handle and nothing else.
+        // The rows are converted by the closure below, on the response worker
+        // — a 4K framebuffer is eight million pixels, and paying for that here
+        // would blow a 250 microsecond frame budget by two orders of
+        // magnitude every time an agent asks for a picture.
         let taken = ctx.input(|input| {
+            let pixels_per_point = input.pixels_per_point();
             input.events.iter().find_map(|event| match event {
-                eframe::egui::Event::Screenshot { image, .. } => Some(RawScreenshot {
-                    width_px: u32::try_from(image.size[0]).unwrap_or(0),
-                    height_px: u32::try_from(image.size[1]).unwrap_or(0),
-                    pixels_per_point: input.pixels_per_point(),
-                    rgba: image
-                        .pixels
-                        .iter()
-                        .flat_map(|pixel| pixel.to_array())
-                        .collect(),
-                }),
+                eframe::egui::Event::Screenshot { image, .. } => {
+                    let image = Arc::clone(image);
+                    Some(RawScreenshot {
+                        width_px: u32::try_from(image.size[0]).unwrap_or(0),
+                        height_px: u32::try_from(image.size[1]).unwrap_or(0),
+                        pixels_per_point,
+                        rgba: super::evidence::ScreenshotPixels::new(move || {
+                            image
+                                .pixels
+                                .iter()
+                                // Unmultiplied: the toolkit stores colours
+                                // premultiplied by alpha and a PNG's are not,
+                                // so a translucent surface would darken on the
+                                // way out if the raw bytes were copied across.
+                                .flat_map(eframe::egui::Color32::to_srgba_unmultiplied)
+                                .collect()
+                        }),
+                    })
+                }
                 _ => None,
             })
         });
