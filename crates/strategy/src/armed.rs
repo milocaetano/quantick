@@ -62,6 +62,38 @@ pub struct StrategyParams {
     pub rearm: Rearm,
     /// What a region-cutting trigger bar does. See [`BreakPolicy`].
     pub on_break: BreakPolicy,
+    /// Whether this instance trades or only watches. See [`Execution`].
+    pub execution: Execution,
+}
+
+/// What an instance does when its setup happens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Execution {
+    /// Place the order, exactly as before this option existed. The default.
+    #[default]
+    Paper,
+    /// Watch and judge, and place nothing — ever. The instance still runs
+    /// its ruler, still tests the region, and still reports the
+    /// opportunity, so a [signal alarm](crate::SignalAlarm) riding it
+    /// speaks on every setup; it simply never emits a command.
+    ///
+    /// This is for the trader whose hands are on another platform. The
+    /// simulated position such a trader does not intend to take is not
+    /// harmless bookkeeping: it occupies the account, and the flat gate
+    /// would then hold the *next* opportunity — silencing exactly what
+    /// they armed the instance to be told about.
+    AlarmOnly,
+}
+
+/// Where a qualifying bar puts the entry — the shape of an opportunity,
+/// with no account and no order in it yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opportunity {
+    /// The body closed inside the region: a market entry.
+    Market,
+    /// The body cut through the region and finished beyond `edge`, which
+    /// the retest limit rests on.
+    Retest { edge: Decimal },
 }
 
 /// Why an instance stopped watching the market.
@@ -160,6 +192,65 @@ pub enum ArmedState {
     },
 }
 
+/// Does this signal belong to this instance at all — right side, live
+/// region? The first half of the opportunity test.
+///
+/// Split from [`entry_geometry`] rather than fused with it because the
+/// order path has to consult the account *between* the two halves: a busy
+/// account holds an order that the geometry would otherwise have placed.
+/// The alarm runs the two halves back to back, and both surfaces read the
+/// same two functions — there is no second copy of either to drift.
+fn signal_is_ours(
+    params: &StrategyParams,
+    region_active: bool,
+    signal: &Signal,
+) -> Result<(), &'static str> {
+    if signal.side != params.side {
+        return Err("trigger held: opposite side");
+    }
+    if !region_active {
+        return Err("trigger held: region not active on this bar");
+    }
+    Ok(())
+}
+
+/// Where this bar's body puts the entry, or the named reason there is no
+/// entry to put. The second half of the opportunity test.
+///
+/// The geometry is the bar's own body — open to close, wicks ignored —
+/// because that is what "the force bar cut the region" means to the trader
+/// reading the chart. A signal's `reference` keeps its separate job: the
+/// price the bracket projects from.
+///
+/// Each arm is complete on its own, policy included, so that a fifth
+/// [`BodyCut`] or a third [`BreakPolicy`] cannot fall through into a
+/// neighbour's outcome and rest a real order by accident. Every refusal
+/// names the gate that actually decided it — the geometry when the bar
+/// could never have traded, the policy when the option was simply off.
+fn entry_geometry(
+    params: &StrategyParams,
+    region: &Region,
+    bar: &Bar,
+) -> Result<Opportunity, &'static str> {
+    match region.body_cut(params.side, bar) {
+        BodyCut::ClosedInside => Ok(Opportunity::Market),
+        // The body crossed the edge and finished beyond it — the one
+        // geometry the retest option exists for. With the option off, the
+        // policy is what held fire, and the badge says so rather than
+        // blaming a bar that did its part.
+        BodyCut::CutThrough { edge } => match params.on_break {
+            BreakPolicy::RetestLimit => Ok(Opportunity::Retest { edge }),
+            BreakPolicy::Ignore => Err("trigger held: cut the region, retest option off"),
+        },
+        // The bar closed past the edge but opened past it too: it travelled
+        // beyond a region it never crossed into. Resting a limit on that
+        // edge would put an order in a band this bar has no claim on. True
+        // whatever the policy says, so the geometry is the honest reason.
+        BodyCut::NoCut => Err("trigger held: the body never cut the region"),
+        BodyCut::ClosedAway => Err("trigger held: closed outside region"),
+    }
+}
+
 /// One strategy armed on one region.
 pub struct ArmedStrategy {
     params: StrategyParams,
@@ -168,6 +259,11 @@ pub struct ArmedStrategy {
     /// One-line note about the last non-fire (an invalid projection), for
     /// status honesty.
     note: Option<&'static str>,
+    /// Whether the bar most recently fed to [`ArmedStrategy::on_closed_bar`]
+    /// presented this instance's setup — judged with the account and the
+    /// state machine deliberately left out. The alarm's closed-bar reading;
+    /// the order path never consults it.
+    last_close_opportunity: Option<Opportunity>,
 }
 
 impl std::fmt::Debug for ArmedStrategy {
@@ -188,12 +284,49 @@ impl ArmedStrategy {
             trigger,
             state: ArmedState::Armed,
             note: None,
+            last_close_opportunity: None,
         }
     }
 
     #[must_use]
     pub fn params(&self) -> &StrategyParams {
         &self.params
+    }
+
+    /// Whether the last closed bar presented this instance's setup.
+    ///
+    /// This is the *opportunity*, not the trade: the account, the state
+    /// machine and [`Execution::AlarmOnly`] have no say in it. A trader
+    /// reading it is asking "did my setup just happen?", which stays true
+    /// whether or not this instance was in a position to act — and that is
+    /// precisely the question a [signal alarm](crate::SignalAlarm) sounds
+    /// for someone who will act somewhere else.
+    #[must_use]
+    pub fn last_close_opportunity(&self) -> Option<Opportunity> {
+        self.last_close_opportunity
+    }
+
+    /// The same question, asked of the bar still **forming**.
+    ///
+    /// Read-only by design, all the way down: the ruler is weighed rather
+    /// than advanced ([`Trigger::preview`]), no state is touched, and no
+    /// command can result. The answer is provisional — the bar keeps
+    /// moving, and it may stop qualifying before it closes — so a consumer
+    /// showing it owes the trader the word "preview".
+    ///
+    /// It reads the same two gate functions the order path does, so the
+    /// alarm cannot come to answer this question differently from the
+    /// strategy that will trade it.
+    #[must_use]
+    pub fn preview_opportunity(
+        &self,
+        bar: &Bar,
+        region: &Region,
+        region_active: bool,
+    ) -> Option<Opportunity> {
+        let signal = self.trigger.preview(bar)?;
+        signal_is_ours(&self.params, region_active, &signal).ok()?;
+        entry_geometry(&self.params, region, bar).ok()
     }
 
     #[must_use]
@@ -222,6 +355,16 @@ impl ArmedStrategy {
         account_flat: bool,
     ) -> Vec<Command> {
         let signal = self.trigger.on_closed_bar(bar);
+        // The *opportunity* is judged for every closed bar, whatever the
+        // state machine is doing and whoever holds the account: it is a
+        // statement about the setup, not about this instance's ability to
+        // act on it. The alarm reads it from here, which is how a trader
+        // executing on another platform still hears a signal their spent
+        // one-shot instance would never trade.
+        self.last_close_opportunity = signal.as_ref().and_then(|signal| {
+            signal_is_ours(&self.params, region_active, signal).ok()?;
+            entry_geometry(&self.params, region, bar).ok()
+        });
 
         // A live operation ends the moment the account is flat again: its
         // bracket fired, or a human hand closed it — the instance does not
@@ -245,36 +388,38 @@ impl ArmedStrategy {
             self.note = None;
             return Vec::new();
         };
-        if signal.side != self.params.side {
-            self.note = Some("trigger held: opposite side");
+        if let Err(note) = signal_is_ours(&self.params, region_active, &signal) {
+            self.note = Some(note);
             return Vec::new();
         }
-        if !region_active {
-            self.note = Some("trigger held: region not active on this bar");
+        // The geometry runs before the account and before the projection: a
+        // bar whose body never came near the region could not have traded
+        // under any multiplier or any account state, and blaming an
+        // unpriceable leg — or a busy account — there sends the trader
+        // tuning something that was never the reason. The badge names the
+        // gate that actually decided.
+        let opportunity = match entry_geometry(&self.params, region, bar) {
+            Ok(opportunity) => opportunity,
+            Err(note) => {
+                self.note = Some(note);
+                return Vec::new();
+            }
+        };
+        // An instance that places no orders stops here, having judged the
+        // bar exactly as a trading one would — geometry included, so its
+        // badge still names what held a silent alarm. It is not disarmed
+        // and not spent: it keeps watching, which is the whole reason a
+        // trader arms one.
+        if self.params.execution == Execution::AlarmOnly {
+            self.note = Some("alarm only — no order placed");
             return Vec::new();
         }
         if !account_flat {
             self.note = Some("trigger held: account not flat");
             return Vec::new();
         }
-        // The geometry is judged before the projection: a bar whose body
-        // never came near the region could not have traded under any
-        // multiplier, and blaming an unpriceable leg there sends the
-        // trader tuning numbers that were never the reason.
-        //
-        // The geometry is the bar's own body — open to close, wicks
-        // ignored — because that is what "the force bar cut the region"
-        // means to the trader reading the chart. `signal.reference` keeps
-        // its separate job: the price the bracket projects from.
-        //
-        // Each arm below is complete on its own, policy included, so that a
-        // fifth `BodyCut` or a third `BreakPolicy` cannot fall through into
-        // a neighbour's outcome and rest a real order by accident. Every
-        // hold names the gate that actually decided it — the geometry when
-        // the bar could never have traded, the policy when the option was
-        // simply off.
-        let edge = match region.body_cut(self.params.side, bar) {
-            BodyCut::ClosedInside => {
+        let edge = match opportunity {
+            Opportunity::Market => {
                 let Some(bracket) = self.project(&signal) else {
                     return Vec::new();
                 };
@@ -289,30 +434,7 @@ impl ArmedStrategy {
                     bracket,
                 }];
             }
-            // The body crossed the edge and finished beyond it — the one
-            // geometry the retest option exists for. With the option off,
-            // the policy is what held fire, and the badge says so rather
-            // than blaming a bar that did its part.
-            BodyCut::CutThrough { edge } => match self.params.on_break {
-                BreakPolicy::RetestLimit => edge,
-                BreakPolicy::Ignore => {
-                    self.note = Some("trigger held: cut the region, retest option off");
-                    return Vec::new();
-                }
-            },
-            BodyCut::NoCut => {
-                // The bar closed past the edge but opened past it too: it
-                // travelled beyond a region it never crossed into. Resting
-                // a limit on that edge would put an order in a band this
-                // bar has no claim on. True whatever the policy says, so
-                // the geometry is the honest reason.
-                self.note = Some("trigger held: the body never cut the region");
-                return Vec::new();
-            }
-            BodyCut::ClosedAway => {
-                self.note = Some("trigger held: closed outside region");
-                return Vec::new();
-            }
+            Opportunity::Retest { edge } => edge,
         };
         let Some(bracket) = self.project(&signal) else {
             return Vec::new();
@@ -671,6 +793,7 @@ mod tests {
             sl_mult: Decimal::ONE,
             rearm: Rearm::OneShot,
             on_break: BreakPolicy::Ignore,
+            execution: Execution::Paper,
         }
     }
 
@@ -1022,6 +1145,47 @@ mod tests {
             }]
         );
         assert!(instance.status_line().starts_with("fired"));
+    }
+
+    /// The other half of the port's new method: a ruler with no honest
+    /// provisional reading keeps the default and is simply never previewed.
+    ///
+    /// The fake below fires on *every* closed bar and declines to preview,
+    /// which is exactly the pair that would expose a consumer guessing. An
+    /// alarm that fell back to the closed-bar path for a trigger saying "I
+    /// cannot judge a bar that has not finished" would announce a signal
+    /// that ruler never made.
+    #[test]
+    fn a_trigger_that_declines_to_preview_is_never_previewed() {
+        struct EveryClosedBar;
+        impl Trigger for EveryClosedBar {
+            fn on_closed_bar(&mut self, bar: &Bar) -> Option<Signal> {
+                Some(Signal {
+                    side: Side::Buy,
+                    reference: bar.close,
+                    projection: Decimal::ONE,
+                })
+            }
+            fn status(&self) -> String {
+                "always".to_owned()
+            }
+        }
+        let region = Region::new(dec("100"), dec("110"));
+        let mut instance = ArmedStrategy::new(params(Side::Buy), Box::new(EveryClosedBar));
+        let forming = bar("100", "105");
+        assert_eq!(
+            instance.preview_opportunity(&forming, &region, true),
+            None,
+            "the default preview says nothing, and nothing is what the caller hears"
+        );
+        // The same bar, closed, is a signal — so the silence above is the
+        // port's default speaking, not the fixture failing to qualify.
+        assert!(
+            !instance
+                .on_closed_bar(&forming, &region, true, true)
+                .is_empty()
+        );
+        assert_eq!(instance.last_close_opportunity(), Some(Opportunity::Market));
     }
 
     /// "Never fire unprotected" extends past the fill: a bracket the
@@ -1623,5 +1787,252 @@ mod tests {
     fn the_force_trigger_declares_its_warmup_depth() {
         let instance = force_instance(Side::Buy);
         assert_eq!(instance.trigger().warmup_bars(), 3);
+    }
+
+    fn alarm_only_instance(side: Side) -> ArmedStrategy {
+        ArmedStrategy::new(
+            StrategyParams {
+                execution: Execution::AlarmOnly,
+                ..params(side)
+            },
+            Box::new(ForceTrigger::new(ForceParams {
+                window: 3,
+                min_factor: dec("1.5"),
+                max_factor: dec("2.5"),
+                min_body: Decimal::ZERO,
+            })),
+        )
+    }
+
+    /// The sentence the whole alarm was built for: a busy account silences
+    /// the *order* and says so, and the opportunity is reported anyway. A
+    /// trader executing on another platform does not care that this
+    /// simulator is occupied — the setup is the thing they armed to hear.
+    #[test]
+    fn a_busy_account_holds_the_order_and_still_reports_the_opportunity() {
+        let region = Region::new(dec("100"), dec("110"));
+        let mut instance = force_instance(Side::Buy);
+        instance.on_closed_bar(&bar("100", "101"), &region, true, false);
+        instance.on_closed_bar(&bar("101", "102"), &region, true, false);
+        let commands = instance.on_closed_bar(&bar("102", "106"), &region, true, false);
+
+        assert!(commands.is_empty(), "a busy account places nothing");
+        assert_eq!(
+            instance.status_line(),
+            "armed · trigger held: account not flat"
+        );
+        assert_eq!(
+            instance.last_close_opportunity(),
+            Some(Opportunity::Market),
+            "the setup happened, whoever was holding the account"
+        );
+    }
+
+    /// A spent one-shot instance has stopped trading, not stopped watching.
+    /// Its ruler keeps running (the port's contract) and so does the
+    /// opportunity it reports — which is what keeps the alarm speaking
+    /// after the single operation the trader allowed it has closed.
+    #[test]
+    fn a_finished_one_shot_still_reports_the_opportunities_it_will_not_take() {
+        let region = Region::new(dec("100"), dec("110"));
+        let mut instance = force_instance(Side::Buy);
+        assert!(!warm_then_force(&mut instance, &region).is_empty());
+        let order = quantick_sim::Order {
+            id: OrderId(7),
+            side: Side::Buy,
+            kind: quantick_sim::EntryKind::Market,
+            price: None,
+            quantity: Decimal::ONE,
+            bracket: Bracket::none(),
+            cancel_at: None,
+            flat_only: false,
+            placed_ms: 0,
+        };
+        let _ = instance.on_sim_events(&[SimEvent::Placed(order)]);
+        let _ = instance.on_sim_events(&[SimEvent::Filled(quantick_sim::Fill {
+            timestamp_ms: 1,
+            agg_id: 10,
+            side: Side::Buy,
+            price: dec("106"),
+            quantity: Decimal::ONE,
+            role: quantick_sim::FillRole::Entry(OrderId(7)),
+        })]);
+        // Flat again on the next bar: the one shot is spent.
+        instance.on_closed_bar(&bar("106", "107"), &region, true, true);
+        assert_eq!(instance.state(), &ArmedState::Done);
+
+        // Another force bar closing inside the region, with nothing left to
+        // trade it: bodies 1, 1, then 4 — ratio 2, the same force.
+        instance.on_closed_bar(&bar("107", "108"), &region, true, true);
+        let commands = instance.on_closed_bar(&bar("104", "108"), &region, true, true);
+        assert!(commands.is_empty(), "a finished one shot places nothing");
+        assert_eq!(
+            instance.last_close_opportunity(),
+            Some(Opportunity::Market),
+            "a spent instance still recognises the setup it will not trade"
+        );
+    }
+
+    /// [`Execution::AlarmOnly`]: the instance judges the bar exactly as a
+    /// trading one does, reports the opportunity, emits nothing, and — the
+    /// part that matters — stays armed. An instance that spent itself on an
+    /// order it never placed would go quiet on the very next setup.
+    #[test]
+    fn an_alarm_only_instance_places_nothing_and_keeps_watching() {
+        let region = Region::new(dec("100"), dec("110"));
+        let mut instance = alarm_only_instance(Side::Buy);
+        let commands = warm_then_force(&mut instance, &region);
+        assert!(commands.is_empty(), "alarm only places nothing");
+        assert_eq!(instance.state(), &ArmedState::Armed);
+        assert_eq!(
+            instance.status_line(),
+            "armed · alarm only — no order placed"
+        );
+        assert_eq!(instance.last_close_opportunity(), Some(Opportunity::Market));
+
+        // And again on the next setup: nothing was spent. Two body-1 bars
+        // walk the window back to [1, 1] before the body-4 force bar.
+        instance.on_closed_bar(&bar("106", "107"), &region, true, true);
+        instance.on_closed_bar(&bar("107", "108"), &region, true, true);
+        let commands = instance.on_closed_bar(&bar("104", "108"), &region, true, true);
+        assert!(commands.is_empty());
+        assert_eq!(instance.state(), &ArmedState::Armed);
+        assert_eq!(instance.last_close_opportunity(), Some(Opportunity::Market));
+    }
+
+    /// An alarm-only instance is not a blind one: a bar that never reached
+    /// the region is refused by the geometry and named by it, so a trader
+    /// tuning a silent alarm is told what actually held it.
+    #[test]
+    fn an_alarm_only_instance_still_names_the_geometry_that_held_it() {
+        let region = Region::new(dec("100"), dec("110"));
+        let mut instance = alarm_only_instance(Side::Buy);
+        instance.on_closed_bar(&bar("120", "121"), &region, true, true);
+        instance.on_closed_bar(&bar("121", "122"), &region, true, true);
+        instance.on_closed_bar(&bar("122", "126"), &region, true, true);
+        assert_eq!(
+            instance.status_line(),
+            "armed · trigger held: the body never cut the region"
+        );
+        assert_eq!(instance.last_close_opportunity(), None);
+    }
+
+    /// The line the mid-bar alarm must never cross: reading the forming bar
+    /// is `&self`, so it cannot place an order, cannot move the state
+    /// machine, and cannot advance the ruler. The proof is that the *same*
+    /// bar, previewed any number of times and then closed, walks exactly
+    /// the path it would have walked with no preview at all.
+    #[test]
+    fn previewing_the_forming_bar_emits_no_command_and_moves_nothing() {
+        let region = Region::new(dec("100"), dec("110"));
+        let mut previewed = force_instance(Side::Buy);
+        let mut untouched = force_instance(Side::Buy);
+        for warm in [bar("100", "101"), bar("101", "102")] {
+            previewed.on_closed_bar(&warm, &region, true, true);
+            untouched.on_closed_bar(&warm, &region, true, true);
+        }
+
+        // The bar forming toward the force close, judged over and over.
+        let forming = bar("102", "106");
+        for _ in 0..50 {
+            assert_eq!(
+                previewed.preview_opportunity(&forming, &region, true),
+                Some(Opportunity::Market),
+                "the forming bar already qualifies"
+            );
+        }
+        assert_eq!(previewed.state(), &ArmedState::Armed);
+        assert_eq!(
+            previewed.status_line(),
+            untouched.status_line(),
+            "a preview leaves the ruler's own narration alone"
+        );
+
+        // Now close it. Both instances must answer identically: fifty
+        // previews changed nothing at all.
+        let previewed_commands = previewed.on_closed_bar(&forming, &region, true, true);
+        let untouched_commands = untouched.on_closed_bar(&forming, &region, true, true);
+        assert_eq!(previewed_commands, untouched_commands);
+        assert_eq!(
+            previewed_commands.len(),
+            1,
+            "the closed bar is the one that fires"
+        );
+        assert_eq!(previewed.state(), untouched.state());
+        assert_eq!(previewed.status_line(), untouched.status_line());
+    }
+
+    /// The preview reads the same gates the order does, so it holds on the
+    /// same bars: the wrong side, a dead region, a body that never reached
+    /// the band. A preview that were more permissive would alarm the trader
+    /// into a trade this strategy would not take.
+    #[test]
+    fn the_preview_holds_on_exactly_the_bars_the_order_holds_on() {
+        let region = Region::new(dec("100"), dec("110"));
+        let mut sell = force_instance(Side::Sell);
+        let mut buy = force_instance(Side::Buy);
+        for warm in [bar("100", "101"), bar("101", "102")] {
+            sell.on_closed_bar(&warm, &region, true, true);
+            buy.on_closed_bar(&warm, &region, true, true);
+        }
+        let force = bar("102", "106");
+
+        // A buy force bar for a sell instance: the wrong side.
+        assert_eq!(sell.preview_opportunity(&force, &region, true), None);
+        // The region is not active on this bar.
+        assert_eq!(buy.preview_opportunity(&force, &region, false), None);
+        // A quiet bar is not a signal, however active the region is.
+        assert_eq!(
+            buy.preview_opportunity(&bar("102", "103"), &region, true),
+            None
+        );
+        // The qualifying case, so the test cannot pass by always saying no.
+        assert_eq!(
+            buy.preview_opportunity(&force, &region, true),
+            Some(Opportunity::Market)
+        );
+    }
+
+    /// A cut is an opportunity only when the policy would rest on it. The
+    /// preview follows [`BreakPolicy`] rather than inventing a second
+    /// answer, so the alarm never announces a setup the strategy ignores.
+    #[test]
+    fn the_preview_follows_the_break_policy_on_a_cutting_bar() {
+        let region = Region::new(dec("105"), dec("115"));
+        // Opens at 110, inside the band, and finishes at 102, below its
+        // low: the body crossed the edge a sell leaves by. Body 8 against
+        // two body-2 neighbours is ratio 2 — force.
+        let cutting = bar("110", "102");
+        let ruler = ForceParams {
+            window: 3,
+            min_factor: dec("1.5"),
+            max_factor: dec("2.5"),
+            min_body: Decimal::ZERO,
+        };
+        let mut ignoring = ArmedStrategy::new(
+            params(Side::Sell),
+            Box::new(ForceTrigger::new(ruler.clone())),
+        );
+        let mut resting = ArmedStrategy::new(
+            StrategyParams {
+                on_break: BreakPolicy::RetestLimit,
+                ..params(Side::Sell)
+            },
+            Box::new(ForceTrigger::new(ruler)),
+        );
+        for warm in [bar("112", "110"), bar("110", "112")] {
+            ignoring.on_closed_bar(&warm, &region, true, true);
+            resting.on_closed_bar(&warm, &region, true, true);
+        }
+
+        assert_eq!(
+            ignoring.preview_opportunity(&cutting, &region, true),
+            None,
+            "with the retest option off, a cut is not an opportunity"
+        );
+        assert_eq!(
+            resting.preview_opportunity(&cutting, &region, true),
+            Some(Opportunity::Retest { edge: dec("105") })
+        );
     }
 }

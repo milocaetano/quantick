@@ -608,6 +608,9 @@ fn build_strategy(args: &Args) -> Result<Box<dyn Strategy>, String> {
                     } else {
                         quantick_strategy::BreakPolicy::Ignore
                     },
+                    // The harness exists to measure orders; an alarm-only
+                    // instance would report a run in which nothing traded.
+                    execution: quantick_strategy::Execution::Paper,
                 },
                 quantick_strategy::ForceParams::default_band(),
             )))

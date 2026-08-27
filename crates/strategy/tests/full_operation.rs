@@ -63,6 +63,7 @@ fn run() -> RunOutcome {
             sl_mult: Decimal::ONE,
             rearm: Rearm::OneShot,
             on_break: quantick_strategy::BreakPolicy::Ignore,
+            execution: quantick_strategy::Execution::Paper,
         },
         Box::new(ForceTrigger::new(ForceParams {
             window: 3,
@@ -160,6 +161,7 @@ fn run_retest(after_cut: &[&str]) -> RunOutcome {
             sl_mult: Decimal::ONE,
             rearm: Rearm::OneShot,
             on_break: quantick_strategy::BreakPolicy::RetestLimit,
+            execution: quantick_strategy::Execution::Paper,
         },
         Box::new(ForceTrigger::new(ForceParams {
             window: 3,

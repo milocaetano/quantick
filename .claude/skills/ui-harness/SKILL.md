@@ -114,6 +114,15 @@ Landing with the strategy anchors goal (`feat/strategy-anchors`):
 
 Once merged, move these into the table above.
 
+Landing with the signal-alarm goal (`feat/strategy-signal-alarm`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_STRATEGY_DEMO=alarm` | the arming dialog with its **alarm section unfolded** — the checkbox, the on-close/share choice and its share spinner, the once-per-bar/cooldown choice and its seconds, the sound picker with its Test button, and alarm-only. The section folds itself away while the checkbox is clear (right for a trader, useless for a capture), so `popup` alone can never photograph it; the scene also picks the share gate *and* the cooldown, so the controls that exist only under a choice are all on screen at once |
+| `QUANTICK_STRATEGY_DEMO=alarm-badge` | an **alarm-only** instance armed on the region wearing a standing `signal (preview)` mark — the badge that says "this places nothing" and the provisional label together. Both are states a real tape reaches only when a force bar happens to be half-formed, which no capture can wait for, so the scene stages the mark rather than hoping for one. The drawing is left **unselected** on purpose: placing one selects it, and a selection raises the context bar across the region's top edge, which is exactly where the badge paints. **Caveat for photography**: the badge paints at the region's top-left corner and is not clamped into view, while the shared demo region is ±3 % of price — far wider than the few hundred points a tick chart shows — so at the default zoom that corner, and with it the badge, sits off the top of the canvas. The hook reaches the *state* (assert it through the instance, or pan to the corner); it does not frame the badge on its own |
+
+Once merged, move these into the table above.
+
 Landing with the progressive venue-history goal
 (`feat/progressive-venue-history`):
 
