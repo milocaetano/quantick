@@ -396,6 +396,80 @@ fn apply_min_width(shares: &mut [f32], widths: &[PaneWidth], total_px: f32) {
 /// on every frame.
 #[must_use]
 pub fn split_row(area: egui::Rect, widths: &[PaneWidth]) -> RowAreas {
+    split_axis(area, widths, Axis::Horizontal)
+}
+
+/// Carve `area` top to bottom instead of left to right.
+///
+/// Not yet called by the canvas, and the reason is worth writing down rather
+/// than leaving as a gap: laying two context panes out is arithmetic this
+/// function already does, but *drawing* on them is not. `shared_picks`,
+/// `apply_shared_interactions` and `paint_shared_drawings` are pairwise by
+/// construction — each asks "the other pane", singular — and a mark shared
+/// across three panes has two owners, not one. Generalising that decides
+/// which chart a trader's edit lands on, so it is a design change rather than
+/// a rename, and it lands with the commit that draws the stack.
+///
+/// The context column stacks its panes; the row beside the flow pane splits
+/// across. Same arithmetic, same floors, same collapse rule — one function,
+/// because two would drift and a trader would find a divider that behaved one
+/// way horizontally and another way vertically.
+#[must_use]
+#[allow(dead_code, reason = "wired by the commit that draws the context stack")]
+pub fn split_column(area: egui::Rect, heights: &[PaneWidth]) -> RowAreas {
+    split_axis(area, heights, Axis::Vertical)
+}
+
+/// Which way a split runs.
+#[allow(dead_code, reason = "Vertical is reached through `split_column`")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Axis {
+    Horizontal,
+    Vertical,
+}
+
+impl Axis {
+    /// How long `area` is along this axis.
+    fn extent(self, area: egui::Rect) -> f32 {
+        match self {
+            Self::Horizontal => area.width(),
+            Self::Vertical => area.height(),
+        }
+    }
+
+    /// Where `area` starts along this axis.
+    fn start(self, area: egui::Rect) -> f32 {
+        match self {
+            Self::Horizontal => area.left(),
+            Self::Vertical => area.top(),
+        }
+    }
+
+    /// Where `area` ends along this axis.
+    fn end(self, area: egui::Rect) -> f32 {
+        match self {
+            Self::Horizontal => area.right(),
+            Self::Vertical => area.bottom(),
+        }
+    }
+
+    /// A band of `area` between `from` and `to` along this axis, keeping the
+    /// full extent of the other one.
+    fn band(self, area: egui::Rect, from: f32, to: f32) -> egui::Rect {
+        match self {
+            Self::Horizontal => egui::Rect::from_min_max(
+                egui::pos2(from, area.top()),
+                egui::pos2(to.max(from), area.bottom()),
+            ),
+            Self::Vertical => egui::Rect::from_min_max(
+                egui::pos2(area.left(), from),
+                egui::pos2(area.right(), to.max(from)),
+            ),
+        }
+    }
+}
+
+fn split_axis(area: egui::Rect, widths: &[PaneWidth], axis: Axis) -> RowAreas {
     let mut areas = RowAreas::default();
     if widths.is_empty() {
         return areas;
@@ -405,7 +479,7 @@ pub fn split_row(area: egui::Rect, widths: &[PaneWidth]) -> RowAreas {
         return areas;
     }
 
-    let shares = resolve_shares(widths, area.width());
+    let shares = resolve_shares(widths, axis.extent(area));
     let half = CANVAS_DIVIDER_PX / 2.0;
 
     // Boundaries are cumulative shares of the *whole* width, so the divider
@@ -416,27 +490,22 @@ pub fn split_row(area: egui::Rect, widths: &[PaneWidth]) -> RowAreas {
     let mut cumulative = 0.0_f32;
     for share in shares.iter().take(widths.len() - 1) {
         cumulative += share;
-        boundaries.push(area.left() + area.width() * cumulative);
+        boundaries.push(axis.start(area) + axis.extent(area) * cumulative);
     }
 
-    let mut left = area.left();
+    let mut head = axis.start(area);
     for (index, boundary) in boundaries.iter().enumerate() {
-        let boundary = boundary.clamp(area.left(), area.right());
-        areas.panes.push(egui::Rect::from_min_max(
-            egui::pos2(left, area.top()),
-            egui::pos2((boundary - half).max(left), area.bottom()),
-        ));
-        areas.dividers.push(egui::Rect::from_min_max(
-            egui::pos2(boundary - half, area.top()),
-            egui::pos2(boundary + half, area.bottom()),
-        ));
-        left = boundary + half;
+        let boundary = boundary.clamp(axis.start(area), axis.end(area));
+        areas.panes.push(axis.band(area, head, boundary - half));
+        areas
+            .dividers
+            .push(axis.band(area, boundary - half, boundary + half));
+        head = boundary + half;
         debug_assert!(index < widths.len(), "one divider per seam, never more");
     }
-    areas.panes.push(egui::Rect::from_min_max(
-        egui::pos2(left.min(area.right()), area.top()),
-        area.max,
-    ));
+    areas
+        .panes
+        .push(axis.band(area, head.min(axis.end(area)), axis.end(area)));
     areas
 }
 
@@ -827,5 +896,82 @@ mod registry_tests {
                 areas.panes[index].width()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod column_tests {
+    use super::*;
+
+    fn canvas() -> egui::Rect {
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 900.0))
+    }
+
+    /// The context column stacks its panes top to bottom, and spends its
+    /// height exactly once — the vertical twin of the row's own rule.
+    #[test]
+    fn a_column_stacks_top_to_bottom_and_spends_its_height_once() {
+        let area = canvas();
+        let areas = split_column(area, &[PaneWidth::Auto, PaneWidth::Auto]);
+        assert_eq!(areas.panes.len(), 2);
+        assert_eq!(areas.dividers.len(), 1);
+        assert!(
+            areas.panes[0].bottom() <= areas.panes[1].top(),
+            "the first pane is the upper one"
+        );
+        let spent: f32 = areas.panes.iter().map(egui::Rect::height).sum::<f32>()
+            + areas.dividers.iter().map(egui::Rect::height).sum::<f32>();
+        assert!((spent - area.height()).abs() < 1e-3, "spent {spent}");
+        assert_eq!(areas.panes[0].top(), area.top());
+        assert_eq!(areas.panes[1].bottom(), area.bottom());
+    }
+
+    /// A column keeps the full width: stacking splits one axis only, exactly
+    /// as the row keeps the full height.
+    #[test]
+    fn stacking_never_narrows_a_pane() {
+        let area = canvas();
+        for count in 1..=MAX_CONTEXT_PANES {
+            let areas = split_column(area, &vec![PaneWidth::Auto; count]);
+            for pane in &areas.panes {
+                assert_eq!(pane.left(), area.left());
+                assert_eq!(pane.right(), area.right());
+            }
+        }
+    }
+
+    /// The two axes are one function, so a divider dragged vertically behaves
+    /// exactly as one dragged horizontally. Asserted by transposing a canvas
+    /// and comparing the split it produces.
+    #[test]
+    fn a_column_splits_where_a_row_of_the_same_shares_would() {
+        let widths = [PaneWidth::Manual(0.35), PaneWidth::Auto];
+        let across = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+        let down = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(600.0, 1000.0));
+
+        let row = split_row(across, &widths);
+        let column = split_column(down, &widths);
+        assert!(
+            (row.panes[0].width() - column.panes[0].height()).abs() < 1e-3,
+            "the same shares must carve the same extent on either axis: \
+             row gave {} and column gave {}",
+            row.panes[0].width(),
+            column.panes[0].height()
+        );
+        assert!((row.dividers[0].width() - column.dividers[0].height()).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_collapsed_pane_in_a_column_is_the_same_rail_a_row_gives() {
+        let area = canvas();
+        let areas = split_column(
+            area,
+            &[PaneWidth::Collapsed { restore: 0.5 }, PaneWidth::Auto],
+        );
+        assert!(
+            (areas.panes[0].height() - COLLAPSED_PANE_WIDTH_PX).abs() < 1e-3,
+            "a stacked rail came out {} px",
+            areas.panes[0].height()
+        );
     }
 }
