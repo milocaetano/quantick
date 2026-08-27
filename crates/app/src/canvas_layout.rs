@@ -152,6 +152,13 @@ pub fn preset(id: &str) -> Option<&'static LayoutPreset> {
 /// that should come with the measurement that justifies it.
 pub const MAX_CANVAS_PANES: usize = 4;
 
+/// Most context panes one tab may stack beside the flow pane.
+///
+/// One fewer than [`MAX_CANVAS_PANES`], because the flow pane is always one of
+/// them: quantick's canvas is the heatmap plus whatever context stands beside
+/// it, never context alone plus more context.
+pub const MAX_CONTEXT_PANES: usize = MAX_CANVAS_PANES - 1;
+
 /// Width of the draggable divider between two panes, in pixels.
 pub const CANVAS_DIVIDER_PX: f32 = 4.0;
 

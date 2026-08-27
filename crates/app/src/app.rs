@@ -1723,7 +1723,7 @@ impl QuantickApp {
         if std::env::var("QUANTICK_INVERTED").is_ok_and(|value| value.trim() == "1") {
             let tab = app.active_tab_mut();
             tab.flow_pane.price_view.set_inverted(true);
-            if let Some(time_pane) = tab.time_pane.as_mut() {
+            if let Some(time_pane) = tab.time_pane_mut() {
                 time_pane.price_view.set_inverted(true);
             }
         }
@@ -2472,8 +2472,7 @@ impl QuantickApp {
             .map(|tab| {
                 tab.flow_pane.drawings.authored_count()
                     + tab
-                        .time_pane
-                        .as_ref()
+                        .time_pane()
                         .map_or(0, |pane| pane.drawings.authored_count())
             })
             .sum()
@@ -2486,7 +2485,7 @@ impl QuantickApp {
         let mut removed = 0;
         for tab in &mut self.tabs {
             for side in [crate::pane::PaneSide::Flow, crate::pane::PaneSide::Time] {
-                if side == crate::pane::PaneSide::Time && tab.time_pane.is_none() {
+                if side == crate::pane::PaneSide::Time && tab.time_panes.is_empty() {
                     continue;
                 }
                 let pane = tab.pane_mut(side);
@@ -2770,8 +2769,7 @@ impl QuantickApp {
         let flow_inverted = self.active_tab().flow_pane.price_view.is_inverted();
         let time_inverted = self
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .map_or(flow_inverted, |pane| pane.price_view.is_inverted());
         let ids = self.pane_ids.alloc_pair();
         let mut tab = Tab::new(id, ids, feed_id, symbol, spec, feed, trades_dir);
@@ -2802,7 +2800,7 @@ impl QuantickApp {
         // new tab has a time pane to orient at all.
         let tab = self.active_tab_mut();
         tab.flow_pane.price_view.set_inverted(flow_inverted);
-        if let Some(time_pane) = tab.time_pane.as_mut() {
+        if let Some(time_pane) = tab.time_pane_mut() {
             time_pane.price_view.set_inverted(time_inverted);
         }
     }
@@ -3003,7 +3001,7 @@ impl QuantickApp {
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
         let pane = match focused {
-            PaneSide::Time => tab.time_pane.as_mut().unwrap_or(&mut tab.flow_pane),
+            PaneSide::Time => tab.time_panes.first_mut().unwrap_or(&mut tab.flow_pane),
             PaneSide::Flow => &mut tab.flow_pane,
         };
         let mut model = toolbar::ToolbarModel {
@@ -3236,7 +3234,7 @@ impl QuantickApp {
             let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
                 return;
             };
-            let requested = match (side, tab.time_pane.as_mut()) {
+            let requested = match (side, tab.time_pane_mut()) {
                 (PaneSide::Flow, _) => tab.flow_pane.take_settings_request(),
                 (PaneSide::Time, Some(pane)) => pane.take_settings_request(),
                 (PaneSide::Time, None) => None,
@@ -3346,7 +3344,7 @@ impl QuantickApp {
     fn draw_indicator_legends(&mut self, ctx: &egui::Context) {
         let tab_id = self.active_tab().id;
         let split = self.active_tab().layout == CanvasLayout::TimeAndFlow
-            && self.active_tab().time_pane.is_some();
+            && self.active_tab().has_time_pane();
         let mut pending: Vec<(PaneSide, indicator_legend::LegendAction)> = Vec::new();
         for side in [PaneSide::Flow, PaneSide::Time] {
             if side == PaneSide::Time && !split {
@@ -4361,7 +4359,7 @@ impl QuantickApp {
     fn apply_layer_defaults(&mut self, states: &std::collections::BTreeMap<ChartLayer, bool>) {
         for tab in &mut self.tabs {
             tab.flow_pane.apply_layer_states(states);
-            if let Some(pane) = tab.time_pane.as_mut() {
+            if let Some(pane) = tab.time_pane_mut() {
                 pane.apply_layer_states(states);
             }
         }
@@ -4456,17 +4454,13 @@ impl QuantickApp {
                 // tab that never showed the split restores on the default,
                 // which is what it had.
                 time_bars: tab
-                    .time_pane
-                    .as_ref()
+                    .time_pane()
                     .map(|pane| pane.state.spec().to_config_string()),
                 flow_legend_collapsed: tab.flow_pane.legend_collapsed,
                 // A tab with no time pane has no second legend, and `false`
                 // is what it will restore into when one is opened: a pane
                 // that never existed cannot have been folded.
-                time_legend_collapsed: tab
-                    .time_pane
-                    .as_ref()
-                    .is_some_and(|pane| pane.legend_collapsed),
+                time_legend_collapsed: tab.time_pane().is_some_and(|pane| pane.legend_collapsed),
             })
             .collect();
         let chrome = ui_state::SavedChrome {
@@ -4943,7 +4937,7 @@ impl QuantickApp {
             strip(&mut tab.flow_pane);
             // Not `pane_mut(Time)`: that falls back to the flow pane when a
             // tab was never split, which would strip it twice.
-            if let Some(pane) = tab.time_pane.as_mut() {
+            if let Some(pane) = tab.time_pane_mut() {
                 strip(pane);
             }
         }
@@ -5707,7 +5701,7 @@ impl QuantickApp {
             scale = scale,
             native_scale = native_scale,
             zoom_factor = zoom,
-            time_pane_spec = self.active_tab().time_pane.as_ref().map(|pane| pane.state.spec().summary()),
+            time_pane_spec = self.active_tab().time_pane().map(|pane| pane.state.spec().summary()),
             // Drawings are a per-frame, O(objects) paint cost, and the shared
             // ones are additionally reprojected on every other pane of the
             // tab. Counting them here is what lets a frame-cost reading be
@@ -5716,14 +5710,12 @@ impl QuantickApp {
             drawings = self.active_tab().flow_pane.drawings.items().len()
                 + self
                     .active_tab()
-                    .time_pane
-                    .as_ref()
+                    .time_pane()
                     .map_or(0, |pane| pane.drawings.items().len()),
             shared_drawings = self.active_tab().flow_pane.drawings.shared_count()
                 + self
                     .active_tab()
-                    .time_pane
-                    .as_ref()
+                    .time_pane()
                     .map_or(0, |pane| pane.drawings.shared_count()),
             book_enabled = book.enabled,
             book_status = book.status,
@@ -6183,7 +6175,7 @@ impl QuantickApp {
                         // over two charts has no way to know which corner is
                         // about to change.
                         let split = self.active_tab().layout == CanvasLayout::TimeAndFlow
-                            && self.active_tab().time_pane.is_some();
+                            && self.active_tab().has_time_pane();
                         let pane_name = match self.active_tab().focused_side() {
                             PaneSide::Flow => "Flow",
                             PaneSide::Time => "Timeframe",
@@ -9465,7 +9457,7 @@ impl QuantickApp {
         // only honest option here: a stress scene photographed on the tape
         // pane would be a picture of twenty bars captioned as twenty-five
         // thousand.
-        if stress && self.active_tab_mut().time_pane.is_none() {
+        if stress && self.active_tab_mut().time_panes.is_empty() {
             return;
         }
         let slots = self.active_tab_mut().pane_mut(side).slots();
@@ -13022,8 +13014,7 @@ plot(close)
         run_frame(&mut app, &ctx);
         let time = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("the split is what this proof is about");
         assert!(
             time.footprint_visible,
@@ -16798,7 +16789,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
         assert!(
-            app.active_tab().time_pane.is_some(),
+            app.active_tab().has_time_pane(),
             "the split is what this proof is about"
         );
 
@@ -16874,8 +16865,7 @@ crosshair = false
         // below silently does nothing.
         let pane = app
             .active_tab_mut()
-            .time_pane
-            .as_mut()
+            .time_pane_mut()
             .expect("two frames is enough for the deferred layout to build it");
         pane.kind = crate::state::BarKind::Time;
         pane.time_interval_ms = 1_000;
@@ -16885,8 +16875,7 @@ crosshair = false
         run_frame(&mut app, ctx);
         assert!(
             app.active_tab()
-                .time_pane
-                .as_ref()
+                .time_pane()
                 .is_some_and(|pane| pane.slots() > 5),
             "the time pane must hold a real series, or these tests pass on a              gesture that never reached a bar"
         );
@@ -16933,8 +16922,7 @@ crosshair = false
     fn time_pane_projection(app: &QuantickApp) -> (egui::Rect, PriceScale) {
         let time_pane = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("the split built a time pane");
         let chart = time_pane.last_chart_area.expect("the time pane drew");
         let (lo, hi) = time_pane
@@ -17047,8 +17035,7 @@ crosshair = false
         let (mut app, _commands, on_the_time_pane) = split_with_a_shared_line(&ctx);
         let time_pane = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("the split built a time pane");
         let before = time_pane.viewport.right_edge_bar(time_pane.slots());
 
@@ -17061,8 +17048,7 @@ crosshair = false
 
         let time_pane = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("the split built a time pane");
         assert_eq!(
             time_pane.viewport.right_edge_bar(time_pane.slots()),
@@ -20423,8 +20409,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
         let time_pane = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("the split built a time pane");
         assert!(
             time_pane.price_view.is_inverted(),
@@ -20680,8 +20665,7 @@ crosshair = false
 
         let plot = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("the split has a time pane")
             .last_plot_area
             .expect("laid out by the frames above");
@@ -20725,8 +20709,7 @@ crosshair = false
 
     fn time_zoom(app: &QuantickApp) -> f32 {
         app.active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("time pane")
             .viewport
             .px_per_bar()
@@ -21512,8 +21495,7 @@ crosshair = false
 
         let time = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("Time + Flow builds the time pane")
             .last_chart_area
             .expect("the time pane was laid out");
@@ -21564,7 +21546,7 @@ crosshair = false
 
         app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
         assert!(
-            app.active_tab().time_pane.is_none(),
+            app.active_tab().time_panes.is_empty(),
             "the frame carrying the change does no work"
         );
         assert!(
@@ -21576,8 +21558,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
         let time = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("the next frame builds it");
         assert!(
             !time.state.trades().is_empty(),
@@ -21644,7 +21625,7 @@ crosshair = false
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 200);
 
-        let time = app.active_tab().time_pane.as_ref().expect("time pane");
+        let time = app.active_tab().time_pane().expect("time pane");
         assert_eq!(
             time.state.trades().len(),
             app.active_tab().flow_pane.state.trades().len(),
@@ -21660,8 +21641,7 @@ crosshair = false
         let flow_before = app.active_tab().flow_pane.state.trades().len();
         let time_before = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("time pane")
             .state
             .trades()
@@ -21675,8 +21655,7 @@ crosshair = false
         );
         assert_eq!(
             app.active_tab()
-                .time_pane
-                .as_ref()
+                .time_pane()
                 .expect("time pane")
                 .state
                 .trades()
@@ -21704,7 +21683,7 @@ crosshair = false
         // `enabling_the_split_paints_before_it_seeds`.
         run_frame(&mut app, &ctx);
 
-        let time = app.active_tab().time_pane.as_ref().expect("time pane");
+        let time = app.active_tab().time_pane().expect("time pane");
         assert_eq!(
             time.state.trades().len(),
             103,
@@ -21764,7 +21743,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
 
         let tab = app.active_tab();
-        let time = tab.time_pane.as_ref().expect("the pane was built");
+        let time = tab.time_pane().expect("the pane was built");
         assert_eq!(
             time.state.trades().len(),
             200,
@@ -21886,7 +21865,7 @@ crosshair = false
             "the flow pane opens on the rule the workspace recorded"
         );
         assert_eq!(
-            tab.time_pane.as_ref().map(|pane| pane.state.spec().clone()),
+            tab.time_pane().map(|pane| pane.state.spec().clone()),
             Some(BarSpec::Time(300_000)),
             "and the time pane on its saved interval, not the header default"
         );
@@ -21957,8 +21936,7 @@ crosshair = false
             "the flow pane reopens folded"
         );
         assert!(
-            tab.time_pane
-                .as_ref()
+            tab.time_pane()
                 .expect("the split was restored")
                 .legend_collapsed,
             "and so does the time pane, built a frame after the restore"
@@ -22788,8 +22766,7 @@ crosshair = false
 
         assert_eq!(
             app.active_tab()
-                .time_pane
-                .as_ref()
+                .time_pane()
                 .expect("time pane")
                 .state
                 .spec(),
@@ -22850,8 +22827,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
         assert_eq!(
             app.active_tab()
-                .time_pane
-                .as_ref()
+                .time_pane()
                 .expect("built the frame after startup")
                 .state
                 .spec(),
@@ -22930,7 +22906,7 @@ crosshair = false
         app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
         settle_indicators(&mut app);
 
-        let time = app.active_tab().time_pane.as_ref().expect("time pane");
+        let time = app.active_tab().time_pane().expect("time pane");
         assert_eq!(
             time.indicators.all().len(),
             1,
@@ -23172,8 +23148,7 @@ crosshair = false
         settle_indicators(&mut app);
         let slot = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("time pane")
             .indicators
             .all()[0]
@@ -23191,8 +23166,7 @@ crosshair = false
         app.toggle_indicator_hidden_at(target);
         assert!(
             app.active_tab()
-                .time_pane
-                .as_ref()
+                .time_pane()
                 .expect("time pane")
                 .indicators
                 .all()[0]
@@ -23226,8 +23200,7 @@ crosshair = false
         assert_eq!(app.slot_kinds.len(), 2);
         let time_slot = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("time pane")
             .indicators
             .all()[0]
@@ -23261,7 +23234,7 @@ crosshair = false
         app.apply_toolbar_action(ToolbarAction::SetBubbles(true));
         run_frame(&mut app, &ctx);
 
-        let time = app.active_tab().time_pane.as_ref().expect("time pane");
+        let time = app.active_tab().time_pane().expect("time pane");
         assert!(
             time.orderflow.is_none(),
             "no tape means no book worker behind it"
@@ -23547,7 +23520,7 @@ crosshair = false
 
         assert_eq!(app.active_tab().layout, CanvasLayout::Single);
         assert!(
-            app.active_tab().time_pane.is_none(),
+            app.active_tab().time_panes.is_empty(),
             "an unsplit canvas builds no second pane, and no worker behind it"
         );
         let chart = app

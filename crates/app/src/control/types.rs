@@ -134,7 +134,7 @@ pub(crate) fn unavailable(reason: &str) -> AvailabilitySnapshot {
 pub(crate) fn visible_panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {
     let mut panes = Vec::with_capacity(MAX_PANES_PER_TAB);
     if tab.layout.shows_time()
-        && let Some(time) = &tab.time_pane
+        && let Some(time) = tab.time_pane()
     {
         panes.push((time, PaneSide::Time));
     }

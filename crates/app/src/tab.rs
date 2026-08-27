@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, watch};
 
 use quantick_feed_binance::depth::DepthEvent;
 
-use crate::canvas_layout::{self, LayoutPreset, PaneKind};
+use crate::canvas_layout::{self, LayoutPreset, MAX_CONTEXT_PANES, PaneKind};
 use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::feed::{
@@ -380,15 +380,19 @@ pub struct Tab {
 
     /// quantick's own chart, and the only one in the default layout.
     pub flow_pane: ChartPane,
-    /// The context chart beside it (§11), built the first time the split is
-    /// shown and kept for as long as the tab lives — switching back to Single
-    /// hides it, and must not throw away its indicators and drawings.
+    /// The context charts beside it, top to bottom in the left column.
     ///
-    /// While it exists it is fed every trade the flow pane is fed, on screen
-    /// or not, which is what keeps the two in step. The cost is the market's
-    /// trades retained twice: one tape, two `ChartState`s, and still only one
-    /// bar-building path.
-    pub time_pane: Option<ChartPane>,
+    /// Built the first time a layout that shows one is picked, and kept for as
+    /// long as the tab lives — switching to a layout that hides them only
+    /// stops them being drawn, and must not throw away their indicators and
+    /// drawings.
+    ///
+    /// While one exists it is fed every trade the flow pane is fed, on screen
+    /// or not, which is what keeps them in step. The cost is the market's
+    /// trades retained once per pane: one tape, N `ChartState`s, and still
+    /// only one bar-building path. `MAX_CONTEXT_PANES` is what bounds that
+    /// cost.
+    pub time_panes: SmallVec<[ChartPane; MAX_CONTEXT_PANES]>,
     /// `SYMBOL · venue`, as the strip shows it — see [`Self::chip_label`].
     chip_label: String,
     /// The venue's own 1-minute candles for this market, fetched once and
@@ -493,6 +497,27 @@ pub struct Tab {
 }
 
 impl Tab {
+    /// The first context pane, if this tab has built one.
+    ///
+    /// Most of the chrome speaks about *the* context chart because most
+    /// layouts show one. The ones that show more reach for `time_panes`
+    /// directly; this is the convenience, not the truth.
+    #[must_use]
+    pub fn time_pane(&self) -> Option<&ChartPane> {
+        self.time_panes.first()
+    }
+
+    /// The first context pane, mutably.
+    pub fn time_pane_mut(&mut self) -> Option<&mut ChartPane> {
+        self.time_panes.first_mut()
+    }
+
+    /// Whether this tab has built any context pane at all.
+    #[must_use]
+    pub fn has_time_pane(&self) -> bool {
+        !self.time_panes.is_empty()
+    }
+
     /// A tab on `feed_id`/`symbol`, already streaming through `feed`, showing
     /// bar `spec`.
     ///
@@ -546,7 +571,7 @@ impl Tab {
             progressive_history: true,
             ohlcv_generation: 0,
             ohlcv_capable: false,
-            time_pane: None,
+            time_panes: SmallVec::new(),
             time_pane_id: pane_ids.1,
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
             time_pane_opening_legend_collapsed: false,
@@ -584,7 +609,7 @@ impl Tab {
         self.ohlcv_older_exhausted = false;
         self.ohlcv_capable = false;
         self.loading.set_active(LoadingTask::VenueHistory, false);
-        for pane in std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut()) {
+        for pane in self.panes_mut() {
             pane.install_history_prefix(Vec::new());
         }
         self.events = handle.events;
@@ -670,7 +695,7 @@ impl Tab {
     /// the split's time pane gets.
     fn any_pane_wants_venue_history(&self) -> bool {
         std::iter::once(&self.flow_pane)
-            .chain(self.time_pane.as_ref())
+            .chain(self.time_pane())
             .any(|pane| {
                 pane.state
                     .spec()
@@ -1148,11 +1173,17 @@ impl Tab {
     /// Reports whether any prefix actually changed — an installed prefix
     /// rebuilds the indicators, so the caller can skip sending a second one.
     pub fn refold_history_prefix(&mut self) -> bool {
-        let Some(base) = self.ohlcv_base.as_ref() else {
+        let Self {
+            ohlcv_base,
+            flow_pane,
+            time_panes,
+            ..
+        } = self;
+        let Some(base) = ohlcv_base.as_ref() else {
             return false;
         };
         let mut changed = false;
-        for pane in std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut()) {
+        for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
             // A pane not cutting by time has no interval to fold to, and a
             // sub-minute one has no whole number of venue candles in it: both
             // get no prefix, which is the honest answer rather than an
@@ -1192,7 +1223,7 @@ impl Tab {
     /// last split left `focus` set to. Time falls back to the flow pane for
     /// the frame between asking for the layout and the pane being built.
     pub fn focused_side(&self) -> PaneSide {
-        match (self.layout, self.time_pane.is_some()) {
+        match (self.layout, self.has_time_pane()) {
             (CanvasLayout::TimeAndFlow, true) => self.focus,
             (CanvasLayout::Time, true) => PaneSide::Time,
             _ => PaneSide::Flow,
@@ -1203,7 +1234,7 @@ impl Tab {
     /// has never been opened.
     pub fn pane(&self, side: PaneSide) -> &ChartPane {
         match side {
-            PaneSide::Time => self.time_pane.as_ref().unwrap_or(&self.flow_pane),
+            PaneSide::Time => self.time_pane().unwrap_or(&self.flow_pane),
             PaneSide::Flow => &self.flow_pane,
         }
     }
@@ -1286,7 +1317,7 @@ impl Tab {
         self.flow_pane.content_editing = target
             .filter(|(side, _)| *side == PaneSide::Flow)
             .map(|(_, index)| index);
-        if let Some(time) = self.time_pane.as_mut() {
+        if let Some(time) = self.time_pane_mut() {
             time.content_editing = target
                 .filter(|(side, _)| *side == PaneSide::Time)
                 .map(|(_, index)| index);
@@ -1295,7 +1326,7 @@ impl Tab {
 
     pub fn pane_mut(&mut self, side: PaneSide) -> &mut ChartPane {
         match side {
-            PaneSide::Time => self.time_pane.as_mut().unwrap_or(&mut self.flow_pane),
+            PaneSide::Time => self.time_panes.first_mut().unwrap_or(&mut self.flow_pane),
             PaneSide::Flow => &mut self.flow_pane,
         }
     }
@@ -1324,7 +1355,7 @@ impl Tab {
     /// the focused pane first and takes the answer it finds.
     pub fn drawing_side(&self) -> PaneSide {
         let focused = self.focused_side();
-        if self.pane(focused).drawings.selected().is_some() || self.time_pane.is_none() {
+        if self.pane(focused).drawings.selected().is_some() || self.time_panes.is_empty() {
             return focused;
         }
         let other = focused.other();
@@ -1353,13 +1384,21 @@ impl Tab {
     /// quiet frame.
     pub fn panes(&self) -> impl Iterator<Item = (&ChartPane, PaneSide)> {
         std::iter::once((&self.flow_pane, PaneSide::Flow))
-            .chain(self.time_pane.as_ref().map(|time| (time, PaneSide::Time)))
+            .chain(self.time_panes.iter().map(|time| (time, PaneSide::Time)))
     }
 
     /// Every pane holding this market's bars, on screen or not. One tape, and
     /// however many charts the layout has ever shown read off it.
     pub fn panes_mut(&mut self) -> impl Iterator<Item = &mut ChartPane> {
-        std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut())
+        // Destructured rather than borrowed field by field: the flow pane and
+        // the context stack are two disjoint parts of `self`, and the compiler
+        // only knows that when it is told in one pattern.
+        let Self {
+            flow_pane,
+            time_panes,
+            ..
+        } = self;
+        std::iter::once(flow_pane).chain(time_panes.iter_mut())
     }
 
     /// The flow pane's tape.
@@ -1401,7 +1440,7 @@ impl Tab {
             return;
         }
         self.layout = layout;
-        if layout.shows_time() && self.time_pane.is_none() {
+        if layout.shows_time() && self.time_panes.is_empty() {
             // Seeding replays every retained trade, which on a deep history
             // holds the render thread long enough to notice. Armed here and
             // done on the next frame, exactly as a bar-spec change is: the
@@ -1428,7 +1467,7 @@ impl Tab {
             schema_version = 1_u8,
             event_code = "CANVAS_LAYOUT",
             layout = ?layout,
-            time_pane_bars = self.time_pane.as_ref().map(|pane| pane.state.bars().len()),
+            time_pane_bars = self.time_pane().map(|pane| pane.state.bars().len()),
             action = if self.pending_time_pane {
                 "build_time_pane_next_frame"
             } else {
@@ -1481,7 +1520,7 @@ impl Tab {
             .open_all_hidden(self.flow_pane.drawings.all_hidden());
         pane.price_view
             .set_inverted(self.flow_pane.price_view.is_inverted());
-        self.time_pane = Some(pane);
+        self.time_panes.push(pane);
         self.loading.end(LoadingTask::BarRebuild);
         // The pane exists now, so there is something for a prefix to go in
         // front of. A base already held (a layout toggled off and on) is
@@ -1948,7 +1987,7 @@ impl Tab {
         // `capture_arrangement` would then persist that `false` over the
         // trader's choice.
         self.time_pane_opening_legend_collapsed = legends.time;
-        if let Some(time) = self.time_pane.as_mut() {
+        if let Some(time) = self.time_pane_mut() {
             time.legend_collapsed = legends.time;
         }
     }
@@ -1957,13 +1996,12 @@ impl Tab {
     /// rebuild indicator: it is up while *any* pane has a rebuild pending.
     pub fn apply_spec_changes(&mut self) {
         self.apply_spec_change(PaneSide::Flow);
-        if self.time_pane.is_some() {
+        if self.has_time_pane() {
             self.apply_spec_change(PaneSide::Time);
         }
         let rebuilding = self.flow_pane.pending_spec.is_some()
             || self
-                .time_pane
-                .as_ref()
+                .time_pane()
                 .is_some_and(|pane| pane.pending_spec.is_some());
         self.loading.set_active(LoadingTask::BarRebuild, rebuilding);
     }
@@ -2193,9 +2231,14 @@ impl Tab {
     /// events.
     fn run_strategies(&mut self) {
         let print_events = self.paper.drain_bot_events();
-        let paper = &mut self.paper;
+        let Self {
+            paper,
+            flow_pane,
+            time_panes,
+            ..
+        } = self;
         let mut watching = 0;
-        for pane in std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut()) {
+        for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
             if pane.strategies.is_empty() {
                 continue;
             }
@@ -2270,8 +2313,13 @@ impl Tab {
     /// order. Runs on the UI frame that clicked, not on the next print: a
     /// cancel that waits for the market to move may lose the race to it.
     pub fn apply_strategy_cleanup(&mut self) {
-        let paper = &mut self.paper;
-        for pane in std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut()) {
+        let Self {
+            paper,
+            flow_pane,
+            time_panes,
+            ..
+        } = self;
+        for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
             for command in pane.take_strategy_cleanup() {
                 let _ = paper.apply_strategy_command(command);
             }
@@ -2550,7 +2598,7 @@ impl Tab {
         area: egui::Rect,
         chrome: &mut CanvasChrome<'_>,
     ) {
-        let show_time = self.layout.shows_time() && self.time_pane.is_some();
+        let show_time = self.layout.shows_time() && self.has_time_pane();
         // The flow pane also stands in for a time pane still being built, so
         // the frame between asking for the Time layout and the pane existing
         // shows the market rather than nothing.
@@ -2602,7 +2650,7 @@ impl Tab {
             let focused = self.focused_side();
             let Self {
                 flow_pane,
-                time_pane,
+                time_panes,
                 symbol,
                 paper,
                 ..
@@ -2625,7 +2673,7 @@ impl Tab {
             // immediately when the bucket has not changed, which is every
             // frame but the one after a market switch.
             if let (Some(time), Some(base)) = (
-                time_pane.as_mut(),
+                time_panes.first_mut(),
                 flow_pane
                     .orderflow
                     .as_ref()
@@ -2654,7 +2702,7 @@ impl Tab {
             // pane cannot drift from the first, and one pane is this same
             // loop with one entry in it.
             let time =
-                time_chart.and_then(|chart| Some((time_pane.as_mut()?, chart, PaneSide::Time)));
+                time_chart.and_then(|chart| Some((time_panes.first_mut()?, chart, PaneSide::Time)));
             let flow = show_flow.then_some((&mut *flow_pane, flow_area, PaneSide::Flow));
             for (pane, rect, side) in time.into_iter().chain(flow) {
                 // Order entry follows the focused pane (§11): both charts are
@@ -2719,7 +2767,7 @@ impl Tab {
     /// does not hold. Nothing to answer on an unsplit tab: one pane has no
     /// other pane to mirror.
     fn shared_picks(&self, ui: &egui::Ui) -> SharedPicks {
-        let Some(time_pane) = self.time_pane.as_ref() else {
+        let Some(time_pane) = self.time_pane() else {
             return SharedPicks::default();
         };
         let Some(position) = ui.input(|input| input.pointer.latest_pos()) else {
@@ -2783,7 +2831,7 @@ impl Tab {
     /// one feed, which is what makes a price level mean the same thing on
     /// both (`docs/ux/drawing-tools-2026-08.md` §D7).
     fn paint_shared_drawings(&self, painter: &egui::Painter) {
-        let Some(time_pane) = self.time_pane.as_ref() else {
+        let Some(time_pane) = self.time_pane() else {
             return;
         };
         let flow_pane = &self.flow_pane;
