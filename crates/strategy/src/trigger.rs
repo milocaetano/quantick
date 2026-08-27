@@ -17,9 +17,18 @@ use crate::force::{BarVerdict, ForceParams, ForceWindow};
 pub struct Signal {
     /// Direction the bar pushed.
     pub side: Side,
-    /// The entry reference price (the trigger bar's close — a market order
-    /// meets the tape at the next print, but the *projection* anchors on
-    /// the fact the trigger measured).
+    /// The entry reference price, and **only** the price the bracket
+    /// projects from: a market order meets the tape at the next print,
+    /// while the projection anchors on the fact the trigger measured.
+    ///
+    /// The region test does not read this — it reads the bar's own open
+    /// and close ([`Region::body_cut`]), because "the force bar cut the
+    /// region" is a statement about the bar, not about a ruler's anchor.
+    /// An implementation whose reference is *not* the judged bar's close
+    /// therefore brackets around a price the entry will not fill near, and
+    /// owes its consumers a word about that in its own documentation.
+    ///
+    /// [`Region::body_cut`]: crate::Region::body_cut
     pub reference: Decimal,
     /// The projection ruler: for the force bar, its full range.
     pub projection: Decimal,

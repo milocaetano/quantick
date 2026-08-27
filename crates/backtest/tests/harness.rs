@@ -197,6 +197,115 @@ fn the_force_region_kernel_walks_a_full_operation_under_the_harness() {
     );
 }
 
+/// The body rule reaches the *second* consumer, and a genuine cut still
+/// trades there. Sell region 105–115; the force bar opens at 108 inside
+/// the band and closes at 104 below it — a body cut — so a limit rests at
+/// the 105 edge, the tape comes back to it, and the projected target
+/// closes the operation.
+///
+/// This is the positive half the negative test below cannot supply: invert
+/// the open comparison in `Region::body_cut` and this test goes red, which
+/// is what makes the pair a guard against the chart and the harness
+/// drifting apart rather than a pair of assertions that nothing happened.
+#[test]
+fn a_body_cut_rests_a_limit_under_the_harness_and_the_retest_fills() {
+    use quantick_strategy::{BreakPolicy, ForceParams, Rearm, Region, StrategyParams};
+
+    // Tick(3) bars: two body-1 warmup bars, the body-4 cut, the return to
+    // the 105 edge that fills the limit, then the walk down to the target.
+    let session = synthetic(&tape_of(&[
+        "110", "110", "109", //
+        "109", "109", "108", //
+        "108", "108", "104", //
+        "104", "105", "105", //
+        "105", "102", "100",
+    ]));
+    let mut strategy = ForceRegion::new(
+        Region::new(Decimal::from(105), Decimal::from(115)),
+        StrategyParams {
+            side: Side::Sell,
+            quantity: Decimal::ONE,
+            tp_mult: Decimal::ONE,
+            sl_mult: Decimal::ONE,
+            rearm: Rearm::OneShot,
+            on_break: BreakPolicy::RetestLimit,
+        },
+        ForceParams {
+            window: 3,
+            min_factor: "1.5".parse().expect("fixture factor"),
+            max_factor: "2.5".parse().expect("fixture factor"),
+            min_body: Decimal::ZERO,
+        },
+    );
+    let run = run_session(&session, BarSpec::Tick(3), &mut strategy);
+
+    assert_eq!(run.trades.len(), 1, "the retest round-tripped: {:?}", run);
+    let trade = &run.trades[0];
+    assert_eq!(
+        trade.entry_price,
+        Decimal::from(105),
+        "the limit filled at the edge the body cut, not at the bar's close"
+    );
+    assert_eq!(trade.exit_price, Decimal::from(100));
+    assert_eq!(trade.exit_reason, ExitReason::TakeProfit);
+    assert_eq!(run.resting_at_end, 0, "nothing left waiting");
+}
+
+/// The mirror, and the one that pins the reported bug: the force bar's
+/// *shadow* reaches 106 inside the 105–115 band while its body runs
+/// 100 → 96 entirely below it, so nothing may rest. The tape then prints
+/// back at 105 — the price a wrongly rested limit would have filled at.
+///
+/// `resting_at_end` is the assertion that carries the bug, not
+/// `trades.is_empty()`: under the pre-fix geometry the limit rested, the
+/// 105 print filled it, and the position was still open when the recording
+/// ended — so no *closed* trade existed and an `is_empty()` check on
+/// `trades` passed against the very bug it names. `SessionRun` separates
+/// the two for exactly this reason.
+#[test]
+fn a_body_that_never_cut_the_region_rests_nothing_under_the_harness() {
+    use quantick_strategy::{BreakPolicy, ForceParams, Rearm, Region, StrategyParams};
+
+    let session = synthetic(&tape_of(&[
+        "102", "102", "101", //
+        "101", "101", "100", //
+        "100", "106", "96", //
+        "100", "105", "100",
+    ]));
+    let mut strategy = ForceRegion::new(
+        Region::new(Decimal::from(105), Decimal::from(115)),
+        StrategyParams {
+            side: Side::Sell,
+            quantity: Decimal::ONE,
+            tp_mult: Decimal::ONE,
+            sl_mult: Decimal::ONE,
+            rearm: Rearm::OneShot,
+            on_break: BreakPolicy::RetestLimit,
+        },
+        ForceParams {
+            window: 3,
+            min_factor: "1.5".parse().expect("fixture factor"),
+            max_factor: "2.5".parse().expect("fixture factor"),
+            min_body: Decimal::ZERO,
+        },
+    );
+    let run = run_session(&session, BarSpec::Tick(3), &mut strategy);
+
+    assert_eq!(
+        run.resting_at_end, 0,
+        "a body that never cut the region rests no limit at the edge"
+    );
+    assert_eq!(
+        run.open_at_end, None,
+        "so the print back at 105 had nothing to fill"
+    );
+    assert!(
+        run.trades.is_empty(),
+        "and no operation ran: {:?}",
+        run.trades
+    );
+}
+
 #[test]
 fn a_foreign_strategy_docks_reads_indicators_and_reaches_the_tape() {
     // 60 prints at 100..159, ten per bar: bar 2 closes on print 29 (price

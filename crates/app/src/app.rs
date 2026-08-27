@@ -9119,15 +9119,18 @@ impl QuantickApp {
                 }
                 let mut retest = popup.form.on_break == "retest_limit";
                 if ui
-                    .checkbox(
-                        &mut retest,
-                        "on a cut: rest a limit at the region edge until the target",
-                    )
+                    .checkbox(&mut retest, "on a cut: rest a limit at the region edge")
                     .on_hover_text(
-                        "a trigger bar closing beyond the region in the trade's direction \
-                         rests a limit at the edge it cut — the retest entry — bracketed \
-                         off the bar; the order removes itself if the bar's projected \
-                         target trades first. Off = a cut holds fire, as before.",
+                        "a trigger bar whose body cuts the region in the trade's direction \
+                         — it opened on the region's side of that edge and closed beyond it, \
+                         wicks ignored — rests a limit at the edge it cut, the retest entry, \
+                         bracketed off the bar. The order removes itself if the bar's \
+                         projected target trades first; with the TP multiplier at 0 there is \
+                         no such level, so it rests until it fills or you disarm it — the \
+                         badge says which. A bar that closed past an edge its body never \
+                         crossed, one that closed away on the far side, and a cut whose legs \
+                         would not clear the edge all rest nothing. Off = a cut holds fire, \
+                         as before.",
                     )
                     .changed()
                 {
@@ -13728,6 +13731,117 @@ crosshair = false
             "no resting bot order outlives its badge"
         );
         assert!(app.active_tab().flow_pane.strategies.is_empty());
+    }
+
+    /// The bug the trader reported, walked through the real chart path: a
+    /// sell region drawn above the market, and a force bar whose *shadow*
+    /// reaches into the band while its body stays entirely below it. The
+    /// body never crossed the edge, so nothing may rest on it.
+    ///
+    /// The numbers make the test bite: range 10 puts the projected SL at
+    /// 106 and the TP at 86, both clear of the 105 edge, so the old
+    /// close-only rule really did rest a sell limit at 105 — an order
+    /// inside a band the bar's body never entered.
+    #[test]
+    fn a_force_bar_that_never_crossed_the_region_leaves_no_order_in_it() {
+        fn print(app: &mut QuantickApp, id: &mut u64, price: &str) {
+            *id += 1;
+            let trade = quantick_engine::Trade {
+                agg_id: *id,
+                timestamp_ms: 1_700_000_000_000 + *id as i64 * 100,
+                price: rust_decimal::Decimal::from_str_exact(price).unwrap(),
+                quantity: rust_decimal::Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            };
+            app.active_tab_mut()
+                .ingest_live_trade_at(&trade, trade.timestamp_ms);
+        }
+        fn bar(app: &mut QuantickApp, id: &mut u64, open: &str, close: &str) {
+            for _ in 0..49 {
+                print(app, id, open);
+            }
+            print(app, id, close);
+        }
+        /// Fifty prints again, but one of them reaches `wick` — so the bar
+        /// carries a shadow its body never covers.
+        fn bar_with_wick(app: &mut QuantickApp, id: &mut u64, open: &str, wick: &str, close: &str) {
+            for _ in 0..48 {
+                print(app, id, open);
+            }
+            print(app, id, wick);
+            print(app, id, close);
+        }
+
+        let (mut app, _events, _commands, _book) = test_app();
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "rectangle")
+            .expect("the rectangle tool is registered");
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(0.0, 105.0));
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(30.0, 115.0));
+        }
+        let drawing = app.active_tab().flow_pane.drawings.items()[0].id;
+        let mut form =
+            crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell);
+        form.window = 3;
+        form.min_body = "0".to_owned();
+        form.on_break = "retest_limit".to_owned();
+        app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF no cut".to_owned())
+            .expect("the retest form compiles");
+
+        let mut id = 0u64;
+        bar(&mut app, &mut id, "102", "101");
+        bar(&mut app, &mut id, "101", "100");
+        // Body 4 over average (1+1+4)/3 = 2: a genuine force bar. It opens
+        // at 100, already below the region's 105 edge, prints once at 106
+        // inside the band, and closes at 96. The shadow visited the region;
+        // the body never did.
+        bar_with_wick(&mut app, &mut id, "100", "106", "96");
+
+        let tab = app.active_tab();
+        // The premise, pinned: if the bar spec or the print counts ever
+        // drift, the 106 print lands in a neighbouring bar and this test
+        // silently stops testing wick-versus-body — the only thing it is
+        // here for.
+        assert_eq!(
+            tab.flow_pane.closed_slots(),
+            3,
+            "the three fixture bars closed as three bars"
+        );
+        let trigger = tab.flow_pane.closed_bar(2).expect("the trigger bar closed");
+        assert_eq!(
+            (trigger.open, trigger.high, trigger.close),
+            (
+                rust_decimal::Decimal::from(100),
+                rust_decimal::Decimal::from(106),
+                rust_decimal::Decimal::from(96)
+            ),
+            "the shadow reaches into the 105-115 band while the body stays below it"
+        );
+        assert!(
+            tab.paper.working_orders().is_empty(),
+            "a bar whose body never cut the region rests no order in it: {:?}",
+            tab.paper.working_orders()
+        );
+        assert!(tab.paper.is_flat(), "and takes no position either");
+        let instance = tab
+            .flow_pane
+            .strategies
+            .for_drawing(drawing)
+            .expect("instance");
+        assert_eq!(
+            instance.armed.state(),
+            &quantick_strategy::ArmedState::Armed
+        );
+        assert_eq!(
+            instance.armed.status_line(),
+            "armed · trigger held: the body never cut the region",
+            "the instance names the gate it held on rather than reporting a bare armed"
+        );
     }
 
     /// The user's retest flow end to end in the app: a sell preset with the
