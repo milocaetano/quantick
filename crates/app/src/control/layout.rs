@@ -383,11 +383,8 @@ fn set_collapsed(
     let tab = app
         .control_tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    let changed = tab.context_collapsed != collapsed;
-    // `split_fraction` is untouched either way: it is the width the column
-    // springs back to, and spending it here would hand back a different chart
-    // from the one that was put away.
-    tab.context_collapsed = collapsed;
+    // The same call the divider drag, the rail and the menu take.
+    let changed = tab.set_context_collapsed(collapsed);
     result(app, index, changed)
 }
 

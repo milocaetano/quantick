@@ -515,6 +515,28 @@ pub struct Tab {
 }
 
 impl Tab {
+    /// Put the context column away, or bring it back.
+    ///
+    /// **The one collapse path.** The divider drag, the rail, the View menu,
+    /// `Ctrl+0` and `layout.pane.collapse` all arrive here. Before this
+    /// existed the only way a *trader* could collapse the column was a mouse
+    /// drag, while an assistant had a named call for it — the second operator
+    /// holding a capability the first could not reach from the keyboard,
+    /// which is the rule inverted.
+    ///
+    /// `split_fraction` is deliberately untouched: it is the width the column
+    /// springs back to, and spending it here would hand back a different chart
+    /// from the one that was put away.
+    ///
+    /// Returns whether anything changed.
+    pub fn set_context_collapsed(&mut self, collapsed: bool) -> bool {
+        if self.context_collapsed == collapsed {
+            return false;
+        }
+        self.context_collapsed = collapsed;
+        true
+    }
+
     /// Move the context pane at `from` to `to`, keeping the rest in order.
     ///
     /// **The one reposition path.** The View menu, the keyboard and the
@@ -3161,7 +3183,7 @@ impl Tab {
             .rect_filled(grip, egui::Rounding::same(1.0), grip_colour);
 
         if response.clicked() {
-            self.context_collapsed = false;
+            self.set_context_collapsed(false);
         }
     }
 
@@ -3201,9 +3223,9 @@ impl Tab {
                 // Dismissed, not squeezed. `split_fraction` is left where it
                 // was, so the rail springs back to the width the trader chose
                 // rather than to a default that would discard it.
-                self.context_collapsed = true;
+                self.set_context_collapsed(true);
             } else {
-                self.context_collapsed = false;
+                self.set_context_collapsed(false);
                 self.split_fraction = clamp_pane_fraction(wanted_px / canvas_width);
             }
         }
@@ -3530,5 +3552,76 @@ mod move_pane_tests {
         assert!(!tab.move_context_pane(1, 1));
         assert!(!tab.move_context_pane(1, 2));
         assert_eq!(tab.time_panes.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod collapse_path_tests {
+    use super::*;
+    use crate::feed;
+    use crate::state::BarSpec;
+    use tokio::sync::mpsc;
+
+    static NEXT_DIR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(2000);
+
+    fn tab() -> Tab {
+        let (_evt_tx, evt_rx) = mpsc::channel(8);
+        let (_book_tx, book_rx) = mpsc::channel(8);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(8);
+        Tab::new(
+            0,
+            0,
+            "binance".to_owned(),
+            "BTCUSDT".to_owned(),
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(
+                    crate::config::ProviderKind::Binance.capabilities(),
+                ),
+                latency: feed::unsplit_latency(),
+                commands: cmd_tx,
+                replay: None,
+            },
+            std::env::temp_dir().join(format!(
+                "quantick-collapse-test-{}",
+                NEXT_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            )),
+        )
+    }
+
+    /// Collapse reports whether it changed anything, so a caller that retried
+    /// a dropped call can tell "nothing happened" from "it worked".
+    #[test]
+    fn collapsing_reports_change_and_is_idempotent() {
+        let mut tab = tab();
+        assert!(
+            tab.set_context_collapsed(true),
+            "the first collapse changes it"
+        );
+        assert!(
+            !tab.set_context_collapsed(true),
+            "the second is a no-op and says so"
+        );
+        assert!(tab.set_context_collapsed(false), "and it comes back");
+        assert!(!tab.set_context_collapsed(false));
+    }
+
+    /// The width the column springs back to is never spent by putting it away
+    /// — however many times it is put away.
+    #[test]
+    fn collapsing_never_spends_the_remembered_width() {
+        let mut tab = tab();
+        tab.split_fraction = 0.42;
+        for _ in 0..3 {
+            tab.set_context_collapsed(true);
+            tab.set_context_collapsed(false);
+        }
+        assert_eq!(
+            tab.split_fraction, 0.42,
+            "the column came back at a width the trader never chose"
+        );
     }
 }

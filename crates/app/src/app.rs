@@ -5970,6 +5970,16 @@ fn layout_preset_shortcut(index: usize) -> Option<egui::KeyboardShortcut> {
         .map(|key| egui::KeyboardShortcut::new(egui::Modifiers::CTRL, *key))
 }
 
+/// `Ctrl+0` puts the context charts away, or brings them back.
+///
+/// The number row's own zero, beside `Ctrl+1..9` for the presets: nine keys
+/// choose an arrangement and the tenth dismisses the column that arrangement
+/// put beside the heatmap. Without it the only way to collapse was a drag,
+/// which a trader working by keyboard cannot make and which WCAG 2.2's
+/// dragging rule wants an alternative to besides.
+const COLLAPSE_CONTEXT_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Num0);
+
 const DOCK_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::B);
 /// Folds the focused pane's on-chart indicator legend to its count puck, or
@@ -6035,6 +6045,10 @@ impl QuantickApp {
         }
         if ctx.input_mut(|i| i.consume_shortcut(&DOCK_SHORTCUT)) {
             self.dock.toggle_visible();
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&COLLAPSE_CONTEXT_SHORTCUT)) {
+            let collapsed = self.active_tab().context_collapsed;
+            self.active_tab_mut().set_context_collapsed(!collapsed);
         }
         // Layout by number, straight off the registry. The same
         // `apply_layout_preset` the picker and the menu call — three doors,
@@ -6172,6 +6186,31 @@ impl QuantickApp {
                                 }
                             }
                         });
+                        // Collapsing was drag-only, which a trader working
+                        // by keyboard could not do at all — while the
+                        // assistant had `layout.pane.collapse`. Same call,
+                        // three doors.
+                        if self.active_tab().layout.shows_time()
+                            && self.active_tab().layout.shows_flow()
+                        {
+                            let collapsed = self.active_tab().context_collapsed;
+                            let label = if collapsed {
+                                "Show context charts"
+                            } else {
+                                "Hide context charts"
+                            };
+                            if ui
+                                .add(
+                                    egui::Button::new(label).shortcut_text(
+                                        ui.ctx().format_shortcut(&COLLAPSE_CONTEXT_SHORTCUT),
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                self.active_tab_mut().set_context_collapsed(!collapsed);
+                                ui.close_menu();
+                            }
+                        }
                         // Reposition without a drag. WCAG 2.2's dragging rule
                         // wants a single-pointer alternative to every drag, and
                         // TradingView — the reference the trader named — moves
