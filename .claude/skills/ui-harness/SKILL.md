@@ -305,7 +305,16 @@ $env:QUANTICK_CONTROL_SCOPES = "all-reads,observe.evidence,observe.screenshot"
 
 **The client.** `quantick-mcp` is a STDIO MCP server; feeding it JSON-RPC lines
 is a complete client, no extra tooling. It discovers the running instance
-itself and never starts one:
+itself and never starts one.
+
+Build it first — step 1 of the launch workflow builds `quantick-app` only, and
+the adapter is a separate binary in the same target directory:
+
+```powershell
+$target = "D:\quantick-agent-target"     # the same one the launch used
+cargo build -p quantick-mcp
+$mcp = Join-Path $target "debug\quantick-mcp.exe"
+```
 
 ```powershell
 $lines = @(
@@ -313,7 +322,7 @@ $lines = @(
   '{"jsonrpc":"2.0","method":"notifications/initialized"}',
   '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"quantick_get_scene","arguments":{}}}'
 ) -join "`n"
-$lines | & "$target\debug\quantick-mcp.exe" --profile observer
+$lines | & $mcp --profile observer
 ```
 
 Every answer is one JSON line on stdout; `result.structuredContent` is the

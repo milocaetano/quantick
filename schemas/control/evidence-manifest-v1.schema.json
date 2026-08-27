@@ -138,7 +138,7 @@
       "properties": {
         "capture_revision": {
           "$ref": "#/$defs/WireU64",
-          "description": "The capture this image belongs to — the same revision as the scene in\nthe same bundle. That equality is the whole point: it is what turns a\nrectangle of pixels into the name of a control."
+          "description": "The capture this image belongs to — the same revision as the scene in\nthe same bundle. That equality is the whole point: it is what turns a\nrectangle of pixels into the name of a control.\n\nIt ties the image to the *scene*, and to nothing stronger. The pixels\nare of the frame that was painted; the projections are taken at the top\nof the next frame, after it has drained whatever the feed delivered in\nbetween. Controls do not move in a drain, so every region below still\nnames what is under it — but a price or a bar count elsewhere in the\nbundle can be one drain newer than the picture, and\n`coverage.not_captured` says so rather than leaving a reader to assume\notherwise."
         },
         "control_regions": {
           "description": "Where each named control sits in this image.",

@@ -2696,7 +2696,12 @@ impl QuantickApp {
                 frames = CONTROL_EVIDENCE_HOOK_FRAMES,
                 "the window never delivered a frame to rasterise; capturing without one"
             );
-            wants_screenshot = false;
+            // The request stays true on purpose. Clearing it would send
+            // `screenshot: false`, and the bundle would then record
+            // `screenshot/not_requested` — a lie about a run that asked for a
+            // picture and waited two seconds for one. Left true, the capture
+            // finds no image and records `frame_not_delivered`, which is what
+            // actually happened.
         }
         let outcome = access.invoke_local_read(
             self,
@@ -30625,7 +30630,15 @@ plot(close)
             .collect::<Vec<_>>();
         for expected in [
             ("diagnostic_logs", "not_captured_in_this_tier"),
-            ("user_authored_text", "redacted_from_projections_and_events"),
+            // Two separate claims, because they have two separate answers: the
+            // journal is stripped by key whatever the grant, while one
+            // projection is allowed to publish the trader's own words and this
+            // capture did not ask for it.
+            ("user_authored_text_in_events", "redacted_by_payload_key"),
+            (
+                "user_authored_text_in_projections",
+                "redacted_by_projection_policy",
+            ),
             ("configuration_paths", "redacted_path_values"),
             ("disk_export", "cockpit_tier_capability"),
             ("screenshot", "not_requested"),

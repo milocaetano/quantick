@@ -61,6 +61,12 @@ const OBSERVER_SCOPES: &[&str] = &[
     "observe.health",
     "observe.attention",
     "observe.events",
+    // The evidence tier, for exactly the reason the two comments above give:
+    // both are off in the panel until the trader ticks them, and a connection
+    // that never asked is refused even after they do — which reads to a client
+    // as `quantick_capture_evidence` being broken rather than withheld.
+    "observe.evidence",
+    "observe.screenshot",
 ];
 
 const USAGE: &str = "usage:
@@ -231,5 +237,71 @@ fn serve(profile: &str, instance: Option<InstanceId>, instances_dir: Option<Path
             eprintln!("quantick-mcp: stdio transport ended with an error: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OBSERVER_SCOPES;
+
+    /// The committed capability catalog, as the application publishes it.
+    const CATALOG: &str =
+        include_str!("../../../schemas/control/observer-capability-catalog-v1.json");
+
+    /// Every read this adapter can reach is a read it asked the scopes for.
+    ///
+    /// The gateway intersects the requested scopes with the trader's grant, so
+    /// a scope this list forgets is refused *even after the trader ticks it* —
+    /// which reads to a client as a broken tool rather than a withheld one.
+    /// That is exactly how `quantick_capture_evidence` shipped in the first
+    /// draft of this branch: registered, advertised, and permanently answering
+    /// `control.scope_denied`.
+    ///
+    /// So the list is held against the registry rather than against memory. A
+    /// module that registers a capability inside the observer ceiling and
+    /// forgets to widen this list fails here, and is told which capability
+    /// needs which scope.
+    #[test]
+    fn the_adapter_asks_for_every_scope_an_observer_capability_needs() {
+        let catalog: serde_json::Value = serde_json::from_str(CATALOG).expect("the catalog parses");
+        let observer_ceiling = catalog["permissions"]
+            .as_array()
+            .expect("the catalog lists permissions")
+            .iter()
+            .filter(|permission| {
+                permission["profile_ceilings"]
+                    .as_array()
+                    .is_some_and(|ceilings| ceilings.iter().any(|id| id == "observer"))
+            })
+            .filter_map(|permission| permission["id"].as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+
+        let mut missing = std::collections::BTreeSet::new();
+        for capability in catalog["capabilities"]
+            .as_array()
+            .expect("the catalog lists capabilities")
+        {
+            let required = capability["required_permissions"]
+                .as_array()
+                .expect("a capability declares its permissions")
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>();
+            // Only the reads an observer connection could ever reach: an
+            // annotate action is outside this profile's ceiling by design.
+            if !required.iter().all(|id| observer_ceiling.contains(id)) {
+                continue;
+            }
+            for id in required {
+                if !OBSERVER_SCOPES.contains(&id) {
+                    missing.insert(format!("{id} (needed by {})", capability["id"]));
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "the adapter never asks for these, so the gateway refuses them whatever the \
+             trader grants: {missing:?}"
+        );
     }
 }

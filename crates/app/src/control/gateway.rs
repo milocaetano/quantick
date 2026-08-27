@@ -1258,12 +1258,16 @@ impl ControlAccess {
         // still describe that frame. Harvesting after the drain would pair a
         // scene with a picture of the screen before it.
         self.harvest_screenshot(app, ctx);
-        self.serve_awaiting_screenshot(app, generation, ctx, frame_started);
+        // What the waiters spend, the drain does not get to spend again. They
+        // are the same work against the same frame, so the ceiling has to be
+        // one number: four captures served here plus four admitted below would
+        // be eight projection passes in a frame documented to admit four.
+        let already_served = self.serve_awaiting_screenshot(app, generation, ctx, frame_started);
 
         // The drain owns `self` for the whole pass: an action runs through the
         // same `invoke_local_action` the hotkey uses, which needs the journal
         // and the trace mutably, so no field can stay borrowed across it.
-        let drain = drain_bounded_since(&requests, frame_started, |request| {
+        let drain = drain_bounded_since(&requests, frame_started, already_served, |request| {
             if self.defer_for_screenshot(&request, ctx) {
                 self.awaiting_screenshot.push_back(request);
                 return;
@@ -1344,7 +1348,8 @@ impl ControlAccess {
         app.show_agent_toast(SCREENSHOT_NOTICE.to_owned());
     }
 
-    /// Run the captures that were waiting for an image, or give up on them.
+    /// Run the captures that were waiting for an image, or give up on them,
+    /// and report how much of the frame's request budget they spent.
     ///
     /// Returns before touching anything when none is waiting, which is every
     /// frame of every session where no client asked for a picture.
@@ -1354,14 +1359,30 @@ impl ControlAccess {
         generation: u64,
         ctx: &eframe::egui::Context,
         frame_started: Instant,
-    ) {
+    ) -> usize {
         if self.awaiting_screenshot.is_empty() {
-            return;
+            return 0;
         }
         let now = Instant::now();
         let mut served = 0usize;
         let mut waiting = std::mem::take(&mut self.awaiting_screenshot);
         while let Some(request) = waiting.pop_front() {
+            // Revocation applies to work already in flight, and a parked
+            // capture is in flight. Answered here rather than left to park,
+            // because parking is what keeps asking the window to rasterise —
+            // and a revoked connection must not be able to make the trader's
+            // window flash a capture notice for a request that will be refused
+            // anyway.
+            if request.grant_generation != generation
+                || self.revoked_connections.contains(&request.connection_id)
+            {
+                let _ = request.response.try_send(Err(known_error(
+                    codes::PERMISSION_DENIED,
+                    "connection authority was revoked while the capture waited for a frame",
+                    false,
+                )));
+                continue;
+            }
             // These captures spend the same frame budget the drain does, and
             // they run before it. Left uncounted, four waiters plus the
             // drain's own four would put eight projection passes in one frame
@@ -1374,7 +1395,7 @@ impl ControlAccess {
                 self.awaiting_screenshot.push_back(request);
                 self.awaiting_screenshot.extend(waiting);
                 ctx.request_repaint();
-                return;
+                return served;
             }
             // Given up on *before* the deadline, not at it. `execute_on_ui`
             // refuses an expired request with `control.timeout` as its very
@@ -1402,6 +1423,7 @@ impl ControlAccess {
         if self.awaiting_screenshot.is_empty() {
             self.screenshot_armed = false;
         }
+        served
     }
 
     /// Whether this request has to wait a frame for the window to be
@@ -2247,6 +2269,11 @@ impl ControlAccess {
                 } if generation == self.grant_generation => {
                     self.active_cancellation = None;
                     self.notice = Some(message);
+                    // A gateway that died takes the evidence with it: access
+                    // is off either way, and a bundle outliving the door it
+                    // came through is the accumulation the bounds exist to
+                    // stop, however the door closed.
+                    self.forget_evidence();
                     self.state = AccessState::Disabled;
                 }
                 LifecycleEvent::Failed {
@@ -2283,6 +2310,8 @@ impl ControlAccess {
                         self.active_cancellation = None;
                         self.connections.clear();
                         self.revoked_connections.clear();
+                        // Expected stop or unexpected, the evidence goes.
+                        self.forget_evidence();
                         self.state = AccessState::Disabled;
                         self.notice = Some(if expected {
                             "Local observer access is off and discovery was removed.".to_owned()
@@ -2663,9 +2692,12 @@ fn elapsed_us_since(started: Instant) -> u64 {
 fn drain_bounded_since<T>(
     receiver: &Receiver<T>,
     started: Instant,
+    already_processed: usize,
     mut handle: impl FnMut(T),
 ) -> DrainObservation {
-    let mut processed = 0usize;
+    // Requests this frame already ran elsewhere (the screenshot waiters) count
+    // against the same ceiling: one frame, one budget.
+    let mut processed = already_processed;
     // Why the drain stopped is recorded where it stops, not re-derived from
     // a later clock reading: the count ceiling, the budget, or an empty queue
     // are three different diagnoses.
@@ -4115,6 +4147,7 @@ mod tests {
         let observation = drain_bounded_since(
             &receiver,
             Instant::now() + Duration::from_secs(60),
+            0,
             |value| handled.push(value),
         );
         assert_eq!(handled.len(), CONTROL_UI_MAX_REQUESTS_PER_FRAME);
@@ -4143,7 +4176,7 @@ mod tests {
                 sender.send(value).unwrap();
             }
             let mut handled = 0usize;
-            let observation = drain_bounded_since(&receiver, Instant::now(), |_| {
+            let observation = drain_bounded_since(&receiver, Instant::now(), 0, |_| {
                 handled += 1;
                 let until = Instant::now() + budget;
                 while Instant::now() < until {

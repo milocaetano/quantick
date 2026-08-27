@@ -81,6 +81,8 @@ pub(crate) const EVIDENCE_MODULE_ID: &str = "evidence";
 pub(crate) const EVIDENCE_PERMISSION_ID: &str = "observe.evidence";
 /// Rasterising the window is its own decision, separately granted.
 pub(crate) const SCREENSHOT_PERMISSION_ID: &str = "observe.screenshot";
+/// The scope one projection publishes the trader's own words under.
+const USER_TEXT_PERMISSION_ID: &str = "observe.user_text";
 
 pub(crate) const CAPTURE_CAPABILITY_ID: &str = "evidence.capture";
 pub(crate) const READ_CAPABILITY_ID: &str = "evidence.read";
@@ -292,6 +294,15 @@ pub(crate) struct EvidenceScreenshot {
     /// The capture this image belongs to — the same revision as the scene in
     /// the same bundle. That equality is the whole point: it is what turns a
     /// rectangle of pixels into the name of a control.
+    ///
+    /// It ties the image to the *scene*, and to nothing stronger. The pixels
+    /// are of the frame that was painted; the projections are taken at the top
+    /// of the next frame, after it has drained whatever the feed delivered in
+    /// between. Controls do not move in a drain, so every region below still
+    /// names what is under it — but a price or a bar count elsewhere in the
+    /// bundle can be one drain newer than the picture, and
+    /// `coverage.not_captured` says so rather than leaving a reader to assume
+    /// otherwise.
     pub capture_revision: WireU64,
     pub width_px: u32,
     pub height_px: u32,
@@ -760,13 +771,25 @@ impl EvidenceStore {
 }
 
 impl StoreState {
+    /// Drop every bundle whose retention has run out — all of them, not the
+    /// run at the front.
+    ///
+    /// The deque is not ordered by deadline and cannot be: response workers
+    /// insert concurrently, so two captures can land out of the order they
+    /// were collected in, and a wall clock can step backwards besides. A sweep
+    /// that stopped at the first live bundle would leave an expired one behind
+    /// it holding a slot and its bytes, and the next count or byte eviction
+    /// would then drop a *live* bundle to make room for a dead one.
     fn expire(&mut self, now_unix_ms: i64) {
-        while let Some(front) = self.bundles.front() {
-            if front.expires_at_unix_ms > now_unix_ms {
-                break;
-            }
-            self.drop_front();
-        }
+        let reclaimed: usize = self
+            .bundles
+            .iter()
+            .filter(|bundle| bundle.expires_at_unix_ms <= now_unix_ms)
+            .map(|bundle| bundle.encoded_bytes)
+            .sum();
+        self.total_bytes = self.total_bytes.saturating_sub(reclaimed);
+        self.bundles
+            .retain(|bundle| bundle.expires_at_unix_ms > now_unix_ms);
     }
 
     fn evict_to_bounds(&mut self) {
@@ -912,13 +935,21 @@ fn recent_events(
     .map(redact_event_prose)
 }
 
-/// Payload keys under which an operator's own words reach the journal.
+/// Payload keys under which an operator's own words reach the journal:
 ///
-/// `note` is what a human types at a mark, `message` what an assistant puts in
-/// a notification, `text` what either of them writes on the chart. A new
-/// action that records prose adds its key here — and the doc comment is the
-/// contract, because nothing else can find prose in a free-form payload.
-const USER_PROSE_PAYLOAD_KEYS: &[&str] = &["note", "message", "text"];
+/// - `note` — what a human types at a mark (`attention.mark.created`).
+/// - `message` — what an assistant puts in a notification (`notify.raised`).
+/// - `text` — the words on a label, inside an annotation payload.
+/// - `label` — what an object is *called*: `Drawing::display_label` returns
+///   the name the trader gave it, and the annotate events carry it as `label`.
+/// - `name`, `title` — a script's own name and an indicator's, inside the
+///   `indicator.script.*` payloads.
+///
+/// This list is the contract. A new action that records prose adds its key
+/// here, because nothing else can find prose in a free-form payload — and the
+/// day one is forgotten is the day a bundle carries the trader's words while
+/// its coverage says it does not.
+const USER_PROSE_PAYLOAD_KEYS: &[&str] = &["note", "message", "text", "label", "name", "title"];
 
 /// Take the operator's own words out of the events a bundle carries.
 ///
@@ -983,6 +1014,7 @@ impl EvidenceCapture {
         let capture_revision = snapshot.capture_revision;
 
         let mut gaps = fixed_gaps();
+        gaps.push(user_text_gap(&self.source_scopes));
         gaps.extend(self.pending_gaps);
 
         // Three outcomes, and the bundle has to be able to tell them apart:
@@ -1011,7 +1043,19 @@ impl EvidenceCapture {
         let image = match self.screenshot {
             None => None,
             Some(raw) => match encode_screenshot(raw, capture_revision, scene.as_ref()) {
-                Ok(image) => Some(image),
+                Ok(image) => {
+                    // The pixels are of the frame that was painted; the
+                    // projections beside them were taken at the top of the
+                    // next one, after its drain. Controls do not move in a
+                    // drain, so the regions hold — but the market data can
+                    // be one step newer than the picture, and a reader is
+                    // told rather than left to assume.
+                    gaps.push(EvidenceGap {
+                        subject: "screenshot.state_skew".to_owned(),
+                        reason: "pixels_precede_projections_by_one_drain".to_owned(),
+                    });
+                    Some(image)
+                }
                 Err(gap) => {
                     gaps.push(gap);
                     None
@@ -1198,11 +1242,13 @@ fn fixed_gaps() -> Vec<EvidenceGap> {
             reason: "not_captured_in_this_tier".to_owned(),
         },
         EvidenceGap {
-            subject: "user_authored_text".to_owned(),
-            // Two mechanisms, one promise: the projections strip it before it
-            // reaches a snapshot, and the event page is stripped on its way
-            // into the bundle.
-            reason: "redacted_from_projections_and_events".to_owned(),
+            // The journal records prose verbatim whatever the grant, so the
+            // event page is stripped by key on its way into every bundle.
+            // What the *projections* do is a separate question, answered by
+            // `user_text_gap` below, because one scope is allowed to publish
+            // it and a blanket claim here would be false whenever it does.
+            subject: "user_authored_text_in_events".to_owned(),
+            reason: "redacted_by_payload_key".to_owned(),
         },
         EvidenceGap {
             subject: "configuration_paths".to_owned(),
@@ -1217,6 +1263,30 @@ fn fixed_gaps() -> Vec<EvidenceGap> {
             reason: "separately_paginated_capability".to_owned(),
         },
     ]
+}
+
+/// What this bundle has to say about user-authored text in its *projections*.
+///
+/// Not a constant, because it is not always the same answer. Most scopes strip
+/// the trader's words before evidence ever sees them — but `analysis.indicators`
+/// deliberately publishes the titles of the scripts they wrote, gated on
+/// `observe.user_text`, because an agent cannot address an indicator it cannot
+/// name. A bundle that captured such a scope therefore *carries* prose, and
+/// saying otherwise would be a false statement in the section that exists to
+/// be honest about what is missing. So the answer is derived from the scopes
+/// the bundle actually aggregated.
+fn user_text_gap(source_scopes: &BTreeSet<PermissionId>) -> EvidenceGap {
+    let carries_user_text = source_scopes
+        .iter()
+        .any(|permission| permission.as_str() == USER_TEXT_PERMISSION_ID);
+    EvidenceGap {
+        subject: "user_authored_text_in_projections".to_owned(),
+        reason: if carries_user_text {
+            "retained_under_observe_user_text".to_owned()
+        } else {
+            "redacted_by_projection_policy".to_owned()
+        },
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1602,6 +1672,11 @@ const ALWAYS_AGGREGATED_PERMISSION_IDS: &[&str] = &[
     // The effective configuration: feed IDs, symbol catalogues, the
     // MetaTrader port.
     "observe.market",
+    // The build and host identity. Every manifest and every document embeds
+    // `system_snapshot()` whatever scopes were named, and that is the `system`
+    // module's projection — so a capture of `feed.status` alone still reads
+    // it, and must still hold its scope.
+    "observe.system",
 ];
 
 /// The scopes a bundle over these snapshot scopes aggregates.
@@ -1921,6 +1996,58 @@ mod tests {
         // And everything that is not prose is untouched.
         assert_eq!(payload["target"]["pane_id"], "3");
         assert_eq!(payload["annotation"]["tool_id"], "text");
+    }
+
+    /// Retention is per bundle, and the sweep reaches all of them.
+    ///
+    /// The deque is not ordered by deadline — response workers insert
+    /// concurrently and a wall clock can step backwards — so a sweep that
+    /// stopped at the first live bundle would leave a dead one behind it
+    /// holding a slot, and the next eviction would drop a *live* bundle to
+    /// make room for it.
+    #[test]
+    fn an_expired_bundle_behind_a_live_one_is_swept_and_gives_its_bytes_back() {
+        let store = EvidenceStore::with_bounds(8, 1 << 20, 1 << 20, 1_000);
+        let epoch = store.epoch();
+        // Inserted in an order the clock disagrees with.
+        store.insert(bundle(1, 64, 0, 10_000), epoch, 0).unwrap();
+        store.insert(bundle(2, 64, 0, 1_000), epoch, 0).unwrap();
+        store.insert(bundle(3, 64, 0, 10_000), epoch, 0).unwrap();
+        assert_eq!(store.retained(), 3);
+
+        // At five seconds only the middle one has run out of retention.
+        store
+            .insert(bundle(4, 64, 0, 10_000), epoch, 5_000)
+            .unwrap();
+        assert_eq!(
+            store.retained(),
+            3,
+            "the expired bundle went; the live ones on either side stayed"
+        );
+        let granted = scopes(&["observe", EVIDENCE_PERMISSION_ID]);
+        for id in [1, 3, 4] {
+            assert!(
+                store
+                    .read(&evidence_id(id), None, &instance(), &granted, 5_000)
+                    .is_ok(),
+                "bundle {id} should still be readable"
+            );
+        }
+        assert_eq!(
+            store.lock().total_bytes,
+            3 * 64,
+            "and the swept bundle gave its bytes back"
+        );
+    }
+
+    /// Every bundle embeds the build identity, so every bundle needs its scope.
+    #[test]
+    fn a_bundle_requires_the_system_scope_it_always_embeds() {
+        let aggregated = source_scopes(std::iter::empty(), false);
+        assert!(
+            aggregated.contains(&permission("observe.system")),
+            "`system_snapshot()` is in every manifest and every document: {aggregated:?}"
+        );
     }
 
     /// Meeting the budget is reported; *not* meeting it is not.
