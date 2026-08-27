@@ -2658,6 +2658,19 @@ impl QuantickApp {
                     .map(|scope| scope.to_string()),
             );
         }
+        // The scope is checked before anything is armed, not after. Arming is
+        // what eventually raises the screenshot notice, and telling the trader
+        // their window was captured on the way to refusing the capture would
+        // make the one indicator `visual-qa` asserts on say something untrue.
+        if wants_screenshot && !access.grants_screenshot() {
+            tracing::warn!(
+                target: "quantick::control",
+                event_code = "CONTROL_EVIDENCE_HOOK_SCREENSHOT_NOT_GRANTED",
+                "QUANTICK_CONTROL_EVIDENCE asked for an image without observe.screenshot; \
+                 capturing without one"
+            );
+            wants_screenshot = false;
+        }
         if wants_screenshot {
             // Harvests as well as arms: the frame service that normally takes
             // the pixels runs only while the gateway is enabled, and this hook
@@ -30597,7 +30610,7 @@ plot(close)
             .collect::<Vec<_>>();
         for expected in [
             ("diagnostic_logs", "not_captured_in_this_tier"),
-            ("user_authored_text", "redacted_by_projection_policy"),
+            ("user_authored_text", "redacted_from_projections_and_events"),
             ("configuration_paths", "redacted_path_values"),
             ("disk_export", "cockpit_tier_capability"),
             ("screenshot", "not_requested"),
@@ -30782,6 +30795,10 @@ plot(close)
         const NOTE_CANARY: &str = "CANARYNOTEqzx";
         const PATH_CANARY: &str = "C:/Users/CANARYUSERqzx/Documents/quantick-trades";
         const COMMAND_CANARY: &str = "C:/Users/CANARYUSERqzx/bridge/quantick_bridge.py";
+        /// The other place the trader's words live: the journal, which the
+        /// bundle embeds a page of. The drawing note above is stripped by the
+        /// projections; this one is only stripped by the bundle itself.
+        const MARK_CANARY: &str = "CANARYMARKqzx";
 
         let ctx = egui::Context::default();
         let (mut app, _commands) = app_with_history(8);
@@ -30811,6 +30828,11 @@ plot(close)
             // The same call the inline editor makes when the trader types.
             tool.set_inline_text(drawing.payload.as_mut(), NOTE_CANARY.to_owned());
         }
+        run_frame(&mut app, &ctx);
+        // And the trader's own words in the *journal*, through the hotkey's
+        // own action — the page a bundle embeds carries these verbatim, so
+        // this is the leak the drawing canary above cannot find.
+        app.pending_control_mark = Some(MARK_CANARY.to_owned());
         run_frame(&mut app, &ctx);
 
         let directory = gateway_test_directory("evidence-redaction");
@@ -30852,6 +30874,7 @@ plot(close)
         for (where_it_is, haystack) in &haystacks {
             for (what, canary) in [
                 ("the trader's note", NOTE_CANARY),
+                ("the trader's mark note", MARK_CANARY),
                 ("a configured path", PATH_CANARY),
                 ("a bridge command", COMMAND_CANARY),
                 ("the user name in a path", "CANARYUSERqzx"),

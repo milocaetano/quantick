@@ -1114,6 +1114,18 @@ impl ControlAccess {
         self.contract.readable_scopes(&self.configured_scopes)
     }
 
+    /// Whether the configured grant permits rasterising the window.
+    ///
+    /// Asked *before* anything arms a rasterise, because taking the picture is
+    /// what raises the notice: a caller that will be refused the scope one
+    /// step later must not first tell the trader their window was captured.
+    /// The indicator only means something if it is never wrong.
+    pub(crate) fn grants_screenshot(&self) -> bool {
+        self.configured_scopes
+            .iter()
+            .any(|permission| permission.as_str() == super::evidence::SCREENSHOT_PERMISSION_ID)
+    }
+
     /// Ask the window to rasterise itself for the next read that wants it,
     /// and take the frame if one has already arrived.
     ///
@@ -1246,7 +1258,7 @@ impl ControlAccess {
         // still describe that frame. Harvesting after the drain would pair a
         // scene with a picture of the screen before it.
         self.harvest_screenshot(app, ctx);
-        self.serve_awaiting_screenshot(app, generation, ctx);
+        self.serve_awaiting_screenshot(app, generation, ctx, frame_started);
 
         // The drain owns `self` for the whole pass: an action runs through the
         // same `invoke_local_action` the hotkey uses, which needs the journal
@@ -1341,13 +1353,29 @@ impl ControlAccess {
         app: &mut QuantickApp,
         generation: u64,
         ctx: &eframe::egui::Context,
+        frame_started: Instant,
     ) {
         if self.awaiting_screenshot.is_empty() {
             return;
         }
         let now = Instant::now();
+        let mut served = 0usize;
         let mut waiting = std::mem::take(&mut self.awaiting_screenshot);
         while let Some(request) = waiting.pop_front() {
+            // These captures spend the same frame budget the drain does, and
+            // they run before it. Left uncounted, four waiters plus the
+            // drain's own four would put eight projection passes in one frame
+            // against a documented ceiling of four, and the drain would find
+            // its budget already gone. A waiter this frame cannot serve stays
+            // queued and is served by the next one.
+            if served >= CONTROL_UI_MAX_REQUESTS_PER_FRAME
+                || elapsed_us_since(frame_started) > CONTROL_UI_BUDGET_US
+            {
+                self.awaiting_screenshot.push_back(request);
+                self.awaiting_screenshot.extend(waiting);
+                ctx.request_repaint();
+                return;
+            }
             // Given up on *before* the deadline, not at it. `execute_on_ui`
             // refuses an expired request with `control.timeout` as its very
             // first act, so waiting to the last moment would answer a window
@@ -1366,6 +1394,7 @@ impl ControlAccess {
             }
             let result = self.execute_on_ui(app, generation, &request);
             let _ = request.response.try_send(result);
+            served = served.saturating_add(1);
         }
         // Nothing is waiting any more, so nothing is owed a rasterise. Left
         // set, the flag would suppress every future arming for the rest of the
@@ -2623,6 +2652,14 @@ fn replay_key(tab: &crate::tab::Tab) -> Option<(bool, bool)> {
         .map(|link| (link.status.is_playing(), link.status.is_finished()))
 }
 
+/// Microseconds spent since `started`, saturating.
+///
+/// One reading for everything that shares the frame budget, so the drain and
+/// the captures that run before it are measuring the same thing.
+fn elapsed_us_since(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
+}
+
 fn drain_bounded_since<T>(
     receiver: &Receiver<T>,
     started: Instant,
@@ -2637,8 +2674,7 @@ fn drain_bounded_since<T>(
         if processed >= CONTROL_UI_MAX_REQUESTS_PER_FRAME {
             break;
         }
-        if u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX) >= CONTROL_UI_BUDGET_US
-        {
+        if elapsed_us_since(started) >= CONTROL_UI_BUDGET_US {
             stopped_on_budget = true;
             break;
         }
@@ -2650,7 +2686,7 @@ fn drain_bounded_since<T>(
             Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
         }
     }
-    let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+    let elapsed_us = elapsed_us_since(started);
     DrainObservation {
         processed,
         elapsed_us,

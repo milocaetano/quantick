@@ -527,6 +527,16 @@ struct StoreState {
     max_total_bytes: usize,
     max_bundle_bytes: usize,
     retention_ms: u64,
+    /// Bumped every time the store is emptied.
+    ///
+    /// A capture is collected on the application thread and finishes encoding
+    /// on a response worker some milliseconds later, so the trader can withdraw
+    /// access in between — and an insert that landed after the clear would put
+    /// a bundle into a store that was just emptied *because* the grant behind
+    /// it was withdrawn, where it would sit for its full retention. Each
+    /// capture carries the epoch it was collected under and is dropped if the
+    /// store has moved on.
+    epoch: u64,
 }
 
 struct RetainedBundle {
@@ -570,6 +580,7 @@ impl EvidenceStore {
                 max_total_bytes,
                 max_bundle_bytes,
                 retention_ms,
+                epoch: 0,
             })),
         }
     }
@@ -577,10 +588,19 @@ impl EvidenceStore {
     /// Forget every retained bundle. Called when local access is withdrawn and
     /// when the window closes: evidence outliving the door it came through
     /// would be exactly the accumulation the retention bounds exist to stop.
+    ///
+    /// Bumps the epoch, which is what closes the door on captures still being
+    /// encoded elsewhere as well as on the ones already retained.
     pub fn clear(&self) {
         let mut state = self.lock();
         state.bundles.clear();
         state.total_bytes = 0;
+        state.epoch = state.epoch.saturating_add(1);
+    }
+
+    /// The epoch a capture collected now belongs to.
+    pub fn epoch(&self) -> u64 {
+        self.lock().epoch
     }
 
     pub fn retention_ms(&self) -> u64 {
@@ -598,8 +618,24 @@ impl EvidenceStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn insert(&self, bundle: RetainedBundle, now_unix_ms: i64) -> Result<(), ControlError> {
+    fn insert(
+        &self,
+        bundle: RetainedBundle,
+        collected_under_epoch: u64,
+        now_unix_ms: i64,
+    ) -> Result<(), ControlError> {
         let mut state = self.lock();
+        if state.epoch != collected_under_epoch {
+            // Access was withdrawn while this capture was being encoded. The
+            // grant it was collected under is gone, so the bundle is not
+            // retained and the client is told the resource is not there —
+            // which is exactly what it will find if it asks.
+            return Err(known_error(
+                codes::RESOURCE_GONE,
+                "local access was withdrawn while this capture was being encoded",
+                false,
+            ));
+        }
         if bundle.encoded_bytes > state.max_bundle_bytes {
             return Err(known_error(
                 codes::BACKPRESSURE,
@@ -782,6 +818,10 @@ pub(crate) struct EvidenceCapture {
     pub pending_gaps: Vec<EvidenceGap>,
     pub source_scopes: BTreeSet<PermissionId>,
     pub store: EvidenceStore,
+    /// The store's epoch when this capture was collected. If the store has
+    /// been emptied since — the trader withdrew access while this was
+    /// encoding — the bundle is not retained.
+    pub store_epoch: u64,
     pub captured_at_unix_ms: i64,
 }
 
@@ -830,6 +870,7 @@ pub(crate) fn capture_prevalidated(
         pending_gaps,
         source_scopes,
         store: context.evidence.clone(),
+        store_epoch: context.evidence.epoch(),
         captured_at_unix_ms: crate::metrics::wall_clock_ms(),
     })
 }
@@ -868,6 +909,59 @@ fn recent_events(
         Some(limit),
         false,
     )
+    .map(redact_event_prose)
+}
+
+/// Payload keys under which an operator's own words reach the journal.
+///
+/// `note` is what a human types at a mark, `message` what an assistant puts in
+/// a notification, `text` what either of them writes on the chart. A new
+/// action that records prose adds its key here — and the doc comment is the
+/// contract, because nothing else can find prose in a free-form payload.
+const USER_PROSE_PAYLOAD_KEYS: &[&str] = &["note", "message", "text"];
+
+/// Take the operator's own words out of the events a bundle carries.
+///
+/// The projections already strip user text before it reaches a snapshot, but a
+/// bundle also embeds a page of the *journal*, and the journal records prose
+/// verbatim: the note a trader typed at a mark, the message an assistant sent,
+/// the words on a label. Carrying those while `coverage` claimed user text was
+/// redacted would be a false statement made by the one section whose whole job
+/// is to be honest about what is missing.
+///
+/// Redacted unconditionally, not per grant. `events.read` still serves the
+/// prose to a client holding `observe.events`, unchanged; what a *bundle* must
+/// not become is the aggregate durable object where every scope's text is
+/// gathered in one place. The marker says redacted rather than empty, so a
+/// reader can tell a withheld note from a mark that never had one.
+fn redact_event_prose(mut page: EventPage) -> EventPage {
+    for event in &mut page.events {
+        redact_prose_value(&mut event.payload);
+    }
+    page
+}
+
+fn redact_prose_value(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map.iter_mut() {
+                if USER_PROSE_PAYLOAD_KEYS.contains(&key.as_str()) && child.is_string() {
+                    *child = json!({
+                        "redacted": true,
+                        "reason": "user_text_is_not_carried_in_a_bundle",
+                    });
+                } else {
+                    redact_prose_value(child);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                redact_prose_value(child);
+            }
+        }
+        _ => {}
+    }
 }
 
 impl EvidenceCapture {
@@ -1020,6 +1114,7 @@ impl EvidenceCapture {
                 source_scopes: self.source_scopes.clone(),
                 chunks,
             },
+            self.store_epoch,
             self.captured_at_unix_ms,
         )?;
 
@@ -1104,7 +1199,10 @@ fn fixed_gaps() -> Vec<EvidenceGap> {
         },
         EvidenceGap {
             subject: "user_authored_text".to_owned(),
-            reason: "redacted_by_projection_policy".to_owned(),
+            // Two mechanisms, one promise: the projections strip it before it
+            // reaches a snapshot, and the event page is stripped on its way
+            // into the bundle.
+            reason: "redacted_from_projections_and_events".to_owned(),
         },
         EvidenceGap {
             subject: "configuration_paths".to_owned(),
@@ -1327,13 +1425,20 @@ fn walk_unavailable(
 ) {
     let mut pending = vec![(prefix.to_owned(), root)];
     while let Some((pointer, value)) = pending.pop() {
-        if found.len() >= budget {
-            *truncated = true;
-            return;
-        }
         match value {
             Value::Object(map) => {
                 if map.get("available") == Some(&Value::Bool(false)) {
+                    // The budget is spent at the moment a field would be
+                    // *added*, not at the top of the walk. Checking early
+                    // marked a scope truncated whenever any node was still
+                    // queued — a scalar, an object with nothing unavailable in
+                    // it — so coverage could report that something was dropped
+                    // when nothing was, in the one section whose job is to be
+                    // honest about what is missing.
+                    if found.len() >= budget {
+                        *truncated = true;
+                        return;
+                    }
                     found.push(EvidenceUnavailableField {
                         pointer: pointer.clone(),
                         reason: map
@@ -1571,9 +1676,15 @@ mod tests {
     #[test]
     fn retention_evicts_by_the_earlier_of_count_bytes_and_age() {
         let store = EvidenceStore::with_bounds(2, 8_192, 8_192, 1_000);
-        store.insert(bundle(1, 16, 0, 1_000), 0).unwrap();
-        store.insert(bundle(2, 16, 0, 1_000), 0).unwrap();
-        store.insert(bundle(3, 16, 0, 1_000), 0).unwrap();
+        store
+            .insert(bundle(1, 16, 0, 1_000), store.epoch(), 0)
+            .unwrap();
+        store
+            .insert(bundle(2, 16, 0, 1_000), store.epoch(), 0)
+            .unwrap();
+        store
+            .insert(bundle(3, 16, 0, 1_000), store.epoch(), 0)
+            .unwrap();
         assert_eq!(store.retained(), 2, "the count bound evicted the oldest");
         assert_eq!(
             store
@@ -1591,12 +1702,18 @@ mod tests {
         );
 
         let store = EvidenceStore::with_bounds(8, 64, 8_192, 1_000);
-        store.insert(bundle(1, 48, 0, 1_000), 0).unwrap();
-        store.insert(bundle(2, 48, 0, 1_000), 0).unwrap();
+        store
+            .insert(bundle(1, 48, 0, 1_000), store.epoch(), 0)
+            .unwrap();
+        store
+            .insert(bundle(2, 48, 0, 1_000), store.epoch(), 0)
+            .unwrap();
         assert_eq!(store.retained(), 1, "the byte bound evicted the oldest");
 
         let store = EvidenceStore::with_bounds(8, 8_192, 8_192, 1_000);
-        store.insert(bundle(1, 16, 0, 1_000), 0).unwrap();
+        store
+            .insert(bundle(1, 16, 0, 1_000), store.epoch(), 0)
+            .unwrap();
         assert_eq!(
             store
                 .read(
@@ -1625,8 +1742,12 @@ mod tests {
         let store = EvidenceStore::with_bounds(8, 1 << 20, 1 << 20, 1_000);
         // Captured in an order the clock disagrees with: the first bundle
         // outlives the second.
-        store.insert(bundle(1, 16, 0, 10_000), 0).unwrap();
-        store.insert(bundle(2, 16, 0, 1_000), 0).unwrap();
+        store
+            .insert(bundle(1, 16, 0, 10_000), store.epoch(), 0)
+            .unwrap();
+        store
+            .insert(bundle(2, 16, 0, 1_000), store.epoch(), 0)
+            .unwrap();
 
         // At 5 s the front is still alive, so the sweep stops there.
         assert!(
@@ -1650,8 +1771,12 @@ mod tests {
     #[test]
     fn a_bundle_larger_than_its_own_share_is_refused_instead_of_emptying_the_store() {
         let store = EvidenceStore::with_bounds(4, 8_192, 64, 1_000);
-        store.insert(bundle(1, 32, 0, 1_000), 0).unwrap();
-        let error = store.insert(bundle(2, 4_096, 0, 1_000), 0).unwrap_err();
+        store
+            .insert(bundle(1, 32, 0, 1_000), store.epoch(), 0)
+            .unwrap();
+        let error = store
+            .insert(bundle(2, 4_096, 0, 1_000), store.epoch(), 0)
+            .unwrap_err();
         assert_eq!(error.code.as_str(), codes::BACKPRESSURE);
         assert_eq!(store.retained(), 1, "the bundle already retained is intact");
     }
@@ -1662,8 +1787,12 @@ mod tests {
         let store = EvidenceStore::with_bounds(4, 1 << 30, 1 << 30, 60_000);
         // Six chunks: two pages of four and two.
         let total = CONTROL_EVIDENCE_CHUNK_BYTES * 5 + 11;
-        store.insert(bundle(1, total, 0, 60_000), 0).unwrap();
-        store.insert(bundle(2, total, 0, 60_000), 0).unwrap();
+        store
+            .insert(bundle(1, total, 0, 60_000), store.epoch(), 0)
+            .unwrap();
+        store
+            .insert(bundle(2, total, 0, 60_000), store.epoch(), 0)
+            .unwrap();
 
         let first = store
             .read(&evidence_id(1), None, &instance(), &granted, 0)
@@ -1707,7 +1836,7 @@ mod tests {
         let store = EvidenceStore::with_bounds(4, 1 << 20, 1 << 20, 60_000);
         let mut retained = bundle(1, 32, 0, 60_000);
         retained.source_scopes = scopes(&["observe", EVIDENCE_PERMISSION_ID, "observe.paper"]);
-        store.insert(retained, 0).unwrap();
+        store.insert(retained, store.epoch(), 0).unwrap();
 
         let error = store
             .read(
@@ -1731,9 +1860,91 @@ mod tests {
     #[test]
     fn withdrawing_access_forgets_every_retained_bundle() {
         let store = EvidenceStore::with_bounds(4, 1 << 20, 1 << 20, 60_000);
-        store.insert(bundle(1, 32, 0, 60_000), 0).unwrap();
+        let epoch = store.epoch();
+        store.insert(bundle(1, 32, 0, 60_000), epoch, 0).unwrap();
         store.clear();
         assert_eq!(store.retained(), 0);
+    }
+
+    /// A capture still encoding when access is withdrawn is not retained.
+    ///
+    /// The ingredients are collected on the application thread and the bundle
+    /// is built on a response worker some milliseconds later, so the trader
+    /// can disable local access in between. An insert that landed after the
+    /// clear would put a bundle into a store emptied *because* the grant
+    /// behind it was withdrawn, where it would sit for its whole retention.
+    #[test]
+    fn a_capture_that_finishes_after_access_is_withdrawn_is_not_retained() {
+        let store = EvidenceStore::with_bounds(4, 1 << 20, 1 << 20, 60_000);
+        // Collected under the epoch of the moment it was asked for.
+        let collected_under = store.epoch();
+        // The trader disables access while it encodes.
+        store.clear();
+
+        let error = store
+            .insert(bundle(1, 32, 0, 60_000), collected_under, 0)
+            .unwrap_err();
+        assert_eq!(error.code.as_str(), codes::RESOURCE_GONE);
+        assert_eq!(store.retained(), 0, "and nothing was retained");
+
+        // A capture collected after the withdrawal is retained normally.
+        let epoch = store.epoch();
+        store.insert(bundle(2, 32, 0, 60_000), epoch, 0).unwrap();
+        assert_eq!(store.retained(), 1);
+    }
+
+    /// The operator's own words do not travel in a bundle.
+    ///
+    /// The projections strip user text before it reaches a snapshot, but a
+    /// bundle also embeds a page of the *journal*, and the journal records
+    /// prose verbatim — the note a trader typed at a mark, the message an
+    /// assistant sent, the words on a label.
+    #[test]
+    fn the_event_page_a_bundle_carries_holds_no_operator_prose() {
+        let mut payload = json!({
+            "target": { "pane_id": "3" },
+            "note": "the absorption I keep seeing here",
+            "annotation": { "text": "supply", "tool_id": "text" },
+            "nested": [{ "message": "look at this" }],
+        });
+        redact_prose_value(&mut payload);
+
+        let encoded = payload.to_string();
+        for prose in ["the absorption", "supply", "look at this"] {
+            assert!(!encoded.contains(prose), "`{prose}` survived in {encoded}");
+        }
+        // Redacted, and saying so — a withheld note reads differently from a
+        // mark that never had one.
+        assert_eq!(payload["note"]["redacted"], true);
+        assert_eq!(payload["annotation"]["text"]["redacted"], true);
+        assert_eq!(payload["nested"][0]["message"]["redacted"], true);
+        // And everything that is not prose is untouched.
+        assert_eq!(payload["target"]["pane_id"], "3");
+        assert_eq!(payload["annotation"]["tool_id"], "text");
+    }
+
+    /// Meeting the budget is reported; *not* meeting it is not.
+    ///
+    /// The check used to run at the top of the walk, so a scope that found
+    /// exactly its budget and still had a scalar queued reported that fields
+    /// had been dropped when none had — a false statement in the section whose
+    /// whole job is honesty about what is missing.
+    #[test]
+    fn a_coverage_walk_that_fits_exactly_does_not_claim_it_truncated() {
+        let scope = json!({
+            "first": { "available": false, "reason": "one" },
+            "second": { "available": false, "reason": "two" },
+            "plenty": "of other nodes",
+            "more": [1, 2, 3],
+        });
+        let mut found = Vec::new();
+        let mut truncated = false;
+        walk_unavailable("/snapshot", &scope, 2, &mut found, &mut truncated);
+        assert_eq!(found.len(), 2);
+        assert!(
+            !truncated,
+            "both fields fit, so nothing was dropped and nothing should say so"
+        );
     }
 
     /// The renderer a bundle names is the renderer the build links.

@@ -82,7 +82,7 @@ O-21/O-25).
 | 3. The bundle reports omitted information and coverage gaps | `an_evidence_bundle_names_what_it_omitted_and_why_as_codes_not_prose` — every registered scope the caller did not name is in `omitted_scopes`, the five fixed gaps are present, and every reason is asserted to be a lower-case code rather than a sentence |
 | 4. A bundle with a screenshot maps every named control to a region of the image | `a_bundle_with_a_screenshot_maps_every_named_control_to_a_region_of_the_image` — the image carries the scene's own `capture_revision`, the bytes are a real PNG hashed as the descriptor says, every control the scene gave bounds for has a region `within_image`, and every control without bounds is listed with the scene's own reason. `a_capture_that_wants_an_image_waits_for_the_frame_instead_of_answering_blind` proves the capture waits for the window rather than answering without it |
 | 5. A validation skill reads and asserts through the live control plane | `ui-harness` gained *Reading the running app through the control plane* (driving `quantick-mcp` over STDIO, and what `coverage` and `screenshot.control_regions` mean); `visual-qa` gained §3, *Ask the app what it believes, then look*, which now takes a structured reading before the pixels and treats a scene/image disagreement as a FAIL. The deterministic fixture is `QUANTICK_CONTROL_EVIDENCE`, proved by `the_evidence_launch_hook_captures_through_the_same_read_a_client_calls` |
-| 6. No token, user path, user drawing text or config key in the bundle | `no_token_user_path_user_text_or_redacted_config_key_reaches_an_evidence_bundle` — plants the trader's own note text, a configured journal path, a bridge command naming their home, a routable bind address, and reads the connection's real bearer token out of the published descriptor; then hunts all six through the whole reassembled bundle *and* the manifest |
+| 6. No token, user path, user drawing text or config key in the bundle | `no_token_user_path_user_text_or_redacted_config_key_reaches_an_evidence_bundle` — plants the trader's own drawing text, a note typed at a mark (the journal path, which the projections do not touch), a configured journal path, a bridge command naming their home, a routable bind address, and reads the connection's real bearer token out of the published descriptor; then hunts all seven through the whole reassembled bundle *and* the manifest. `the_event_page_a_bundle_carries_holds_no_operator_prose` pins the redaction itself |
 | 7. Retention and size bounded by named constants | `retention_evicts_by_the_earlier_of_count_bytes_and_age`, `a_bundle_past_its_retention_is_gone_even_when_it_is_not_at_the_front`, `a_bundle_larger_than_its_own_share_is_refused_instead_of_emptying_the_store` (`control.backpressure`), `a_bundle_is_paged_by_its_cursor_and_a_foreign_cursor_is_refused` (`control.cursor_invalid`), `withdrawing_access_forgets_every_retained_bundle`. An expired or unknown bundle is `control.resource_gone` — every code from the existing vocabulary. `a_bundle_too_large_for_one_chunk_still_pages_back_over_the_socket` proves the paging itself against an incompressible image, which is the fixture the deflating one hid |
 
 ## What a bundle carries, against plan §8
@@ -173,9 +173,19 @@ home directory only identifies a person.
 
 What is dropped is listed by key in `configuration.redacted_keys`, so a reader
 is told a setting exists and was withheld rather than left to conclude it is
-unset. User-authored text never reaches a bundle at all: the projections redact
-it before evidence sees them, which is why the note canary is absent even
-though `analysis.drawings` was captured.
+unset.
+
+**User-authored text takes two paths out, and both are closed.** The
+projections strip it before it reaches a snapshot, which is why the drawing
+canary is absent even though `analysis.drawings` was captured. But a bundle
+also embeds a page of the *journal*, and the journal records prose verbatim —
+the note a trader types at a mark, the message an assistant sends, the words on
+a label — so the event page is stripped on its way into the bundle as well.
+Redacted unconditionally rather than per grant: `events.read` still serves the
+prose to a client holding `observe.events`, unchanged; what a bundle must not
+become is the one durable object where every scope's text is gathered
+together. The marker says redacted rather than empty, so a reader can tell a
+withheld note from a mark that never had one.
 
 ## The screenshot, and why the revision is the whole point
 
@@ -302,7 +312,35 @@ could misbehave, two second copies of things the repo already owned (the
 `host:port` splitter, and `evidence.read` declared in the adapter with no test
 or fake arm), the double canonicalisation, the published scale not reproducing
 the regions it was used to build, and the framebuffer copy on the application
-thread. Nothing was deferred.
+thread.
+
+A second pass over the opened pull request found five more, all confirmed and
+all fixed:
+
+1. **The event page carried the operator's own words** while `coverage`
+   claimed user text was redacted — a false statement by the section whose job
+   is honesty, and a hole in criterion 6 that the original canary could not
+   find because it planted a *drawing* note, which the projections already
+   strip. The redaction test now plants a mark note too, and fails without the
+   fix.
+2. **A capture still encoding when access was withdrawn was retained anyway.**
+   The ingredients are collected on the application thread and the bundle is
+   built on a response worker milliseconds later, so an insert could land
+   after `clear()` and sit for its full retention in a store emptied
+   *because* the grant behind it was gone. The store now carries an epoch.
+3. **Coverage could report a truncation that never happened** — the budget was
+   checked at the top of the walk rather than where a field is added, so a
+   scope that fitted exactly but still had a scalar queued claimed fields were
+   dropped.
+4. **The screenshot waiters ran outside the frame budget**, so a frame could
+   execute eight projection passes against a documented ceiling of four and
+   leave the drain with nothing to spend.
+5. **The launch hook raised the screenshot notice before the scope check**, so
+   asking for an image without `observe.screenshot` told the trader their
+   window had been captured on the way to refusing it — weakening the one
+   indicator `visual-qa` now asserts on.
+
+Nothing was deferred from either pass.
 
 ## Verification
 
