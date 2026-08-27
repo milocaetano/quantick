@@ -778,6 +778,11 @@ pub struct QuantickApp {
     next_tab_id: u64,
     /// Whether the toolbar's layout popover is open.
     layout_picker_open: bool,
+    /// A pending request to open that popover, from the
+    /// `QUANTICK_LAYOUT_PICKER` hook. Drained by the frame that honours it —
+    /// the popover is a popup egui owns, so the hook asks for it through the
+    /// same call the click makes rather than faking the surface.
+    layout_picker_autostart: bool,
     /// The window's one source of pane ids. Pane ids namespace egui
     /// interaction state across the whole window rather than within a tab, so
     /// this may not be per-tab state: two panes sharing an id share a drag.
@@ -1317,6 +1322,8 @@ impl QuantickApp {
             active_tab: 0,
             next_tab_id: FIRST_TAB_ID + 1,
             layout_picker_open: false,
+            layout_picker_autostart: std::env::var("QUANTICK_LAYOUT_PICKER")
+                .is_ok_and(|value| value == "1"),
             pane_ids,
             persisted_tab: Some(FIRST_TAB_ID),
             source_picker: None,
@@ -2987,9 +2994,12 @@ impl QuantickApp {
         // indicator command lands on (§11) — so the three chrome surfaces
         // can never disagree about which chart a command describes, and in
         // the Time layout the group governs the chart actually on screen.
-        // Split off the picker's flag before the tab borrow: the model wants
+        // Split off the picker's flags before the tab borrow: the model wants
         // both, and they live on the same struct.
         let mut layout_picker_open = self.layout_picker_open;
+        // One shot: the hook opens the popover on the first drawn frame and
+        // then gets out of the way, so a trader's click can close it.
+        let layout_picker_autostart = std::mem::take(&mut self.layout_picker_autostart);
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
         let pane = match focused {
@@ -2999,6 +3009,7 @@ impl QuantickApp {
         let mut model = toolbar::ToolbarModel {
             layout_preset: Some(tab.layout.preset()),
             layout_picker_open: &mut layout_picker_open,
+            layout_picker_request_open: layout_picker_autostart,
             feeds,
             feed_id: &mut tab.feed_id,
             feed_display_name,

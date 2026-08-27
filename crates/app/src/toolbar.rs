@@ -212,6 +212,8 @@ pub struct ToolbarModel<'a> {
     pub layout_preset: Option<&'static crate::canvas_layout::LayoutPreset>,
     /// Whether the layout popover is open.
     pub layout_picker_open: &'a mut bool,
+    /// Open the layout popover this frame (the `QUANTICK_LAYOUT_PICKER` hook).
+    pub layout_picker_request_open: bool,
     /// `(id, display label)` for every configured feed.
     pub feeds: Vec<(String, String)>,
     /// The selected feed id.
@@ -437,6 +439,7 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                         crate::layout_picker::PickerModel {
                             current: model.layout_preset,
                             open: model.layout_picker_open,
+                            request_open: model.layout_picker_request_open,
                         },
                     ) {
                         actions.push(ToolbarAction::SetLayout(preset));
@@ -1365,6 +1368,7 @@ mod tests {
                     let mut model = ToolbarModel {
                         layout_preset: None,
                         layout_picker_open: &mut layout_picker_open,
+                        layout_picker_request_open: false,
                         feeds: vec![("binance".to_owned(), "Binance".to_owned())],
                         feed_id: &mut feed_id,
                         feed_display_name: "Binance".to_owned(),
@@ -1458,6 +1462,7 @@ mod tests {
                 let mut model = ToolbarModel {
                     layout_preset: None,
                     layout_picker_open: &mut layout_picker_open,
+                    layout_picker_request_open: false,
                     feeds: vec![("binance".to_owned(), "Binance".to_owned())],
                     feed_id: &mut feed_id,
                     feed_display_name: "Binance".to_owned(),
@@ -1535,6 +1540,7 @@ mod tests {
                     let mut model = ToolbarModel {
                         layout_preset: None,
                         layout_picker_open: &mut layout_picker_open,
+                        layout_picker_request_open: false,
                         feeds: vec![("metatrader".to_owned(), "MetaTrader 5".to_owned())],
                         feed_id: &mut feed_id,
                         feed_display_name: "MetaTrader 5".to_owned(),
@@ -1607,6 +1613,7 @@ mod tests {
                 let mut model = ToolbarModel {
                     layout_preset: None,
                     layout_picker_open: &mut layout_picker_open,
+                    layout_picker_request_open: false,
                     feeds: vec![("binance".to_owned(), "Binance".to_owned())],
                     feed_id: &mut feed_id,
                     feed_display_name: "Binance".to_owned(),

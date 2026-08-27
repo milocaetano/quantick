@@ -17,9 +17,14 @@ use crate::theme;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
 
 /// Width of the popover, in pixels.
-const POPOVER_WIDTH_PX: f32 = 248.0;
+const POPOVER_WIDTH_PX: f32 = 268.0;
 /// One preset cell: the thumbnail plus its label.
-const CELL_SIZE: egui::Vec2 = egui::vec2(72.0, 72.0);
+///
+/// Tall enough for a label on two lines. Preset names grow with the number of
+/// panes they hold — "Timeframe + Timeframe + Flow" is one that is coming — so
+/// the label wraps inside the cell rather than the cell being widened to fit
+/// whichever name happens to be longest today.
+const CELL_SIZE: egui::Vec2 = egui::vec2(76.0, 92.0);
 /// The miniature layout diagram inside a cell.
 const THUMBNAIL_SIZE: egui::Vec2 = egui::vec2(64.0, 40.0);
 /// Gap between cells, both axes.
@@ -34,6 +39,11 @@ const THUMBNAIL_STROKE_PX: f32 = 1.0;
 const SELECTED_STROKE_PX: f32 = 1.5;
 /// Padding inside the popover frame.
 const POPOVER_PADDING_PX: f32 = 10.0;
+/// Font size of a cell's label.
+const LABEL_SIZE_PX: f32 = 11.0;
+/// How much of a cell's width the label gives up on each side before it wraps.
+/// Keeps a wrapped line clear of the selection ring drawn on the cell's edge.
+const LABEL_INSET_PX: f32 = 5.0;
 
 /// What the picker needs to know about the canvas it is switching.
 pub struct PickerModel<'a> {
@@ -44,6 +54,13 @@ pub struct PickerModel<'a> {
     /// Whether the popover is open. Owned by the caller so the toolbar's own
     /// collapse logic can close it.
     pub open: &'a mut bool,
+    /// Open the popover this frame, whatever it was doing.
+    ///
+    /// One-shot, and drained by the caller. A popover is a thing egui owns, so
+    /// there is no state to set that would not be a second way of opening it:
+    /// the request goes through the same `open_popup` the click does
+    /// (`.claude/skills/ui-harness`).
+    pub request_open: bool,
 }
 
 /// Draw the picker button, and its popover when it is open.
@@ -56,6 +73,10 @@ pub fn draw(ui: &mut egui::Ui, model: PickerModel<'_>) -> Option<&'static Layout
         .show(ui);
 
     let popup_id = ui.make_persistent_id("layout_picker_popup");
+    if model.request_open {
+        ui.memory_mut(|memory| memory.open_popup(popup_id));
+        *model.open = true;
+    }
     if button.clicked() {
         *model.open = !*model.open;
         ui.memory_mut(|memory| memory.toggle_popup(popup_id));
@@ -63,7 +84,7 @@ pub fn draw(ui: &mut egui::Ui, model: PickerModel<'_>) -> Option<&'static Layout
     // The two have to agree in both directions: egui closes the popup on a
     // click elsewhere without telling us, and a stale `open` flag would leave
     // the button lit over a popover that is gone.
-    if !ui.memory(|memory| memory.is_popup_open(popup_id)) {
+    if !model.request_open && !ui.memory(|memory| memory.is_popup_open(popup_id)) {
         *model.open = false;
     }
 
@@ -149,11 +170,22 @@ fn draw_cell(ui: &mut egui::Ui, preset: &'static LayoutPreset, selected: bool) -
     } else {
         theme::TEXT_MUTED
     };
-    painter.text(
+    // Wrapped to the cell, never past it. An unwrapped label crosses the
+    // selection ring and reads as a broken widget — which is what a preset
+    // name one pane longer than today's would have done.
+    let mut job = egui::text::LayoutJob::simple(
+        preset.label.to_owned(),
+        egui::FontId::proportional(LABEL_SIZE_PX),
+        label_colour,
+        rect.width() - LABEL_INSET_PX * 2.0,
+    );
+    // Centre every line, not just the block: a two-line name whose second line
+    // hangs left reads as a text box that ran out of room.
+    job.halign = egui::Align::Center;
+    let galley = painter.layout_job(job);
+    painter.galley(
         egui::pos2(rect.center().x, thumbnail.bottom() + 5.0),
-        egui::Align2::CENTER_TOP,
-        preset.label,
-        egui::FontId::proportional(11.0),
+        galley,
         label_colour,
     );
     response
