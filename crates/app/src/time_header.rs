@@ -63,7 +63,20 @@ impl HeaderLayout {
 /// `interval_ms` is the pane's own `BarSpec::Time` parameter; the caller
 /// applies it through the same deferred spec path a toolbar change takes, so
 /// the rebuild is armed and painted exactly once either way.
-pub fn draw(ui: &mut egui::Ui, strip: egui::Rect, interval_ms: &mut i64) -> HeaderLayout {
+/// `salt` namespaces every widget this header registers.
+///
+/// A canvas may now stack more than one context pane, and each carries its own
+/// header. egui keys a widget by its parent's id and its order within it, so
+/// two headers built from the same parent would answer to one id — the chips
+/// of the lower pane would drive the upper one's interval. The pane's own id
+/// is what makes them distinct, the same rule `ChartPane::interaction_id`
+/// follows.
+pub fn draw(
+    ui: &mut egui::Ui,
+    strip: egui::Rect,
+    interval_ms: &mut i64,
+    salt: u64,
+) -> HeaderLayout {
     let mut changed = false;
     #[cfg(test)]
     let mut chips = [egui::Rect::NOTHING; PRESETS.len()];
@@ -78,6 +91,7 @@ pub fn draw(ui: &mut egui::Ui, strip: egui::Rect, interval_ms: &mut i64) -> Head
     );
     let mut content = ui.new_child(
         egui::UiBuilder::new()
+            .id_salt(("time_header", salt))
             .max_rect(strip.shrink2(CONTENT_PADDING))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );

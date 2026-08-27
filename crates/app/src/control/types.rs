@@ -34,6 +34,7 @@ pub(crate) enum CanvasLayoutDto {
     Flow,
     Time,
     TimeAndFlow,
+    TimeTimeAndFlow,
 }
 
 impl From<CanvasLayout> for CanvasLayoutDto {
@@ -42,6 +43,7 @@ impl From<CanvasLayout> for CanvasLayoutDto {
             CanvasLayout::Single => Self::Flow,
             CanvasLayout::Time => Self::Time,
             CanvasLayout::TimeAndFlow => Self::TimeAndFlow,
+            CanvasLayout::TimeTimeAndFlow => Self::TimeTimeAndFlow,
         }
     }
 }

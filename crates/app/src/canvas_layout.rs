@@ -54,13 +54,6 @@ impl PaneIdAllocator {
         id
     }
 
-    /// A pair of ids, for a tab opening with a flow pane and a reserved time
-    /// pane. A convenience over two [`Self::alloc`] calls, kept so the tab
-    /// constructor reads as "these two ids belong together".
-    pub fn alloc_pair(&mut self) -> (u64, u64) {
-        (self.alloc(), self.alloc())
-    }
-
     /// How many ids have been spent. Test and diagnostic use only — nothing
     /// may derive a pane's identity from it.
     #[must_use]
@@ -135,6 +128,11 @@ pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
         id: "time+flow",
         label: "Timeframe + Flow",
         kinds: &[PaneKind::Time, PaneKind::Flow],
+    },
+    LayoutPreset {
+        id: "time+time+flow",
+        label: "2 Timeframes + Flow",
+        kinds: &[PaneKind::Time, PaneKind::Time, PaneKind::Flow],
     },
 ];
 
@@ -547,29 +545,27 @@ mod tests {
     }
 
     #[test]
-    fn a_pair_is_two_distinct_ids() {
+    fn consecutive_ids_are_always_distinct() {
         let mut allocator = PaneIdAllocator::new();
-        let (flow, time) = allocator.alloc_pair();
-        assert_ne!(flow, time);
-        let (next_flow, next_time) = allocator.alloc_pair();
-        assert_ne!(next_flow, flow);
-        assert_ne!(next_flow, time);
-        assert_ne!(next_time, flow);
-        assert_ne!(next_time, time);
+        let mut seen = BTreeSet::new();
+        for _ in 0..8 {
+            assert!(seen.insert(allocator.alloc()), "an id came back");
+        }
     }
 
     #[test]
     fn ids_do_not_encode_the_tab_they_were_asked_for() {
         // A regression guard on the rule rather than on an implementation:
-        // whatever the allocator does, asking twice in a row must not produce
-        // a value derivable from a tab index, or reordering would carry
-        // gesture state with the position instead of with the pane.
+        // whatever the allocator does, an id must not be derivable from a tab
+        // index, or reordering would carry gesture state with the position
+        // instead of with the pane.
         let mut allocator = PaneIdAllocator::new();
-        let first_tab = allocator.alloc_pair();
-        let second_tab = allocator.alloc_pair();
+        let first_tab_flow = allocator.alloc();
+        let _first_tab_context = allocator.alloc();
+        let second_tab_flow = allocator.alloc();
         assert_ne!(
-            second_tab.0,
-            first_tab.0 * 2,
+            second_tab_flow,
+            first_tab_flow * 2,
             "an id that is a function of the tab index is the bug this replaced"
         );
     }

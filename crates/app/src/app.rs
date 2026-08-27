@@ -1303,7 +1303,7 @@ impl QuantickApp {
         let mut pane_ids = PaneIdAllocator::new();
         let mut tab = Tab::new(
             FIRST_TAB_ID,
-            pane_ids.alloc_pair(),
+            pane_ids.alloc(),
             feed_id.into(),
             symbol.into(),
             spec,
@@ -2771,8 +2771,8 @@ impl QuantickApp {
             .active_tab()
             .time_pane()
             .map_or(flow_inverted, |pane| pane.price_view.is_inverted());
-        let ids = self.pane_ids.alloc_pair();
-        let mut tab = Tab::new(id, ids, feed_id, symbol, spec, feed, trades_dir);
+        let flow_pane_id = self.pane_ids.alloc();
+        let mut tab = Tab::new(id, flow_pane_id, feed_id, symbol, spec, feed, trades_dir);
         tab.paper.set_cmd_trading(cmd_trading);
         self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
@@ -10001,10 +10001,11 @@ impl QuantickApp {
             tabs,
             config,
             style,
+            pane_ids,
             ..
         } = self;
         for tab in tabs.iter_mut() {
-            tab.apply_pending_layout(config, style);
+            tab.apply_pending_layout(config, style, pane_ids);
         }
         self.active_tab_mut().apply_spec_changes();
         self.draw_style_panel(ctx, now);

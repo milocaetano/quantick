@@ -8481,7 +8481,8 @@
             "enum": [
               "flow",
               "time",
-              "time_and_flow"
+              "time_and_flow",
+              "time_time_and_flow"
             ],
             "type": "string"
           },

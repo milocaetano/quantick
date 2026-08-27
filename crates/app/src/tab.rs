@@ -17,7 +17,9 @@ use tokio::sync::{mpsc, watch};
 
 use quantick_feed_binance::depth::DepthEvent;
 
-use crate::canvas_layout::{self, LayoutPreset, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneKind};
+use crate::canvas_layout::{
+    self, LayoutPreset, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneIdAllocator, PaneKind,
+};
 use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::feed::{
@@ -61,6 +63,8 @@ pub enum CanvasLayout {
     Time,
     /// Time pane left, flow pane right, on a draggable divider.
     TimeAndFlow,
+    /// Two time panes stacked in the left column, flow pane right.
+    TimeTimeAndFlow,
 }
 
 impl CanvasLayout {
@@ -76,6 +80,7 @@ impl CanvasLayout {
             CanvasLayout::Single => "flow",
             CanvasLayout::Time => "time",
             CanvasLayout::TimeAndFlow => "time+flow",
+            CanvasLayout::TimeTimeAndFlow => "time+time+flow",
         };
         canvas_layout::preset(id).expect("every canvas layout names a registered preset")
     }
@@ -92,6 +97,7 @@ impl CanvasLayout {
             "flow" => Some(CanvasLayout::Single),
             "time" => Some(CanvasLayout::Time),
             "time+flow" => Some(CanvasLayout::TimeAndFlow),
+            "time+time+flow" => Some(CanvasLayout::TimeTimeAndFlow),
             _ => None,
         }
     }
@@ -121,6 +127,7 @@ impl From<crate::config::DeclaredLayout> for CanvasLayout {
             crate::config::DeclaredLayout::Flow => CanvasLayout::Single,
             crate::config::DeclaredLayout::Time => CanvasLayout::Time,
             crate::config::DeclaredLayout::TimeAndFlow => CanvasLayout::TimeAndFlow,
+            crate::config::DeclaredLayout::TimeTimeAndFlow => CanvasLayout::TimeTimeAndFlow,
         }
     }
 }
@@ -137,6 +144,7 @@ impl From<CanvasLayout> for crate::config::DeclaredLayout {
             CanvasLayout::Single => crate::config::DeclaredLayout::Flow,
             CanvasLayout::Time => crate::config::DeclaredLayout::Time,
             CanvasLayout::TimeAndFlow => crate::config::DeclaredLayout::TimeAndFlow,
+            CanvasLayout::TimeTimeAndFlow => crate::config::DeclaredLayout::TimeTimeAndFlow,
         }
     }
 }
@@ -463,8 +471,6 @@ pub struct Tab {
     /// `nothing_held`. The edge is what asks again once the answer can be a
     /// real one.
     ohlcv_capable: bool,
-    /// The id the time pane takes when this tab first shows the split.
-    time_pane_id: u64,
     /// The interval the time pane opens on when it is first built. The
     /// header's default unless the feed declared one (`default_bars` with a
     /// time-showing `default_layout`); once the pane exists, its own header
@@ -476,7 +482,7 @@ pub struct Tab {
     time_pane_opening_legend_collapsed: bool,
     /// Set when the split is asked for and the time pane does not exist yet;
     /// drained by [`Self::apply_pending_layout`] on the following frame.
-    pending_time_pane: bool,
+    pending_context_panes: usize,
     /// Which panes this tab's canvas shows. In-session only for now: per-tab
     /// chrome persistence is the open question §14 leaves to `ui-state.toml`,
     /// and this field with `split_fraction` and `focus` is what it would
@@ -544,13 +550,14 @@ impl Tab {
     /// A tab on `feed_id`/`symbol`, already streaming through `feed`, showing
     /// bar `spec`.
     ///
-    /// `id` and `pane_ids` must be unique among the open tabs: pane ids
+    /// `id` and `flow_pane_id` must be unique among the open tabs: pane ids
     /// namespace egui interaction state, so two tabs sharing them would share
-    /// a drag.
+    /// a drag. Context panes take their ids from the window's allocator as
+    /// they are built, rather than a tab reserving one it may never use.
     #[must_use]
     pub fn new(
         id: u64,
-        pane_ids: (u64, u64),
+        flow_pane_id: u64,
         feed_id: String,
         symbol: String,
         spec: BarSpec,
@@ -584,7 +591,7 @@ impl Tab {
             latest_trade_ms: None,
             live_trades: 0,
             paper: PaperTrading::with_trades_dir(trades_dir),
-            flow_pane: ChartPane::flow(pane_ids.0, spec, symbol.clone()),
+            flow_pane: ChartPane::flow(flow_pane_id, spec, symbol.clone()),
             chip_label: String::new(),
             ohlcv_base: None,
             ohlcv_pending: false,
@@ -595,10 +602,9 @@ impl Tab {
             ohlcv_generation: 0,
             ohlcv_capable: false,
             time_panes: SmallVec::new(),
-            time_pane_id: pane_ids.1,
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
             time_pane_opening_legend_collapsed: false,
-            pending_time_pane: false,
+            pending_context_panes: 0,
             layout: CanvasLayout::Single,
             split_fraction: DEFAULT_PANE_FRACTION,
             focus: PaneSide::Flow,
@@ -1463,14 +1469,19 @@ impl Tab {
             return;
         }
         self.layout = layout;
-        if layout.shows_time() && self.time_panes.is_empty() {
+        let wanted = layout
+            .kinds()
+            .iter()
+            .filter(|kind| matches!(kind, PaneKind::Time))
+            .count();
+        if wanted > self.time_panes.len() {
             // Seeding replays every retained trade, which on a deep history
             // holds the render thread long enough to notice. Armed here and
             // done on the next frame, exactly as a bar-spec change is: the
             // frame carrying the menu click paints the loading overlay first,
             // so the wait reads as the chart working rather than the app
             // hanging.
-            self.pending_time_pane = true;
+            self.pending_context_panes = wanted - self.time_panes.len();
             self.loading.begin(LoadingTask::BarRebuild);
         }
         self.focus = match layout {
@@ -1479,10 +1490,10 @@ impl Tab {
             // The split reveals whichever pane the previous layout was not
             // showing: the time pane coming from Single, the flow pane coming
             // from Time.
-            CanvasLayout::TimeAndFlow => match previous {
+            CanvasLayout::TimeAndFlow | CanvasLayout::TimeTimeAndFlow => match previous {
                 CanvasLayout::Single => PaneSide::Time,
                 CanvasLayout::Time => PaneSide::Flow,
-                CanvasLayout::TimeAndFlow => self.focus,
+                CanvasLayout::TimeAndFlow | CanvasLayout::TimeTimeAndFlow => self.focus,
             },
         };
         tracing::info!(
@@ -1491,7 +1502,7 @@ impl Tab {
             event_code = "CANVAS_LAYOUT",
             layout = ?layout,
             time_pane_bars = self.time_pane().map(|pane| pane.state.bars().len()),
-            action = if self.pending_time_pane {
+            action = if self.pending_context_panes > 0 {
                 "build_time_pane_next_frame"
             } else {
                 "relayout_canvas"
@@ -1500,16 +1511,25 @@ impl Tab {
         );
     }
 
-    /// Build the time pane the last layout change asked for, if one is due.
+    /// Build the context panes the last layout change asked for, if any are
+    /// due.
     ///
     /// Runs at the top of the frame after the click, so the overlay armed by
-    /// [`Self::set_layout`] has already been painted once.
-    pub fn apply_pending_layout(&mut self, config: &AppConfig, style: &ChartStyle) {
-        if !self.pending_time_pane {
+    /// [`Self::set_layout`] has already been painted once. `ids` is the
+    /// window's allocator rather than the tab's: pane ids namespace egui
+    /// interaction state across the whole window, so a tab may not mint its
+    /// own.
+    pub fn apply_pending_layout(
+        &mut self,
+        config: &AppConfig,
+        style: &ChartStyle,
+        ids: &mut PaneIdAllocator,
+    ) {
+        if self.pending_context_panes == 0 {
             return;
         }
-        self.pending_time_pane = false;
-        let mut pane = ChartPane::time(self.time_pane_id, self.time_pane_opening_interval_ms);
+        self.pending_context_panes -= 1;
+        let mut pane = ChartPane::time(ids.alloc(), self.time_pane_opening_interval_ms);
         pane.legend_collapsed = self.time_pane_opening_legend_collapsed;
         pane.seed_from(
             self.flow_pane.state.trades(),
@@ -1544,7 +1564,13 @@ impl Tab {
         pane.price_view
             .set_inverted(self.flow_pane.price_view.is_inverted());
         self.time_panes.push(pane);
-        self.loading.end(LoadingTask::BarRebuild);
+        // One pane per frame, for the reason the first one waits a frame at
+        // all: seeding replays every retained trade, and building three at
+        // once would hold the render thread for three times as long. The
+        // overlay stays up until the last one lands.
+        if self.pending_context_panes == 0 {
+            self.loading.end(LoadingTask::BarRebuild);
+        }
         // The pane exists now, so there is something for a prefix to go in
         // front of. A base already held (a layout toggled off and on) is
         // folded rather than re-fetched; otherwise this is the first moment
@@ -2621,7 +2647,18 @@ impl Tab {
         area: egui::Rect,
         chrome: &mut CanvasChrome<'_>,
     ) {
-        let show_time = self.layout.shows_time() && self.has_time_pane();
+        // How many context charts this layout asks for, and how many the tab
+        // has actually built. The lower of the two is what gets drawn: a
+        // layout may name a pane the tab is still building, and half a canvas
+        // is better than a frame of nothing.
+        let context_wanted = self
+            .layout
+            .kinds()
+            .iter()
+            .filter(|kind| matches!(kind, PaneKind::Time))
+            .count();
+        let context_shown = context_wanted.min(self.time_panes.len());
+        let show_time = context_shown > 0;
         // The flow pane also stands in for a time pane still being built, so
         // the frame between asking for the Time layout and the pane existing
         // shows the market rather than nothing.
@@ -2639,29 +2676,44 @@ impl Tab {
             (None, None, area)
         };
 
-        let time_chart = time_area.map(|time_area| {
+        // The context column, carved into one band per chart it shows, top to
+        // bottom. Each band spends its own header strip and hands back the
+        // chart rect below it.
+        let mut context_charts: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]> = SmallVec::new();
+        if let Some(column) = time_area {
             // Focus before input, so the click that focuses a pane is also the
             // click that pane goes on to handle. Only a split has focus to
             // move: a single visible pane is the focused one by definition.
             if split {
-                self.focus_from_pointer(ui, time_area, flow_area);
+                self.focus_from_pointer(ui, column, flow_area);
             }
-            let areas = split_time_pane(time_area);
-            // The time pane's own timeframe selector (§11): its BARS group,
-            // beside the toolbar's, which keeps governing the flow pane.
-            let mut interval_ms = self.pane(PaneSide::Time).time_interval_ms;
-            let header_layout = crate::time_header::draw(ui, areas.header, &mut interval_ms);
-            #[cfg(test)]
-            {
-                self.time_header_chips = header_layout.chips();
+            let heights: SmallVec<[canvas_layout::PaneWidth; MAX_CONTEXT_PANES]> =
+                SmallVec::from_elem(canvas_layout::PaneWidth::Auto, context_shown);
+            let bands = canvas_layout::split_column(column, &heights);
+            for (slot, band) in bands.panes.iter().enumerate().take(context_shown) {
+                let areas = split_time_pane(*band);
+                // Each context chart carries its own timeframe selector (§11):
+                // its BARS group, beside the toolbar's, which keeps governing
+                // the flow pane.
+                let mut interval_ms = self.time_panes[slot].time_interval_ms;
+                let header_layout = crate::time_header::draw(
+                    ui,
+                    areas.header,
+                    &mut interval_ms,
+                    self.time_panes[slot].id,
+                );
+                #[cfg(test)]
+                if slot == 0 {
+                    self.time_header_chips = header_layout.chips();
+                }
+                if header_layout.changed {
+                    let pane = &mut self.time_panes[slot];
+                    pane.kind = BarKind::Time;
+                    pane.time_interval_ms = interval_ms;
+                }
+                context_charts.push(areas.chart);
             }
-            if header_layout.changed {
-                let pane = self.pane_mut(PaneSide::Time);
-                pane.kind = BarKind::Time;
-                pane.time_interval_ms = interval_ms;
-            }
-            areas.chart
-        });
+        }
 
         // Which shared mark the pointer is over, on each pane, against the
         // other pane's store. Answered here because answering it needs both
@@ -2732,10 +2784,13 @@ impl Tab {
             // loop with one entry in it.
             // Context panes carry addresses `1..`, the flow pane `0` — the
             // order `Tab::pane_at` uses, never the order they sit in.
-            let time =
-                time_chart.and_then(|chart| Some((time_panes.first_mut()?, chart, 1 as PaneIndex)));
+            let context = time_panes
+                .iter_mut()
+                .zip(context_charts.iter().copied())
+                .enumerate()
+                .map(|(slot, (pane, chart))| (pane, chart, slot + 1));
             let flow = show_flow.then_some((&mut *flow_pane, flow_area, 0 as PaneIndex));
-            for (pane, rect, side) in time.into_iter().chain(flow) {
+            for (pane, rect, side) in context.chain(flow) {
                 // Order entry follows the focused pane (§11): both charts are
                 // trading surfaces — a level is as true on the time pane as on
                 // the flow pane — and focus lands on the press that acts, so
@@ -2989,7 +3044,7 @@ mod shared_routing_tests {
         let (cmd_tx, _cmd_rx) = mpsc::channel(8);
         let mut tab = Tab::new(
             0,
-            (0, 1),
+            0,
             "binance".to_owned(),
             "BTCUSDT".to_owned(),
             BarSpec::Tick(50),
@@ -3004,7 +3059,10 @@ mod shared_routing_tests {
                 commands: cmd_tx,
                 replay: None,
             },
-            std::env::temp_dir(),
+            // Its own directory, never the shared temp root: a tab opens a
+            // paper-trading ledger, and pointing every test tab at one folder
+            // makes them read each other's trades.
+            std::env::temp_dir().join(format!("quantick-tab-test-{context}")),
         );
         for slot in 0..context {
             tab.time_panes.push(ChartPane::time(
