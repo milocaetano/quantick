@@ -21,7 +21,12 @@ use quantick_engine::Side;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-use quantick_strategy::{BreakPolicy, ForceParams, Rearm, StrategyParams};
+use quantick_strategy::{
+    AlarmParams, AlarmWhen, BreakPolicy, Execution, ForceParams, Rearm, RepeatPolicy,
+    StrategyParams,
+};
+
+use crate::audio::AlertSound;
 
 /// Environment override for the bank's location.
 pub const STRATEGIES_ENV: &str = "QUANTICK_STRATEGY_PRESETS";
@@ -39,6 +44,22 @@ pub const FORCE_BAR_TRIGGER: &str = "force_bar";
 /// ceiling, shared with the arming dialog's drag range. A hand-edited file
 /// beyond it is refused whole, like every other field it cannot honour.
 pub const MAX_FORCE_WINDOW: u32 = 500;
+
+/// Narrowest share of a forming bar an alarm may watch from. Below 1% the
+/// gate opens on the bar's first print, where the ruler is measuring a body
+/// that has barely started moving — a reading that would alarm on almost
+/// every bar and teach the trader to ignore the sound.
+pub const MIN_ALARM_SHARE_PERCENT: u32 = 1;
+/// The whole bar. `100` is the honest way to spell "only when it closes"
+/// through the share gate, and the drag range's ceiling.
+pub const MAX_ALARM_SHARE_PERCENT: u32 = 100;
+/// Shortest cooldown a preset may ask for. Zero is not a cooldown, and the
+/// repeat rule exists precisely so that a mid-bar alarm cannot sound on
+/// every print.
+pub const MIN_ALARM_COOLDOWN_SECS: u32 = 1;
+/// Longest cooldown a preset may ask for: an hour of silence is already far
+/// past any session's usefulness, and it bounds a hand-edited file.
+pub const MAX_ALARM_COOLDOWN_SECS: u32 = 3_600;
 
 /// One bank row, as it goes to disk.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -77,6 +98,56 @@ pub struct StoredPreset {
     /// the version does not move.
     #[serde(default = "ignore_break")]
     pub on_break: String,
+    /// Whether a sound plays when this strategy's signal happens.
+    ///
+    /// The alarm fields share the vintage rule the two fields above
+    /// established: every one is optional, so a bank file written before
+    /// the alarm existed reads clean with the alarm **off** and the version
+    /// does not move. Silence is what those presets have always done, and a
+    /// saved preset must not start making noise because the app was
+    /// updated.
+    #[serde(default)]
+    pub alarm: bool,
+    /// `on_close` (default) or `share`.
+    #[serde(default = "on_close")]
+    pub alarm_when: String,
+    /// With `alarm_when = "share"`, how far into the forming bar's closing
+    /// measure the alarm starts looking, as a whole percentage. The
+    /// trader's own example, `70`, means "on a 2000-tick chart, judge from
+    /// tick 1400 on".
+    #[serde(default = "default_alarm_share")]
+    pub alarm_share_percent: u32,
+    /// `once_per_bar` (default) or `cooldown`.
+    #[serde(default = "once_per_bar")]
+    pub alarm_repeat: String,
+    /// With `alarm_repeat = "cooldown"`, the seconds between sounds.
+    #[serde(default = "default_alarm_cooldown")]
+    pub alarm_cooldown_secs: u32,
+    /// Which platform sound plays. See [`AlertSound`].
+    #[serde(default = "default_alarm_sound")]
+    pub alarm_sound: String,
+    /// Whether the instance only watches: `true` places no orders at all.
+    /// See [`Execution::AlarmOnly`].
+    #[serde(default)]
+    pub alarm_only: bool,
+}
+
+/// The alarm half of a compiled preset: the kernel's rules, plus the sound
+/// the app plays for them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlarmSetup {
+    pub params: AlarmParams,
+    pub sound: AlertSound,
+}
+
+/// Everything one bank row compiles into.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompiledPreset {
+    pub params: StrategyParams,
+    pub force: ForceParams,
+    /// `None` when the alarm is off: the instance watches and trades in
+    /// silence, exactly as it did before the alarm existed.
+    pub alarm: Option<AlarmSetup>,
 }
 
 impl StoredPreset {
@@ -102,6 +173,16 @@ impl StoredPreset {
             sl_mult: "1.0".to_owned(),
             rearm: "one_shot".to_owned(),
             on_break: "ignore".to_owned(),
+            // Off, like every other preset that predates the alarm: a chart
+            // does not start making noise because the trader opened a
+            // dialog. The rest of the row is what the checkbox switches on.
+            alarm: false,
+            alarm_when: on_close(),
+            alarm_share_percent: default_alarm_share(),
+            alarm_repeat: once_per_bar(),
+            alarm_cooldown_secs: default_alarm_cooldown(),
+            alarm_sound: default_alarm_sound(),
+            alarm_only: false,
         }
     }
 
@@ -109,7 +190,7 @@ impl StoredPreset {
     /// does not parse or the trigger is unknown — a preset this build
     /// cannot faithfully execute is refused whole, never approximated.
     #[must_use]
-    pub fn to_kernel(&self) -> Option<(StrategyParams, ForceParams)> {
+    pub fn to_kernel(&self) -> Option<CompiledPreset> {
         if self.trigger != FORCE_BAR_TRIGGER {
             return None;
         }
@@ -147,6 +228,13 @@ impl StoredPreset {
         if min_body < Decimal::ZERO {
             return None;
         }
+        let alarm = self.alarm_to_kernel()?;
+        // An instance that places no orders and sounds no alarm does
+        // nothing at all. Refused whole rather than armed as a decoration
+        // the trader would sit watching for a signal it can never give.
+        if self.alarm_only && alarm.is_none() {
+            return None;
+        }
         let params = StrategyParams {
             side,
             quantity,
@@ -154,6 +242,11 @@ impl StoredPreset {
             sl_mult: Decimal::from_str(&self.sl_mult).ok()?,
             rearm,
             on_break,
+            execution: if self.alarm_only {
+                Execution::AlarmOnly
+            } else {
+                Execution::Paper
+            },
         };
         let force = ForceParams {
             window: self.window as usize,
@@ -161,7 +254,57 @@ impl StoredPreset {
             max_factor,
             min_body,
         };
-        Some((params, force))
+        Some(CompiledPreset {
+            params,
+            force,
+            alarm,
+        })
+    }
+
+    /// Compile the alarm half. `Ok(None)` — spelled as an outer `Some(None)`
+    /// — is "the alarm is off", the reading of every preset written before
+    /// it existed. The outer `None` is a row this build cannot honour, and
+    /// it voids the whole preset like any other unreadable field: an alarm
+    /// that silently falls back to a rule the trader did not choose is
+    /// worse than one that refuses to arm.
+    fn alarm_to_kernel(&self) -> Option<Option<AlarmSetup>> {
+        if !self.alarm {
+            return Some(None);
+        }
+        let when = match self.alarm_when.as_str() {
+            "on_close" => AlarmWhen::OnClose,
+            "share" => {
+                if !(MIN_ALARM_SHARE_PERCENT..=MAX_ALARM_SHARE_PERCENT)
+                    .contains(&self.alarm_share_percent)
+                {
+                    return None;
+                }
+                AlarmWhen::at_share(Decimal::new(i64::from(self.alarm_share_percent), 2))
+            }
+            _ => return None,
+        };
+        let repeat = match self.alarm_repeat.as_str() {
+            "once_per_bar" => RepeatPolicy::OncePerBar,
+            "cooldown" => {
+                // A zero-second cooldown is no repeat rule at all: mid-bar,
+                // it would sound on every print. One of the two rules is
+                // always in force, so this one has a floor.
+                if !(MIN_ALARM_COOLDOWN_SECS..=MAX_ALARM_COOLDOWN_SECS)
+                    .contains(&self.alarm_cooldown_secs)
+                {
+                    return None;
+                }
+                RepeatPolicy::Cooldown {
+                    millis: u64::from(self.alarm_cooldown_secs) * 1_000,
+                }
+            }
+            _ => return None,
+        };
+        let sound = AlertSound::from_token(&self.alarm_sound)?;
+        Some(Some(AlarmSetup {
+            params: AlarmParams { when, repeat },
+            sound,
+        }))
     }
 }
 
@@ -181,6 +324,37 @@ fn zero_points() -> String {
 /// existed read as "hold fire on a cut", the old behaviour.
 fn ignore_break() -> String {
     "ignore".to_owned()
+}
+
+/// Serde default for [`StoredPreset::alarm_when`]: the bar's close, the one
+/// instant the strategy itself judges. No head start unless asked for.
+fn on_close() -> String {
+    "on_close".to_owned()
+}
+
+/// Serde default for [`StoredPreset::alarm_repeat`]: the quiet rule.
+fn once_per_bar() -> String {
+    "once_per_bar".to_owned()
+}
+
+/// Serde default for [`StoredPreset::alarm_share_percent`]: the trader's own
+/// worked example, and a share far enough into the bar that the ruler is
+/// reading a shape rather than a first print.
+fn default_alarm_share() -> u32 {
+    70
+}
+
+/// Serde default for [`StoredPreset::alarm_cooldown_secs`]: long enough that
+/// a mid-bar alarm cannot become a stream, short enough not to swallow the
+/// next bar's signal on a fast tape.
+fn default_alarm_cooldown() -> u32 {
+    30
+}
+
+/// Serde default for [`StoredPreset::alarm_sound`]: the sound this app has
+/// always made.
+fn default_alarm_sound() -> String {
+    AlertSound::default().token().to_owned()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -310,7 +484,8 @@ mod tests {
         bank.save("BF compra 1x1", StoredPreset::starting_point(Side::Buy));
         let reloaded = StrategyBank::load_from(&path);
         let preset = reloaded.get("BF compra 1x1").expect("saved preset");
-        let (params, force) = preset.to_kernel().expect("shipped defaults compile");
+        let compiled = preset.to_kernel().expect("shipped defaults compile");
+        let (params, force) = (compiled.params, compiled.force);
         assert_eq!(params.side, Side::Buy);
         assert_eq!(params.rearm, Rearm::OneShot);
         assert_eq!(force.window, 20);
@@ -344,7 +519,8 @@ mod tests {
         .unwrap();
         let bank = StrategyBank::load_from(&path);
         let preset = bank.get("BF antiga").expect("old row reads");
-        let (params, force) = preset.to_kernel().expect("and still compiles");
+        let compiled = preset.to_kernel().expect("and still compiles");
+        let (params, force) = (compiled.params, compiled.force);
         assert_eq!(
             force.min_body,
             Decimal::ZERO,
@@ -397,7 +573,10 @@ mod tests {
         );
         let mut retest = StoredPreset::starting_point(Side::Sell);
         retest.on_break = "retest_limit".to_owned();
-        let (params, _) = retest.to_kernel().expect("the retest policy compiles");
+        let params = retest
+            .to_kernel()
+            .expect("the retest policy compiles")
+            .params;
         assert_eq!(params.on_break, BreakPolicy::RetestLimit);
 
         // The ruler's own limits are contract too: a zero window is not
@@ -419,5 +598,163 @@ mod tests {
                 "window={window} min={min} max={max} must be refused whole"
             );
         }
+    }
+
+    /// A bank written before the alarm existed reads clean and **silent**.
+    /// The whole reason the alarm fields are optional: a saved preset must
+    /// not start making noise because the app was updated.
+    #[test]
+    fn a_pre_alarm_bank_row_reads_with_the_alarm_off() {
+        let path = scratch("prealarm");
+        std::fs::write(
+            &path,
+            "version = 1\n\
+             [presets.\"BF antiga\"]\n\
+             trigger = \"force_bar\"\n\
+             side = \"sell\"\n\
+             quantity = \"1\"\n\
+             window = 20\n\
+             min_factor = \"1.5\"\n\
+             max_factor = \"2.5\"\n\
+             tp_mult = \"1.0\"\n\
+             sl_mult = \"1.0\"\n\
+             rearm = \"one_shot\"\n",
+        )
+        .unwrap();
+        let bank = StrategyBank::load_from(&path);
+        let preset = bank.get("BF antiga").expect("the old row still reads");
+        assert!(!preset.alarm, "an old row is silent");
+        let compiled = preset.to_kernel().expect("and still compiles");
+        assert_eq!(compiled.alarm, None);
+        assert_eq!(
+            compiled.params.execution,
+            Execution::Paper,
+            "an old row still places its orders"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// Every alarm setting survives the round trip to disk. A preset saved
+    /// as "critical, from 70%, every 45s" that comes back as anything else
+    /// is an alarm the trader cannot rely on.
+    #[test]
+    fn the_alarm_settings_round_trip_through_the_bank() {
+        let path = scratch("alarm-roundtrip");
+        let _ = std::fs::remove_file(&path);
+        let mut saved = StoredPreset::starting_point(Side::Sell);
+        saved.alarm = true;
+        saved.alarm_when = "share".to_owned();
+        saved.alarm_share_percent = 70;
+        saved.alarm_repeat = "cooldown".to_owned();
+        saved.alarm_cooldown_secs = 45;
+        saved.alarm_sound = AlertSound::Critical.token().to_owned();
+        saved.alarm_only = true;
+
+        let mut bank = StrategyBank::load_from(&path);
+        bank.save("BF alarme", saved.clone());
+        let reloaded = StrategyBank::load_from(&path);
+        assert_eq!(reloaded.get("BF alarme"), Some(&saved));
+
+        let compiled = reloaded
+            .get("BF alarme")
+            .expect("saved preset")
+            .to_kernel()
+            .expect("the alarm row compiles");
+        let alarm = compiled.alarm.expect("the alarm is on");
+        assert_eq!(
+            alarm.params.when,
+            AlarmWhen::AtShare {
+                share: Decimal::new(70, 2)
+            }
+        );
+        assert_eq!(
+            alarm.params.repeat,
+            RepeatPolicy::Cooldown { millis: 45_000 }
+        );
+        assert_eq!(alarm.sound, AlertSound::Critical);
+        assert_eq!(compiled.params.execution, Execution::AlarmOnly);
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// The alarm's own unreadable rows are refused whole, like every other
+    /// field: an alarm that quietly falls back to a rule the trader did not
+    /// choose is worse than one that refuses to arm and says so.
+    #[test]
+    fn an_alarm_row_this_build_cannot_honour_voids_the_preset() {
+        let mut share_out_of_range = StoredPreset::starting_point(Side::Buy);
+        share_out_of_range.alarm = true;
+        share_out_of_range.alarm_when = "share".to_owned();
+        share_out_of_range.alarm_share_percent = MAX_ALARM_SHARE_PERCENT + 1;
+        assert!(share_out_of_range.to_kernel().is_none());
+
+        let mut zero_cooldown = StoredPreset::starting_point(Side::Buy);
+        zero_cooldown.alarm = true;
+        zero_cooldown.alarm_repeat = "cooldown".to_owned();
+        zero_cooldown.alarm_cooldown_secs = 0;
+        assert!(
+            zero_cooldown.to_kernel().is_none(),
+            "zero seconds is not a repeat rule, and one is always in force"
+        );
+
+        let mut unknown_sound = StoredPreset::starting_point(Side::Buy);
+        unknown_sound.alarm = true;
+        unknown_sound.alarm_sound = "foghorn".to_owned();
+        assert!(unknown_sound.to_kernel().is_none());
+
+        for token in ["", "sometimes", "SHARE"] {
+            let mut bad_when = StoredPreset::starting_point(Side::Buy);
+            bad_when.alarm = true;
+            bad_when.alarm_when = token.to_owned();
+            assert!(bad_when.to_kernel().is_none(), "alarm_when={token:?}");
+
+            let mut bad_repeat = StoredPreset::starting_point(Side::Buy);
+            bad_repeat.alarm = true;
+            bad_repeat.alarm_repeat = token.to_owned();
+            assert!(bad_repeat.to_kernel().is_none(), "alarm_repeat={token:?}");
+        }
+    }
+
+    /// An instance that places no orders and sounds no alarm does nothing
+    /// at all. Refused, rather than armed as a decoration the trader would
+    /// sit watching for a signal it can never give.
+    #[test]
+    fn an_instance_that_neither_trades_nor_alarms_is_refused() {
+        let mut silent = StoredPreset::starting_point(Side::Buy);
+        silent.alarm_only = true;
+        silent.alarm = false;
+        assert!(silent.to_kernel().is_none());
+
+        // With the alarm on, the same row is exactly what the trader asked
+        // for: a watcher that speaks and never trades.
+        silent.alarm = true;
+        let compiled = silent.to_kernel().expect("alarm only, with an alarm");
+        assert_eq!(compiled.params.execution, Execution::AlarmOnly);
+        assert!(compiled.alarm.is_some());
+    }
+
+    /// The form opens silent, on the quiet reading of every alarm option. A
+    /// dialog that starts armed to make noise is one the trader has to
+    /// remember to disarm.
+    #[test]
+    fn the_forms_starting_point_is_a_silent_strategy() {
+        let start = StoredPreset::starting_point(Side::Buy);
+        assert!(!start.alarm);
+        assert!(!start.alarm_only);
+        let compiled = start.to_kernel().expect("the starting point compiles");
+        assert_eq!(compiled.alarm, None);
+        assert_eq!(compiled.params.execution, Execution::Paper);
+
+        // And ticking the one checkbox gives the quiet defaults, not a
+        // half-configured alarm.
+        let mut sounding = start;
+        sounding.alarm = true;
+        let alarm = sounding
+            .to_kernel()
+            .expect("compiles")
+            .alarm
+            .expect("the alarm is on");
+        assert_eq!(alarm.params.when, AlarmWhen::OnClose);
+        assert_eq!(alarm.params.repeat, RepeatPolicy::OncePerBar);
+        assert_eq!(alarm.sound, AlertSound::default());
     }
 }

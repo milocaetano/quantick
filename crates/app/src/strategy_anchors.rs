@@ -8,10 +8,48 @@
 //! already carries one replaces it, so a rectangle never hides a stack of
 //! bots behind one badge.
 
+use quantick_engine::{Bar, BarProgress};
 use quantick_sim::Command;
-use quantick_strategy::{ArmedState, ArmedStrategy, DisarmReason};
+use quantick_strategy::{
+    AlarmEvent, ArmedState, ArmedStrategy, DisarmReason, Execution, Region, SignalAlarm,
+};
 
+use crate::audio::AlertSound;
 use crate::drawings::DrawingId;
+
+/// What the last alarm judgement left standing over the drawing.
+///
+/// The chart shows this beside the badge, because a mid-bar alarm is a
+/// claim about a bar that has not finished: the trader who heard it is owed
+/// both the word "preview" while it stands and the correction when it turns
+/// out not to have held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AlarmMark {
+    /// Nothing to say.
+    #[default]
+    Quiet,
+    /// A provisional signal, announced from the bar still forming.
+    Preview,
+    /// The bar closed and the signal held.
+    Confirmed,
+    /// The bar closed and the previewed signal did **not** hold. Shown
+    /// until the next judgement replaces it: a trader who left the desk on
+    /// the sound comes back to the reason it meant nothing.
+    Faded,
+}
+
+impl AlarmMark {
+    /// The words the chart shows, or `None` when there is nothing to add.
+    #[must_use]
+    pub fn label(self) -> Option<&'static str> {
+        match self {
+            Self::Quiet => None,
+            Self::Preview => Some("signal (preview)"),
+            Self::Confirmed => Some("signal"),
+            Self::Faded => Some("preview faded"),
+        }
+    }
+}
 
 /// One armed strategy riding one drawing.
 pub struct AnchoredInstance {
@@ -19,6 +57,87 @@ pub struct AnchoredInstance {
     /// The preset name the badge and tooltip show ("BF compra 1x1").
     pub preset: String,
     pub armed: ArmedStrategy,
+    /// The signal alarm, when the preset asked for one. `None` is the
+    /// silent instance every preset written before the alarm existed
+    /// compiles to.
+    pub alarm: Option<SignalAlarm>,
+    /// Which platform sound this instance's alarm plays.
+    pub sound: AlertSound,
+    /// What the last alarm judgement left on the chart.
+    pub mark: AlarmMark,
+}
+
+impl AnchoredInstance {
+    /// Whether this instance places orders at all.
+    #[must_use]
+    pub fn alarm_only(&self) -> bool {
+        self.armed.params().execution == Execution::AlarmOnly
+    }
+
+    /// Judge the bar that just closed, and answer with the sound to play.
+    ///
+    /// The opportunity comes from the kernel's own reading of that bar
+    /// ([`ArmedStrategy::last_close_opportunity`]) rather than from whether
+    /// an order went out, which is the whole distinction the alarm exists
+    /// to draw: the trader is told their setup happened, not that this
+    /// simulator acted on it.
+    pub fn alarm_on_closed_bar(&mut self, now_ms: u64) -> Option<AlertSound> {
+        let qualifies = self.armed.last_close_opportunity().is_some();
+        let event = self.alarm.as_mut()?.on_closed(qualifies, now_ms);
+        self.apply(event)
+    }
+
+    /// Judge the bar still forming, and answer with the sound to play.
+    ///
+    /// Cheap first: the alarm's own gate is asked before the ruler and the
+    /// region are, because this runs once per print. Everything past
+    /// `wants_forming_check` is skipped on the overwhelming majority of
+    /// prints — the bar is not far enough along, or the repeat rule has
+    /// this bar's sound already spent.
+    pub fn alarm_on_forming_bar(
+        &mut self,
+        bar: &Bar,
+        region: &Region,
+        region_active: bool,
+        progress: Option<BarProgress>,
+        now_ms: u64,
+    ) -> Option<AlertSound> {
+        if !self.alarm.as_ref()?.wants_forming_check(progress, now_ms) {
+            return None;
+        }
+        let qualifies = self
+            .armed
+            .preview_opportunity(bar, region, region_active)
+            .is_some();
+        let event = self
+            .alarm
+            .as_mut()
+            .expect("the alarm answered its own gate a moment ago")
+            .on_forming(qualifies, progress, now_ms);
+        self.apply(event)
+    }
+
+    /// Record what the chart should show, and hand back the sound — if any.
+    /// A silent event still moves the mark: withdrawing a preview that did
+    /// not hold is exactly the case where nothing is heard and something
+    /// must be seen.
+    fn apply(&mut self, event: Option<AlarmEvent>) -> Option<AlertSound> {
+        let event = event?;
+        self.mark = match event {
+            AlarmEvent::Preview => AlarmMark::Preview,
+            AlarmEvent::Confirmed | AlarmEvent::ConfirmedQuietly => AlarmMark::Confirmed,
+            AlarmEvent::Faded => AlarmMark::Faded,
+        };
+        event.sounds().then_some(self.sound)
+    }
+
+    /// The series this instance was judging no longer exists.
+    pub fn reset_alarm(&mut self) {
+        if let Some(alarm) = self.alarm.as_mut() {
+            alarm.reset();
+        }
+        self.mark = AlarmMark::Quiet;
+    }
 }
 
 /// The pane's armed instances. A plain `Vec`: evaluation order is creation
@@ -96,6 +215,12 @@ impl StrategyAnchors {
         let mut cleanup = Vec::new();
         for instance in &mut self.instances {
             cleanup.extend(instance.armed.disarm(reason));
+            // A disarm that rebuilt the series takes the alarm's cooldown
+            // and its outstanding preview with it: both were counted
+            // against a tape that no longer exists.
+            if reason.resets_series() {
+                instance.reset_alarm();
+            }
         }
         cleanup
     }
@@ -137,18 +262,31 @@ impl StrategyAnchors {
 /// decided here so every surface says the same thing.
 #[must_use]
 pub fn badge_text(instance: &AnchoredInstance) -> String {
-    match instance.armed.state() {
-        ArmedState::Armed => format!("⚡ {}", instance.preset),
-        ArmedState::Fired { retest: false, .. } => format!("⚡ {} · fired", instance.preset),
-        ArmedState::Fired { retest: true, .. } => {
-            format!("⚡ {} · retest resting", instance.preset)
+    // An alarm-only instance never leaves `Armed`, so its state alone would
+    // read as an ordinary bot the trader is still waiting on an order from.
+    // It says what it is instead.
+    let state = if instance.alarm_only() {
+        "alarm only".to_owned()
+    } else {
+        match instance.armed.state() {
+            ArmedState::Armed => String::new(),
+            ArmedState::Fired { retest: false, .. } => "fired".to_owned(),
+            ArmedState::Fired { retest: true, .. } => "retest resting".to_owned(),
+            ArmedState::InPosition => "in position".to_owned(),
+            ArmedState::Done => "done".to_owned(),
+            ArmedState::Disarmed { reason } => reason.label().to_owned(),
         }
-        ArmedState::InPosition => format!("⚡ {} · in position", instance.preset),
-        ArmedState::Done => format!("⚡ {} · done", instance.preset),
-        ArmedState::Disarmed { reason } => {
-            format!("⚡ {} · {}", instance.preset, reason.label())
-        }
+    };
+    // The alarm's own word comes last, where the eye lands after the name:
+    // it is the most recent thing that happened, and the one a trader who
+    // heard a sound is looking for.
+    let parts = [state.as_str(), instance.mark.label().unwrap_or_default()];
+    let mut badge = format!("⚡ {}", instance.preset);
+    for part in parts.into_iter().filter(|part| !part.is_empty()) {
+        badge.push_str(" · ");
+        badge.push_str(part);
     }
+    badge
 }
 
 #[cfg(test)]
@@ -170,9 +308,13 @@ mod tests {
                     sl_mult: Decimal::ONE,
                     rearm: Rearm::OneShot,
                     on_break: quantick_strategy::BreakPolicy::Ignore,
+                    execution: Execution::Paper,
                 },
                 Box::new(ForceTrigger::new(ForceParams::default_band())),
             ),
+            alarm: None,
+            sound: AlertSound::default(),
+            mark: AlarmMark::Quiet,
         }
     }
 
@@ -231,6 +373,7 @@ mod tests {
                     sl_mult: Decimal::ONE,
                     rearm: Rearm::OneShot,
                     on_break: quantick_strategy::BreakPolicy::Ignore,
+                    execution: Execution::Paper,
                 },
                 Box::new(ForceTrigger::new(ForceParams {
                     window: 3,
@@ -239,6 +382,9 @@ mod tests {
                     min_body: Decimal::ZERO,
                 })),
             ),
+            alarm: None,
+            sound: AlertSound::default(),
+            mark: AlarmMark::Quiet,
         };
         let region = quantick_strategy::Region::new(Decimal::from(100), Decimal::from(110));
         let _ = riding
@@ -306,6 +452,7 @@ mod tests {
                     sl_mult: Decimal::ONE,
                     rearm: Rearm::OneShot,
                     on_break: quantick_strategy::BreakPolicy::Ignore,
+                    execution: Execution::Paper,
                 },
                 Box::new(ForceTrigger::new(ForceParams {
                     window: 3,
@@ -314,6 +461,9 @@ mod tests {
                     min_body: Decimal::ZERO,
                 })),
             ),
+            alarm: None,
+            sound: AlertSound::default(),
+            mark: AlarmMark::Quiet,
         };
         let region = quantick_strategy::Region::new(Decimal::from(100), Decimal::from(110));
         let _ = riding
@@ -369,5 +519,194 @@ mod tests {
                 }
             );
         }
+    }
+
+    /// A 3-bar force ruler on a buy region, with the alarm the test asks
+    /// for. The tape below is the one every other fixture here uses:
+    /// bodies 1, 1, then 4 — ratio 2, closing inside the region.
+    fn alarming_instance(
+        when: quantick_strategy::AlarmWhen,
+        repeat: quantick_strategy::RepeatPolicy,
+        sound: AlertSound,
+    ) -> AnchoredInstance {
+        let mut instance = instance(DrawingId(9));
+        instance.armed = ArmedStrategy::new(
+            StrategyParams {
+                side: Side::Buy,
+                quantity: Decimal::ONE,
+                tp_mult: Decimal::ONE,
+                sl_mult: Decimal::ONE,
+                rearm: Rearm::Auto,
+                on_break: quantick_strategy::BreakPolicy::Ignore,
+                execution: Execution::Paper,
+            },
+            Box::new(ForceTrigger::new(ForceParams {
+                window: 3,
+                min_factor: "1.5".parse().expect("fixture"),
+                max_factor: "2.5".parse().expect("fixture"),
+                min_body: Decimal::ZERO,
+            })),
+        );
+        instance.alarm = Some(SignalAlarm::new(quantick_strategy::AlarmParams {
+            when,
+            repeat,
+        }));
+        instance.sound = sound;
+        instance
+    }
+
+    fn test_bar(open: i64, close: i64) -> Bar {
+        Bar {
+            open_time: 0,
+            close_time: 0,
+            open: Decimal::from(open),
+            high: Decimal::from(open.max(close) + 1),
+            low: Decimal::from(open.min(close) - 1),
+            close: Decimal::from(close),
+            buy_volume: Decimal::ONE,
+            sell_volume: Decimal::ONE,
+            trade_count: 2,
+        }
+    }
+
+    fn test_progress(done: i64, target: i64) -> Option<BarProgress> {
+        Some(BarProgress {
+            done: Decimal::from(done),
+            target: Decimal::from(target),
+        })
+    }
+
+    /// The whole chain, end to end: a closed force bar inside the region
+    /// asks for the sound the preset named, exactly once, and the chart is
+    /// told the signal is a confirmed one.
+    #[test]
+    fn a_closed_signal_bar_asks_for_the_preset_s_own_sound() {
+        let region = Region::new(Decimal::from(100), Decimal::from(110));
+        let mut instance = alarming_instance(
+            quantick_strategy::AlarmWhen::OnClose,
+            quantick_strategy::RepeatPolicy::OncePerBar,
+            AlertSound::Critical,
+        );
+        for warm in [test_bar(100, 101), test_bar(101, 102)] {
+            instance.armed.on_closed_bar(&warm, &region, true, true);
+            assert_eq!(
+                instance.alarm_on_closed_bar(0),
+                None,
+                "a quiet bar is quiet"
+            );
+            assert_eq!(instance.mark, AlarmMark::Quiet);
+        }
+        instance
+            .armed
+            .on_closed_bar(&test_bar(102, 106), &region, true, true);
+        assert_eq!(
+            instance.alarm_on_closed_bar(0),
+            Some(AlertSound::Critical),
+            "the signal bar plays the sound the preset named"
+        );
+        assert_eq!(instance.mark, AlarmMark::Confirmed);
+        // A trading instance shows both halves: the order it placed and the
+        // signal that placed it. They are separate facts, and the badge
+        // does not collapse one into the other.
+        assert_eq!(badge_text(&instance), "⚡ test · fired · signal");
+    }
+
+    /// The head start, and its honest label: the alarm sounds on a bar that
+    /// has not closed, the badge says "preview", and when the bar closes
+    /// without the signal the chart withdraws it — silently, because the
+    /// trader already heard that alarm.
+    #[test]
+    fn a_previewed_signal_that_does_not_hold_is_withdrawn_without_a_second_sound() {
+        let region = Region::new(Decimal::from(100), Decimal::from(110));
+        let mut instance = alarming_instance(
+            quantick_strategy::AlarmWhen::at_share(Decimal::new(70, 2)),
+            quantick_strategy::RepeatPolicy::OncePerBar,
+            AlertSound::Exclamation,
+        );
+        for warm in [test_bar(100, 101), test_bar(101, 102)] {
+            instance.armed.on_closed_bar(&warm, &region, true, true);
+            let _ = instance.alarm_on_closed_bar(0);
+        }
+
+        // The bar forming toward a force close: at 60% nothing is judged,
+        // at 70% the alarm speaks.
+        let forming = test_bar(102, 106);
+        assert_eq!(
+            instance.alarm_on_forming_bar(&forming, &region, true, test_progress(1200, 2000), 0),
+            None,
+            "before the share, not a sound and not a judgement"
+        );
+        assert_eq!(instance.mark, AlarmMark::Quiet);
+        assert_eq!(
+            instance.alarm_on_forming_bar(&forming, &region, true, test_progress(1400, 2000), 0),
+            Some(AlertSound::Exclamation)
+        );
+        assert_eq!(instance.mark, AlarmMark::Preview);
+        assert_eq!(badge_text(&instance), "⚡ test · signal (preview)");
+
+        // The bar keeps forming and gives the force back: it closes as an
+        // ordinary small body.
+        let closed = test_bar(102, 103);
+        instance.armed.on_closed_bar(&closed, &region, true, true);
+        assert_eq!(
+            instance.alarm_on_closed_bar(0),
+            None,
+            "withdrawing a signal is shown, never played"
+        );
+        assert_eq!(instance.mark, AlarmMark::Faded);
+        assert_eq!(badge_text(&instance), "⚡ test · preview faded");
+    }
+
+    /// An alarm-only instance says so on its badge. Its state never leaves
+    /// `Armed`, so the state alone would read as an ordinary bot the trader
+    /// is still waiting on an order from.
+    #[test]
+    fn an_alarm_only_badge_says_it_will_never_place_an_order() {
+        let mut instance = alarming_instance(
+            quantick_strategy::AlarmWhen::OnClose,
+            quantick_strategy::RepeatPolicy::OncePerBar,
+            AlertSound::default(),
+        );
+        instance.armed = ArmedStrategy::new(
+            StrategyParams {
+                execution: Execution::AlarmOnly,
+                ..instance.armed.params().clone()
+            },
+            Box::new(ForceTrigger::new(ForceParams::default_band())),
+        );
+        assert!(instance.alarm_only());
+        assert_eq!(badge_text(&instance), "⚡ test · alarm only");
+        instance.mark = AlarmMark::Confirmed;
+        assert_eq!(badge_text(&instance), "⚡ test · alarm only · signal");
+    }
+
+    /// A rebuilt series takes the alarm's cooldown and its outstanding
+    /// preview with it — both were counted against a tape that is gone.
+    #[test]
+    fn a_series_changing_disarm_resets_the_alarms_too() {
+        let mut anchors = StrategyAnchors::default();
+        let mut instance = alarming_instance(
+            quantick_strategy::AlarmWhen::at_share(Decimal::new(70, 2)),
+            quantick_strategy::RepeatPolicy::Cooldown { millis: 30_000 },
+            AlertSound::default(),
+        );
+        instance.mark = AlarmMark::Preview;
+        let _ = anchors.arm(instance);
+
+        let _ = anchors.disarm_all(DisarmReason::TimelineReset);
+        assert_eq!(anchors.instances[0].mark, AlarmMark::Quiet);
+        assert!(
+            !anchors.instances[0]
+                .alarm
+                .as_ref()
+                .expect("the alarm is still attached")
+                .preview_outstanding()
+        );
+
+        // A disarm that did *not* rebuild the series leaves the cooldown
+        // alone: the tape it was counted against is still the tape.
+        anchors.instances[0].mark = AlarmMark::Preview;
+        let _ = anchors.disarm_all(DisarmReason::User);
+        assert_eq!(anchors.instances[0].mark, AlarmMark::Preview);
     }
 }

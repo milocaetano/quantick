@@ -653,6 +653,18 @@ fn fmt_progress(progress: &quantick_engine::BarProgress, unit: &str) -> String {
 enum StrategyDemoMode {
     Armed,
     Popup,
+    /// The arming dialog with the **alarm switched on** and its share gate
+    /// picked, so every alarm control is on screen at once. The section
+    /// folds itself away while the checkbox is clear — which is right for a
+    /// trader and useless for a capture — so `popup` alone can never
+    /// photograph it.
+    AlarmPopup,
+    /// An **alarm-only** instance armed on the region, carrying a standing
+    /// preview mark: the badge that says "this places nothing" and the
+    /// provisional label, in one frame. Both are states a real tape reaches
+    /// only when a force bar happens to be half-formed, which no capture
+    /// can wait for.
+    AlarmBadge,
 }
 
 /// The arming dialog's state: which drawing on which pane of which tab,
@@ -1087,6 +1099,15 @@ pub struct QuantickApp {
     strategy_bank: crate::strategy_presets::StrategyBank,
     /// The arming dialog, opened by a drawing menu's "Add strategy…".
     strategy_popup: Option<StrategyPopup>,
+    /// Where signal alarms are played. The shipped sink is the platform's
+    /// own sounds; a test swaps in a recorder, which is how "the alarm
+    /// sounded, once, and it was the sound the preset named" is asserted
+    /// without a build machine making noise.
+    alerts: Box<dyn crate::audio::AlertSink>,
+    /// The last reason a sound could not be played, shown once in the
+    /// dialog. A build with no audio backend, or a platform that refused,
+    /// is reported: an alarm the trader never heard is never assumed heard.
+    alert_failure: Option<String>,
     /// `QUANTICK_STRATEGY_DEMO`: rectangle + armed instance (`1`) or the
     /// arming dialog over it (`popup`), for validation runs. Consumed once
     /// the chart has bars enough, like the drawings demo.
@@ -1413,6 +1434,8 @@ impl QuantickApp {
                 crate::strategy_presets::StrategyBank::default_path(),
             ),
             strategy_popup: None,
+            alerts: Box::new(crate::audio::PlatformAlerts),
+            alert_failure: None,
             pending_strategy_demo: None,
             scripted_indicator_settings: false,
             scripted_candle_width: None,
@@ -1739,6 +1762,8 @@ impl QuantickApp {
                 .and_then(|value| match value.trim() {
                     "1" | "armed" => Some(StrategyDemoMode::Armed),
                     "popup" => Some(StrategyDemoMode::Popup),
+                    "alarm" => Some(StrategyDemoMode::AlarmPopup),
+                    "alarm-badge" => Some(StrategyDemoMode::AlarmBadge),
                     _ => None,
                 });
 
@@ -8915,6 +8940,168 @@ impl QuantickApp {
         true
     }
 
+    /// The alarm section of the arming dialog.
+    ///
+    /// Its own function because it is the one part of the form that is
+    /// about hearing rather than trading, and because the fields under the
+    /// checkbox are only meaningful while it is ticked — a shape the rest
+    /// of the dialog does not have.
+    fn draw_alarm_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        form: &mut crate::strategy_presets::StoredPreset,
+    ) {
+        use crate::audio::AlertSound;
+        use crate::strategy_presets as presets;
+
+        ui.checkbox(&mut form.alarm, "alarm on signal bar")
+            .on_hover_text(
+                "play a sound the moment this strategy's signal happens — the trigger \
+                 fires on your side, inside the region. It is the *signal* that alarms, \
+                 not the order: with the share option below, you hear it before the bar \
+                 closes and before any order could be placed, which is the time you need \
+                 to act on another platform.",
+            );
+        if !form.alarm {
+            // The alarm-only mode goes with the alarm: an instance that
+            // neither trades nor alarms does nothing, and the form must not
+            // be able to describe one.
+            form.alarm_only = false;
+            return;
+        }
+
+        // The bar rule the chart is actually running decides whether a
+        // share of the bar means anything. An adaptive rule closes on a
+        // condition, not on a count, so there is no fraction of it to wait
+        // for — and saying so here is cheaper than a trader wondering for a
+        // session why the alarm only ever speaks at the close.
+        let shares_available = self.drawing_pane().state.progress().is_some();
+
+        ui.horizontal(|ui| {
+            ui.label("when:");
+            let on_close = form.alarm_when != "share";
+            if ui
+                .selectable_label(on_close, "bar closes")
+                .on_hover_text("the same instant the strategy itself judges")
+                .clicked()
+            {
+                form.alarm_when = "on_close".to_owned();
+            }
+            let share_button = ui.add_enabled(
+                shares_available,
+                egui::SelectableLabel::new(!on_close, "part-way through the bar"),
+            );
+            if share_button.clicked() {
+                form.alarm_when = "share".to_owned();
+            }
+            if !shares_available {
+                share_button.on_hover_text(
+                    "this bar rule closes on a condition rather than on a count, so there \
+                     is no share of it to wait for — the alarm speaks at the close",
+                );
+            }
+        });
+        if form.alarm_when == "share" {
+            ui.horizontal(|ui| {
+                ui.label("from");
+                ui.add(
+                    egui::DragValue::new(&mut form.alarm_share_percent)
+                        .range(presets::MIN_ALARM_SHARE_PERCENT..=presets::MAX_ALARM_SHARE_PERCENT),
+                );
+                ui.label("% of the bar onward").on_hover_text(
+                    "on a 2000-tick chart at 70%, the alarm starts judging past tick \
+                     1400. The bar is still moving, so the signal is marked \"preview\" \
+                     — and if it stops qualifying before the close, the chart says so.",
+                );
+            });
+        }
+
+        ui.horizontal(|ui| {
+            ui.label("repeat:");
+            let once = form.alarm_repeat != "cooldown";
+            if ui
+                .selectable_label(once, "once per bar")
+                .on_hover_text("one sound per bar, however many prints agree")
+                .clicked()
+            {
+                form.alarm_repeat = "once_per_bar".to_owned();
+            }
+            if ui.selectable_label(!once, "every").clicked() {
+                form.alarm_repeat = "cooldown".to_owned();
+            }
+            if form.alarm_repeat == "cooldown" {
+                ui.add(
+                    egui::DragValue::new(&mut form.alarm_cooldown_secs)
+                        .range(presets::MIN_ALARM_COOLDOWN_SECS..=presets::MAX_ALARM_COOLDOWN_SECS),
+                );
+                ui.label("s").on_hover_text(
+                    "counted across bars, not reset by one closing — the rule for a \
+                     trader who wants a reminder rather than one notice",
+                );
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("sound");
+            let current = AlertSound::from_token(&form.alarm_sound).unwrap_or_default();
+            egui::ComboBox::from_id_salt("strategy_alarm_sound")
+                .selected_text(current.label())
+                .show_ui(ui, |ui| {
+                    for sound in AlertSound::ALL {
+                        if ui
+                            .selectable_label(sound == current, sound.label())
+                            .clicked()
+                        {
+                            form.alarm_sound = sound.token().to_owned();
+                        }
+                    }
+                });
+            if ui
+                .button("Test")
+                .on_hover_text("play it now, so the sound is chosen with the ears")
+                .clicked()
+            {
+                self.alert_failure = self.alerts.play(current).err().map(ToOwned::to_owned);
+            }
+        });
+
+        ui.checkbox(&mut form.alarm_only, "alarm only — never place an order")
+            .on_hover_text(
+                "the instance watches, judges and alarms, and places nothing. For a \
+                 trader who executes elsewhere: a simulated position they never meant \
+                 to take would occupy the account and silence the next signal.",
+            );
+        if let Some(reason) = &self.alert_failure {
+            ui.colored_label(theme::SELL, format!("no sound was played: {reason}"));
+        }
+    }
+
+    /// Play the alarm sounds every tab's armed instances asked for this
+    /// frame, and empty their queues.
+    ///
+    /// Every tab, not only the active one: a tab the trader is not looking
+    /// at keeps its feed running and its instances judging, and an alarm
+    /// exists precisely to be heard when the eyes are elsewhere.
+    ///
+    /// At most one sound per frame per tab. The kernel's repeat rule has
+    /// already thinned the stream to at most one per bar (or one per
+    /// cooldown); this is the second, blunter guard, for the case a single
+    /// frame ingested a burst of prints that closed several bars at once —
+    /// four beeps stacked into one instant are one noise, not four alarms.
+    fn play_pending_alarms(&mut self) {
+        for index in 0..self.tabs.len() {
+            let Some(sound) = self.tabs[index].pending_alarm_sounds.first().copied() else {
+                continue;
+            };
+            self.tabs[index].pending_alarm_sounds.clear();
+            if let Err(reason) = self.alerts.play(sound) {
+                // A notification that never reached the trader is reported,
+                // never assumed. The dialog shows it the next time it opens.
+                self.alert_failure = Some(reason.to_owned());
+            }
+        }
+    }
+
     /// Arm one instance on a drawing: compile the form, warm the trigger on
     /// the bars already closed (gates shut, so nothing fires from history),
     /// attach it, and start the paper host listening. `Err` carries the
@@ -8926,12 +9113,18 @@ impl QuantickApp {
         form: &crate::strategy_presets::StoredPreset,
         preset_label: String,
     ) -> Result<(), String> {
-        let Some((params, force)) = form.to_kernel() else {
+        let Some(compiled) = form.to_kernel() else {
             return Err(
-                "a field does not parse: quantity, factors and multipliers must be numbers"
+                "a field does not parse: quantity, factors and multipliers must be numbers, \
+                 and an instance that neither trades nor alarms cannot be armed"
                     .to_owned(),
             );
         };
+        let crate::strategy_presets::CompiledPreset {
+            params,
+            force,
+            alarm,
+        } = compiled;
         let tab = self.active_tab_mut();
         let replaced_cleanup = {
             let pane = tab.pane_mut(side);
@@ -8990,6 +9183,9 @@ impl QuantickApp {
                     drawing,
                     preset: preset_label,
                     armed,
+                    alarm: alarm.map(|setup| quantick_strategy::SignalAlarm::new(setup.params)),
+                    sound: alarm.map(|setup| setup.sound).unwrap_or_default(),
+                    mark: crate::strategy_anchors::AlarmMark::Quiet,
                 })
         };
         for command in replaced_cleanup {
@@ -9137,6 +9333,8 @@ impl QuantickApp {
                     popup.form.on_break = if retest { "retest_limit" } else { "ignore" }.to_owned();
                 }
                 ui.separator();
+                self.draw_alarm_controls(ui, &mut popup.form);
+                ui.separator();
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut popup.save_name)
@@ -9226,11 +9424,13 @@ impl QuantickApp {
     }
 
     /// The `QUANTICK_STRATEGY_DEMO` hook: a named rectangle over the recent
-    /// tape with a force-bar instance armed on it (`1`), or the arming
-    /// dialog open over it (`popup`). The rectangle spans the visible
-    /// middle of the chart so `QUANTICK_CONTEXT_MENU=chart`'s centre click
-    /// lands on it and opens the per-drawing menu. Consumed once the chart
-    /// has bars enough, like the drawings demo.
+    /// tape with a force-bar instance armed on it (`1`), the arming dialog
+    /// open over it (`popup`), that dialog with the **alarm section
+    /// unfolded** (`alarm`), or an **alarm-only** instance wearing a
+    /// standing preview mark (`alarm-badge`). The rectangle spans the
+    /// visible middle of the chart so `QUANTICK_CONTEXT_MENU=chart`'s centre
+    /// click lands on it and opens the per-drawing menu. Consumed once the
+    /// chart has bars enough, like the drawings demo.
     fn apply_strategy_demo(&mut self) {
         let Some(mode) = self.pending_strategy_demo else {
             return;
@@ -9302,8 +9502,20 @@ impl QuantickApp {
         };
         // Staged: the rectangle exists, so the hook is consumed.
         self.pending_strategy_demo = None;
-        let form =
+        let mut form =
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
+        // The alarm scenes tick the checkbox the trader would tick, and the
+        // share gate under it, so the section is unfolded with every control
+        // it owns on screen.
+        if matches!(
+            mode,
+            StrategyDemoMode::AlarmPopup | StrategyDemoMode::AlarmBadge
+        ) {
+            form.alarm = true;
+            form.alarm_when = "share".to_owned();
+            form.alarm_repeat = "cooldown".to_owned();
+            form.alarm_sound = crate::audio::AlertSound::Exclamation.token().to_owned();
+        }
         match mode {
             StrategyDemoMode::Armed => {
                 let _ = self.arm_strategy_instance(
@@ -9313,7 +9525,29 @@ impl QuantickApp {
                     "demo BF".to_owned(),
                 );
             }
-            StrategyDemoMode::Popup => {
+            StrategyDemoMode::AlarmBadge => {
+                form.alarm_only = true;
+                let _ = self.arm_strategy_instance(
+                    pane::PaneSide::Flow,
+                    drawing_id,
+                    &form,
+                    "demo alarme".to_owned(),
+                );
+                // Stand a provisional judgement on the badge. The mark is
+                // the surface under test, and the tape reaches it only when
+                // a force bar happens to be half-formed — so the scene
+                // stages the mark itself rather than waiting for a market
+                // that may not oblige before the shutter.
+                if let Some(instance) = self
+                    .active_tab_mut()
+                    .pane_mut(pane::PaneSide::Flow)
+                    .strategies
+                    .for_drawing_mut(drawing_id)
+                {
+                    instance.mark = crate::strategy_anchors::AlarmMark::Preview;
+                }
+            }
+            StrategyDemoMode::Popup | StrategyDemoMode::AlarmPopup => {
                 self.strategy_popup = Some(StrategyPopup {
                     tab: self.active_tab,
                     side: pane::PaneSide::Flow,
@@ -9994,6 +10228,7 @@ impl QuantickApp {
         for tab in &mut self.tabs {
             tab.apply_strategy_cleanup();
         }
+        self.play_pending_alarms();
         self.draw_toast(ctx, now);
         // Both are window chrome reading the active tab, like the notice card
         // and the transport strip: they speak for one market at a time.
@@ -13376,6 +13611,153 @@ crosshair = false
             instance.armed.state(),
             &quantick_strategy::ArmedState::Done,
             "one shot per arming: after the round trip the instance is done"
+        );
+    }
+
+    /// One print, one bar, one sound: the whole alarm chain from the tape to
+    /// the platform's sink, with a recorder standing in for the speaker.
+    ///
+    /// The two halves the trader asked for are both here. The **preview**
+    /// fires part-way through a bar that has not closed — before any order
+    /// could exist, which is the head start the alarm is for — and the
+    /// **alarm-only** instance places nothing while it does, because this
+    /// trader is executing on another platform.
+    #[test]
+    fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
+        fn print(app: &mut QuantickApp, id: &mut u64, price: &str) {
+            *id += 1;
+            let trade = quantick_engine::Trade {
+                agg_id: *id,
+                timestamp_ms: 1_700_000_000_000 + *id as i64 * 100,
+                price: rust_decimal::Decimal::from_str_exact(price).unwrap(),
+                quantity: rust_decimal::Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+            };
+            app.active_tab_mut()
+                .ingest_live_trade_at(&trade, trade.timestamp_ms);
+        }
+        /// One Tick(50) bar: 49 prints at `open`, the fiftieth at `close`.
+        fn bar(app: &mut QuantickApp, id: &mut u64, open: &str, close: &str) {
+            for _ in 0..49 {
+                print(app, id, open);
+            }
+            print(app, id, close);
+        }
+
+        let (mut app, _events, _commands, _book) = test_app();
+        let recorder = crate::audio::RecordingAlerts::default();
+        app.alerts = Box::new(recorder.clone());
+
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == "rectangle")
+            .expect("the rectangle tool is registered");
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
+            pane.drawings
+                .place(rectangle, drawings::ChartPoint::at(30.0, 110.0));
+        }
+        let drawing = app.active_tab().flow_pane.drawings.items()[0].id;
+
+        let mut form =
+            crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
+        form.window = 3;
+        form.min_body = "0".to_owned();
+        form.alarm = true;
+        form.alarm_when = "share".to_owned();
+        form.alarm_share_percent = 70;
+        // One sound per bar keeps the assertion about *which* bar spoke
+        // rather than about the wall clock a cooldown would consult.
+        form.alarm_repeat = "once_per_bar".to_owned();
+        form.alarm_sound = crate::audio::AlertSound::Critical.token().to_owned();
+        form.alarm_only = true;
+        app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "alarme".to_owned())
+            .expect("the alarm form compiles and the drawing exists");
+
+        let mut id = 0u64;
+        // Three body-1 warmup bars inside the region: quiet, and silent.
+        bar(&mut app, &mut id, "100", "101");
+        bar(&mut app, &mut id, "101", "102");
+        bar(&mut app, &mut id, "102", "103");
+        app.play_pending_alarms();
+        assert!(
+            recorder.sounds().is_empty(),
+            "a warming ruler has nothing to announce: {:?}",
+            recorder.sounds()
+        );
+
+        // The signal bar, in two halves. Its first print sets the open at
+        // 103; the rest move the close to 107, a body of 4 against an
+        // average of 2 — force, from print two onward. A Tick(50) bar's
+        // 70% gate opens on print 35, so prints 2 to 34 are the control:
+        // the bar already qualifies and the alarm is still holding.
+        print(&mut app, &mut id, "103");
+        for _ in 0..33 {
+            print(&mut app, &mut id, "107");
+        }
+        app.play_pending_alarms();
+        assert!(
+            recorder.sounds().is_empty(),
+            "before 70% of the bar the alarm holds its tongue: {:?}",
+            recorder.sounds()
+        );
+
+        // Print 35 crosses the share. The bar has not closed.
+        print(&mut app, &mut id, "107");
+        app.play_pending_alarms();
+        assert_eq!(
+            recorder.sounds(),
+            vec![crate::audio::AlertSound::Critical],
+            "past the share the forming bar alarms, in the preset's own sound"
+        );
+        let instance = app
+            .active_tab()
+            .flow_pane
+            .strategies
+            .for_drawing(drawing)
+            .expect("instance");
+        assert_eq!(
+            instance.mark,
+            crate::strategy_anchors::AlarmMark::Preview,
+            "a bar that has not closed is announced as provisional"
+        );
+        assert!(
+            app.active_tab().paper.is_flat(),
+            "the alarm sounded and nothing was ordered — the bar is still open"
+        );
+
+        // The rest of the bar, then its close. Once per bar means the
+        // trader hears this signal exactly once, however many prints agree.
+        for _ in 0..15 {
+            print(&mut app, &mut id, "107");
+        }
+        app.play_pending_alarms();
+        assert_eq!(
+            recorder.sounds(),
+            vec![crate::audio::AlertSound::Critical],
+            "one sound per bar, whatever the tape does inside it"
+        );
+        let instance = app
+            .active_tab()
+            .flow_pane
+            .strategies
+            .for_drawing(drawing)
+            .expect("instance");
+        assert_eq!(
+            instance.mark,
+            crate::strategy_anchors::AlarmMark::Confirmed,
+            "the bar closed still qualifying: the preview held"
+        );
+        assert_eq!(
+            instance.armed.state(),
+            &quantick_strategy::ArmedState::Armed,
+            "an alarm-only instance is never spent — it keeps watching"
+        );
+        assert!(
+            app.active_tab().paper.is_flat(),
+            "alarm only: the whole bar passed and no order was ever placed"
         );
     }
 

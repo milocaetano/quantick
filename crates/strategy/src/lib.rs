@@ -44,13 +44,30 @@
 //! or refused outright when those legs would not clear the edge, since a
 //! resting entry is never armed unprotected. A body that finished beyond
 //! an edge it never crossed cut nothing, and rests nothing.
+//!
+//! Beside the order there is a second, quieter output: the [signal
+//! alarm](SignalAlarm). It answers "did my setup just happen?" rather than
+//! "should this account trade?", so it sounds for a trader whose hands are
+//! on another platform — through a busy account, a spent one shot, and an
+//! [`Execution::AlarmOnly`] instance that will never place anything. It can
+//! also read the bar still *forming*, which the [`Trigger`] port is
+//! forbidden to do: [`Trigger::preview`] weighs a bar without advancing the
+//! ruler, the reading is labelled provisional, and nothing it says reaches
+//! the state machine. Both outputs are gated by one pair of functions over
+//! side, region and body geometry, so the alarm and the order can never
+//! come to disagree about the same bar.
 
+mod alarm;
 mod armed;
 mod force;
 mod region;
 mod trigger;
 
-pub use armed::{ArmedState, ArmedStrategy, BreakPolicy, DisarmReason, Rearm, StrategyParams};
+pub use alarm::{AlarmEvent, AlarmParams, AlarmWhen, RepeatPolicy, SignalAlarm};
+pub use armed::{
+    ArmedState, ArmedStrategy, BreakPolicy, DisarmReason, Execution, Opportunity, Rearm,
+    StrategyParams,
+};
 pub use force::{BarVerdict, ForceBar, ForceParams, ForceWindow};
 pub use region::{BodyCut, Region};
 pub use trigger::{ForceTrigger, Signal, Trigger};

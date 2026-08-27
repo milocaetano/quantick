@@ -41,6 +41,26 @@ pub trait Trigger {
     /// Judge one closed bar. `Some` means "this bar fires".
     fn on_closed_bar(&mut self, bar: &Bar) -> Option<Signal>;
 
+    /// Judge a bar the series has **not** closed — the one still forming —
+    /// without advancing any running state.
+    ///
+    /// This is the [signal alarm](crate::SignalAlarm)'s path, and only it.
+    /// The verdict is provisional by construction: the bar keeps moving,
+    /// and one that reads as force at 70% of its measure may not at its
+    /// close. So it never reaches the state machine and never places an
+    /// order — the trigger's own contract, that a signal the trader can
+    /// audit afterwards comes from a closed bar, is untouched. What the
+    /// preview buys is the seconds a trader needs to act on another
+    /// platform, at the honest price of a reading labelled provisional.
+    ///
+    /// `&self` is the guarantee: a ruler cannot be corrupted by a bar that
+    /// has not finished. A ruler with no honest provisional reading keeps
+    /// the default `None`, and its consumer falls back to closed bars.
+    fn preview(&self, bar: &Bar) -> Option<Signal> {
+        let _ = bar;
+        None
+    }
+
     /// One human-readable line for badges and tooltips: why the trigger is
     /// or is not firing ("warmup 7/20", "quiet 0.8×", "force 1.9×").
     fn status(&self) -> String;
@@ -88,16 +108,20 @@ impl ForceTrigger {
 impl Trigger for ForceTrigger {
     fn on_closed_bar(&mut self, bar: &Bar) -> Option<Signal> {
         let verdict = self.window.classify(bar);
-        let signal = match &verdict {
-            BarVerdict::Force(force) => Some(Signal {
-                side: force.side,
-                reference: bar.close,
-                projection: force.range,
-            }),
-            _ => None,
-        };
+        let signal = signal_from(&verdict, bar);
         self.last = Some(verdict);
         signal
+    }
+
+    fn preview(&self, bar: &Bar) -> Option<Signal> {
+        // `weigh` is `classify` without the fold, and `signal_from` is the
+        // same mapping the closed-bar path uses. The provisional answer is
+        // therefore the answer this bar would get if it closed right now —
+        // which is exactly the claim the alarm makes on the trader's
+        // behalf. The `last` verdict is deliberately not touched: the badge
+        // narrates closed bars, and a forming bar overwriting it would make
+        // the ruler's own status flicker with the tape.
+        signal_from(&self.window.weigh(bar), bar)
     }
 
     fn reset(&mut self) {
@@ -126,6 +150,21 @@ impl Trigger for ForceTrigger {
                 format!("exhaustion {}×", round_ratio(*ratio))
             }
         }
+    }
+}
+
+/// The one place a [`BarVerdict`] becomes a [`Signal`], shared by the
+/// closed-bar path and the forming bar's preview. Two copies of this match
+/// would let the alarm and the order disagree about the same bar — the
+/// divergence a trader can only discover at the worst possible moment.
+fn signal_from(verdict: &BarVerdict, bar: &Bar) -> Option<Signal> {
+    match verdict {
+        BarVerdict::Force(force) => Some(Signal {
+            side: force.side,
+            reference: bar.close,
+            projection: force.range,
+        }),
+        _ => None,
     }
 }
 
