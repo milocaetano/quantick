@@ -1,0 +1,221 @@
+{
+  "$defs": {
+    "Base64Bytes": {
+      "contentEncoding": "base64",
+      "description": "One run of opaque bytes on the wire: standard base64 with padding.\n\nResources are the only place the control plane carries bytes rather than\nvalues — a chunk of a retained evidence bundle today — and they need one\nspelling, declared here beside the rest of the transport vocabulary rather\nthan invented by whichever module happens to page bytes first. Padded\nstandard alphabet, because a chunk is decoded by an ordinary reader in\nwhatever language the client is written in; the unpadded URL-safe alphabet\nstays where it belongs, on the runtime identifiers that travel in\nidentifiers and file names.\n\nThe digest of a chunk is taken over the *raw* bytes, never over this text\n(contract section 3), so re-encoding can never change what a manifest\nattests.",
+      "pattern": "^[A-Za-z0-9+/]*={0,2}$",
+      "type": "string"
+    },
+    "EvidenceChunk": {
+      "description": "One byte run of the canonical document.",
+      "properties": {
+        "byte_length": {
+          "$ref": "#/$defs/WireU64",
+          "x-unit": "bytes"
+        },
+        "byte_offset": {
+          "$ref": "#/$defs/WireU64",
+          "x-unit": "bytes"
+        },
+        "data": {
+          "$ref": "#/$defs/Base64Bytes"
+        },
+        "digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "index": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "index",
+        "byte_offset",
+        "byte_length",
+        "digest",
+        "data"
+      ],
+      "type": "object"
+    },
+    "EvidenceId": {
+      "description": "A retained evidence-bundle identity.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "InstanceId": {
+      "description": "The identity of one running Quantick instance.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "Page": {
+      "properties": {
+        "has_more": {
+          "type": "boolean"
+        },
+        "item_count": {
+          "format": "uint",
+          "maximum": 2048,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/EvidenceChunk"
+          },
+          "maxItems": 2048,
+          "type": "array"
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PageCursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "item_count",
+        "has_more"
+      ],
+      "type": "object"
+    },
+    "PageCursor": {
+      "properties": {
+        "consistency_mode": {
+          "$ref": "#/$defs/PaginationConsistency"
+        },
+        "consistency_revision": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "high_water_position": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "instance_id": {
+          "$ref": "#/$defs/InstanceId"
+        },
+        "next_position": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "query_digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "resource_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResourceId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope_id": {
+          "$ref": "#/$defs/SnapshotScopeId"
+        }
+      },
+      "required": [
+        "instance_id",
+        "scope_id",
+        "query_digest",
+        "consistency_mode",
+        "consistency_revision",
+        "next_position"
+      ],
+      "type": "object"
+    },
+    "PaginationConsistency": {
+      "enum": [
+        "revision_locked",
+        "append_only",
+        "retained_resource"
+      ],
+      "type": "string"
+    },
+    "ResourceId": {
+      "description": "A retained immutable resource identity.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "maxLength": 71,
+      "minLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "SnapshotScopeId": {
+      "description": "A namespaced semantic snapshot projection.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One page of a retained bundle.",
+  "properties": {
+    "chunk_count": {
+      "format": "uint",
+      "maximum": 16,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "content_digest": {
+      "$ref": "#/$defs/Sha256Digest"
+    },
+    "encoded_bytes": {
+      "$ref": "#/$defs/WireU64",
+      "x-unit": "bytes"
+    },
+    "evidence_id": {
+      "$ref": "#/$defs/EvidenceId"
+    },
+    "expires_at_unix_ms": {
+      "format": "int64",
+      "type": "integer",
+      "x-unit": "unix_milliseconds"
+    },
+    "media_type": {
+      "type": "string"
+    },
+    "page": {
+      "$ref": "#/$defs/Page"
+    },
+    "resource_id": {
+      "$ref": "#/$defs/ResourceId"
+    }
+  },
+  "required": [
+    "evidence_id",
+    "resource_id",
+    "content_digest",
+    "media_type",
+    "encoded_bytes",
+    "chunk_count",
+    "expires_at_unix_ms",
+    "page"
+  ],
+  "title": "EvidenceChunkPage",
+  "type": "object"
+}

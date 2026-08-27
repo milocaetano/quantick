@@ -598,11 +598,24 @@ a hard limit requires a reviewed contract change and threat-model check.
 | `CONTROL_EVIDENCE_MAX_BUNDLES` | 8 | default | Bound retained captures |
 | `CONTROL_EVIDENCE_MAX_TOTAL_BYTES` | 64 MiB | hard | Bound total in-memory evidence |
 | `CONTROL_EVIDENCE_RETENTION_MS` | 900,000 | default | Retain evidence for 15 minutes |
+| `CONTROL_EVIDENCE_MAX_BUNDLE_BYTES` | 8 MiB | hard | One bundle's own share, so a single capture cannot evict every other one |
+| `CONTROL_EVIDENCE_CHUNK_BYTES` | 512 KiB | hard | One chunk of a retained resource, before transport encoding |
+| `CONTROL_EVIDENCE_MAX_CHUNKS_PER_PAGE` | 4 | hard | Chunks one page carries, leaving room for base64 and the envelope |
 
 Evidence payloads are resources read in chunks no larger than
 `CONTROL_MAX_RESPONSE_BYTES`; `quantick_capture_evidence` returns a manifest
 and resource ID, not an unbounded inline bundle. Old evidence is evicted by the
-earlier of count, total bytes, or retention time.
+earlier of count, total bytes, or retention time. A capture that would exceed
+`CONTROL_EVIDENCE_MAX_BUNDLE_BYTES` is refused with `control.backpressure`
+rather than admitted at the cost of every bundle already retained, and a
+screenshot that would take a bundle over that ceiling is reported as not
+captured rather than costing the bundle its text.
+
+The chunks are byte runs of the bundle's own Quantick Canonical JSON v1 text,
+so a client that concatenates them and hashes the result reproduces the
+manifest's `content_digest` without re-canonicalising anything. Each chunk also
+carries its raw-byte digest, and the manifest carries them in order (section 3).
+Bytes on the wire are standard padded base64.
 
 The event journal evicts by the earlier of entry capacity or total encoded
 bytes. A semantic event larger than `CONTROL_EVENT_MAX_BYTES` contains a

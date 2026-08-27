@@ -13,6 +13,10 @@ use super::{
         SnapshotScopeDescriptor,
     },
     events::{EventsReadInput, EventsWaitInput},
+    evidence::{
+        EvidenceCaptureInput, EvidenceChunkPage, EvidenceDocument, EvidenceManifest,
+        EvidenceReadInput,
+    },
     feed::FeedSnapshot,
     health::HealthSnapshot,
     interaction::{CursorSnapshot, SelectionSnapshot},
@@ -62,6 +66,13 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<EventsReadInput>("observer-events-read-input-v1.schema.json"),
         document::<EventsWaitInput>("observer-events-wait-input-v1.schema.json"),
         document::<EventPage>("observer-event-page-v1.schema.json"),
+        document::<EvidenceCaptureInput>("evidence-capture-input-v1.schema.json"),
+        document::<EvidenceManifest>("evidence-manifest-v1.schema.json"),
+        document::<EvidenceReadInput>("evidence-read-input-v1.schema.json"),
+        document::<EvidenceChunkPage>("evidence-chunk-page-v1.schema.json"),
+        // The shape the chunks reassemble into, so a client can generate a
+        // reader for a bundle rather than reverse-engineering one.
+        document::<EvidenceDocument>("evidence-bundle-v1.schema.json"),
         document::<MarkInput>("attention-mark-input-v1.schema.json"),
         document::<MarkResult>("attention-mark-result-v1.schema.json"),
         document::<AnnotationInput>("annotate-object-input-v1.schema.json"),
@@ -83,8 +94,12 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
 pub(crate) fn capability_catalog() -> Value {
     let projections = super::standard_registry().expect("built-in projection registry is valid");
     let actions = super::actions::standard_actions().expect("action registry is valid");
-    let contract = ObserverContract::new(&projections, std::sync::Arc::new(actions))
-        .expect("observer contract is valid");
+    let contract = ObserverContract::new(
+        &projections,
+        std::sync::Arc::new(actions),
+        super::evidence::EvidenceStore::new(),
+    )
+    .expect("observer contract is valid");
     let default_scopes = contract.default_grant();
     let description = contract.describe(
         quantick_control::id::InstanceId::from_bytes([0; 16]),

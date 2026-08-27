@@ -68,7 +68,7 @@ fn startup_errors_and_shutdown_emit_only_mcp_frames_on_stdout() {
     assert_eq!(frames[0]["id"], 1);
     assert_eq!(frames[0]["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(frames[1]["id"], 2);
-    assert_eq!(frames[1]["result"]["tools"].as_array().unwrap().len(), 9);
+    assert_eq!(frames[1]["result"]["tools"].as_array().unwrap().len(), 10);
     assert_eq!(frames[2]["id"], 3);
     let describe = &frames[2]["result"];
     assert_eq!(describe["isError"], false);

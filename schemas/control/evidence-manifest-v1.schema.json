@@ -1,0 +1,427 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "EvidenceControlRegion": {
+      "description": "One control's rectangle in the captured image, in physical pixels.",
+      "properties": {
+        "control_id": {
+          "type": "string"
+        },
+        "height_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels"
+        },
+        "width_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels"
+        },
+        "within_image": {
+          "description": "Whether the rectangle lies wholly inside the image. A control the\nwindow is clipping is exactly what a screenshot gets asked about, so it\nis reported with its real numbers and this flag rather than trimmed.",
+          "type": "boolean"
+        },
+        "x_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels"
+        },
+        "y_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "pixels"
+        }
+      },
+      "required": [
+        "control_id",
+        "x_px",
+        "y_px",
+        "width_px",
+        "height_px",
+        "within_image"
+      ],
+      "type": "object"
+    },
+    "EvidenceCoverage": {
+      "description": "The honest bound on everything else in the bundle.\n\nAbsence is reported here; qualification is reported in place. A value that\nis inferred rather than measured carries its own provenance where it lives\n— the aggressor side under `feed.status`, the tick-rule delta under\n`orderflow.tape` — because a label separated from its value is a label that\ndrifts. What this section answers is the other question: what is *not*\nhere, and why.",
+      "properties": {
+        "complete": {
+          "description": "True only when every list above is empty. It is never true today, and\nsays so rather than letting a reader take a bundle for the session.",
+          "type": "boolean"
+        },
+        "not_captured": {
+          "description": "What this bundle does not carry at all, and why.",
+          "items": {
+            "$ref": "#/$defs/EvidenceGap"
+          },
+          "type": "array"
+        },
+        "omitted_scopes": {
+          "description": "Registered scopes this capture did not include, because the caller did\nnot name them.",
+          "items": {
+            "$ref": "#/$defs/SnapshotScopeId"
+          },
+          "type": "array"
+        },
+        "unavailable_fields": {
+          "description": "Fields the captured projections themselves reported as unavailable,\nwith the pointer that finds each one in the document and the coded\nreason it gave. Derived by walking the capture, never hand-kept.",
+          "items": {
+            "$ref": "#/$defs/EvidenceUnavailableField"
+          },
+          "maxItems": 256,
+          "type": "array"
+        }
+      },
+      "required": [
+        "omitted_scopes",
+        "unavailable_fields",
+        "not_captured",
+        "complete"
+      ],
+      "type": "object"
+    },
+    "EvidenceEnvironment": {
+      "description": "The build and the machine the capture was taken on.",
+      "properties": {
+        "graphics_backend": {
+          "type": "string"
+        },
+        "process_started_at_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "process_uptime_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "milliseconds"
+        },
+        "system": {
+          "$ref": "#/$defs/SystemSnapshot",
+          "description": "The application's own identity projection, verbatim: version, commit\nand its provenance, target triple, build profile, protocol version.\nTaken from the same function `system.info` publishes, so a bundle and a\nsnapshot can never disagree about what build produced them."
+        }
+      },
+      "required": [
+        "system",
+        "graphics_backend",
+        "process_started_at_unix_ms",
+        "process_uptime_ms"
+      ],
+      "type": "object"
+    },
+    "EvidenceGap": {
+      "description": "One thing the bundle does not carry.",
+      "properties": {
+        "reason": {
+          "description": "Why, as a stable code — never the sentence an interface shows a human.\nA client made to parse that sentence would break the day it is\nreworded, and translating it would break every such client at once.",
+          "type": "string"
+        },
+        "subject": {
+          "description": "What is missing, as a stable name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "EvidenceId": {
+      "description": "A retained evidence-bundle identity.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "EvidenceScreenshot": {
+      "description": "The geometry and integrity of a captured frame, without its pixels.",
+      "properties": {
+        "capture_revision": {
+          "$ref": "#/$defs/WireU64",
+          "description": "The capture this image belongs to — the same revision as the scene in\nthe same bundle. That equality is the whole point: it is what turns a\nrectangle of pixels into the name of a control."
+        },
+        "control_regions": {
+          "description": "Where each named control sits in this image.",
+          "items": {
+            "$ref": "#/$defs/EvidenceControlRegion"
+          },
+          "maxItems": 512,
+          "type": "array"
+        },
+        "controls_without_region": {
+          "description": "Controls the scene named that have no region here, each with the reason\nthe scene itself gave for having no bounds. Listed rather than dropped:\na reader must be able to tell \"not on screen\" from \"not measured\".",
+          "items": {
+            "$ref": "#/$defs/EvidenceGap"
+          },
+          "type": "array"
+        },
+        "format": {
+          "type": "string"
+        },
+        "height_px": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "image_bytes": {
+          "$ref": "#/$defs/WireU64",
+          "x-unit": "bytes"
+        },
+        "image_digest": {
+          "$ref": "#/$defs/Sha256Digest",
+          "description": "Digest of the raw image bytes, not of their transport encoding."
+        },
+        "pixels_per_point": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Physical pixels per logical point: the factor the scene's own\npoint-valued bounds were multiplied by to reach the regions below."
+        },
+        "width_px": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "capture_revision",
+        "width_px",
+        "height_px",
+        "pixels_per_point",
+        "format",
+        "image_digest",
+        "image_bytes",
+        "control_regions",
+        "controls_without_region"
+      ],
+      "type": "object"
+    },
+    "EvidenceUnavailableField": {
+      "description": "One field a projection reported it could not fill.",
+      "properties": {
+        "pointer": {
+          "description": "JSON Pointer (RFC 6901) into the bundle document.",
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pointer",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "InstanceId": {
+      "description": "The identity of one running Quantick instance.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "PermissionId": {
+      "description": "A granular authority or data-read grant.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "ProcessNonce": {
+      "description": "A nonce distinguishing one application process.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "ResourceId": {
+      "description": "A retained immutable resource identity.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "maxLength": 71,
+      "minLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "SnapshotScopeId": {
+      "description": "A namespaced semantic snapshot projection.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "SystemSnapshot": {
+      "properties": {
+        "application": {
+          "type": "string"
+        },
+        "application_version": {
+          "type": "string"
+        },
+        "build_profile": {
+          "type": "string"
+        },
+        "control_protocol_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "git_commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "git_commit_provenance": {
+          "type": "string"
+        },
+        "target_arch": {
+          "type": "string"
+        },
+        "target_family": {
+          "type": "string"
+        },
+        "target_os": {
+          "type": "string"
+        },
+        "ui_capture_budget_us": {
+          "$ref": "#/$defs/WireU64",
+          "x-unit": "microseconds"
+        }
+      },
+      "required": [
+        "application",
+        "application_version",
+        "control_protocol_version",
+        "target_os",
+        "target_arch",
+        "target_family",
+        "build_profile",
+        "git_commit_provenance",
+        "ui_capture_budget_us"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Everything about a bundle except the bundle.\n\nReturned by `evidence.capture` so a client can decide whether the capture\nis worth reading at all — what was covered, what was not, how large it is\nand how many chunks that will take — without paging a byte. The fields it\nrepeats from the document (the environment, the coverage, the screenshot's\ngeometry) are repeated deliberately: they are the ones that decide whether\nto read further, and a reader that had to page in order to learn them would\npay for the whole bundle to answer a question about its size.",
+  "properties": {
+    "bundle_version": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "capture_revision": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The one revision every projection in the bundle was taken at — and the\nrevision the screenshot, if there is one, is stamped with."
+    },
+    "captured_at_unix_ms": {
+      "format": "int64",
+      "type": "integer",
+      "x-unit": "unix_milliseconds"
+    },
+    "chunk_bytes": {
+      "$ref": "#/$defs/WireU64",
+      "x-unit": "bytes"
+    },
+    "chunk_count": {
+      "format": "uint",
+      "maximum": 16,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "chunk_digests": {
+      "description": "Raw-byte digest of each chunk, in order (contract section 3).",
+      "items": {
+        "$ref": "#/$defs/Sha256Digest"
+      },
+      "maxItems": 16,
+      "type": "array"
+    },
+    "content_digest": {
+      "$ref": "#/$defs/Sha256Digest",
+      "description": "Quantick Canonical JSON v1 digest of the whole document. The chunks\nbelow are byte runs of exactly that canonical text, so a client that\nconcatenates them and hashes the result reproduces this value without\nre-canonicalising anything."
+    },
+    "coverage": {
+      "$ref": "#/$defs/EvidenceCoverage"
+    },
+    "encoded_bytes": {
+      "$ref": "#/$defs/WireU64",
+      "x-unit": "bytes"
+    },
+    "environment": {
+      "$ref": "#/$defs/EvidenceEnvironment"
+    },
+    "evidence_id": {
+      "$ref": "#/$defs/EvidenceId"
+    },
+    "expires_at_unix_ms": {
+      "format": "int64",
+      "type": "integer",
+      "x-unit": "unix_milliseconds"
+    },
+    "instance_id": {
+      "$ref": "#/$defs/InstanceId"
+    },
+    "manifest_version": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "media_type": {
+      "type": "string"
+    },
+    "resource_id": {
+      "$ref": "#/$defs/ResourceId"
+    },
+    "screenshot": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EvidenceScreenshot"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "session_id": {
+      "$ref": "#/$defs/ProcessNonce"
+    },
+    "source_scopes": {
+      "description": "Every scope this bundle aggregates. Rechecked against the connection's\ngrant on every chunk read, so a revoked scope closes an open resource.",
+      "items": {
+        "$ref": "#/$defs/PermissionId"
+      },
+      "type": "array",
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "evidence_id",
+    "resource_id",
+    "manifest_version",
+    "bundle_version",
+    "instance_id",
+    "session_id",
+    "capture_revision",
+    "captured_at_unix_ms",
+    "expires_at_unix_ms",
+    "content_digest",
+    "media_type",
+    "encoded_bytes",
+    "chunk_bytes",
+    "chunk_count",
+    "chunk_digests",
+    "source_scopes",
+    "environment",
+    "coverage"
+  ],
+  "title": "EvidenceManifest",
+  "type": "object"
+}

@@ -26,6 +26,66 @@ impl fmt::Display for WireValueError {
 
 impl std::error::Error for WireValueError {}
 
+/// One run of opaque bytes on the wire: standard base64 with padding.
+///
+/// Resources are the only place the control plane carries bytes rather than
+/// values — a chunk of a retained evidence bundle today — and they need one
+/// spelling, declared here beside the rest of the transport vocabulary rather
+/// than invented by whichever module happens to page bytes first. Padded
+/// standard alphabet, because a chunk is decoded by an ordinary reader in
+/// whatever language the client is written in; the unpadded URL-safe alphabet
+/// stays where it belongs, on the runtime identifiers that travel in
+/// identifiers and file names.
+///
+/// The digest of a chunk is taken over the *raw* bytes, never over this text
+/// (contract section 3), so re-encoding can never change what a manifest
+/// attests.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, JsonSchema)]
+#[serde(transparent)]
+pub struct Base64Bytes(
+    #[schemars(
+        regex(pattern = r"^[A-Za-z0-9+/]*={0,2}$"),
+        extend("contentEncoding" = "base64")
+    )]
+    String,
+);
+
+impl Base64Bytes {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        use base64::Engine as _;
+        Self(base64::engine::general_purpose::STANDARD.encode(bytes))
+    }
+
+    pub fn new(encoded: impl Into<String>) -> Result<Self, WireValueError> {
+        use base64::Engine as _;
+        let encoded = encoded.into();
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded.as_bytes())
+            .map_err(|_| WireValueError("invalid base64 resource chunk"))?;
+        Ok(Self(encoded))
+    }
+
+    pub fn decode(&self) -> Result<Vec<u8>, WireValueError> {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD
+            .decode(self.0.as_bytes())
+            .map_err(|_| WireValueError("invalid base64 resource chunk"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for Base64Bytes {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::new(String::deserialize(deserializer)?).map_err(de::Error::custom)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, JsonSchema)]
 pub struct WireU64(#[schemars(with = "String", regex(pattern = r"^(0|[1-9][0-9]*)$"))] pub u64);
 

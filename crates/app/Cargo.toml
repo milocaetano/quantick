@@ -54,6 +54,11 @@ egui-phosphor = "0.7"
 # platform for the client area it actually has. Already in the tree as eframe's
 # own dependency; named here because this crate calls it directly.
 raw-window-handle = "0.6"
+# PNG encoding for the optional evidence screenshot. Already compiled as part
+# of this crate's tree (eframe -> image -> png); named here because the
+# control plane calls it directly, and because a raster no viewer accepts
+# would make an evidence image useless to the human reading the bundle.
+png = "0.18"
 
 [target.'cfg(windows)'.dependencies]
 # The platform's own attention sound, for the annotate tier's audible alert.

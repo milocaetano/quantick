@@ -14,7 +14,10 @@ use quantick_control::{
         CapabilityId, ConfirmationClassId, CostClassId, EffectId, InstanceId, ModuleId,
         PermissionId, ProfileId, SnapshotScopeId,
     },
-    limits::{CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS, CONTROL_MAX_SNAPSHOT_SCOPES},
+    limits::{
+        CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS, CONTROL_EVIDENCE_MAX_CHUNKS_PER_PAGE,
+        CONTROL_MAX_SNAPSHOT_SCOPES,
+    },
     registry::{
         Availability, CapabilityDescriptor, ControlRegistry, DefaultGrant, EffectConstraints,
         EffectPersistence, EffectPolicy, ExpectedCost, IdempotencyPolicy, McpHintFloor,
@@ -40,6 +43,13 @@ use super::{
         EVENTS_MODULE_ID, EVENTS_PERMISSION_ID, EventsReadInput, EventsWaitInput,
         READ_CAPABILITY_ID as EVENTS_READ_CAPABILITY_ID,
         WAIT_CAPABILITY_ID as EVENTS_WAIT_CAPABILITY_ID, complete_wait_page, read_page,
+    },
+    evidence::{
+        CAPTURE_CAPABILITY_ID as EVIDENCE_CAPTURE_CAPABILITY_ID, EVIDENCE_MODULE_ID,
+        EVIDENCE_PERMISSION_ID, EvidenceCapture, EvidenceCaptureInput, EvidenceChunkPage,
+        EvidenceGap, EvidenceManifest, EvidenceReadInput, EvidenceStore,
+        READ_CAPABILITY_ID as EVIDENCE_READ_CAPABILITY_ID, RawScreenshot, SessionIdentity,
+        redact_configuration, source_scopes,
     },
     journal::{EventJournal, EventPage},
     notify::{NOTIFY_MODULE_ID, NOTIFY_PERMISSION_ID, NOTIFY_SOUND_PERMISSION_ID},
@@ -238,21 +248,33 @@ pub(crate) struct SerializedUiRead {
     pub result: Value,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct DeferredSerializationError;
-
+/// Work a capture still owes after it has left the application thread.
+///
+/// The failure is a full `ControlError` and not a marker: everything after the
+/// application thread — encoding, hashing, retention — can refuse for a reason
+/// the client can act on, and an evidence bundle that does not fit its store
+/// has to be able to say `control.backpressure` rather than "serialization
+/// failed".
 pub(crate) trait DeferredUiRead: Send {
-    fn into_serialized(self: Box<Self>) -> Result<SerializedUiRead, DeferredSerializationError>;
+    fn into_serialized(self: Box<Self>) -> Result<SerializedUiRead, ControlError>;
 }
 
 pub(crate) type UiReadExecution = Box<dyn DeferredUiRead>;
+
+fn serialization_failed(what: &str) -> ControlError {
+    known_error(
+        codes::CAPABILITY_UNAVAILABLE,
+        format!("{what} could not be serialized"),
+        false,
+    )
+}
 
 /// An action's result, on its way off the application thread. It is already
 /// a value; the wrapper only lets it travel the same channel a capture does.
 pub(crate) struct DeferredActionResult(pub Value);
 
 impl DeferredUiRead for DeferredActionResult {
-    fn into_serialized(self: Box<Self>) -> Result<SerializedUiRead, DeferredSerializationError> {
+    fn into_serialized(self: Box<Self>) -> Result<SerializedUiRead, ControlError> {
         Ok(SerializedUiRead {
             capture_revision: None,
             module_revisions: Vec::new(),
@@ -261,14 +283,37 @@ impl DeferredUiRead for DeferredActionResult {
     }
 }
 
+/// Everything one application-thread read may touch.
+///
+/// A struct rather than a parameter list because the set grows with the tier:
+/// evidence needs the retained store, the connection's grant and the frame's
+/// pixels on top of what a snapshot needs, and threading four more arguments
+/// through every implementation would make each of them harder to read for the
+/// benefit of one.
+pub(crate) struct UiReadContext<'a> {
+    pub projections: &'a mut ProjectionRegistry,
+    pub journal: &'a EventJournal,
+    pub app: &'a QuantickApp,
+    pub instance_id: &'a InstanceId,
+    pub session: &'a SessionIdentity,
+    pub evidence: &'a EvidenceStore,
+    /// The pixels of the frame just painted, when one was asked for and has
+    /// arrived. Taken by the read that uses it, so a stale image can never be
+    /// served to the next capture.
+    pub screenshot: &'a mut Option<RawScreenshot>,
+}
+
 pub(crate) trait PreparedUiRead: Send {
-    fn execute(
-        &self,
-        projections: &mut ProjectionRegistry,
-        journal: &EventJournal,
-        app: &QuantickApp,
-        instance_id: &InstanceId,
-    ) -> Result<UiReadExecution, ControlError>;
+    fn execute(&self, context: UiReadContext<'_>) -> Result<UiReadExecution, ControlError>;
+
+    /// Whether this read needs the frame rasterised before it can run.
+    ///
+    /// The gateway asks before dispatching: a read that says yes and finds no
+    /// image waits one frame while the window is asked for one, rather than
+    /// answering without it.
+    fn needs_screenshot(&self) -> bool {
+        false
+    }
 }
 
 pub(crate) trait PreparedWorkerRead: Send {
@@ -303,13 +348,7 @@ impl PreparedDispatch {
         }
     }
 
-    pub fn execute_ui(
-        &self,
-        projections: &mut ProjectionRegistry,
-        journal: &EventJournal,
-        app: &QuantickApp,
-        instance_id: &InstanceId,
-    ) -> Result<UiReadExecution, ControlError> {
+    pub fn execute_ui(&self, context: UiReadContext<'_>) -> Result<UiReadExecution, ControlError> {
         match self {
             Self::Worker(_) | Self::Parked(_) => Err(known_error(
                 codes::CAPABILITY_UNAVAILABLE,
@@ -321,7 +360,15 @@ impl PreparedDispatch {
                 "an action reached the read path instead of the action path",
                 false,
             )),
-            Self::Ui(invocation) => invocation.execute(projections, journal, app, instance_id),
+            Self::Ui(invocation) => invocation.execute(context),
+        }
+    }
+
+    /// Whether this request needs the window rasterised first.
+    pub fn needs_screenshot(&self) -> bool {
+        match self {
+            Self::Ui(invocation) => invocation.needs_screenshot(),
+            Self::Worker(_) | Self::Parked(_) | Self::Action(_) => false,
         }
     }
 }
@@ -358,26 +405,22 @@ struct SnapshotInvocation {
 }
 
 impl PreparedUiRead for SnapshotInvocation {
-    fn execute(
-        &self,
-        projections: &mut ProjectionRegistry,
-        _journal: &EventJournal,
-        app: &QuantickApp,
-        instance_id: &InstanceId,
-    ) -> Result<UiReadExecution, ControlError> {
-        projections
-            .capture(app, instance_id, &self.scopes)
+    fn execute(&self, context: UiReadContext<'_>) -> Result<UiReadExecution, ControlError> {
+        context
+            .projections
+            .capture(context.app, context.instance_id, &self.scopes)
             .map(|capture| Box::new(capture) as UiReadExecution)
     }
 }
 
 impl DeferredUiRead for SnapshotCapture {
-    fn into_serialized(self: Box<Self>) -> Result<SerializedUiRead, DeferredSerializationError> {
-        let snapshot =
-            SnapshotCapture::into_serialized(*self).map_err(|_| DeferredSerializationError)?;
+    fn into_serialized(self: Box<Self>) -> Result<SerializedUiRead, ControlError> {
+        let snapshot = SnapshotCapture::into_serialized(*self)
+            .map_err(|_| serialization_failed("a snapshot capture"))?;
         let capture_revision = Some(snapshot.capture_revision);
         let module_revisions = snapshot.module_revisions.clone();
-        let result = serde_json::to_value(snapshot).map_err(|_| DeferredSerializationError)?;
+        let result = serde_json::to_value(snapshot)
+            .map_err(|_| serialization_failed("a snapshot capture"))?;
         Ok(SerializedUiRead {
             capture_revision,
             module_revisions,
@@ -392,16 +435,10 @@ struct ChartWindowInvocation {
 }
 
 impl PreparedUiRead for ChartWindowInvocation {
-    fn execute(
-        &self,
-        _projections: &mut ProjectionRegistry,
-        _journal: &EventJournal,
-        app: &QuantickApp,
-        instance_id: &InstanceId,
-    ) -> Result<UiReadExecution, ControlError> {
+    fn execute(&self, context: UiReadContext<'_>) -> Result<UiReadExecution, ControlError> {
         chart_window_prevalidated(
-            app,
-            instance_id,
+            context.app,
+            context.instance_id,
             &self.input.query,
             &self.canonical_query,
             self.input.cursor.as_ref(),
@@ -411,9 +448,10 @@ impl PreparedUiRead for ChartWindowInvocation {
 }
 
 impl DeferredUiRead for ChartWindowPage {
-    fn into_serialized(self: Box<Self>) -> Result<SerializedUiRead, DeferredSerializationError> {
+    fn into_serialized(self: Box<Self>) -> Result<SerializedUiRead, ControlError> {
         let revision = self.consistency_revision;
-        let result = serde_json::to_value(*self).map_err(|_| DeferredSerializationError)?;
+        let result =
+            serde_json::to_value(*self).map_err(|_| serialization_failed("a chart window page"))?;
         Ok(SerializedUiRead {
             capture_revision: None,
             module_revisions: vec![ModuleRevision {
@@ -437,16 +475,10 @@ pub(crate) struct EventsReadInvocation {
 }
 
 impl PreparedUiRead for EventsReadInvocation {
-    fn execute(
-        &self,
-        _projections: &mut ProjectionRegistry,
-        journal: &EventJournal,
-        _app: &QuantickApp,
-        instance_id: &InstanceId,
-    ) -> Result<UiReadExecution, ControlError> {
+    fn execute(&self, context: UiReadContext<'_>) -> Result<UiReadExecution, ControlError> {
         let page = read_page(
-            journal,
-            instance_id,
+            context.journal,
+            context.instance_id,
             self.input.cursor.as_ref(),
             self.input.start,
             self.input.limit,
@@ -460,14 +492,135 @@ impl PreparedUiRead for EventsReadInvocation {
 }
 
 impl DeferredUiRead for EventPage {
-    fn into_serialized(self: Box<Self>) -> Result<SerializedUiRead, DeferredSerializationError> {
-        let result = serde_json::to_value(&*self).map_err(|_| DeferredSerializationError)?;
+    fn into_serialized(self: Box<Self>) -> Result<SerializedUiRead, ControlError> {
+        let result =
+            serde_json::to_value(&*self).map_err(|_| serialization_failed("an event page"))?;
         Ok(SerializedUiRead {
             capture_revision: None,
             module_revisions: Vec::new(),
             result,
         })
     }
+}
+
+/// `evidence.capture`: one coherent bundle over the named scopes, plus the
+/// events around it and, when asked for and available, the frame just painted.
+///
+/// The application thread does only the collecting. Encoding, hashing,
+/// chunking and retention happen in [`EvidenceCapture::into_manifest`], on the
+/// same worker that serializes every other read.
+struct EvidenceCaptureInvocation {
+    input: EvidenceCaptureInput,
+    source_scopes: BTreeSet<PermissionId>,
+}
+
+impl PreparedUiRead for EvidenceCaptureInvocation {
+    fn execute(&self, context: UiReadContext<'_>) -> Result<UiReadExecution, ControlError> {
+        let snapshot =
+            context
+                .projections
+                .capture(context.app, context.instance_id, &self.input.scopes)?;
+        // The journal read shares the capture's instant: the events a client
+        // reads out of the bundle are the ones that were there when the
+        // projections were taken, and its cursor continues from exactly there.
+        let events = read_page(
+            context.journal,
+            context.instance_id,
+            None,
+            Some(quantick_control::cursor::EventStart::Oldest),
+            self.input.event_limit,
+            false,
+        )?;
+        let (configuration, mut pending_gaps) = redact_configuration(context.app.control_config());
+        let screenshot = if self.input.screenshot {
+            let taken = context.screenshot.take();
+            if taken.is_none() {
+                pending_gaps.push(EvidenceGap {
+                    subject: "screenshot".to_owned(),
+                    reason: "frame_not_delivered".to_owned(),
+                });
+            }
+            taken
+        } else {
+            pending_gaps.push(EvidenceGap {
+                subject: "screenshot".to_owned(),
+                reason: "not_requested".to_owned(),
+            });
+            None
+        };
+        Ok(Box::new(EvidenceCapture {
+            evidence_id: new_evidence_id()?,
+            resource_id: new_resource_id()?,
+            instance_id: context.instance_id.clone(),
+            session: context.session.clone(),
+            snapshot,
+            events,
+            configuration,
+            screenshot,
+            pending_gaps,
+            source_scopes: self.source_scopes.clone(),
+            store: context.evidence.clone(),
+            captured_at_unix_ms: crate::metrics::wall_clock_ms(),
+        }))
+    }
+
+    fn needs_screenshot(&self) -> bool {
+        self.input.screenshot
+    }
+}
+
+impl DeferredUiRead for EvidenceCapture {
+    fn into_serialized(self: Box<Self>) -> Result<SerializedUiRead, ControlError> {
+        let (manifest, capture_revision) = (*self).into_manifest()?;
+        let result = serde_json::to_value(manifest)
+            .map_err(|_| serialization_failed("an evidence manifest"))?;
+        Ok(SerializedUiRead {
+            capture_revision: Some(capture_revision),
+            module_revisions: Vec::new(),
+            result,
+        })
+    }
+}
+
+/// `evidence.read`: one page of a retained bundle.
+///
+/// A worker read, and deliberately: paging a retained resource needs no
+/// application state at all, so it costs the frame nothing even while a client
+/// pulls a bundle down chunk by chunk.
+struct EvidenceReadInvocation {
+    input: EvidenceReadInput,
+}
+
+impl PreparedWorkerRead for EvidenceReadInvocation {
+    fn execute(
+        &self,
+        contract: &ObserverContract,
+        instance_id: &InstanceId,
+        _effective_profile: &ProfileId,
+        effective_scopes: &BTreeSet<PermissionId>,
+        _effective_limits: &ProtocolLimits,
+    ) -> Result<Value, ControlError> {
+        let page = contract.evidence.read(
+            &self.input.evidence_id,
+            self.input.cursor.as_ref(),
+            instance_id,
+            effective_scopes,
+            crate::metrics::wall_clock_ms(),
+        )?;
+        serde_json::to_value(page).map_err(|_| serialization_failed("an evidence page"))
+    }
+}
+
+fn new_evidence_id() -> Result<quantick_control::id::EvidenceId, ControlError> {
+    Ok(quantick_control::id::EvidenceId::from_bytes(
+        super::gateway::runtime_id_bytes()?,
+    ))
+}
+
+fn new_resource_id() -> Result<quantick_control::id::ResourceId, ControlError> {
+    Ok(quantick_control::id::ResourceId::from_bytes(
+        super::gateway::runtime_id_bytes()?,
+    ))
 }
 
 struct PreparedCapability {
@@ -488,12 +641,21 @@ pub(crate) struct ObserverContract {
     permissions: Vec<PermissionDescriptor>,
     snapshot_scopes: Vec<SnapshotScopeDescriptor>,
     scope_permissions: BTreeMap<SnapshotScopeId, BTreeSet<PermissionId>>,
+    /// The retained evidence bundles of this instance.
+    ///
+    /// Held here because a worker read reaches the contract and nothing else:
+    /// paging a bundle needs no application state, so it must not have to
+    /// travel the application thread to find its own store. The handle is
+    /// shared; the application thread keeps one too, and empties it when
+    /// access is withdrawn.
+    evidence: EvidenceStore,
 }
 
 impl ObserverContract {
     pub fn new(
         projections: &ProjectionRegistry,
         actions: Arc<ActionRegistry>,
+        evidence: EvidenceStore,
     ) -> Result<Self, RegistryError> {
         let observer = profile(OBSERVER_PROFILE_ID);
         let annotator = profile(ANNOTATOR_PROFILE_ID);
@@ -617,6 +779,13 @@ impl ObserverContract {
             id: module(EVENTS_MODULE_ID),
             title: "Events".to_owned(),
             description: "The bounded semantic event journal and its cursor.".to_owned(),
+        })?;
+        registry.register_module(ModuleDescriptor {
+            id: module(EVIDENCE_MODULE_ID),
+            title: "Evidence".to_owned(),
+            description:
+                "Coherent in-memory investigation bundles, read back as a paginated resource."
+                    .to_owned(),
         })?;
         registry.register_module(ModuleDescriptor {
             id: module(ANNOTATE_MODULE_ID),
@@ -757,7 +926,10 @@ impl ObserverContract {
                 "Read chart window",
                 "Reads a bounded append-only page of chart bars with an optional continuation cursor.",
                 [OBSERVE_PERMISSION_ID, "observe.market", "observe.chart"],
-                Some(quantick_control::cursor::PaginationConsistency::AppendOnly),
+                Some((
+                    quantick_control::cursor::PaginationConsistency::AppendOnly,
+                    CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS,
+                )),
             ),
             prepare_chart_window,
         )?;
@@ -833,6 +1005,47 @@ impl ObserverContract {
             ),
             prepare_events_wait,
         )?;
+        // Read-only in the sense the effect policy means: a bundle changes no
+        // application state, touches no position and takes nothing away from
+        // the trader. What it creates is the answer itself — bounded by its
+        // own named limits, expiring on its own, and gone the moment access
+        // is withdrawn.
+        register_capability(
+            &mut registry,
+            &mut handlers,
+            &mut input_validators,
+            &mut output_validators,
+            read_capability::<EvidenceCaptureInput, EvidenceManifest, _>(
+                EVIDENCE_CAPTURE_CAPABILITY_ID,
+                EVIDENCE_MODULE_ID,
+                "Capture evidence",
+                "Freezes the named scopes, the events around them and the effective configuration into one hashed, redacted in-memory bundle, and answers with its manifest.",
+                // The floor. Every scope the bundle actually aggregates is
+                // added per request, so a capture can never reach further
+                // than a snapshot of the same scopes would.
+                [OBSERVE_PERMISSION_ID, EVIDENCE_PERMISSION_ID],
+                None,
+            ),
+            prepare_evidence_capture,
+        )?;
+        register_capability(
+            &mut registry,
+            &mut handlers,
+            &mut input_validators,
+            &mut output_validators,
+            read_capability::<EvidenceReadInput, EvidenceChunkPage, _>(
+                EVIDENCE_READ_CAPABILITY_ID,
+                EVIDENCE_MODULE_ID,
+                "Read evidence bundle",
+                "Reads a retained bundle in chunks of its canonical text, rechecking the grant the bundle aggregated on every page.",
+                [OBSERVE_PERMISSION_ID, EVIDENCE_PERMISSION_ID],
+                Some((
+                    quantick_control::cursor::PaginationConsistency::RetainedResource,
+                    CONTROL_EVIDENCE_MAX_CHUNKS_PER_PAGE,
+                )),
+            ),
+            prepare_evidence_read,
+        )?;
         // Actions are discoverable through the same registry as the reads;
         // they have no prepare handler here, so a remote request for one that
         // passes the permission check still fails closed before dispatch.
@@ -846,6 +1059,7 @@ impl ObserverContract {
             handlers,
             input_validators,
             output_validators,
+            evidence,
             profiles,
             permissions,
             snapshot_scopes,
@@ -878,6 +1092,21 @@ impl ObserverContract {
     pub fn default_grant(&self) -> BTreeSet<PermissionId> {
         std::iter::once(permission(OBSERVE_PERMISSION_ID))
             .chain(SAFE_DEFAULT_SCOPE_IDS.iter().map(|id| permission(id)))
+            .collect()
+    }
+
+    /// Every registered snapshot scope this grant already reaches, in
+    /// registration order and capped at what one capture may carry.
+    ///
+    /// Derived from the registry, never a hand-kept list: a module that
+    /// registers a scope tomorrow is in a bundle tomorrow, without an edit
+    /// here or in whatever asked.
+    pub fn readable_scopes(&self, grant: &BTreeSet<PermissionId>) -> Vec<SnapshotScopeId> {
+        self.snapshot_scopes
+            .iter()
+            .filter(|descriptor| descriptor.required_permissions.is_subset(grant))
+            .map(|descriptor| descriptor.id.clone())
+            .take(CONTROL_MAX_SNAPSHOT_SCOPES)
             .collect()
     }
 
@@ -1095,6 +1324,50 @@ fn prepare_snapshot(
     })
 }
 
+/// A bundle asks for exactly the permissions a snapshot of the same scopes
+/// would, plus the evidence scope the capability already requires and, when an
+/// image is asked for, the screenshot scope. Aggregation is not a way in.
+fn prepare_evidence_capture(
+    contract: &ObserverContract,
+    payload: &Value,
+) -> Result<PreparedCapability, ControlError> {
+    let input: EvidenceCaptureInput = decode_payload(payload)?;
+    let mut unique = BTreeSet::new();
+    let mut scope_permissions = Vec::with_capacity(input.scopes.len());
+    for scope in &input.scopes {
+        if !unique.insert(scope.clone()) {
+            return Err(ControlError::invalid_request(format!(
+                "snapshot scope `{scope}` was requested more than once"
+            )));
+        }
+        scope_permissions.push(contract.scope_permissions.get(scope).ok_or_else(|| {
+            ControlError::invalid_request(format!("snapshot scope `{scope}` is not registered"))
+        })?);
+    }
+    let source_scopes = source_scopes(scope_permissions.into_iter(), input.screenshot);
+    Ok(PreparedCapability {
+        dispatch: PreparedDispatch::Ui(Box::new(EvidenceCaptureInvocation {
+            input,
+            source_scopes: source_scopes.clone(),
+        })),
+        dynamic_permissions: source_scopes,
+    })
+}
+
+fn prepare_evidence_read(
+    _contract: &ObserverContract,
+    payload: &Value,
+) -> Result<PreparedCapability, ControlError> {
+    let input: EvidenceReadInput = decode_payload(payload)?;
+    Ok(PreparedCapability {
+        dispatch: PreparedDispatch::Worker(Box::new(EvidenceReadInvocation { input })),
+        // The bundle's own source scopes are rechecked inside the store, from
+        // the manifest: what a bundle aggregated is known there and nowhere
+        // else, and a resource identifier is never an authorization.
+        dynamic_permissions: BTreeSet::new(),
+    })
+}
+
 fn prepare_chart_window(
     _contract: &ObserverContract,
     payload: &Value,
@@ -1189,13 +1462,20 @@ fn prepare_scene(
     })
 }
 
+/// One read capability, with its pagination mode and that mode's own page
+/// ceiling.
+///
+/// The ceiling travels with the mode because it is per capability, not per
+/// protocol: a chart page is bounded by the bars an owned DTO may copy, an
+/// evidence page by the chunks that fit one response, and the descriptor is
+/// where a client learns which.
 fn read_capability<I, O, const N: usize>(
     id: &str,
     module_id: &str,
     title: &str,
     description: &str,
     permissions: [&str; N],
-    pagination: Option<quantick_control::cursor::PaginationConsistency>,
+    pagination: Option<(quantick_control::cursor::PaginationConsistency, usize)>,
 ) -> CapabilityDescriptor
 where
     I: JsonSchema,
@@ -1227,10 +1507,10 @@ where
         availability: Availability::available(),
         expected_cost: ExpectedCost {
             class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
-            max_items: pagination.map(|_| CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS),
+            max_items: pagination.map(|(_, max_items)| max_items),
             max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
         },
-        pagination,
+        pagination: pagination.map(|(mode, _)| mode),
     }
 }
 
@@ -1269,6 +1549,7 @@ mod tests {
         ObserverContract::new(
             &super::super::standard_registry().unwrap(),
             Arc::new(super::super::actions::standard_actions().unwrap()),
+            EvidenceStore::new(),
         )
         .unwrap()
     }
@@ -1331,16 +1612,17 @@ mod tests {
 
     #[test]
     fn observer_registry_contains_only_read_capabilities() {
-        // Seven reads with prepare handlers, plus the registered actions,
+        // Nine reads with prepare handlers, plus the registered actions,
         // which have none here: an action is prepared from the action registry
         // and sits behind annotate permissions the observer ceiling does not
         // hold — discoverable to every client, reachable by none of them
         // until the trader grants the annotator profile.
+        const READ_CAPABILITIES: usize = 9;
         let contract = contract();
         let capabilities = contract.registry.capabilities().collect::<Vec<_>>();
         let actions = contract.actions.descriptors().count();
-        assert_eq!(capabilities.len(), 7 + actions);
-        assert_eq!(contract.handlers.len(), 7);
+        assert_eq!(capabilities.len(), READ_CAPABILITIES + actions);
+        assert_eq!(contract.handlers.len(), READ_CAPABILITIES);
         let observer_ceiling = contract
             .registry
             .permission_ceiling(&profile(OBSERVER_PROFILE_ID))

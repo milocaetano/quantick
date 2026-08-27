@@ -1,7 +1,7 @@
 //! Explicitly enabled authenticated loopback gateway and UI-thread dispatcher.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     io::Write as _,
     net::{Ipv4Addr, Shutdown, TcpListener, TcpStream},
     path::PathBuf,
@@ -51,9 +51,11 @@ use super::{
     actions::{ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, ActionRegistry, standard_actions},
     contract::{
         DeferredActionResult, EventsReadInvocation, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID,
-        ObserverContract, ParkedWait, PreparedDispatch, PreparedRequest, UiReadExecution,
+        ObserverContract, ParkedWait, PreparedDispatch, PreparedRequest, UiReadContext,
+        UiReadExecution,
     },
     events::EventsReadInput,
+    evidence::{EvidenceStore, RawScreenshot, SessionIdentity},
     feed::connection_state,
     interaction::{SelectionIdentity, selection_identity, selection_snapshot},
     journal::{EventJournal, JournalSignal, NewEvent},
@@ -92,6 +94,19 @@ const UI_ACTOR_CLIENT_NAME: &str = "quantick-ui";
 pub(crate) const MARK_SHORTCUT: eframe::egui::KeyboardShortcut =
     eframe::egui::KeyboardShortcut::new(eframe::egui::Modifiers::CTRL, eframe::egui::Key::M);
 const EXIT_SHUTDOWN_TIMEOUT_MS: u64 = 2_000;
+/// Captures that may be waiting on one rasterised frame at once.
+///
+/// Small on purpose: each holds a response worker and its deadline, and the
+/// window only ever produces one image per arming, so a queue deeper than the
+/// frame budget's own request ceiling would buy nothing. A capture that
+/// arrives with the queue full is answered without an image and says so.
+const CONTROL_MAX_SCREENSHOT_WAITERS: usize = CONTROL_UI_MAX_REQUESTS_PER_FRAME;
+/// What the window tells the trader when a picture of it leaves the process.
+///
+/// Not optional and not configurable: a screenshot is the one observer read
+/// that copies the screen itself, and the person at it is told every time
+/// (threat model O-18).
+const SCREENSHOT_NOTICE: &str = "Your assistant captured a picture of this window.";
 
 /// The identity a human action in this window is attributed with. One
 /// principal and one "connection" per process, generated with the instance
@@ -280,6 +295,16 @@ impl ProcessIdentity {
             process_nonce: ProcessNonce::from_bytes(random_bytes::<CONTROL_RUNTIME_ID_BYTES>()?),
             process_started_at_unix_ms: metrics::wall_clock_ms(),
         })
+    }
+
+    /// What names this run of the process, for the reads that record it. The
+    /// instance identifier travels on every envelope already; this is the
+    /// other half — which *session* of that instance answered.
+    fn session(&self) -> SessionIdentity {
+        SessionIdentity {
+            session_id: self.process_nonce.clone(),
+            process_started_at_unix_ms: self.process_started_at_unix_ms,
+        }
     }
 }
 
@@ -561,6 +586,20 @@ pub(crate) struct ControlAccess {
     /// path, loaded once and walked by logical replay time; a tab without a
     /// replay costs the frame one comparison.
     trace_reinjection: BTreeMap<PathBuf, TraceReinjection>,
+    /// The retained evidence bundles. The same handle the contract holds, so
+    /// a worker paging a bundle and the window emptying the store are talking
+    /// about one thing.
+    evidence: EvidenceStore,
+    /// The pixels of the last frame the window was asked to rasterise, waiting
+    /// for the capture that asked for them.
+    screenshot: Option<RawScreenshot>,
+    /// Whether a rasterise has been asked for and not yet arrived. One at a
+    /// time: several captures in the same frame all wait for the same image.
+    screenshot_armed: bool,
+    /// Requests that asked for an image the frame had not delivered yet. They
+    /// hold their own deadline, so a window that never answers costs the
+    /// client its request timeout and nothing more.
+    awaiting_screenshot: VecDeque<UiRequest>,
 }
 
 impl ControlAccess {
@@ -568,8 +607,9 @@ impl ControlAccess {
         let projections = super::standard_registry()
             .expect("built-in semantic projection registry must be valid");
         let actions = Arc::new(standard_actions().expect("built-in action registry must be valid"));
+        let evidence = EvidenceStore::new();
         let contract = Arc::new(
-            ObserverContract::new(&projections, Arc::clone(&actions))
+            ObserverContract::new(&projections, Arc::clone(&actions), evidence.clone())
                 .expect("built-in observer capability registry must be valid"),
         );
         let (journal, journal_ticks) = EventJournal::new();
@@ -609,6 +649,10 @@ impl ControlAccess {
             replayed_author: None,
             next_trace_sequence: 1,
             trace_reinjection: BTreeMap::new(),
+            evidence,
+            screenshot: None,
+            screenshot_armed: false,
+            awaiting_screenshot: VecDeque::new(),
         }
     }
 
@@ -710,6 +754,34 @@ impl ControlAccess {
     #[cfg(test)]
     pub fn journal(&self) -> &EventJournal {
         &self.journal
+    }
+
+    /// Hand the gateway a rasterised frame the way the window would.
+    ///
+    /// A headless `egui::Context` answers no `ViewportCommand::Screenshot`, so
+    /// the correlation between an image and the scene captured beside it can
+    /// only be proved by supplying the pixels here. Everything downstream —
+    /// the stamping, the point-to-pixel scaling, the encoding, the digest — is
+    /// the shipped path, unchanged.
+    #[cfg(test)]
+    pub(crate) fn publish_screenshot_for_test(
+        &mut self,
+        app: &mut QuantickApp,
+        raw: RawScreenshot,
+    ) {
+        self.accept_screenshot(app, raw);
+    }
+
+    /// Whether a capture is still waiting for the window to be rasterised.
+    #[cfg(test)]
+    pub(crate) fn awaiting_screenshot_for_test(&self) -> usize {
+        self.awaiting_screenshot.len()
+    }
+
+    /// How many bundles this instance is holding.
+    #[cfg(test)]
+    pub(crate) fn retained_evidence_for_test(&self) -> usize {
+        self.evidence.retained()
     }
 
     /// Whom an object this call produces belongs to, when the call is a
@@ -943,6 +1015,102 @@ impl ControlAccess {
         outcome
     }
 
+    /// Invoke one registered *read* from inside the application — a launch
+    /// hook, or a test.
+    ///
+    /// The same door a remote client comes through: the same
+    /// [`ObserverContract::prepare`], the same permission check against the
+    /// scopes the trader configured, the same invocation, the same
+    /// serialization. Only the socket is missing. A read reachable one way
+    /// from the outside and another way from the inside would be two
+    /// implementations of one contract, and the second would be the one
+    /// nobody tests.
+    ///
+    /// The gateway does not have to be enabled: a read costs nothing until it
+    /// is asked for, and refusing it because no door is open would make the
+    /// hook prove something other than what a client would see.
+    pub(crate) fn invoke_local_read(
+        &mut self,
+        app: &QuantickApp,
+        capability_id: &str,
+        input: Value,
+    ) -> Result<Value, ControlError> {
+        let Some(identity) = self.identity.as_ref() else {
+            return Err(known_error(
+                codes::INSTANCE_GONE,
+                "the running instance has no control identity",
+                false,
+            ));
+        };
+        let instance_id = identity.instance_id.clone();
+        let session = identity.session();
+        let envelope = RequestEnvelope {
+            protocol_version: CURRENT_PROTOCOL_VERSION,
+            request_id: RequestId::new(format!("ui-read-{}", self.next_ui_request))
+                .expect("generated request ID is valid"),
+            instance_id: instance_id.clone(),
+            capability_id: quantick_control::id::CapabilityId::new(capability_id).map_err(
+                |error| ControlError::invalid_request(format!("invalid capability ID: {error}")),
+            )?,
+            capability_version: 1,
+            expected_revisions: Vec::new(),
+            idempotency_key: None,
+            dry_run: false,
+            reason: None,
+            payload: input,
+        };
+        self.next_ui_request = self.next_ui_request.saturating_add(1);
+        let prepared = self.contract.prepare(envelope, &self.configured_scopes)?;
+        let profile = self.configured_profile();
+        match &prepared.dispatch {
+            PreparedDispatch::Worker(_) => prepared
+                .dispatch
+                .execute_worker(
+                    &self.contract,
+                    &instance_id,
+                    &profile,
+                    &self.configured_scopes,
+                    &ProtocolLimits::default(),
+                )
+                .expect("a worker dispatch always answers on the worker path"),
+            PreparedDispatch::Ui(_) => {
+                let execution = prepared.dispatch.execute_ui(UiReadContext {
+                    projections: &mut self.projections,
+                    journal: &self.journal,
+                    app,
+                    instance_id: &instance_id,
+                    session: &session,
+                    evidence: &self.evidence,
+                    screenshot: &mut self.screenshot,
+                })?;
+                execution
+                    .into_serialized()
+                    .map(|serialized| serialized.result)
+            }
+            PreparedDispatch::Parked(_) | PreparedDispatch::Action(_) => Err(known_error(
+                codes::CAPABILITY_UNAVAILABLE,
+                "only registered reads are invoked from inside the application",
+                false,
+            )),
+        }
+    }
+
+    /// Whether this window is holding a rasterised frame a read could use.
+    pub(crate) fn has_screenshot(&self) -> bool {
+        self.screenshot.is_some()
+    }
+
+    /// The registered snapshot scopes the configured grant already reaches.
+    pub(crate) fn readable_scopes(&self) -> Vec<quantick_control::id::SnapshotScopeId> {
+        self.contract.readable_scopes(&self.configured_scopes)
+    }
+
+    /// Ask the window to rasterise itself for the next read that wants it.
+    /// The same arming a deferred remote capture does.
+    pub(crate) fn request_screenshot(&mut self, ctx: &eframe::egui::Context) {
+        self.arm_screenshot(ctx);
+    }
+
     /// One request on the application thread: the authority checks the
     /// gateway made when it arrived, re-made at the moment it runs, and then
     /// the read or the action itself.
@@ -1016,12 +1184,20 @@ impl ControlAccess {
             return Ok(Box::new(DeferredActionResult(result)) as UiReadExecution);
         }
 
-        request.prepared.dispatch.execute_ui(
-            &mut self.projections,
-            &self.journal,
+        let session = self
+            .identity
+            .as_ref()
+            .expect("the instance identity was read above")
+            .session();
+        request.prepared.dispatch.execute_ui(UiReadContext {
+            projections: &mut self.projections,
+            journal: &self.journal,
             app,
-            &instance_id,
-        )
+            instance_id: &instance_id,
+            session: &session,
+            evidence: &self.evidence,
+            screenshot: &mut self.screenshot,
+        })
     }
 
     pub fn begin_frame(&mut self, app: &mut QuantickApp, ctx: &eframe::egui::Context) {
@@ -1043,18 +1219,116 @@ impl ControlAccess {
         };
 
         self.emit_semantic_changes(app);
+        // Before the drain, and deliberately: an image that arrived this frame
+        // is of the frame just painted, and the projections about to be taken
+        // still describe that frame. Harvesting after the drain would pair a
+        // scene with a picture of the screen before it.
+        self.harvest_screenshot(app, ctx);
+        self.serve_awaiting_screenshot(app, generation, ctx);
 
         // The drain owns `self` for the whole pass: an action runs through the
         // same `invoke_local_action` the hotkey uses, which needs the journal
         // and the trace mutably, so no field can stay borrowed across it.
         let drain = drain_bounded_since(&requests, frame_started, |request| {
+            if self.defer_for_screenshot(&request, ctx) {
+                self.awaiting_screenshot.push_back(request);
+                return;
+            }
             let result = self.execute_on_ui(app, generation, &request);
             let _ = request.response.try_send(result);
         });
         self.last_drain = drain;
-        if statuses_have_more || self.last_drain.queue_has_more {
+        if statuses_have_more
+            || self.last_drain.queue_has_more
+            || !self.awaiting_screenshot.is_empty()
+        {
             ctx.request_repaint();
         }
+    }
+
+    /// Take the rasterised frame the window was asked for, if it has arrived.
+    ///
+    /// Costs a frame nothing until something arms it: with no capture waiting
+    /// the input scan does not run at all. When one does arrive the trader is
+    /// told, because a picture of their window leaving the process is not
+    /// something that should happen quietly (threat model O-18).
+    fn harvest_screenshot(&mut self, app: &mut QuantickApp, ctx: &eframe::egui::Context) {
+        if !self.screenshot_armed {
+            return;
+        }
+        let taken = ctx.input(|input| {
+            input.events.iter().find_map(|event| match event {
+                eframe::egui::Event::Screenshot { image, .. } => Some(RawScreenshot {
+                    width_px: u32::try_from(image.size[0]).unwrap_or(0),
+                    height_px: u32::try_from(image.size[1]).unwrap_or(0),
+                    pixels_per_point: input.pixels_per_point(),
+                    rgba: image
+                        .pixels
+                        .iter()
+                        .flat_map(|pixel| pixel.to_array())
+                        .collect(),
+                }),
+                _ => None,
+            })
+        });
+        if let Some(raw) = taken {
+            self.accept_screenshot(app, raw);
+        }
+    }
+
+    /// Take one rasterised frame, and tell the person at the window.
+    ///
+    /// The single door for pixels entering the control plane, so the notice
+    /// cannot be bypassed by whatever hands them over — the window's own
+    /// screenshot event today, a test's fixture in the same breath.
+    fn accept_screenshot(&mut self, app: &mut QuantickApp, raw: RawScreenshot) {
+        self.screenshot_armed = false;
+        self.screenshot = Some(raw);
+        app.show_agent_toast(SCREENSHOT_NOTICE.to_owned());
+    }
+
+    /// Run the captures that were waiting for an image, or give up on them.
+    fn serve_awaiting_screenshot(
+        &mut self,
+        app: &mut QuantickApp,
+        generation: u64,
+        ctx: &eframe::egui::Context,
+    ) {
+        let mut waiting = std::mem::take(&mut self.awaiting_screenshot);
+        while let Some(request) = waiting.pop_front() {
+            // An expired request runs anyway: the capture then reports the
+            // image as not delivered, which is a better answer than a timeout
+            // that says nothing about the session.
+            if self.screenshot.is_none() && request.deadline > Instant::now() {
+                self.arm_screenshot(ctx);
+                self.awaiting_screenshot.push_back(request);
+                continue;
+            }
+            let result = self.execute_on_ui(app, generation, &request);
+            let _ = request.response.try_send(result);
+        }
+    }
+
+    /// Whether this request has to wait a frame for the window to be
+    /// rasterised, arming the rasterise if so.
+    fn defer_for_screenshot(&mut self, request: &UiRequest, ctx: &eframe::egui::Context) -> bool {
+        if !request.prepared.dispatch.needs_screenshot() || self.screenshot.is_some() {
+            return false;
+        }
+        if self.awaiting_screenshot.len() >= CONTROL_MAX_SCREENSHOT_WAITERS {
+            return false;
+        }
+        self.arm_screenshot(ctx);
+        true
+    }
+
+    fn arm_screenshot(&mut self, ctx: &eframe::egui::Context) {
+        if self.screenshot_armed {
+            return;
+        }
+        self.screenshot_armed = true;
+        ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Screenshot);
+        ctx.request_repaint();
     }
 
     /// Record the semantic changes since the last frame: tab, focus,
@@ -1800,6 +2074,13 @@ impl ControlAccess {
             cancellation.store(true, Ordering::Release);
         }
         self.semantic_baseline = None;
+        // Evidence does not outlive the door it came through: a bundle is
+        // every granted scope at once, and the grant is what has just been
+        // withdrawn. The pending image goes with it.
+        self.evidence.clear();
+        self.screenshot = None;
+        self.screenshot_armed = false;
+        self.awaiting_screenshot.clear();
         let previous = std::mem::replace(&mut self.state, AccessState::Disabled);
         self.grant_generation = self.grant_generation.saturating_add(1).max(1);
         self.revoked_connections
@@ -1957,6 +2238,10 @@ impl ControlAccess {
         if let Some(cancellation) = &self.active_cancellation {
             cancellation.store(true, Ordering::Release);
         }
+        // Before the early return below: a disabled gateway holds no bundles,
+        // and one that is still running must not leave any behind.
+        self.evidence.clear();
+        self.screenshot = None;
         match &self.state {
             AccessState::Enabled(runtime) => runtime.request_shutdown(),
             AccessState::Disabling(Some(runtime)) => runtime.request_shutdown(),
@@ -3609,6 +3894,22 @@ fn random_bytes<const N: usize>() -> Result<[u8; N], String> {
     let mut bytes = [0u8; N];
     getrandom::fill(&mut bytes).map_err(|error| error.to_string())?;
     Ok(bytes)
+}
+
+/// Entropy for one runtime identifier, as a control failure rather than a
+/// string.
+///
+/// The evidence reads mint identifiers of their own, and an operating system
+/// that cannot supply entropy has to refuse the request in the vocabulary the
+/// client already handles — never with a guessable identifier.
+pub(crate) fn runtime_id_bytes() -> Result<[u8; CONTROL_RUNTIME_ID_BYTES], ControlError> {
+    random_bytes::<CONTROL_RUNTIME_ID_BYTES>().map_err(|error| {
+        known_error(
+            codes::CAPABILITY_UNAVAILABLE,
+            format!("secure identifier generation failed: {error}"),
+            true,
+        )
+    })
 }
 
 #[cfg(test)]

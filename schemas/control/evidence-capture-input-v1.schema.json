@@ -1,0 +1,44 @@
+{
+  "$defs": {
+    "SnapshotScopeId": {
+      "description": "A namespaced semantic snapshot projection.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "`evidence.capture`: which scopes to freeze, how much of the journal to\ncarry with them, and whether to rasterise the window as well.",
+  "properties": {
+    "event_limit": {
+      "format": "uint",
+      "maximum": 256,
+      "minimum": 1,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "scopes": {
+      "description": "Named explicitly, like every snapshot: a bundle may not aggregate its\nway into a scope the connection was not granted, and a caller that did\nnot ask for a scope is told it was omitted rather than left to guess.",
+      "items": {
+        "$ref": "#/$defs/SnapshotScopeId"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "type": "array"
+    },
+    "screenshot": {
+      "default": false,
+      "description": "Requires `observe.screenshot`. A capture that asks for one and cannot\nhave it says why in its coverage; it never silently answers with text\nalone.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "scopes"
+  ],
+  "title": "EvidenceCaptureInput",
+  "type": "object"
+}

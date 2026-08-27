@@ -11,6 +11,7 @@ mod annotate;
 pub(crate) mod chart;
 mod contract;
 mod events;
+mod evidence;
 mod feed;
 mod gateway;
 mod health;
@@ -33,6 +34,8 @@ mod workspace;
 pub(crate) use actions::{MARK_CAPABILITY_ID, MARK_CAPABILITY_VERSION};
 #[cfg(test)]
 pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID};
+#[cfg(test)]
+pub(crate) use evidence::RawScreenshot;
 #[cfg(test)]
 pub(crate) use gateway::RecordedActor;
 pub(crate) use gateway::{ActionOrigin, ControlAccess, MARK_SHORTCUT};
