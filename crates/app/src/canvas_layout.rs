@@ -70,6 +70,80 @@ impl PaneIdAllocator {
     }
 }
 
+/// What a pane is *for*.
+///
+/// Decides which layers it may draw and how it is seeded — never where it
+/// sits. Position is the row's business, and a kind that knew its own column
+/// could not be moved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneKind {
+    /// The order-flow pane: the liquidity heatmap, the aggression bubbles and
+    /// the tape. quantick's protagonist.
+    Flow,
+    /// A timeframe pane: candles, indicators and drawings over time bars.
+    Time,
+    /// A kind that exists only under test, to prove that the layout engine
+    /// does not decide anything from a pane's kind.
+    ///
+    /// This is not decoration. If `split_row`, `resolve_shares` or any other
+    /// function that carves the row matched exhaustively on `PaneKind`, this
+    /// variant would fail to compile the moment it was added — so the fact
+    /// that the test build compiles at all *is* the proof that a new kind
+    /// costs a table entry and nothing else.
+    #[cfg(test)]
+    Fake,
+}
+
+/// One named arrangement of panes.
+///
+/// A preset is a *seed and a recogniser*, not a state: applying one lays its
+/// kinds out left to right, and a row that still matches a preset's kinds
+/// reports that preset's name. Keeping it out of the state is what lets a
+/// trader drag a divider without the layout losing its name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayoutPreset {
+    /// The stable wire name — what a config file, the `QUANTICK_LAYOUT` hook,
+    /// a saved workspace and the control plane all call this layout. Never the
+    /// label: that is prose a reader sees, and rewording it must not move an
+    /// operator's ground.
+    pub id: &'static str,
+    /// What the picker and the menu call it.
+    pub label: &'static str,
+    /// The panes it lays out, left to right.
+    pub kinds: &'static [PaneKind],
+}
+
+/// Every layout the canvas can draw, in picker order.
+///
+/// **This table is the registry.** Adding an arrangement is an entry here; no
+/// function that carves the canvas may grow a case for it. The rule that keeps
+/// the heatmap the protagonist lives here too, as data rather than as a check
+/// somewhere in the layout engine: where a preset holds a flow pane, the flow
+/// pane is *last*, so context charts default to the left of it.
+pub static LAYOUT_PRESETS: &[LayoutPreset] = &[
+    LayoutPreset {
+        id: "flow",
+        label: "Flow",
+        kinds: &[PaneKind::Flow],
+    },
+    LayoutPreset {
+        id: "time",
+        label: "Timeframe",
+        kinds: &[PaneKind::Time],
+    },
+    LayoutPreset {
+        id: "time+flow",
+        label: "Timeframe + Flow",
+        kinds: &[PaneKind::Time, PaneKind::Flow],
+    },
+];
+
+/// The preset `id` names, if the registry has one.
+#[must_use]
+pub fn preset(id: &str) -> Option<&'static LayoutPreset> {
+    LAYOUT_PRESETS.iter().find(|preset| preset.id == id.trim())
+}
+
 /// Most panes one tab's canvas may hold at once.
 ///
 /// A cap rather than a policy: every pane is a second `ChartState` cut from
@@ -609,5 +683,142 @@ mod row_tests {
         let areas = split_row(canvas(), &[]);
         assert!(areas.panes.is_empty());
         assert!(areas.dividers.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    /// The registry is the vocabulary. Every id is a name a config file, the
+    /// `QUANTICK_LAYOUT` hook and a saved workspace may all use, so two
+    /// presets answering to one name would make a saved layout ambiguous.
+    #[test]
+    fn every_preset_id_is_unique() {
+        for (index, preset) in LAYOUT_PRESETS.iter().enumerate() {
+            for other in LAYOUT_PRESETS.iter().skip(index + 1) {
+                assert_ne!(preset.id, other.id, "two presets answer to {}", preset.id);
+            }
+        }
+    }
+
+    #[test]
+    fn every_preset_is_reachable_by_its_id() {
+        for entry in LAYOUT_PRESETS {
+            assert_eq!(preset(entry.id), Some(entry));
+        }
+        assert_eq!(preset("no such layout"), None);
+        assert_eq!(preset("  flow  "), preset("flow"), "ids are read trimmed");
+    }
+
+    /// The rule that keeps the heatmap the protagonist, held as data rather
+    /// than as a check inside the layout engine: a preset that draws the flow
+    /// pane draws it **last**, so context charts default to its left.
+    #[test]
+    fn the_flow_pane_is_always_the_rightmost_pane_a_preset_holds() {
+        for entry in LAYOUT_PRESETS {
+            let flow_at = entry.kinds.iter().position(|kind| *kind == PaneKind::Flow);
+            if let Some(index) = flow_at {
+                assert_eq!(
+                    index,
+                    entry.kinds.len() - 1,
+                    "preset {} puts a context pane right of the flow pane",
+                    entry.id
+                );
+            }
+            assert_eq!(
+                entry.kinds.iter().filter(|k| **k == PaneKind::Flow).count(),
+                flow_at.map_or(0, |_| 1),
+                "preset {} holds more than one flow pane",
+                entry.id
+            );
+        }
+    }
+
+    #[test]
+    fn no_preset_asks_for_more_panes_than_the_canvas_allows() {
+        for entry in LAYOUT_PRESETS {
+            assert!(!entry.kinds.is_empty(), "preset {} draws nothing", entry.id);
+            assert!(
+                entry.kinds.len() <= MAX_CANVAS_PANES,
+                "preset {} wants {} panes",
+                entry.id,
+                entry.kinds.len()
+            );
+        }
+    }
+
+    #[test]
+    fn every_preset_lays_out_and_spends_the_canvas() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1600.0, 900.0));
+        for entry in LAYOUT_PRESETS {
+            let widths = vec![PaneWidth::Auto; entry.kinds.len()];
+            let areas = split_row(area, &widths);
+            assert_eq!(areas.panes.len(), entry.kinds.len(), "preset {}", entry.id);
+            assert_eq!(areas.dividers.len(), entry.kinds.len() - 1);
+        }
+    }
+
+    /// The port proof.
+    ///
+    /// A pane kind the registry has never heard of is laid out by the same
+    /// splitter, and nothing in the layout engine had to learn its name. The
+    /// compiler carries most of this test: `PaneKind::Fake` exists only under
+    /// `cfg(test)`, so if `split_row`, `resolve_shares` or `apply_min_width`
+    /// matched exhaustively on a pane's kind, this module would not build.
+    /// What is left to assert is that a fake preset behaves like a real one.
+    #[test]
+    fn a_pane_kind_the_engine_has_never_heard_of_lays_out_anyway() {
+        static FAKE: LayoutPreset = LayoutPreset {
+            id: "fake+fake+flow",
+            label: "Fake",
+            kinds: &[PaneKind::Fake, PaneKind::Fake, PaneKind::Flow],
+        };
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1600.0, 900.0));
+        let widths = vec![PaneWidth::Auto; FAKE.kinds.len()];
+        let areas = split_row(area, &widths);
+
+        assert_eq!(areas.panes.len(), 3, "three fake panes, three areas");
+        assert_eq!(areas.dividers.len(), 2);
+        let spent: f32 = areas.panes.iter().map(egui::Rect::width).sum::<f32>()
+            + areas.dividers.iter().map(egui::Rect::width).sum::<f32>();
+        assert!(
+            (spent - area.width()).abs() < 1e-3,
+            "a row of unknown kinds still spends the canvas exactly once"
+        );
+        assert!(
+            !LAYOUT_PRESETS.iter().any(|entry| entry.id == FAKE.id),
+            "the fake preset must not be in the shipped registry"
+        );
+    }
+
+    /// Width is decided by `PaneWidth` alone — a pane's kind never reaches
+    /// the arithmetic. Asserted here as a property of the signature rather
+    /// than by comparing two identical calls: the row is laid out from widths
+    /// only, so there is no kind to pass in, and a rail is a rail whatever the
+    /// pane it hides holds.
+    #[test]
+    fn the_rail_is_the_same_width_at_every_position_in_the_row() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
+        let collapsed = PaneWidth::Collapsed { restore: 0.3 };
+
+        // Leading, interior and trailing: each loses a different number of
+        // divider halves, and each must still come out a full rail wide.
+        for widths in [
+            vec![collapsed, PaneWidth::Auto, PaneWidth::Auto],
+            vec![PaneWidth::Auto, collapsed, PaneWidth::Auto],
+            vec![PaneWidth::Auto, PaneWidth::Auto, collapsed],
+        ] {
+            let index = widths
+                .iter()
+                .position(|width| width.is_collapsed())
+                .expect("the row under test holds a collapsed pane");
+            let areas = split_row(area, &widths);
+            assert!(
+                (areas.panes[index].width() - COLLAPSED_PANE_WIDTH_PX).abs() < 1e-3,
+                "a rail at position {index} came out {} px",
+                areas.panes[index].width()
+            );
+        }
     }
 }

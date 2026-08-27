@@ -17,6 +17,7 @@ use tokio::sync::{mpsc, watch};
 
 use quantick_feed_binance::depth::DepthEvent;
 
+use crate::canvas_layout::{self, LayoutPreset, PaneKind};
 use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::feed::{
@@ -62,16 +63,38 @@ pub enum CanvasLayout {
 }
 
 impl CanvasLayout {
+    /// The registry entry this layout is a name for.
+    ///
+    /// The one place a variant is turned into panes. Everything that wants to
+    /// know what a layout *holds* reads the table through here rather than
+    /// matching on the variant, so an arrangement added to the registry does
+    /// not have to be taught to every caller one at a time.
+    #[must_use]
+    pub fn preset(self) -> &'static LayoutPreset {
+        let id = match self {
+            CanvasLayout::Single => "flow",
+            CanvasLayout::Time => "time",
+            CanvasLayout::TimeAndFlow => "time+flow",
+        };
+        canvas_layout::preset(id).expect("every canvas layout names a registered preset")
+    }
+
+    /// The panes this layout draws, left to right.
+    #[must_use]
+    pub fn kinds(self) -> &'static [PaneKind] {
+        self.preset().kinds
+    }
+
     /// Whether this layout draws the time pane at all.
     #[must_use]
     pub fn shows_time(self) -> bool {
-        matches!(self, CanvasLayout::Time | CanvasLayout::TimeAndFlow)
+        self.kinds().contains(&PaneKind::Time)
     }
 
     /// Whether this layout draws the flow pane at all.
     #[must_use]
     pub fn shows_flow(self) -> bool {
-        matches!(self, CanvasLayout::Single | CanvasLayout::TimeAndFlow)
+        self.kinds().contains(&PaneKind::Flow)
     }
 }
 
