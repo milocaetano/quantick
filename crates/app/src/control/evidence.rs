@@ -589,7 +589,15 @@ impl EvidenceStore {
         let bundle = state
             .bundles
             .iter()
-            .find(|bundle| &bundle.evidence_id == evidence_id)
+            // The sweep above walks from the front and stops at the first
+            // bundle still alive, which is every bundle only while the clock
+            // runs forward. A wall clock can step backwards, and then a
+            // retention that has run out sits behind one that has not. So the
+            // bundle actually asked for is checked on its own terms too:
+            // retention is a promise about this bundle, not about the queue.
+            .find(|bundle| {
+                &bundle.evidence_id == evidence_id && bundle.expires_at_unix_ms > now_unix_ms
+            })
             .ok_or_else(|| {
                 known_error(
                     codes::RESOURCE_GONE,
@@ -1363,6 +1371,36 @@ mod tests {
             "and age evicts one the other two bounds would have kept"
         );
         assert_eq!(store.retained(), 0);
+    }
+
+    /// Retention is a promise about one bundle, not about the queue it sits
+    /// in. A wall clock that steps backwards can leave an expired bundle
+    /// behind a live one, where a front-to-back sweep never reaches it; the
+    /// read refuses it anyway.
+    #[test]
+    fn a_bundle_past_its_retention_is_gone_even_when_it_is_not_at_the_front() {
+        let granted = scopes(&["observe", EVIDENCE_PERMISSION_ID]);
+        let store = EvidenceStore::with_bounds(8, 1 << 20, 1 << 20, 1_000);
+        // Captured in an order the clock disagrees with: the first bundle
+        // outlives the second.
+        store.insert(bundle(1, 16, 0, 10_000), 0).unwrap();
+        store.insert(bundle(2, 16, 0, 1_000), 0).unwrap();
+
+        // At 5 s the front is still alive, so the sweep stops there.
+        assert!(
+            store
+                .read(&evidence_id(1), None, &instance(), &granted, 5_000)
+                .is_ok()
+        );
+        assert_eq!(
+            store
+                .read(&evidence_id(2), None, &instance(), &granted, 5_000)
+                .unwrap_err()
+                .code
+                .as_str(),
+            codes::RESOURCE_GONE,
+            "the one behind it has run out of retention and is refused"
+        );
     }
 
     /// A capture too large for one bundle's share of the store is refused, not
