@@ -28,8 +28,23 @@ const TAB_RADIUS_PX: f32 = 3.0;
 /// The accent rule under the active tab — the same 1 px the focused pane
 /// wears, so "which one is on" reads the same way twice.
 const ACTIVE_RULE_PX: f32 = 1.5;
-/// Width of the rename box, in characters of the name limit.
+/// Width of the rename box: room for [`MAX_LAYOUT_NAME`] characters of body
+/// text, so the longest legal name is typed without scrolling.
 const RENAME_WIDTH_PX: f32 = 150.0;
+/// Font size of a tab's label — the status bar's, so the two strips read as
+/// one band.
+const LABEL_SIZE_PX: f32 = 11.5;
+/// Size of the `+` glyph, a touch larger than the labels so it reads as a
+/// button rather than a tab called "+".
+const ADD_ICON_SIZE_PX: f32 = 12.0;
+/// How much brighter than the chrome the active tab's background is.
+const ACTIVE_TAB_BRIGHTNESS: f32 = 1.6;
+/// How much brighter than the chrome a hovered tab's background is.
+const HOVER_TAB_BRIGHTNESS: f32 = 1.3;
+/// Vertical inset of a tab's background inside the strip.
+const TAB_INSET_Y_PX: f32 = 2.0;
+/// Horizontal inset of the active rule inside its tab.
+const RULE_INSET_X_PX: f32 = 2.0;
 
 /// What the app hands the strip each frame.
 pub struct StripModel<'a> {
@@ -89,7 +104,7 @@ pub fn draw(ctx: &egui::Context, model: StripModel<'_>) -> Vec<StripAction> {
                     model.can_add,
                     egui::Button::new(
                         egui::RichText::new(icons::PLUS)
-                            .size(12.0)
+                            .size(ADD_ICON_SIZE_PX)
                             .color(theme::TEXT_MUTED),
                     )
                     .frame(false),
@@ -113,7 +128,7 @@ fn draw_tab(
     actions: &mut Vec<StripAction>,
 ) {
     let text = egui::RichText::new(&layout.name)
-        .size(11.5)
+        .size(LABEL_SIZE_PX)
         .color(if active {
             theme::TEXT_PRIMARY
         } else {
@@ -132,12 +147,12 @@ fn draw_tab(
         let painter = ui.painter();
         if active || response.hovered() {
             painter.rect_filled(
-                rect.shrink2(egui::vec2(0.0, 2.0)),
+                rect.shrink2(egui::vec2(0.0, TAB_INSET_Y_PX)),
                 TAB_RADIUS_PX,
                 if active {
-                    theme::CHROME.gamma_multiply(1.6)
+                    theme::CHROME.gamma_multiply(ACTIVE_TAB_BRIGHTNESS)
                 } else {
-                    theme::CHROME.gamma_multiply(1.3)
+                    theme::CHROME.gamma_multiply(HOVER_TAB_BRIGHTNESS)
                 },
             );
         }
@@ -151,8 +166,11 @@ fn draw_tab(
             // it must not read as a drawing to anything counting strokes.
             painter.rect_filled(
                 egui::Rect::from_min_max(
-                    egui::pos2(rect.left() + 2.0, rect.bottom() - ACTIVE_RULE_PX),
-                    egui::pos2(rect.right() - 2.0, rect.bottom()),
+                    egui::pos2(
+                        rect.left() + RULE_INSET_X_PX,
+                        rect.bottom() - ACTIVE_RULE_PX,
+                    ),
+                    egui::pos2(rect.right() - RULE_INSET_X_PX, rect.bottom()),
                 ),
                 0.0,
                 theme::ACCENT,
