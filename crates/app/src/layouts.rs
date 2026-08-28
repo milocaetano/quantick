@@ -359,6 +359,12 @@ impl ChartLayout {
         }
     }
 
+    /// How many drawings this layout keeps, over every market and pane.
+    #[must_use]
+    pub fn drawing_count(&self) -> usize {
+        self.drawings.iter().map(|set| set.items.len()).sum()
+    }
+
     /// Every key this layout holds drawings for, in key order.
     #[cfg(test)]
     pub fn drawing_keys(&self) -> Vec<DrawingKey> {

@@ -1028,9 +1028,80 @@ impl QuantickApp {
                 self.layout_rename = None;
                 Ok(())
             }
-            StripAction::Delete(id) => self.delete_layout(id),
+            // Deleting takes the layout's drawings with it, on disk as well
+            // as on screen: the one strip action that asks first.
+            StripAction::Delete(id) => {
+                if self.layouts.get(id).is_some() {
+                    self.layout_delete_confirm = Some(id);
+                }
+                Ok(())
+            }
         };
         if let Err(error) = outcome {
+            self.note_workspace(error.to_string());
+        }
+    }
+}
+
+impl QuantickApp {
+    /// The confirmation a delete waits on: the layout's name, what goes with
+    /// it, and the two buttons. Escape cancels; nothing else on the window
+    /// is touched while it is up.
+    pub(super) fn draw_layout_delete_confirm(&mut self, ctx: &eframe::egui::Context) {
+        use eframe::egui;
+        let Some(id) = self.layout_delete_confirm else {
+            return;
+        };
+        let Some(layout) = self.layouts.get(id) else {
+            self.layout_delete_confirm = None;
+            return;
+        };
+        let name = layout.name.clone();
+        let drawings: usize = layout.drawing_count();
+        let mut decision: Option<bool> = None;
+        egui::Window::new("Delete layout")
+            .id(egui::Id::new("layout_delete_confirm"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.label(format!("Delete \"{name}\"?"));
+                ui.label(
+                    egui::RichText::new(if drawings == 0 {
+                        "Its indicator set goes with it. Nothing is drawn under it.".to_owned()
+                    } else {
+                        format!(
+                            "Its indicator set and the {drawings} drawing(s) kept under it go with it. This cannot be undone."
+                        )
+                    })
+                    .small()
+                    .color(crate::theme::TEXT_SUPPORT),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Delete").clicked() {
+                        decision = Some(true);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        decision = Some(false);
+                    }
+                });
+            });
+        if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            decision = Some(false);
+        }
+        match decision {
+            Some(true) => self.confirm_layout_delete(),
+            Some(false) => self.layout_delete_confirm = None,
+            None => {}
+        }
+    }
+
+    /// The confirmed half of a delete: what the dialog's Delete button does.
+    pub(crate) fn confirm_layout_delete(&mut self) {
+        let Some(id) = self.layout_delete_confirm.take() else {
+            return;
+        };
+        if let Err(error) = self.delete_layout(id) {
             self.note_workspace(error.to_string());
         }
     }

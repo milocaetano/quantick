@@ -892,6 +892,9 @@ pub struct QuantickApp {
     indicator_edit_origin: Option<(u64, PaneSide)>,
     /// The layout being renamed in the strip, with the draft name.
     layout_rename: Option<(crate::layouts::LayoutId, String)>,
+    /// The layout a delete is waiting on: deleting takes its drawings with
+    /// it, on disk too, so it is the one strip action behind a confirmation.
+    layout_delete_confirm: Option<crate::layouts::LayoutId>,
     /// Set by any add/remove/hide/inputs change; drained by the settled
     /// reconciliation that copies the edited pane's set into the layout.
     indicator_state_dirty: bool,
@@ -1419,6 +1422,7 @@ impl QuantickApp {
             last_layout_change: None,
             indicator_edit_origin: None,
             layout_rename: None,
+            layout_delete_confirm: None,
             indicator_state_dirty: false,
             last_indicator_change: None,
             last_script_poll: Instant::now(),
@@ -2035,6 +2039,10 @@ impl QuantickApp {
         if std::env::var("QUANTICK_LAYOUT_RENAME").is_ok_and(|value| value == "1") {
             let active = app.layouts().active_id();
             app.begin_layout_rename(active);
+        }
+        if std::env::var("QUANTICK_LAYOUT_DELETE").is_ok_and(|value| value == "1") {
+            let active = app.layouts().active_id();
+            app.apply_strip_action(crate::layout_strip::StripAction::Delete(active));
         }
         // The settings dialog, reachable without a pointer: the index of the
         // indicator to open it on, among the focused pane's views in add
@@ -10462,6 +10470,7 @@ impl QuantickApp {
         }
         // Above the status bar, below the canvas: the layout tabs.
         self.draw_layout_strip(ctx);
+        self.draw_layout_delete_confirm(ctx);
         // The browser window and, while the *active* tab plays a session, its
         // transport bar. A background tab's recording keeps advancing on its
         // own feed thread; what it does not get is the strip, which speaks for
@@ -24744,6 +24753,30 @@ crosshair = false
             "the EMA is back on the restored layout"
         );
         assert_eq!(drawings_on(&again, PaneSide::Time(0)), vec![100.0]);
+    }
+
+    /// Deleting a layout destroys its drawings, so the strip's Delete asks
+    /// first; the confirmed half is what removes it, and cancelling keeps it.
+    #[test]
+    fn deleting_a_layout_waits_for_the_confirmation() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        let second = app.create_layout(Some("levels")).expect("second");
+        app.apply_strip_action(crate::layout_strip::StripAction::Delete(second));
+        assert_eq!(app.layouts().layouts().len(), 2, "nothing is deleted yet");
+        assert_eq!(app.layout_delete_confirm, Some(second));
+        app.layout_delete_confirm = None;
+        assert_eq!(app.layouts().layouts().len(), 2, "cancelling keeps it");
+
+        app.apply_strip_action(crate::layout_strip::StripAction::Delete(second));
+        app.confirm_layout_delete();
+        assert_eq!(app.layouts().layouts().len(), 1, "confirming deletes it");
+        assert_ne!(
+            app.layouts().active_id(),
+            second,
+            "and the neighbour is active"
+        );
+        assert!(app.layout_delete_confirm.is_none());
     }
 
     /// Drawings are per pane, and the tool rail is one: an object lands on the

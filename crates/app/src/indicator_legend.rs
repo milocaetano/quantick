@@ -492,7 +492,7 @@ fn draw_row(
         }
         if ui
             .small_button(icons::TRASH)
-            .on_hover_text("remove this indicator")
+            .on_hover_text("remove this indicator from every chart of this layout")
             .clicked()
         {
             actions.push(LegendAction::Remove(view.slot));
