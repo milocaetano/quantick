@@ -14,7 +14,7 @@ use quantick_strategy::{
     AlarmEvent, ArmedState, ArmedStrategy, DisarmReason, Execution, Region, SignalAlarm,
 };
 
-use crate::audio::AlertSound;
+use crate::audio::Cue;
 use crate::drawings::DrawingId;
 
 /// What the last alarm judgement left standing over the drawing.
@@ -61,8 +61,8 @@ pub struct AnchoredInstance {
     /// silent instance every preset written before the alarm existed
     /// compiles to.
     pub alarm: Option<SignalAlarm>,
-    /// Which platform sound this instance's alarm plays.
-    pub sound: AlertSound,
+    /// What this instance's alarm plays, and for how long.
+    pub cue: Cue,
     /// What the last alarm judgement left on the chart.
     pub mark: AlarmMark,
 }
@@ -94,7 +94,7 @@ impl AnchoredInstance {
     /// an order went out, which is the whole distinction the alarm exists
     /// to draw: the trader is told their setup happened, not that this
     /// simulator acted on it.
-    pub fn alarm_on_closed_bar(&mut self, now_ms: u64) -> Option<AlertSound> {
+    pub fn alarm_on_closed_bar(&mut self, now_ms: u64) -> Option<Cue> {
         if !self.listening() {
             // Silence *and* forget: a preview raised before the disarm has
             // no close coming that could withdraw it, so leaving the mark
@@ -122,7 +122,7 @@ impl AnchoredInstance {
         region_active: bool,
         progress: Option<BarProgress>,
         now_ms: u64,
-    ) -> Option<AlertSound> {
+    ) -> Option<Cue> {
         if !self.listening() {
             return None;
         }
@@ -145,14 +145,14 @@ impl AnchoredInstance {
     /// A silent event still moves the mark: withdrawing a preview that did
     /// not hold is exactly the case where nothing is heard and something
     /// must be seen.
-    fn apply(&mut self, event: Option<AlarmEvent>) -> Option<AlertSound> {
+    fn apply(&mut self, event: Option<AlarmEvent>) -> Option<Cue> {
         let event = event?;
         self.mark = match event {
             AlarmEvent::Preview => AlarmMark::Preview,
             AlarmEvent::Confirmed | AlarmEvent::ConfirmedQuietly => AlarmMark::Confirmed,
             AlarmEvent::Faded => AlarmMark::Faded,
         };
-        event.sounds().then_some(self.sound)
+        event.sounds().then_some(self.cue)
     }
 
     /// The series this instance was judging no longer exists.
@@ -320,6 +320,7 @@ pub fn badge_text(instance: &AnchoredInstance) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::AlertSound;
     use quantick_engine::Side;
     use quantick_strategy::{ForceParams, ForceTrigger, Rearm, StrategyParams};
     use rust_decimal::Decimal;
@@ -341,7 +342,7 @@ mod tests {
                 Box::new(ForceTrigger::new(ForceParams::default_band())),
             ),
             alarm: None,
-            sound: AlertSound::default(),
+            cue: Cue::default(),
             mark: AlarmMark::Quiet,
         }
     }
@@ -411,7 +412,7 @@ mod tests {
                 })),
             ),
             alarm: None,
-            sound: AlertSound::default(),
+            cue: Cue::default(),
             mark: AlarmMark::Quiet,
         };
         let region = quantick_strategy::Region::new(Decimal::from(100), Decimal::from(110));
@@ -490,7 +491,7 @@ mod tests {
                 })),
             ),
             alarm: None,
-            sound: AlertSound::default(),
+            cue: Cue::default(),
             mark: AlarmMark::Quiet,
         };
         let region = quantick_strategy::Region::new(Decimal::from(100), Decimal::from(110));
@@ -555,7 +556,7 @@ mod tests {
     fn alarming_instance(
         when: quantick_strategy::AlarmWhen,
         repeat: quantick_strategy::RepeatPolicy,
-        sound: AlertSound,
+        cue: Cue,
     ) -> AnchoredInstance {
         let mut instance = instance(DrawingId(9));
         instance.armed = ArmedStrategy::new(
@@ -579,7 +580,7 @@ mod tests {
             when,
             repeat,
         }));
-        instance.sound = sound;
+        instance.cue = cue;
         instance
     }
 
@@ -613,7 +614,7 @@ mod tests {
         let mut instance = alarming_instance(
             quantick_strategy::AlarmWhen::OnClose,
             quantick_strategy::RepeatPolicy::OncePerBar,
-            AlertSound::Critical,
+            Cue::whole(AlertSound::Critical),
         );
         for warm in [test_bar(100, 101), test_bar(101, 102)] {
             instance.armed.on_closed_bar(&warm, &region, true, true);
@@ -629,7 +630,7 @@ mod tests {
             .on_closed_bar(&test_bar(102, 106), &region, true, true);
         assert_eq!(
             instance.alarm_on_closed_bar(0),
-            Some(AlertSound::Critical),
+            Some(Cue::whole(AlertSound::Critical)),
             "the signal bar plays the sound the preset named"
         );
         assert_eq!(instance.mark, AlarmMark::Confirmed);
@@ -649,7 +650,7 @@ mod tests {
         let mut instance = alarming_instance(
             quantick_strategy::AlarmWhen::at_share(Decimal::new(70, 2)),
             quantick_strategy::RepeatPolicy::OncePerBar,
-            AlertSound::Exclamation,
+            Cue::whole(AlertSound::Exclamation),
         );
         for warm in [test_bar(100, 101), test_bar(101, 102)] {
             instance.armed.on_closed_bar(&warm, &region, true, true);
@@ -667,7 +668,7 @@ mod tests {
         assert_eq!(instance.mark, AlarmMark::Quiet);
         assert_eq!(
             instance.alarm_on_forming_bar(&forming, &region, true, test_progress(1400, 2000), 0),
-            Some(AlertSound::Exclamation)
+            Some(Cue::whole(AlertSound::Exclamation))
         );
         assert_eq!(instance.mark, AlarmMark::Preview);
         assert_eq!(badge_text(&instance), "⚡ test · signal (preview)");
@@ -693,7 +694,7 @@ mod tests {
         let mut instance = alarming_instance(
             quantick_strategy::AlarmWhen::OnClose,
             quantick_strategy::RepeatPolicy::OncePerBar,
-            AlertSound::default(),
+            Cue::whole(AlertSound::default()),
         );
         instance.armed = ArmedStrategy::new(
             StrategyParams {
@@ -729,7 +730,7 @@ mod tests {
         let mut instance = alarming_instance(
             quantick_strategy::AlarmWhen::at_share(Decimal::new(70, 2)),
             quantick_strategy::RepeatPolicy::OncePerBar,
-            AlertSound::Critical,
+            Cue::whole(AlertSound::Critical),
         );
         for warm in [test_bar(100, 101), test_bar(101, 102)] {
             instance.armed.on_closed_bar(&warm, &region, true, true);
@@ -740,7 +741,7 @@ mod tests {
         let forming = test_bar(102, 106);
         assert_eq!(
             instance.alarm_on_forming_bar(&forming, &region, true, test_progress(1400, 2000), 0),
-            Some(AlertSound::Critical)
+            Some(Cue::whole(AlertSound::Critical))
         );
         assert_eq!(instance.mark, AlarmMark::Preview);
 
@@ -771,7 +772,7 @@ mod tests {
         let mut instance = alarming_instance(
             quantick_strategy::AlarmWhen::at_share(Decimal::new(70, 2)),
             quantick_strategy::RepeatPolicy::Cooldown { millis: 30_000 },
-            AlertSound::default(),
+            Cue::whole(AlertSound::default()),
         );
         instance.mark = AlarmMark::Preview;
         let _ = anchors.arm(instance);

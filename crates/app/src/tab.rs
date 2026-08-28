@@ -388,7 +388,7 @@ pub struct Tab {
     /// without a build machine making noise, and where blocking on an
     /// operating-system call would be on the tape's path. The app plays
     /// them through the [`AlertSink`](crate::audio::AlertSink) port.
-    pub pending_alarm_sounds: Vec<crate::audio::AlertSound>,
+    pub pending_alarm_sounds: Vec<crate::audio::Cue>,
 
     /// Paper trading for this market: the deterministic simulator plus its
     /// journal, chart layer, dock tab and report.
@@ -2482,7 +2482,7 @@ impl Tab {
             ..
         } = self;
         let mut watching = 0;
-        let mut sounds: Vec<crate::audio::AlertSound> = Vec::new();
+        let mut sounds: Vec<crate::audio::Cue> = Vec::new();
         // The alarm's sounds come from `main`; walking every pane in the
         // context stack rather than a single time pane comes from this branch.
         // Both are wanted: a strategy armed on the second stacked chart has to

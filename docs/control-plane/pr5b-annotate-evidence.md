@@ -77,7 +77,8 @@ the trader drew.
 ## Blast radius
 
 - Added: `crates/app/src/control/{annotate,notify,script}.rs`,
-  `crates/app/src/audio.rs`, eleven schema documents, this document.
+  `crates/app/src/audio.rs` (since grown into `crates/app/src/audio/`, when the
+  alarm clip library landed), eleven schema documents, this document.
 - Edited as registration: `control/{mod,actions,contract,schema_catalog}.rs`
   (one line or one block per module), `crates/mcp/src/tools.rs` (five tools),
   `crates/mcp/src/main.rs` (the profile), `crates/control-local/src/client.rs`
@@ -180,8 +181,11 @@ and CLAUDE.md's tool list are corrected.
   across its channel, which is a larger change to a path this tier does not own.
 - **`notify.sound` on a platform with no audio backend** reports
   `unavailable_reason` rather than making a noise. Windows uses the system's
-  own information sound (`MessageBeep`); no audio engine is linked, and no
-  platform is told the alert was heard when it was not.
+  own information sound (`MessageBeep`), and no platform is told the alert
+  was heard when it was not. (At the time of this tier no audio engine was
+  linked; the alarm clip library later added `rodio` for the strategy
+  alarm's clips, behind the same `AlertSink` port — `notify.sound` still
+  asks for the platform's own sound.)
 - **The trader UX review with the personas was not run**, and neither was the
   sound channel — it makes a noise on the owner's machine, and this session
   asked for authorization to launch the app rather than to interrupt them.
