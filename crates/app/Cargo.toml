@@ -59,12 +59,15 @@ raw-window-handle = "0.6"
 # control plane calls it directly, and because a raster no viewer accepts
 # would make an evidence image useless to the human reading the bundle.
 png = "0.18"
+
+[target.'cfg(windows)'.dependencies]
 # Playback of the shipped alarm clips (`assets/alarms/`, see `audio/`). The
 # narrowest cut: the output-device half and the AAC-in-MP4 decoder the clips
 # need, nothing else — no recording, no other codecs, no dither noise.
+# Windows only, like the platform sound beside it: on Linux cpal links ALSA,
+# which the CI runner does not carry, and a build there reports "no audio
+# backend" for a clip exactly as it already does for a system sound.
 rodio = { version = "0.22", default-features = false, features = ["playback", "mp4"] }
-
-[target.'cfg(windows)'.dependencies]
 # The platform's own attention sounds — the system-scheme half of the alarm
 # catalogue. `MessageBeep` is the sound Windows itself uses, and a platform
 # without one reports that instead of pretending (see `audio/platform.rs`).
