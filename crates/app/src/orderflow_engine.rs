@@ -1189,6 +1189,17 @@ impl BookEngine {
     /// never hold a print. The tape knows the grid regardless, because every
     /// print lands on it.
     ///
+    /// `reference_price` is the same chart's own price magnitude, and it is
+    /// what a depth-less chart was missing. `capture_base` folds a tick up
+    /// toward the money a market moves in, but it can only do that when it is
+    /// told the price — and the only caller that ever told it read the mid off
+    /// a *book snapshot*. So BTCUSDT with the heatmap off, or on replay, came
+    /// through here with its true 0.01 tick and no price at all, and got
+    /// cent-wide rows: a fixed-range profile over a few hundred dollars asking
+    /// for tens of thousands of them, which is the jagged wash a trader sees.
+    /// `None` where the tape has not shown a price yet, which behaves exactly
+    /// as this did before.
+    ///
     /// A venue-stated step always wins: this is the fallback for a chart that
     /// was never told, never an override of one that was. It is also skipped
     /// once the trader sets the base resolution by hand, like every other
@@ -1196,7 +1207,7 @@ impl BookEngine {
     ///
     /// Goes through `capture_base`, so the ladder and the liquidity map are
     /// sized by one rule rather than by two that have to be kept in step.
-    pub fn size_from_tape(&mut self, step: Decimal) {
+    pub fn size_from_tape(&mut self, step: Decimal, reference_price: Option<Decimal>) {
         // `apply_auto_base` resizes by *discarding* history — the bucket width
         // is the grid every run and aggression was recorded against, and there
         // is no reindexing them. Its own doc says "while history is still empty
@@ -1213,11 +1224,18 @@ impl BookEngine {
         {
             return;
         }
+        // A book's mid outranks the tape's first print where both exist: one
+        // is the live spread, the other is wherever this chart happened to
+        // open. Where only the tape has spoken it is the whole answer, and
+        // that is the case this argument was added for.
+        let reference = self
+            .reference_price
+            .or_else(|| reference_price.and_then(|price| price.to_f64()));
         // `capture_base`'s own labels both name the instrument as the source.
         // That is true where a feed stated the tick and a lie here, where the
         // number was inferred from prints — and this log line is the only place
         // the provenance is recorded.
-        if let Some((base, _)) = capture_base(Some(step), self.reference_price) {
+        if let Some((base, _)) = capture_base(Some(step), reference) {
             self.apply_auto_base(base, "tape_price_grid");
         }
     }
@@ -1694,13 +1712,77 @@ mod tests {
         // on the fine default — rows most of which no print can land in.
         let mut engine = BookEngine::new("WINV26");
         let default_base = engine.config.price_grouping;
-        engine.size_from_tape(Decimal::from(5));
+        engine.size_from_tape(Decimal::from(5), None);
         assert_ne!(
             engine.published().base_price_grouping,
             default_base,
             "the tape said five and the bucket stayed on the default",
         );
         assert_eq!(engine.published().base_price_grouping, Decimal::from(5));
+    }
+
+    #[test]
+    fn a_coarse_tick_at_index_magnitude_keeps_the_tick_the_tape_named() {
+        // The regression pin. WIN trades near 140k points on a five-point
+        // tick, and five points is already the right row: a trader reading
+        // that ladder today sees the grouping they expect. Handing the sizing
+        // rule the tape's own magnitude must not move it — the price-derived
+        // base here is two points, *finer* than the tick, and the instrument's
+        // own grid wins whenever that happens.
+        let mut engine = BookEngine::new("WINV26");
+        engine.size_from_tape(Decimal::from(5), Some(Decimal::from(140_000)));
+        assert_eq!(
+            engine.published().base_price_grouping,
+            Decimal::from(5),
+            "the tape's magnitude moved a bucket the instrument's tick already settled",
+        );
+    }
+
+    #[test]
+    fn a_fine_tick_at_bitcoin_magnitude_sizes_the_bucket_from_the_tapes_own_price() {
+        // The defect. BTCUSDT prints on a 0.01 grid near $80k, so the tick is
+        // a true fact about the instrument and a useless row: a profile over a
+        // few hundred dollars of range asks for tens of thousands of them and
+        // paints as a jagged wash. `capture_base` has always known to fold that
+        // up to ~$1 — but only from a *snapshot's* mid, and a chart with no L2
+        // never gets one. The tape's own magnitude is the missing input.
+        let mut engine = BookEngine::new("BTCUSDT");
+        engine.size_from_tape(Decimal::new(1, 2), Some(Decimal::from(80_000)));
+        assert_eq!(
+            engine.published().base_price_grouping,
+            Decimal::from(1),
+            "an $80k instrument stayed on cent-wide rows",
+        );
+    }
+
+    #[test]
+    fn a_snapshots_mid_outranks_the_tapes_first_print() {
+        // Both are "the price this market is at", and where both exist the
+        // book's is the live spread while the tape's is wherever the chart
+        // happened to open. The snapshot path runs first and its answer stands.
+        let mut engine = BookEngine::new("BTCUSDT");
+        engine.set_enabled(true, 1);
+        engine.handle_depth_event(DepthEvent::Snapshot {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 1,
+            observed_at_ms: 1_100,
+            effective_at_ms: 1_000,
+            price_step: None,
+            snapshot: BookSnapshot::new(
+                10,
+                vec![BookLevel::new(Decimal::from(64_999), Decimal::from(2)).unwrap()],
+                vec![BookLevel::new(Decimal::from(65_001), Decimal::from(3)).unwrap()],
+                BookCoverage::Limited {
+                    levels_per_side: 1_000,
+                },
+            ),
+        });
+        assert_eq!(engine.base_capture_grouping(), Decimal::from(1));
+        // A tape magnitude ten times larger arrives afterwards. History is no
+        // longer empty, so nothing is resized — and that gate is what keeps a
+        // live book from being reinterpreted underneath its own runs.
+        engine.size_from_tape(Decimal::new(1, 2), Some(Decimal::from(650_000)));
+        assert_eq!(engine.base_capture_grouping(), Decimal::from(1));
     }
 
     #[test]
@@ -1734,7 +1816,7 @@ mod tests {
         });
         assert_eq!(engine.published().base_price_grouping, Decimal::from(2));
 
-        engine.size_from_tape(Decimal::from(5));
+        engine.size_from_tape(Decimal::from(5), Some(Decimal::from(140_000)));
         assert_eq!(
             engine.published().base_price_grouping,
             Decimal::from(2),
@@ -1749,11 +1831,21 @@ mod tests {
         let mut engine = BookEngine::new("WINV26");
         engine.apply_grouping_now(Decimal::from(2));
         let chosen = engine.published().base_price_grouping;
-        engine.size_from_tape(Decimal::from(5));
+        engine.size_from_tape(Decimal::from(5), Some(Decimal::from(140_000)));
         assert_eq!(
             engine.published().base_price_grouping,
             chosen,
             "the tape overrode a bucket the trader picked by hand",
+        );
+        // And it keeps stepping aside as the tape keeps printing: the choice
+        // is not merely honoured on the print that follows it. A grid that
+        // narrows later — the only direction a GCD moves — must not become a
+        // second chance to resize.
+        engine.size_from_tape(Decimal::new(1, 2), Some(Decimal::from(140_000)));
+        assert_eq!(
+            engine.published().base_price_grouping,
+            chosen,
+            "a later, finer tape grid reopened a bucket the trader had closed",
         );
     }
 

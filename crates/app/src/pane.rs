@@ -2694,9 +2694,9 @@ impl ChartPane {
         }
     }
 
-    /// Hand the tape's own price grid to the order-flow engine, which sizes
-    /// the capture bucket — and through it the footprint ladder's rows — from
-    /// whichever tick it ends up trusting.
+    /// Hand the tape's own price grid — and the magnitude it prints at — to
+    /// the order-flow engine, which sizes the capture bucket, and through it
+    /// the footprint ladder's rows and the volume profile folded from them.
     ///
     /// Called after every ingest because the answer can only arrive after
     /// prints have. The view sends a command only when the answer changes, and
@@ -2709,7 +2709,7 @@ impl ChartPane {
             return;
         };
         if let Some(step) = self.state.tape_price_step() {
-            orderflow.observe_tape_price_step(step);
+            orderflow.observe_tape_price_grid(step, self.state.tape_reference_price());
         }
     }
 
