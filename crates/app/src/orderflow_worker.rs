@@ -39,10 +39,14 @@ pub(crate) enum BookCommand {
     },
     ApplyVisualConfig(HeatmapConfig),
     ApplyGroupingNow(Decimal),
-    /// The price grid the tape itself prints on, for a chart whose feed never
-    /// states an instrument tick. Loses to a venue-stated step; see
+    /// The price grid the tape itself prints on and the magnitude it prints
+    /// at, for a chart whose feed never states an instrument tick and whose
+    /// book never states a price. Loses to a venue-stated step; see
     /// [`BookEngine::size_from_tape`](crate::orderflow_engine::BookEngine::size_from_tape).
-    TapePriceGrid(Decimal),
+    TapePriceGrid {
+        step: Decimal,
+        reference_price: Option<Decimal>,
+    },
     AcceptGroupingRestart {
         grouping: Decimal,
         generation_floor: u64,
@@ -157,7 +161,10 @@ fn run(mut engine: BookEngine, rx: &Receiver<BookCommand>, shared: &Arc<Mutex<Bo
                 } => engine.prepare_restart(generation_floor, reason),
                 BookCommand::ApplyVisualConfig(config) => engine.apply_visual_config(config),
                 BookCommand::ApplyGroupingNow(grouping) => engine.apply_grouping_now(grouping),
-                BookCommand::TapePriceGrid(step) => engine.size_from_tape(step),
+                BookCommand::TapePriceGrid {
+                    step,
+                    reference_price,
+                } => engine.size_from_tape(step, reference_price),
                 BookCommand::AcceptGroupingRestart {
                     grouping,
                     generation_floor,

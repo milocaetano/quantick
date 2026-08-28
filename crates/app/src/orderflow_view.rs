@@ -121,9 +121,13 @@ pub struct OrderflowView {
     published: BookPublished,
     /// Engine bucket last adopted into the mirror, to detect auto-base moves.
     last_seen_base: Decimal,
-    /// The tape grid last sent to the engine, so the per-trade path sends one
-    /// command per change rather than one per print.
-    last_tape_price_step: Option<Decimal>,
+    /// The `(step, reference_price)` pair last sent to the engine, so the
+    /// per-trade path sends one command per change rather than one per print.
+    ///
+    /// Both halves are in the key: either one moving is a different answer,
+    /// and keying on the step alone would swallow the first magnitude a chart
+    /// ever learns whenever the grid happened to settle first.
+    last_tape_price_grid: Option<(Decimal, Option<Decimal>)>,
     capture_grouping_draft: f64,
     pending_capture_grouping_previous: Option<Decimal>,
     /// Named bubble looks, loaded from the versionable presets file.
@@ -183,7 +187,7 @@ impl OrderflowView {
             config,
             published: BookPublished::initial(),
             last_seen_base: base_grouping,
-            last_tape_price_step: None,
+            last_tape_price_grid: None,
             capture_grouping_draft: base_grouping.to_f64().unwrap_or(0.01),
             pending_capture_grouping_previous: None,
             presets,
@@ -807,7 +811,7 @@ impl OrderflowView {
         // whose tape prints on the same grid would be suppressed — and a grid
         // the engine refused while the trader had picked a bucket by hand
         // would never be re-offered once auto sizing is re-armed here.
-        self.last_tape_price_step = None;
+        self.last_tape_price_grid = None;
         self.published = BookPublished::initial();
         // The starvation clock is per market, like the history it starves.
         // Carrying the old symbol's zero across would open the new one on a
@@ -888,25 +892,36 @@ impl OrderflowView {
         self.worker.send(BookCommand::Trade(trade.clone()));
     }
 
-    /// Tell the engine the price grid the tape prints on.
+    /// Tell the engine the price grid the tape prints on, and the magnitude
+    /// it prints at.
+    ///
+    /// Both, because a tick alone does not size a row: BTCUSDT's real tick is
+    /// a cent and its rows are dollars. The engine folds the one toward the
+    /// other; it only ever had the price when a *book snapshot* carried one,
+    /// so a chart with no L2 fell back to raw cents.
     ///
     /// Sent only when the answer changes, which a running GCD makes rare: it
     /// starts as nothing, names a grid once the tape has shown one, and only
-    /// ever narrows from there. On the trader's own recordings it settles
-    /// within about thirty prints and never moves again, so a session pays for
-    /// one regroup rather than one per trade — which matters, because this is
-    /// called from the per-trade path.
+    /// ever narrows from there. The magnitude is frozen at the chart's first
+    /// print and never moves at all. On the trader's own recordings the pair
+    /// settles within about thirty prints and never moves again, so a session
+    /// pays for one regroup rather than one per trade — which matters, because
+    /// this is called from the per-trade path.
     ///
     /// Deliberately *not* gated on a layer being enabled, unlike
     /// [`record_trade`](Self::record_trade): the grid sizes the footprint
     /// ladder as well as the liquidity map, and a trader reading a ladder with
     /// the heatmap switched off needs its rows the right width just the same.
-    pub fn observe_tape_price_step(&mut self, step: Decimal) {
-        if self.last_tape_price_step == Some(step) {
+    pub fn observe_tape_price_grid(&mut self, step: Decimal, reference_price: Option<Decimal>) {
+        let grid = (step, reference_price);
+        if self.last_tape_price_grid == Some(grid) {
             return;
         }
-        self.last_tape_price_step = Some(step);
-        self.worker.send(BookCommand::TapePriceGrid(step));
+        self.last_tape_price_grid = Some(grid);
+        self.worker.send(BookCommand::TapePriceGrid {
+            step,
+            reference_price,
+        });
     }
 
     /// Whether the scripted starvation hook is holding this print back.
@@ -2491,7 +2506,7 @@ mod tests {
         // would write the mirror by itself and the test would pass either way.
         let mut view = OrderflowView::new("WINV26");
         let before = view.base_capture_grouping();
-        view.observe_tape_price_step(Decimal::from(5));
+        view.observe_tape_price_grid(Decimal::from(5), Some(Decimal::from(140_000)));
         view.worker.flush();
 
         let direct = view.capture_grouping_now();

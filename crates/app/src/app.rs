@@ -5923,16 +5923,25 @@ impl QuantickApp {
             trades_per_s = rate,
             live_trades = self.active_tab().live_trades,
             bar_spec = self.active_tab().flow_pane.state.spec().summary(),
-            // What the tape says its own price grid is, and what the ladder
-            // ended up drawing rows at. A validation run reads the pair to
-            // tell "the chart has not been told a tick yet" from "the chart
-            // is drawing rows finer than the instrument can trade at".
+            // Both facts the tape states about its own prices — the grid they
+            // land on and the magnitude they land at — and the row width the
+            // ladder ended up drawing from them. A validation run reads all
+            // three: the first two are the sizing rule's whole input, so
+            // without them a run can see that rows are 1.00 and not why, and
+            // cannot tell "the chart has not been told a tick yet" from "the
+            // chart is drawing rows finer than the instrument can trade at".
             tape_price_step = self
                 .active_tab()
                 .flow_pane
                 .state
                 .tape_price_step()
                 .map_or_else(|| "unknown".to_owned(), |step| step.to_string()),
+            tape_reference_price = self
+                .active_tab()
+                .flow_pane
+                .state
+                .tape_reference_price()
+                .map_or_else(|| "unknown".to_owned(), |price| price.to_string()),
             footprint_rows = %self.active_tab().flow_pane.state.footprint_group(),
             canvas_layout = ?self.active_tab().layout,
             screen_pt_w = screen.x,
@@ -24776,6 +24785,33 @@ crosshair = false
         mpsc::Sender<FeedEvent>,
         mpsc::Receiver<FeedCommand>,
     ) {
+        app_backfilled_with(ctx, (0..200).map(minute_trade).collect())
+    }
+
+    /// [`history_app`] on a tape of a chosen magnitude and grid — the two
+    /// facts the row-sizing rule reads. Depth capture stays off, as it is
+    /// there: a chart no depth snapshot will ever hand a price to is the case
+    /// that sizing exists for.
+    fn tape_app(
+        ctx: &egui::Context,
+        first_price: Decimal,
+        step: Decimal,
+    ) -> (
+        QuantickApp,
+        mpsc::Sender<FeedEvent>,
+        mpsc::Receiver<FeedCommand>,
+    ) {
+        app_backfilled_with(ctx, grid_trades(first_price, step))
+    }
+
+    fn app_backfilled_with(
+        ctx: &egui::Context,
+        trades: Vec<quantick_engine::Trade>,
+    ) -> (
+        QuantickApp,
+        mpsc::Sender<FeedEvent>,
+        mpsc::Receiver<FeedCommand>,
+    ) {
         let (evt_tx, evt_rx) = mpsc::channel(64);
         let (book_tx, book_rx) = mpsc::channel(64);
         let (cmd_tx, cmd_rx) = mpsc::channel(16);
@@ -24801,7 +24837,6 @@ crosshair = false
             },
         );
         let _ = book_tx;
-        let trades: Vec<_> = (0..200).map(minute_trade).collect();
         evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
         app.drain_tabs();
         run_frame(&mut app, ctx);
@@ -25020,6 +25055,131 @@ crosshair = false
             time_group, market_bucket,
             "and it is the market's bucket, not either pane's default"
         );
+    }
+
+    /// Two hundred prints walking a `step`-wide grid from `first_price` — the
+    /// two facts the row-sizing rule reads off a tape. The prices move rather
+    /// than repeat because a grid is named from the *distances* between
+    /// prints, and the same price twice is no distance at all.
+    fn grid_trades(first_price: Decimal, step: Decimal) -> Vec<quantick_engine::Trade> {
+        (0..200)
+            .map(|i| quantick_engine::Trade {
+                agg_id: i + 1,
+                timestamp_ms: i as i64 * crate::feed::OHLCV_BASE_INTERVAL_MS + 1_000,
+                price: first_price + step * Decimal::from(i % 20),
+                quantity: Decimal::ONE,
+                side: if i.is_multiple_of(2) {
+                    quantick_engine::Side::Buy
+                } else {
+                    quantick_engine::Side::Sell
+                },
+            })
+            .collect()
+    }
+
+    /// A fixed-range profile placed on the flow pane with the footprint layer
+    /// switched off — the state the trader reported the jagged profile from,
+    /// and the one where nothing but the profile itself wants the ladders.
+    fn place_range_profile_with_the_layer_off(app: &mut QuantickApp) {
+        let frvp = crate::drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == crate::frvp::TOOL_ID)
+            .expect("frvp is registered");
+        let pane = app.active_tab_mut().pane_mut(PaneSide::Flow);
+        pane.set_layer_visible(
+            ChartLayer::Footprint,
+            false,
+            &mut chart_layers::LayerActions::default(),
+        );
+        assert!(
+            !pane
+                .drawings
+                .place(frvp, crate::drawings::ChartPoint::at(1.0, 100.0))
+        );
+        assert!(
+            pane.drawings
+                .place(frvp, crate::drawings::ChartPoint::at(20.0, 105.0))
+        );
+    }
+
+    /// The grouping the flow pane's profile actually folded at, read off the
+    /// drawing rather than off the chart state — the ladder's row width and
+    /// the profile's are meant to be one number, and a test that read only the
+    /// state could not tell whether they had come apart.
+    fn folded_profile_group(app: &QuantickApp) -> Decimal {
+        app.active_tab().pane(PaneSide::Flow).drawings.items()[0]
+            .payload
+            .as_any()
+            .downcast_ref::<crate::drawings::FrvpPayload>()
+            .expect("frvp payload")
+            .cache
+            .as_ref()
+            .expect("a placed range over a live tape folded")
+            .profile
+            .as_ref()
+            .expect("the range covers bars that have tape")
+            .0
+            .group()
+    }
+
+    /// A fine-tick market at a high price: BTCUSDT quotes in cents and trades
+    /// near $80k, so its own tick is a true fact about the instrument and a
+    /// useless row — a few hundred dollars of range asks for tens of thousands
+    /// of them, and the profile paints as a jagged wash. The chart has no L2
+    /// here (`book_capture: false`), which is exactly why this used to fail:
+    /// the sizing rule only ever saw a price when a depth snapshot handed it
+    /// one.
+    #[test]
+    fn a_bitcoin_magnitude_tape_groups_the_profile_by_the_dollar() {
+        let ctx = egui::Context::default();
+        let (mut app, _events, _commands) =
+            tape_app(&ctx, Decimal::from(80_000), Decimal::new(1, 2));
+        place_range_profile_with_the_layer_off(&mut app);
+        // The bucket these tests name an exact number for is decided on the
+        // book worker's own thread. Without this barrier they race it and read
+        // the fine default on a loaded runner.
+        app.active_tab_mut().tape_mut().flush_for_test();
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        assert_eq!(
+            app.active_tab()
+                .pane(PaneSide::Flow)
+                .state
+                .footprint_group(),
+            Decimal::from(1),
+            "an $80k market stayed on the cent-wide rows its tick names",
+        );
+        assert_eq!(
+            folded_profile_group(&app),
+            Decimal::from(1),
+            "the profile folded at a different width than the ladders under it",
+        );
+    }
+
+    /// The regression pin, on the market that already looked right. WIN trades
+    /// near 140k points on a five-point tick, and five points is the row a
+    /// trader expects to see; the price-derived width here is *two* points,
+    /// finer than the tick, and the instrument's own grid has to win.
+    #[test]
+    fn an_index_magnitude_tape_keeps_the_five_point_grouping_it_already_had() {
+        let ctx = egui::Context::default();
+        let (mut app, _events, _commands) =
+            tape_app(&ctx, Decimal::from(140_000), Decimal::from(5));
+        place_range_profile_with_the_layer_off(&mut app);
+        app.active_tab_mut().tape_mut().flush_for_test();
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        assert_eq!(
+            app.active_tab()
+                .pane(PaneSide::Flow)
+                .state
+                .footprint_group(),
+            Decimal::from(5),
+            "sizing from the tape's magnitude moved a grouping the tick had settled",
+        );
+        assert_eq!(folded_profile_group(&app), Decimal::from(5));
     }
 
     /// A short answer teaches nothing about where the record starts. A venue

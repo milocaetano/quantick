@@ -354,6 +354,23 @@ pub struct ChartState {
     /// whether a layer that draws it is switched on, and a consumer sizing
     /// rows needs it before anything is drawn.
     price_grid: PriceGrid,
+    /// The first price this chart ever saw, and never a later one.
+    ///
+    /// The row-sizing rule needs the magnitude a market trades at as well as
+    /// the grid it trades on, and this is the chart's own answer to the first
+    /// half. Deliberately frozen at the first print rather than tracking the
+    /// last: the sizing it feeds re-buckets and re-folds every retained ladder
+    /// when it changes, so a number that drifted with the tape would refold a
+    /// long session repeatedly to say almost the same thing. The heatmap's
+    /// snapshot path is frozen the same way, by only auto-sizing while its
+    /// history is still empty.
+    ///
+    /// First *seen*, which is not first in time: paging older history in
+    /// through [`prepend_history`](Self::prepend_history) feeds prints that
+    /// predate this one and deliberately leaves it standing. A market's
+    /// magnitude is the same an hour earlier, and re-grouping a chart because
+    /// the trader scrolled left would be a refold with nothing to show for it.
+    tape_reference_price: Option<Decimal>,
     /// Whether the ladders are being accumulated at all. Off (the default)
     /// costs nothing per trade and holds nothing per bar — a capability
     /// nobody asked for must not tax every ingest. Enabling refolds the
@@ -379,6 +396,7 @@ impl ChartState {
             backfill_boundary: None,
             footprints: FootprintSeries::new(footprint_series::default_group()),
             price_grid: PriceGrid::new(),
+            tape_reference_price: None,
             footprint_enabled: false,
         }
     }
@@ -388,7 +406,7 @@ impl ChartState {
     pub fn ingest_backfill(&mut self, trades: &[Trade]) {
         self.trades.extend_from_slice(trades);
         for trade in trades {
-            self.price_grid.observe(trade.price);
+            self.observe_price(trade.price);
         }
         self.backfill_trade_count = self.trades.len();
         self.backfill_done = true;
@@ -427,7 +445,7 @@ impl ChartState {
         // future live print able to correct it — and on a paused replay or a
         // closed market that print never comes.
         for trade in trades {
-            self.price_grid.observe(trade.price);
+            self.observe_price(trade.price);
         }
         let mut combined = Vec::with_capacity(trades.len() + self.trades.len());
         combined.extend_from_slice(trades);
@@ -441,7 +459,7 @@ impl ChartState {
     /// Ingest one live trade, incrementally (no full rebuild).
     pub fn ingest_live(&mut self, trade: &Trade) {
         self.trades.push(trade.clone());
-        self.price_grid.observe(trade.price);
+        self.observe_price(trade.price);
         let closed = self.builder.push(trade);
         if self.footprint_enabled {
             self.footprints.observe(trade, closed.as_ref());
@@ -465,6 +483,19 @@ impl ChartState {
         }
         self.spec = spec;
         self.rebuild();
+    }
+
+    /// Fold one print into everything the chart learns from prices alone: the
+    /// grid the tape prints on, and the magnitude it prints at.
+    ///
+    /// One function rather than two calls at each ingest site, so a fourth
+    /// ingest path cannot pick up the grid and quietly forget the magnitude.
+    ///
+    /// Per-trade, and both halves are cheap — a modulo on the settled grid, and
+    /// an `Option` test that stores once per chart.
+    fn observe_price(&mut self, price: Decimal) {
+        self.price_grid.observe(price);
+        self.tape_reference_price.get_or_insert(price);
     }
 
     /// Replay every retained trade through a fresh builder for the current spec,
@@ -575,6 +606,20 @@ impl ChartState {
     #[must_use]
     pub fn partial_footprint(&self) -> Option<&BarFootprint> {
         self.footprints.partial()
+    }
+
+    /// The price magnitude this chart's tape trades at — the first price it
+    /// showed. See [the field](Self::tape_reference_price) for why the first
+    /// and not the latest.
+    ///
+    /// [`None`] only before the first print. Sizing rows needs this beside
+    /// [`tape_price_step`](Self::tape_price_step): a tick is a true fact about
+    /// an instrument and still a useless row on a market whose price dwarfs
+    /// it — BTCUSDT quotes in cents near $80k, and a profile at cent rows is
+    /// tens of thousands of them.
+    #[must_use]
+    pub fn tape_reference_price(&self) -> Option<Decimal> {
+        self.tape_reference_price
     }
 
     /// The price grid this chart's tape prints on, once enough prints have
@@ -881,6 +926,41 @@ mod tests {
             chart.ingest_live(&print_at(i as u64, price));
         }
         assert_eq!(chart.tape_price_step(), Some(dec("5")));
+    }
+
+    #[test]
+    fn a_chart_names_the_price_its_tape_trades_at_and_then_holds_still() {
+        // The other half of sizing a row. A tick is a true fact about an
+        // instrument and still a useless row where the price dwarfs it, so the
+        // rule needs the magnitude too — and it has to hold still, because
+        // every change to it re-buckets and re-folds every retained ladder.
+        let mut chart = ChartState::new(BarSpec::Tick(1000));
+        assert_eq!(chart.tape_reference_price(), None, "nothing has printed");
+
+        chart.ingest_live(&print_at(0, "80000"));
+        assert_eq!(chart.tape_reference_price(), Some(dec("80000")));
+
+        // A session that runs to a very different price is still the same
+        // market at the same magnitude, and re-grouping it mid-session would
+        // be a refold that says almost nothing new.
+        for (i, price) in ["81000", "84000", "88000"].iter().enumerate() {
+            chart.ingest_live(&print_at(i as u64 + 1, price));
+        }
+        assert_eq!(
+            chart.tape_reference_price(),
+            Some(dec("80000")),
+            "the magnitude drifted with the tape instead of holding at the first print",
+        );
+    }
+
+    #[test]
+    fn backfilled_history_names_the_price_as_well_as_the_grid() {
+        // History arrives as one batch before the first live print, and it is
+        // what a chart's very first screen is drawn from. A magnitude learned
+        // only from live prints would size that screen from nothing.
+        let mut chart = ChartState::new(BarSpec::Tick(1000));
+        chart.ingest_backfill(&[print_at(0, "140000"), print_at(1, "140005")]);
+        assert_eq!(chart.tape_reference_price(), Some(dec("140000")));
     }
 
     #[test]
