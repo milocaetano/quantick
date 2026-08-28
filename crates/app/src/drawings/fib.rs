@@ -16,52 +16,92 @@ use smallvec::SmallVec;
 
 use super::{
     DrawContext, Drawing, DrawingPayload, DrawingStyle, FIB_LABEL_OFFSET_PX, FIB_LABEL_SIZE_PX,
-    IconDots, IconStrokes, PresetHost, ToolFamily, distance_to_segment, drawing_stroke,
+    IconDots, IconLetter, IconStrokes, PresetHost, ToolFamily, distance_to_segment, drawing_stroke,
 };
 
-/// The retracement icon, drawn as the gesture it is: the ladder of levels
-/// with the two-anchor leg pulled across it, and the leg's two ends marked.
+/// Centre-x of the letter in both icons — one column, so on two stacked rail
+/// buttons the eye finds the letter in the same place and only the letter
+/// changes.
+const FIB_LETTER_X: f32 = 0.15;
+/// Height of the letter in both icons, as a fraction of the glyph box.
+/// Shared for the same reason: an `R` and a `P` at one size are a choice
+/// between two tools, while two letters at two sizes read as two unrelated
+/// marks.
+const FIB_LETTER_HEIGHT: f32 = 0.46;
+/// The leg the retracement was dragged across, named once: the strokes draw
+/// it and the dots mark its ends, so nudging the glyph cannot leave the
+/// anchors behind on the old line.
 ///
-/// The marked ends are the part that carries the meaning. Without them the
-/// glyph is a stack of lines with a slash through it — which is also what an
-/// extension looks like, and what the `ROWS` glyph both tools used to share
-/// looked like. Two dots against three is how the eye tells the two Fib
-/// tools apart in the flyout at a glance, which is exactly how every drawing
-/// platform draws them.
-/// The leg itself, named once: the strokes draw it and the dots mark its
-/// ends, so nudging the glyph cannot leave the anchors behind on the old line.
-const RETRACEMENT_LEG: &[(f32, f32)] = &[(0.06, 0.84), (0.60, 0.16)];
+/// Its two ends are the 0 and the 1 of the level list — that is why they
+/// carry a dot and no line of their own.
+const RETRACEMENT_LEG: &[(f32, f32)] = &[(0.36, 0.88), (0.84, 0.22)];
 
+/// The retracement icon, drawn as the gesture is drawn on a chart: the leg
+/// across the move, its ends marked, and the levels hanging **between** those
+/// ends — inside the move, which is exactly what a retracement measures.
+///
+/// The levels' side of the leg is the whole difference from
+/// [`FIB_EXTENSION_ICON`], where the same lines sit *beyond* the move. Both
+/// then say in one picture what the tool does with the leg it was given, and
+/// the letter in the corner names it for the trader who would rather read
+/// than compare.
 pub(super) const FIB_RETRACEMENT_ICON: IconStrokes = &[
-    &[(0.30, 0.16), (0.98, 0.16)],
-    &[(0.30, 0.50), (0.98, 0.50)],
-    &[(0.30, 0.84), (0.98, 0.84)],
+    &[(0.52, 0.42), (0.96, 0.42)],
+    &[(0.52, 0.58), (0.96, 0.58)],
+    &[(0.52, 0.74), (0.96, 0.74)],
     RETRACEMENT_LEG,
 ];
 
-/// The two ends of the leg the retracement is dragged across. They sit on the
-/// outer levels because that is where they really are: the anchors *are* 0
-/// and 1, and every other line hangs between them.
+/// The two ends of the leg the retracement is dragged across. They carry no
+/// line of their own because they *are* 0 and 1, and every level the icon
+/// draws hangs between them.
 pub(super) const FIB_RETRACEMENT_DOTS: IconDots = RETRACEMENT_LEG;
 
-/// The extension icon: the same ladder under the *three*-anchor path —
-/// impulse, pullback, projection origin — because that is the gesture, and
-/// the third dot is what says so.
-/// The extension's three-anchor path, named once for the same reason as
-/// [`RETRACEMENT_LEG`].
-const EXTENSION_LEG: &[(f32, f32)] = &[(0.04, 0.84), (0.34, 0.16), (0.62, 0.56)];
+/// `R` for retracement — the half of the pair that measures *back into* a
+/// move already made. It takes the top-left corner because that is the one
+/// this icon's own drawing leaves empty.
+pub(super) const FIB_RETRACEMENT_LETTER: IconLetter = IconLetter {
+    text: "R",
+    at: (FIB_LETTER_X, 0.26),
+    height: FIB_LETTER_HEIGHT,
+};
 
+/// The extension's three-anchor path, named once for the same reason as
+/// [`RETRACEMENT_LEG`]: impulse up, pullback down, and the origin the
+/// projection hangs from.
+const EXTENSION_LEG: &[(f32, f32)] = &[(0.44, 0.92), (0.68, 0.64), (0.88, 0.80)];
+
+/// The extension icon: the same rungs as the retracement, moved **above** the
+/// leg — price the move has not reached yet, which is what a projection is.
+/// The three-anchor path under them is the gesture, and the third dot is
+/// what says so.
+///
+/// Neither icon reaches into the box's top-right corner: a pinned tool wears
+/// the favorites star there (`FAVORITE_BADGE_INSET_PX`), and an anchor under
+/// a star is an anchor the trader cannot see.
 pub(super) const FIB_EXTENSION_ICON: IconStrokes = &[
-    &[(0.30, 0.16), (0.98, 0.16)],
-    &[(0.30, 0.50), (0.98, 0.50)],
-    &[(0.30, 0.84), (0.98, 0.84)],
+    &[(0.52, 0.20), (0.96, 0.20)],
+    &[(0.52, 0.33), (0.96, 0.33)],
+    &[(0.52, 0.46), (0.96, 0.46)],
     EXTENSION_LEG,
 ];
 
 /// The three anchors of the trend-based extension — impulse, pullback and the
-/// origin the projection hangs from. Three dots against two is what tells the
-/// two Fib rows apart in the flyout at icon size.
+/// origin the projection hangs from. Three dots against two is a true
+/// difference, but one the eye has to count.
 pub(super) const FIB_EXTENSION_DOTS: IconDots = EXTENSION_LEG;
+
+/// `P` for projection, not `E` for extension: the letter has to say what the
+/// tool does at a glance, and what this one does is throw the measured leg
+/// *forward*, past the move, onto price that has not traded yet. `E` beside
+/// `R` names the menu entry; `P` beside `R` names the difference. It takes
+/// the bottom-left corner — the empty one here, since this icon's levels are
+/// at the top.
+pub(super) const FIB_EXTENSION_LETTER: IconLetter = IconLetter {
+    text: "P",
+    at: (FIB_LETTER_X, 0.72),
+    height: FIB_LETTER_HEIGHT,
+};
 
 /// The one rail family both Fib tools declare, shared here so the two
 /// members can never drift onto different family ids.
@@ -71,6 +111,7 @@ pub(super) const FIB_FAMILY: ToolFamily = ToolFamily {
     icon: egui_phosphor::regular::ROWS,
     icon_strokes: FIB_RETRACEMENT_ICON,
     icon_dots: FIB_RETRACEMENT_DOTS,
+    icon_letter: Some(FIB_RETRACEMENT_LETTER),
 };
 
 /// Ratios closer than this are the same level; a duplicate is rejected.
@@ -1168,6 +1209,144 @@ mod tests {
 
     fn close(left: f64, right: f64) -> bool {
         (left - right).abs() < EPS
+    }
+
+    /// Whether a stroke of `half_width` laid between `a` and `b` reaches
+    /// into `rect` — the separating-axis test for a capsule against a box,
+    /// conservative at the corners, which is the right side to be wrong on
+    /// for a guard.
+    fn stroke_touches(a: egui::Pos2, b: egui::Pos2, half_width: f32, rect: egui::Rect) -> bool {
+        let grown = rect.expand(half_width);
+        let outside_all = |pick: fn(egui::Pos2) -> f32, bound: f32, above: bool| {
+            let (pa, pb) = (pick(a), pick(b));
+            if above {
+                pa > bound && pb > bound
+            } else {
+                pa < bound && pb < bound
+            }
+        };
+        if outside_all(|p| p.x, grown.left(), false)
+            || outside_all(|p| p.x, grown.right(), true)
+            || outside_all(|p| p.y, grown.top(), false)
+            || outside_all(|p| p.y, grown.bottom(), true)
+        {
+            return false;
+        }
+        let along = b - a;
+        let normal = egui::vec2(-along.y, along.x);
+        if normal.length() <= f32::EPSILON {
+            return true;
+        }
+        let normal = normal.normalized();
+        let mut lowest = f32::MAX;
+        let mut highest = f32::MIN;
+        for corner in [
+            grown.left_top(),
+            grown.right_top(),
+            grown.left_bottom(),
+            grown.right_bottom(),
+        ] {
+            let side = (corner - a).dot(normal);
+            lowest = lowest.min(side);
+            highest = highest.max(side);
+        }
+        !(lowest > 0.0 || highest < 0.0)
+    }
+
+    /// The letter is readable only because nothing else is painted where it
+    /// lands — and *painted* is the word that matters. An earlier guard
+    /// compared the icon's stroke and anchor coordinates against a margin,
+    /// which is the geometry's centre line: a dot is drawn as a disc a tenth
+    /// of the box wide, so an anchor whose centre cleared the margin still
+    /// put ink a long way over it.
+    ///
+    /// This one measures what the painter measures: egui lays out the real
+    /// glyph at the size the icon asks for, the dots and strokes are grown
+    /// by the radius and width `paint_vector_icon` gives them, and the two
+    /// are held apart. Both sizes the icon is painted at are checked,
+    /// because the stroke width is in pixels and does not shrink with the
+    /// box — the flyout's smaller icon is the tighter fit, not the safer one.
+    #[test]
+    fn nothing_the_fib_icons_paint_reaches_the_letter_beside_it() {
+        let ctx = egui::Context::default();
+        // Fonts are built on the first frame; `layout_no_wrap` before one has
+        // nothing to measure with.
+        let _ = ctx.run(egui::RawInput::default(), |_| {});
+        for box_px in [
+            crate::widgets::TOOLRAIL_ICON.glyph,
+            crate::toolrail::FLYOUT_ICON_BOX_PX,
+        ] {
+            let at = |(x, y): (f32, f32)| egui::pos2(x * box_px, y * box_px);
+            let dot_radius = box_px * crate::widgets::ICON_DOT_RADIUS_RATIO;
+            let stroke_half = crate::widgets::ICON_STROKE_WIDTH_PX / 2.0;
+            for (name, strokes, dots, letter) in [
+                (
+                    "retracement",
+                    FIB_RETRACEMENT_ICON,
+                    FIB_RETRACEMENT_DOTS,
+                    FIB_RETRACEMENT_LETTER,
+                ),
+                (
+                    "extension",
+                    FIB_EXTENSION_ICON,
+                    FIB_EXTENSION_DOTS,
+                    FIB_EXTENSION_LETTER,
+                ),
+            ] {
+                let galley = ctx.fonts(|fonts| {
+                    fonts.layout_no_wrap(
+                        letter.text.to_owned(),
+                        egui::FontId::proportional(box_px * letter.height),
+                        egui::Color32::WHITE,
+                    )
+                });
+                let letter_rect = egui::Rect::from_center_size(at(letter.at), galley.size());
+                for polyline in strokes {
+                    for pair in polyline.windows(2) {
+                        assert!(
+                            !stroke_touches(at(pair[0]), at(pair[1]), stroke_half, letter_rect),
+                            "{name}: at {box_px} px the stroke {:?}-{:?} runs into the letter",
+                            pair[0],
+                            pair[1]
+                        );
+                    }
+                }
+                for dot in dots {
+                    assert!(
+                        !letter_rect.expand(dot_radius).contains(at(*dot)),
+                        "{name}: at {box_px} px the anchor {dot:?} lands on the letter"
+                    );
+                }
+                // The glyph box is not a clip rect — the button's hit target
+                // is what the neighbouring buttons leave free — so that is
+                // what the letter has to stay inside of.
+                let margin = (crate::widgets::TOOLRAIL_ICON.hit - box_px) / 2.0;
+                let button = egui::Rect::from_min_size(
+                    egui::pos2(-margin, -margin),
+                    egui::Vec2::splat(box_px + 2.0 * margin),
+                );
+                assert!(
+                    button.contains_rect(letter_rect),
+                    "{name}: at {box_px} px the letter spills out of its button"
+                );
+            }
+        }
+    }
+
+    /// Each letter takes the corner its *own* drawing leaves empty, which is
+    /// why the retracement's sits high and the projection's low: the rungs
+    /// are what moved between the two icons, and the letter follows the free
+    /// space rather than a fixed corner.
+    #[test]
+    fn the_two_fib_letters_take_opposite_corners() {
+        assert!(
+            FIB_RETRACEMENT_LETTER.at.1 < 0.5,
+            "the R sits high, above the rungs hanging inside the move"
+        );
+        assert!(
+            FIB_EXTENSION_LETTER.at.1 > 0.5,
+            "the P sits low, under the rungs projected past the move"
+        );
     }
 
     /// A retracement runs *backwards* along the move: 0 % at the end of it,

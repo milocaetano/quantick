@@ -31,6 +31,7 @@ pub(super) const BRUSH_FAMILY: ToolFamily = ToolFamily {
     icon: icons::SCRIBBLE,
     icon_strokes: &[],
     icon_dots: &[],
+    icon_letter: None,
 };
 
 impl DrawingToolImpl for Brush {

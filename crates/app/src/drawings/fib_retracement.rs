@@ -27,6 +27,9 @@ impl DrawingToolImpl for FibRetracement {
     fn icon_dots(&self) -> super::IconDots {
         fib::FIB_RETRACEMENT_DOTS
     }
+    fn icon_letter(&self) -> Option<super::IconLetter> {
+        Some(fib::FIB_RETRACEMENT_LETTER)
+    }
     fn hover_text(&self) -> &'static str {
         "Fib retracement - click two points or drag (F)"
     }
