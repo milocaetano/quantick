@@ -26,7 +26,7 @@ use quantick_strategy::{
     StrategyParams,
 };
 
-use crate::audio::AlertSound;
+use crate::audio::{AlertSound, Cue};
 
 /// Environment override for the bank's location.
 pub const STRATEGIES_ENV: &str = "QUANTICK_STRATEGY_PRESETS";
@@ -60,6 +60,16 @@ pub const MIN_ALARM_COOLDOWN_SECS: u32 = 1;
 /// Longest cooldown a preset may ask for: an hour of silence is already far
 /// past any session's usefulness, and it bounds a hand-edited file.
 pub const MAX_ALARM_COOLDOWN_SECS: u32 = 3_600;
+/// Shortest cut a preset may ask for. Zero seconds of a sound is no alarm,
+/// and the field's other spelling of "nothing to cut" is to leave it out.
+pub const MIN_ALARM_PLAY_SECS: u32 = 1;
+/// Longest cut a preset may ask for. Ten minutes outlasts every clip in the
+/// library several times over; past it a cap is not a cap.
+pub const MAX_ALARM_PLAY_SECS: u32 = 600;
+/// The cut the dialog proposes when the trader ticks "stop after": long
+/// enough for a nature clip to be recognised, short enough that the tape
+/// is audible again before the next bar.
+pub const DEFAULT_ALARM_PLAY_SECS: u32 = 5;
 
 /// One bank row, as it goes to disk.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -123,9 +133,17 @@ pub struct StoredPreset {
     /// With `alarm_repeat = "cooldown"`, the seconds between sounds.
     #[serde(default = "default_alarm_cooldown")]
     pub alarm_cooldown_secs: u32,
-    /// Which platform sound plays. See [`AlertSound`].
+    /// Which sound plays — a platform sound or a library clip, by its
+    /// stored token. See [`AlertSound`].
     #[serde(default = "default_alarm_sound")]
     pub alarm_sound: String,
+    /// How many seconds of the sound play before it is cut; absent, the
+    /// sound plays whole. Meaningful for the library's clips, some of
+    /// which run for minutes; a platform beep is over before any cut.
+    /// Absent rather than `0` so a row written before the field existed
+    /// reads as what it always did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alarm_play_secs: Option<u32>,
     /// Whether the instance only watches: `true` places no orders at all.
     /// See [`Execution::AlarmOnly`].
     #[serde(default)]
@@ -137,7 +155,8 @@ pub struct StoredPreset {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AlarmSetup {
     pub params: AlarmParams,
-    pub sound: AlertSound,
+    /// What plays, and for how long.
+    pub cue: Cue,
 }
 
 /// Everything one bank row compiles into.
@@ -182,6 +201,7 @@ impl StoredPreset {
             alarm_repeat: once_per_bar(),
             alarm_cooldown_secs: default_alarm_cooldown(),
             alarm_sound: default_alarm_sound(),
+            alarm_play_secs: None,
             alarm_only: false,
         }
     }
@@ -301,9 +321,18 @@ impl StoredPreset {
             _ => return None,
         };
         let sound = AlertSound::from_token(&self.alarm_sound)?;
+        let cue = match self.alarm_play_secs {
+            None => Cue::whole(sound),
+            Some(secs) => {
+                if !(MIN_ALARM_PLAY_SECS..=MAX_ALARM_PLAY_SECS).contains(&secs) {
+                    return None;
+                }
+                Cue::cut_after(sound, secs)
+            }
+        };
         Some(Some(AlarmSetup {
             params: AlarmParams { when, repeat },
-            sound,
+            cue,
         }))
     }
 }
@@ -650,6 +679,7 @@ mod tests {
         saved.alarm_repeat = "cooldown".to_owned();
         saved.alarm_cooldown_secs = 45;
         saved.alarm_sound = AlertSound::Critical.token().to_owned();
+        saved.alarm_play_secs = Some(5);
         saved.alarm_only = true;
 
         let mut bank = StrategyBank::load_from(&path);
@@ -673,7 +703,7 @@ mod tests {
             alarm.params.repeat,
             RepeatPolicy::Cooldown { millis: 45_000 }
         );
-        assert_eq!(alarm.sound, AlertSound::Critical);
+        assert_eq!(alarm.cue, Cue::cut_after(AlertSound::Critical, 5));
         assert_eq!(compiled.params.execution, Execution::AlarmOnly);
         std::fs::remove_file(&path).ok();
     }
@@ -700,7 +730,7 @@ mod tests {
 
         let mut unknown_sound = StoredPreset::starting_point(Side::Buy);
         unknown_sound.alarm = true;
-        unknown_sound.alarm_sound = "foghorn".to_owned();
+        unknown_sound.alarm_sound = "klaxon".to_owned();
         assert!(unknown_sound.to_kernel().is_none());
 
         for token in ["", "sometimes", "SHARE"] {
@@ -714,6 +744,62 @@ mod tests {
             bad_repeat.alarm_repeat = token.to_owned();
             assert!(bad_repeat.to_kernel().is_none(), "alarm_repeat={token:?}");
         }
+    }
+
+    /// The cut has a floor and a ceiling like every other alarm number:
+    /// zero seconds of a sound is no alarm, and past ten minutes a cap is
+    /// not a cap. Outside them the row is refused whole; absent, the sound
+    /// plays whole, which is what every row written before the field
+    /// existed asks for.
+    #[test]
+    fn a_play_length_outside_its_range_voids_the_preset() {
+        let mut zero = StoredPreset::starting_point(Side::Buy);
+        zero.alarm = true;
+        zero.alarm_play_secs = Some(0);
+        assert!(zero.to_kernel().is_none(), "zero seconds is no alarm");
+
+        let mut too_long = StoredPreset::starting_point(Side::Buy);
+        too_long.alarm = true;
+        too_long.alarm_play_secs = Some(MAX_ALARM_PLAY_SECS + 1);
+        assert!(too_long.to_kernel().is_none(), "past the ceiling");
+
+        let mut whole = StoredPreset::starting_point(Side::Buy);
+        whole.alarm = true;
+        whole.alarm_play_secs = None;
+        let alarm = whole.to_kernel().expect("compiles").alarm.expect("on");
+        assert_eq!(alarm.cue.length, crate::audio::PlayLength::Whole);
+    }
+
+    /// A library clip is named in a preset by its file stem, and compiles
+    /// to the clip — the whole reason the tokens are the stems. The cut
+    /// rides along, and a row that stores no cut serialises without the
+    /// field rather than with a zero a future reader would have to
+    /// interpret.
+    #[test]
+    fn a_library_clip_is_a_preset_sound_like_any_other() {
+        let path = scratch("clip-roundtrip");
+        let mut saved = StoredPreset::starting_point(Side::Sell);
+        saved.alarm = true;
+        saved.alarm_sound = "rainforest".to_owned();
+        saved.alarm_play_secs = Some(8);
+        let mut bank = StrategyBank::load_from(&path);
+        bank.save("rainforest sell", saved.clone());
+        let reloaded = StrategyBank::load_from(&path);
+        assert_eq!(reloaded.get("rainforest sell"), Some(&saved));
+        let alarm = saved.to_kernel().expect("compiles").alarm.expect("on");
+        let expected = AlertSound::from_token("rainforest").expect("the clip is shipped");
+        assert!(expected.can_be_cut());
+        assert_eq!(alarm.cue, Cue::cut_after(expected, 8));
+
+        let mut uncut = StoredPreset::starting_point(Side::Sell);
+        uncut.alarm = true;
+        uncut.alarm_sound = "short-beep".to_owned();
+        let text = toml::to_string(&uncut).expect("serialises");
+        assert!(
+            !text.contains("alarm_play_secs"),
+            "no cut, no field: {text}"
+        );
+        let _ = std::fs::remove_file(path);
     }
 
     /// An instance that places no orders and sounds no alarm does nothing
@@ -757,6 +843,6 @@ mod tests {
             .expect("the alarm is on");
         assert_eq!(alarm.params.when, AlarmWhen::OnClose);
         assert_eq!(alarm.params.repeat, RepeatPolicy::OncePerBar);
-        assert_eq!(alarm.sound, AlertSound::default());
+        assert_eq!(alarm.cue, Cue::whole(AlertSound::default()));
     }
 }

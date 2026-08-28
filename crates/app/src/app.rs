@@ -675,6 +675,12 @@ enum StrategyDemoMode {
     /// trader and useless for a capture — so `popup` alone can never
     /// photograph it.
     AlarmPopup,
+    /// The same dialog with the **sound picker dropped open** — the three
+    /// headings and the thirty-two names under them. A combo box's list
+    /// exists only while it is open, and opening it is a click no scripted
+    /// run has a hand for, so the scene asks egui to open it on the frame
+    /// the dialog appears.
+    AlarmSounds,
     /// An **alarm-only** instance armed on the region, carrying a standing
     /// preview mark: the badge that says "this places nothing" and the
     /// provisional label, in one frame. Both are states a real tape reaches
@@ -1144,6 +1150,10 @@ pub struct QuantickApp {
     /// arming dialog over it (`popup`), for validation runs. Consumed once
     /// the chart has bars enough, like the drawings demo.
     pending_strategy_demo: Option<StrategyDemoMode>,
+    /// One-shot: the next draw of the arming dialog drops the sound picker
+    /// open. Set by [`StrategyDemoMode::AlarmSounds`], consumed by
+    /// [`Self::draw_alarm_controls`] on the first frame it draws the box.
+    pending_alarm_sound_picker: bool,
     /// Where the scripted press landed, until its release goes out.
     ///
     /// A real right-click spans frames: the button goes down, the app draws,
@@ -1473,9 +1483,10 @@ impl QuantickApp {
                 crate::strategy_presets::StrategyBank::default_path(),
             ),
             strategy_popup: None,
-            alerts: Box::new(crate::audio::PlatformAlerts),
+            alerts: Box::new(crate::audio::Speaker::default()),
             alert_failure: None,
             pending_strategy_demo: None,
+            pending_alarm_sound_picker: false,
             scripted_indicator_settings: false,
             scripted_candle_width: None,
             scripted_pan_px: None,
@@ -1808,6 +1819,7 @@ impl QuantickApp {
                     "1" | "armed" => Some(StrategyDemoMode::Armed),
                     "popup" => Some(StrategyDemoMode::Popup),
                     "alarm" => Some(StrategyDemoMode::AlarmPopup),
+                    "alarm-sounds" => Some(StrategyDemoMode::AlarmSounds),
                     "alarm-badge" => Some(StrategyDemoMode::AlarmBadge),
                     _ => None,
                 });
@@ -2467,10 +2479,14 @@ impl QuantickApp {
         });
     }
 
-    /// Ask the platform for its attention sound, and report honestly when it
-    /// has none rather than letting a client believe it was heard.
+    /// Ask for the platform's attention sound, through the same sink the
+    /// alarms use, and report honestly when it could not be made rather
+    /// than letting a client believe it was heard.
     pub(crate) fn sound_agent_alert(&mut self) -> Option<String> {
-        crate::audio::alert().err().map(ToOwned::to_owned)
+        self.alerts
+            .play(&[crate::audio::Cue::default()])
+            .err()
+            .map(ToOwned::to_owned)
     }
 
     /// One pane, by tab position and side — the mutable half of
@@ -9319,7 +9335,7 @@ impl QuantickApp {
         side: pane::PaneSide,
         form: &mut crate::strategy_presets::StoredPreset,
     ) {
-        use crate::audio::AlertSound;
+        use crate::audio::{AlertSound, Cue, SoundCategory};
         use crate::strategy_presets as presets;
 
         ui.checkbox(&mut form.alarm, "alarm on signal bar")
@@ -9413,30 +9429,102 @@ impl QuantickApp {
             }
         });
 
+        let current = AlertSound::from_token(&form.alarm_sound).unwrap_or_default();
         ui.horizontal(|ui| {
             ui.label("sound");
-            let current = AlertSound::from_token(&form.alarm_sound).unwrap_or_default();
-            egui::ComboBox::from_id_salt("strategy_alarm_sound")
+            const SOUND_PICKER_ID: &str = "strategy_alarm_sound";
+            /// The shortest the sound list is allowed to be, in points:
+            /// a heading and two names, enough to see that it scrolls.
+            const SOUND_PICKER_MIN_HEIGHT: f32 = 72.0;
+            if std::mem::take(&mut self.pending_alarm_sound_picker) {
+                // The capture hook's one click: open the list the way the
+                // button's own click does. The popup id is the widget id
+                // plus "popup", and the widget id is the salt *as an `Id`*
+                // under this `Ui` — how `ComboBox::from_id_salt` derives
+                // it. The one private detail this hook depends on; a
+                // capture that opens nothing is the symptom if egui moves
+                // it.
+                let button_id = ui.make_persistent_id(egui::Id::new(SOUND_PICKER_ID));
+                ui.memory_mut(|memory| memory.open_popup(button_id.with("popup")));
+            }
+            // The list scrolls inside the room under the button. egui flips
+            // a combo above its button only from the size it remembered
+            // last frame, and a thirty-two-row list opened from the last
+            // rows of a dialog docked at the window's foot otherwise runs
+            // off the screen; a shorter list that scrolls is the honest
+            // answer, and the headings keep the scroll short.
+            let room_below = ui.ctx().screen_rect().bottom()
+                - ui.next_widget_position().y
+                - ui.spacing().interact_size.y
+                - ui.spacing().menu_margin.sum().y;
+            let list_height = room_below.clamp(SOUND_PICKER_MIN_HEIGHT, ui.spacing().combo_height);
+            egui::ComboBox::from_id_salt(SOUND_PICKER_ID)
                 .selected_text(current.label())
+                .height(list_height)
                 .show_ui(ui, |ui| {
-                    for sound in AlertSound::ALL {
-                        if ui
-                            .selectable_label(sound == current, sound.label())
-                            .clicked()
-                        {
-                            form.alarm_sound = sound.token().to_owned();
+                    // Grouped under the catalogue's headings: five system
+                    // beeps, then the clips that behave like alarms, then
+                    // the ones that behave like a room. A flat list of
+                    // thirty-two names would make the trader read every
+                    // row to find the phone.
+                    for category in SoundCategory::ALL {
+                        ui.label(egui::RichText::new(category.label()).small().weak());
+                        for sound in AlertSound::in_category(category) {
+                            if ui
+                                .selectable_label(sound == current, sound.label())
+                                .clicked()
+                            {
+                                form.alarm_sound = sound.token().to_owned();
+                            }
                         }
                     }
                 });
             if ui
                 .button("Test")
-                .on_hover_text("play it now, so the sound is chosen with the ears")
+                .on_hover_text(
+                    "play it now, cut where the row below says, so the sound is chosen \
+                     with the ears",
+                )
                 .clicked()
             {
-                // Same door as a real alarm, so an audition that cannot be
-                // heard reports itself exactly as a missed signal would.
-                let outcome = self.alerts.play(current);
+                // Same door as a real alarm, and the same cue — length
+                // included — so an audition that cannot be heard reports
+                // itself exactly as a missed signal would, and one that can
+                // is what the signal will sound like.
+                let cue = match form.alarm_play_secs {
+                    Some(secs) => Cue::cut_after(current, secs),
+                    None => Cue::whole(current),
+                };
+                let outcome = self.alerts.play(&[cue]);
                 self.report_alert_attempt(outcome);
+            }
+        });
+
+        ui.horizontal(|ui| {
+            let mut cut = form.alarm_play_secs.is_some();
+            if ui
+                .checkbox(&mut cut, "stop after")
+                .on_hover_text(
+                    "cut the sound here rather than letting it run to its end — a nature \
+                     clip runs for minutes, and an alarm that outstays its news is one the \
+                     trader learns to talk over. Off, the sound plays whole.",
+                )
+                .changed()
+            {
+                form.alarm_play_secs = cut.then_some(presets::DEFAULT_ALARM_PLAY_SECS);
+            }
+            if let Some(secs) = form.alarm_play_secs.as_mut() {
+                ui.add(
+                    egui::DragValue::new(secs)
+                        .range(presets::MIN_ALARM_PLAY_SECS..=presets::MAX_ALARM_PLAY_SECS),
+                );
+                ui.label("s");
+                if !current.can_be_cut() {
+                    // Honest rather than silent: the cut is stored and
+                    // applies the moment a clip is picked, but this sound
+                    // is one beep the operating system plays whole.
+                    ui.weak("(a system sound is one beep — the cut applies to the clips)");
+                }
             }
         });
 
@@ -9451,45 +9539,48 @@ impl QuantickApp {
         }
     }
 
-    /// Play the alarm sounds every tab's armed instances asked for this
+    /// Play the alarm cues every tab's armed instances asked for this
     /// frame, and empty their queues.
     ///
     /// Every tab, not only the active one: a tab the trader is not looking
     /// at keeps its feed running and its instances judging, and an alarm
     /// exists precisely to be heard when the eyes are elsewhere.
     ///
-    /// One sound per *distinct* sound per frame per tab. The kernel's repeat
-    /// rule has already thinned each instance's stream to one per bar (or
-    /// one per cooldown); this is the second, blunter guard, for the frame
-    /// that ingested a burst of prints and closed several bars at once —
-    /// four identical beeps stacked into one instant are one noise, not four
-    /// alarms.
+    /// One cue per *distinct* cue per frame, across every tab. The kernel's
+    /// repeat rule has already thinned each instance's stream to one per
+    /// bar (or one per cooldown); this is the second, blunter guard, for
+    /// the frame that ingested a burst of prints and closed several bars at
+    /// once — four identical beeps stacked into one instant are one noise,
+    /// not four alarms.
     ///
-    /// Deduplicating by *sound* rather than collapsing to one is the whole
-    /// point of letting a preset choose one: a trader who gave two regions
-    /// two sounds did it to tell them apart, and swallowing the second
-    /// because it shared a frame with the first would hide a signal and
-    /// leave no trace that it had. The set is small and fixed, so this is
-    /// bounded by [`crate::audio::AlertSound::ALL`] however busy the tape.
+    /// Deduplicating by *cue* rather than collapsing to one is the whole
+    /// point of letting a preset choose a sound: a trader who gave two
+    /// regions two sounds did it to tell them apart, and swallowing the
+    /// second because it shared a frame with the first would hide a signal
+    /// and leave no trace that it had. The frame's cues go to the sink as
+    /// one batch, which plays them in order — so the second is heard after
+    /// the first rather than instead of it. The set of sounds is small and
+    /// fixed, so this is bounded by the catalogue however busy the tape.
+    ///
+    /// Per frame, but cheap: the walk is over a handful of tabs whose
+    /// queues are empty on every frame but the one a signal happened on,
+    /// and the sink is only asked when something is queued.
     fn play_pending_alarms(&mut self) {
-        for index in 0..self.tabs.len() {
-            if self.tabs[index].pending_alarm_sounds.is_empty() {
-                continue;
-            }
-            let mut queued = std::mem::take(&mut self.tabs[index].pending_alarm_sounds);
-            // Order of first request, duplicates dropped — `dedup` alone
-            // would only collapse neighbours.
-            let mut distinct: Vec<crate::audio::AlertSound> = Vec::new();
-            for sound in queued.drain(..) {
-                if !distinct.contains(&sound) {
-                    distinct.push(sound);
+        // Order of first request, duplicates dropped — `dedup` alone would
+        // only collapse neighbours.
+        let mut distinct: Vec<crate::audio::Cue> = Vec::new();
+        for tab in &mut self.tabs {
+            for cue in tab.pending_alarm_sounds.drain(..) {
+                if !distinct.contains(&cue) {
+                    distinct.push(cue);
                 }
             }
-            for sound in distinct {
-                let outcome = self.alerts.play(sound);
-                self.report_alert_attempt(outcome);
-            }
         }
+        if distinct.is_empty() {
+            return;
+        }
+        let outcome = self.alerts.play(&distinct);
+        self.report_alert_attempt(outcome);
     }
 
     /// Record whether a sound actually reached the trader.
@@ -9595,7 +9686,7 @@ impl QuantickApp {
                     preset: preset_label,
                     armed,
                     alarm: alarm.map(|setup| quantick_strategy::SignalAlarm::new(setup.params)),
-                    sound: alarm.map(|setup| setup.sound).unwrap_or_default(),
+                    cue: alarm.map(|setup| setup.cue).unwrap_or_default(),
                     mark: crate::strategy_anchors::AlarmMark::Quiet,
                 })
         };
@@ -9952,12 +10043,17 @@ impl QuantickApp {
         // it owns on screen.
         if matches!(
             mode,
-            StrategyDemoMode::AlarmPopup | StrategyDemoMode::AlarmBadge
+            StrategyDemoMode::AlarmPopup
+                | StrategyDemoMode::AlarmSounds
+                | StrategyDemoMode::AlarmBadge
         ) {
             form.alarm = true;
             form.alarm_when = "share".to_owned();
             form.alarm_repeat = "cooldown".to_owned();
-            form.alarm_sound = crate::audio::AlertSound::Exclamation.token().to_owned();
+            // A library clip with a cut, so the row that exists only for a
+            // clip is on screen too.
+            form.alarm_sound = "cuckoo".to_owned();
+            form.alarm_play_secs = Some(crate::strategy_presets::DEFAULT_ALARM_PLAY_SECS);
         }
         match mode {
             StrategyDemoMode::Armed => {
@@ -9991,7 +10087,10 @@ impl QuantickApp {
                 // selection so the badge is the thing on screen.
                 pane.drawings.select(None);
             }
-            StrategyDemoMode::Popup | StrategyDemoMode::AlarmPopup => {
+            StrategyDemoMode::Popup
+            | StrategyDemoMode::AlarmPopup
+            | StrategyDemoMode::AlarmSounds => {
+                self.pending_alarm_sound_picker = mode == StrategyDemoMode::AlarmSounds;
                 self.strategy_popup = Some(StrategyPopup {
                     tab: self.active_tab,
                     side: pane::PaneSide::Flow,
@@ -14123,6 +14222,9 @@ crosshair = false
         // rather than about the wall clock a cooldown would consult.
         form.alarm_repeat = "once_per_bar".to_owned();
         form.alarm_sound = crate::audio::AlertSound::Critical.token().to_owned();
+        // A cut, so the recorder can show the length travelled with the
+        // sound all the way from the form to the sink.
+        form.alarm_play_secs = Some(3);
         form.alarm_only = true;
         app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "alarm".to_owned())
             .expect("the alarm form compiles and the drawing exists");
@@ -14159,9 +14261,13 @@ crosshair = false
         print(&mut app, &mut id, "107");
         app.play_pending_alarms();
         assert_eq!(
-            recorder.sounds(),
-            vec![crate::audio::AlertSound::Critical],
-            "past the share the forming bar alarms, in the preset's own sound"
+            recorder.cues(),
+            vec![crate::audio::Cue::cut_after(
+                crate::audio::AlertSound::Critical,
+                3
+            )],
+            "past the share the forming bar alarms, in the preset's own sound, cut \
+             where the preset said"
         );
         let instance = app
             .active_tab()
