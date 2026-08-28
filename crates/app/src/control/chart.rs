@@ -44,6 +44,9 @@ pub(crate) struct ChartPaneSnapshot {
     pub tab_id: WireU64,
     pub pane_id: WireU64,
     pub side: PaneSideDto,
+    /// The pane's address within its tab — `0` the flow pane, `1..` the
+    /// context stack top to bottom — the number `layout.focus` takes.
+    pub pane_index: WireU64,
     pub feed_id: String,
     pub symbol: String,
     pub visible: bool,
@@ -236,21 +239,18 @@ fn snapshot(app: &QuantickApp) -> ChartSnapshot {
     let mut panes = Vec::new();
     for (tab_index, tab) in app.control_tabs().iter().enumerate() {
         let focused = tab.focused_side();
-        panes.push(pane_snapshot(
-            tab,
-            &tab.flow_pane,
-            PaneSide::Flow,
-            tab_index == active && tab.layout.shows_flow(),
-            tab_index == active && focused == PaneSide::Flow,
-            config,
-        ));
-        if let Some(time) = tab.time_pane() {
+        let shown = tab.context_panes_shown();
+        for (pane, side) in tab.panes() {
+            let visible = match side {
+                PaneSide::Flow => tab.layout.shows_flow(),
+                PaneSide::Time(slot) => tab.layout.shows_time() && slot < shown,
+            };
             panes.push(pane_snapshot(
                 tab,
-                time,
-                PaneSide::Time,
-                tab_index == active && tab.layout.shows_time(),
-                tab_index == active && focused == PaneSide::Time,
+                pane,
+                side,
+                tab_index == active && visible,
+                tab_index == active && focused == side,
                 config,
             ));
         }
@@ -271,6 +271,7 @@ fn pane_snapshot(
         tab_id: WireU64::new(tab.id),
         pane_id: WireU64::new(pane.id),
         side: side.into(),
+        pane_index: wire_usize(side.index()),
         feed_id: tab.feed_id.clone(),
         symbol: tab.symbol.clone(),
         visible,
@@ -477,14 +478,7 @@ pub(crate) fn chart_window_prevalidated(
         .iter()
         .find(|tab| tab.id == query.tab_id.get())
         .ok_or_else(|| ControlError::invalid_request("chart window names an unknown tab"))?;
-    let (pane, side) = if tab.flow_pane.id == query.pane_id.get() {
-        (&tab.flow_pane, PaneSide::Flow)
-    } else if let Some(time) = tab
-        .time_pane()
-        .filter(|pane| pane.id == query.pane_id.get())
-    {
-        (time, PaneSide::Time)
-    } else {
+    let Some((pane, side)) = tab.panes().find(|(pane, _)| pane.id == query.pane_id.get()) else {
         return Err(ControlError::invalid_request(
             "chart window names an unknown pane on the requested tab",
         ));

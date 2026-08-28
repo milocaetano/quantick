@@ -18,7 +18,7 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use crate::candle_view::draw_style_window;
-use crate::canvas_layout::PaneIdAllocator;
+use crate::canvas_layout::{MAX_CANVAS_PANES, PaneIdAllocator};
 use crate::chart_layers::{self, ChartLayer};
 use crate::config::AppConfig;
 use crate::dock::{Dock, DockEnv, DockTab};
@@ -53,6 +53,7 @@ use crate::toolrail::{Tool, ToolRail, ToolboxDock};
 use crate::ui_state;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
 use crate::window_scale;
+use smallvec::SmallVec;
 
 /// Width of the right-hand price-axis gutter, in pixels (§5 zone 9).
 const AXIS_GUTTER: f32 = 64.0;
@@ -1792,9 +1793,8 @@ impl QuantickApp {
         // silently audit the time pane the right way up.
         if std::env::var("QUANTICK_INVERTED").is_ok_and(|value| value.trim() == "1") {
             let tab = app.active_tab_mut();
-            tab.flow_pane.price_view.set_inverted(true);
-            if let Some(time_pane) = tab.time_pane_mut() {
-                time_pane.price_view.set_inverted(true);
+            for pane in tab.panes_mut() {
+                pane.price_view.set_inverted(true);
             }
         }
         // The right-click itself, on the pane it names. The two panes open
@@ -3028,7 +3028,7 @@ impl QuantickApp {
         // new tab has a time pane to orient at all.
         let tab = self.active_tab_mut();
         tab.flow_pane.price_view.set_inverted(flow_inverted);
-        if let Some(time_pane) = tab.time_pane_mut() {
+        for time_pane in tab.time_panes.iter_mut() {
             time_pane.price_view.set_inverted(time_inverted);
         }
     }
@@ -3229,7 +3229,7 @@ impl QuantickApp {
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
         let pane = match focused {
-            PaneSide::Time => tab.time_panes.first_mut().unwrap_or(&mut tab.flow_pane),
+            PaneSide::Time(slot) => tab.time_panes.get_mut(slot).unwrap_or(&mut tab.flow_pane),
             PaneSide::Flow => &mut tab.flow_pane,
         };
         let mut model = toolbar::ToolbarModel {
@@ -3458,16 +3458,15 @@ impl QuantickApp {
                 }
             }
         }
-        for side in [PaneSide::Flow, PaneSide::Time] {
-            let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
-                return;
-            };
-            let requested = match (side, tab.time_pane_mut()) {
-                (PaneSide::Flow, _) => tab.flow_pane.take_settings_request(),
-                (PaneSide::Time, Some(pane)) => pane.take_settings_request(),
-                (PaneSide::Time, None) => None,
-            };
-            if let Some(slot) = requested {
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+            return;
+        };
+        let requests: SmallVec<[(PaneSide, SlotId); MAX_CANVAS_PANES]> = tab
+            .panes_with_sides_mut()
+            .filter_map(|(pane, side)| pane.take_settings_request().map(|slot| (side, slot)))
+            .collect();
+        for (side, slot) in requests {
+            {
                 self.open_indicator_settings_at(TabSlot {
                     tab: tab_id,
                     side,
@@ -3578,8 +3577,14 @@ impl QuantickApp {
         // against a stale rect while the column was put away.
         let split = self.active_tab().shows_context_charts();
         let mut pending: Vec<(PaneSide, indicator_legend::LegendAction)> = Vec::new();
-        for side in [PaneSide::Flow, PaneSide::Time] {
-            if side == PaneSide::Time && !split {
+        let shown = self.active_tab().context_panes_shown();
+        let sides: SmallVec<[PaneSide; MAX_CANVAS_PANES]> = self.active_tab().sides().collect();
+        for side in sides {
+            // Only a context chart on screen draws a legend: the stack may
+            // hold a pane the layout no longer shows.
+            if let PaneSide::Time(slot) = side
+                && (!split || slot >= shown)
+            {
                 continue;
             }
             let pane = self.active_tab().pane(side);
@@ -4439,10 +4444,7 @@ impl QuantickApp {
                 presets: &mut self.footprint_presets,
                 presets_path: &self.footprint_presets_path,
                 name_draft: &mut self.footprint_preset_draft,
-                target: match side {
-                    PaneSide::Flow => "flow chart",
-                    PaneSide::Time => "time chart",
-                },
+                target: &format!("{} chart", side.title().to_lowercase()),
                 customized,
             },
         );
@@ -4684,7 +4686,8 @@ impl QuantickApp {
                 layout: tab.layout.into(),
                 split_fraction: Some(tab.split_fraction),
                 context_collapsed: tab.context_collapsed,
-                focus: Some(tab.focused_side().into()),
+                focus: Some(ui_state::SavedFocus::from_side(tab.focused_side()).0),
+                focus_slot: ui_state::SavedFocus::from_side(tab.focused_side()).1,
                 flow_bars: tab.flow_pane.state.spec().to_config_string(),
                 // Only a pane that exists has an interval worth recording; a
                 // tab that never showed the split restores on the default,
@@ -4815,7 +4818,7 @@ impl QuantickApp {
                         Ok(BarSpec::Time(ms)) => Some(ms),
                         _ => None,
                     });
-            let focus = saved.focus.map(Into::into);
+            let focus = saved.focus.map(|focus| focus.to_side(saved.focus_slot));
             // `open_tab` activates what it opened, so the tab just arranged is
             // always the last one — index zero on the first pass.
             let target = if index == 0 && adopt_first {
@@ -5598,7 +5601,7 @@ impl QuantickApp {
                 CanvasLayout::from(saved.layout),
                 saved.split_fraction,
                 saved.context_collapsed,
-                saved.focus.map(Into::into),
+                saved.focus.map(|focus| focus.to_side(saved.focus_slot)),
                 time_interval,
                 LegendFold {
                     flow: saved.flow_legend_collapsed,
@@ -5952,21 +5955,22 @@ impl QuantickApp {
             native_scale = native_scale,
             zoom_factor = zoom,
             time_pane_spec = self.active_tab().time_pane().map(|pane| pane.state.spec().summary()),
+            time_pane_count = self.active_tab().time_panes.len(),
             // Drawings are a per-frame, O(objects) paint cost, and the shared
             // ones are additionally reprojected on every other pane of the
             // tab. Counting them here is what lets a frame-cost reading be
             // attributed instead of guessed — and it is the only way a
             // headless run can prove the drawing overlay is populated at all.
-            drawings = self.active_tab().flow_pane.drawings.items().len()
-                + self
-                    .active_tab()
-                    .time_pane()
-                    .map_or(0, |pane| pane.drawings.items().len()),
-            shared_drawings = self.active_tab().flow_pane.drawings.shared_count()
-                + self
-                    .active_tab()
-                    .time_pane()
-                    .map_or(0, |pane| pane.drawings.shared_count()),
+            drawings = self
+                .active_tab()
+                .panes()
+                .map(|(pane, _)| pane.drawings.items().len())
+                .sum::<usize>(),
+            shared_drawings = self
+                .active_tab()
+                .panes()
+                .map(|(pane, _)| pane.drawings.shared_count())
+                .sum::<usize>(),
             book_enabled = book.enabled,
             book_status = book.status,
             book_generation = book.generation,
@@ -6503,10 +6507,7 @@ impl QuantickApp {
                         // over two charts has no way to know which corner is
                         // about to change.
                         let split = self.active_tab().shows_context_charts();
-                        let pane_name = match self.active_tab().focused_side() {
-                            PaneSide::Flow => "Flow",
-                            PaneSide::Time => "Timeframe",
-                        };
+                        let pane_name = self.active_tab().focused_side().title();
                         let legend_label = match (collapsed, split) {
                             (true, false) => "Show indicator legend".to_owned(),
                             (false, false) => "Collapse indicator legend".to_owned(),
@@ -9719,7 +9720,9 @@ impl QuantickApp {
     /// The arming dialog. Drains the panes' menu requests first, so the
     /// click that chose "Add strategy…" opens the form on this same frame.
     fn draw_strategy_popup(&mut self, ctx: &egui::Context) {
-        for side in [pane::PaneSide::Flow, pane::PaneSide::Time] {
+        let sides: SmallVec<[pane::PaneSide; MAX_CANVAS_PANES]> =
+            self.active_tab().sides().collect();
+        for side in sides {
             let request = self
                 .active_tab_mut()
                 .pane_mut(side)
@@ -10158,7 +10161,7 @@ impl QuantickApp {
         // trader drops a session profile on. Every other scene stays on the
         // flow pane, where the tape and the map are.
         let side = if stress {
-            pane::PaneSide::Time
+            pane::PaneSide::Time(0)
         } else {
             pane::PaneSide::Flow
         };
@@ -12356,6 +12359,7 @@ mod tests {
                     split_fraction: None,
                     context_collapsed: false,
                     focus: None,
+                    focus_slot: 0,
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -22337,7 +22341,7 @@ crosshair = false
         let entry = rust_decimal::prelude::ToPrimitive::to_f64(&fill.price)
             .expect("the fill price is finite");
 
-        for side in [PaneSide::Time, PaneSide::Flow] {
+        for side in [PaneSide::Time(0), PaneSide::Flow] {
             app.active_tab_mut().pane_mut(side).price_view.reset();
             let chart = app
                 .active_tab()
@@ -22469,7 +22473,7 @@ crosshair = false
             replay: None,
         });
         let batch: Vec<_> = (700..710).map(trade).collect();
-        let before: Vec<usize> = [PaneSide::Flow, PaneSide::Time]
+        let before: Vec<usize> = [PaneSide::Flow, PaneSide::Time(0)]
             .into_iter()
             .map(|side| {
                 app.active_tab()
@@ -22482,7 +22486,7 @@ crosshair = false
 
         app.active_tab_mut().drain_feed();
 
-        for (side, before) in [PaneSide::Flow, PaneSide::Time].into_iter().zip(before) {
+        for (side, before) in [PaneSide::Flow, PaneSide::Time(0)].into_iter().zip(before) {
             let sent = app
                 .active_tab()
                 .pane(side)
@@ -22582,7 +22586,7 @@ crosshair = false
         let (mut app, _commands) = split_app(&ctx, 200);
         let flow_spec = app.active_tab().flow_pane.state.spec().clone();
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).state.spec(),
+            app.active_tab().pane(PaneSide::Time(0)).state.spec(),
             &BarSpec::Time(time_header::DEFAULT_INTERVAL_MS),
             "the time pane opens on M1, not on the flow selector's interval"
         );
@@ -22597,7 +22601,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
 
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).state.spec(),
+            app.active_tab().pane(PaneSide::Time(0)).state.spec(),
             &BarSpec::Time(expected_ms),
             "clicking {label} must re-cut the time pane"
         );
@@ -22629,7 +22633,7 @@ crosshair = false
         );
         assert_eq!(
             tab.focused_side(),
-            PaneSide::Time,
+            PaneSide::Time(0),
             "the chrome speaks for the one visible chart"
         );
         assert!(
@@ -22710,6 +22714,7 @@ crosshair = false
                 split_fraction: Some(0.4),
                 context_collapsed: false,
                 focus: Some(ui_state::SavedFocus::Flow),
+                focus_slot: 0,
                 flow_bars: "dollar:250000".to_owned(),
                 time_bars: Some("time:5m".to_owned()),
                 flow_legend_collapsed: false,
@@ -22800,6 +22805,7 @@ crosshair = false
                 split_fraction: Some(0.5),
                 context_collapsed: false,
                 focus: Some(ui_state::SavedFocus::Flow),
+                focus_slot: 0,
                 flow_bars: "tick:50".to_owned(),
                 time_bars: Some("time:1m".to_owned()),
                 flow_legend_collapsed: true,
@@ -22846,6 +22852,7 @@ crosshair = false
                 split_fraction: None,
                 context_collapsed: false,
                 focus: None,
+                focus_slot: 0,
                 flow_bars: "tick:377".to_owned(),
                 time_bars: None,
                 flow_legend_collapsed: false,
@@ -22990,7 +22997,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
 
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
     }
 
     /// Naming an arrangement keeps it without touching what the app opens on.
@@ -23606,7 +23613,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
         assert_eq!(
             app.active_tab().focused_side(),
-            PaneSide::Time,
+            PaneSide::Time(0),
             "coming from Single, the split reveals the time pane"
         );
 
@@ -23614,7 +23621,7 @@ crosshair = false
         assert_eq!(app.active_tab().focused_side(), PaneSide::Flow);
 
         app.active_tab_mut().set_layout(CanvasLayout::Time);
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
 
         app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
         assert_eq!(
@@ -23715,7 +23722,7 @@ crosshair = false
             &BarSpec::Time(300_000),
             "the timeframe pane opens on the declared interval too"
         );
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
         assert_eq!(
             drain_ohlcv_requests(&mut cmd_rx),
             1,
@@ -23775,12 +23782,12 @@ crosshair = false
         let (mut app, _commands) = split_app(&ctx, 200);
         let flow_before = app.active_tab().flow_pane.indicators.all().len();
 
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
 
         click_chart(&mut app, &ctx, point);
         assert_eq!(
             app.active_tab().focused_side(),
-            PaneSide::Time,
+            PaneSide::Time(0),
             "clicking a pane focuses it"
         );
 
@@ -23816,7 +23823,7 @@ crosshair = false
         assert!(
             app.slot_kinds
                 .iter()
-                .all(|(owner, _)| owner.side == PaneSide::Time),
+                .all(|(owner, _)| owner.side == PaneSide::Time(0)),
             "and it is the time pane's"
         );
     }
@@ -23962,11 +23969,11 @@ crosshair = false
         let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
 
         // ...and the focus on the other one, which is how a split tab can open.
-        let time_point = pane_point(&app, PaneSide::Time);
+        let time_point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, time_point);
         assert_eq!(
             app.active_tab().focused_side(),
-            PaneSide::Time,
+            PaneSide::Time(0),
             "the fixture has to actually focus the pane without indicators"
         );
 
@@ -24023,7 +24030,7 @@ crosshair = false
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 200);
         // An EMA on the time pane...
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
         app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
         settle_indicators(&mut app);
@@ -24041,7 +24048,7 @@ crosshair = false
 
         let target = TabSlot {
             tab: app.active_tab().id,
-            side: PaneSide::Time,
+            side: PaneSide::Time(0),
             slot,
         };
         app.toggle_indicator_hidden_at(target);
@@ -24058,7 +24065,7 @@ crosshair = false
         assert!(app.indicator_settings.is_some());
         assert_eq!(
             app.indicator_settings_target.side,
-            PaneSide::Time,
+            PaneSide::Time(0),
             "the dialog's Apply will land on the legend's pane"
         );
     }
@@ -24074,7 +24081,7 @@ crosshair = false
 
         click_chart(&mut app, &ctx, point);
         app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
         app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
         settle_indicators(&mut app);
@@ -24315,7 +24322,7 @@ crosshair = false
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 200);
 
-        for side in [PaneSide::Flow, PaneSide::Time] {
+        for side in [PaneSide::Flow, PaneSide::Time(0)] {
             app.toolrail
                 .arm(Tool::Drawing(drawing_tool("horizontal-line")));
             let point = pane_point(&app, side);
@@ -24323,12 +24330,16 @@ crosshair = false
         }
         assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .items()
+                .len(),
             1
         );
         assert_eq!(
             app.active_tab().focused_side(),
-            PaneSide::Time,
+            PaneSide::Time(0),
             "the last click was on the time pane"
         );
 
@@ -24336,7 +24347,7 @@ crosshair = false
 
         assert!(
             app.active_tab()
-                .pane(PaneSide::Time)
+                .pane(PaneSide::Time(0))
                 .drawings
                 .items()
                 .is_empty(),
@@ -24360,7 +24371,7 @@ crosshair = false
 
         click_chart(&mut app, &ctx, point);
         let flow_status = app.status_model();
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
         let time_status = app.status_model();
 
@@ -24370,7 +24381,11 @@ crosshair = false
         );
         assert_eq!(
             time_status.spec_summary,
-            app.active_tab().pane(PaneSide::Time).state.spec().summary()
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .state
+                .spec()
+                .summary()
         );
         assert_ne!(
             flow_status.spec_summary, time_status.spec_summary,
@@ -24379,6 +24394,99 @@ crosshair = false
         // Provenance is the market's and never moves with focus.
         assert_eq!(flow_status.symbol, time_status.symbol);
         assert_eq!(flow_status.venue, time_status.venue);
+    }
+
+    /// The three-pane canvas shipped with a dead bottom chart: focus was a
+    /// two-arm enum, so every reader mapped "time" to the *top* context pane.
+    /// Clicking the bottom one has to focus it — and the status bar, the
+    /// BARS group, the indicator command and the saved workspace have to
+    /// follow that focus, not the top chart's.
+    #[test]
+    fn the_second_context_pane_takes_focus_bars_and_indicators() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+        app.active_tab_mut()
+            .set_layout(CanvasLayout::TimeTimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.active_tab().time_panes.len(),
+            2,
+            "the layout built both context panes"
+        );
+        let flow_before = app.active_tab().flow_pane.indicators.all().len();
+
+        let point = pane_point(&app, PaneSide::Time(1));
+        click_chart(&mut app, &ctx, point);
+        assert_eq!(
+            app.active_tab().focused_side(),
+            PaneSide::Time(1),
+            "clicking the bottom context chart focuses it"
+        );
+        assert_eq!(
+            app.status_model().spec_summary,
+            app.active_tab()
+                .pane(PaneSide::Time(1))
+                .state
+                .spec()
+                .summary(),
+            "the status bar speaks for it"
+        );
+
+        // The BARS group borrows the focused pane's selector fields.
+        let top_spec = app
+            .active_tab()
+            .pane(PaneSide::Time(0))
+            .state
+            .spec()
+            .clone();
+        let pane = app.active_tab_mut().focused_pane_mut();
+        pane.kind = crate::state::BarKind::Time;
+        pane.time_interval_ms = 900_000;
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time(1)).state.spec(),
+            &BarSpec::Time(900_000),
+            "the bar rule changed on the bottom chart"
+        );
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time(0)).state.spec(),
+            &top_spec,
+            "and the top chart kept its own"
+        );
+
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        assert_eq!(
+            app.active_tab()
+                .pane(PaneSide::Time(1))
+                .indicators
+                .all()
+                .len(),
+            1,
+            "the EMA landed on the bottom chart"
+        );
+        assert_eq!(
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .indicators
+                .all()
+                .len(),
+            0,
+            "not on the top one"
+        );
+        assert_eq!(
+            app.active_tab().flow_pane.indicators.all().len(),
+            flow_before,
+            "and not on the flow pane"
+        );
+
+        // The workspace remembers which of the two it was.
+        let (tabs, _chrome) = app.capture_arrangement();
+        assert_eq!(tabs[0].focus, Some(ui_state::SavedFocus::Time));
+        assert_eq!(tabs[0].focus_slot, 1, "the slot travels with the word");
     }
 
     /// Drawings are per pane, and the tool rail is one: an object lands on the
@@ -24390,11 +24498,15 @@ crosshair = false
 
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
 
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .items()
+                .len(),
             1,
             "the click landed on the time pane"
         );
@@ -24409,7 +24521,11 @@ crosshair = false
         click_chart(&mut app, &ctx, point);
         assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .items()
+                .len(),
             1,
             "placing on one pane must not add to the other"
         );
@@ -24423,10 +24539,14 @@ crosshair = false
         let (mut app, _commands) = split_app(&ctx, 200);
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .items()
+                .len(),
             1
         );
 
@@ -24438,19 +24558,32 @@ crosshair = false
             "a single canvas is the flow pane, whatever had focus"
         );
 
-        let before = app.active_tab().pane(PaneSide::Time).state.trades().len();
+        let before = app
+            .active_tab()
+            .pane(PaneSide::Time(0))
+            .state
+            .trades()
+            .len();
         let trade = trade(700);
         app.active_tab_mut()
             .ingest_live_trade_at(&trade, trade.timestamp_ms);
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).state.trades().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .state
+                .trades()
+                .len(),
             before + 1,
             "a hidden pane keeps draining, so showing it again never catches up"
         );
 
         app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .items()
+                .len(),
             1,
             "and its drawings survived the round trip"
         );
@@ -24561,30 +24694,34 @@ crosshair = false
         let (mut app, _commands) = split_app(&ctx, 200);
 
         // A mark on each pane, so an index means something on both.
-        for side in [PaneSide::Time, PaneSide::Flow] {
+        for side in [PaneSide::Time(0), PaneSide::Flow] {
             app.toolrail
                 .arm(Tool::Drawing(drawing_tool("horizontal-line")));
             let point = pane_point(&app, side);
             click_chart(&mut app, &ctx, point);
         }
-        let time_depth = app.active_tab().pane(PaneSide::Time).drawings.undo_depth();
+        let time_depth = app
+            .active_tab()
+            .pane(PaneSide::Time(0))
+            .drawings
+            .undo_depth();
         let flow_depth = app.active_tab().flow_pane.drawings.undo_depth();
 
         // An edit begun on the time pane: the baseline, then a real change to
         // the object (the store records an entry only if something moved).
-        let before = app.active_tab().pane(PaneSide::Time).drawings.items()[0].clone();
+        let before = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0].clone();
         app.inspector_edit_baseline = Some(InspectorEdit {
             tab: app.active_tab().id,
-            side: PaneSide::Time,
+            side: PaneSide::Time(0),
             index: 0,
             before,
         });
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .drawings
             .select(Some(0));
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .drawings
             .selected_mut()
             .expect("the time pane's mark")
@@ -24597,7 +24734,10 @@ crosshair = false
         app.commit_inspector_gesture();
 
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.undo_depth(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .undo_depth(),
             time_depth + 1,
             "the entry lands on the pane the edit started on"
         );
@@ -24625,18 +24765,22 @@ crosshair = false
         // Undo that acts on whatever pane has focus.
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .items()
+                .len(),
             1
         );
 
         run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
         assert!(
             app.active_tab()
-                .pane(PaneSide::Time)
+                .pane(PaneSide::Time(0))
                 .drawings
                 .items()
                 .is_empty()
@@ -24658,11 +24802,15 @@ crosshair = false
 
         assert_eq!(
             app.active_tab().focused_side(),
-            PaneSide::Time,
+            PaneSide::Time(0),
             "a press routed to the toast is not a click on the pane behind it"
         );
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .items()
+                .len(),
             1,
             "so Undo puts back the mark it was offered for"
         );
@@ -24858,7 +25006,7 @@ crosshair = false
             1,
             "the pane asks exactly once when it is built"
         );
-        let slots_before = app.active_tab().pane(PaneSide::Time).slots();
+        let slots_before = app.active_tab().pane(PaneSide::Time(0)).slots();
         assert!(
             app.active_tab()
                 .loading
@@ -24875,7 +25023,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
 
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         assert_eq!(
             pane.seam_slot(),
             120,
@@ -24931,7 +25079,7 @@ crosshair = false
             "now there is"
         );
 
-        let slots_before = app.active_tab().pane(PaneSide::Time).slots();
+        let slots_before = app.active_tab().pane(PaneSide::Time(0)).slots();
         app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
         assert_eq!(
             drain_ohlcv_before_requests(&mut commands),
@@ -24960,7 +25108,7 @@ crosshair = false
             "the older span went in front of what was already held"
         );
         assert!(
-            app.active_tab().pane(PaneSide::Time).slots() > slots_before,
+            app.active_tab().pane(PaneSide::Time(0)).slots() > slots_before,
             "and the chart grew leftwards by it"
         );
         assert!(
@@ -24997,7 +25145,7 @@ crosshair = false
 
         // The state the defect lived in: the layer off on both panes, and a
         // range profile on the time pane wanting the ladders anyway.
-        for side in [PaneSide::Time, PaneSide::Flow] {
+        for side in [PaneSide::Time(0), PaneSide::Flow] {
             app.active_tab_mut().pane_mut(side).set_layer_visible(
                 ChartLayer::Footprint,
                 false,
@@ -25009,7 +25157,7 @@ crosshair = false
             .find(|tool| tool.id() == crate::frvp::TOOL_ID)
             .expect("frvp is registered");
         {
-            let time = app.active_tab_mut().pane_mut(PaneSide::Time);
+            let time = app.active_tab_mut().pane_mut(PaneSide::Time(0));
             assert!(
                 !time
                     .drawings
@@ -25027,7 +25175,7 @@ crosshair = false
         }
         assert_ne!(
             app.active_tab()
-                .pane(PaneSide::Time)
+                .pane(PaneSide::Time(0))
                 .state
                 .footprint_group(),
             market_bucket,
@@ -25039,7 +25187,7 @@ crosshair = false
 
         let time_group = app
             .active_tab()
-            .pane(PaneSide::Time)
+            .pane(PaneSide::Time(0))
             .state
             .footprint_group();
         let flow_group = app
@@ -25335,7 +25483,7 @@ crosshair = false
         // following pane is immune by construction — its right edge *is* the
         // newest bar — so this is where the guarantee has to be proven.
         {
-            let pane = app.active_tab_mut().pane_mut(PaneSide::Time);
+            let pane = app.active_tab_mut().pane_mut(PaneSide::Time(0));
             let total = pane.slots();
             pane.viewport.pan_pixels(200.0, total);
             assert!(
@@ -25344,7 +25492,7 @@ crosshair = false
             );
         }
         let anchored_bar = {
-            let pane = app.active_tab().pane(PaneSide::Time);
+            let pane = app.active_tab().pane(PaneSide::Time(0));
             pane.viewport.right_edge_bar(pane.slots())
         };
 
@@ -25365,7 +25513,7 @@ crosshair = false
                 .unwrap();
             app.drain_tabs();
             assert_eq!(
-                app.active_tab().pane(PaneSide::Time).seam_slot(),
+                app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
                 *expected_seam,
                 "the prefix grew by the slice that just landed"
             );
@@ -25381,7 +25529,7 @@ crosshair = false
             // And the bar the trader was looking at is still under the same
             // edge: the right edge moved by exactly the bars that appeared to
             // its left, so nothing shifted on screen.
-            let pane = app.active_tab().pane(PaneSide::Time);
+            let pane = app.active_tab().pane(PaneSide::Time(0));
             let expected = anchored_bar + *expected_seam as f32;
             assert!(
                 (pane.viewport.right_edge_bar(pane.slots()) - expected).abs() < 0.001,
@@ -25400,7 +25548,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             *expected_seam,
             "the closing slice is merged in front, not written over the rest"
         );
@@ -25418,7 +25566,7 @@ crosshair = false
 
         // The composed series is still searchable: `open_time` never decreases
         // across the merge, which is what the seam contract rests on.
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         let opens: Vec<i64> = pane
             .history_prefix
             .iter()
@@ -25447,7 +25595,7 @@ crosshair = false
             })
             .unwrap();
         app.drain_tabs();
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 20);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 20);
 
         // The feed stored a fresh block: the base being built is abandoned.
         // What is already drawn stays drawn — blanking the chart while a
@@ -25473,7 +25621,7 @@ crosshair = false
             app.drain_tabs();
         }
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             20,
             "the leftovers extended nothing"
         );
@@ -25499,7 +25647,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             45,
             "the fresh answer is the whole prefix, not an addition to the old"
         );
@@ -25541,7 +25689,7 @@ crosshair = false
             })
             .unwrap();
         app.drain_tabs();
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         assert_eq!(pane.seam_slot(), 120, "the whole prefix stands at once");
         assert!(
             !app.active_tab()
@@ -25657,24 +25805,24 @@ crosshair = false
             })
             .unwrap();
         app.drain_tabs();
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 120);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 120);
 
         // Something anchored to a bar index, and a view off the live edge, so
         // the shift has something to preserve.
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
-        let slots = app.active_tab().pane(PaneSide::Time).slots();
+        let slots = app.active_tab().pane(PaneSide::Time(0)).slots();
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .viewport
             .pan_pixels(40.0, slots);
-        let edge_before = app.active_tab().pane(PaneSide::Time).right_edge_time();
-        let mark_before = app.active_tab().pane(PaneSide::Time).drawings.items()[0].points[0];
+        let edge_before = app.active_tab().pane(PaneSide::Time(0)).right_edge_time();
+        let mark_before = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0].points[0];
         let mark_time_before = app
             .active_tab()
-            .pane(PaneSide::Time)
+            .pane(PaneSide::Time(0))
             .slot_open_time(mark_before.bar as usize);
         assert!(edge_before.is_some(), "the view is off the live edge");
 
@@ -25683,7 +25831,7 @@ crosshair = false
         events.try_send(FeedEvent::HistoryPrepended(older)).unwrap();
         app.drain_tabs();
 
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         let first_engine = pane
             .state
             .bars()
@@ -25738,17 +25886,17 @@ crosshair = false
             })
             .unwrap();
         app.drain_tabs();
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 120);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 120);
 
         // 1m → 5m: the same history, folded five ways.
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .time_interval_ms = 5 * crate::feed::OHLCV_BASE_INTERVAL_MS;
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
 
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             24,
             "120 minutes are 24 five-minute bars"
         );
@@ -25774,18 +25922,18 @@ crosshair = false
             })
             .unwrap();
         app.drain_tabs();
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 120);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 120);
 
         // 90 seconds: a minute and a half, which no whole number of venue
         // candles adds up to.
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .time_interval_ms = 90_000;
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
 
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             0,
             "no prefix rather than buckets built from fractions of a candle"
         );
@@ -25797,11 +25945,11 @@ crosshair = false
 
         // Back to a foldable one, and the history returns from the same base.
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .time_interval_ms = 5 * crate::feed::OHLCV_BASE_INTERVAL_MS;
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 24);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 24);
     }
 
     /// A feed switch is a different market: the candles that described the old
@@ -25819,7 +25967,7 @@ crosshair = false
             })
             .unwrap();
         app.drain_tabs();
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 120);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 120);
 
         // A fresh feed arrives, as a symbol switch installs one.
         let (_evt_tx, evt_rx) = mpsc::channel(8);
@@ -25836,7 +25984,7 @@ crosshair = false
         });
 
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             0,
             "the old market's candles do not describe the new one"
         );
@@ -25868,7 +26016,7 @@ crosshair = false
         app.drain_tabs();
 
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             0,
             "bars at an unknown base are not folded as if they were minutes"
         );
@@ -25888,7 +26036,7 @@ crosshair = false
     fn the_indicator_rebuild_covers_the_venue_prefix() {
         let ctx = egui::Context::default();
         let (mut app, events, _commands) = history_app(&ctx);
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
         app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
         settle_indicators(&mut app);
@@ -25903,7 +26051,7 @@ crosshair = false
         app.drain_tabs();
         settle_indicators(&mut app);
 
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         let view = pane
             .indicators
             .all()
@@ -25932,15 +26080,15 @@ crosshair = false
         let ctx = egui::Context::default();
         let (mut app, events, _commands) = history_app(&ctx);
         // Pan off the live edge, so there is a position to preserve.
-        let slots = app.active_tab().pane(PaneSide::Time).slots();
+        let slots = app.active_tab().pane(PaneSide::Time(0)).slots();
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .viewport
             .pan_pixels(40.0, slots);
-        let edge_time = app.active_tab().pane(PaneSide::Time).right_edge_time();
+        let edge_time = app.active_tab().pane(PaneSide::Time(0)).right_edge_time();
         let edge_bar = app
             .active_tab()
-            .pane(PaneSide::Time)
+            .pane(PaneSide::Time(0))
             .viewport
             .right_edge_bar(slots);
         assert!(edge_time.is_some(), "the view is off the live edge");
@@ -25954,7 +26102,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
 
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         assert_eq!(
             pane.viewport.right_edge_bar(pane.slots()),
             edge_bar + 120.0,
@@ -26037,7 +26185,7 @@ crosshair = false
             "an empty reply is a complete answer, and ends the wait"
         );
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             0,
             "with no prefix rather than a fabricated one"
         );
@@ -26168,7 +26316,7 @@ crosshair = false
     fn the_status_bar_counts_venue_bars_separately() {
         let ctx = egui::Context::default();
         let (mut app, events, _commands) = history_app(&ctx);
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
         assert_eq!(
             app.status_model().venue_bars,
@@ -26206,14 +26354,14 @@ crosshair = false
         let (mut app, events, _commands) = history_app(&ctx);
         let first_engine_open = app
             .active_tab()
-            .pane(PaneSide::Time)
+            .pane(PaneSide::Time(0))
             .state
             .bars()
             .first()
             .map(|bar| bar.open_time)
             .or_else(|| {
                 app.active_tab()
-                    .pane(PaneSide::Time)
+                    .pane(PaneSide::Time(0))
                     .state
                     .partial()
                     .map(|bar| bar.open_time)
@@ -26235,7 +26383,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
 
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         assert_eq!(
             pane.seam_slot(),
             2,
@@ -26298,7 +26446,7 @@ crosshair = false
         }
         run_frame(&mut app, &ctx);
 
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         let seam = pane.seam_slot();
         let backfill = pane
             .state
@@ -26313,7 +26461,7 @@ crosshair = false
         // `ChartPane::new`) and this test is about where it lands, so switch
         // it on first — on both panes, since either one's mark answers the
         // assertion below.
-        for side in [PaneSide::Time, PaneSide::Flow] {
+        for side in [PaneSide::Time(0), PaneSide::Flow] {
             app.active_tab_mut().pane_mut(side).set_layer_visible(
                 ChartLayer::BackfillDivider,
                 true,
@@ -26323,15 +26471,15 @@ crosshair = false
         // The view follows the live edge, and the venue history is far behind
         // it, so bring the seam on screen the way a user scrolling back
         // would.
-        let slots = app.active_tab().pane(PaneSide::Time).slots();
+        let slots = app.active_tab().pane(PaneSide::Time(0)).slots();
         let width = app
             .active_tab()
-            .pane(PaneSide::Time)
+            .pane(PaneSide::Time(0))
             .last_chart_area
             .expect("the time pane was laid out")
             .width();
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .viewport
             .center_on_bar(seam as f32, width, slots);
         let texts = painted_text(&run_frame(&mut app, &ctx));
@@ -26588,7 +26736,7 @@ crosshair = false
             })
             .unwrap();
         app.drain_tabs();
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 0);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 0);
         assert_eq!(
             drain_ohlcv_requests(&mut cmd_rx),
             0,
@@ -26613,7 +26761,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             30,
             "and the block it carried is installed through the usual path"
         );
@@ -26642,7 +26790,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
         drain_ohlcv_requests(&mut commands);
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 30);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 30);
 
         // The feed's capabilities are fixed in this fixture, so move the tab's
         // own record of what it has acted on — the same thing a bumped
@@ -26664,7 +26812,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             90,
             "and the longer block replaces the shorter one"
         );
@@ -26910,12 +27058,12 @@ crosshair = false
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         let point = app
             .active_tab()
-            .pane(PaneSide::Time)
+            .pane(PaneSide::Time(0))
             .last_chart_area
             .expect("the time pane was laid out")
             .center();
         click_chart(&mut app, &ctx, point);
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
         let slots = app.active_tab().flow_pane.slots();
         app.active_tab_mut()
             .flow_pane
@@ -26946,7 +27094,7 @@ crosshair = false
             "the viewport came back where it was left"
         );
         assert_eq!(app.active_tab().layout, CanvasLayout::TimeAndFlow);
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
         assert_eq!(
             app.active_tab().focused_pane().drawings.items().len(),
             first_drawings,
@@ -27978,9 +28126,9 @@ crosshair = false
     fn observer_new_scopes_preserve_two_pane_focus_and_provenance() {
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 80);
-        let time_point = pane_point(&app, PaneSide::Time);
+        let time_point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, time_point);
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
 
         let mut registry = crate::control::standard_registry().unwrap();
         let scopes = [
@@ -27998,7 +28146,7 @@ crosshair = false
         // The three pane-addressed scopes see both panes, and tell them apart
         // by id and by side rather than by position.
         let flow_id = app.active_tab().pane(PaneSide::Flow).id.to_string();
-        let time_id = app.active_tab().pane(PaneSide::Time).id.to_string();
+        let time_id = app.active_tab().pane(PaneSide::Time(0)).id.to_string();
         for scope in [&scopes[0], &scopes[1], &scopes[2]] {
             let panes = capture.scopes[scope].value["tabs"][0]["panes"]
                 .as_array()
@@ -30314,8 +30462,8 @@ plot(close)
         run_frame(&mut app, &ctx);
         let before = app.active_tab().focused_side();
         let other = match before {
-            PaneSide::Time => PaneSide::Flow,
-            PaneSide::Flow => PaneSide::Time,
+            PaneSide::Time(_) => PaneSide::Flow,
+            PaneSide::Flow => PaneSide::Time(0),
         };
         let other_point = pane_point(&app, other);
         click_chart(&mut app, &ctx, other_point);
@@ -30635,9 +30783,9 @@ plot(close)
     fn observer_preserves_split_pane_focus_and_market_provenance() {
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 80);
-        let time_point = pane_point(&app, PaneSide::Time);
+        let time_point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, time_point);
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
 
         let mut registry = crate::control::standard_registry().unwrap();
         let scopes = [
@@ -31155,10 +31303,13 @@ plot(close)
 
         let time_chart = app
             .active_tab()
-            .pane(PaneSide::Time)
+            .pane(PaneSide::Time(0))
             .last_chart_area
             .expect("time pane reported its rect");
-        let position = egui::pos2(time_chart.center().x, price_y(&app, PaneSide::Time, price));
+        let position = egui::pos2(
+            time_chart.center().x,
+            price_y(&app, PaneSide::Time(0), price),
+        );
         run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(position)]);
 
         let mut registry = crate::control::standard_registry().unwrap();

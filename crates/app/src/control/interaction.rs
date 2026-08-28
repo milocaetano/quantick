@@ -417,15 +417,16 @@ fn shared_drawing_hit(
     side: PaneSide,
     position: eframe::egui::Pos2,
 ) -> Option<DrawingHitSnapshot> {
-    if !matches!(tab.layout, crate::tab::CanvasLayout::TimeAndFlow) {
-        return None;
-    }
-    let owner_side = side.other();
-    let owner = match owner_side {
-        PaneSide::Flow => &tab.flow_pane,
-        PaneSide::Time => tab.time_pane()?,
-    };
-    let (index, handle_index) = pane.shared_pick(owner, position)?;
+    // Every other pane of the tab may own the mark under the pointer — with a
+    // context stack there is more than one other, and the first hit wins in
+    // the order the tab walks its panes.
+    let (owner, owner_side, index, handle_index) = tab
+        .panes()
+        .filter(|(_, owner_side)| *owner_side != side)
+        .find_map(|(owner, owner_side)| {
+            pane.shared_pick(owner, position)
+                .map(|(index, handle)| (owner, owner_side, index, handle))
+        })?;
     let drawing = owner.drawings.items().get(index)?;
     Some(drawing_hit_snapshot(
         owner,

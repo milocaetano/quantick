@@ -280,10 +280,10 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
             .control_tabs()
             .iter()
             .map(|tab| {
-                let mut panes = vec![pane_health(&tab.flow_pane, PaneSide::Flow)];
-                if let Some(time) = tab.time_pane() {
-                    panes.push(pane_health(time, PaneSide::Time));
-                }
+                let panes: Vec<PaneHealthSnapshot> = tab
+                    .panes()
+                    .map(|(pane, side)| pane_health(pane, side))
+                    .collect();
                 TabHealthSnapshot {
                     tab_id: WireU64::new(tab.id),
                     active_loading_tasks: LoadingTask::ALL

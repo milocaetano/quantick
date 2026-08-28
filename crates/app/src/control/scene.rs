@@ -517,7 +517,7 @@ fn push_panes(
         let bounds = pane_bounds(pane);
         controls.push(SceneControlSnapshot {
             control_id: pane_canvas_control_id(pane.id),
-            label: format!("{} chart", side_label(side)),
+            label: format!("{} chart", side.title()),
             role: SceneRoleDto::Canvas,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::Tab,
@@ -590,13 +590,6 @@ fn pane_bounds(pane: &ChartPane) -> Bounds {
             })
         }
         _ => Bounds::NotReportable,
-    }
-}
-
-fn side_label(side: PaneSide) -> &'static str {
-    match side {
-        PaneSide::Flow => "Flow",
-        PaneSide::Time => "Time",
     }
 }
 

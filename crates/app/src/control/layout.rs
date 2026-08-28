@@ -269,10 +269,7 @@ fn result(app: &QuantickApp, index: usize, changed: bool) -> Result<Value, Contr
     let tab = app
         .control_tab_at(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    let focused = match tab.focused_side() {
-        crate::pane::PaneSide::Flow => 0_u64,
-        crate::pane::PaneSide::Time => 1,
-    };
+    let focused = tab.focused_side().index() as u64;
     let payload = LayoutResult {
         tab_id: WireU64::new(tab.id),
         preset_id: tab.layout.preset().id.to_owned(),
@@ -426,11 +423,7 @@ fn focus(
             "this tab has no pane at address {pane}"
         )));
     }
-    let wanted = if pane == 0 {
-        crate::pane::PaneSide::Flow
-    } else {
-        crate::pane::PaneSide::Time
-    };
+    let wanted = crate::pane::PaneSide::from_index(pane);
     let changed = tab.focus != wanted;
     tab.focus = wanted;
     result(app, index, changed)
