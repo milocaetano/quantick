@@ -27,6 +27,9 @@ impl DrawingToolImpl for FibExtension {
     fn icon_dots(&self) -> super::IconDots {
         fib::FIB_EXTENSION_DOTS
     }
+    fn icon_letter(&self) -> Option<super::IconLetter> {
+        Some(fib::FIB_EXTENSION_LETTER)
+    }
     /// No key is named here, and that is deliberate: this tool gave up
     /// `Shift+F` because that key flattens the position (see
     /// [`Self::shortcut`]). The tooltip went on advertising it long after,

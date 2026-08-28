@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use crate::drawings::{DRAWING_TOOLS, DrawingTool, Drawings, IconDots, IconStrokes, ToolFamily};
+use crate::drawings::{
+    DRAWING_TOOLS, DrawingTool, Drawings, IconDots, IconLetter, IconStrokes, ToolFamily,
+};
 use crate::theme;
 use crate::widgets::{IconButton, MarkerEdge, TOOLRAIL_ICON, paint_vector_icon};
 
@@ -145,6 +147,14 @@ impl Tool {
         match self {
             Self::Pointer | Self::Crosshair => &[],
             Self::Drawing(tool) => tool.icon_dots(),
+        }
+    }
+
+    #[must_use]
+    fn icon_letter(self) -> Option<IconLetter> {
+        match self {
+            Self::Pointer | Self::Crosshair => None,
+            Self::Drawing(tool) => tool.icon_letter(),
         }
     }
 
@@ -1421,7 +1431,7 @@ impl ToolRail {
 
     fn draw_button(&mut self, ui: &mut egui::Ui, tool: Tool, drawings: &Drawings) {
         let response = IconButton::new(tool.icon(), TOOLRAIL_ICON)
-            .vector_icon(tool.icon_strokes(), tool.icon_dots())
+            .vector_icon(tool.icon_strokes(), tool.icon_dots(), tool.icon_letter())
             .active(self.tool == tool)
             .active_marker(self.dock.marker_edge())
             .hover_text(tool.hover_text())
@@ -1493,7 +1503,7 @@ impl ToolRail {
             let tool = self.favorites[index];
             let armed = self.tool == Tool::Drawing(tool);
             let response = IconButton::new(tool.icon(), TOOLRAIL_ICON)
-                .vector_icon(tool.icon_strokes(), tool.icon_dots())
+                .vector_icon(tool.icon_strokes(), tool.icon_dots(), tool.icon_letter())
                 .active(armed)
                 .active_marker(self.dock.marker_edge())
                 .hover_text(tool.hover_text())
@@ -1767,9 +1777,10 @@ impl ToolRail {
         let icon = shown.map_or(family.icon, DrawingTool::icon);
         let strokes = shown.map_or(family.icon_strokes, DrawingTool::icon_strokes);
         let dots = shown.map_or(family.icon_dots, DrawingTool::icon_dots);
+        let letter = shown.map_or(family.icon_letter, DrawingTool::icon_letter);
         let hover = shown.map_or(family.title, DrawingTool::hover_text);
         let response = IconButton::new(icon, TOOLRAIL_ICON)
-            .vector_icon(strokes, dots)
+            .vector_icon(strokes, dots, letter)
             .active(armed)
             .active_marker(self.dock.marker_edge())
             .hover_text(hover)
@@ -1972,6 +1983,7 @@ impl ToolRail {
                     ),
                     member.icon_strokes(),
                     member.icon_dots(),
+                    member.icon_letter(),
                     glyph_color,
                 );
             }

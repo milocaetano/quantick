@@ -380,6 +380,11 @@ pub struct ToolFamily {
     /// Anchor dots for the slot icon — same contract as
     /// [`DrawingTool::icon_dots`].
     pub icon_dots: IconDots,
+    /// Letter set into the slot icon — same contract as
+    /// [`DrawingTool::icon_letter`]. A family whose slot borrows one
+    /// member's picture declares that member's letter, or the slot would be
+    /// the only place that drawing appears unnamed.
+    pub icon_letter: Option<IconLetter>,
 }
 
 /// A vector icon: polylines in the unit square (x right, y down), scaled to
@@ -399,6 +404,27 @@ pub type IconStrokes = &'static [&'static [(f32, f32)]];
 /// their anchors marked for that reason. Registry data like the strokes, so
 /// the chrome never learns which tool it is painting.
 pub type IconDots = &'static [(f32, f32)];
+
+/// A letter set into a vector icon: the character, where its centre sits in
+/// the same unit square as the strokes, and its size as a fraction of the
+/// glyph box.
+///
+/// It exists for the tools that draw the *same picture*. The two Fib tools
+/// are one ladder of levels hung off one leg, and only the number of anchors
+/// separates them — a difference that is two dots wide on a 32 px rail. `R`
+/// and `P` say retracement and projection outright, so a trader picks the
+/// one they meant without hovering for the tooltip first. Registry data like
+/// the strokes: the chrome paints the letter it is handed and never learns
+/// which tool it belongs to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IconLetter {
+    /// The letter itself, painted in the icon's own colour.
+    pub text: &'static str,
+    /// Centre of the letter in the unit square (x right, y down).
+    pub at: (f32, f32),
+    /// Font size as a fraction of the glyph box's height.
+    pub height: f32,
+}
 
 /// The implementation port every drawing plugs into. Selection visuals (halo
 /// and anchor handles) are common chrome painted by the wrapper, so a tool
@@ -420,6 +446,12 @@ trait DrawingToolImpl: Sync {
     /// Only meaningful alongside strokes: a font glyph draws its own.
     fn icon_dots(&self) -> IconDots {
         &[]
+    }
+    /// A letter set into the vector icon — see [`IconLetter`]. Only
+    /// meaningful alongside strokes: a font glyph is somebody else's
+    /// drawing, with no corner reserved to put a letter in.
+    fn icon_letter(&self) -> Option<IconLetter> {
+        None
     }
     fn hover_text(&self) -> &'static str;
     fn required_points(&self) -> usize;
@@ -727,6 +759,12 @@ impl DrawingTool {
     #[must_use]
     pub fn icon_dots(self) -> IconDots {
         self.0.icon_dots()
+    }
+
+    /// The letter set into the vector icon, `None` when it needs none.
+    #[must_use]
+    pub fn icon_letter(self) -> Option<IconLetter> {
+        self.0.icon_letter()
     }
 
     #[must_use]
@@ -2432,6 +2470,62 @@ mod tests {
                 "{id} replaced its glyph and must keep vector strokes"
             );
         }
+    }
+
+    /// The letter half of the same port: it lives in the same unit square,
+    /// is one character rather than a word, and only exists on a tool that
+    /// draws its own strokes — over a font glyph it would land wherever the
+    /// typeface happened to leave a gap.
+    ///
+    /// The two Fib tools are named because the letters are the whole reason
+    /// the port exists: one ladder, one leg, two tools. The letters must
+    /// differ from each other, and must sit at the same place and size, or
+    /// they stop reading as a choice between two rows and start reading as
+    /// two unrelated marks.
+    #[test]
+    fn icon_letters_stay_in_the_unit_square_and_name_the_two_fib_tools() {
+        for tool in DRAWING_TOOLS {
+            let Some(letter) = tool.icon_letter() else {
+                continue;
+            };
+            assert!(
+                !tool.icon_strokes().is_empty(),
+                "{}: a letter needs strokes to sit in",
+                tool.id()
+            );
+            let (x, y) = letter.at;
+            assert!(
+                (0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y),
+                "{}: icon letter at ({x}, {y}) leaves the unit square",
+                tool.id()
+            );
+            assert!(
+                letter.height > 0.0 && letter.height <= 1.0,
+                "{}: an icon letter is a fraction of the glyph box",
+                tool.id()
+            );
+            assert_eq!(
+                letter.text.chars().count(),
+                1,
+                "{}: the icon has room for a letter, not a word",
+                tool.id()
+            );
+        }
+        let retracement = tool("fib-retracement")
+            .icon_letter()
+            .expect("the retracement icon carries its letter");
+        let extension = tool("fib-extension")
+            .icon_letter()
+            .expect("the extension icon carries its letter");
+        assert_ne!(
+            retracement.text, extension.text,
+            "the two Fib icons must not answer with the same letter"
+        );
+        assert_eq!(
+            (retracement.at, retracement.height),
+            (extension.at, extension.height),
+            "the two Fib letters share one corner and one size, or they stop reading as a pair"
+        );
     }
 
     /// The two halves of the note port answer together: `holds_text` is the

@@ -145,6 +145,7 @@ pub struct IconButton<'a> {
     glyph: &'a str,
     strokes: crate::drawings::IconStrokes,
     dots: crate::drawings::IconDots,
+    letter: Option<crate::drawings::IconLetter>,
     size: IconSize,
     active: bool,
     enabled: bool,
@@ -162,6 +163,7 @@ impl<'a> IconButton<'a> {
             glyph,
             strokes: &[],
             dots: &[],
+            letter: None,
             size,
             active: false,
             enabled: true,
@@ -177,18 +179,20 @@ impl<'a> IconButton<'a> {
     /// [`crate::drawings::IconDots`], so the button stays one code path for
     /// every tool.
     ///
-    /// Strokes and dots arrive together on purpose. They are two halves of
-    /// one drawing, and a caller that could ask for the lines alone would
-    /// paint a Fib retracement that reads exactly like the extension beside
-    /// it — the anchors are what tells them apart.
+    /// Strokes, dots and letter arrive together on purpose. They are three
+    /// parts of one drawing, and a caller that could ask for the lines alone
+    /// would paint a Fib retracement that reads exactly like the extension
+    /// beside it — the anchors and the letter are what tell them apart.
     #[must_use]
     pub fn vector_icon(
         mut self,
         strokes: crate::drawings::IconStrokes,
         dots: crate::drawings::IconDots,
+        letter: Option<crate::drawings::IconLetter>,
     ) -> Self {
         self.strokes = strokes;
         self.dots = dots;
+        self.letter = letter;
         self
     }
 
@@ -269,7 +273,14 @@ impl<'a> IconButton<'a> {
             } else {
                 let box_rect =
                     egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(self.size.glyph));
-                paint_vector_icon(painter, box_rect, self.strokes, self.dots, paint.glyph);
+                paint_vector_icon(
+                    painter,
+                    box_rect,
+                    self.strokes,
+                    self.dots,
+                    self.letter,
+                    paint.glyph,
+                );
             }
             if self.active
                 && let Some(edge) = self.marker_edge
@@ -301,9 +312,14 @@ impl<'a> IconButton<'a> {
 /// Phosphor regular glyph at the rail's glyph size.
 const ICON_STROKE_WIDTH_PX: f32 = 1.4;
 
-/// Radius of an icon's anchor dot, in pixels at the rail's glyph size. Small
-/// enough to read as a handle on the leg rather than as a sixth level line.
-const ICON_DOT_RADIUS_PX: f32 = 1.9;
+/// Radius of an icon's anchor dot, as a fraction of the glyph box. Small
+/// enough to read as a handle on the leg rather than as a sixth level line —
+/// 1.9 px at the rail's 18 px box, which is where it was chosen by eye.
+///
+/// A fraction rather than a pixel count because the same icon is painted at
+/// two sizes: the flyout's box is 14 px, and a dot fixed in pixels grew there
+/// from a handle into a blob that swallowed the level line under it.
+const ICON_DOT_RADIUS_RATIO: f32 = 1.9 / 18.0;
 
 /// Paint a vector icon: each polyline's unit-square points scaled into
 /// `rect`, then the anchor dots over them. A handful of line segments and at
@@ -314,6 +330,7 @@ pub fn paint_vector_icon(
     rect: egui::Rect,
     strokes: crate::drawings::IconStrokes,
     dots: crate::drawings::IconDots,
+    letter: Option<crate::drawings::IconLetter>,
     color: egui::Color32,
 ) {
     let at = |(x, y): (f32, f32)| {
@@ -338,7 +355,20 @@ pub fn paint_vector_icon(
     // Over the strokes: the leg passes through its own anchors, and a dot
     // half-hidden under a level line stops reading as an anchor at all.
     for &dot in dots {
-        painter.circle_filled(at(dot), ICON_DOT_RADIUS_PX, color);
+        painter.circle_filled(at(dot), rect.height() * ICON_DOT_RADIUS_RATIO, color);
+    }
+    // Last, in the icon's own colour: the letter that names which of two
+    // near-identical pictures this is. Same colour as the strokes on
+    // purpose — a letter in a colour of its own would be a second signal
+    // competing with the armed accent, when all it has to say is `R` or `P`.
+    if let Some(letter) = letter {
+        painter.text(
+            at(letter.at),
+            egui::Align2::CENTER_CENTER,
+            letter.text,
+            egui::FontId::proportional(rect.height() * letter.height),
+            color,
+        );
     }
 }
 
