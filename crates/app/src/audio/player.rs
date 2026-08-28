@@ -1,13 +1,16 @@
 //! Playing the library's clips through the default output device.
 //!
 //! The one place the app touches an audio device, and it does so late: the
-//! device is opened by the first clip that needs it, never at start-up.
-//! Decoding is lazy too — [`rodio`] pulls samples out of the AAC decoder
-//! from its own mixer thread as the device asks for them — so a cue costs
-//! this thread a header probe and a queue push, whatever the clip's
-//! length. Nothing here runs per frame.
+//! device is opened by the first clip that needs it — or, better, when an
+//! alarm that names a clip is armed ([`super::AlertSink::warm_up`]) — never
+//! at start-up. Decoding is lazy too — [`rodio`] pulls samples out of the
+//! AAC decoder from its own mixer thread as the device asks for them — so a
+//! cue costs this thread a header probe and a queue push, whatever the
+//! clip's length. Nothing here runs per frame.
 
 use std::io::Cursor;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use rodio::source::Source as _;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player};
@@ -17,6 +20,12 @@ use super::{Clip, PlayLength};
 /// The open device and whatever it is currently playing.
 pub(super) struct ClipPlayer {
     device: MixerDeviceSink,
+    /// Raised by the stream's own error callback — the device went away,
+    /// the driver refused a buffer — from rodio's thread. Read before every
+    /// cue: a device that has failed since it was opened is dropped and
+    /// reopened rather than trusted, so "the alarm was handed to the
+    /// device" is never claimed about a device that is no longer there.
+    faulted: Arc<AtomicBool>,
     /// The queue of the newest batch. Replacing it drops the old
     /// [`Player`], and a dropped player stops — which is how a fresh cue
     /// silences a clip still running from the last one.
@@ -28,7 +37,23 @@ impl ClipPlayer {
     /// opened goes to the log in full; the sink's caller gets the sentence
     /// a toast can show.
     pub(super) fn open() -> Result<Self, &'static str> {
-        let mut device = DeviceSinkBuilder::open_default_sink().map_err(|error| {
+        let faulted = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&faulted);
+        let opened = DeviceSinkBuilder::from_default_device().and_then(|builder| {
+            builder
+                .with_error_callback(move |error| {
+                    tracing::warn!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "AUDIO_DEVICE_FAULTED",
+                        error = %error,
+                        "the alarm output device reported an error; it is reopened on the next cue"
+                    );
+                    flag.store(true, Ordering::Relaxed);
+                })
+                .open_sink_or_fallback()
+        });
+        let mut device = opened.map_err(|error| {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -43,8 +68,21 @@ impl ClipPlayer {
         device.log_on_drop(false);
         Ok(Self {
             device,
+            faulted,
             current: None,
         })
+    }
+
+    /// Whether the device has reported an error since it was opened.
+    pub(super) fn is_faulted(&self) -> bool {
+        self.faulted.load(Ordering::Relaxed)
+    }
+
+    /// Silence whatever is still sounding. What a batch with no clip of its
+    /// own asks for: a platform beep is the newest signal, and it is not
+    /// heard under a rainforest.
+    pub(super) fn stop(&mut self) {
+        self.current = None;
     }
 
     /// Queue these clips, in order, replacing whatever is still sounding.
@@ -100,8 +138,8 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::audio::ClipId;
     use crate::audio::library::CLIPS;
+    use crate::audio::{AlertSound, SoundCategory};
 
     /// How long a source runs, measured by pulling every sample out of it
     /// — the ground truth a `total_duration` header can only estimate.
@@ -115,6 +153,10 @@ mod tests {
         Duration::from_secs_f64(samples as f64 / (rate * channels) as f64)
     }
 
+    /// How far a measured length may sit from the one asked for: the
+    /// decoder hands out whole frames, and a frame is a few milliseconds.
+    const SLACK: Duration = Duration::from_millis(50);
+
     /// The cap is a cut, not a hint: a clip asked for two seconds runs two
     /// seconds of samples, and one asked for whole runs longer than that.
     /// Measured by decoding, on the same `Source` the device would play —
@@ -122,9 +164,15 @@ mod tests {
     /// says, without anyone listening.
     #[test]
     fn a_capped_cue_is_cut_where_the_length_says() {
-        let clip = ClipId::from_token("cuckoo")
-            .expect("the cuckoo is in the library")
-            .clip();
+        // The first standard clip, whatever its name: this test is about
+        // the cut, not about which clip is on the shelf.
+        let AlertSound::Clip(id) = AlertSound::in_category(SoundCategory::Standard)
+            .next()
+            .expect("the standard folder has a clip")
+        else {
+            panic!("a standard-category sound is a clip");
+        };
+        let clip = id.clip();
         let whole = measured_length(cue_source(clip, PlayLength::Whole).expect("decodes"));
         assert!(
             whole > Duration::from_secs(3),
@@ -133,9 +181,8 @@ mod tests {
 
         let capped = measured_length(cue_source(clip, PlayLength::seconds(2)).expect("decodes"));
         let target = Duration::from_secs(2);
-        let slack = Duration::from_millis(50);
         assert!(
-            capped >= target - slack && capped <= target + slack,
+            capped.abs_diff(target) <= SLACK,
             "cut at two seconds, measured {capped:?}"
         );
 
@@ -143,7 +190,7 @@ mod tests {
         let generous =
             measured_length(cue_source(clip, PlayLength::seconds(3_600)).expect("decodes"));
         assert!(
-            generous.abs_diff(whole) <= slack,
+            generous.abs_diff(whole) <= SLACK,
             "a cap longer than the clip plays it whole: {generous:?} vs {whole:?}"
         );
     }

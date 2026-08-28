@@ -28,9 +28,9 @@ mod library;
 mod platform;
 mod player;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-pub use library::{Clip, ClipCategory, ClipId};
+pub use library::{Clip, ClipId};
 
 /// One of the sounds a trader may pick.
 ///
@@ -57,14 +57,17 @@ pub enum AlertSound {
     Clip(ClipId),
 }
 
-/// Where a sound comes from, which is also how the picker groups them.
+/// Where a sound comes from, which is also how the picker groups them and
+/// which folder of `assets/alarms/` a clip is filed under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SoundCategory {
-    /// The operating system's own scheme sounds.
+    /// The operating system's own scheme sounds. Never a clip's category.
     System,
-    /// The library's alarm-like clips: beeps, phones, a cuckoo.
+    /// `assets/alarms/standard/`: clips that behave like an alarm — beeps,
+    /// phones, a cuckoo.
     Standard,
-    /// The library's ambient clips: rain, surf, a steam train.
+    /// `assets/alarms/nature/`: ambient clips — rain, surf, a steam train —
+    /// mostly long, which is what the cut is for.
     Nature,
 }
 
@@ -113,10 +116,7 @@ impl AlertSound {
     #[must_use]
     pub fn category(self) -> SoundCategory {
         match self {
-            Self::Clip(id) => match id.clip().category {
-                ClipCategory::Standard => SoundCategory::Standard,
-                ClipCategory::Nature => SoundCategory::Nature,
-            },
+            Self::Clip(id) => id.clip().category,
             _ => SoundCategory::System,
         }
     }
@@ -203,6 +203,22 @@ pub struct Cue {
 }
 
 impl Cue {
+    /// The one way a stored setting becomes a cue: the sound, cut after
+    /// `secs` when there are seconds and the sound can be cut. A platform
+    /// beep is whole whatever the setting says — the operating system
+    /// plays it in one piece — so two presets naming the same beep with
+    /// different cuts compile to the *same* cue, and the per-frame guard
+    /// against stacked beeps sees one sound, not two. The preset compiler
+    /// and the dialog's Test button both come through here, so what the
+    /// trader auditions is what the armed instance will play.
+    #[must_use]
+    pub fn new(sound: AlertSound, secs: Option<u32>) -> Self {
+        match secs {
+            Some(secs) if sound.can_be_cut() => Self::cut_after(sound, secs),
+            _ => Self::whole(sound),
+        }
+    }
+
     /// The sound, whole — what every caller before the length existed
     /// meant.
     #[must_use]
@@ -213,7 +229,8 @@ impl Cue {
         }
     }
 
-    /// The sound, cut after `secs`.
+    /// The sound, cut after `secs`. Prefer [`Self::new`], which knows
+    /// which sounds a cut applies to.
     #[must_use]
     pub const fn cut_after(sound: AlertSound, secs: u32) -> Self {
         Self {
@@ -233,58 +250,116 @@ pub trait AlertSink {
     /// sounding: a clip still running has already turned the head, and the
     /// newest signal is the one the trader has not heard yet. A batch is
     /// one frame's worth — a burst of prints that closed several bars at
-    /// once — and its cues queue behind each other so two regions with two
-    /// sounds are both heard.
+    /// once — and its clips queue behind each other so two regions with
+    /// two sounds are both heard. Platform sounds cannot queue: they sound
+    /// the moment they are asked for, ahead of the batch's clips.
     ///
-    /// `Ok(())` means every cue was handed to something that plays it.
-    /// `Err` carries the reason one could not be, in words a client can
-    /// print: a notification that never reached the trader is reported,
-    /// never assumed.
+    /// Every cue is attempted. `Ok(())` means every one was handed to
+    /// something that plays it; `Err` carries the *first* reason one could
+    /// not be, in words a client can print — a notification that never
+    /// reached the trader is reported, never assumed, and one that did is
+    /// not withheld because a neighbour failed.
     fn play(&mut self, cues: &[Cue]) -> Result<(), &'static str>;
+
+    /// Get ready to play `cue` soon, off the path that will ask for it.
+    /// A sink that has a device to open opens it here — when an alarm is
+    /// armed, not on the frame the signal lands — so the first alarm pays
+    /// nothing the second does not. The default does nothing, which is
+    /// right for a sink with nothing to prepare.
+    fn warm_up(&mut self, cue: Cue) {
+        let _ = cue;
+    }
 }
+
+/// How long the [`Speaker`] leaves a refused output device alone before
+/// asking for it again. Long enough that a machine with no output device
+/// does not re-enumerate its audio stack on every signal bar, short enough
+/// that a headset plugged in mid-session is found within a minute.
+pub const DEVICE_RETRY_AFTER: Duration = Duration::from_secs(30);
 
 /// The shipped sink: platform sounds through the operating system, library
 /// clips through the default output device.
 ///
-/// The device is opened on the first clip, not at start-up — a chart that
-/// never arms an alarm never touches an audio device — and kept open from
-/// then on, so a second alarm does not pay for another device handshake. A
-/// device that refused once is asked again on the next cue: the alarm path
-/// is rare, and a headset plugged in mid-session should start working
-/// without a restart.
+/// The device is opened by [`AlertSink::warm_up`] when an alarm naming a
+/// clip is armed, or by the first clip if nothing warmed it — never at
+/// start-up, so a chart that never arms an alarm never touches an audio
+/// device — and kept open from then on. A device that refused is asked
+/// again after [`DEVICE_RETRY_AFTER`]; one that failed after opening is
+/// dropped and reopened on the next cue, so a success is never claimed
+/// about a device that is no longer there.
 #[derive(Default)]
 pub struct Speaker {
     clips: Option<player::ClipPlayer>,
+    /// When the device last refused to open, if it did.
+    refused_at: Option<Instant>,
 }
 
-impl std::fmt::Debug for Speaker {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Speaker")
-            .field("device_open", &self.clips.is_some())
-            .finish()
+impl Speaker {
+    /// The open device, opening or reopening it as needed.
+    fn device(&mut self) -> Result<&mut player::ClipPlayer, &'static str> {
+        if self
+            .clips
+            .as_ref()
+            .is_some_and(player::ClipPlayer::is_faulted)
+        {
+            self.clips = None;
+        }
+        if self.clips.is_none() {
+            if let Some(refused_at) = self.refused_at
+                && refused_at.elapsed() < DEVICE_RETRY_AFTER
+            {
+                return Err("no audio output device could be opened");
+            }
+            match player::ClipPlayer::open() {
+                Ok(player) => {
+                    self.refused_at = None;
+                    self.clips = Some(player);
+                }
+                Err(reason) => {
+                    self.refused_at = Some(Instant::now());
+                    return Err(reason);
+                }
+            }
+        }
+        Ok(self
+            .clips
+            .as_mut()
+            .expect("the device was opened a moment ago"))
     }
 }
 
 impl AlertSink for Speaker {
     fn play(&mut self, cues: &[Cue]) -> Result<(), &'static str> {
-        // Platform sounds first and at once: the system plays them on its
-        // own and they cannot queue, so they are the "now" of the batch
-        // while the clips are its story.
+        let mut first_failure: Option<&'static str> = None;
         let mut clips: Vec<(&'static Clip, PlayLength)> = Vec::with_capacity(cues.len());
         for cue in cues {
             match cue.sound {
                 AlertSound::Clip(id) => clips.push((id.clip(), cue.length)),
-                platform_sound => platform::alert(platform_sound)?,
+                platform_sound => {
+                    if let Err(reason) = platform::alert(platform_sound) {
+                        first_failure.get_or_insert(reason);
+                    }
+                }
             }
         }
         if clips.is_empty() {
-            return Ok(());
+            // The newest signal is a beep: a clip still running from an
+            // older one would bury it, and its news is already old.
+            if let Some(player) = self.clips.as_mut() {
+                player.stop();
+            }
+        } else if let Err(reason) = self.device().and_then(|player| player.play(&clips)) {
+            first_failure.get_or_insert(reason);
         }
-        let player = match self.clips.as_mut() {
-            Some(player) => player,
-            None => self.clips.insert(player::ClipPlayer::open()?),
-        };
-        player.play(&clips)
+        first_failure.map_or(Ok(()), Err)
+    }
+
+    fn warm_up(&mut self, cue: Cue) {
+        if cue.sound.can_be_cut() {
+            // The refusal, if any, is reported by the cue that needs the
+            // device; warming up is silent by design.
+            let _ = self.device();
+        }
     }
 }
 
@@ -300,6 +375,7 @@ impl AlertSink for Speaker {
 #[derive(Debug, Default, Clone)]
 pub struct RecordingAlerts {
     pub played: std::rc::Rc<std::cell::RefCell<Vec<Cue>>>,
+    pub warmed: std::rc::Rc<std::cell::RefCell<Vec<Cue>>>,
 }
 
 #[cfg(test)]
@@ -313,6 +389,11 @@ impl RecordingAlerts {
     pub fn sounds(&self) -> Vec<AlertSound> {
         self.cues().into_iter().map(|cue| cue.sound).collect()
     }
+
+    /// What the app asked to be ready for, in order.
+    pub fn warmed_up(&self) -> Vec<Cue> {
+        self.warmed.borrow().clone()
+    }
 }
 
 #[cfg(test)]
@@ -320,6 +401,10 @@ impl AlertSink for RecordingAlerts {
     fn play(&mut self, cues: &[Cue]) -> Result<(), &'static str> {
         self.played.borrow_mut().extend_from_slice(cues);
         Ok(())
+    }
+
+    fn warm_up(&mut self, cue: Cue) {
+        self.warmed.borrow_mut().push(cue);
     }
 }
 
@@ -359,7 +444,7 @@ mod tests {
 
     /// The picker's groups cover the set exactly once, in the order the
     /// headings are listed, so a sound is neither under two headings nor
-    /// under none.
+    /// under none — and no clip claims the system heading.
     #[test]
     fn the_categories_partition_the_sounds_in_picker_order() {
         let grouped: Vec<AlertSound> = SoundCategory::ALL
@@ -371,7 +456,7 @@ mod tests {
         assert_eq!(all.len(), AlertSound::PLATFORM.len() + library::CLIPS.len());
         assert!(
             AlertSound::in_category(SoundCategory::System).all(|sound| !sound.can_be_cut()),
-            "a platform beep cannot be cut"
+            "a platform beep cannot be cut, and no clip is filed under system"
         );
         assert!(
             AlertSound::in_category(SoundCategory::Nature).all(AlertSound::can_be_cut),
@@ -392,6 +477,26 @@ mod tests {
         );
     }
 
+    /// A cut applies to a clip and not to a beep: the same beep asked for
+    /// with and without seconds is one cue, so two presets that agree on
+    /// the sound cannot make the platform play it twice in a frame.
+    #[test]
+    fn a_cut_only_reaches_a_sound_that_can_be_cut() {
+        let clip = AlertSound::in_category(SoundCategory::Standard)
+            .next()
+            .expect("a standard clip");
+        assert_eq!(Cue::new(clip, Some(4)), Cue::cut_after(clip, 4));
+        assert_eq!(Cue::new(clip, None), Cue::whole(clip));
+        assert_eq!(
+            Cue::new(AlertSound::Critical, Some(4)),
+            Cue::whole(AlertSound::Critical)
+        );
+        assert_eq!(
+            Cue::new(AlertSound::Critical, Some(4)),
+            Cue::new(AlertSound::Critical, None)
+        );
+    }
+
     /// The port's other implementation records what it was asked for, in
     /// order — the whole reason the alarm can be tested at all.
     #[test]
@@ -402,9 +507,11 @@ mod tests {
         let mut installed = sink.clone();
         let first = Cue::whole(AlertSound::Critical);
         let second = Cue::cut_after(AlertSound::Beep, 3);
+        installed.warm_up(first);
         assert_eq!(installed.play(&[first]), Ok(()));
         assert_eq!(installed.play(&[second]), Ok(()));
         assert_eq!(sink.cues(), vec![first, second]);
         assert_eq!(sink.sounds(), vec![AlertSound::Critical, AlertSound::Beep]);
+        assert_eq!(sink.warmed_up(), vec![first]);
     }
 }

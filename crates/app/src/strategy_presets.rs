@@ -321,15 +321,15 @@ impl StoredPreset {
             _ => return None,
         };
         let sound = AlertSound::from_token(&self.alarm_sound)?;
-        let cue = match self.alarm_play_secs {
-            None => Cue::whole(sound),
-            Some(secs) => {
-                if !(MIN_ALARM_PLAY_SECS..=MAX_ALARM_PLAY_SECS).contains(&secs) {
-                    return None;
-                }
-                Cue::cut_after(sound, secs)
-            }
-        };
+        if let Some(secs) = self.alarm_play_secs
+            && !(MIN_ALARM_PLAY_SECS..=MAX_ALARM_PLAY_SECS).contains(&secs)
+        {
+            return None;
+        }
+        // The same constructor the dialog's Test button uses, so the
+        // audition and the armed instance can never disagree — including
+        // on a platform beep, which stays whole whatever the row stores.
+        let cue = Cue::new(sound, self.alarm_play_secs);
         Some(Some(AlarmSetup {
             params: AlarmParams { when, repeat },
             cue,
@@ -703,7 +703,10 @@ mod tests {
             alarm.params.repeat,
             RepeatPolicy::Cooldown { millis: 45_000 }
         );
-        assert_eq!(alarm.cue, Cue::cut_after(AlertSound::Critical, 5));
+        // A platform sound is one beep: the stored cut rides along in the
+        // file and applies the moment a clip is picked, but the compiled
+        // cue is the whole beep.
+        assert_eq!(alarm.cue, Cue::whole(AlertSound::Critical));
         assert_eq!(compiled.params.execution, Execution::AlarmOnly);
         std::fs::remove_file(&path).ok();
     }

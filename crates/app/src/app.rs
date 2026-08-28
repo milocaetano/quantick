@@ -9457,7 +9457,12 @@ impl QuantickApp {
                 - ui.next_widget_position().y
                 - ui.spacing().interact_size.y
                 - ui.spacing().menu_margin.sum().y;
-            let list_height = room_below.clamp(SOUND_PICKER_MIN_HEIGHT, ui.spacing().combo_height);
+            // `min` then `max`, not `clamp`: `clamp` asserts its bounds are
+            // ordered, and a style whose combo height is under the floor
+            // must shorten the list, not crash the dialog.
+            let list_height = room_below
+                .min(ui.spacing().combo_height)
+                .max(SOUND_PICKER_MIN_HEIGHT);
             egui::ComboBox::from_id_salt(SOUND_PICKER_ID)
                 .selected_text(current.label())
                 .height(list_height)
@@ -9491,10 +9496,7 @@ impl QuantickApp {
                 // included — so an audition that cannot be heard reports
                 // itself exactly as a missed signal would, and one that can
                 // is what the signal will sound like.
-                let cue = match form.alarm_play_secs {
-                    Some(secs) => Cue::cut_after(current, secs),
-                    None => Cue::whole(current),
-                };
+                let cue = Cue::new(current, form.alarm_play_secs);
                 let outcome = self.alerts.play(&[cue]);
                 self.report_alert_attempt(outcome);
             }
@@ -9627,6 +9629,12 @@ impl QuantickApp {
             force,
             alarm,
         } = compiled;
+        // The sink opens its device now, at arm time, so the first signal
+        // does not pay for it on the tape's path. Silent by design: the
+        // cue that needs the device reports its refusal.
+        if let Some(setup) = alarm {
+            self.alerts.warm_up(setup.cue);
+        }
         let tab = self.active_tab_mut();
         let replaced_cleanup = {
             let pane = tab.pane_mut(side);
@@ -10051,8 +10059,14 @@ impl QuantickApp {
             form.alarm_when = "share".to_owned();
             form.alarm_repeat = "cooldown".to_owned();
             // A library clip with a cut, so the row that exists only for a
-            // clip is on screen too.
-            form.alarm_sound = "cuckoo".to_owned();
+            // clip is on screen too. The first standard clip, whatever it
+            // is called: a name here would go stale the day a clip is
+            // renamed, and the scene would silently photograph the
+            // system-sound caveat instead.
+            let clip = crate::audio::AlertSound::in_category(crate::audio::SoundCategory::Standard)
+                .next()
+                .expect("the shipped library has a standard clip");
+            form.alarm_sound = clip.token().to_owned();
             form.alarm_play_secs = Some(crate::strategy_presets::DEFAULT_ALARM_PLAY_SECS);
         }
         match mode {
@@ -14221,13 +14235,22 @@ crosshair = false
         // One sound per bar keeps the assertion about *which* bar spoke
         // rather than about the wall clock a cooldown would consult.
         form.alarm_repeat = "once_per_bar".to_owned();
-        form.alarm_sound = crate::audio::AlertSound::Critical.token().to_owned();
-        // A cut, so the recorder can show the length travelled with the
-        // sound all the way from the form to the sink.
+        // A library clip with a cut, so the recorder can show the length
+        // travelled with the sound all the way from the form to the sink
+        // (a platform beep would arrive whole, cut or no cut).
+        let clip = crate::audio::AlertSound::in_category(crate::audio::SoundCategory::Standard)
+            .next()
+            .expect("a standard clip is shipped");
+        form.alarm_sound = clip.token().to_owned();
         form.alarm_play_secs = Some(3);
         form.alarm_only = true;
         app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "alarm".to_owned())
             .expect("the alarm form compiles and the drawing exists");
+        assert_eq!(
+            recorder.warmed_up(),
+            vec![crate::audio::Cue::cut_after(clip, 3)],
+            "arming warms the sink up for the cue it will be asked for"
+        );
 
         let mut id = 0u64;
         // Three body-1 warmup bars inside the region: quiet, and silent.
@@ -14262,10 +14285,7 @@ crosshair = false
         app.play_pending_alarms();
         assert_eq!(
             recorder.cues(),
-            vec![crate::audio::Cue::cut_after(
-                crate::audio::AlertSound::Critical,
-                3
-            )],
+            vec![crate::audio::Cue::cut_after(clip, 3)],
             "past the share the forming bar alarms, in the preset's own sound, cut \
              where the preset said"
         );
@@ -14293,7 +14313,7 @@ crosshair = false
         app.play_pending_alarms();
         assert_eq!(
             recorder.sounds(),
-            vec![crate::audio::AlertSound::Critical],
+            vec![clip],
             "one sound per bar, whatever the tape does inside it"
         );
         let instance = app

@@ -12,14 +12,7 @@
 //! token is the file stem, so a hand-edited preset can be checked against
 //! the folder by eye.
 
-/// Which folder a clip lives in, which is also how the picker groups it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClipCategory {
-    /// `assets/alarms/standard/`: clips that behave like an alarm.
-    Standard,
-    /// `assets/alarms/nature/`: ambient clips, mostly long.
-    Nature,
-}
+use super::SoundCategory;
 
 /// One recording: its stored token, its picker label, its folder and its
 /// bytes as shipped (AAC in an MP4 container — the format the library came
@@ -28,7 +21,9 @@ pub enum ClipCategory {
 pub struct Clip {
     pub token: &'static str,
     pub label: &'static str,
-    pub category: ClipCategory,
+    /// Never [`SoundCategory::System`]: that heading is the platform's.
+    /// The catalogue test holds the line.
+    pub category: SoundCategory,
     pub bytes: &'static [u8],
 }
 
@@ -39,7 +34,7 @@ macro_rules! clip {
         Clip {
             token: $stem,
             label: $label,
-            category: ClipCategory::$category,
+            category: SoundCategory::$category,
             bytes: include_bytes!(concat!("../../assets/alarms/", $folder, "/", $stem, ".m4a")),
         }
     };
@@ -124,8 +119,8 @@ mod tests {
     fn the_catalogue_matches_the_assets_folder() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/alarms");
         for (category, folder) in [
-            (ClipCategory::Standard, "standard"),
-            (ClipCategory::Nature, "nature"),
+            (SoundCategory::Standard, "standard"),
+            (SoundCategory::Nature, "nature"),
         ] {
             let on_disk: BTreeSet<String> = std::fs::read_dir(root.join(folder))
                 .expect("the category folder exists")
@@ -145,7 +140,12 @@ mod tests {
                 .collect();
             assert_eq!(on_disk, listed, "{folder} folder vs table");
         }
-        assert_eq!(CLIPS.len(), 27, "the library the trader supplied");
+        assert!(
+            CLIPS
+                .iter()
+                .all(|clip| clip.category != SoundCategory::System),
+            "a clip is never filed under the platform's own heading"
+        );
     }
 
     /// Tokens are file stems: lower-case, digits and hyphens, so the name
