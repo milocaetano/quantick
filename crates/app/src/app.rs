@@ -887,19 +887,16 @@ pub struct QuantickApp {
     layouts_dirty: bool,
     /// When the last layout change happened (the debounce clock).
     last_layout_change: Option<Instant>,
-    /// The pane the last indicator edit happened on: the one whose set the
-    /// settled reconciliation copies into the layout and onto the others.
-    indicator_edit_origin: Option<(u64, PaneSide)>,
+    /// Whether the layouts file may be written this session. `true` only
+    /// when the file was there at launch, could not be read, and could not
+    /// be set aside — the trader's only copy, which this session's empty
+    /// book must never replace.
+    layouts_save_blocked: bool,
     /// The layout being renamed in the strip, with the draft name.
     layout_rename: Option<(crate::layouts::LayoutId, String)>,
     /// The layout a delete is waiting on: deleting takes its drawings with
     /// it, on disk too, so it is the one strip action behind a confirmation.
     layout_delete_confirm: Option<crate::layouts::LayoutId>,
-    /// Set by any add/remove/hide/inputs change; drained by the settled
-    /// reconciliation that copies the edited pane's set into the layout.
-    indicator_state_dirty: bool,
-    /// When the last indicator change happened (the debounce clock).
-    last_indicator_change: Option<Instant>,
     /// Last hot-reload poll instant (the poll runs about once a second;
     /// file metadata every frame would be waste).
     last_script_poll: Instant,
@@ -1372,6 +1369,8 @@ impl QuantickApp {
             &state_path,
         );
         let mut pane_ids = PaneIdAllocator::new();
+        let loaded_layouts =
+            Self::load_layouts(&crate::layouts::default_path(), &state_file::default_path());
         let mut tab = Tab::new(
             FIRST_TAB_ID,
             pane_ids.alloc(),
@@ -1413,18 +1412,13 @@ impl QuantickApp {
             pending_hidden: Vec::new(),
             pending_styles: Vec::new(),
             settings_autostart: None,
-            layouts: Self::load_layouts(
-                &crate::layouts::default_path(),
-                &state_file::default_path(),
-            ),
+            layouts: loaded_layouts.0,
             layouts_path: crate::layouts::default_path(),
             layouts_dirty: false,
             last_layout_change: None,
-            indicator_edit_origin: None,
+            layouts_save_blocked: loaded_layouts.1,
             layout_rename: None,
             layout_delete_confirm: None,
-            indicator_state_dirty: false,
-            last_indicator_change: None,
             last_script_poll: Instant::now(),
             replay_view: ReplayView::new(workspace.replay_folder.as_deref()),
             dock: Dock::new(),
@@ -3138,15 +3132,6 @@ impl QuantickApp {
         self.pending_hidden.retain(|owner| owner.tab != closed.id);
         self.pending_styles
             .retain(|(owner, _)| owner.tab != closed.id);
-        if self
-            .indicator_edit_origin
-            .is_some_and(|(tab, _)| tab == closed.id)
-        {
-            // The pane the reconciliation would read is gone; the layout
-            // already holds the last settled set.
-            self.indicator_edit_origin = None;
-            self.indicator_state_dirty = false;
-        }
         self.active_tab = self.active_tab.min(self.tabs.len() - 1);
         drop(closed);
     }
@@ -4263,31 +4248,14 @@ impl QuantickApp {
     /// simply does not enter the persisted set.
     fn forget_last_indicator_state_change(&mut self) {
         self.slot_kinds.pop();
-        self.indicator_state_dirty = false;
-        self.last_indicator_change = None;
-        self.indicator_edit_origin = None;
     }
 
-    /// Apply layout-placed hide flags and styles once their views exist, then
-    /// — once an indicator edit has settled — copy the edited pane's set into
-    /// the active layout and bring every other pane to it.
+    /// Apply layout-placed hide flags and styles once their views exist.
     ///
-    /// Settled, not immediate: the mirror already put the change on every
-    /// pane the frame it happened. This is the reconciliation, and it waits
-    /// for the workers to answer so the set it reads has its inputs bound
-    /// and its views born. See `layout_wiring`.
+    /// The layout itself is written by the edit that changed it — see
+    /// `layout_wiring` — so nothing here reads a view back.
     fn maintain_indicator_state(&mut self) {
         self.apply_pending_indicator_state();
-        let settled = self
-            .last_indicator_change
-            .is_some_and(|changed| changed.elapsed() >= INDICATOR_STATE_SAVE_DEBOUNCE);
-        if self.indicator_state_dirty && settled {
-            self.indicator_state_dirty = false;
-            // The clock starts again with the next edit rather than ticking
-            // on every frame from here on.
-            self.last_indicator_change = None;
-            self.reconcile_indicators();
-        }
     }
 
     /// What a pane's layer menu could not switch itself.
@@ -4866,13 +4834,10 @@ impl QuantickApp {
     /// Write every store that is still only in memory, so a bundle captured
     /// next describes the screen rather than the last flush.
     fn flush_cockpit_stores(&mut self) {
-        if self.indicator_state_dirty {
-            // The indicator file is written debounced, off the frame path.
-            // An export is the one moment worth paying it immediately, so
-            // the debounce is declared elapsed rather than waited out.
-            self.last_indicator_change = Instant::now().checked_sub(INDICATOR_STATE_SAVE_DEBOUNCE);
-            self.maintain_indicator_state();
-        }
+        // The layouts file is written debounced, off the frame path. An
+        // export is the one moment worth paying it immediately, or the
+        // bundle would carry the layouts as they stood a second ago.
+        self.flush_layouts();
         self.maintain_chart_layers();
     }
 
@@ -4940,11 +4905,11 @@ impl QuantickApp {
                 crate::store_home::COCKPIT_STORES,
                 &crate::workspace_bundle::live_paths,
             )
-            .map(|written| written.len())
         });
         match outcome {
-            Ok(stores) => {
-                self.reload_cockpit_stores();
+            Ok(written) => {
+                let stores = written.len();
+                self.reload_cockpit_stores(&written);
                 crate::workspace_bundle::remember_recent(&mut self.recent_workspaces, path);
                 self.refresh_recent_workspaces();
                 // The recent list lives in the workspace file the import just
@@ -4986,7 +4951,7 @@ impl QuantickApp {
     /// it already had, so an imported cockpit is restored by exactly the code
     /// that restores one at startup — a second, import-only restore path is
     /// how the two would drift.
-    fn reload_cockpit_stores(&mut self) {
+    fn reload_cockpit_stores(&mut self, imported: &[&str]) {
         self.added_symbols = symbols_file::load(&self.symbols_path);
         self.drawing_presets = drawings::presets::PresetStore::load_from(
             drawings::presets::PresetStore::default_path(),
@@ -5008,7 +4973,7 @@ impl QuantickApp {
 
         // The layouts come last, once the tabs are the imported ones: every
         // pane is stripped and re-seeded from the imported file.
-        self.reload_layouts();
+        self.reload_layouts(imported);
     }
 
     /// Work out which remembered workspace files are still there.
@@ -6168,12 +6133,18 @@ impl QuantickApp {
         }
         // Layout tabs by number: `Alt+1..9`, beside `Ctrl+1..9` for the
         // presets — one row of keys, two things a trader switches by number.
+        // Not while a text field has the keyboard — a rename box, a note,
+        // the ticket — where Alt+1 is text, not a switch.
+        let typing = ctx.memory(|memory| memory.focused().is_some());
         for index in 0..LAYOUT_PRESET_KEYS.len() {
             let Some(shortcut) = layout_tab_shortcut(index) else {
                 break;
             };
-            if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
-                let _ = self.switch_layout_index(index);
+            if !typing
+                && ctx.input_mut(|i| i.consume_shortcut(&shortcut))
+                && let Err(error) = self.switch_layout_index(index)
+            {
+                self.note_workspace(error.to_string());
             }
         }
         if ctx.input_mut(|i| i.consume_shortcut(&LEGEND_SHORTCUT)) {
@@ -6382,7 +6353,8 @@ impl QuantickApp {
                                         )))
                                         .on_disabled_hover_text("already the top chart");
                                     if up.clicked() {
-                                        self.active_tab_mut().move_context_pane(slot, slot - 1);
+                                        let tab_id = self.active_tab().id;
+                                        self.move_context_pane_at(tab_id, slot, slot - 1);
                                         ui.close_menu();
                                     }
                                     let down = ui
@@ -6392,7 +6364,8 @@ impl QuantickApp {
                                         )
                                         .on_disabled_hover_text("already the bottom chart");
                                     if down.clicked() {
-                                        self.active_tab_mut().move_context_pane(slot, slot + 1);
+                                        let tab_id = self.active_tab().id;
+                                        self.move_context_pane_at(tab_id, slot, slot + 1);
                                         ui.close_menu();
                                     }
                                 }
@@ -12515,7 +12488,7 @@ plot(close)
             ],
         );
 
-        app.reload_layouts();
+        app.reload_layouts(&[]);
         assert_eq!(
             app.layouts().active().name,
             "Layout 1",
@@ -12530,14 +12503,12 @@ plot(close)
         assert_eq!(app.slot_kinds[1].1, SavedKind::NativeCvd);
         assert_eq!(app.pending_hidden.len(), 1, "the hidden flag survived");
         assert!(
-            !app.indicator_state_dirty,
+            !app.layouts_dirty,
             "restoring is not a user edit and must not rewrite the file"
         );
 
         // A user edit, settled: the file must match the live set.
         app.mark_indicator_state_dirty();
-        app.last_indicator_change =
-            Some(Instant::now() - INDICATOR_STATE_SAVE_DEBOUNCE - Duration::from_millis(10));
         // Let the worker answer the adds, so the views the snapshot reads
         // exist — a settled edit reads what is on screen.
         app.active_tab_mut().flow_pane.indicator_worker.flush();
@@ -12550,20 +12521,16 @@ plot(close)
         let written = &book.active().indicators;
         assert_eq!(
             written.len(),
-            {
-                let kinds = app.slot_kinds.clone();
-                app.active_tab()
-                    .flow_pane
-                    .indicators
-                    .all()
-                    .iter()
-                    .filter(|view| kinds.iter().any(|(owner, _)| owner.slot == view.slot))
-                    .count()
-            },
-            "every slot with a known kind is written, and only those"
+            3,
+            "the whole migrated set is written — the script the library lacks stays in the layout, waiting for its file"
+        );
+        assert_eq!(
+            app.slot_kinds.len(),
+            2,
+            "while only the two the library can build are on the chart"
         );
         assert!(
-            !app.indicator_state_dirty,
+            !app.layouts_dirty,
             "the debounce fired, so the change is written"
         );
         let _ = std::fs::remove_file(&path);
@@ -23803,8 +23770,6 @@ crosshair = false
         );
 
         // Settled, the edited pane's set is the layout's.
-        app.last_indicator_change =
-            Some(Instant::now() - INDICATOR_STATE_SAVE_DEBOUNCE - Duration::from_millis(10));
         app.maintain_indicator_state();
         assert_eq!(app.layouts().active().indicators.len(), 1);
         assert_eq!(
@@ -24536,8 +24501,6 @@ crosshair = false
         let (mut app, _commands) = split_app(&ctx, 200);
         app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
         settle_indicators(&mut app);
-        app.last_indicator_change =
-            Some(Instant::now() - INDICATOR_STATE_SAVE_DEBOUNCE - Duration::from_millis(10));
         app.maintain_indicator_state();
         let first = app.layouts().active_id();
         assert_eq!(app.layouts().active().indicators.len(), 1);
@@ -24557,8 +24520,6 @@ crosshair = false
 
         app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
         settle_indicators(&mut app);
-        app.last_indicator_change =
-            Some(Instant::now() - INDICATOR_STATE_SAVE_DEBOUNCE - Duration::from_millis(10));
         app.maintain_indicator_state();
         assert_eq!(
             app.layouts().active().indicators[0].kind,
@@ -24712,8 +24673,6 @@ crosshair = false
         let (mut app, _commands) = split_app(&ctx, 200);
         app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
         settle_indicators(&mut app);
-        app.last_indicator_change =
-            Some(Instant::now() - INDICATOR_STATE_SAVE_DEBOUNCE - Duration::from_millis(10));
         app.maintain_indicator_state();
         place_level(&mut app, PaneSide::Time(0), 100.0);
         run_frame(&mut app, &ctx);
@@ -24738,7 +24697,7 @@ crosshair = false
         // A second app on the same home — the same file — opens on the book.
         let (mut again, _commands2) = split_app(&ctx, 200);
         again.layouts_path = path.clone();
-        again.reload_layouts();
+        again.reload_layouts(&[]);
         assert_eq!(again.layouts().active().name, "open");
         again.switch_layout(book.layouts()[0].id).expect("layout 1");
         settle_indicators(&mut again);
@@ -24753,6 +24712,109 @@ crosshair = false
             "the EMA is back on the restored layout"
         );
         assert_eq!(drawings_on(&again, PaneSide::Time(0)), vec![100.0]);
+    }
+
+    /// A drawing keeps its id across a put-away and a bring-out, so whatever
+    /// named it — a strategy armed on it, an agent's annotation — still does.
+    #[test]
+    fn a_drawing_keeps_its_id_across_a_layout_round_trip() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        place_level(&mut app, PaneSide::Time(0), 100.0);
+        let id = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0].id;
+        run_frame(&mut app, &ctx);
+        let first = app.layouts().active_id();
+        let second = app.create_layout(None).expect("second");
+        assert_eq!(app.layouts().active_id(), second);
+        app.switch_layout(first).expect("back");
+        let items = app.active_tab().pane(PaneSide::Time(0)).drawings.items();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, id, "the level came back under its own id");
+    }
+
+    /// Moving a context chart moves its drawings' key and its slot
+    /// bookkeeping with it, so the charts do not swap sets on the next
+    /// switch and the layout keeps addressing the right pane.
+    #[test]
+    fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+        app.active_tab_mut()
+            .set_layout(CanvasLayout::TimeTimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        place_level(&mut app, PaneSide::Time(0), 100.0);
+        run_frame(&mut app, &ctx);
+        let top_id = app.active_tab().pane(PaneSide::Time(0)).id;
+
+        let tab_id = app.active_tab().id;
+        assert!(
+            app.move_context_pane_at(tab_id, 1, 2),
+            "the top chart moved down"
+        );
+        assert_eq!(app.active_tab().pane(PaneSide::Time(1)).id, top_id);
+        assert_eq!(
+            app.active_tab()
+                .pane(PaneSide::Time(1))
+                .drawings_key
+                .as_ref()
+                .map(|key| key.pane),
+            Some(2),
+            "its drawing key names its new address"
+        );
+        assert_eq!(drawings_on(&app, PaneSide::Time(1)), vec![100.0]);
+        assert!(
+            app.slot_kinds
+                .iter()
+                .filter(|(owner, _)| owner.tab == tab_id && owner.side == PaneSide::Time(1))
+                .count()
+                == 1,
+            "and its indicator registration followed it"
+        );
+
+        // A switch away and back finds the level on the same chart.
+        let first = app.layouts().active_id();
+        let second = app.create_layout(None).expect("second");
+        assert_eq!(app.layouts().active_id(), second);
+        app.switch_layout(first).expect("back");
+        assert_eq!(drawings_on(&app, PaneSide::Time(1)), vec![100.0]);
+        assert!(drawings_on(&app, PaneSide::Time(0)).is_empty());
+    }
+
+    /// A settings preview reaches the origin's worker and nothing else: the
+    /// layout keeps the last committed inputs, so Discard leaves no trace on
+    /// another chart or in the file.
+    #[test]
+    fn a_previewed_input_never_reaches_the_layout() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
+        let target = TabSlot {
+            tab: app.active_tab().id,
+            side: PaneSide::Flow,
+            slot,
+        };
+        app.open_indicator_settings_at(target);
+        app.indicator_settings.as_mut().expect("dialog").draft = vec![
+            quantick_indicators::InputValue::Int(50),
+            quantick_indicators::InputValue::Source(quantick_indicators::SourceId::Close),
+        ];
+        app.preview_indicator_settings_draft();
+        assert!(
+            app.layouts().active().indicators[0].inputs.is_empty(),
+            "a preview is not a commit"
+        );
+        app.apply_indicator_settings_draft();
+        assert_eq!(
+            app.layouts().active().indicators[0].inputs[0],
+            crate::indicators::state_file::SavedInput::Int(50),
+            "Apply is"
+        );
     }
 
     /// Deleting a layout destroys its drawings, so the strip's Delete asks

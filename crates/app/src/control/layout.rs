@@ -536,11 +536,13 @@ fn move_pane(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.target)?;
     let (from, to) = (input.from.get() as usize, input.to.get() as usize);
-    let tab = app
-        .control_tab_at_mut(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    // The one reposition path — the same call the View menu takes.
-    let changed = tab.move_context_pane(from, to);
+    let tab_id = app
+        .control_tab_at(index)
+        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?
+        .id;
+    // The one reposition path — the same call the View menu takes, which
+    // moves the slot bookkeeping and the drawing keys with the pane.
+    let changed = app.move_context_pane_at(tab_id, from, to);
     result(app, index, changed)
 }
 

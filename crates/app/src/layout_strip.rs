@@ -215,11 +215,14 @@ fn draw_rename_box(
     if !response.has_focus() && !response.lost_focus() {
         response.request_focus();
     }
-    let enter = ui.input(|input| input.key_pressed(egui::Key::Enter));
-    let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
+    // Consumed, not read: a key the box answered must not fall through to
+    // the chart, where Escape drops a selection and Enter places an anchor.
+    let escape = ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    let enter =
+        !escape && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
     if escape {
         actions.push(StripAction::CancelRename);
-    } else if enter || (response.lost_focus() && !escape) {
+    } else if enter || response.lost_focus() {
         actions.push(StripAction::CommitRename(id, draft.clone()));
     }
 }

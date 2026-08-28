@@ -89,6 +89,11 @@ pub enum LayoutError {
     Duplicate,
     /// Nothing was left of the name once it was cleaned.
     Empty,
+    /// A strategy is armed on a drawing; switching would put that drawing
+    /// away and orphan the instance.
+    StrategyArmed,
+    /// A drawing gesture is in flight; the stores cannot be swapped under it.
+    GestureInFlight,
 }
 
 impl std::fmt::Display for LayoutError {
@@ -99,6 +104,10 @@ impl std::fmt::Display for LayoutError {
             Self::Last => "the last layout cannot be deleted",
             Self::Duplicate => "another layout already has that name",
             Self::Empty => "a layout needs a name",
+            Self::StrategyArmed => {
+                "disarm the strategy before switching layouts: it is armed on a drawing this layout holds"
+            }
+            Self::GestureInFlight => "finish the drawing gesture before switching layouts",
         })
     }
 }
@@ -153,6 +162,12 @@ pub struct SavedAuthor {
 /// undo history does not travel — a launch starts with nothing to undo.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SavedDrawing {
+    /// The id the drawing had on its pane, kept so it comes back under the
+    /// same one: a strategy armed on a region and an annotation an agent
+    /// placed both name their object by id. Absent in files written before
+    /// ids travelled; such an entry takes a fresh id on load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
     /// The tool id ([`DrawingTool::id`]). An id this build does not know
     /// keeps the entry in the file and draws nothing, so a file from a newer
     /// build never loses a mark to an older one.
@@ -190,6 +205,7 @@ impl SavedDrawing {
     pub fn from_drawing(drawing: &Drawing) -> Self {
         let [r, g, b, a] = drawing.style.color.to_array();
         Self {
+            id: Some(drawing.id.0),
             tool: drawing.tool.id().to_owned(),
             name: drawing.name.clone(),
             author: drawing.author.as_ref().map(|author| SavedAuthor {
@@ -339,7 +355,20 @@ impl ChartLayout {
     /// Replace the drawings kept for `key`. An empty set removes the entry:
     /// a market the trader cleared is a market with no drawings, not one
     /// with an empty list to carry around.
-    pub fn set_drawings(&mut self, key: &DrawingKey, items: Vec<SavedDrawing>) {
+    ///
+    /// Entries whose tool this build does not know are kept: the pane never
+    /// held them, so a set written back from the pane would drop them, and
+    /// a file from a newer build would lose a mark to an older one.
+    pub fn set_drawings(&mut self, key: &DrawingKey, mut items: Vec<SavedDrawing>) {
+        if let Some(previous) = self.drawings.iter().find(|set| set.is(key)) {
+            items.extend(
+                previous
+                    .items
+                    .iter()
+                    .filter(|entry| DrawingTool::by_id(&entry.tool).is_none())
+                    .cloned(),
+            );
+        }
         if let Some(index) = self.drawings.iter().position(|set| set.is(key)) {
             if items.is_empty() {
                 self.drawings.remove(index);
@@ -603,35 +632,47 @@ pub(crate) enum Loaded {
     /// A file this build refuses, with why. Nothing of it is used: half a
     /// book would resurrect half a workspace. The caller starts fresh, and
     /// the refused file is set aside under a `.broken` name so the next save
-    /// does not write over the trader's only copy.
-    Refused(String),
+    /// does not write over the trader's only copy — `set_aside` says whether
+    /// that rename succeeded; when it did not, the caller must not save at
+    /// all.
+    Refused { reason: String, set_aside: bool },
 }
 
 /// Read the layouts file.
 #[must_use]
 pub(crate) fn load(path: &Path) -> Loaded {
+    let refused = |reason: String| {
+        let aside = path.with_extension("toml.broken");
+        let set_aside = std::fs::rename(path, &aside).is_ok();
+        tracing::warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "LAYOUTS_UNREADABLE",
+            path = %path.display(),
+            set_aside_to = %aside.display(),
+            set_aside,
+            reason = %reason,
+            action = if set_aside {
+                "starting_with_one_layout"
+            } else {
+                "starting_with_one_layout_and_never_saving_over_the_file"
+            },
+            "the layouts file could not be read"
+        );
+        Loaded::Refused { reason, set_aside }
+    };
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Loaded::Missing,
-        Err(error) => return Loaded::Refused(error.to_string()),
+        // Not "no file": a file that is there and cannot be read — held by
+        // another process, denied, or not text. Refused like a file that
+        // does not parse, for the same reason: what this session starts on
+        // is not what the trader saved, and must never be written over it.
+        Err(error) => return refused(error.to_string()),
     };
     match parse(&text) {
         Ok(book) => Loaded::Book(book),
-        Err(reason) => {
-            let aside = path.with_extension("toml.broken");
-            let _ = std::fs::rename(path, &aside);
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "LAYOUTS_UNREADABLE",
-                path = %path.display(),
-                set_aside = %aside.display(),
-                reason = %reason,
-                action = "starting_with_one_layout",
-                "the layouts file could not be read"
-            );
-            Loaded::Refused(reason)
-        }
+        Err(reason) => refused(reason),
     }
 }
 
@@ -707,6 +748,7 @@ mod tests {
             shared: false,
             payload: None,
             text: None,
+            id: None,
         }
     }
 
@@ -825,15 +867,42 @@ mod tests {
         let saved = level(101.5);
         let drawing = saved.to_drawing(DrawingId(7)).expect("a known tool");
         assert_eq!(drawing.id, DrawingId(7));
+        let mut with_id = saved.clone();
+        with_id.id = Some(7);
         assert_eq!(drawing.points[0].price, 101.5);
         assert_eq!(drawing.points[0].time_ms, Some(1_000));
         assert_eq!(drawing.name.as_deref(), Some("max"));
         assert_eq!(drawing.scope, DrawingScope::ThisChart);
-        assert_eq!(SavedDrawing::from_drawing(&drawing), saved);
+        assert_eq!(
+            SavedDrawing::from_drawing(&drawing),
+            with_id,
+            "the id travels"
+        );
 
         let mut unknown = level(1.0);
         unknown.tool = "a-tool-from-the-future".to_owned();
         assert!(unknown.to_drawing(DrawingId(1)).is_none());
+    }
+
+    /// A mark from a tool this build lacks is kept in the file through a
+    /// rewrite of its market's set, so a newer build's file loses nothing to
+    /// an older one.
+    #[test]
+    fn an_unknown_tools_drawing_survives_a_rewrite_of_its_set() {
+        let mut layout = LayoutBook::default().active().clone();
+        let mut future = level(50.0);
+        future.tool = "a-tool-from-the-future".to_owned();
+        layout.set_drawings(&key(0), vec![level(100.0), future.clone()]);
+        layout.set_drawings(&key(0), vec![level(101.0)]);
+        let kept = layout.drawings(&key(0)).unwrap();
+        assert_eq!(kept.len(), 2);
+        assert!(kept.contains(&future));
+        layout.set_drawings(&key(0), Vec::new());
+        assert_eq!(
+            layout.drawings(&key(0)).map(<[_]>::len),
+            Some(1),
+            "clearing the pane keeps what the pane never held"
+        );
     }
 
     #[test]
@@ -866,7 +935,10 @@ mod tests {
         assert!(validate(&std::fs::read_to_string(&path).unwrap()).is_ok());
 
         std::fs::write(&path, "version = 99\nactive = 1\nnext_id = 2\n").unwrap();
-        assert!(matches!(load(&path), Loaded::Refused(reason) if reason.contains("version 99")));
+        assert!(matches!(
+            load(&path),
+            Loaded::Refused { reason, set_aside: true } if reason.contains("version 99")
+        ));
         assert!(
             path.with_extension("toml.broken").exists(),
             "the refused file is set aside, never written over"
@@ -878,7 +950,7 @@ mod tests {
             "version = 1\nactive = 5\nnext_id = 2\n[[layouts]]\nid = 1\nname = \"a\"\n",
         )
         .unwrap();
-        assert!(matches!(load(&path), Loaded::Refused(reason) if reason.contains("active")));
+        assert!(matches!(load(&path), Loaded::Refused { reason, .. } if reason.contains("active")));
         assert!(validate("not = [toml").is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }

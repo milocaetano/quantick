@@ -2865,6 +2865,13 @@ impl ChartPane {
         self.pending_settings = Some(slot);
     }
 
+    /// Ask for a re-anchor once there are bars, for drawings adopted onto an
+    /// empty series — the layout seeding a pane before its first print.
+    /// Asking now would mark every anchor off a series that does not exist.
+    pub fn defer_reanchor(&mut self) {
+        self.pending_reanchor.get_or_insert(0);
+    }
+
     pub fn settle_pending_reanchor(&mut self) {
         let Some(old_slots) = self.pending_reanchor else {
             return;

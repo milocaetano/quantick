@@ -1469,15 +1469,26 @@ impl Drawings {
         std::mem::take(&mut self.items)
     }
 
-    /// Fill an emptied store from saved objects, each given a fresh id here
-    /// — a file's ids are that file's, and two markets' files may share one.
+    /// Fill an emptied store from saved objects.
+    ///
+    /// An object keeps the id it arrives with when that id is free here, so
+    /// whatever named it — a strategy armed on it, an agent's annotation —
+    /// still does; the counter moves past it so nothing later collides. An
+    /// object with no id (`0`), or one whose id this store already gave out,
+    /// takes a fresh one.
     ///
     /// Anchors keep the bar offsets they came with; the pane re-anchors them
     /// against its own series right after, exactly as after a re-cut.
     pub fn adopt(&mut self, items: impl IntoIterator<Item = Drawing>) {
         self.revision += 1;
         for mut drawing in items {
-            drawing.id = self.alloc_id();
+            let wanted = drawing.id.0;
+            let taken = self.items.iter().any(|held| held.id.0 == wanted);
+            if wanted == 0 || taken {
+                drawing.id = self.alloc_id();
+            } else {
+                self.next_id = self.next_id.max(wanted);
+            }
             self.items.push(drawing);
         }
     }
