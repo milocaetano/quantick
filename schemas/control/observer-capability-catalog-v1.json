@@ -52,6 +52,17 @@
                 ],
                 "description": "The pane within that tab. Omitted: the pane drawings go to."
               },
+              "pane_slot": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Which context chart `pane_side = \"time\"` means, top to bottom from\n`0`. Omitted: the top one. Ignored for the flow pane, which has no\nstack to pick from."
+              },
               "tab_id": {
                 "anyOf": [
                   {
@@ -296,6 +307,17 @@
                   }
                 ],
                 "description": "The pane within that tab. Omitted: the pane drawings go to."
+              },
+              "pane_slot": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Which context chart `pane_side = \"time\"` means, top to bottom from\n`0`. Omitted: the top one. Ignored for the flow pane, which has no\nstack to pick from."
               },
               "tab_id": {
                 "anyOf": [
@@ -625,6 +647,17 @@
                   }
                 ],
                 "description": "The pane within that tab. Omitted: the pane drawings go to."
+              },
+              "pane_slot": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Which context chart `pane_side = \"time\"` means, top to bottom from\n`0`. Omitted: the top one. Ignored for the flow pane, which has no\nstack to pick from."
               },
               "tab_id": {
                 "anyOf": [
@@ -7141,6 +7174,10 @@
               "pane_id": {
                 "$ref": "#/$defs/WireU64"
               },
+              "pane_index": {
+                "$ref": "#/$defs/WireU64",
+                "description": "The pane's address within its tab — `0` the flow pane, `1..` the\ncontext stack top to bottom — the number `layout.focus` takes."
+              },
               "side": {
                 "$ref": "#/$defs/PaneSideDto"
               },
@@ -7167,6 +7204,7 @@
               "tab_id",
               "pane_id",
               "side",
+              "pane_index",
               "feed_id",
               "symbol",
               "visible",
@@ -10233,6 +10271,10 @@
               "pane_id": {
                 "$ref": "#/$defs/WireU64"
               },
+              "pane_index": {
+                "$ref": "#/$defs/WireU64",
+                "description": "The pane's address within its tab — the number `layout.focus` takes."
+              },
               "side": {
                 "$ref": "#/$defs/PaneSideDto"
               },
@@ -10243,6 +10285,7 @@
             "required": [
               "pane_id",
               "side",
+              "pane_index",
               "visible",
               "focused"
             ],

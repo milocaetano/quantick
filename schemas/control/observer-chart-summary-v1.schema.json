@@ -96,6 +96,10 @@
         "pane_id": {
           "$ref": "#/$defs/WireU64"
         },
+        "pane_index": {
+          "$ref": "#/$defs/WireU64",
+          "description": "The pane's address within its tab — `0` the flow pane, `1..` the\ncontext stack top to bottom — the number `layout.focus` takes."
+        },
         "side": {
           "$ref": "#/$defs/PaneSideDto"
         },
@@ -122,6 +126,7 @@
         "tab_id",
         "pane_id",
         "side",
+        "pane_index",
         "feed_id",
         "symbol",
         "visible",

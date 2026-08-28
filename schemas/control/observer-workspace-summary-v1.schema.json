@@ -32,6 +32,10 @@
         "pane_id": {
           "$ref": "#/$defs/WireU64"
         },
+        "pane_index": {
+          "$ref": "#/$defs/WireU64",
+          "description": "The pane's address within its tab — the number `layout.focus` takes."
+        },
         "side": {
           "$ref": "#/$defs/PaneSideDto"
         },
@@ -42,6 +46,7 @@
       "required": [
         "pane_id",
         "side",
+        "pane_index",
         "visible",
         "focused"
       ],

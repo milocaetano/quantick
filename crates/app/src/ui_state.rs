@@ -220,8 +220,16 @@ pub struct SavedTab {
     /// The flow pane's bar rule.
     pub flow_bars: String,
     /// The time pane's interval, when the tab had one.
+    ///
+    /// The *top* context chart's, kept under its old name so every workspace
+    /// written so far still restores; `context_bars` carries the whole stack.
     #[serde(default)]
     pub time_bars: Option<String>,
+    /// Every context chart's bar rule, top to bottom, when the tab had a
+    /// stack. Empty in files written before the stack existed, which then
+    /// fall back to `time_bars` for the top chart and the default below it.
+    #[serde(default)]
+    pub context_bars: Vec<String>,
     /// Whether the flow pane's on-chart indicator legend was folded to its
     /// count puck.
     ///
@@ -964,6 +972,7 @@ mod tests {
                     context_collapsed: false,
                     focus: Some(SavedFocus::Flow),
                     focus_slot: 0,
+                    context_bars: vec![],
                     flow_bars: "tick:50".to_owned(),
                     time_bars: Some("time:1m".to_owned()),
                     flow_legend_collapsed: false,
@@ -977,6 +986,7 @@ mod tests {
                     context_collapsed: false,
                     focus: None,
                     focus_slot: 0,
+                    context_bars: vec![],
                     flow_bars: "dollar:500000".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -1303,6 +1313,7 @@ mod tests {
             context_collapsed: false,
             focus: None,
             focus_slot: 0,
+            context_bars: vec![],
             flow_bars: "tick:50".to_owned(),
             time_bars: None,
             flow_legend_collapsed: false,
@@ -1316,6 +1327,7 @@ mod tests {
             context_collapsed: false,
             focus: None,
             focus_slot: 0,
+            context_bars: vec![],
             flow_bars: "tick:50".to_owned(),
             time_bars: None,
             flow_legend_collapsed: false,
@@ -1450,6 +1462,7 @@ mod tests {
                     context_collapsed: false,
                     focus: None,
                     focus_slot: 0,
+                    context_bars: vec![],
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -1463,6 +1476,7 @@ mod tests {
                     context_collapsed: false,
                     focus: None,
                     focus_slot: 0,
+                    context_bars: vec![],
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -1495,6 +1509,7 @@ mod tests {
                 context_collapsed: false,
                 focus: None,
                 focus_slot: 0,
+                context_bars: vec![],
                 flow_bars: "tick:50".to_owned(),
                 time_bars: None,
                 flow_legend_collapsed: false,
@@ -1674,6 +1689,7 @@ time_bars = "time:60000"
                 context_collapsed: false,
                 focus: None,
                 focus_slot: 0,
+                context_bars: vec![],
                 flow_bars: "tick:50".to_owned(),
                 time_bars: None,
                 flow_legend_collapsed: false,

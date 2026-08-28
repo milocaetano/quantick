@@ -4695,6 +4695,11 @@ impl QuantickApp {
                 time_bars: tab
                     .time_pane()
                     .map(|pane| pane.state.spec().to_config_string()),
+                context_bars: tab
+                    .time_panes
+                    .iter()
+                    .map(|pane| pane.state.spec().to_config_string())
+                    .collect(),
                 flow_legend_collapsed: tab.flow_pane.legend_collapsed,
                 // A tab with no time pane has no second legend, and `false`
                 // is what it will restore into when one is opened: a pane
@@ -4810,14 +4815,8 @@ impl QuantickApp {
             } else {
                 self.open_tab(saved.feed.clone(), saved.symbol.clone(), flow);
             }
-            let time_interval =
-                saved
-                    .time_bars
-                    .as_deref()
-                    .and_then(|text| match BarSpec::parse(text) {
-                        Ok(BarSpec::Time(ms)) => Some(ms),
-                        _ => None,
-                    });
+            let context_intervals =
+                saved_context_intervals(&saved.context_bars, saved.time_bars.as_deref());
             let focus = saved.focus.map(|focus| focus.to_side(saved.focus_slot));
             // `open_tab` activates what it opened, so the tab just arranged is
             // always the last one — index zero on the first pass.
@@ -4831,7 +4830,7 @@ impl QuantickApp {
                 saved.split_fraction,
                 saved.context_collapsed,
                 focus,
-                time_interval,
+                &context_intervals,
                 LegendFold {
                     flow: saved.flow_legend_collapsed,
                     time: saved.time_legend_collapsed,
@@ -5588,21 +5587,15 @@ impl QuantickApp {
                 saved.symbol.clone(),
                 BarSpec::parse(&saved.flow_bars).ok(),
             );
-            let time_interval =
-                saved
-                    .time_bars
-                    .as_deref()
-                    .and_then(|text| match BarSpec::parse(text) {
-                        Ok(BarSpec::Time(ms)) => Some(ms),
-                        _ => None,
-                    });
+            let context_intervals =
+                saved_context_intervals(&saved.context_bars, saved.time_bars.as_deref());
             let opened = self.tabs.len() - 1;
             self.tabs[opened].restore_canvas(
                 CanvasLayout::from(saved.layout),
                 saved.split_fraction,
                 saved.context_collapsed,
                 saved.focus.map(|focus| focus.to_side(saved.focus_slot)),
-                time_interval,
+                &context_intervals,
                 LegendFold {
                     flow: saved.flow_legend_collapsed,
                     time: saved.time_legend_collapsed,
@@ -11034,6 +11027,31 @@ impl QuantickApp {
     }
 }
 
+/// The interval a saved bar rule names, when it is a time rule at all — a
+/// workspace that recorded `tick:50` for a context chart is a file written by
+/// hand, and the chart opens on the default rather than on a guess.
+fn saved_time_interval(text: Option<&str>) -> Option<i64> {
+    text.and_then(|text| match BarSpec::parse(text) {
+        Ok(BarSpec::Time(ms)) => Some(ms),
+        _ => None,
+    })
+}
+
+/// Every context chart's opening interval, top to bottom, from the rules a
+/// workspace saved. A rule that is not a time rule keeps the default for its
+/// slot so the slots after it still line up with their charts. A file written
+/// before the stack existed carries only `time_bars`, which is the top chart's.
+fn saved_context_intervals(bars: &[String], time_bars: Option<&str>) -> Vec<i64> {
+    if bars.is_empty() {
+        return saved_time_interval(time_bars).into_iter().collect();
+    }
+    bars.iter()
+        .map(|text| {
+            saved_time_interval(Some(text)).unwrap_or(crate::time_header::DEFAULT_INTERVAL_MS)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -12360,6 +12378,7 @@ mod tests {
                     context_collapsed: false,
                     focus: None,
                     focus_slot: 0,
+                    context_bars: vec![],
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -22715,6 +22734,7 @@ crosshair = false
                 context_collapsed: false,
                 focus: Some(ui_state::SavedFocus::Flow),
                 focus_slot: 0,
+                context_bars: vec![],
                 flow_bars: "dollar:250000".to_owned(),
                 time_bars: Some("time:5m".to_owned()),
                 flow_legend_collapsed: false,
@@ -22806,6 +22826,7 @@ crosshair = false
                 context_collapsed: false,
                 focus: Some(ui_state::SavedFocus::Flow),
                 focus_slot: 0,
+                context_bars: vec![],
                 flow_bars: "tick:50".to_owned(),
                 time_bars: Some("time:1m".to_owned()),
                 flow_legend_collapsed: true,
@@ -22853,6 +22874,7 @@ crosshair = false
                 context_collapsed: false,
                 focus: None,
                 focus_slot: 0,
+                context_bars: vec![],
                 flow_bars: "tick:377".to_owned(),
                 time_bars: None,
                 flow_legend_collapsed: false,

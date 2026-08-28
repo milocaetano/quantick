@@ -490,6 +490,11 @@ pub struct Tab {
     /// time-showing `default_layout`); once the pane exists, its own header
     /// owns the interval and this is never read again.
     time_pane_opening_interval_ms: i64,
+    /// The interval each context pane opens on, by slot, when a restored
+    /// workspace recorded more than one. A slot past the end of this list
+    /// opens on `time_pane_opening_interval_ms`, which is what every tab did
+    /// while the stack held one chart.
+    context_opening_intervals_ms: SmallVec<[i64; MAX_CONTEXT_PANES]>,
     /// Whether the time pane opens with its indicator legend folded, for the
     /// same reason the interval above is stashed: a restored workspace names
     /// the fold a frame before the pane it belongs to exists.
@@ -693,6 +698,7 @@ impl Tab {
             ohlcv_capable: false,
             time_panes: SmallVec::new(),
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
+            context_opening_intervals_ms: SmallVec::new(),
             time_pane_opening_legend_collapsed: false,
             pending_context_panes: 0,
             layout: CanvasLayout::Single,
@@ -1720,7 +1726,13 @@ impl Tab {
             return;
         }
         self.pending_context_panes -= 1;
-        let mut pane = ChartPane::time(ids.alloc(), self.time_pane_opening_interval_ms);
+        // The slot this pane will take is the next free one in the stack.
+        let interval_ms = self
+            .context_opening_intervals_ms
+            .get(self.time_panes.len())
+            .copied()
+            .unwrap_or(self.time_pane_opening_interval_ms);
+        let mut pane = ChartPane::time(ids.alloc(), interval_ms);
         pane.legend_collapsed = self.time_pane_opening_legend_collapsed;
         pane.seed_from(
             self.flow_pane.state.trades(),
@@ -2206,12 +2218,19 @@ impl Tab {
         split_fraction: Option<f32>,
         context_collapsed: bool,
         focus: Option<PaneSide>,
-        time_interval_ms: Option<i64>,
+        context_intervals_ms: &[i64],
         legends: LegendFold,
     ) {
-        if let Some(ms) = time_interval_ms {
-            self.time_pane_opening_interval_ms = ms;
+        // The top chart's interval is also the one every slot past the list
+        // opens on, which is what a one-chart file has always meant.
+        if let Some(ms) = context_intervals_ms.first() {
+            self.time_pane_opening_interval_ms = *ms;
         }
+        self.context_opening_intervals_ms = context_intervals_ms
+            .iter()
+            .copied()
+            .take(MAX_CONTEXT_PANES)
+            .collect();
         self.set_layout(layout);
         // *After* `set_layout`, for the reason the focus below is: a switch
         // opens the column it just revealed, which is right for a menu click
@@ -3835,6 +3854,45 @@ mod collapse_path_tests {
     /// the column it reveals, which is right for a menu click and wrong for a
     /// restore. Assigned before that call, the flag was overwritten every
     /// time — and the next `capture_arrangement` wrote the wrong answer back
+    /// A three-pane workspace records one bar rule per context chart, and
+    /// each chart opens on its own. Before `context_bars` existed the file
+    /// kept one interval and both charts opened on it — the bottom chart lost
+    /// its timeframe on every restart.
+    #[test]
+    fn a_restored_stack_opens_each_context_chart_on_its_own_interval() {
+        let mut tab = tab();
+        tab.restore_canvas(
+            CanvasLayout::TimeTimeAndFlow,
+            None,
+            false,
+            Some(PaneSide::Time(1)),
+            &[60_000, 900_000],
+            LegendFold::default(),
+        );
+        let config = crate::config::AppConfig {
+            default_feed: "binance".to_owned(),
+            default_symbol: "BTCUSDT".to_owned(),
+            feeds: vec![],
+            metatrader: Default::default(),
+            paper: Default::default(),
+        };
+        let style = crate::style::ChartStyle::default();
+        let mut ids = PaneIdAllocator::new();
+        tab.apply_pending_layout(&config, &style, &mut ids);
+        tab.apply_pending_layout(&config, &style, &mut ids);
+        assert_eq!(tab.time_panes.len(), 2, "both charts were built");
+        assert_eq!(tab.time_panes[0].time_interval_ms, 60_000);
+        assert_eq!(
+            tab.time_panes[1].time_interval_ms, 900_000,
+            "the bottom chart opened on the interval the file kept for it"
+        );
+        assert_eq!(
+            tab.focused_side(),
+            PaneSide::Time(1),
+            "and the saved focus names the bottom chart"
+        );
+    }
+
     /// over the trader's file.
     #[test]
     fn a_restored_workspace_keeps_its_collapsed_column() {
@@ -3844,7 +3902,7 @@ mod collapse_path_tests {
             Some(0.42),
             true,
             Some(PaneSide::Flow),
-            None,
+            &[],
             LegendFold {
                 flow: false,
                 time: false,
