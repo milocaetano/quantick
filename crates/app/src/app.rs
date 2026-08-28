@@ -25009,6 +25009,10 @@ crosshair = false
         let (mut app, _events, _commands) =
             tape_app(&ctx, Decimal::from(80_000), Decimal::new(1, 2));
         place_range_profile_with_the_layer_off(&mut app);
+        // The bucket these tests name an exact number for is decided on the
+        // book worker's own thread. Without this barrier they race it and read
+        // the fine default on a loaded runner.
+        app.active_tab_mut().tape_mut().flush_for_test();
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
 
@@ -25037,6 +25041,7 @@ crosshair = false
         let (mut app, _events, _commands) =
             tape_app(&ctx, Decimal::from(140_000), Decimal::from(5));
         place_range_profile_with_the_layer_off(&mut app);
+        app.active_tab_mut().tape_mut().flush_for_test();
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
 

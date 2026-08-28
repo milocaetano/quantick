@@ -1224,10 +1224,16 @@ impl BookEngine {
         {
             return;
         }
-        // A book's mid outranks the tape's first print where both exist: one
-        // is the live spread, the other is wherever this chart happened to
-        // open. Where only the tape has spoken it is the whole answer, and
-        // that is the case this argument was added for.
+        // In practice the tape's own magnitude *is* the answer here, and the
+        // gate above is why: a book's mid would be the better number — it is
+        // the live spread rather than wherever this chart happened to open —
+        // but installing the snapshot that carries one is exactly what stops
+        // history being `Empty`, so a chart with a book has already returned.
+        // `self.reference_price` stays the first operand for the one state
+        // that falls between the two: a snapshot whose levels were read just
+        // before `install_snapshot` refused it. Written in that order because
+        // it is the right precedence when both are known, not because the
+        // first operand is the one usually taken.
         let reference = self
             .reference_price
             .or_else(|| reference_price.and_then(|price| price.to_f64()));
@@ -1542,6 +1548,10 @@ mod tests {
         assert!(engine.history.book().is_initialized());
     }
 
+    fn dec(text: &str) -> Decimal {
+        std::str::FromStr::from_str(text).expect("test literal is a decimal")
+    }
+
     fn snapshot_event(generation: u64) -> DepthEvent {
         DepthEvent::Snapshot {
             symbol: "BTCUSDT".to_owned(),
@@ -1756,10 +1766,58 @@ mod tests {
     }
 
     #[test]
-    fn a_snapshots_mid_outranks_the_tapes_first_print() {
-        // Both are "the price this market is at", and where both exist the
-        // book's is the live spread while the tape's is wherever the chart
-        // happened to open. The snapshot path runs first and its answer stands.
+    fn the_tapes_magnitude_only_moves_instruments_whose_tick_is_finer_than_their_scale() {
+        // The blast radius of sizing from the tape's own price, stated rather
+        // than discovered. A chart whose feed never declares a tick is every
+        // chart with the heatmap off, so this rule now reaches all of them —
+        // and it should, since a depth-less chart drawing different rows from
+        // the same instrument seen with depth is its own defect. What it must
+        // not do is move a market whose tick already suits its price.
+        //
+        // Moved: the tick is far finer than the money these markets travel in,
+        // which is the whole disease — cent rows on a four- or five-figure
+        // instrument, half-pip rows on a currency.
+        for (symbol, step, price, rows) in [
+            ("BTCUSDT", "0.01", "80000", "1"),
+            ("ETHUSDT", "0.01", "3000", "0.05"),
+            ("XAUUSD", "0.01", "2400", "0.05"),
+            ("EURUSD", "0.00001", "1.08", "0.00002"),
+        ] {
+            let mut engine = BookEngine::new(symbol);
+            engine.size_from_tape(dec(step), Some(dec(price)));
+            assert_eq!(
+                engine.published().base_price_grouping,
+                dec(rows),
+                "{symbol} sized its rows somewhere other than the documented width",
+            );
+        }
+
+        // Left alone: the instrument's own tick is already at least as coarse
+        // as the price-derived width, so the tick wins and nothing moves. The
+        // trader's own index and FX futures are both in this half, which is
+        // what makes the change safe to ship to the charts they watch daily.
+        for (symbol, step, price) in [
+            ("WINV26", "5", "177600"),
+            ("WDOU26", "0.5", "5500"),
+            ("US500", "0.1", "5800"),
+            ("PETR4", "0.01", "100"),
+        ] {
+            let mut engine = BookEngine::new(symbol);
+            engine.size_from_tape(dec(step), Some(dec(price)));
+            assert_eq!(
+                engine.published().base_price_grouping,
+                dec(step),
+                "{symbol} was regrouped away from the tick its own venue trades on",
+            );
+        }
+    }
+
+    #[test]
+    fn a_running_book_is_never_resized_by_a_later_tape_print() {
+        // The gate, not the precedence — and it is the gate that matters, since
+        // a resize here discards every run and aggression already recorded and
+        // leaves the map blank until the venue happens to resync. A tape whose
+        // magnitude disagrees with the book's must not be able to reach that.
         let mut engine = BookEngine::new("BTCUSDT");
         engine.set_enabled(true, 1);
         engine.handle_depth_event(DepthEvent::Snapshot {
@@ -1778,11 +1836,14 @@ mod tests {
             ),
         });
         assert_eq!(engine.base_capture_grouping(), Decimal::from(1));
-        // A tape magnitude ten times larger arrives afterwards. History is no
-        // longer empty, so nothing is resized — and that gate is what keeps a
-        // live book from being reinterpreted underneath its own runs.
+        // A tape magnitude ten times larger arrives afterwards, which on an
+        // empty history would size these rows at $10.
         engine.size_from_tape(Decimal::new(1, 2), Some(Decimal::from(650_000)));
-        assert_eq!(engine.base_capture_grouping(), Decimal::from(1));
+        assert_eq!(
+            engine.base_capture_grouping(),
+            Decimal::from(1),
+            "a tape print resized a book that was already recording against these rows",
+        );
     }
 
     #[test]
