@@ -253,7 +253,24 @@ impl ClipPlayer {
         &mut self,
         clips: &[(&'static Clip, PlayLength)],
     ) -> Result<(), &'static str> {
-        let _ = clips;
+        // What was asked for goes to the log, so a session on a build
+        // without audio still shows which clip, and how much of it, an
+        // alarm wanted.
+        for (clip, length) in clips {
+            let cut_secs = match length {
+                PlayLength::Whole => None,
+                PlayLength::Capped(duration) => Some(duration.as_secs()),
+            };
+            tracing::debug!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "AUDIO_CLIP_UNPLAYABLE",
+                clip = clip.token,
+                bytes = clip.bytes.len(),
+                cut_secs,
+                "an alarm clip was asked for on a build with no audio backend"
+            );
+        }
         Err("this build has no audio backend, so an alarm clip cannot be played")
     }
 }
