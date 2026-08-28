@@ -10454,7 +10454,6 @@ impl QuantickApp {
         self.draw_indicator_legends(ctx);
         self.poll_script_files();
         self.maintain_indicator_state();
-        self.maintain_layouts();
         self.maintain_chart_layers();
         let status = self.status_model();
         let status_response = statusbar::draw(ctx, &status, &mut self.tz);
@@ -10641,6 +10640,10 @@ impl QuantickApp {
         for tab in tabs.iter_mut() {
             tab.apply_pending_layout(config, style, pane_ids);
         }
+        // Right after panes appear and markets switch, so a pane built this
+        // frame is seeded this frame and a tab that changed symbol swaps its
+        // drawings before anything paints them.
+        self.maintain_layouts();
         self.active_tab_mut().apply_spec_changes();
         self.draw_style_panel(ctx, now);
         self.draw_footprint_settings(ctx);
@@ -24484,6 +24487,263 @@ crosshair = false
         let (tabs, _chrome) = app.capture_arrangement();
         assert_eq!(tabs[0].focus, Some(ui_state::SavedFocus::Time));
         assert_eq!(tabs[0].focus_slot, 1, "the slot travels with the word");
+    }
+
+    /// A level for the layout tests: one anchor, in market time, on the pane.
+    fn place_level(app: &mut QuantickApp, side: PaneSide, price: f64) {
+        let tool = crate::drawings::DrawingTool::by_id("horizontal-line").expect("the tool");
+        let time = app
+            .active_tab()
+            .pane(side)
+            .slot_open_time(0)
+            .expect("bars to anchor on");
+        let placed = app.active_tab_mut().pane_mut(side).drawings.place(
+            tool,
+            crate::drawings::ChartPoint {
+                bar: 0.5,
+                price,
+                time_ms: Some(time),
+            },
+        );
+        assert!(placed, "a horizontal line places on one anchor");
+    }
+
+    fn drawings_on(app: &QuantickApp, side: PaneSide) -> Vec<f64> {
+        app.active_tab()
+            .pane(side)
+            .drawings
+            .items()
+            .iter()
+            .map(|drawing| drawing.points[0].price)
+            .collect()
+    }
+
+    /// Switching layout swaps the whole indicator set on every pane: the
+    /// EMA of layout 1 goes, the empty set of layout 2 shows, and switching
+    /// back brings the EMA back on both panes — with its inputs.
+    #[test]
+    fn switching_layouts_swaps_the_indicator_set_on_every_pane() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        app.last_indicator_change =
+            Some(Instant::now() - INDICATOR_STATE_SAVE_DEBOUNCE - Duration::from_millis(10));
+        app.maintain_indicator_state();
+        let first = app.layouts().active_id();
+        assert_eq!(app.layouts().active().indicators.len(), 1);
+
+        let second = app.create_layout(Some("levels")).expect("a second layout");
+        assert_eq!(app.layouts().active_id(), second, "creating switches to it");
+        for side in [PaneSide::Flow, PaneSide::Time(0)] {
+            assert!(
+                app.active_tab().pane(side).indicators.all().is_empty(),
+                "the new layout is empty on {side:?}"
+            );
+        }
+        assert!(
+            app.slot_kinds.is_empty(),
+            "nothing of layout 1 is registered"
+        );
+
+        app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
+        settle_indicators(&mut app);
+        app.last_indicator_change =
+            Some(Instant::now() - INDICATOR_STATE_SAVE_DEBOUNCE - Duration::from_millis(10));
+        app.maintain_indicator_state();
+        assert_eq!(
+            app.layouts().active().indicators[0].kind,
+            crate::indicators::state_file::SavedKind::NativeCvd
+        );
+
+        assert_eq!(app.switch_layout(first), Ok(true));
+        settle_indicators(&mut app);
+        for side in [PaneSide::Flow, PaneSide::Time(0)] {
+            let labels: Vec<String> = app
+                .active_tab()
+                .pane(side)
+                .indicators
+                .all()
+                .iter()
+                .map(|view| view.label().to_owned())
+                .collect();
+            assert_eq!(labels.len(), 1, "layout 1 is back on {side:?}: {labels:?}");
+            assert!(labels[0].contains("EMA"), "and it is the EMA: {labels:?}");
+        }
+        assert_eq!(app.slot_kinds.len(), 2);
+        assert_eq!(
+            app.layouts().get(second).expect("kept").indicators.len(),
+            1,
+            "layout 2 kept its own set while it was away"
+        );
+    }
+
+    /// A drawing belongs to the layout, the market and the pane it was drawn
+    /// on: it is put away when the layout changes and comes back when the
+    /// layout does; it never appears on the pane beside it.
+    #[test]
+    fn drawings_are_kept_per_layout_and_pane() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        place_level(&mut app, PaneSide::Time(0), 100.0);
+        assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0]);
+        assert!(
+            drawings_on(&app, PaneSide::Flow).is_empty(),
+            "not on the flow pane"
+        );
+        run_frame(&mut app, &ctx);
+
+        let first = app.layouts().active_id();
+        let second = app.create_layout(None).expect("a second layout");
+        assert!(
+            drawings_on(&app, PaneSide::Time(0)).is_empty(),
+            "layout 2 has no level on this market yet"
+        );
+        place_level(&mut app, PaneSide::Time(0), 200.0);
+        run_frame(&mut app, &ctx);
+
+        app.switch_layout(first).expect("back");
+        assert_eq!(
+            drawings_on(&app, PaneSide::Time(0)),
+            vec![100.0],
+            "layout 1's level is back, and layout 2's is not on it"
+        );
+        app.switch_layout(second).expect("forth");
+        assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![200.0]);
+        let key = crate::layouts::DrawingKey {
+            feed: "binance".to_owned(),
+            symbol: "TESTUSDT".to_owned(),
+            pane: 1,
+        };
+        assert_eq!(
+            app.layouts()
+                .get(first)
+                .expect("kept")
+                .drawings(&key)
+                .map(<[_]>::len),
+            Some(1),
+            "the book holds layout 1's level under its market and pane"
+        );
+    }
+
+    /// A drawing belongs to the market it was drawn on: when the tab moves to
+    /// another symbol the level is put away, and it is back — on its bar —
+    /// when the tab returns. The other market starts clean.
+    #[test]
+    fn drawings_follow_the_market_the_tab_shows() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        place_level(&mut app, PaneSide::Flow, 100.0);
+        run_frame(&mut app, &ctx);
+
+        app.active_tab_mut().symbol = "ETHUSDT".to_owned();
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.active_tab().active.1,
+            "ETHUSDT",
+            "the tab switched market"
+        );
+        assert!(
+            drawings_on(&app, PaneSide::Flow).is_empty(),
+            "a level on TESTUSDT is not a level on ETHUSDT"
+        );
+        run_frame(&mut app, &ctx);
+
+        app.active_tab_mut().symbol = "TESTUSDT".to_owned();
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            drawings_on(&app, PaneSide::Flow),
+            vec![100.0],
+            "back on TESTUSDT, its own level is back"
+        );
+        assert!(
+            !app.active_tab().flow_pane.drawings.items()[0].foreign_market,
+            "and it is at home, not marked as another market's"
+        );
+    }
+
+    /// "Show on all charts" is stored once, under the pane it was drawn on,
+    /// and comes back shared — so the other pane mirrors it again after a
+    /// layout round trip.
+    #[test]
+    fn a_shared_drawing_comes_back_shared() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        place_level(&mut app, PaneSide::Time(0), 100.0);
+        {
+            let pane = app.active_tab_mut().pane_mut(PaneSide::Time(0));
+            pane.drawings.select(Some(0));
+            pane.drawings.selected_mut().expect("selected").scope =
+                crate::drawings::DrawingScope::AllCharts;
+        }
+        run_frame(&mut app, &ctx);
+        let first = app.layouts().active_id();
+        let second = app.create_layout(None).expect("second");
+        app.switch_layout(second).ok();
+        app.switch_layout(first).expect("back");
+        let items = app.active_tab().pane(PaneSide::Time(0)).drawings.items();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].scope, crate::drawings::DrawingScope::AllCharts);
+        assert_eq!(
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .shared_count(),
+            1,
+            "the flow pane mirrors it again"
+        );
+    }
+
+    /// The whole book survives a restart: layouts, the active one, each
+    /// layout's indicators and each market's drawings. A fresh app on the
+    /// same cockpit home opens on it.
+    #[test]
+    fn layouts_come_back_after_a_restart() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        app.last_indicator_change =
+            Some(Instant::now() - INDICATOR_STATE_SAVE_DEBOUNCE - Duration::from_millis(10));
+        app.maintain_indicator_state();
+        place_level(&mut app, PaneSide::Time(0), 100.0);
+        run_frame(&mut app, &ctx);
+        let second = app.create_layout(Some("levels")).expect("second");
+        app.rename_layout(second, "open").expect("renamed");
+        app.flush_layouts();
+
+        let path = app.layouts_path.clone();
+        let crate::layouts::Loaded::Book(book) = crate::layouts::load(&path) else {
+            panic!("the book was written");
+        };
+        assert_eq!(book.layouts().len(), 2);
+        assert_eq!(book.active().name, "open");
+        assert_eq!(book.layouts()[0].indicators.len(), 1);
+        let key = crate::layouts::DrawingKey {
+            feed: "binance".to_owned(),
+            symbol: "TESTUSDT".to_owned(),
+            pane: 1,
+        };
+        assert_eq!(book.layouts()[0].drawings(&key).map(<[_]>::len), Some(1));
+
+        // A second app on the same home — the same file — opens on the book.
+        let (mut again, _commands2) = split_app(&ctx, 200);
+        again.layouts_path = path.clone();
+        again.reload_layouts();
+        assert_eq!(again.layouts().active().name, "open");
+        again.switch_layout(book.layouts()[0].id).expect("layout 1");
+        settle_indicators(&mut again);
+        assert_eq!(
+            again
+                .active_tab()
+                .pane(PaneSide::Time(0))
+                .indicators
+                .all()
+                .len(),
+            1,
+            "the EMA is back on the restored layout"
+        );
+        assert_eq!(drawings_on(&again, PaneSide::Time(0)), vec![100.0]);
     }
 
     /// Drawings are per pane, and the tool rail is one: an object lands on the

@@ -30,6 +30,9 @@ pub(crate) struct WorkspaceSnapshot {
     pub performance_readings_visible: bool,
     pub progressive_venue_history: bool,
     pub tabs: Vec<WorkspaceTab>,
+    /// The layout strip: every layout, and which is active. Additive.
+    #[serde(default)]
+    pub layouts: Vec<super::layout::LayoutTabSnapshot>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -98,6 +101,7 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
             .map_or_else(|| WireU64::new(0), |tab| WireU64::new(tab.id)),
         timezone_offset_minutes: timezone.minutes(),
         timezone_label: timezone.label(),
+        layouts: super::layout::layout_tabs(app),
         save_on_exit,
         performance_readings_visible,
         progressive_venue_history,

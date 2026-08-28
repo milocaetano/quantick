@@ -46,6 +46,9 @@ const COLLAPSE_ID: &str = "layout.pane.collapse";
 const EXPAND_ID: &str = "layout.pane.expand";
 const FOCUS_ID: &str = "layout.focus.set";
 const INTERVAL_ID: &str = "layout.pane.set_interval";
+const TAB_SWITCH_ID: &str = "layout.tab.switch";
+const TAB_CREATE_ID: &str = "layout.tab.create";
+const TAB_RENAME_ID: &str = "layout.tab.rename";
 
 /// Which tab a call is about. Omitted means the one the trader is looking at —
 /// the same default the chrome's own commands take.
@@ -104,6 +107,73 @@ pub(crate) struct IntervalInput {
     pub pane: WireU64,
     /// The interval in milliseconds.
     pub interval_ms: i64,
+}
+
+/// Which layout tab a call is about: by id, by name, or — omitted — the
+/// active one. An id and a name that disagree are refused rather than
+/// resolved, because a caller that gave both meant both.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct LayoutTabTarget {
+    /// The layout's id, as `observe.workspace` reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_id: Option<WireU64>,
+    /// The layout's name, as the strip shows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// Add a layout tab and switch to it.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct CreateLayoutTabInput {
+    /// What to call it. Omitted: the first free `Layout N`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// Rename a layout tab.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct RenameLayoutTabInput {
+    #[serde(flatten)]
+    pub target: LayoutTabTarget,
+    /// The new name.
+    pub new_name: String,
+}
+
+/// One layout tab, as the strip lists it.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct LayoutTabSnapshot {
+    pub layout_id: WireU64,
+    pub name: String,
+    pub active: bool,
+    /// How many indicators the layout holds.
+    pub indicator_count: WireU64,
+}
+
+/// What every layout-tab call answers with: the strip as it now stands.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct LayoutTabResult {
+    pub active_layout_id: WireU64,
+    pub active_layout_name: String,
+    pub layouts: Vec<LayoutTabSnapshot>,
+    /// Whether the call changed anything. `false` is a real answer:
+    /// switching to the layout already showing is a no-op, not a failure.
+    pub changed: bool,
+}
+
+/// The strip as the control plane reports it — one reading for the layout
+/// calls and `observe.workspace` alike.
+pub(crate) fn layout_tabs(app: &QuantickApp) -> Vec<LayoutTabSnapshot> {
+    let active = app.layouts().active_id();
+    app.layouts()
+        .layouts()
+        .iter()
+        .map(|layout| LayoutTabSnapshot {
+            layout_id: WireU64::new(layout.id.0),
+            name: layout.name.clone(),
+            active: layout.id == active,
+            indicator_count: WireU64::new(layout.indicators.len() as u64),
+        })
+        .collect()
 }
 
 /// What every layout call answers with: the arrangement as it now stands.
@@ -193,7 +263,150 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
         ),
         set_interval,
     )?;
+    registry.register(
+        tab_descriptor(
+            TAB_SWITCH_ID,
+            "Switch layout tab",
+            "Makes one of the workspace's layouts active on every pane of every tab: its indicators replace what every chart shows, and each market's drawings under it come out. The same call the strip's click and Alt+1..9 make.",
+            generated_schema::<LayoutTabTarget>(),
+        ),
+        tab_switch,
+    )?;
+    registry.register(
+        tab_descriptor(
+            TAB_CREATE_ID,
+            "Create layout tab",
+            "Adds an empty layout after the others and switches to it, the way the strip's + does.",
+            generated_schema::<CreateLayoutTabInput>(),
+        ),
+        tab_create,
+    )?;
+    registry.register(
+        tab_descriptor(
+            TAB_RENAME_ID,
+            "Rename layout tab",
+            "Renames one layout. Names are unique within the workspace and bounded to what a tab can show.",
+            generated_schema::<RenameLayoutTabInput>(),
+        ),
+        tab_rename,
+    )?;
+    // `layout.tab.delete` is deliberately not registered. Deleting a layout
+    // destroys its indicator set and every drawing kept under it, and no
+    // effect policy in the control contract allows a destructive capability
+    // yet (`contract.rs`, `allows_destructive: false` on all three). The
+    // trader deletes from the strip or the View menu; the operator gets the
+    // call the day the contract grows a confirmed-destructive effect.
     Ok(())
+}
+
+fn tab_descriptor(
+    id: &str,
+    title: &str,
+    description: &str,
+    input_schema: Value,
+) -> CapabilityDescriptor {
+    let mut descriptor = descriptor(id, title, description, input_schema);
+    descriptor.output_schema = generated_schema::<LayoutTabResult>();
+    descriptor.stale_input_safety = Some(
+        "Switching, creating or renaming a layout removes no work: every layout keeps its indicators and drawings while another is showing. A stale caller can only show the wrong layout, which the result it gets back names."
+            .to_owned(),
+    );
+    descriptor
+}
+
+fn tab_result(app: &QuantickApp, changed: bool) -> Result<Value, ControlError> {
+    let active = app.layouts().active();
+    let payload = LayoutTabResult {
+        active_layout_id: WireU64::new(active.id.0),
+        active_layout_name: active.name.clone(),
+        layouts: layout_tabs(app),
+        changed,
+    };
+    serde_json::to_value(payload).map_err(|error| {
+        ControlError::invalid_request(format!(
+            "the layout tab result could not be encoded: {error}"
+        ))
+    })
+}
+
+fn resolve_layout_tab(
+    app: &QuantickApp,
+    target: &LayoutTabTarget,
+) -> Result<crate::layouts::LayoutId, ControlError> {
+    let by_id = target
+        .layout_id
+        .map(|id| crate::layouts::LayoutId(id.get()))
+        .map(|id| {
+            app.layouts()
+                .get(id)
+                .map(|layout| layout.id)
+                .ok_or_else(|| ControlError::invalid_request(format!("no layout has id {}", id.0)))
+        })
+        .transpose()?;
+    let by_name = target
+        .name
+        .as_deref()
+        .map(|name| {
+            app.layouts()
+                .by_name(name)
+                .map(|layout| layout.id)
+                .ok_or_else(|| {
+                    ControlError::invalid_request(format!("no layout is called {name:?}"))
+                })
+        })
+        .transpose()?;
+    match (by_id, by_name) {
+        (Some(id), Some(named)) if id != named => Err(ControlError::invalid_request(
+            "layout_id and name name different layouts",
+        )),
+        (Some(id), _) | (None, Some(id)) => Ok(id),
+        (None, None) => Ok(app.layouts().active_id()),
+    }
+}
+
+fn layout_error(error: crate::layouts::LayoutError) -> ControlError {
+    ControlError::invalid_request(error.to_string())
+}
+
+fn tab_switch(
+    app: &mut QuantickApp,
+    _access: &mut ControlAccess,
+    _actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let input: LayoutTabTarget = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let id = resolve_layout_tab(app, &input)?;
+    let changed = app.switch_layout(id).map_err(layout_error)?;
+    tab_result(app, changed)
+}
+
+fn tab_create(
+    app: &mut QuantickApp,
+    _access: &mut ControlAccess,
+    _actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let input: CreateLayoutTabInput = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    app.create_layout(input.name.as_deref())
+        .map_err(layout_error)?;
+    tab_result(app, true)
+}
+
+fn tab_rename(
+    app: &mut QuantickApp,
+    _access: &mut ControlAccess,
+    _actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let input: RenameLayoutTabInput = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let id = resolve_layout_tab(app, &input.target)?;
+    let changed = app
+        .rename_layout(id, &input.new_name)
+        .map_err(layout_error)?;
+    tab_result(app, changed)
 }
 
 fn layout_permissions() -> BTreeSet<PermissionId> {
