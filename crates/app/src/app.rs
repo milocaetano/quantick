@@ -5907,16 +5907,25 @@ impl QuantickApp {
             trades_per_s = rate,
             live_trades = self.active_tab().live_trades,
             bar_spec = self.active_tab().flow_pane.state.spec().summary(),
-            // What the tape says its own price grid is, and what the ladder
-            // ended up drawing rows at. A validation run reads the pair to
-            // tell "the chart has not been told a tick yet" from "the chart
-            // is drawing rows finer than the instrument can trade at".
+            // Both facts the tape states about its own prices — the grid they
+            // land on and the magnitude they land at — and the row width the
+            // ladder ended up drawing from them. A validation run reads all
+            // three: the first two are the sizing rule's whole input, so
+            // without them a run can see that rows are 1.00 and not why, and
+            // cannot tell "the chart has not been told a tick yet" from "the
+            // chart is drawing rows finer than the instrument can trade at".
             tape_price_step = self
                 .active_tab()
                 .flow_pane
                 .state
                 .tape_price_step()
                 .map_or_else(|| "unknown".to_owned(), |step| step.to_string()),
+            tape_reference_price = self
+                .active_tab()
+                .flow_pane
+                .state
+                .tape_reference_price()
+                .map_or_else(|| "unknown".to_owned(), |price| price.to_string()),
             footprint_rows = %self.active_tab().flow_pane.state.footprint_group(),
             canvas_layout = ?self.active_tab().layout,
             screen_pt_w = screen.x,

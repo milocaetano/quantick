@@ -121,8 +121,12 @@ pub struct OrderflowView {
     published: BookPublished,
     /// Engine bucket last adopted into the mirror, to detect auto-base moves.
     last_seen_base: Decimal,
-    /// The tape grid last sent to the engine, so the per-trade path sends one
-    /// command per change rather than one per print.
+    /// The `(step, reference_price)` pair last sent to the engine, so the
+    /// per-trade path sends one command per change rather than one per print.
+    ///
+    /// Both halves are in the key: either one moving is a different answer,
+    /// and keying on the step alone would swallow the first magnitude a chart
+    /// ever learns whenever the grid happened to settle first.
     last_tape_price_grid: Option<(Decimal, Option<Decimal>)>,
     capture_grouping_draft: f64,
     pending_capture_grouping_previous: Option<Decimal>,

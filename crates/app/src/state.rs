@@ -364,6 +364,12 @@ pub struct ChartState {
     /// long session repeatedly to say almost the same thing. The heatmap's
     /// snapshot path is frozen the same way, by only auto-sizing while its
     /// history is still empty.
+    ///
+    /// First *seen*, which is not first in time: paging older history in
+    /// through [`prepend_history`](Self::prepend_history) feeds prints that
+    /// predate this one and deliberately leaves it standing. A market's
+    /// magnitude is the same an hour earlier, and re-grouping a chart because
+    /// the trader scrolled left would be a refold with nothing to show for it.
     tape_reference_price: Option<Decimal>,
     /// Whether the ladders are being accumulated at all. Off (the default)
     /// costs nothing per trade and holds nothing per bar — a capability
@@ -479,10 +485,11 @@ impl ChartState {
         self.rebuild();
     }
 
-    /// Replay every retained trade through a fresh builder for the current spec,
-    /// recomputing the bars and the backfill/live boundary.
     /// Fold one print into everything the chart learns from prices alone: the
     /// grid the tape prints on, and the magnitude it prints at.
+    ///
+    /// One function rather than two calls at each ingest site, so a fourth
+    /// ingest path cannot pick up the grid and quietly forget the magnitude.
     ///
     /// Per-trade, and both halves are cheap — a modulo on the settled grid, and
     /// an `Option` test that stores once per chart.
@@ -491,6 +498,8 @@ impl ChartState {
         self.tape_reference_price.get_or_insert(price);
     }
 
+    /// Replay every retained trade through a fresh builder for the current spec,
+    /// recomputing the bars and the backfill/live boundary.
     fn rebuild(&mut self) {
         let mut builder = self.spec.build();
         let mut bars = Vec::new();
