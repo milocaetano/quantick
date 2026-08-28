@@ -310,7 +310,7 @@ impl<'a> IconButton<'a> {
 
 /// Stroke width of a vector icon, chosen to sit near the visual weight of a
 /// Phosphor regular glyph at the rail's glyph size.
-const ICON_STROKE_WIDTH_PX: f32 = 1.4;
+pub(crate) const ICON_STROKE_WIDTH_PX: f32 = 1.4;
 
 /// Radius of an icon's anchor dot, as a fraction of the glyph box. Small
 /// enough to read as a handle on the leg rather than as a sixth level line —
@@ -319,7 +319,7 @@ const ICON_STROKE_WIDTH_PX: f32 = 1.4;
 /// A fraction rather than a pixel count because the same icon is painted at
 /// two sizes: the flyout's box is 14 px, and a dot fixed in pixels grew there
 /// from a handle into a blob that swallowed the level line under it.
-const ICON_DOT_RADIUS_RATIO: f32 = 1.9 / 18.0;
+pub(crate) const ICON_DOT_RADIUS_RATIO: f32 = 1.9 / 18.0;
 
 /// Paint a vector icon: each polyline's unit-square points scaled into
 /// `rect`, then the anchor dots over them. A handful of line segments and at
@@ -375,6 +375,66 @@ pub fn paint_vector_icon(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every string one frame painted, so a test can ask what reached the
+    /// screen rather than what the builder was handed.
+    fn painted_text(output: &egui::FullOutput) -> Vec<String> {
+        fn walk(shape: &egui::Shape, found: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => found.push(text.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        walk(shape, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut found = Vec::new();
+        for clipped in &output.shapes {
+            walk(&clipped.shape, &mut found);
+        }
+        found
+    }
+
+    /// The letter has to reach the screen, not just the builder. A vector
+    /// icon takes the *strokes* branch of the paint, which is exactly the
+    /// branch that used to have no way to say a word — so a regression here
+    /// would be silent: the lines would still be there and the button would
+    /// still work, with the one mark that says which Fibonacci it is gone.
+    #[test]
+    fn a_vector_icon_paints_the_letter_it_was_given() {
+        let strokes: crate::drawings::IconStrokes = &[&[(0.4, 0.9), (0.9, 0.2)]];
+        let letter = crate::drawings::IconLetter {
+            text: "R",
+            at: (0.15, 0.26),
+            height: 0.46,
+        };
+        let ctx = egui::Context::default();
+        let draw = |with_letter: Option<crate::drawings::IconLetter>| {
+            ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    IconButton::new("", TOOLRAIL_ICON)
+                        .vector_icon(strokes, &[], with_letter)
+                        .show(ui);
+                });
+            })
+        };
+        // Twice: egui lays a frame out against the previous one, and the
+        // first frame of a fresh context has no sizes to paint into yet.
+        let _ = draw(Some(letter));
+        assert!(
+            painted_text(&draw(Some(letter)))
+                .iter()
+                .any(|text| text == "R"),
+            "a lettered vector icon must paint its letter"
+        );
+        let _ = draw(None);
+        assert!(
+            !painted_text(&draw(None)).iter().any(|text| text == "R"),
+            "an icon given no letter must paint none"
+        );
+    }
 
     #[test]
     fn idle_is_muted_on_bare_chrome() {

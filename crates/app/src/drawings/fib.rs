@@ -19,16 +19,6 @@ use super::{
     IconDots, IconLetter, IconStrokes, PresetHost, ToolFamily, distance_to_segment, drawing_stroke,
 };
 
-/// Left edge of the *drawing* in both Fib icons: every level line, every
-/// leg and every anchor stays right of this, so the column left of it
-/// belongs to the letter alone. A letter painted over a level line is
-/// neither a readable letter nor a readable level.
-///
-/// A bound rather than a coordinate — nothing is drawn *at* it — so it is
-/// the guard's constant and does not ship in the binary.
-#[cfg(test)]
-const DRAWING_LEFT_X: f32 = 0.34;
-
 /// Centre-x of the letter in both icons — one column, so on two stacked rail
 /// buttons the eye finds the letter in the same place and only the letter
 /// changes.
@@ -38,13 +28,6 @@ const FIB_LETTER_X: f32 = 0.15;
 /// between two tools, while two letters at two sizes read as two unrelated
 /// marks.
 const FIB_LETTER_HEIGHT: f32 = 0.46;
-/// Half the width of a capital in the proportional face, as a fraction of
-/// its font size, generously rounded up. It exists only so a test can prove
-/// the letter clears `DRAWING_LEFT_X`; egui measures the real glyph when it
-/// paints one, so this number never reaches the screen — or the binary.
-#[cfg(test)]
-const LETTER_HALF_WIDTH_RATIO: f32 = 0.4;
-
 /// The leg the retracement was dragged across, named once: the strokes draw
 /// it and the dots mark its ends, so nudging the glyph cannot leave the
 /// anchors behind on the old line.
@@ -86,7 +69,7 @@ pub(super) const FIB_RETRACEMENT_LETTER: IconLetter = IconLetter {
 /// The extension's three-anchor path, named once for the same reason as
 /// [`RETRACEMENT_LEG`]: impulse up, pullback down, and the origin the
 /// projection hangs from.
-const EXTENSION_LEG: &[(f32, f32)] = &[(0.36, 0.92), (0.66, 0.64), (0.88, 0.80)];
+const EXTENSION_LEG: &[(f32, f32)] = &[(0.44, 0.92), (0.68, 0.64), (0.88, 0.80)];
 
 /// The extension icon: the same rungs as the retracement, moved **above** the
 /// leg — price the move has not reached yet, which is what a projection is.
@@ -1228,37 +1211,132 @@ mod tests {
         (left - right).abs() < EPS
     }
 
-    /// The letters are only readable because nothing else is drawn in their
-    /// column. Both icons keep every stroke and every anchor right of
-    /// [`DRAWING_LEFT_X`]; since a segment between two such points can never
-    /// wander left of them, that one bound is what proves the `R` and the
-    /// `P` are painted on empty space rather than across a level line.
-    #[test]
-    fn the_fib_icons_leave_their_letter_column_empty() {
-        for (name, strokes, dots) in [
-            ("retracement", FIB_RETRACEMENT_ICON, FIB_RETRACEMENT_DOTS),
-            ("extension", FIB_EXTENSION_ICON, FIB_EXTENSION_DOTS),
+    /// Whether a stroke of `half_width` laid between `a` and `b` reaches
+    /// into `rect` — the separating-axis test for a capsule against a box,
+    /// conservative at the corners, which is the right side to be wrong on
+    /// for a guard.
+    fn stroke_touches(a: egui::Pos2, b: egui::Pos2, half_width: f32, rect: egui::Rect) -> bool {
+        let grown = rect.expand(half_width);
+        let outside_all = |pick: fn(egui::Pos2) -> f32, bound: f32, above: bool| {
+            let (pa, pb) = (pick(a), pick(b));
+            if above {
+                pa > bound && pb > bound
+            } else {
+                pa < bound && pb < bound
+            }
+        };
+        if outside_all(|p| p.x, grown.left(), false)
+            || outside_all(|p| p.x, grown.right(), true)
+            || outside_all(|p| p.y, grown.top(), false)
+            || outside_all(|p| p.y, grown.bottom(), true)
+        {
+            return false;
+        }
+        let along = b - a;
+        let normal = egui::vec2(-along.y, along.x);
+        if normal.length() <= f32::EPSILON {
+            return true;
+        }
+        let normal = normal.normalized();
+        let mut lowest = f32::MAX;
+        let mut highest = f32::MIN;
+        for corner in [
+            grown.left_top(),
+            grown.right_top(),
+            grown.left_bottom(),
+            grown.right_bottom(),
         ] {
-            for (x, y) in strokes.iter().copied().flatten().chain(dots) {
+            let side = (corner - a).dot(normal);
+            lowest = lowest.min(side);
+            highest = highest.max(side);
+        }
+        !(lowest > 0.0 || highest < 0.0)
+    }
+
+    /// The letter is readable only because nothing else is painted where it
+    /// lands — and *painted* is the word that matters. An earlier guard
+    /// compared the icon's stroke and anchor coordinates against a margin,
+    /// which is the geometry's centre line: a dot is drawn as a disc a tenth
+    /// of the box wide, so an anchor whose centre cleared the margin still
+    /// put ink a long way over it.
+    ///
+    /// This one measures what the painter measures: egui lays out the real
+    /// glyph at the size the icon asks for, the dots and strokes are grown
+    /// by the radius and width `paint_vector_icon` gives them, and the two
+    /// are held apart. Both sizes the icon is painted at are checked,
+    /// because the stroke width is in pixels and does not shrink with the
+    /// box — the flyout's smaller icon is the tighter fit, not the safer one.
+    #[test]
+    fn nothing_the_fib_icons_paint_reaches_the_letter_beside_it() {
+        let ctx = egui::Context::default();
+        // Fonts are built on the first frame; `layout_no_wrap` before one has
+        // nothing to measure with.
+        let _ = ctx.run(egui::RawInput::default(), |_| {});
+        for box_px in [
+            crate::widgets::TOOLRAIL_ICON.glyph,
+            crate::toolrail::FLYOUT_ICON_BOX_PX,
+        ] {
+            let at = |(x, y): (f32, f32)| egui::pos2(x * box_px, y * box_px);
+            let dot_radius = box_px * crate::widgets::ICON_DOT_RADIUS_RATIO;
+            let stroke_half = crate::widgets::ICON_STROKE_WIDTH_PX / 2.0;
+            for (name, strokes, dots, letter) in [
+                (
+                    "retracement",
+                    FIB_RETRACEMENT_ICON,
+                    FIB_RETRACEMENT_DOTS,
+                    FIB_RETRACEMENT_LETTER,
+                ),
+                (
+                    "extension",
+                    FIB_EXTENSION_ICON,
+                    FIB_EXTENSION_DOTS,
+                    FIB_EXTENSION_LETTER,
+                ),
+            ] {
+                let galley = ctx.fonts(|fonts| {
+                    fonts.layout_no_wrap(
+                        letter.text.to_owned(),
+                        egui::FontId::proportional(box_px * letter.height),
+                        egui::Color32::WHITE,
+                    )
+                });
+                let letter_rect = egui::Rect::from_center_size(at(letter.at), galley.size());
+                for polyline in strokes {
+                    for pair in polyline.windows(2) {
+                        assert!(
+                            !stroke_touches(at(pair[0]), at(pair[1]), stroke_half, letter_rect),
+                            "{name}: at {box_px} px the stroke {:?}-{:?} runs into the letter",
+                            pair[0],
+                            pair[1]
+                        );
+                    }
+                }
+                for dot in dots {
+                    assert!(
+                        !letter_rect.expand(dot_radius).contains(at(*dot)),
+                        "{name}: at {box_px} px the anchor {dot:?} lands on the letter"
+                    );
+                }
+                // The glyph box is not a clip rect — the button's hit target
+                // is what the neighbouring buttons leave free — so that is
+                // what the letter has to stay inside of.
+                let margin = (crate::widgets::TOOLRAIL_ICON.hit - box_px) / 2.0;
+                let button = egui::Rect::from_min_size(
+                    egui::pos2(-margin, -margin),
+                    egui::Vec2::splat(box_px + 2.0 * margin),
+                );
                 assert!(
-                    *x >= DRAWING_LEFT_X,
-                    "{name}: icon point ({x}, {y}) crosses into the letter's column"
+                    button.contains_rect(letter_rect),
+                    "{name}: at {box_px} px the letter spills out of its button"
                 );
             }
         }
-        let letter_right = FIB_LETTER_X + FIB_LETTER_HEIGHT * LETTER_HALF_WIDTH_RATIO;
-        assert!(
-            letter_right <= DRAWING_LEFT_X,
-            "the letter must fit in the column the drawing leaves empty"
-        );
     }
 
     /// Each letter takes the corner its *own* drawing leaves empty, which is
     /// why the retracement's sits high and the projection's low: the rungs
     /// are what moved between the two icons, and the letter follows the free
-    /// space rather than a fixed corner. Both stay inside the box they are
-    /// painted in — a letter clipped by the glyph box is a letter the trader
-    /// reads as a different letter.
+    /// space rather than a fixed corner.
     #[test]
     fn the_two_fib_letters_take_opposite_corners() {
         assert!(
@@ -1269,14 +1347,6 @@ mod tests {
             FIB_EXTENSION_LETTER.at.1 > 0.5,
             "the P sits low, under the rungs projected past the move"
         );
-        for letter in [FIB_RETRACEMENT_LETTER, FIB_EXTENSION_LETTER] {
-            let half = FIB_LETTER_HEIGHT / 2.0;
-            assert!(
-                letter.at.1 - half >= 0.0 && letter.at.1 + half <= 1.0,
-                "{}: the letter leaves the glyph box",
-                letter.text
-            );
-        }
     }
 
     /// A retracement runs *backwards* along the move: 0 % at the end of it,

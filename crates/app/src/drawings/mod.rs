@@ -2511,6 +2511,25 @@ mod tests {
                 tool.id()
             );
         }
+        // A family slot borrows a member's picture, and the same rule holds
+        // there: `IconButton` only reaches the letter on the strokes branch,
+        // so a family that declared a letter over a font glyph would carry a
+        // letter nothing ever paints.
+        for family in DRAWING_TOOLS.into_iter().filter_map(DrawingTool::family) {
+            if let Some(letter) = family.icon_letter {
+                assert!(
+                    !family.icon_strokes.is_empty(),
+                    "{}: a family letter needs strokes to sit in",
+                    family.id
+                );
+                assert_eq!(
+                    letter.text.chars().count(),
+                    1,
+                    "{}: the slot has room for a letter, not a word",
+                    family.id
+                );
+            }
+        }
         let retracement = tool("fib-retracement")
             .icon_letter()
             .expect("the retracement icon carries its letter");
@@ -2528,7 +2547,7 @@ mod tests {
         );
         assert_ne!(
             retracement.at.1, extension.at.1,
-            "each letter takes the corner its own levels leave empty, so the two sit at              different heights"
+            "each letter takes the corner its own levels leave empty, so the two sit apart"
         );
     }
 

@@ -54,6 +54,9 @@ const FLYOUT_HEADER_TEXT_PX: f32 = 11.0;
 /// left so the two never collide. The hit zone is bigger than the glyph —
 /// a 9 px star is no hit target — and stays clear of the icon and name, so
 /// an arming click can never silently star.
+/// Side of the icon box in a flyout row — the smallest box a vector icon is
+/// ever painted into, and therefore the size the icon guards measure against.
+pub(crate) const FLYOUT_ICON_BOX_PX: f32 = FLYOUT_GLYPH_PX - 4.0;
 const FLYOUT_STAR_PX: f32 = 9.0;
 const FLYOUT_STAR_RIGHT_INSET_PX: f32 = 10.0;
 const FLYOUT_STAR_HIT_PX: f32 = 14.0;
@@ -1979,7 +1982,7 @@ impl ToolRail {
                     ui.painter(),
                     egui::Rect::from_center_size(
                         glyph_center,
-                        egui::Vec2::splat(FLYOUT_GLYPH_PX - 4.0),
+                        egui::Vec2::splat(FLYOUT_ICON_BOX_PX),
                     ),
                     member.icon_strokes(),
                     member.icon_dots(),

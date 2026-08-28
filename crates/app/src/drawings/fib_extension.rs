@@ -35,8 +35,13 @@ impl DrawingToolImpl for FibExtension {
     /// [`Self::shortcut`]). The tooltip went on advertising it long after,
     /// which told the trader to press the one key that closes their position
     /// to reach a drawing tool.
+    ///
+    /// It does name the icon's letter. The registry calls this tool
+    /// *extension* and the icon says `P`, for the projection it draws; a
+    /// trader who has not met the pair yet meets them here, in the one place
+    /// they go to ask what a button is.
     fn hover_text(&self) -> &'static str {
-        "Fib extension - drag the first leg, then click the projection origin"
+        "Fib extension (P for projection) - drag the first leg, then click the projection origin"
     }
     fn placement_hint(&self, placed: usize) -> Option<&'static str> {
         match placed {
