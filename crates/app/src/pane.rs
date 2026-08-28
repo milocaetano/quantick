@@ -973,6 +973,18 @@ pub struct ChartPane {
     /// The UI's copy of every indicator's plot columns (see
     /// [`crate::indicators`]).
     pub indicators: IndicatorViews,
+    /// Whether the app has put the active layout on this pane — its
+    /// indicators and its market's drawings. `false` from construction until
+    /// the first frame that sees the pane, so a pane opened by any path (a
+    /// new tab, a split, a restore) is seeded exactly once.
+    pub layout_seeded: bool,
+    /// Which market and pane address the drawings on this pane belong to,
+    /// once the layout put them here. The app compares it with the tab's
+    /// market every frame and swaps the set when they part.
+    pub drawings_key: Option<crate::layouts::DrawingKey>,
+    /// The drawings revision last copied into the layout; a different
+    /// reading means the layout is behind this pane.
+    pub drawings_saved_revision: u64,
     /// Whether this pane's on-chart indicator legend is folded to its count
     /// puck. Per pane, not per window: a split is two readings of the same
     /// market, and the corner pressure that makes a trader fold the flow
@@ -1288,6 +1300,9 @@ impl ChartPane {
             orderflow,
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
+            layout_seeded: false,
+            drawings_key: None,
+            drawings_saved_revision: 0,
             legend_collapsed: false,
             live_strip_visible: false,
             footprint_visible: false,

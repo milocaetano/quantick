@@ -19,6 +19,8 @@ use egui_phosphor::regular as icons;
 
 use crate::candle_view::draw_style_window;
 use crate::canvas_layout::{MAX_CANVAS_PANES, PaneIdAllocator};
+
+mod layout_wiring;
 use crate::chart_layers::{self, ChartLayer};
 use crate::config::AppConfig;
 use crate::dock::{Dock, DockEnv, DockTab};
@@ -33,7 +35,7 @@ use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorSource,
 use crate::indicators::IndicatorView;
 use crate::indicators::library::ScriptLibrary;
 use crate::indicators::preset_file;
-use crate::indicators::state_file::{self, SavedIndicator, SavedInput, SavedKind, SavedPlotStyle};
+use crate::indicators::state_file::{self, SavedInput, SavedKind};
 use crate::loading::{self, LoadingTask};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
@@ -829,12 +831,6 @@ pub struct QuantickApp {
     /// interaction state across the whole window rather than within a tab, so
     /// this may not be per-tab state: two panes sharing an id share a drag.
     pane_ids: PaneIdAllocator,
-    /// The tab the indicator state file describes — the one opened from the
-    /// config defaults at startup, which is the workspace the file was written
-    /// for. Cleared when that tab closes: the set it recorded is gone, and
-    /// silently retargeting the file at another market would be a lie. Per-tab
-    /// persistence is §14's `ui-state.toml` question and lands with the layout.
-    persisted_tab: Option<u64>,
     /// The `+` dialog, while it is open.
     source_picker: Option<SourcePicker>,
     /// The instruments the user added from the picker, already folded into
@@ -870,22 +866,34 @@ pub struct QuantickApp {
     /// panes with the slots themselves: one file records what the window had
     /// open, so one list records what is in it.
     slot_kinds: Vec<(TabSlot, SavedKind)>,
-    /// Slots restored as hidden, applied when their Rebuilt lands. The
-    /// persisted tab's flow pane only, because restoring is (see
-    /// [`Self::maintain_indicator_state`]).
-    pending_hidden: Vec<SlotId>,
-    /// Per-plot style layers restored from disk, applied when their Rebuilt
-    /// lands — the same deferral [`Self::pending_hidden`] performs, on the
-    /// same pane, for the same reason.
-    pending_styles: Vec<(SlotId, crate::indicator_style::StyleOverride)>,
+    /// Slots placed hidden by a layout, applied when their Rebuilt lands —
+    /// the view a hide acts on is born from the worker's first answer.
+    pending_hidden: Vec<TabSlot>,
+    /// Per-plot style layers placed by a layout, applied when their Rebuilt
+    /// lands — the same deferral [`Self::pending_hidden`] performs, for the
+    /// same reason.
+    pending_styles: Vec<(TabSlot, crate::indicator_style::StyleOverride)>,
     /// `QUANTICK_INDICATOR_SETTINGS`: which indicator to open the dialog on,
     /// and on which tab, once its view exists. Cleared by the first open, so a
     /// dialog the run then closes stays closed.
     settings_autostart: Option<(usize, indicator_panel::SettingsTab)>,
-    /// Where the indicator set persists.
-    indicator_state_path: std::path::PathBuf,
-    /// Set by any add/remove/hide/inputs change; drained by the debounced
-    /// save.
+    /// The workspace's layouts: the strip's tabs, their indicator sets and
+    /// their per-market drawings. See [`crate::layouts`].
+    layouts: crate::layouts::LayoutBook,
+    /// Where the layouts persist.
+    layouts_path: std::path::PathBuf,
+    /// Set by any layout edit — a switch, a rename, a drawing, a settled
+    /// indicator change; drained by the debounced save.
+    layouts_dirty: bool,
+    /// When the last layout change happened (the debounce clock).
+    last_layout_change: Option<Instant>,
+    /// The pane the last indicator edit happened on: the one whose set the
+    /// settled reconciliation copies into the layout and onto the others.
+    indicator_edit_origin: Option<(u64, PaneSide)>,
+    /// The layout being renamed in the strip, with the draft name.
+    layout_rename: Option<(crate::layouts::LayoutId, String)>,
+    /// Set by any add/remove/hide/inputs change; drained by the settled
+    /// reconciliation that copies the edited pane's set into the layout.
     indicator_state_dirty: bool,
     /// When the last indicator change happened (the debounce clock).
     last_indicator_change: Option<Instant>,
@@ -1385,7 +1393,6 @@ impl QuantickApp {
             layout_picker_autostart: std::env::var("QUANTICK_LAYOUT_PICKER")
                 .is_ok_and(|value| value == "1"),
             pane_ids,
-            persisted_tab: Some(FIRST_TAB_ID),
             source_picker: None,
             added_symbols: symbols_file::load(&symbols_file::default_path()),
             symbols_path: symbols_file::default_path(),
@@ -1403,7 +1410,15 @@ impl QuantickApp {
             pending_hidden: Vec::new(),
             pending_styles: Vec::new(),
             settings_autostart: None,
-            indicator_state_path: state_file::default_path(),
+            layouts: Self::load_layouts(
+                &crate::layouts::default_path(),
+                &state_file::default_path(),
+            ),
+            layouts_path: crate::layouts::default_path(),
+            layouts_dirty: false,
+            last_layout_change: None,
+            indicator_edit_origin: None,
+            layout_rename: None,
             indicator_state_dirty: false,
             last_indicator_change: None,
             last_script_poll: Instant::now(),
@@ -1991,9 +2006,36 @@ impl QuantickApp {
         if std::env::var("QUANTICK_LEGEND_COLLAPSED").is_ok_and(|value| value == "1") {
             app.set_focused_legend_collapsed(true);
         }
-        // Restore the persisted indicator set before any autostart hook:
-        // the file is what the user actually had open.
-        app.restore_indicator_state();
+        // Put the active layout on the first tab's panes before any autostart
+        // hook: the file is what the user actually had open.
+        app.seed_new_panes();
+        // The layout strip's hooks (`ui-harness`): open on a named layout,
+        // creating it when the file has none by that name, and open the
+        // rename box on the active one.
+        if let Ok(name) = std::env::var("QUANTICK_LAYOUT_TAB")
+            && let Some(name) = crate::layouts::clean_name(&name)
+        {
+            let wanted = app.layouts().by_name(&name).map(|layout| layout.id);
+            let outcome = match wanted {
+                Some(id) => app.switch_layout(id).map(|_| id),
+                None => app.create_layout(Some(&name)),
+            };
+            if let Err(error) = outcome {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LAYOUT_TAB_HOOK_REFUSED",
+                    layout = %name,
+                    %error,
+                    action = "hook_ignored",
+                    "QUANTICK_LAYOUT_TAB could not open the layout"
+                );
+            }
+        }
+        if std::env::var("QUANTICK_LAYOUT_RENAME").is_ok_and(|value| value == "1") {
+            let active = app.layouts().active_id();
+            app.begin_layout_rename(active);
+        }
         // The settings dialog, reachable without a pointer: the index of the
         // indicator to open it on, among the focused pane's views in add
         // order, and optionally the tab (`0` or `inputs`, `1` or `style`).
@@ -2013,14 +2055,25 @@ impl QuantickApp {
                     .iter()
                     .position(|entry| entry.name == name)
                 {
-                    Some(index) => {
-                        app.add_script_indicator(index);
-                        // An env var is not a user edit. Without this, a
-                        // scripted validation run appended its own scripts to
-                        // the saved set and they opened by themselves on the
-                        // next plain launch — config presence activating
+                    Some(_) => {
+                        // Straight onto the focused pane, with no mirror: an
+                        // env var is not a user edit. Without this, a scripted
+                        // validation run appended its own scripts to the
+                        // layout and they opened by themselves on the next
+                        // plain launch — config presence activating
                         // something, which the rules forbid. The natives hook
                         // above never registers a kind, so it is already inert.
+                        let (tab, side) = {
+                            let tab = app.active_tab();
+                            (tab.id, tab.focused_side())
+                        };
+                        app.add_indicator_at(
+                            tab,
+                            side,
+                            &SavedKind::Script {
+                                name: name.to_owned(),
+                            },
+                        );
                         app.forget_last_indicator_state_change();
                     }
                     None => tracing::warn!(
@@ -2418,13 +2471,19 @@ impl QuantickApp {
                 text,
             });
         let owner = self.target_slot(slot);
-        self.slot_kinds.push((owner, SavedKind::Script { name }));
+        let kind = SavedKind::Script { name };
+        self.slot_kinds.push((owner, kind.clone()));
         // Whose slot this is decides who may take it away again: the annotate
-        // tier removes what it attached, never what the trader put there.
+        // tier removes what it attached, never what the trader put there. An
+        // operator's overlay stays on the one pane it was attached to and
+        // out of the layout; the trader's script is a layout edit and goes
+        // onto every pane.
         if by_operator {
             self.operator_slots.insert(owner);
+        } else {
+            self.mirror_add(owner, &kind);
         }
-        self.mark_indicator_state_dirty();
+        self.note_indicator_edit_at(owner.tab, owner.side);
         (owner.tab, owner.side.into(), slot)
     }
 
@@ -3068,20 +3127,17 @@ impl QuantickApp {
         self.operator_slots.retain(|owner| owner.tab != closed.id);
         self.script_files
             .retain(|(owner, ..)| owner.tab != closed.id);
-        if self.persisted_tab == Some(closed.id) {
-            // The set the file describes no longer exists. Silently writing
-            // some other tab's indicators over it would be a lie about what
-            // the workspace was.
-            self.persisted_tab = None;
+        self.pending_hidden.retain(|owner| owner.tab != closed.id);
+        self.pending_styles
+            .retain(|(owner, _)| owner.tab != closed.id);
+        if self
+            .indicator_edit_origin
+            .is_some_and(|(tab, _)| tab == closed.id)
+        {
+            // The pane the reconciliation would read is gone; the layout
+            // already holds the last settled set.
+            self.indicator_edit_origin = None;
             self.indicator_state_dirty = false;
-            tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "INDICATOR_STATE_UNTRACKED",
-                tab = closed.id,
-                action = "stop_saving_until_restart",
-                "the tab the indicator state file describes was closed"
-            );
         }
         self.active_tab = self.active_tab.min(self.tabs.len() - 1);
         drop(closed);
@@ -3514,13 +3570,20 @@ impl QuantickApp {
         tab.pane_mut(target.side)
             .indicators
             .toggle_hidden(target.slot);
-        self.mark_indicator_state_dirty();
+        self.mirror_hidden(target);
+        self.note_indicator_edit_at(target.tab, target.side);
     }
 
     /// Remove a slot, wherever it lives. UI first (the entry vanishes this
     /// frame), worker second; events already in flight for the slot are
     /// dropped on apply.
     fn remove_indicator_at(&mut self, target: TabSlot) {
+        if !self.tabs.iter().any(|tab| tab.id == target.tab) {
+            return;
+        }
+        // The mirrors first, while the slot's layout position can still be
+        // read off the bookkeeping.
+        self.mirror_remove(target);
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) else {
             return;
         };
@@ -3531,7 +3594,9 @@ impl QuantickApp {
         self.slot_kinds.retain(|(owner, _)| *owner != target);
         self.operator_slots.remove(&target);
         self.script_files.retain(|(owner, ..)| *owner != target);
-        self.mark_indicator_state_dirty();
+        self.pending_hidden.retain(|owner| *owner != target);
+        self.pending_styles.retain(|(owner, _)| *owner != target);
+        self.note_indicator_edit_at(target.tab, target.side);
     }
 
     /// Open the settings dialog for a slot, wherever it lives.
@@ -3743,7 +3808,11 @@ impl QuantickApp {
             // Deliberately unlike an input edit — it takes no rebuild and no
             // replay, and it follows the legend's eye, which is also instant
             // and also persisted without an Apply.
-            SettingsOutcome::StyleChanged => self.mark_indicator_state_dirty(),
+            SettingsOutcome::StyleChanged => {
+                let target = self.indicator_settings_target;
+                self.mirror_style(target);
+                self.note_indicator_edit_at(target.tab, target.side);
+            }
         }
         self.draw_indicator_preview_watermark(ctx);
     }
@@ -3925,9 +3994,13 @@ impl QuantickApp {
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) {
             tab.pane_mut(target.side)
                 .indicator_worker
-                .send(IndicatorCommand::SetInputs { slot, values });
+                .send(IndicatorCommand::SetInputs {
+                    slot,
+                    values: values.clone(),
+                });
         }
-        self.mark_indicator_state_dirty();
+        self.mirror_inputs(target, &values);
+        self.note_indicator_edit_at(target.tab, target.side);
     }
 
     /// Show the draft on the chart without committing it: same worker path
@@ -4159,14 +4232,22 @@ impl QuantickApp {
         };
         let slot = self.focused_pane_mut().add_indicator(source);
         let owner = self.target_slot(slot);
-        self.slot_kinds.push((owner, kind));
-        self.mark_indicator_state_dirty();
+        self.slot_kinds.push((owner, kind.clone()));
+        // Every other pane of every tab gets the same indicator now; the
+        // settled reconciliation binds the layout's copy of it.
+        self.mirror_add(owner, &kind);
+        self.note_indicator_edit_at(owner.tab, owner.side);
         slot
     }
 
+    /// An indicator edit happened on the focused pane. Edits that know their
+    /// pane call [`Self::note_indicator_edit_at`] directly.
     fn mark_indicator_state_dirty(&mut self) {
-        self.indicator_state_dirty = true;
-        self.last_indicator_change = Some(Instant::now());
+        let (tab, side) = {
+            let tab = self.active_tab();
+            (tab.id, tab.focused_side())
+        };
+        self.note_indicator_edit_at(tab, side);
     }
 
     /// Undo the dirty mark an add just set — for indicators an env var asked
@@ -4176,217 +4257,28 @@ impl QuantickApp {
         self.slot_kinds.pop();
         self.indicator_state_dirty = false;
         self.last_indicator_change = None;
+        self.indicator_edit_origin = None;
     }
 
-    /// Rebuild the persisted set at startup, through the same commands the
-    /// menu sends (add, then bind saved inputs, then hide once the view
-    /// lands). A script the library no longer has is skipped with a log
-    /// line, never a phantom entry.
+    /// Apply layout-placed hide flags and styles once their views exist, then
+    /// — once an indicator edit has settled — copy the edited pane's set into
+    /// the active layout and bring every other pane to it.
     ///
-    /// The flow pane only, and the file holds only its slots — see
-    /// [`Self::maintain_indicator_state`] for why.
-    fn restore_indicator_state(&mut self) {
-        let saved = state_file::load(&self.indicator_state_path);
-        for entry in saved {
-            let slot = match &entry.kind {
-                SavedKind::NativeEma => Some(self.add_native_indicator(SavedKind::NativeEma)),
-                SavedKind::NativeCvd => Some(self.add_native_indicator(SavedKind::NativeCvd)),
-                SavedKind::Script { name } => {
-                    match self
-                        .script_library
-                        .entries()
-                        .iter()
-                        .position(|candidate| candidate.name == *name)
-                    {
-                        // The returned slot, not `slot_kinds.last()`: that
-                        // assumed the add always pushes an entry as its last
-                        // act, and it does not when the file no longer reads
-                        // — the saved inputs would then bind to whatever
-                        // indicator happened to be added before this one.
-                        Some(index) => self.add_script_indicator(index),
-                        None => {
-                            tracing::warn!(
-                                target: "quantick::app",
-                                schema_version = 1_u8,
-                                event_code = "INDICATOR_STATE_SCRIPT_MISSING",
-                                script = %name,
-                                action = "entry_skipped",
-                                "the saved state references a script the library no longer has"
-                            );
-                            None
-                        }
-                    }
-                }
-            };
-            let Some(slot) = slot else { continue };
-            let values: Vec<_> = entry
-                .inputs
-                .iter()
-                .filter_map(SavedInput::to_value)
-                .collect();
-            if !values.is_empty() && values.len() == entry.inputs.len() {
-                self.active_tab_mut()
-                    .flow_pane
-                    .indicator_worker
-                    .send(IndicatorCommand::SetInputs { slot, values });
-            } else if !entry.inputs.is_empty() {
-                // One unreadable cell dropped every input of the entry, in
-                // silence — a hand-edited or stale file lost the whole
-                // parameter set without a word.
-                tracing::warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "INDICATOR_STATE_INPUTS_DROPPED",
-                    kind = ?entry.kind,
-                    saved = entry.inputs.len(),
-                    readable = values.len(),
-                    action = "declared_defaults_used",
-                    "saved indicator inputs could not be read; using the declared defaults"
-                );
-            }
-            if entry.hidden {
-                self.pending_hidden.push(slot);
-            }
-            if !entry.plot_styles.is_empty() {
-                // Same deferral as `hidden`, and for the same reason: the view
-                // is born from the worker's first `Rebuilt`, which has not
-                // arrived yet, so the layer waits with it.
-                self.pending_styles.push((
-                    slot,
-                    crate::indicator_style::StyleOverride::from_plots(
-                        entry
-                            .plot_styles
-                            .iter()
-                            .copied()
-                            .map(SavedPlotStyle::to_override)
-                            .collect(),
-                    ),
-                ));
-            }
-        }
-        // Restoring is not a change; only user edits dirty the file.
-        self.indicator_state_dirty = false;
-        self.last_indicator_change = None;
-    }
-
-    /// Apply restored-hidden flags once their views exist, then write the
-    /// state file when a change has settled (debounced off the frame path).
-    ///
-    /// The file records the flow pane of the *first* tab — the one the window
-    /// opens with, whether its market came from the config defaults or from
-    /// the saved workspace ([`crate::ui_state`]). Slots on a time pane, or on
-    /// a tab opened after it, stay in-session: a restored entry for either
-    /// would have nowhere to land, and would then be quietly dropped by the
-    /// next save.
-    ///
-    /// The tab strip now persists, which was the precondition this comment
-    /// used to name — but the indicators of tabs 2..n did not follow it in the
-    /// same change. That is the honest state: a restored workspace brings back
-    /// every tab's *market and canvas*, and every tab but the first opens with
-    /// no indicators. Extending the state file to key its entries by
-    /// (tab, pane) is the increment that closes it.
+    /// Settled, not immediate: the mirror already put the change on every
+    /// pane the frame it happened. This is the reconciliation, and it waits
+    /// for the workers to answer so the set it reads has its inputs bound
+    /// and its views born. See `layout_wiring`.
     fn maintain_indicator_state(&mut self) {
-        if !self.pending_hidden.is_empty()
-            && let Some(index) = self
-                .persisted_tab
-                .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
-        {
-            let pane = &mut self.tabs[index].flow_pane;
-            let existing: Vec<SlotId> = self
-                .pending_hidden
-                .iter()
-                .copied()
-                .filter(|slot| pane.indicators.all().iter().any(|v| v.slot == *slot))
-                .collect();
-            for slot in &existing {
-                pane.indicators.toggle_hidden(*slot);
-            }
-            self.pending_hidden.retain(|slot| !existing.contains(slot));
-        }
-        if !self.pending_styles.is_empty()
-            && let Some(index) = self
-                .persisted_tab
-                .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
-        {
-            let pane = &mut self.tabs[index].flow_pane;
-            self.pending_styles.retain(|(slot, style)| {
-                let Some(view) = pane.indicators.view_mut(*slot) else {
-                    return true;
-                };
-                view.style = style.clone();
-                false
-            });
-        }
+        self.apply_pending_indicator_state();
         let settled = self
             .last_indicator_change
             .is_some_and(|changed| changed.elapsed() >= INDICATOR_STATE_SAVE_DEBOUNCE);
-        let Some(persisted) = self
-            .persisted_tab
-            .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
-        else {
-            // Nothing to describe: the tab the file was written for is gone.
-            return;
-        };
         if self.indicator_state_dirty && settled {
             self.indicator_state_dirty = false;
-            // The change has been written; the clock starts again with the
-            // next edit rather than ticking on every frame from here on.
+            // The clock starts again with the next edit rather than ticking
+            // on every frame from here on.
             self.last_indicator_change = None;
-            // What is on disk today, so a slot that failed to build does not
-            // overwrite its own saved parameters with an empty list.
-            let previous = state_file::load(&self.indicator_state_path);
-            let tab_id = self.tabs[persisted].id;
-            let saved: Vec<SavedIndicator> = self.tabs[persisted]
-                .flow_pane
-                .indicators
-                .all()
-                .iter()
-                .filter_map(|view| {
-                    let owner = TabSlot {
-                        tab: tab_id,
-                        side: PaneSide::Flow,
-                        slot: view.slot,
-                    };
-                    let kind_ref = self
-                        .slot_kinds
-                        .iter()
-                        .find(|(candidate, _)| *candidate == owner)
-                        .map(|(_, kind)| kind)?;
-                    let kind = kind_ref.clone();
-                    // A slot whose build failed has an empty view: the
-                    // worker's error path sends `Rebuilt { inputs: [] }`.
-                    // Rewriting its entry from that would erase the user's
-                    // saved parameters before they had a chance to fix the
-                    // script, so a broken slot keeps what is already on disk.
-                    let inputs = if view.error.is_some() {
-                        previous
-                            .iter()
-                            .find(|entry| entry.kind == *kind_ref)
-                            .map_or_else(Vec::new, |entry| entry.inputs.clone())
-                    } else {
-                        view.input_values
-                            .iter()
-                            .map(SavedInput::from_value)
-                            .collect()
-                    };
-                    Some(SavedIndicator {
-                        kind,
-                        hidden: view.hidden,
-                        inputs,
-                        // Unlike the inputs, a broken slot's style is still
-                        // the trader's: styling survives in the view across
-                        // the error, so there is nothing to rescue from disk.
-                        plot_styles: view
-                            .style
-                            .plots()
-                            .iter()
-                            .copied()
-                            .map(SavedPlotStyle::from_override)
-                            .collect(),
-                    })
-                })
-                .collect();
-            state_file::save(&self.indicator_state_path, &saved);
+            self.reconcile_indicators();
         }
     }
 
@@ -4789,12 +4681,10 @@ impl QuantickApp {
         // strip holding one market with another's name. Then every tab is
         // opened outright and the ones that were there are closed after, so
         // the strip is *replaced* rather than grown.
-        let adopt_first =
-            self.tabs.first().is_some_and(|tab| {
-                tab.id == FIRST_TAB_ID && self.persisted_tab == Some(FIRST_TAB_ID)
-            }) && self.tabs.len() == 1
-                && self.tabs[0].feed_id == workspace.tabs[0].feed
-                && self.tabs[0].symbol == workspace.tabs[0].symbol;
+        let adopt_first = self.tabs.first().is_some_and(|tab| tab.id == FIRST_TAB_ID)
+            && self.tabs.len() == 1
+            && self.tabs[0].feed_id == workspace.tabs[0].feed
+            && self.tabs[0].symbol == workspace.tabs[0].symbol;
         let stale: Vec<u64> = if adopt_first {
             Vec::new()
         } else {
@@ -5108,41 +4998,9 @@ impl QuantickApp {
         self.restore_workspace(workspace);
         self.restore_chart_layers();
 
-        // Indicators are *added* by the restore, so the live ones have to go
-        // first or the imported set would land on top of them.
-        self.clear_indicators();
-        self.focus_persisted_flow_pane();
-        self.restore_indicator_state();
-        // The set on screen is now the file's; nothing changed since.
-        self.indicator_state_dirty = false;
-    }
-
-    /// Put the focus where [`Self::restore_indicator_state`] expects it, and
-    /// make sure some tab still answers for the indicator file.
-    ///
-    /// The restore adds through the *focused* pane, which at startup is
-    /// always tab zero's flow pane — the only pane the indicator file
-    /// describes. Mid-session it is wherever the trader was looking, so an
-    /// import has to put it back or the restored indicators land on a time
-    /// pane, with their inputs sent to a different worker.
-    ///
-    /// And an import replaces the tab strip, so the tab the file was written
-    /// for is closed on the way — which clears `persisted_tab` and, with it,
-    /// every future save of the indicator set. That is right when a trader
-    /// closes the tab themselves (the set the file describes is genuinely
-    /// gone), and wrong here: the imported set is about to be restored onto
-    /// the new tab, and it is that tab which now answers for the file.
-    fn focus_persisted_flow_pane(&mut self) {
-        let Some(index) = self
-            .persisted_tab
-            .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
-            .or(if self.tabs.is_empty() { None } else { Some(0) })
-        else {
-            return;
-        };
-        self.active_tab = index;
-        self.tabs[index].focus = PaneSide::Flow;
-        self.persisted_tab = Some(self.tabs[index].id);
+        // The layouts come last, once the tabs are the imported ones: every
+        // pane is stripped and re-seeded from the imported file.
+        self.reload_layouts();
     }
 
     /// Work out which remembered workspace files are still there.
@@ -6193,6 +6051,14 @@ fn layout_preset_shortcut(index: usize) -> Option<egui::KeyboardShortcut> {
         .map(|key| egui::KeyboardShortcut::new(egui::Modifiers::CTRL, *key))
 }
 
+/// The shortcut that reaches the layout tab at strip position `index`, if a
+/// number key still reaches that far.
+fn layout_tab_shortcut(index: usize) -> Option<egui::KeyboardShortcut> {
+    LAYOUT_PRESET_KEYS
+        .get(index)
+        .map(|key| egui::KeyboardShortcut::new(egui::Modifiers::ALT, *key))
+}
+
 /// `Ctrl+0` puts the context charts away, or brings them back.
 ///
 /// The number row's own zero, beside `Ctrl+1..9` for the presets: nine keys
@@ -6290,6 +6156,16 @@ impl QuantickApp {
             };
             if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
                 self.apply_layout_preset(preset);
+            }
+        }
+        // Layout tabs by number: `Alt+1..9`, beside `Ctrl+1..9` for the
+        // presets — one row of keys, two things a trader switches by number.
+        for index in 0..LAYOUT_PRESET_KEYS.len() {
+            let Some(shortcut) = layout_tab_shortcut(index) else {
+                break;
+            };
+            if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
+                let _ = self.switch_layout_index(index);
             }
         }
         if ctx.input_mut(|i| i.consume_shortcut(&LEGEND_SHORTCUT)) {
@@ -6390,6 +6266,47 @@ impl QuantickApp {
                         // switch lives here rather than under File, and each
                         // entry names the charts it shows — "Timeframe", not
                         // layout jargon (audit §3).
+                        ui.menu_button("Layouts", |ui| {
+                            // The strip's tabs, from the book: switch by name,
+                            // and the three edits the strip's own menu holds.
+                            let active = self.layouts().active_id();
+                            let names: Vec<(crate::layouts::LayoutId, String)> = self
+                                .layouts()
+                                .layouts()
+                                .iter()
+                                .map(|layout| (layout.id, layout.name.clone()))
+                                .collect();
+                            for (index, (id, name)) in names.iter().enumerate() {
+                                let mut button = egui::Button::new(name.as_str());
+                                if let Some(shortcut) = layout_tab_shortcut(index) {
+                                    button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut));
+                                }
+                                if ui.add(button.selected(*id == active)).clicked() {
+                                    self.apply_strip_action(crate::layout_strip::StripAction::Switch(*id));
+                                    ui.close_menu();
+                                }
+                            }
+                            ui.separator();
+                            let can_add = names.len() < crate::layouts::MAX_LAYOUTS;
+                            if ui
+                                .add_enabled(can_add, egui::Button::new("New layout"))
+                                .clicked()
+                            {
+                                self.apply_strip_action(crate::layout_strip::StripAction::Create);
+                                ui.close_menu();
+                            }
+                            if ui.button("Rename layout…").clicked() {
+                                self.apply_strip_action(crate::layout_strip::StripAction::BeginRename(active));
+                                ui.close_menu();
+                            }
+                            if ui
+                                .add_enabled(names.len() > 1, egui::Button::new("Delete layout"))
+                                .clicked()
+                            {
+                                self.apply_strip_action(crate::layout_strip::StripAction::Delete(active));
+                                ui.close_menu();
+                            }
+                        });
                         ui.menu_button("Layout", |ui| {
                             // Read from the registry, like the picker: a menu
                             // holding its own list of layouts is the second
@@ -8782,6 +8699,9 @@ impl eframe::App for QuantickApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Whatever the debounce was still holding: a level drawn a moment
+        // before closing is a level the trader expects back.
+        self.flush_layouts();
         if let Some(access) = self.control_access.as_mut() {
             access.shutdown_for_exit();
         }
@@ -10534,12 +10454,15 @@ impl QuantickApp {
         self.draw_indicator_legends(ctx);
         self.poll_script_files();
         self.maintain_indicator_state();
+        self.maintain_layouts();
         self.maintain_chart_layers();
         let status = self.status_model();
         let status_response = statusbar::draw(ctx, &status, &mut self.tz);
         if status_response.open_trading_tab {
             self.dock.open_tab(DockTab::Trading);
         }
+        // Above the status bar, below the canvas: the layout tabs.
+        self.draw_layout_strip(ctx);
         // The browser window and, while the *active* tab plays a session, its
         // transport bar. A background tab's recording keeps advancing on its
         // own feed thread; what it does not get is the strip, which speaks for
@@ -12423,10 +12346,15 @@ mod tests {
         app.open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
         app.import_workspace_from(&file);
 
-        let persisted = app.persisted_tab.expect("a tab still answers for the file");
         assert!(
-            app.tabs.iter().any(|tab| tab.id == persisted),
-            "and it is one of the tabs actually open"
+            app.tabs
+                .iter()
+                .all(|tab| tab.panes().all(|(pane, _)| pane.layout_seeded)),
+            "every pane of the imported strip carries the imported layout"
+        );
+        assert!(
+            !app.layouts_dirty,
+            "what is on screen is the file's; nothing to write back yet"
         );
         let _ = std::fs::remove_file(&file);
     }
@@ -12532,19 +12460,20 @@ plot(close)
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The PR's headline behaviour had no test: everything sat on the serde
-    /// layer, and the wiring is where the defects were.
+    /// A cockpit from before layouts existed keeps its indicator set: the
+    /// old file becomes Layout 1, restores through the same commands the
+    /// menu sends, and the layouts file — not the old one — is what a settled
+    /// edit writes back.
     #[test]
     fn the_indicator_set_restores_from_disk_and_saves_back() {
         use crate::indicators::state_file::{SavedIndicator, SavedInput, SavedKind};
 
         let (mut app, _events, _commands, _book) = test_app();
-        let path = std::env::temp_dir().join(format!(
-            "quantick-indicator-state-app-{}.toml",
-            std::process::id()
-        ));
+        let path = crate::indicators::state_file::default_path();
+        let layouts_path = crate::layouts::default_path();
         let _ = std::fs::remove_file(&path);
-        app.indicator_state_path = path.clone();
+        let _ = std::fs::remove_file(&layouts_path);
+        app.layouts_path = layouts_path.clone();
 
         // A saved set: one native with bound inputs, one hidden native, and
         // a script the library does not have.
@@ -12574,7 +12503,12 @@ plot(close)
             ],
         );
 
-        app.restore_indicator_state();
+        app.reload_layouts();
+        assert_eq!(
+            app.layouts().active().name,
+            "Layout 1",
+            "the old set migrated into the first layout"
+        );
         assert_eq!(
             app.slot_kinds.len(),
             2,
@@ -12592,16 +12526,16 @@ plot(close)
         app.mark_indicator_state_dirty();
         app.last_indicator_change =
             Some(Instant::now() - INDICATOR_STATE_SAVE_DEBOUNCE - Duration::from_millis(10));
-        for event in app
-            .active_tab_mut()
-            .flow_pane
-            .indicator_worker
-            .drain_events()
-        {
-            app.active_tab_mut().flow_pane.indicators.apply(event);
-        }
+        // Let the worker answer the adds, so the views the snapshot reads
+        // exist — a settled edit reads what is on screen.
+        app.active_tab_mut().flow_pane.indicator_worker.flush();
+        app.active_tab_mut().flow_pane.apply_indicator_events();
         app.maintain_indicator_state();
-        let written = crate::indicators::state_file::load(&path);
+        app.flush_layouts();
+        let crate::layouts::Loaded::Book(book) = crate::layouts::load(&layouts_path) else {
+            panic!("the layouts file was written");
+        };
+        let written = &book.active().indicators;
         assert_eq!(
             written.len(),
             {
@@ -12621,6 +12555,7 @@ plot(close)
             "the debounce fired, so the change is written"
         );
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&layouts_path);
     }
 
     fn test_app_with_notices() -> (
@@ -20259,16 +20194,23 @@ crosshair = false
             None,
             "the editor does not follow the trader to another tab"
         );
-        assert!(
-            app.tabs
-                .iter()
-                .find(|tab| tab.id != home)
-                .expect("the new tab")
-                .flow_pane
-                .drawings
-                .items()
-                .is_empty(),
-            "and nothing of it is recorded against the new tab"
+        // The new tab is on the same market, so the layout puts the same note
+        // on it — a drawing belongs to a market on a pane, not to a tab. The
+        // words were committed when the editor closed, and the mirror follows
+        // a commit on the next frame.
+        run_frame(&mut app, &ctx);
+        let mirrored = app
+            .tabs
+            .iter()
+            .find(|tab| tab.id != home)
+            .expect("the new tab")
+            .flow_pane
+            .drawings
+            .items();
+        assert_eq!(mirrored.len(), 1, "the market's note came with the market");
+        assert_eq!(
+            mirrored[0].tool.inline_text(mirrored[0].payload.as_ref()),
+            Some("mine")
         );
 
         let owner = app
@@ -23796,10 +23738,11 @@ crosshair = false
         );
     }
 
-    /// (d) `Insert → Indicator` targets the focused pane (§11): the slot lands
-    /// on the pane the user is working in, and only there.
+    /// (d) `Insert → Indicator` is a layout edit: the slot lands on the pane
+    /// the user is working in *and* on every other pane, on the same frame —
+    /// a layout's indicators are shared by every chart that shows it.
     #[test]
-    fn an_indicator_lands_on_the_focused_pane_only() {
+    fn an_indicator_added_on_one_pane_appears_on_every_pane() {
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 200);
         let flow_before = app.active_tab().flow_pane.indicators.all().len();
@@ -23816,37 +23759,45 @@ crosshair = false
         app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
         settle_indicators(&mut app);
 
-        let time = app.active_tab().time_pane().expect("time pane");
-        assert_eq!(
-            time.indicators.all().len(),
-            1,
-            "the EMA belongs to the pane that had focus"
-        );
-        assert!(
-            time.indicators
-                .all()
-                .iter()
-                .any(|view| view.label().contains("EMA")),
-            "and it really built: {:?}",
-            time.indicators
+        for side in [PaneSide::Time(0), PaneSide::Flow] {
+            let pane = app.active_tab().pane(side);
+            let labels: Vec<String> = pane
+                .indicators
                 .all()
                 .iter()
                 .map(|view| view.label().to_owned())
-                .collect::<Vec<_>>()
-        );
+                .collect();
+            assert!(
+                labels.iter().any(|label| label.contains("EMA")),
+                "the EMA is on {side:?}, and it really built: {labels:?}"
+            );
+        }
         assert_eq!(
             app.active_tab().flow_pane.indicators.all().len(),
-            flow_before,
-            "the pane beside it gains nothing"
+            flow_before + 1,
+            "the pane beside the focused one gained the same indicator"
         );
-        // The persisted set is the flow pane's; a time-pane slot must not
-        // enter it (see maintain_indicator_state).
-        assert_eq!(app.slot_kinds.len(), 1, "exactly one slot was registered");
-        assert!(
+        assert_eq!(
+            app.slot_kinds.len(),
+            2,
+            "one registration per pane, each on its own slot"
+        );
+        assert_eq!(
             app.slot_kinds
                 .iter()
-                .all(|(owner, _)| owner.side == PaneSide::Time(0)),
-            "and it is the time pane's"
+                .filter(|(owner, _)| owner.side == PaneSide::Time(0))
+                .count(),
+            1
+        );
+
+        // Settled, the edited pane's set is the layout's.
+        app.last_indicator_change =
+            Some(Instant::now() - INDICATOR_STATE_SAVE_DEBOUNCE - Duration::from_millis(10));
+        app.maintain_indicator_state();
+        assert_eq!(app.layouts().active().indicators.len(), 1);
+        assert_eq!(
+            app.layouts().active().indicators[0].kind,
+            crate::indicators::state_file::SavedKind::NativeEma
         );
     }
 
@@ -23949,6 +23900,7 @@ crosshair = false
             );
 
         // What the save path would write, and what a fresh launch reads back.
+        use crate::indicators::state_file::SavedPlotStyle;
         let saved: Vec<_> = app.active_tab().flow_pane.indicators.all()[0]
             .style
             .plots()
@@ -23988,7 +23940,9 @@ crosshair = false
         click_chart(&mut app, &ctx, point);
         app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
         settle_indicators(&mut app);
-        let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
+        // ...mirrored onto the time pane by the layout; the hook's index names
+        // the same indicator on whichever pane has focus.
+        let slot = app.active_tab().pane(PaneSide::Time(0)).indicators.all()[0].slot;
 
         // ...and the focus on the other one, which is how a split tab can open.
         let time_point = pane_point(&app, PaneSide::Time(0));
@@ -24009,8 +23963,8 @@ crosshair = false
         assert_eq!(dialog.slot, slot);
         assert_eq!(
             app.indicator_settings_target.side,
-            PaneSide::Flow,
-            "and addressed it on the pane it really lives on"
+            PaneSide::Time(0),
+            "and addressed it on the focused pane, which carries the layout too"
         );
         assert_eq!(dialog.tab, crate::indicator_panel::SettingsTab::Style);
         assert!(
@@ -24092,44 +24046,57 @@ crosshair = false
         );
     }
 
-    /// Slot ids are per pane, so the same number means different indicators on
-    /// the two of them. Removing one must not unregister the other.
+    /// Slot ids are per pane, so the same number means different indicators
+    /// on the two of them. A removal is mirrored by *layout position*, never
+    /// by number: with two indicators on every pane, removing the second on
+    /// the time pane removes the second on the flow pane — whatever numbers
+    /// either pane gave them.
     #[test]
-    fn removing_a_slot_on_one_pane_leaves_the_same_number_on_the_other() {
+    fn removing_a_slot_on_one_pane_removes_its_layout_position_everywhere() {
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 200);
 
         let point = pane_point(&app, PaneSide::Flow);
-
         click_chart(&mut app, &ctx, point);
-        app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
-        let point = pane_point(&app, PaneSide::Time(0));
-        click_chart(&mut app, &ctx, point);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
         app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
         settle_indicators(&mut app);
-        assert_eq!(app.slot_kinds.len(), 2);
-        let time_slot = app
+        assert_eq!(
+            app.slot_kinds.len(),
+            4,
+            "two indicators, mirrored onto two panes"
+        );
+
+        let point = pane_point(&app, PaneSide::Time(0));
+        click_chart(&mut app, &ctx, point);
+        let time_cvd = app
             .active_tab()
             .time_pane()
             .expect("time pane")
             .indicators
-            .all()[0]
+            .all()[1]
             .slot;
 
-        // Focused on the time pane: remove its slot.
-        app.apply_toolbar_action(ToolbarAction::RemoveIndicator(time_slot.0));
+        // Focused on the time pane: remove its second slot.
+        app.apply_toolbar_action(ToolbarAction::RemoveIndicator(time_cvd.0));
 
         assert_eq!(
             app.slot_kinds.len(),
-            1,
-            "exactly one registration went with it"
+            2,
+            "one registration per pane went with it"
         );
-        assert_eq!(
-            app.slot_kinds[0].0.side,
-            PaneSide::Flow,
-            "and the survivor is the flow pane's"
-        );
-        assert_eq!(app.active_tab().flow_pane.indicators.all().len(), 1);
+        for side in [PaneSide::Flow, PaneSide::Time(0)] {
+            let pane = app.active_tab().pane(side);
+            assert_eq!(
+                pane.indicators.all().len(),
+                1,
+                "one indicator left on {side:?}"
+            );
+            assert!(
+                pane.indicators.all()[0].label().contains("EMA"),
+                "and it is the first one, not the removed one, on {side:?}"
+            );
+        }
     }
 
     /// §11: flow layers stay on the flow pane. A time pane must not run a book
@@ -24490,19 +24457,27 @@ crosshair = false
             1,
             "the EMA landed on the bottom chart"
         );
+        // The command targeted the bottom chart; the layout put the same
+        // indicator on the other two.
         assert_eq!(
             app.active_tab()
                 .pane(PaneSide::Time(0))
                 .indicators
                 .all()
                 .len(),
-            0,
-            "not on the top one"
+            1,
+            "and on the top one, through the layout"
         );
         assert_eq!(
             app.active_tab().flow_pane.indicators.all().len(),
-            flow_before,
-            "and not on the flow pane"
+            flow_before + 1,
+            "and on the flow pane, through the layout"
+        );
+        assert!(
+            app.slot_kinds
+                .iter()
+                .any(|(owner, _)| owner.side == PaneSide::Time(1)),
+            "the bottom chart's own registration is the one the command made"
         );
 
         // The workspace remembers which of the two it was.

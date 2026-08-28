@@ -1422,6 +1422,11 @@ struct UndoEntry {
 
 #[derive(Debug, Default)]
 pub struct Drawings {
+    /// Bumped on every change to the collection — a placement, an edit, a
+    /// delete, an undo, a load. What the layout store compares against to
+    /// know a pane's drawings need writing, at the cost of one integer per
+    /// pane per frame rather than a walk of every object.
+    revision: u64,
     items: Vec<Drawing>,
     draft: Option<Drawing>,
     selected: Option<usize>,
@@ -1440,6 +1445,43 @@ pub struct Drawings {
 }
 
 impl Drawings {
+    /// How many times the collection has changed. See [`Self::revision`]'s
+    /// field: equal readings mean nothing to write.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Empty the store and hand back what it held — the way a pane puts its
+    /// drawings away when the layout or the market under it changes.
+    ///
+    /// The undo history goes with them: it described objects that are no
+    /// longer on this chart, and an undo that brought back a mark from
+    /// another market would be the very confusion the scoping exists to
+    /// prevent. Ids are not rewound.
+    pub fn take_all(&mut self) -> Vec<Drawing> {
+        self.revision += 1;
+        self.draft = None;
+        self.selected = None;
+        self.undo.clear();
+        self.redo.clear();
+        self.gesture_baseline = None;
+        std::mem::take(&mut self.items)
+    }
+
+    /// Fill an emptied store from saved objects, each given a fresh id here
+    /// — a file's ids are that file's, and two markets' files may share one.
+    ///
+    /// Anchors keep the bar offsets they came with; the pane re-anchors them
+    /// against its own series right after, exactly as after a re-cut.
+    pub fn adopt(&mut self, items: impl IntoIterator<Item = Drawing>) {
+        self.revision += 1;
+        for mut drawing in items {
+            drawing.id = self.alloc_id();
+            self.items.push(drawing);
+        }
+    }
+
     #[must_use]
     pub fn items(&self) -> &[Drawing] {
         &self.items
@@ -1544,6 +1586,7 @@ impl Drawings {
         if before == self.snapshot() {
             return;
         }
+        self.revision += 1;
         self.undo.push(before);
         if self.undo.len() > UNDO_HISTORY_LIMIT {
             self.undo.remove(0);
@@ -1556,8 +1599,8 @@ impl Drawings {
     /// Test-only, and it exists for one question: when a pane edits a mark it
     /// does not own, did the gesture open on the store that holds the mark?
     /// The answer is invisible from outside otherwise — the baseline is
-    /// private, as it should be.
-    #[cfg(test)]
+    /// private, as it should be. The layout store asks it too: a drag in
+    /// flight is not a change to write yet.
     #[must_use]
     pub fn in_gesture(&self) -> bool {
         self.gesture_baseline.is_some()
@@ -1595,6 +1638,7 @@ impl Drawings {
     }
 
     fn restore(&mut self, entry: UndoEntry) {
+        self.revision += 1;
         self.items = entry.items;
         self.all_hidden = entry.all_hidden;
         self.draft = None;

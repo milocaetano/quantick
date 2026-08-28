@@ -38,6 +38,8 @@ mod indicator_style;
 mod indicator_worker;
 mod indicators;
 mod layout_picker;
+mod layout_strip;
+mod layouts;
 mod live_strip;
 mod loading;
 mod metrics;

@@ -231,6 +231,10 @@ pub(crate) fn load(path: &std::path::Path) -> Vec<SavedIndicator> {
 }
 
 /// Write the saved set (the debounced end of the save path).
+///
+/// Test-only since layouts took over the file: the app reads it once, to
+/// migrate, and never writes it again. Tests write it to prove the migration.
+#[cfg(test)]
 pub(crate) fn save(path: &std::path::Path, indicators: &[SavedIndicator]) {
     let file = StateFile {
         version: FORMAT_VERSION,
