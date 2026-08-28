@@ -19,83 +19,104 @@ use super::{
     IconDots, IconLetter, IconStrokes, PresetHost, ToolFamily, distance_to_segment, drawing_stroke,
 };
 
-/// Left edge of the ladder in both Fib icons. The levels used to start at
-/// the glyph box's left margin; they were pulled right to leave the corner
-/// at [`FIB_LETTER_AT`] empty, because a letter painted over a level line is
+/// Left edge of the *drawing* in both Fib icons: every level line, every
+/// leg and every anchor stays right of this, so the column left of it
+/// belongs to the letter alone. A letter painted over a level line is
 /// neither a readable letter nor a readable level.
-const LEVELS_LEFT_X: f32 = 0.34;
-
-/// Where the letter sits in both Fib icons, and how tall it is.
 ///
-/// Named once and shared, because the letter is only useful as a
-/// *comparison*: `R` above `P` on the same baseline, at the same size, in
-/// the same corner, is a choice between two tools. Two letters that drift
-/// apart in size or position read as two unrelated marks instead.
-const FIB_LETTER_AT: (f32, f32) = (0.15, 0.26);
-/// Height of that letter as a fraction of the glyph box — as large as the
-/// corner left of the ladder and above the leg can hold.
-const FIB_LETTER_HEIGHT: f32 = 0.50;
+/// A bound rather than a coordinate — nothing is drawn *at* it — so it is
+/// the guard's constant and does not ship in the binary.
+#[cfg(test)]
+const DRAWING_LEFT_X: f32 = 0.34;
 
-/// The retracement icon, drawn as the gesture it is: the ladder of levels
-/// with the two-anchor leg pulled across it, and the leg's two ends marked.
+/// Centre-x of the letter in both icons — one column, so on two stacked rail
+/// buttons the eye finds the letter in the same place and only the letter
+/// changes.
+const FIB_LETTER_X: f32 = 0.15;
+/// Height of the letter in both icons, as a fraction of the glyph box.
+/// Shared for the same reason: an `R` and a `P` at one size are a choice
+/// between two tools, while two letters at two sizes read as two unrelated
+/// marks.
+const FIB_LETTER_HEIGHT: f32 = 0.46;
+/// Half the width of a capital in the proportional face, as a fraction of
+/// its font size, generously rounded up. It exists only so a test can prove
+/// the letter clears `DRAWING_LEFT_X`; egui measures the real glyph when it
+/// paints one, so this number never reaches the screen — or the binary.
+#[cfg(test)]
+const LETTER_HALF_WIDTH_RATIO: f32 = 0.4;
+
+/// The leg the retracement was dragged across, named once: the strokes draw
+/// it and the dots mark its ends, so nudging the glyph cannot leave the
+/// anchors behind on the old line.
 ///
-/// The marked ends are the part that carries the meaning. Without them the
-/// glyph is a stack of lines with a slash through it — which is also what an
-/// extension looks like, and what the `ROWS` glyph both tools used to share
-/// looked like. Two dots against three is how the eye tells the two Fib
-/// tools apart in the flyout at a glance, which is exactly how every drawing
-/// platform draws them.
-/// The leg itself, named once: the strokes draw it and the dots mark its
-/// ends, so nudging the glyph cannot leave the anchors behind on the old line.
-const RETRACEMENT_LEG: &[(f32, f32)] = &[(0.40, 0.84), (0.86, 0.16)];
+/// Its two ends are the 0 and the 1 of the level list — that is why they
+/// carry a dot and no line of their own.
+const RETRACEMENT_LEG: &[(f32, f32)] = &[(0.36, 0.88), (0.84, 0.22)];
 
+/// The retracement icon, drawn as the gesture is drawn on a chart: the leg
+/// across the move, its ends marked, and the levels hanging **between** those
+/// ends — inside the move, which is exactly what a retracement measures.
+///
+/// The levels' side of the leg is the whole difference from
+/// [`FIB_EXTENSION_ICON`], where the same lines sit *beyond* the move. Both
+/// then say in one picture what the tool does with the leg it was given, and
+/// the letter in the corner names it for the trader who would rather read
+/// than compare.
 pub(super) const FIB_RETRACEMENT_ICON: IconStrokes = &[
-    &[(LEVELS_LEFT_X, 0.16), (0.98, 0.16)],
-    &[(LEVELS_LEFT_X, 0.50), (0.98, 0.50)],
-    &[(LEVELS_LEFT_X, 0.84), (0.98, 0.84)],
+    &[(0.52, 0.42), (0.96, 0.42)],
+    &[(0.52, 0.58), (0.96, 0.58)],
+    &[(0.52, 0.74), (0.96, 0.74)],
     RETRACEMENT_LEG,
 ];
 
-/// The two ends of the leg the retracement is dragged across. They sit on the
-/// outer levels because that is where they really are: the anchors *are* 0
-/// and 1, and every other line hangs between them.
+/// The two ends of the leg the retracement is dragged across. They carry no
+/// line of their own because they *are* 0 and 1, and every level the icon
+/// draws hangs between them.
 pub(super) const FIB_RETRACEMENT_DOTS: IconDots = RETRACEMENT_LEG;
 
 /// `R` for retracement — the half of the pair that measures *back into* a
-/// move already made. Two dots against three is a true difference, but it is
-/// a difference the eye has to count; the letter is the one it reads.
+/// move already made. It takes the top-left corner because that is the one
+/// this icon's own drawing leaves empty.
 pub(super) const FIB_RETRACEMENT_LETTER: IconLetter = IconLetter {
     text: "R",
-    at: FIB_LETTER_AT,
+    at: (FIB_LETTER_X, 0.26),
     height: FIB_LETTER_HEIGHT,
 };
 
-/// The extension icon: the same ladder under the *three*-anchor path —
-/// impulse, pullback, projection origin — because that is the gesture, and
-/// the third dot is what says so.
 /// The extension's three-anchor path, named once for the same reason as
-/// [`RETRACEMENT_LEG`].
-const EXTENSION_LEG: &[(f32, f32)] = &[(0.40, 0.84), (0.70, 0.16), (0.92, 0.52)];
+/// [`RETRACEMENT_LEG`]: impulse up, pullback down, and the origin the
+/// projection hangs from.
+const EXTENSION_LEG: &[(f32, f32)] = &[(0.36, 0.92), (0.66, 0.64), (0.88, 0.80)];
 
+/// The extension icon: the same rungs as the retracement, moved **above** the
+/// leg — price the move has not reached yet, which is what a projection is.
+/// The three-anchor path under them is the gesture, and the third dot is
+/// what says so.
+///
+/// Neither icon reaches into the box's top-right corner: a pinned tool wears
+/// the favorites star there (`FAVORITE_BADGE_INSET_PX`), and an anchor under
+/// a star is an anchor the trader cannot see.
 pub(super) const FIB_EXTENSION_ICON: IconStrokes = &[
-    &[(LEVELS_LEFT_X, 0.16), (0.98, 0.16)],
-    &[(LEVELS_LEFT_X, 0.50), (0.98, 0.50)],
-    &[(LEVELS_LEFT_X, 0.84), (0.98, 0.84)],
+    &[(0.52, 0.20), (0.96, 0.20)],
+    &[(0.52, 0.33), (0.96, 0.33)],
+    &[(0.52, 0.46), (0.96, 0.46)],
     EXTENSION_LEG,
 ];
 
 /// The three anchors of the trend-based extension — impulse, pullback and the
-/// origin the projection hangs from. Three dots against two is what tells the
-/// two Fib rows apart in the flyout at icon size.
+/// origin the projection hangs from. Three dots against two is a true
+/// difference, but one the eye has to count.
 pub(super) const FIB_EXTENSION_DOTS: IconDots = EXTENSION_LEG;
 
 /// `P` for projection, not `E` for extension: the letter has to say what the
 /// tool does at a glance, and what this one does is throw the measured leg
 /// *forward*, past the move, onto price that has not traded yet. `E` beside
-/// `R` names the menu entry; `P` beside `R` names the difference.
+/// `R` names the menu entry; `P` beside `R` names the difference. It takes
+/// the bottom-left corner — the empty one here, since this icon's levels are
+/// at the top.
 pub(super) const FIB_EXTENSION_LETTER: IconLetter = IconLetter {
     text: "P",
-    at: FIB_LETTER_AT,
+    at: (FIB_LETTER_X, 0.72),
     height: FIB_LETTER_HEIGHT,
 };
 
@@ -1203,32 +1224,59 @@ mod tests {
 
     const EPS: f64 = 1e-9;
 
-    /// The letter's corner is only free because nothing else is drawn in it.
-    /// Both icons keep every stroke and every anchor right of
-    /// [`LEVELS_LEFT_X`]; since a segment between two such points can never
+    fn close(left: f64, right: f64) -> bool {
+        (left - right).abs() < EPS
+    }
+
+    /// The letters are only readable because nothing else is drawn in their
+    /// column. Both icons keep every stroke and every anchor right of
+    /// [`DRAWING_LEFT_X`]; since a segment between two such points can never
     /// wander left of them, that one bound is what proves the `R` and the
     /// `P` are painted on empty space rather than across a level line.
     #[test]
-    fn the_fib_icons_leave_their_letter_corner_empty() {
+    fn the_fib_icons_leave_their_letter_column_empty() {
         for (name, strokes, dots) in [
             ("retracement", FIB_RETRACEMENT_ICON, FIB_RETRACEMENT_DOTS),
             ("extension", FIB_EXTENSION_ICON, FIB_EXTENSION_DOTS),
         ] {
             for (x, y) in strokes.iter().copied().flatten().chain(dots) {
                 assert!(
-                    *x >= LEVELS_LEFT_X,
-                    "{name}: icon point ({x}, {y}) crosses into the letter's corner"
+                    *x >= DRAWING_LEFT_X,
+                    "{name}: icon point ({x}, {y}) crosses into the letter's column"
                 );
             }
         }
+        let letter_right = FIB_LETTER_X + FIB_LETTER_HEIGHT * LETTER_HALF_WIDTH_RATIO;
         assert!(
-            FIB_LETTER_AT.0 < LEVELS_LEFT_X,
-            "the letter sits in the corner the drawing leaves empty"
+            letter_right <= DRAWING_LEFT_X,
+            "the letter must fit in the column the drawing leaves empty"
         );
     }
 
-    fn close(left: f64, right: f64) -> bool {
-        (left - right).abs() < EPS
+    /// Each letter takes the corner its *own* drawing leaves empty, which is
+    /// why the retracement's sits high and the projection's low: the rungs
+    /// are what moved between the two icons, and the letter follows the free
+    /// space rather than a fixed corner. Both stay inside the box they are
+    /// painted in — a letter clipped by the glyph box is a letter the trader
+    /// reads as a different letter.
+    #[test]
+    fn the_two_fib_letters_take_opposite_corners() {
+        assert!(
+            FIB_RETRACEMENT_LETTER.at.1 < 0.5,
+            "the R sits high, above the rungs hanging inside the move"
+        );
+        assert!(
+            FIB_EXTENSION_LETTER.at.1 > 0.5,
+            "the P sits low, under the rungs projected past the move"
+        );
+        for letter in [FIB_RETRACEMENT_LETTER, FIB_EXTENSION_LETTER] {
+            let half = FIB_LETTER_HEIGHT / 2.0;
+            assert!(
+                letter.at.1 - half >= 0.0 && letter.at.1 + half <= 1.0,
+                "{}: the letter leaves the glyph box",
+                letter.text
+            );
+        }
     }
 
     /// A retracement runs *backwards* along the move: 0 % at the end of it,

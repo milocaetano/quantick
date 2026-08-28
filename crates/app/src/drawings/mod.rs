@@ -2478,10 +2478,10 @@ mod tests {
     /// typeface happened to leave a gap.
     ///
     /// The two Fib tools are named because the letters are the whole reason
-    /// the port exists: one ladder, one leg, two tools. The letters must
-    /// differ from each other, and must sit at the same place and size, or
-    /// they stop reading as a choice between two rows and start reading as
-    /// two unrelated marks.
+    /// the port exists: one leg, one set of rungs, two tools. The letters
+    /// must differ from each other and share a column and a size, or they
+    /// stop reading as a choice between two rows and start reading as two
+    /// unrelated marks.
     #[test]
     fn icon_letters_stay_in_the_unit_square_and_name_the_two_fib_tools() {
         for tool in DRAWING_TOOLS {
@@ -2522,9 +2522,13 @@ mod tests {
             "the two Fib icons must not answer with the same letter"
         );
         assert_eq!(
-            (retracement.at, retracement.height),
-            (extension.at, extension.height),
-            "the two Fib letters share one corner and one size, or they stop reading as a pair"
+            (retracement.at.0, retracement.height),
+            (extension.at.0, extension.height),
+            "the two Fib letters share one column and one size, or they stop reading as a pair"
+        );
+        assert_ne!(
+            retracement.at.1, extension.at.1,
+            "each letter takes the corner its own levels leave empty, so the two sit at              different heights"
         );
     }
 
