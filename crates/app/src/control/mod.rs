@@ -17,6 +17,7 @@ mod gateway;
 mod health;
 mod interaction;
 mod journal;
+mod layout;
 mod notify;
 mod orderflow;
 pub(crate) use interaction::drawing_band_name;

@@ -281,7 +281,7 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
             .iter()
             .map(|tab| {
                 let mut panes = vec![pane_health(&tab.flow_pane, PaneSide::Flow)];
-                if let Some(time) = &tab.time_pane {
+                if let Some(time) = tab.time_pane() {
                     panes.push(pane_health(time, PaneSide::Time));
                 }
                 TabHealthSnapshot {

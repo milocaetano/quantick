@@ -17,6 +17,9 @@ use tokio::sync::{mpsc, watch};
 
 use quantick_feed_binance::depth::DepthEvent;
 
+use crate::canvas_layout::{
+    self, LayoutPreset, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneIdAllocator, PaneKind,
+};
 use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::feed::{
@@ -27,8 +30,8 @@ use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
 use crate::orderflow_view::OrderflowView;
 use crate::pane::{
-    CANVAS_DIVIDER_HANDLE_PX, ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneChrome, PaneSide,
-    SharedEdit, SharedInteraction, SharedPick, clamp_pane_fraction, split_canvas, split_time_pane,
+    CANVAS_DIVIDER_HANDLE_PX, ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneChrome, PaneIndex,
+    PaneSide, SharedEdit, SharedInteraction, SharedPick, clamp_pane_fraction, split_time_pane,
 };
 use crate::paper_trading::PaperTrading;
 use crate::state::{BarKind, BarSpec};
@@ -46,6 +49,11 @@ const BOOK_DRAIN_BUDGET: usize = 2_048;
 /// Thickness of the rule marking the focused pane (§11: an accent under the
 /// pane's top edge, never a box drawn around market data).
 const FOCUS_RULE_PX: f32 = 1.0;
+/// Width of the grip bar on a collapsed column's rail.
+const RAIL_GRIP_WIDTH_PX: f32 = 2.0;
+/// Height of that grip bar. Long enough to read as a handle at a glance,
+/// short enough that it is a mark on the rail rather than the rail itself.
+const RAIL_GRIP_HEIGHT_PX: f32 = 24.0;
 
 /// How many charts a tab's canvas shows for its market (§11), and which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -59,19 +67,61 @@ pub enum CanvasLayout {
     Time,
     /// Time pane left, flow pane right, on a draggable divider.
     TimeAndFlow,
+    /// Two time panes stacked in the left column, flow pane right.
+    TimeTimeAndFlow,
 }
 
 impl CanvasLayout {
+    /// The registry entry this layout is a name for.
+    ///
+    /// The one place a variant is turned into panes. Everything that wants to
+    /// know what a layout *holds* reads the table through here rather than
+    /// matching on the variant, so an arrangement added to the registry does
+    /// not have to be taught to every caller one at a time.
+    #[must_use]
+    pub fn preset(self) -> &'static LayoutPreset {
+        let id = match self {
+            CanvasLayout::Single => "flow",
+            CanvasLayout::Time => "time",
+            CanvasLayout::TimeAndFlow => "time+flow",
+            CanvasLayout::TimeTimeAndFlow => "time+time+flow",
+        };
+        canvas_layout::preset(id).expect("every canvas layout names a registered preset")
+    }
+
+    /// The layout a registry entry names, if the canvas can draw it.
+    ///
+    /// The inverse of [`Self::preset`], and deliberately partial: the registry
+    /// is allowed to describe an arrangement the canvas has not learned to
+    /// draw yet, and answering `None` is how that stays visible instead of
+    /// being approximated into the nearest layout that happens to exist.
+    #[must_use]
+    pub fn from_preset(preset: &LayoutPreset) -> Option<Self> {
+        match preset.id {
+            "flow" => Some(CanvasLayout::Single),
+            "time" => Some(CanvasLayout::Time),
+            "time+flow" => Some(CanvasLayout::TimeAndFlow),
+            "time+time+flow" => Some(CanvasLayout::TimeTimeAndFlow),
+            _ => None,
+        }
+    }
+
+    /// The panes this layout draws, left to right.
+    #[must_use]
+    pub fn kinds(self) -> &'static [PaneKind] {
+        self.preset().kinds
+    }
+
     /// Whether this layout draws the time pane at all.
     #[must_use]
     pub fn shows_time(self) -> bool {
-        matches!(self, CanvasLayout::Time | CanvasLayout::TimeAndFlow)
+        self.kinds().contains(&PaneKind::Time)
     }
 
     /// Whether this layout draws the flow pane at all.
     #[must_use]
     pub fn shows_flow(self) -> bool {
-        matches!(self, CanvasLayout::Single | CanvasLayout::TimeAndFlow)
+        self.kinds().contains(&PaneKind::Flow)
     }
 }
 
@@ -81,6 +131,7 @@ impl From<crate::config::DeclaredLayout> for CanvasLayout {
             crate::config::DeclaredLayout::Flow => CanvasLayout::Single,
             crate::config::DeclaredLayout::Time => CanvasLayout::Time,
             crate::config::DeclaredLayout::TimeAndFlow => CanvasLayout::TimeAndFlow,
+            crate::config::DeclaredLayout::TimeTimeAndFlow => CanvasLayout::TimeTimeAndFlow,
         }
     }
 }
@@ -97,6 +148,7 @@ impl From<CanvasLayout> for crate::config::DeclaredLayout {
             CanvasLayout::Single => crate::config::DeclaredLayout::Flow,
             CanvasLayout::Time => crate::config::DeclaredLayout::Time,
             CanvasLayout::TimeAndFlow => crate::config::DeclaredLayout::TimeAndFlow,
+            CanvasLayout::TimeTimeAndFlow => crate::config::DeclaredLayout::TimeTimeAndFlow,
         }
     }
 }
@@ -232,18 +284,17 @@ impl OlderCandles {
 ///
 /// A pair rather than a per-pane field because the question can only be asked
 /// while both panes are in hand, and it is asked once for the frame.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct SharedPicks {
-    time: Option<SharedPick>,
-    flow: Option<SharedPick>,
+    /// One entry per pane, in [`PaneIndex`] order: `0` is the flow pane, `1..`
+    /// the context stack. A pair would only answer for two panes, and the
+    /// question is asked of however many the layout holds.
+    by_pane: SmallVec<[Option<SharedPick>; MAX_CANVAS_PANES]>,
 }
 
 impl SharedPicks {
-    const fn for_side(self, side: PaneSide) -> Option<SharedPick> {
-        match side {
-            PaneSide::Time => self.time,
-            PaneSide::Flow => self.flow,
-        }
+    fn for_pane(&self, pane: PaneIndex) -> Option<SharedPick> {
+        self.by_pane.get(pane).copied().flatten()
     }
 }
 
@@ -351,15 +402,19 @@ pub struct Tab {
 
     /// quantick's own chart, and the only one in the default layout.
     pub flow_pane: ChartPane,
-    /// The context chart beside it (§11), built the first time the split is
-    /// shown and kept for as long as the tab lives — switching back to Single
-    /// hides it, and must not throw away its indicators and drawings.
+    /// The context charts beside it, top to bottom in the left column.
     ///
-    /// While it exists it is fed every trade the flow pane is fed, on screen
-    /// or not, which is what keeps the two in step. The cost is the market's
-    /// trades retained twice: one tape, two `ChartState`s, and still only one
-    /// bar-building path.
-    pub time_pane: Option<ChartPane>,
+    /// Built the first time a layout that shows one is picked, and kept for as
+    /// long as the tab lives — switching to a layout that hides them only
+    /// stops them being drawn, and must not throw away their indicators and
+    /// drawings.
+    ///
+    /// While one exists it is fed every trade the flow pane is fed, on screen
+    /// or not, which is what keeps them in step. The cost is the market's
+    /// trades retained once per pane: one tape, N `ChartState`s, and still
+    /// only one bar-building path. `MAX_CONTEXT_PANES` is what bounds that
+    /// cost.
+    pub time_panes: SmallVec<[ChartPane; MAX_CONTEXT_PANES]>,
     /// `SYMBOL · venue`, as the strip shows it — see [`Self::chip_label`].
     chip_label: String,
     /// The venue's own 1-minute candles for this market, fetched once and
@@ -430,8 +485,6 @@ pub struct Tab {
     /// `nothing_held`. The edge is what asks again once the answer can be a
     /// real one.
     ohlcv_capable: bool,
-    /// The id the time pane takes when this tab first shows the split.
-    time_pane_id: u64,
     /// The interval the time pane opens on when it is first built. The
     /// header's default unless the feed declared one (`default_bars` with a
     /// time-showing `default_layout`); once the pane exists, its own header
@@ -443,14 +496,23 @@ pub struct Tab {
     time_pane_opening_legend_collapsed: bool,
     /// Set when the split is asked for and the time pane does not exist yet;
     /// drained by [`Self::apply_pending_layout`] on the following frame.
-    pending_time_pane: bool,
+    pending_context_panes: usize,
     /// Which panes this tab's canvas shows. In-session only for now: per-tab
     /// chrome persistence is the open question §14 leaves to `ui-state.toml`,
     /// and this field with `split_fraction` and `focus` is what it would
     /// write.
     pub layout: CanvasLayout,
-    /// The time pane's share of the canvas width while the split is shown.
+    /// The context column's share of the canvas width while it is shown.
+    ///
+    /// Kept while the column is collapsed, which is what it springs back to.
+    /// One number and one flag rather than two numbers: a separate "restore"
+    /// field would be a second opinion about the same width.
     pub split_fraction: f32,
+    /// Whether the context column is collapsed to its rail.
+    pub context_collapsed: bool,
+    /// The canvas width the last drawn frame used. See
+    /// [`Self::last_canvas_width`].
+    last_canvas_width: f32,
     /// The pane the chrome speaks for while this tab is active: status bar,
     /// indicator targeting and the keyboard's drawing grammar (§11).
     /// Meaningless while the canvas is Single — read it through
@@ -461,19 +523,130 @@ pub struct Tab {
     time_header_chips: [egui::Rect; crate::time_header::PRESETS.len()],
     #[cfg(test)]
     canvas_divider: Option<egui::Rect>,
+    #[cfg(test)]
+    collapsed_rail: Option<egui::Rect>,
 }
 
 impl Tab {
+    /// Put the context column away, or bring it back.
+    ///
+    /// **The one collapse path.** The divider drag, the rail, the View menu,
+    /// `Ctrl+0` and `layout.pane.collapse` all arrive here. Before this
+    /// existed the only way a *trader* could collapse the column was a mouse
+    /// drag, while an assistant had a named call for it — the second operator
+    /// holding a capability the first could not reach from the keyboard,
+    /// which is the rule inverted.
+    ///
+    /// `split_fraction` is deliberately untouched: it is the width the column
+    /// springs back to, and spending it here would hand back a different chart
+    /// from the one that was put away.
+    ///
+    /// Returns whether anything changed.
+    pub fn set_context_collapsed(&mut self, collapsed: bool) -> bool {
+        if self.context_collapsed == collapsed {
+            return false;
+        }
+        self.context_collapsed = collapsed;
+        true
+    }
+
+    /// Move the context pane at `from` to `to`, keeping the rest in order.
+    ///
+    /// **The one reposition path.** The View menu, the keyboard and the
+    /// control plane all arrive here, so none of them can grow its own idea of
+    /// what moving a pane does; a drag gesture, when it lands, is sugar over
+    /// this call rather than a second implementation of it.
+    ///
+    /// Addresses are [`PaneIndex`]es, so `0` names the flow pane. The flow
+    /// pane does not move: it is the protagonist and its column is the one
+    /// thing every preset agrees on. Refused rather than clamped — a caller
+    /// that asked to move the heatmap meant something this cannot do, and
+    /// quietly moving a different pane would be worse than saying no.
+    ///
+    /// Returns whether anything moved.
+    pub fn move_context_pane(&mut self, from: PaneIndex, to: PaneIndex) -> bool {
+        let (Some(from_slot), Some(to_slot)) = (from.checked_sub(1), to.checked_sub(1)) else {
+            return false;
+        };
+        if from_slot >= self.time_panes.len() || to_slot >= self.time_panes.len() {
+            return false;
+        }
+        if from_slot == to_slot {
+            return false;
+        }
+        let pane = self.time_panes.remove(from_slot);
+        self.time_panes.insert(to_slot, pane);
+        // Focus follows the pane the trader just moved, so the next command
+        // lands on the chart they were working with rather than on whichever
+        // one slid into its place.
+        self.focus = PaneSide::Time;
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "LAYOUT_PANE_MOVED",
+            tab_id = self.id,
+            from = from,
+            to = to,
+            "a context pane was moved within the stack"
+        );
+        true
+    }
+
+    /// How many panes this tab holds, drawn or not.
+    #[must_use]
+    pub fn pane_count(&self) -> PaneIndex {
+        1 + self.time_panes.len()
+    }
+
+    /// The pane at `index`: `0` is the flow pane, `1..` the context stack.
+    #[must_use]
+    pub fn pane_at(&self, index: PaneIndex) -> Option<&ChartPane> {
+        match index {
+            0 => Some(&self.flow_pane),
+            other => self.time_panes.get(other - 1),
+        }
+    }
+
+    /// The pane at `index`, mutably.
+    pub fn pane_at_mut(&mut self, index: PaneIndex) -> Option<&mut ChartPane> {
+        match index {
+            0 => Some(&mut self.flow_pane),
+            other => self.time_panes.get_mut(other - 1),
+        }
+    }
+
+    /// The first context pane, if this tab has built one.
+    ///
+    /// Most of the chrome speaks about *the* context chart because most
+    /// layouts show one. The ones that show more reach for `time_panes`
+    /// directly; this is the convenience, not the truth.
+    #[must_use]
+    pub fn time_pane(&self) -> Option<&ChartPane> {
+        self.time_panes.first()
+    }
+
+    /// The first context pane, mutably.
+    pub fn time_pane_mut(&mut self) -> Option<&mut ChartPane> {
+        self.time_panes.first_mut()
+    }
+
+    /// Whether this tab has built any context pane at all.
+    #[must_use]
+    pub fn has_time_pane(&self) -> bool {
+        !self.time_panes.is_empty()
+    }
+
     /// A tab on `feed_id`/`symbol`, already streaming through `feed`, showing
     /// bar `spec`.
     ///
-    /// `id` and `pane_ids` must be unique among the open tabs: pane ids
+    /// `id` and `flow_pane_id` must be unique among the open tabs: pane ids
     /// namespace egui interaction state, so two tabs sharing them would share
-    /// a drag.
+    /// a drag. Context panes take their ids from the window's allocator as
+    /// they are built, rather than a tab reserving one it may never use.
     #[must_use]
     pub fn new(
         id: u64,
-        pane_ids: (u64, u64),
+        flow_pane_id: u64,
         feed_id: String,
         symbol: String,
         spec: BarSpec,
@@ -508,7 +681,7 @@ impl Tab {
             live_trades: 0,
             pending_alarm_sounds: Vec::new(),
             paper: PaperTrading::with_trades_dir(trades_dir),
-            flow_pane: ChartPane::flow(pane_ids.0, spec, symbol.clone()),
+            flow_pane: ChartPane::flow(flow_pane_id, spec, symbol.clone()),
             chip_label: String::new(),
             ohlcv_base: None,
             ohlcv_pending: false,
@@ -518,19 +691,23 @@ impl Tab {
             progressive_history: true,
             ohlcv_generation: 0,
             ohlcv_capable: false,
-            time_pane: None,
-            time_pane_id: pane_ids.1,
+            time_panes: SmallVec::new(),
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
             time_pane_opening_legend_collapsed: false,
-            pending_time_pane: false,
+            pending_context_panes: 0,
             layout: CanvasLayout::Single,
             split_fraction: DEFAULT_PANE_FRACTION,
+            context_collapsed: std::env::var("QUANTICK_PANE_COLLAPSED")
+                .is_ok_and(|value| value == "1"),
+            last_canvas_width: 0.0,
             focus: PaneSide::Flow,
             symbol,
             #[cfg(test)]
             time_header_chips: [egui::Rect::NOTHING; crate::time_header::PRESETS.len()],
             #[cfg(test)]
             canvas_divider: None,
+            #[cfg(test)]
+            collapsed_rail: None,
         }
     }
 
@@ -556,7 +733,7 @@ impl Tab {
         self.ohlcv_older_exhausted = false;
         self.ohlcv_capable = false;
         self.loading.set_active(LoadingTask::VenueHistory, false);
-        for pane in std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut()) {
+        for pane in self.panes_mut() {
             pane.install_history_prefix(Vec::new());
         }
         self.events = handle.events;
@@ -642,7 +819,7 @@ impl Tab {
     /// the split's time pane gets.
     fn any_pane_wants_venue_history(&self) -> bool {
         std::iter::once(&self.flow_pane)
-            .chain(self.time_pane.as_ref())
+            .chain(self.time_pane())
             .any(|pane| {
                 pane.state
                     .spec()
@@ -1120,11 +1297,17 @@ impl Tab {
     /// Reports whether any prefix actually changed — an installed prefix
     /// rebuilds the indicators, so the caller can skip sending a second one.
     pub fn refold_history_prefix(&mut self) -> bool {
-        let Some(base) = self.ohlcv_base.as_ref() else {
+        let Self {
+            ohlcv_base,
+            flow_pane,
+            time_panes,
+            ..
+        } = self;
+        let Some(base) = ohlcv_base.as_ref() else {
             return false;
         };
         let mut changed = false;
-        for pane in std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut()) {
+        for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
             // A pane not cutting by time has no interval to fold to, and a
             // sub-minute one has no whole number of venue candles in it: both
             // get no prefix, which is the honest answer rather than an
@@ -1159,23 +1342,66 @@ impl Tab {
                 || matches!(self.notice, FeedNotice::Attention { .. }))
     }
 
+    /// The canvas width the last drawn frame used, for callers that have to
+    /// reason in pixels without a frame in hand — the control plane's resize,
+    /// which must honour the same floor a drag does.
+    ///
+    /// Zero before the first frame, which callers read as "no opinion" rather
+    /// than as a canvas of no width.
+    #[must_use]
+    pub fn last_canvas_width(&self) -> f32 {
+        self.last_canvas_width
+    }
+
+    /// Whether any context chart is actually on screen.
+    ///
+    /// The layout has to *hold* one, the tab has to have *built* one, and the
+    /// column must not be collapsed. Three conditions that chrome kept
+    /// re-deriving one variant at a time — and got wrong twice: the legend
+    /// gate matched `TimeAndFlow` alone, so the stacked charts drew no legend
+    /// and a collapsed column drew one over the flow chart against a stale
+    /// rect.
+    #[must_use]
+    pub fn shows_context_charts(&self) -> bool {
+        self.layout.shows_time() && self.has_time_pane() && !self.context_collapsed
+    }
+
     /// The pane the chrome speaks for. Only a split canvas has a choice to
     /// make: a single-pane layout *is* its one visible pane, whatever the
     /// last split left `focus` set to. Time falls back to the flow pane for
     /// the frame between asking for the layout and the pane being built.
     pub fn focused_side(&self) -> PaneSide {
-        match (self.layout, self.time_pane.is_some()) {
-            (CanvasLayout::TimeAndFlow, true) => self.focus,
-            (CanvasLayout::Time, true) => PaneSide::Time,
-            _ => PaneSide::Flow,
+        // Read from what the layout *holds*, never from which variant it is.
+        // Matching one variant is how the three-pane canvas shipped with dead
+        // focus: a click set `self.focus` and every reader threw it away,
+        // because `TimeTimeAndFlow` was not in the arm.
+        // A collapsed column is not on screen, and focus on a pane nobody can
+        // see is worse than useless: `paper_owns_input` goes false for the one
+        // pane that *is* drawn, so order entry, the ladder and the trade HUD
+        // all go dead on the heatmap until the trader expands again.
+        if !self.has_time_pane() || !self.layout.shows_time() {
+            return PaneSide::Flow;
         }
+        if !self.layout.shows_flow() {
+            // A layout with no flow pane has nothing to fall back *to*: the
+            // context chart is the only pane drawn, and the collapse flag
+            // names a column this layout does not carve. Read before the flag,
+            // or `Ctrl+0` on the Timeframe layout sent focus to a pane nobody
+            // draws — order entry, the ladder and the trade HUD all dead on
+            // the one chart on screen, with no rail to click to undo it.
+            return PaneSide::Time;
+        }
+        if self.context_collapsed {
+            return PaneSide::Flow;
+        }
+        self.focus
     }
 
     /// The pane on `side`, falling back to the flow pane when the time pane
     /// has never been opened.
     pub fn pane(&self, side: PaneSide) -> &ChartPane {
         match side {
-            PaneSide::Time => self.time_pane.as_ref().unwrap_or(&self.flow_pane),
+            PaneSide::Time => self.time_pane().unwrap_or(&self.flow_pane),
             PaneSide::Flow => &self.flow_pane,
         }
     }
@@ -1258,7 +1484,7 @@ impl Tab {
         self.flow_pane.content_editing = target
             .filter(|(side, _)| *side == PaneSide::Flow)
             .map(|(_, index)| index);
-        if let Some(time) = self.time_pane.as_mut() {
+        if let Some(time) = self.time_pane_mut() {
             time.content_editing = target
                 .filter(|(side, _)| *side == PaneSide::Time)
                 .map(|(_, index)| index);
@@ -1267,7 +1493,7 @@ impl Tab {
 
     pub fn pane_mut(&mut self, side: PaneSide) -> &mut ChartPane {
         match side {
-            PaneSide::Time => self.time_pane.as_mut().unwrap_or(&mut self.flow_pane),
+            PaneSide::Time => self.time_panes.first_mut().unwrap_or(&mut self.flow_pane),
             PaneSide::Flow => &mut self.flow_pane,
         }
     }
@@ -1296,7 +1522,7 @@ impl Tab {
     /// the focused pane first and takes the answer it finds.
     pub fn drawing_side(&self) -> PaneSide {
         let focused = self.focused_side();
-        if self.pane(focused).drawings.selected().is_some() || self.time_pane.is_none() {
+        if self.pane(focused).drawings.selected().is_some() || self.time_panes.is_empty() {
             return focused;
         }
         let other = focused.other();
@@ -1325,13 +1551,21 @@ impl Tab {
     /// quiet frame.
     pub fn panes(&self) -> impl Iterator<Item = (&ChartPane, PaneSide)> {
         std::iter::once((&self.flow_pane, PaneSide::Flow))
-            .chain(self.time_pane.as_ref().map(|time| (time, PaneSide::Time)))
+            .chain(self.time_panes.iter().map(|time| (time, PaneSide::Time)))
     }
 
     /// Every pane holding this market's bars, on screen or not. One tape, and
     /// however many charts the layout has ever shown read off it.
     pub fn panes_mut(&mut self) -> impl Iterator<Item = &mut ChartPane> {
-        std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut())
+        // Destructured rather than borrowed field by field: the flow pane and
+        // the context stack are two disjoint parts of `self`, and the compiler
+        // only knows that when it is told in one pattern.
+        let Self {
+            flow_pane,
+            time_panes,
+            ..
+        } = self;
+        std::iter::once(flow_pane).chain(time_panes.iter_mut())
     }
 
     /// The flow pane's tape.
@@ -1369,18 +1603,34 @@ impl Tab {
     /// Time + Flow) keeps the focus where it was.
     pub fn set_layout(&mut self, layout: CanvasLayout) {
         let previous = self.layout;
+        // A layout chosen from the picker shows the panes its thumbnail drew.
+        // Leaving the column collapsed meant the cell lit, two panes were
+        // promised, and an 8 px rail arrived instead. Before the early return,
+        // because picking the arrangement that is *already* selected is
+        // exactly how a trader asks for the charts they can see promised in a
+        // lit cell — and a return above this line answered that with the rail.
+        self.context_collapsed = false;
         if layout == previous {
             return;
         }
         self.layout = layout;
-        if layout.shows_time() && self.time_pane.is_none() {
+        let wanted = layout
+            .kinds()
+            .iter()
+            .filter(|kind| matches!(kind, PaneKind::Time))
+            .count();
+        // Set, never raised: switching to a three-pane layout and back before
+        // the next frame used to leave the count where the wider layout put
+        // it, and the tab then built a pane no layout had asked for — seeded
+        // from the whole retained tape and fed every trade thereafter.
+        self.pending_context_panes = wanted.saturating_sub(self.time_panes.len());
+        if wanted > self.time_panes.len() {
             // Seeding replays every retained trade, which on a deep history
             // holds the render thread long enough to notice. Armed here and
             // done on the next frame, exactly as a bar-spec change is: the
             // frame carrying the menu click paints the loading overlay first,
             // so the wait reads as the chart working rather than the app
             // hanging.
-            self.pending_time_pane = true;
             self.loading.begin(LoadingTask::BarRebuild);
         }
         self.focus = match layout {
@@ -1389,10 +1639,10 @@ impl Tab {
             // The split reveals whichever pane the previous layout was not
             // showing: the time pane coming from Single, the flow pane coming
             // from Time.
-            CanvasLayout::TimeAndFlow => match previous {
+            CanvasLayout::TimeAndFlow | CanvasLayout::TimeTimeAndFlow => match previous {
                 CanvasLayout::Single => PaneSide::Time,
                 CanvasLayout::Time => PaneSide::Flow,
-                CanvasLayout::TimeAndFlow => self.focus,
+                CanvasLayout::TimeAndFlow | CanvasLayout::TimeTimeAndFlow => self.focus,
             },
         };
         tracing::info!(
@@ -1400,8 +1650,8 @@ impl Tab {
             schema_version = 1_u8,
             event_code = "CANVAS_LAYOUT",
             layout = ?layout,
-            time_pane_bars = self.time_pane.as_ref().map(|pane| pane.state.bars().len()),
-            action = if self.pending_time_pane {
+            time_pane_bars = self.time_pane().map(|pane| pane.state.bars().len()),
+            action = if self.pending_context_panes > 0 {
                 "build_time_pane_next_frame"
             } else {
                 "relayout_canvas"
@@ -1410,16 +1660,25 @@ impl Tab {
         );
     }
 
-    /// Build the time pane the last layout change asked for, if one is due.
+    /// Build the context panes the last layout change asked for, if any are
+    /// due.
     ///
     /// Runs at the top of the frame after the click, so the overlay armed by
-    /// [`Self::set_layout`] has already been painted once.
-    pub fn apply_pending_layout(&mut self, config: &AppConfig, style: &ChartStyle) {
-        if !self.pending_time_pane {
+    /// [`Self::set_layout`] has already been painted once. `ids` is the
+    /// window's allocator rather than the tab's: pane ids namespace egui
+    /// interaction state across the whole window, so a tab may not mint its
+    /// own.
+    pub fn apply_pending_layout(
+        &mut self,
+        config: &AppConfig,
+        style: &ChartStyle,
+        ids: &mut PaneIdAllocator,
+    ) {
+        if self.pending_context_panes == 0 {
             return;
         }
-        self.pending_time_pane = false;
-        let mut pane = ChartPane::time(self.time_pane_id, self.time_pane_opening_interval_ms);
+        self.pending_context_panes -= 1;
+        let mut pane = ChartPane::time(ids.alloc(), self.time_pane_opening_interval_ms);
         pane.legend_collapsed = self.time_pane_opening_legend_collapsed;
         pane.seed_from(
             self.flow_pane.state.trades(),
@@ -1453,8 +1712,14 @@ impl Tab {
             .open_all_hidden(self.flow_pane.drawings.all_hidden());
         pane.price_view
             .set_inverted(self.flow_pane.price_view.is_inverted());
-        self.time_pane = Some(pane);
-        self.loading.end(LoadingTask::BarRebuild);
+        self.time_panes.push(pane);
+        // One pane per frame, for the reason the first one waits a frame at
+        // all: seeding replays every retained trade, and building three at
+        // once would hold the render thread for three times as long. The
+        // overlay stays up until the last one lands.
+        if self.pending_context_panes == 0 {
+            self.loading.end(LoadingTask::BarRebuild);
+        }
         // The pane exists now, so there is something for a prefix to go in
         // front of. A base already held (a layout toggled off and on) is
         // folded rather than re-fetched; otherwise this is the first moment
@@ -1897,6 +2162,7 @@ impl Tab {
         &mut self,
         layout: CanvasLayout,
         split_fraction: Option<f32>,
+        context_collapsed: bool,
         focus: Option<PaneSide>,
         time_interval_ms: Option<i64>,
         legends: LegendFold,
@@ -1905,6 +2171,13 @@ impl Tab {
             self.time_pane_opening_interval_ms = ms;
         }
         self.set_layout(layout);
+        // *After* `set_layout`, for the reason the focus below is: a switch
+        // opens the column it just revealed, which is right for a menu click
+        // and wrong for a restore, where the saved state is the answer.
+        // Assigned before, a workspace saved with its charts put away reopened
+        // with them out — and the next `capture_arrangement` wrote that over
+        // the trader's choice.
+        self.context_collapsed = context_collapsed;
         if let Some(fraction) = split_fraction {
             self.split_fraction = clamp_pane_fraction(fraction);
         }
@@ -1920,7 +2193,7 @@ impl Tab {
         // `capture_arrangement` would then persist that `false` over the
         // trader's choice.
         self.time_pane_opening_legend_collapsed = legends.time;
-        if let Some(time) = self.time_pane.as_mut() {
+        if let Some(time) = self.time_pane_mut() {
             time.legend_collapsed = legends.time;
         }
     }
@@ -1928,15 +2201,15 @@ impl Tab {
     /// Let every pane's selectors settle, then mirror the result onto the
     /// rebuild indicator: it is up while *any* pane has a rebuild pending.
     pub fn apply_spec_changes(&mut self) {
-        self.apply_spec_change(PaneSide::Flow);
-        if self.time_pane.is_some() {
-            self.apply_spec_change(PaneSide::Time);
+        // Every pane, by address. Settling "the flow pane and the time pane"
+        // left the second stacked chart's selector armed for ever: its header
+        // chip lit, its interval changed, and its bars never rebuilt.
+        for pane in 0..self.pane_count() {
+            self.apply_spec_change_at(pane);
         }
-        let rebuilding = self.flow_pane.pending_spec.is_some()
-            || self
-                .time_pane
-                .as_ref()
-                .is_some_and(|pane| pane.pending_spec.is_some());
+        let rebuilding = self
+            .panes()
+            .any(|(pane, _side)| pane.pending_spec.is_some());
         self.loading.set_active(LoadingTask::BarRebuild, rebuilding);
     }
 
@@ -1954,9 +2227,13 @@ impl Tab {
     /// The two panes run this independently: the toolbar's BARS group governs
     /// the focused pane and the time pane's own header governs the time pane
     /// (§11), so a change to one pane must not rebuild the chart beside it.
-    fn apply_spec_change(&mut self, side: PaneSide) {
-        let desired = self.pane(side).current_spec();
-        let pane = self.pane_mut(side);
+    fn apply_spec_change_at(&mut self, index: PaneIndex) {
+        let Some(desired) = self.pane_at(index).map(ChartPane::current_spec) else {
+            return;
+        };
+        let Some(pane) = self.pane_at_mut(index) else {
+            return;
+        };
         if desired == *pane.state.spec() {
             // Selection and chart agree — nothing is pending any more (a feed
             // switch or reset may have rebuilt the state under a pending spec).
@@ -1994,10 +2271,12 @@ impl Tab {
                 // frame, with no coalescing in the worker, is the cost of
                 // sending both.
                 let refolded = self.refold_history_prefix();
-                if !refolded {
-                    self.pane_mut(side).send_indicator_rebuild();
+                if !refolded && let Some(pane) = self.pane_at_mut(index) {
+                    pane.send_indicator_rebuild();
                 }
-                let pane = self.pane_mut(side);
+                let Some(pane) = self.pane_at_mut(index) else {
+                    return;
+                };
                 let slot = anchor.and_then(|ms| pane.slot_at_time(ms));
                 let slots = pane.slots();
                 pane.viewport.reanchor(slot, slots);
@@ -2196,10 +2475,19 @@ impl Tab {
     fn run_strategies_at(&mut self, now_ms: i64) {
         let now_ms = u64::try_from(now_ms).unwrap_or(0);
         let print_events = self.paper.drain_bot_events();
-        let paper = &mut self.paper;
+        let Self {
+            paper,
+            flow_pane,
+            time_panes,
+            ..
+        } = self;
         let mut watching = 0;
         let mut sounds: Vec<crate::audio::AlertSound> = Vec::new();
-        for pane in std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut()) {
+        // The alarm's sounds come from `main`; walking every pane in the
+        // context stack rather than a single time pane comes from this branch.
+        // Both are wanted: a strategy armed on the second stacked chart has to
+        // ring like one armed on the first.
+        for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
             if pane.strategies.is_empty() {
                 continue;
             }
@@ -2325,8 +2613,13 @@ impl Tab {
     /// order. Runs on the UI frame that clicked, not on the next print: a
     /// cancel that waits for the market to move may lose the race to it.
     pub fn apply_strategy_cleanup(&mut self) {
-        let paper = &mut self.paper;
-        for pane in std::iter::once(&mut self.flow_pane).chain(self.time_pane.as_mut()) {
+        let Self {
+            paper,
+            flow_pane,
+            time_panes,
+            ..
+        } = self;
+        for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
             for command in pane.take_strategy_cleanup() {
                 let _ = paper.apply_strategy_command(command);
             }
@@ -2605,7 +2898,19 @@ impl Tab {
         area: egui::Rect,
         chrome: &mut CanvasChrome<'_>,
     ) {
-        let show_time = self.layout.shows_time() && self.time_pane.is_some();
+        // How many context charts this layout asks for, and how many the tab
+        // has actually built. The lower of the two is what gets drawn: a
+        // layout may name a pane the tab is still building, and half a canvas
+        // is better than a frame of nothing.
+        self.last_canvas_width = area.width();
+        let context_wanted = self
+            .layout
+            .kinds()
+            .iter()
+            .filter(|kind| matches!(kind, PaneKind::Time))
+            .count();
+        let context_shown = context_wanted.min(self.time_panes.len());
+        let show_time = context_shown > 0;
         // The flow pane also stands in for a time pane still being built, so
         // the frame between asking for the Time layout and the pane existing
         // shows the market rather than nothing.
@@ -2615,49 +2920,88 @@ impl Tab {
         // reduces to nothing: no divider, no focus rule — though a lone time
         // pane keeps its header.
         let (time_area, divider, flow_area) = if split {
-            let areas = split_canvas(area, self.split_fraction);
-            (Some(areas.time), Some(areas.divider), areas.flow)
+            let width = if self.context_collapsed {
+                canvas_layout::PaneWidth::Collapsed {
+                    restore: self.split_fraction,
+                }
+            } else {
+                canvas_layout::PaneWidth::Manual(self.split_fraction)
+            };
+            let row = canvas_layout::split_row(area, &[width, canvas_layout::PaneWidth::Auto]);
+            (Some(row.panes[0]), Some(row.dividers[0]), row.panes[1])
         } else if show_time {
             (Some(area), None, area)
         } else {
             (None, None, area)
         };
+        // A collapsed column paints a rail, not charts: eight pixels is a
+        // handle, not a chart, and laying one out there would draw a price
+        // axis and nothing else.
+        let collapsed_rail = (split && self.context_collapsed)
+            .then_some(time_area)
+            .flatten();
+        let time_area = if collapsed_rail.is_some() {
+            None
+        } else {
+            time_area
+        };
 
-        let time_chart = time_area.map(|time_area| {
+        // The context column, carved into one band per chart it shows, top to
+        // bottom. Each band spends its own header strip and hands back the
+        // chart rect below it.
+        let mut context_charts: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]> = SmallVec::new();
+        if let Some(column) = time_area {
             // Focus before input, so the click that focuses a pane is also the
             // click that pane goes on to handle. Only a split has focus to
             // move: a single visible pane is the focused one by definition.
             if split {
-                self.focus_from_pointer(ui, time_area, flow_area);
+                self.focus_from_pointer(ui, column, flow_area);
             }
-            let areas = split_time_pane(time_area);
-            // The time pane's own timeframe selector (§11): its BARS group,
-            // beside the toolbar's, which keeps governing the flow pane.
-            let mut interval_ms = self.pane(PaneSide::Time).time_interval_ms;
-            let header_layout = crate::time_header::draw(ui, areas.header, &mut interval_ms);
-            #[cfg(test)]
-            {
-                self.time_header_chips = header_layout.chips();
+            let heights: SmallVec<[canvas_layout::PaneWidth; MAX_CONTEXT_PANES]> =
+                SmallVec::from_elem(canvas_layout::PaneWidth::Auto, context_shown);
+            let bands = canvas_layout::split_column(column, &heights);
+            for (slot, band) in bands.panes.iter().enumerate().take(context_shown) {
+                let areas = split_time_pane(*band);
+                // Each context chart carries its own timeframe selector (§11):
+                // its BARS group, beside the toolbar's, which keeps governing
+                // the flow pane.
+                let mut interval_ms = self.time_panes[slot].time_interval_ms;
+                let header_layout = crate::time_header::draw(
+                    ui,
+                    areas.header,
+                    &mut interval_ms,
+                    self.time_panes[slot].id,
+                );
+                #[cfg(test)]
+                if slot == 0 {
+                    self.time_header_chips = header_layout.chips();
+                }
+                if header_layout.changed {
+                    let pane = &mut self.time_panes[slot];
+                    pane.kind = BarKind::Time;
+                    pane.time_interval_ms = interval_ms;
+                }
+                context_charts.push(areas.chart);
             }
-            if header_layout.changed {
-                let pane = self.pane_mut(PaneSide::Time);
-                pane.kind = BarKind::Time;
-                pane.time_interval_ms = interval_ms;
-            }
-            areas.chart
-        });
+        }
 
         // Which shared mark the pointer is over, on each pane, against the
         // other pane's store. Answered here because answering it needs both
         // panes at once, and the loop below holds them one at a time.
         let picks = self.shared_picks(ui);
 
-        let mut edits: SmallVec<[(PaneSide, SharedInteraction); 2]> = SmallVec::new();
+        let mut edits: SmallVec<[(PaneIndex, SharedInteraction); MAX_CANVAS_PANES]> =
+            SmallVec::new();
         {
-            let focused = self.focused_side();
+            // Focus as an address, so the loop below compares like with
+            // like however many panes it walks.
+            let focused = match self.focused_side() {
+                PaneSide::Flow => 0,
+                PaneSide::Time => 1,
+            };
             let Self {
                 flow_pane,
-                time_pane,
+                time_panes,
                 symbol,
                 paper,
                 ..
@@ -2680,7 +3024,7 @@ impl Tab {
             // immediately when the bucket has not changed, which is every
             // frame but the one after a market switch.
             if let (Some(time), Some(base)) = (
-                time_pane.as_mut(),
+                time_panes.first_mut(),
                 flow_pane
                     .orderflow
                     .as_ref()
@@ -2708,17 +3052,22 @@ impl Tab {
             // same order — which is what keeps the split honest: the second
             // pane cannot drift from the first, and one pane is this same
             // loop with one entry in it.
-            let time =
-                time_chart.and_then(|chart| Some((time_pane.as_mut()?, chart, PaneSide::Time)));
-            let flow = show_flow.then_some((&mut *flow_pane, flow_area, PaneSide::Flow));
-            for (pane, rect, side) in time.into_iter().chain(flow) {
+            // Context panes carry addresses `1..`, the flow pane `0` — the
+            // order `Tab::pane_at` uses, never the order they sit in.
+            let context = time_panes
+                .iter_mut()
+                .zip(context_charts.iter().copied())
+                .enumerate()
+                .map(|(slot, (pane, chart))| (pane, chart, slot + 1));
+            let flow = show_flow.then_some((&mut *flow_pane, flow_area, 0 as PaneIndex));
+            for (pane, rect, side) in context.chain(flow) {
                 // Order entry follows the focused pane (§11): both charts are
                 // trading surfaces — a level is as true on the time pane as on
                 // the flow pane — and focus lands on the press that acts, so
                 // the first click already trades where the accent rule is.
                 // Unsplit, the flow pane is the only pane and nothing changes.
                 chrome.paper_owns_input = side == focused;
-                chrome.shared_pick = picks.for_side(side);
+                chrome.shared_pick = picks.for_pane(side);
                 chrome.shared = SharedInteraction::default();
                 pane.handle_navigation(ui, rect, &mut chrome);
                 pane.draw_chart(ui.painter(), rect, &mut chrome);
@@ -2747,6 +3096,9 @@ impl Tab {
             crate::paper_hud::draw(ui.ctx(), rect, &mut self.paper, &scale);
         }
 
+        if let Some(rail) = collapsed_rail {
+            self.draw_collapsed_rail(ui, rail);
+        }
         let (Some(time_area), Some(divider)) = (time_area, divider) else {
             return;
         };
@@ -2774,34 +3126,52 @@ impl Tab {
     /// does not hold. Nothing to answer on an unsplit tab: one pane has no
     /// other pane to mirror.
     fn shared_picks(&self, ui: &egui::Ui) -> SharedPicks {
-        let Some(time_pane) = self.time_pane.as_ref() else {
-            return SharedPicks::default();
+        let count = self.pane_count();
+        let mut picks = SharedPicks {
+            by_pane: SmallVec::from_elem(None, count),
         };
+        if count < 2 {
+            // One pane has no other pane to mirror.
+            return picks;
+        }
         let Some(position) = ui.input(|input| input.pointer.latest_pos()) else {
-            return SharedPicks::default();
+            return picks;
         };
-        let pick = |pane: &ChartPane, source: &ChartPane| {
+
+        for viewer in 0..count {
+            let Some(pane) = self.pane_at(viewer) else {
+                continue;
+            };
             // Only the pane the pointer is actually over is asked. Besides
-            // halving the work, it is what stops a horizontal line — which
+            // saving the work, it is what stops a horizontal line — which
             // spans a whole chart — from reporting a hit on the pane beside
             // the one the pointer is in, at the same height.
             if !pane
                 .last_chart_area
                 .is_some_and(|chart| chart.contains(position))
             {
-                return None;
+                continue;
             }
-            pane.shared_pick(source, position)
-                .map(|(index, anchor)| SharedPick {
-                    index,
-                    anchor,
-                    locked: source.drawings.items()[index].locked,
-                })
-        };
-        SharedPicks {
-            time: pick(time_pane, &self.flow_pane),
-            flow: pick(&self.flow_pane, time_pane),
+            // The mark may belong to any other pane. First owner in address
+            // order wins, which is stable frame to frame: a pick that
+            // depended on iteration luck would move an object between charts
+            // between frames.
+            for owner in (0..count).filter(|owner| *owner != viewer) {
+                let Some(source) = self.pane_at(owner) else {
+                    continue;
+                };
+                if let Some((index, anchor)) = pane.shared_pick(source, position) {
+                    picks.by_pane[viewer] = Some(SharedPick {
+                        owner,
+                        index,
+                        anchor,
+                        locked: source.drawings.items()[index].locked,
+                    });
+                    break;
+                }
+            }
         }
+        picks
     }
 
     /// Land what each pane did to the other's marks on the store that holds
@@ -2812,20 +3182,41 @@ impl Tab {
     /// coalescing the object gets on its own chart, because it is the same
     /// gesture on the same object. A selection taken on one pane is dropped on
     /// the other, so the tab never holds two.
-    fn apply_shared_interactions(&mut self, edits: &[(PaneSide, SharedInteraction)]) {
-        for (side, interaction) in edits {
-            let owner = side.other();
+    fn apply_shared_interactions(&mut self, edits: &[(PaneIndex, SharedInteraction)]) {
+        for (actor, interaction) in edits {
+            // No owner means no mark was ever taken hold of, so there is
+            // nothing to land. Refused rather than guessed: landing it on a
+            // neighbour chosen by arithmetic would move an object the trader
+            // drew onto a chart they were not working on.
+            let Some(owner) = interaction.owner else {
+                continue;
+            };
+            if self.pane_at(owner).is_none() {
+                continue;
+            }
             if interaction.begin_gesture {
-                self.pane_mut(owner).drawings.begin_gesture();
+                self.pane_at_mut(owner)
+                    .expect("owner checked above")
+                    .drawings
+                    .begin_gesture();
             }
             if let Some(edit) = interaction.edit {
-                if matches!(edit, SharedEdit::Select(_)) {
-                    self.pane_mut(*side).drawings.select(None);
+                if matches!(edit, SharedEdit::Select(_))
+                    && let Some(pane) = self.pane_at_mut(*actor)
+                {
+                    // A selection taken on a mirror is dropped on the pane
+                    // that took it, so the tab never holds two.
+                    pane.drawings.select(None);
                 }
-                self.pane_mut(owner).apply_shared_edit(edit);
+                self.pane_at_mut(owner)
+                    .expect("owner checked above")
+                    .apply_shared_edit(edit);
             }
             if interaction.commit_gesture {
-                self.pane_mut(owner).drawings.commit_gesture();
+                self.pane_at_mut(owner)
+                    .expect("owner checked above")
+                    .drawings
+                    .commit_gesture();
             }
         }
     }
@@ -2838,12 +3229,20 @@ impl Tab {
     /// one feed, which is what makes a price level mean the same thing on
     /// both (`docs/ux/drawing-tools-2026-08.md` §D7).
     fn paint_shared_drawings(&self, painter: &egui::Painter) {
-        let Some(time_pane) = self.time_pane.as_ref() else {
+        let count = self.pane_count();
+        if count < 2 {
             return;
-        };
-        let flow_pane = &self.flow_pane;
-        flow_pane.paint_shared_from(painter, time_pane);
-        time_pane.paint_shared_from(painter, flow_pane);
+        }
+        for viewer in 0..count {
+            let Some(pane) = self.pane_at(viewer) else {
+                continue;
+            };
+            for owner in (0..count).filter(|owner| *owner != viewer) {
+                if let Some(source) = self.pane_at(owner) {
+                    pane.paint_shared_from(painter, source);
+                }
+            }
+        }
     }
 
     /// Clicking a pane focuses it (§11). Read from the raw pointer press
@@ -2873,6 +3272,74 @@ impl Tab {
         }
     }
 
+    /// The collapsed context column: a rail with a grip, and the way back.
+    ///
+    /// A pane dragged to nothing has to leave something behind. Blender's
+    /// manual puts the rule plainly — a hidden region leaves a little arrow to
+    /// click — and the vertical axis in this app already refuses zero for the
+    /// same reason (`indicators::COLLAPSED_PANE_HEIGHT_PX`). Eight pixels of a
+    /// 1920 px canvas is four tenths of one percent: near enough to the "size
+    /// zero" a trader asks for, and not so near that the chart is gone for
+    /// good.
+    ///
+    /// The paint is 8 px wide; the *hit* area is 24 px, reaching into the
+    /// chart beside it where it costs nothing but the pointer's first few
+    /// pixels. A rail that photographed well but could not be hit would be a
+    /// picture of an affordance rather than one.
+    fn draw_collapsed_rail(&mut self, ui: &egui::Ui, rail: egui::Rect) {
+        #[cfg(test)]
+        {
+            self.collapsed_rail = Some(rail);
+        }
+        let painter = ui.painter();
+        painter.rect_filled(rail, egui::Rounding::ZERO, theme::CHROME);
+        // The inner edge, so the rail reads as chrome against the chart rather
+        // than as a stripe the chart happens to start after.
+        painter.line_segment(
+            [
+                egui::pos2(rail.right(), rail.top()),
+                egui::pos2(rail.right(), rail.bottom()),
+            ],
+            egui::Stroke::new(1.0_f32, theme::BORDER),
+        );
+
+        let hit = egui::Rect::from_min_max(
+            rail.min,
+            egui::pos2(
+                rail.left() + canvas_layout::COLLAPSED_HIT_PX.max(rail.width()),
+                rail.bottom(),
+            ),
+        );
+        let response = ui
+            .interact(
+                hit,
+                egui::Id::new(("collapsed_context_rail", self.id)),
+                egui::Sense::click(),
+            )
+            .on_hover_text("show the timeframe charts again");
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+
+        // The grip: a short bar at the rail's middle, in the colour a reader
+        // already knows means "chrome you can take hold of".
+        let grip_colour = if response.hovered() {
+            theme::ACCENT
+        } else {
+            theme::TEXT_MUTED
+        };
+        let grip = egui::Rect::from_center_size(
+            rail.center(),
+            egui::vec2(RAIL_GRIP_WIDTH_PX, RAIL_GRIP_HEIGHT_PX),
+        );
+        ui.painter()
+            .rect_filled(grip, egui::Rounding::same(1.0), grip_colour);
+
+        if response.clicked() {
+            self.set_context_collapsed(false);
+        }
+    }
+
     /// The divider between the panes, as a resize handle.
     ///
     /// Registered after both panes so it takes the drag that would otherwise
@@ -2898,8 +3365,489 @@ impl Tab {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
         if handle.dragged() && canvas_width > 0.0 {
-            let moved = self.split_fraction + handle.drag_delta().x / canvas_width;
-            self.split_fraction = clamp_pane_fraction(moved);
+            // In pixels, because the gesture is in pixels and the floor is
+            // too. `split_fraction` carries the *asked-for* width rather than
+            // a floored one, so a hand that keeps pushing left keeps
+            // travelling: the splitter floors what it draws, and this is what
+            // makes "drag past the floor to dismiss it" a gesture a hand can
+            // finish rather than one that needs a single impossible frame.
+            let wanted_px = self.split_fraction * canvas_width + handle.drag_delta().x;
+            if wanted_px < canvas_layout::COLLAPSE_AT_PX {
+                // Dismissed, not squeezed. `split_fraction` is left where it
+                // was, so the rail springs back to the width the trader chose
+                // rather than to a default that would discard it.
+                self.set_context_collapsed(true);
+            } else {
+                self.set_context_collapsed(false);
+                self.split_fraction = clamp_pane_fraction(wanted_px / canvas_width);
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod shared_routing_tests {
+    use super::*;
+    use crate::feed;
+    use crate::state::BarSpec;
+    use tokio::sync::mpsc;
+
+    /// Hands each test tab its own trades directory. A tab opens a
+    /// paper-trading ledger, and two tabs pointed at one folder read each
+    /// other's trades — which shows up as unrelated ledger tests failing.
+    static NEXT_TEST_DIR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    /// A tab with `context` context panes stacked beside its flow pane.
+    fn tab_with_context_panes(context: usize) -> Tab {
+        let (_evt_tx, evt_rx) = mpsc::channel(8);
+        let (_book_tx, book_rx) = mpsc::channel(8);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(8);
+        let mut tab = Tab::new(
+            0,
+            0,
+            "binance".to_owned(),
+            "BTCUSDT".to_owned(),
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(
+                    crate::config::ProviderKind::Binance.capabilities(),
+                ),
+                latency: feed::unsplit_latency(),
+                commands: cmd_tx,
+                replay: None,
+            },
+            // Its own directory, never the shared temp root: a tab opens a
+            // paper-trading ledger, and pointing every test tab at one folder
+            // makes them read each other's trades.
+            std::env::temp_dir().join(format!(
+                "quantick-tab-test-{context}-{}",
+                NEXT_TEST_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            )),
+        );
+        for slot in 0..context {
+            tab.time_panes.push(ChartPane::time(
+                100 + slot as u64,
+                crate::time_header::DEFAULT_INTERVAL_MS,
+            ));
+        }
+        tab
+    }
+
+    /// Collapsing must not spend the width it collapses.
+    ///
+    /// `split_fraction` is the trader's own sizing and the only thing that can
+    /// restore the column. A collapse that overwrote it — with a rail's width,
+    /// or with a default — would hand back a different chart from the one that
+    /// was put away.
+    #[test]
+    fn collapsing_a_column_keeps_the_width_it_springs_back_to() {
+        let mut tab = tab_with_context_panes(1);
+        tab.split_fraction = 0.42;
+
+        tab.context_collapsed = true;
+        assert_eq!(
+            tab.split_fraction, 0.42,
+            "the collapse spent the width it was supposed to remember"
+        );
+
+        // And again: a second collapse must not overwrite it either.
+        tab.context_collapsed = true;
+        assert_eq!(tab.split_fraction, 0.42);
+
+        tab.context_collapsed = false;
+        assert_eq!(
+            tab.split_fraction, 0.42,
+            "the column came back at a width the trader never chose"
+        );
+    }
+
+    /// The flow pane is address `0` and the context stack follows it, whatever
+    /// order they are drawn in. A reader who took this for a left-to-right
+    /// order would mirror every edit, so it is pinned.
+    #[test]
+    fn panes_are_addressed_flow_first_then_the_context_stack() {
+        let tab = tab_with_context_panes(2);
+        assert_eq!(tab.pane_count(), 3);
+        assert_eq!(
+            tab.pane_at(0).map(|pane| pane.id),
+            Some(tab.flow_pane.id),
+            "address 0 is the flow pane"
+        );
+        assert_eq!(tab.pane_at(1).map(|pane| pane.id), Some(100));
+        assert_eq!(tab.pane_at(2).map(|pane| pane.id), Some(101));
+        assert!(tab.pane_at(3).is_none(), "there is no fourth pane");
+    }
+
+    /// A shared mark belongs to the pane whose store holds it, and an edit
+    /// made on a mirror has to land *there* — not on "the other pane".
+    ///
+    /// With two panes those two phrases mean the same thing, which is why the
+    /// routing this replaced (`side.other()`) was correct and why nothing
+    /// caught it losing that meaning. With a stack beside the flow pane there
+    /// is more than one other pane. The owner named here is address 2, which
+    /// is neither the actor nor the actor's single counterpart, so this fails
+    /// against the arithmetic it replaced rather than merely passing beside
+    /// it.
+    #[test]
+    fn a_shared_gesture_opens_on_the_pane_the_interaction_names() {
+        let mut tab = tab_with_context_panes(2);
+        tab.apply_shared_interactions(&[(
+            0,
+            SharedInteraction {
+                owner: Some(2),
+                edit: None,
+                begin_gesture: true,
+                commit_gesture: false,
+            },
+        )]);
+
+        assert!(
+            tab.pane_at(2)
+                .expect("the named pane exists")
+                .drawings
+                .in_gesture(),
+            "the gesture must open on the pane the interaction named"
+        );
+        for bystander in [0usize, 1] {
+            assert!(
+                !tab.pane_at(bystander)
+                    .expect("pane exists")
+                    .drawings
+                    .in_gesture(),
+                "pane {bystander} took a gesture it was never named for"
+            );
+        }
+    }
+
+    /// An interaction with no owner is refused rather than guessed. Landing it
+    /// on a neighbour chosen by arithmetic would move an object the trader
+    /// drew onto a chart they were not working on.
+    #[test]
+    fn an_unowned_interaction_lands_nowhere() {
+        let mut tab = tab_with_context_panes(2);
+        tab.apply_shared_interactions(&[(
+            0,
+            SharedInteraction {
+                owner: None,
+                edit: None,
+                begin_gesture: true,
+                commit_gesture: false,
+            },
+        )]);
+        for pane in 0..tab.pane_count() {
+            assert!(
+                !tab.pane_at(pane)
+                    .expect("pane exists")
+                    .drawings
+                    .in_gesture(),
+                "pane {pane} opened a gesture for an interaction that named no owner"
+            );
+        }
+    }
+
+    /// An owner address past the end of the stack is ignored, not panicked on:
+    /// a saved workspace or a control-plane call can name a pane that has
+    /// since gone.
+    #[test]
+    fn an_owner_that_no_longer_exists_is_ignored() {
+        let mut tab = tab_with_context_panes(1);
+        tab.apply_shared_interactions(&[(
+            0,
+            SharedInteraction {
+                owner: Some(7),
+                edit: None,
+                begin_gesture: true,
+                commit_gesture: false,
+            },
+        )]);
+        for pane in 0..tab.pane_count() {
+            assert!(
+                !tab.pane_at(pane)
+                    .expect("pane exists")
+                    .drawings
+                    .in_gesture()
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod move_pane_tests {
+    use super::*;
+    use crate::feed;
+    use crate::state::BarSpec;
+    use tokio::sync::mpsc;
+
+    static NEXT_DIR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1000);
+
+    fn tab_with(context: usize) -> Tab {
+        let (_evt_tx, evt_rx) = mpsc::channel(8);
+        let (_book_tx, book_rx) = mpsc::channel(8);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(8);
+        let mut tab = Tab::new(
+            0,
+            0,
+            "binance".to_owned(),
+            "BTCUSDT".to_owned(),
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(
+                    crate::config::ProviderKind::Binance.capabilities(),
+                ),
+                latency: feed::unsplit_latency(),
+                commands: cmd_tx,
+                replay: None,
+            },
+            std::env::temp_dir().join(format!(
+                "quantick-move-test-{}",
+                NEXT_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            )),
+        );
+        for slot in 0..context {
+            tab.time_panes.push(ChartPane::time(
+                200 + slot as u64,
+                crate::time_header::DEFAULT_INTERVAL_MS,
+            ));
+        }
+        tab
+    }
+
+    /// The order the stack draws in is the order it holds, so moving a chart
+    /// moves the pane rather than swapping what is inside two of them: the
+    /// drawings, indicators and bars travel with the chart the trader moved.
+    #[test]
+    fn moving_a_chart_carries_the_pane_rather_than_its_contents() {
+        let mut tab = tab_with(3);
+        let ids: Vec<u64> = tab.time_panes.iter().map(|pane| pane.id).collect();
+        assert_eq!(ids, vec![200, 201, 202]);
+
+        assert!(
+            tab.move_context_pane(3, 1),
+            "the bottom chart moves to the top"
+        );
+        let after: Vec<u64> = tab.time_panes.iter().map(|pane| pane.id).collect();
+        assert_eq!(
+            after,
+            vec![202, 200, 201],
+            "the pane moved and the others closed up behind it"
+        );
+    }
+
+    #[test]
+    fn moving_a_chart_one_slot_swaps_it_with_its_neighbour() {
+        let mut tab = tab_with(2);
+        assert!(tab.move_context_pane(1, 2));
+        let after: Vec<u64> = tab.time_panes.iter().map(|pane| pane.id).collect();
+        assert_eq!(after, vec![201, 200]);
+    }
+
+    /// The flow pane is address `0` and does not move: its column is the one
+    /// thing every preset agrees on, and a caller that asked to move the
+    /// heatmap meant something this cannot do.
+    #[test]
+    fn the_flow_pane_refuses_to_move() {
+        let mut tab = tab_with(2);
+        let before: Vec<u64> = tab.time_panes.iter().map(|pane| pane.id).collect();
+        assert!(!tab.move_context_pane(0, 1), "address 0 is the flow pane");
+        assert!(!tab.move_context_pane(1, 0), "and it is not a destination");
+        assert_eq!(
+            tab.time_panes
+                .iter()
+                .map(|pane| pane.id)
+                .collect::<Vec<_>>(),
+            before,
+            "a refused move must leave the stack exactly as it was"
+        );
+    }
+
+    /// An address past the end is refused rather than clamped. A control-plane
+    /// call or a stale menu naming a chart that has gone means something this
+    /// cannot do, and moving a different chart would be worse than saying no.
+    #[test]
+    fn an_address_the_stack_does_not_have_is_refused() {
+        let mut tab = tab_with(2);
+        let before: Vec<u64> = tab.time_panes.iter().map(|pane| pane.id).collect();
+        for (from, to) in [(1_usize, 9_usize), (9, 1), (7, 8)] {
+            assert!(
+                !tab.move_context_pane(from, to),
+                "moving {from} to {to} names a chart that is not there"
+            );
+        }
+        assert_eq!(
+            tab.time_panes
+                .iter()
+                .map(|pane| pane.id)
+                .collect::<Vec<_>>(),
+            before
+        );
+    }
+
+    /// Moving a chart onto itself changes nothing, and says so. A caller that
+    /// retried a dropped call needs "nothing happened" to be distinguishable
+    /// from "it worked".
+    #[test]
+    fn moving_a_chart_onto_itself_reports_no_change() {
+        let mut tab = tab_with(2);
+        assert!(!tab.move_context_pane(1, 1));
+        assert!(!tab.move_context_pane(2, 2));
+    }
+
+    /// A single context chart has nowhere to go.
+    #[test]
+    fn a_lone_context_chart_cannot_be_reordered() {
+        let mut tab = tab_with(1);
+        assert!(!tab.move_context_pane(1, 1));
+        assert!(!tab.move_context_pane(1, 2));
+        assert_eq!(tab.time_panes.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod collapse_path_tests {
+    use super::*;
+    use crate::feed;
+    use crate::state::BarSpec;
+    use tokio::sync::mpsc;
+
+    static NEXT_DIR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(2000);
+
+    fn tab() -> Tab {
+        let (_evt_tx, evt_rx) = mpsc::channel(8);
+        let (_book_tx, book_rx) = mpsc::channel(8);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(8);
+        Tab::new(
+            0,
+            0,
+            "binance".to_owned(),
+            "BTCUSDT".to_owned(),
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(
+                    crate::config::ProviderKind::Binance.capabilities(),
+                ),
+                latency: feed::unsplit_latency(),
+                commands: cmd_tx,
+                replay: None,
+            },
+            std::env::temp_dir().join(format!(
+                "quantick-collapse-test-{}",
+                NEXT_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            )),
+        )
+    }
+
+    /// Collapse reports whether it changed anything, so a caller that retried
+    /// a dropped call can tell "nothing happened" from "it worked".
+    #[test]
+    fn collapsing_reports_change_and_is_idempotent() {
+        let mut tab = tab();
+        assert!(
+            tab.set_context_collapsed(true),
+            "the first collapse changes it"
+        );
+        assert!(
+            !tab.set_context_collapsed(true),
+            "the second is a no-op and says so"
+        );
+        assert!(tab.set_context_collapsed(false), "and it comes back");
+        assert!(!tab.set_context_collapsed(false));
+    }
+
+    /// The width the column springs back to is never spent by putting it away
+    /// — however many times it is put away.
+    #[test]
+    fn collapsing_never_spends_the_remembered_width() {
+        let mut tab = tab();
+        tab.split_fraction = 0.42;
+        for _ in 0..3 {
+            tab.set_context_collapsed(true);
+            tab.set_context_collapsed(false);
+        }
+        assert_eq!(
+            tab.split_fraction, 0.42,
+            "the column came back at a width the trader never chose"
+        );
+    }
+
+    /// A workspace saved with its charts put away reopens with them put away.
+    ///
+    /// The order inside `restore_canvas` is the whole test: `set_layout` opens
+    /// the column it reveals, which is right for a menu click and wrong for a
+    /// restore. Assigned before that call, the flag was overwritten every
+    /// time — and the next `capture_arrangement` wrote the wrong answer back
+    /// over the trader's file.
+    #[test]
+    fn a_restored_workspace_keeps_its_collapsed_column() {
+        let mut tab = tab();
+        tab.restore_canvas(
+            CanvasLayout::TimeAndFlow,
+            Some(0.42),
+            true,
+            Some(PaneSide::Flow),
+            None,
+            LegendFold {
+                flow: false,
+                time: false,
+            },
+        );
+        assert!(
+            tab.context_collapsed,
+            "the workspace recorded a collapsed column and it opened expanded"
+        );
+        assert_eq!(
+            tab.split_fraction, 0.42,
+            "and the width it springs back to is the saved one"
+        );
+    }
+
+    /// Picking the arrangement that is already showing brings the column back.
+    ///
+    /// The picker lights a cell for the current layout; a trader who put the
+    /// column away and then clicked that lit cell is asking for the charts the
+    /// thumbnail draws. Answering with the 8 px rail is the chrome lying.
+    #[test]
+    fn re_picking_the_current_layout_brings_the_column_back() {
+        let mut tab = tab();
+        tab.set_layout(CanvasLayout::TimeAndFlow);
+        assert!(tab.set_context_collapsed(true));
+
+        tab.set_layout(CanvasLayout::TimeAndFlow);
+        assert!(
+            !tab.context_collapsed,
+            "the lit cell promised two panes and handed back a rail"
+        );
+    }
+
+    /// A layout with no flow pane has no column to put away, so the collapse
+    /// flag must not decide its focus.
+    ///
+    /// Read the other way round, `Ctrl+0` on the Timeframe layout pointed
+    /// focus at a pane nobody draws: `paper_owns_input` went false for the one
+    /// chart on screen, so order entry, the ladder and the trade HUD all went
+    /// dead — and with no split there is no rail to click to undo it.
+    #[test]
+    fn collapsing_never_takes_focus_off_the_only_chart_on_screen() {
+        let mut tab = tab();
+        tab.time_panes.push(ChartPane::time(
+            300,
+            crate::time_header::DEFAULT_INTERVAL_MS,
+        ));
+        tab.layout = CanvasLayout::Time;
+        tab.context_collapsed = true;
+
+        assert_eq!(
+            tab.focused_side(),
+            PaneSide::Time,
+            "the only chart drawn has to be the one the chrome speaks for"
+        );
     }
 }

@@ -423,7 +423,7 @@ fn shared_drawing_hit(
     let owner_side = side.other();
     let owner = match owner_side {
         PaneSide::Flow => &tab.flow_pane,
-        PaneSide::Time => tab.time_pane.as_ref()?,
+        PaneSide::Time => tab.time_pane()?,
     };
     let (index, handle_index) = pane.shared_pick(owner, position)?;
     let drawing = owner.drawings.items().get(index)?;

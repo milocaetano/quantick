@@ -418,6 +418,9 @@ pub enum DeclaredLayout {
     /// Timeframe left, flow right, on the draggable divider.
     #[serde(rename = "time+flow")]
     TimeAndFlow,
+    /// Two timeframe charts stacked left, flow right.
+    #[serde(rename = "time+time+flow")]
+    TimeTimeAndFlow,
 }
 
 impl DeclaredLayout {
@@ -432,6 +435,7 @@ impl DeclaredLayout {
             "flow" => Some(DeclaredLayout::Flow),
             "time" => Some(DeclaredLayout::Time),
             "time+flow" => Some(DeclaredLayout::TimeAndFlow),
+            "time+time+flow" => Some(DeclaredLayout::TimeTimeAndFlow),
             _ => None,
         }
     }

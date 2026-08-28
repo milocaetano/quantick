@@ -49,6 +49,7 @@ use crate::{app::QuantickApp, metrics};
 
 use super::{
     actions::{ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, ActionRegistry, standard_actions},
+    contract::{COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID},
     contract::{
         DeferredActionResult, EventsReadInvocation, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID,
         ObserverContract, ParkedWait, PreparedDispatch, PreparedRequest, UiReadContext,
@@ -503,6 +504,16 @@ impl ClientRateLimiter {
 /// itself or one of its scopes.
 fn is_annotate_permission(permission: &PermissionId) -> bool {
     permission.as_str() == ANNOTATE_PERMISSION_ID || is_annotate_scope(permission)
+}
+
+/// Any permission of the cockpit tier — the floor or one of its scopes.
+fn is_cockpit_permission(permission: &PermissionId) -> bool {
+    permission.as_str() == COCKPIT_PERMISSION_ID || is_cockpit_scope(permission)
+}
+
+/// A scope *of* the cockpit tier, as opposed to the floor they stand on.
+fn is_cockpit_scope(permission: &PermissionId) -> bool {
+    permission.as_str().starts_with(concat!("cockpit", "."))
 }
 
 /// A scope *of* the annotate tier — the ones that actually open a capability,
@@ -1935,8 +1946,31 @@ impl ControlAccess {
     /// The ceiling every connection of the next run is capped at. It follows
     /// the scopes the human ticked: no annotate scope, no annotator profile,
     /// however loudly a client asks for one.
+    /// Whether the next connection may rearrange the window.
+    ///
+    /// Same shape as [`Self::grants_annotate`], and for the same reason: the
+    /// floor on its own opens nothing and a scope without the floor opens
+    /// nothing either, because every cockpit capability requires both.
+    pub(crate) fn grants_cockpit(&self) -> bool {
+        self.configured_scopes.iter().any(is_cockpit_scope)
+            && self
+                .configured_scopes
+                .iter()
+                .any(|permission| permission.as_str() == COCKPIT_PERMISSION_ID)
+    }
+
+    /// The ceiling the next connection is given.
+    ///
+    /// A profile no code path constructs is a tier nothing can reach: the
+    /// seven `layout.*` capabilities shipped registered, catalogued and
+    /// refused at the gate because this function knew only two profiles. The
+    /// cockpit tier is checked first because it is the higher ceiling — it
+    /// inherits the observer's reads, and a connection granted both tiers
+    /// needs the one that covers both.
     fn configured_profile(&self) -> ProfileId {
-        let id = if self.grants_annotate() {
+        let id = if self.grants_cockpit() {
+            COCKPIT_PROFILE_ID
+        } else if self.grants_annotate() {
             ANNOTATOR_PROFILE_ID
         } else {
             OBSERVER_PROFILE_ID
@@ -2013,11 +2047,9 @@ impl ControlAccess {
         ui.separator();
         ui.strong("Read scopes for the next connection");
         let can_edit = matches!(self.state, AccessState::Disabled);
-        for descriptor in self
-            .contract
-            .selectable_permissions()
-            .filter(|descriptor| !is_annotate_permission(&descriptor.id))
-        {
+        for descriptor in self.contract.selectable_permissions().filter(|descriptor| {
+            !is_annotate_permission(&descriptor.id) && !is_cockpit_permission(&descriptor.id)
+        }) {
             let mut selected = self.configured_scopes.contains(&descriptor.id);
             // The description is the label — a first-week user reads "Chart
             // framing, viewport, and bars", not `observe.chart` — and the ID
@@ -2042,12 +2074,41 @@ impl ControlAccess {
         ui.add_space(CONTROL_PANEL_SECTION_SPACING_PX);
         ui.strong("Let an assistant answer on the chart");
         ui.small(
-            "Objects an assistant places are labelled with its name wherever you see them, and \"Remove objects placed for you\" in the object manager takes them all back at once. Nothing here can delete your own drawings, change your layout, or touch a position.",
+            "Objects an assistant places are labelled with its name wherever you see them, and \"Remove objects placed for you\" in the object manager takes them all back at once. Nothing here can delete your own drawings or touch a position. Rearranging your charts is the separate grant below.",
         );
         for descriptor in self
             .contract
             .selectable_permissions()
             .filter(|descriptor| is_annotate_permission(&descriptor.id))
+        {
+            let mut selected = self.configured_scopes.contains(&descriptor.id);
+            let label = if descriptor.sensitive {
+                format!("{} · {} (sensitive)", descriptor.description, descriptor.id)
+            } else {
+                format!("{} · {}", descriptor.description, descriptor.id)
+            };
+            ui.add_enabled(can_edit, eframe::egui::Checkbox::new(&mut selected, label));
+            if can_edit {
+                if selected {
+                    self.configured_scopes.insert(descriptor.id.clone());
+                } else {
+                    self.configured_scopes.remove(&descriptor.id);
+                }
+            }
+        }
+        // The cockpit tier, in its own section for the reason it is its own
+        // tier: it is a *write* grant, and it was rendering under "Read
+        // scopes" — a checkbox that rearranges the trader's window, presented
+        // as though it only looked at it.
+        ui.add_space(CONTROL_PANEL_SECTION_SPACING_PX);
+        ui.strong("Let an assistant rearrange your charts");
+        ui.small(
+            "Changes which charts are on screen, where they sit and how wide they are — the same things the layout picker does. Nothing here places or removes an object, and nothing here touches a position. A chart put away keeps its drawings, its indicators and its bars, and comes back with them.",
+        );
+        for descriptor in self
+            .contract
+            .selectable_permissions()
+            .filter(|descriptor| is_cockpit_permission(&descriptor.id))
         {
             let mut selected = self.configured_scopes.contains(&descriptor.id);
             let label = if descriptor.sensitive {
@@ -2071,7 +2132,9 @@ impl ControlAccess {
         ui.separator();
         match self.state {
             AccessState::Disabled => {
-                let label = if self.grants_annotate() {
+                let label = if self.grants_cockpit() {
+                    "Enable access (reading, answering and rearranging)"
+                } else if self.grants_annotate() {
                     "Enable access (reading and answering)"
                 } else {
                     "Enable observer access"
@@ -4356,5 +4419,128 @@ mod tests {
             GATEWAY_STATUS_CAPACITY - high_watermark,
             CONTROL_MAX_CONNECTIONS * GATEWAY_CRITICAL_STATUS_SLOTS_PER_CONNECTION
         );
+    }
+}
+
+#[cfg(test)]
+mod cockpit_tier_tests {
+    use super::*;
+
+    /// A profile no code path constructs is a tier nothing can reach.
+    ///
+    /// The seven `layout.*` capabilities shipped registered, catalogued and
+    /// refused at the gate, because `configured_profile` knew only the
+    /// observer and the annotator. Nothing failed: the registry was valid, the
+    /// schema published, the catalog complete — and every call was denied. A
+    /// capability set is not delivered until a connection can hold the ceiling
+    /// it needs, so that is what this asserts.
+    #[test]
+    fn granting_the_cockpit_scopes_reaches_the_cockpit_profile() {
+        let mut access = ControlAccess::new();
+        access
+            .configure_scopes("cockpit,cockpit.layout")
+            .expect("the cockpit scopes are registered permissions");
+        assert!(
+            access.grants_cockpit(),
+            "the floor and a scope together open the tier"
+        );
+        assert_eq!(
+            access.configured_profile().as_str(),
+            COCKPIT_PROFILE_ID,
+            "the layout capabilities are refused under any lower ceiling"
+        );
+    }
+
+    /// The floor alone opens nothing, and a scope without the floor opens
+    /// nothing either — every cockpit capability requires both, so claiming
+    /// the tier on half of it would put a grant on the panel that is refused
+    /// on every call.
+    #[test]
+    fn half_the_cockpit_grant_is_not_the_cockpit_tier() {
+        for scopes in ["cockpit", "cockpit.layout"] {
+            let mut access = ControlAccess::new();
+            access
+                .configure_scopes(scopes)
+                .expect("registered permission");
+            assert!(
+                !access.grants_cockpit(),
+                "{scopes} alone must not open the tier"
+            );
+            assert_ne!(access.configured_profile().as_str(), COCKPIT_PROFILE_ID);
+        }
+    }
+
+    /// The annotate tier is untouched by the new one: a trader who granted
+    /// only the chart scopes gets exactly what that consent text describes.
+    #[test]
+    fn the_annotate_tier_does_not_pick_up_the_cockpit_ceiling() {
+        let mut access = ControlAccess::new();
+        access
+            .configure_scopes("annotate,annotate.chart")
+            .expect("registered permissions");
+        assert!(access.grants_annotate());
+        assert!(
+            !access.grants_cockpit(),
+            "annotate must not carry a grant to rearrange the window"
+        );
+        assert_eq!(access.configured_profile().as_str(), ANNOTATOR_PROFILE_ID);
+    }
+
+    /// The tiers have to **nest**, not merely coexist.
+    ///
+    /// `handshake::authorize` intersects the requested and the granted ceiling
+    /// and then demands that one of the two *be* that intersection — "profiles
+    /// are built nested" is the comment it says so under. Two sibling write
+    /// tiers overlap without nesting, and an incomparable pair is refused
+    /// outright: a client asking for `--profile annotator` against a cockpit
+    /// grant could not connect at all.
+    #[test]
+    fn the_cockpit_ceiling_contains_the_annotator_ceiling() {
+        use quantick_control::handshake::ProfileAuthority;
+
+        let access = ControlAccess::new();
+        let registry = access.contract.registry();
+        let ceiling = |id: &str| {
+            registry
+                .permission_ceiling(&ProfileId::new(id).expect("static profile ID is valid"))
+                .expect("the profile is registered")
+        };
+        assert!(
+            ceiling(ANNOTATOR_PROFILE_ID).is_subset(&ceiling(COCKPIT_PROFILE_ID)),
+            "the two write tiers are siblings, so the handshake refuses any \
+             connection that names one against a grant holding the other"
+        );
+    }
+
+    /// A trader who grants both tiers keeps both.
+    ///
+    /// The connection takes one ceiling, and every scope the human ticked has
+    /// to survive it — `authorize` drops a granted scope the ceiling does not
+    /// hold. Under a cockpit ceiling that was a sibling of the annotator, that
+    /// meant ticking "rearrange my charts" silently switched off "answer on
+    /// the chart".
+    #[test]
+    fn granting_both_tiers_keeps_every_scope_the_trader_ticked() {
+        use quantick_control::handshake::ProfileAuthority;
+
+        let mut access = ControlAccess::new();
+        access
+            .configure_scopes("annotate,annotate.chart,cockpit,cockpit.layout")
+            .expect("registered permissions");
+        assert!(access.grants_annotate());
+        assert!(access.grants_cockpit());
+
+        let profile = access.configured_profile();
+        let ceiling = access
+            .contract
+            .registry()
+            .permission_ceiling(&profile)
+            .expect("the configured profile is registered");
+        for scope in &access.configured_scopes {
+            assert!(
+                ceiling.contains(scope),
+                "the {profile} ceiling drops the granted scope {scope}"
+            );
+        }
     }
 }

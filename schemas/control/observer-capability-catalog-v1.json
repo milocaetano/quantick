@@ -4729,6 +4729,816 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Moves focus to one pane: the chart the status bar speaks for, and the one an indicator or drawing command lands on.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.focus.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Focus one pane: the chart the chrome speaks for and commands land on.",
+        "properties": {
+          "pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The pane's address. `0` is the flow pane."
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "required": [
+          "pane"
+        ],
+        "title": "FocusInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every layout call answers with: the arrangement as it now stands.\n\nEchoed back rather than assumed, so a client never has to guess whether a\ncall it made is the reason the canvas looks the way it does.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "description": "The context column's share of the canvas.",
+            "format": "double",
+            "type": "number"
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "changed"
+        ],
+        "title": "LayoutResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Focus a chart",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Puts the context charts away, leaving the rail that brings them back. The width they had is kept, so expanding returns the layout the trader chose.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.pane.collapse",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Which tab a call is about. Omitted means the one the trader is looking at —\nthe same default the chrome's own commands take.",
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "title": "TabTarget",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every layout call answers with: the arrangement as it now stands.\n\nEchoed back rather than assumed, so a client never has to guess whether a\ncall it made is the reason the canvas looks the way it does.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "description": "The context column's share of the canvas.",
+            "format": "double",
+            "type": "number"
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "changed"
+        ],
+        "title": "LayoutResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Collapse the context column",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Brings the context charts back at the width they had before they were collapsed.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.pane.expand",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Which tab a call is about. Omitted means the one the trader is looking at —\nthe same default the chrome's own commands take.",
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "title": "TabTarget",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every layout call answers with: the arrangement as it now stands.\n\nEchoed back rather than assumed, so a client never has to guess whether a\ncall it made is the reason the canvas looks the way it does.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "description": "The context column's share of the canvas.",
+            "format": "double",
+            "type": "number"
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "changed"
+        ],
+        "title": "LayoutResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Expand the context column",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Moves one context chart up or down the column beside the heatmap. The flow pane does not move: its column is the one thing every preset agrees on.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.pane.move",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Move one context chart within the stack.",
+        "properties": {
+          "from": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The pane's address now. `0` is the flow pane and cannot be moved."
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          },
+          "to": {
+            "$ref": "#/$defs/WireU64",
+            "description": "Where it should sit."
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "title": "MovePaneInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every layout call answers with: the arrangement as it now stands.\n\nEchoed back rather than assumed, so a client never has to guess whether a\ncall it made is the reason the canvas looks the way it does.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "description": "The context column's share of the canvas.",
+            "format": "double",
+            "type": "number"
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "changed"
+        ],
+        "title": "LayoutResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Move a chart within the stack",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Sets the context column's share of the canvas, held inside the same floor a divider drag is held to.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.pane.resize",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Set the context column's share of the canvas.",
+        "properties": {
+          "fraction": {
+            "description": "The share, 0..1. Held inside the same floor a drag is held to, so a\ncall cannot reach a width a hand could not.",
+            "format": "double",
+            "type": "number"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "required": [
+          "fraction"
+        ],
+        "title": "ResizeInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every layout call answers with: the arrangement as it now stands.\n\nEchoed back rather than assumed, so a client never has to guess whether a\ncall it made is the reason the canvas looks the way it does.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "description": "The context column's share of the canvas.",
+            "format": "double",
+            "type": "number"
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "changed"
+        ],
+        "title": "LayoutResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Resize the context column",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Sets one context chart's interval, the same value its own header selector writes.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.pane.set_interval",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Set one context chart's timeframe.",
+        "properties": {
+          "interval_ms": {
+            "description": "The interval in milliseconds.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The pane's address. `0` is the flow pane, which the toolbar governs."
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "required": [
+          "pane",
+          "interval_ms"
+        ],
+        "title": "IntervalInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every layout call answers with: the arrangement as it now stands.\n\nEchoed back rather than assumed, so a client never has to guess whether a\ncall it made is the reason the canvas looks the way it does.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "description": "The context column's share of the canvas.",
+            "format": "double",
+            "type": "number"
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "changed"
+        ],
+        "title": "LayoutResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Set a chart's timeframe",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the View menu read.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.preset.apply",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Apply a named arrangement from the layout registry.",
+        "properties": {
+          "preset_id": {
+            "description": "A preset id from the registry — `describe` lists them.",
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "required": [
+          "preset_id"
+        ],
+        "title": "ApplyPresetInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every layout call answers with: the arrangement as it now stands.\n\nEchoed back rather than assumed, so a client never has to guess whether a\ncall it made is the reason the canvas looks the way it does.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "description": "The context column's share of the canvas.",
+            "format": "double",
+            "type": "number"
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "changed"
+        ],
+        "title": "LayoutResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Apply a layout preset",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Opens a small window over the chart carrying one message, attributed to whoever asked for it, dismissed by the trader.",
       "destructive": false,
       "dry_run_supported": false,
@@ -5413,6 +6223,11 @@
       "title": "Interaction"
     },
     {
+      "description": "The canvas: which charts are on screen, where they sit, and how wide.",
+      "id": "layout",
+      "title": "Layout"
+    },
+    {
       "description": "Interruptions: a popup, a toast, a sound.",
       "id": "notify",
       "title": "Notify"
@@ -5508,6 +6323,26 @@
         "annotator"
       ],
       "sensitive": true
+    },
+    {
+      "default_grant": "prompt",
+      "description": "Change which charts are on screen, where they sit and how wide they are. Never places or removes an object, and never touches a position.",
+      "id": "cockpit",
+      "label": "Rearrange the window",
+      "profile_ceilings": [
+        "cockpit"
+      ],
+      "sensitive": false
+    },
+    {
+      "default_grant": "prompt",
+      "description": "Apply a layout preset, move a chart within the stack, resize a column, collapse it to its rail or expand it again, and move focus between charts.",
+      "id": "cockpit.layout",
+      "label": "Change the chart layout",
+      "profile_ceilings": [
+        "cockpit"
+      ],
+      "sensitive": false
     },
     {
       "default_grant": "granted",
@@ -5694,6 +6529,14 @@
         "observer"
       ],
       "label": "Annotator",
+      "permissions": []
+    },
+    {
+      "id": "cockpit",
+      "inherits": [
+        "annotator"
+      ],
+      "label": "Cockpit",
       "permissions": []
     }
   ],
@@ -9366,7 +10209,8 @@
             "enum": [
               "flow",
               "time",
-              "time_and_flow"
+              "time_and_flow",
+              "time_time_and_flow"
             ],
             "type": "string"
           },

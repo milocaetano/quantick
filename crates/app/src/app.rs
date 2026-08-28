@@ -18,6 +18,7 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use crate::candle_view::draw_style_window;
+use crate::canvas_layout::PaneIdAllocator;
 use crate::chart_layers::{self, ChartLayer};
 use crate::config::AppConfig;
 use crate::dock::{Dock, DockEnv, DockTab};
@@ -60,14 +61,6 @@ const TIME_STRIP: f32 = 24.0;
 /// Id of the tab the window opens with.
 const FIRST_TAB_ID: u64 = 0;
 
-/// The (flow, time) pane ids for tab `id`.
-///
-/// Pane ids namespace every egui interaction a pane registers, so they have to
-/// be unique across the whole window, not just within a tab — two tabs sharing
-/// them would share a drag the moment both had been on screen.
-const fn pane_ids(tab: u64) -> (u64, u64) {
-    (tab * 2, tab * 2 + 1)
-}
 /// The note being typed on the chart: which object, and how it looked before
 /// the first keystroke.
 ///
@@ -818,6 +811,17 @@ pub struct QuantickApp {
     /// Handed out to new tabs and never reused, so a closed tab's ids can
     /// never be mistaken for a living one's.
     next_tab_id: u64,
+    /// Whether the toolbar's layout popover is open.
+    layout_picker_open: bool,
+    /// A pending request to open that popover, from the
+    /// `QUANTICK_LAYOUT_PICKER` hook. Drained by the frame that honours it —
+    /// the popover is a popup egui owns, so the hook asks for it through the
+    /// same call the click makes rather than faking the surface.
+    layout_picker_autostart: bool,
+    /// The window's one source of pane ids. Pane ids namespace egui
+    /// interaction state across the whole window rather than within a tab, so
+    /// this may not be per-tab state: two panes sharing an id share a drag.
+    pane_ids: PaneIdAllocator,
     /// The tab the indicator state file describes — the one opened from the
     /// config defaults at startup, which is the workspace the file was written
     /// for. Cleared when that tab closes: the set it recorded is gone, and
@@ -1345,9 +1349,10 @@ impl QuantickApp {
             paper_state.trades_dir.as_deref(),
             &state_path,
         );
+        let mut pane_ids = PaneIdAllocator::new();
         let mut tab = Tab::new(
             FIRST_TAB_ID,
-            pane_ids(FIRST_TAB_ID),
+            pane_ids.alloc(),
             feed_id.into(),
             symbol.into(),
             spec,
@@ -1365,6 +1370,10 @@ impl QuantickApp {
             tabs: vec![tab],
             active_tab: 0,
             next_tab_id: FIRST_TAB_ID + 1,
+            layout_picker_open: false,
+            layout_picker_autostart: std::env::var("QUANTICK_LAYOUT_PICKER")
+                .is_ok_and(|value| value == "1"),
+            pane_ids,
             persisted_tab: Some(FIRST_TAB_ID),
             source_picker: None,
             added_symbols: symbols_file::load(&symbols_file::default_path()),
@@ -1773,7 +1782,7 @@ impl QuantickApp {
         if std::env::var("QUANTICK_INVERTED").is_ok_and(|value| value.trim() == "1") {
             let tab = app.active_tab_mut();
             tab.flow_pane.price_view.set_inverted(true);
-            if let Some(time_pane) = tab.time_pane.as_mut() {
+            if let Some(time_pane) = tab.time_pane_mut() {
                 time_pane.price_view.set_inverted(true);
             }
         }
@@ -2181,7 +2190,15 @@ impl QuantickApp {
                     event_code = "LAYOUT_AUTOSTART_UNKNOWN",
                     layout = %name,
                     action = "layout_left_as_is",
-                    "QUANTICK_LAYOUT names no canvas layout (flow, time, time+flow)"
+                    accepted = %crate::canvas_layout::LAYOUT_PRESETS
+                        .iter()
+                        .map(|preset| preset.id)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    // Built from the registry rather than spelled out: a
+                    // hand-written list goes stale the day a preset is added,
+                    // and a run that mistypes an id deserves the real one.
+                    "QUANTICK_LAYOUT names no canvas layout"
                 ),
             }
         }
@@ -2310,6 +2327,20 @@ impl QuantickApp {
     /// Read-only application roots available to the on-demand control
     /// projections. The gateway never receives `QuantickApp`; it receives the
     /// owned DTOs built from these narrow views.
+    /// One tab by position, for a control capability that resolved an id.
+    pub(crate) fn control_tab_at(&self, index: usize) -> Option<&Tab> {
+        self.tabs.get(index)
+    }
+
+    /// The mutable twin, for the cockpit tier.
+    ///
+    /// Narrow on purpose: the layout capabilities need to *change* a tab, and
+    /// handing them the whole application would let a later one reach past the
+    /// canvas into the feed or the simulator.
+    pub(crate) fn control_tab_at_mut(&mut self, index: usize) -> Option<&mut Tab> {
+        self.tabs.get_mut(index)
+    }
+
     pub(crate) fn control_tabs(&self) -> &[Tab] {
         &self.tabs
     }
@@ -2522,11 +2553,9 @@ impl QuantickApp {
         self.tabs
             .iter()
             .map(|tab| {
-                tab.flow_pane.drawings.authored_count()
-                    + tab
-                        .time_pane
-                        .as_ref()
-                        .map_or(0, |pane| pane.drawings.authored_count())
+                tab.panes()
+                    .map(|(pane, _side)| pane.drawings.authored_count())
+                    .sum::<usize>()
             })
             .sum()
     }
@@ -2537,11 +2566,11 @@ impl QuantickApp {
     fn remove_every_authored_object(&mut self) -> usize {
         let mut removed = 0;
         for tab in &mut self.tabs {
-            for side in [crate::pane::PaneSide::Flow, crate::pane::PaneSide::Time] {
-                if side == crate::pane::PaneSide::Time && tab.time_pane.is_none() {
-                    continue;
-                }
-                let pane = tab.pane_mut(side);
+            // Every pane the tab holds, not the two it used to. "Remove
+            // objects placed for you" promises to take them *all* back, and a
+            // sweep that skipped the second stacked chart would leave an
+            // assistant's marks behind while reporting the job done.
+            for pane in tab.panes_mut() {
                 let taken = pane.drawings.remove_authored();
                 if taken > 0 {
                     pane.sweep_strategy_orphans();
@@ -2952,10 +2981,10 @@ impl QuantickApp {
         let flow_inverted = self.active_tab().flow_pane.price_view.is_inverted();
         let time_inverted = self
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .map_or(flow_inverted, |pane| pane.price_view.is_inverted());
-        let mut tab = Tab::new(id, pane_ids(id), feed_id, symbol, spec, feed, trades_dir);
+        let flow_pane_id = self.pane_ids.alloc();
+        let mut tab = Tab::new(id, flow_pane_id, feed_id, symbol, spec, feed, trades_dir);
         tab.paper.set_cmd_trading(cmd_trading);
         self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
@@ -2983,7 +3012,7 @@ impl QuantickApp {
         // new tab has a time pane to orient at all.
         let tab = self.active_tab_mut();
         tab.flow_pane.price_view.set_inverted(flow_inverted);
-        if let Some(time_pane) = tab.time_pane.as_mut() {
+        if let Some(time_pane) = tab.time_pane_mut() {
             time_pane.price_view.set_inverted(time_inverted);
         }
     }
@@ -3175,13 +3204,22 @@ impl QuantickApp {
         // indicator command lands on (§11) — so the three chrome surfaces
         // can never disagree about which chart a command describes, and in
         // the Time layout the group governs the chart actually on screen.
+        // Split off the picker's flags before the tab borrow: the model wants
+        // both, and they live on the same struct.
+        let mut layout_picker_open = self.layout_picker_open;
+        // One shot: the hook opens the popover on the first drawn frame and
+        // then gets out of the way, so a trader's click can close it.
+        let layout_picker_autostart = std::mem::take(&mut self.layout_picker_autostart);
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
         let pane = match focused {
-            PaneSide::Time => tab.time_pane.as_mut().unwrap_or(&mut tab.flow_pane),
+            PaneSide::Time => tab.time_panes.first_mut().unwrap_or(&mut tab.flow_pane),
             PaneSide::Flow => &mut tab.flow_pane,
         };
         let mut model = toolbar::ToolbarModel {
+            layout_preset: Some(tab.layout.preset()),
+            layout_picker_open: &mut layout_picker_open,
+            layout_picker_request_open: layout_picker_autostart,
             feeds,
             feed_id: &mut tab.feed_id,
             feed_display_name,
@@ -3215,6 +3253,10 @@ impl QuantickApp {
             scripts,
         };
         let actions = toolbar::draw(ctx, &mut model);
+        // The popover's own state, back where it lives. Without this the flag
+        // resets every frame and the button never reads as open.
+        drop(model);
+        self.layout_picker_open = layout_picker_open;
         // A newly picked feed may not offer the current symbol. Never during
         // a replay: the recorded instrument belongs to no live feed's menu,
         // and snapping it away would relabel the whole session — the status
@@ -3227,6 +3269,30 @@ impl QuantickApp {
         for action in actions {
             self.apply_toolbar_action(action);
         }
+    }
+
+    /// Switch the active tab to `preset`.
+    ///
+    /// **The one path.** The toolbar's picker, the `View → Layout` menu and
+    /// the keyboard all arrive here, so none of them can grow its own idea of
+    /// what applying a layout does. A control-plane capability joins them by
+    /// calling this, never by repeating it.
+    fn apply_layout_preset(&mut self, preset: &'static crate::canvas_layout::LayoutPreset) {
+        let Some(layout) = CanvasLayout::from_preset(preset) else {
+            // A preset the canvas cannot draw yet is refused rather than
+            // approximated: switching to the nearest arrangement would be the
+            // picker showing one layout and the canvas drawing another.
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "LAYOUT_PRESET_UNSUPPORTED",
+                preset = %preset.id,
+                action = "layout_left_as_is",
+                "the layout registry names an arrangement the canvas cannot draw yet"
+            );
+            return;
+        };
+        self.active_tab_mut().set_layout(layout);
     }
 
     /// One toolbar side effect. Layer toggles reuse the same code paths the
@@ -3262,6 +3328,7 @@ impl QuantickApp {
             }
             ToolbarAction::OpenFootprintSettings => self.show_footprint_settings = true,
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
+            ToolbarAction::SetLayout(preset) => self.apply_layout_preset(preset),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
             ToolbarAction::ToggleAppearance => self.show_style = !self.show_style,
             // Every indicator command lands on the focused pane (§11), which
@@ -3379,7 +3446,7 @@ impl QuantickApp {
             let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
                 return;
             };
-            let requested = match (side, tab.time_pane.as_mut()) {
+            let requested = match (side, tab.time_pane_mut()) {
                 (PaneSide::Flow, _) => tab.flow_pane.take_settings_request(),
                 (PaneSide::Time, Some(pane)) => pane.take_settings_request(),
                 (PaneSide::Time, None) => None,
@@ -3488,8 +3555,12 @@ impl QuantickApp {
     /// trap, avoided by construction).
     fn draw_indicator_legends(&mut self, ctx: &egui::Context) {
         let tab_id = self.active_tab().id;
-        let split = self.active_tab().layout == CanvasLayout::TimeAndFlow
-            && self.active_tab().time_pane.is_some();
+        // Whether a context chart is on screen — from what the layout holds
+        // and whether the column is collapsed, never from one variant. Matched
+        // against `TimeAndFlow` alone, this drew no legend at all on the
+        // stacked charts of `time+time+flow`, and drew one over the flow chart
+        // against a stale rect while the column was put away.
+        let split = self.active_tab().shows_context_charts();
         let mut pending: Vec<(PaneSide, indicator_legend::LegendAction)> = Vec::new();
         for side in [PaneSide::Flow, PaneSide::Time] {
             if side == PaneSide::Time && !split {
@@ -4503,8 +4574,11 @@ impl QuantickApp {
     /// function.
     fn apply_layer_defaults(&mut self, states: &std::collections::BTreeMap<ChartLayer, bool>) {
         for tab in &mut self.tabs {
-            tab.flow_pane.apply_layer_states(states);
-            if let Some(pane) = tab.time_pane.as_mut() {
+            // Every pane, by address: a default applied to "the flow pane and
+            // the time pane" left the second stacked chart on whatever the
+            // previous defaults were, so one canvas drew the same layer two
+            // ways.
+            for pane in tab.panes_mut() {
                 pane.apply_layer_states(states);
             }
         }
@@ -4593,23 +4667,20 @@ impl QuantickApp {
                 symbol: tab.symbol.clone(),
                 layout: tab.layout.into(),
                 split_fraction: Some(tab.split_fraction),
+                context_collapsed: tab.context_collapsed,
                 focus: Some(tab.focused_side().into()),
                 flow_bars: tab.flow_pane.state.spec().to_config_string(),
                 // Only a pane that exists has an interval worth recording; a
                 // tab that never showed the split restores on the default,
                 // which is what it had.
                 time_bars: tab
-                    .time_pane
-                    .as_ref()
+                    .time_pane()
                     .map(|pane| pane.state.spec().to_config_string()),
                 flow_legend_collapsed: tab.flow_pane.legend_collapsed,
                 // A tab with no time pane has no second legend, and `false`
                 // is what it will restore into when one is opened: a pane
                 // that never existed cannot have been folded.
-                time_legend_collapsed: tab
-                    .time_pane
-                    .as_ref()
-                    .is_some_and(|pane| pane.legend_collapsed),
+                time_legend_collapsed: tab.time_pane().is_some_and(|pane| pane.legend_collapsed),
             })
             .collect();
         let chrome = ui_state::SavedChrome {
@@ -4739,6 +4810,7 @@ impl QuantickApp {
             self.tabs[target].restore_canvas(
                 CanvasLayout::from(saved.layout),
                 saved.split_fraction,
+                saved.context_collapsed,
                 focus,
                 time_interval,
                 LegendFold {
@@ -5083,10 +5155,13 @@ impl QuantickApp {
             }
         }
         for tab in &mut self.tabs {
-            strip(&mut tab.flow_pane);
-            // Not `pane_mut(Time)`: that falls back to the flow pane when a
-            // tab was never split, which would strip it twice.
-            if let Some(pane) = tab.time_pane.as_mut() {
+            // Every pane the tab holds, not the two it used to. `panes_mut`
+            // rather than `pane_mut(Time)`: the latter falls back to the flow
+            // pane when a tab was never split, which would strip it twice, and
+            // it stops at the *first* context chart — so the second stacked
+            // chart kept its indicators while `slot_kinds` was cleared out from
+            // under them, and the imported set stacked on top.
+            for pane in tab.panes_mut() {
                 strip(pane);
             }
         }
@@ -5506,6 +5581,7 @@ impl QuantickApp {
             self.tabs[opened].restore_canvas(
                 CanvasLayout::from(saved.layout),
                 saved.split_fraction,
+                saved.context_collapsed,
                 saved.focus.map(Into::into),
                 time_interval,
                 LegendFold {
@@ -5850,7 +5926,7 @@ impl QuantickApp {
             scale = scale,
             native_scale = native_scale,
             zoom_factor = zoom,
-            time_pane_spec = self.active_tab().time_pane.as_ref().map(|pane| pane.state.spec().summary()),
+            time_pane_spec = self.active_tab().time_pane().map(|pane| pane.state.spec().summary()),
             // Drawings are a per-frame, O(objects) paint cost, and the shared
             // ones are additionally reprojected on every other pane of the
             // tab. Counting them here is what lets a frame-cost reading be
@@ -5859,14 +5935,12 @@ impl QuantickApp {
             drawings = self.active_tab().flow_pane.drawings.items().len()
                 + self
                     .active_tab()
-                    .time_pane
-                    .as_ref()
+                    .time_pane()
                     .map_or(0, |pane| pane.drawings.items().len()),
             shared_drawings = self.active_tab().flow_pane.drawings.shared_count()
                 + self
                     .active_tab()
-                    .time_pane
-                    .as_ref()
+                    .time_pane()
                     .map_or(0, |pane| pane.drawings.shared_count()),
             book_enabled = book.enabled,
             book_status = book.status,
@@ -6070,6 +6144,43 @@ impl QuantickApp {
 const REPLAY_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::R);
 /// Shows/hides the panels dock (§10).
+/// `Ctrl+1` … `Ctrl+9` apply the layout registry's presets, in table order.
+///
+/// The keys are listed; which preset each one reaches is not. A preset added
+/// to `LAYOUT_PRESETS` gets its shortcut from its position without this array
+/// or its dispatch being edited — the same rule the picker and the View menu
+/// follow. Nine is what a number row has; `MAX_CANVAS_PANES` keeps the
+/// registry far below that.
+const LAYOUT_PRESET_KEYS: [egui::Key; 9] = [
+    egui::Key::Num1,
+    egui::Key::Num2,
+    egui::Key::Num3,
+    egui::Key::Num4,
+    egui::Key::Num5,
+    egui::Key::Num6,
+    egui::Key::Num7,
+    egui::Key::Num8,
+    egui::Key::Num9,
+];
+
+/// The shortcut that reaches the preset at `index` in the registry, if a
+/// number key still reaches that far.
+fn layout_preset_shortcut(index: usize) -> Option<egui::KeyboardShortcut> {
+    LAYOUT_PRESET_KEYS
+        .get(index)
+        .map(|key| egui::KeyboardShortcut::new(egui::Modifiers::CTRL, *key))
+}
+
+/// `Ctrl+0` puts the context charts away, or brings them back.
+///
+/// The number row's own zero, beside `Ctrl+1..9` for the presets: nine keys
+/// choose an arrangement and the tenth dismisses the column that arrangement
+/// put beside the heatmap. Without it the only way to collapse was a drag,
+/// which a trader working by keyboard cannot make and which WCAG 2.2's
+/// dragging rule wants an alternative to besides.
+const COLLAPSE_CONTEXT_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Num0);
+
 const DOCK_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::B);
 /// Folds the focused pane's on-chart indicator legend to its count puck, or
@@ -6135,6 +6246,29 @@ impl QuantickApp {
         }
         if ctx.input_mut(|i| i.consume_shortcut(&DOCK_SHORTCUT)) {
             self.dock.toggle_visible();
+        }
+        // Gated on the same condition the View menu's entry is gated on: only
+        // a layout that carves a context column *beside* the flow pane has a
+        // column to put away. Ungated, `Ctrl+0` on the Flow or Timeframe
+        // layout set a flag nothing drew — and swallowed the key besides, so
+        // egui's own "reset zoom" never ran.
+        if self.active_tab().layout.shows_time()
+            && self.active_tab().layout.shows_flow()
+            && ctx.input_mut(|i| i.consume_shortcut(&COLLAPSE_CONTEXT_SHORTCUT))
+        {
+            let collapsed = self.active_tab().context_collapsed;
+            self.active_tab_mut().set_context_collapsed(!collapsed);
+        }
+        // Layout by number, straight off the registry. The same
+        // `apply_layout_preset` the picker and the menu call — three doors,
+        // one room.
+        for (index, preset) in crate::canvas_layout::LAYOUT_PRESETS.iter().enumerate() {
+            let Some(shortcut) = layout_preset_shortcut(index) else {
+                break;
+            };
+            if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
+                self.apply_layout_preset(preset);
+            }
         }
         if ctx.input_mut(|i| i.consume_shortcut(&LEGEND_SHORTCUT)) {
             let collapsed = self.focused_legend_collapsed();
@@ -6235,20 +6369,88 @@ impl QuantickApp {
                         // entry names the charts it shows — "Timeframe", not
                         // layout jargon (audit §3).
                         ui.menu_button("Layout", |ui| {
-                            for (layout, label) in [
-                                (CanvasLayout::Single, "Flow"),
-                                (CanvasLayout::Time, "Timeframe"),
-                                (CanvasLayout::TimeAndFlow, "Timeframe + Flow"),
-                            ] {
+                            // Read from the registry, like the picker: a menu
+                            // holding its own list of layouts is the second
+                            // opinion that goes stale the day one is added.
+                            let current = self.active_tab().layout.preset();
+                            for (index, preset) in
+                                crate::canvas_layout::LAYOUT_PRESETS.iter().enumerate()
+                            {
+                                // The menu is where a shortcut is learned, so
+                                // it carries the binding beside the name.
+                                let label = match layout_preset_shortcut(index) {
+                                    Some(shortcut) => format!(
+                                        "{}	{}",
+                                        preset.label,
+                                        ui.ctx().format_shortcut(&shortcut)
+                                    ),
+                                    None => preset.label.to_owned(),
+                                };
                                 if ui
-                                    .selectable_label(self.active_tab().layout == layout, label)
+                                    .selectable_label(current.id == preset.id, label)
                                     .clicked()
                                 {
-                                    self.active_tab_mut().set_layout(layout);
+                                    self.apply_layout_preset(preset);
                                     ui.close_menu();
                                 }
                             }
                         });
+                        // Collapsing was drag-only, which a trader working
+                        // by keyboard could not do at all — while the
+                        // assistant had `layout.pane.collapse`. Same call,
+                        // three doors.
+                        if self.active_tab().layout.shows_time()
+                            && self.active_tab().layout.shows_flow()
+                        {
+                            let collapsed = self.active_tab().context_collapsed;
+                            let label = if collapsed {
+                                "Show context charts"
+                            } else {
+                                "Hide context charts"
+                            };
+                            if ui
+                                .add(
+                                    egui::Button::new(label).shortcut_text(
+                                        ui.ctx().format_shortcut(&COLLAPSE_CONTEXT_SHORTCUT),
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                self.active_tab_mut().set_context_collapsed(!collapsed);
+                                ui.close_menu();
+                            }
+                        }
+                        // Reposition without a drag. WCAG 2.2's dragging rule
+                        // wants a single-pointer alternative to every drag, and
+                        // TradingView — the reference the trader named — moves
+                        // charts by a menu command rather than by dragging at
+                        // all. Both go through `Tab::move_context_pane`.
+                        let context_panes = self.active_tab().pane_count().saturating_sub(1);
+                        if context_panes > 1 {
+                            ui.menu_button("Move chart", |ui| {
+                                for slot in 1..=context_panes {
+                                    let up = ui
+                                        .add_enabled(slot > 1, egui::Button::new(format!(
+                                            "Chart {slot} up"
+                                        )))
+                                        .on_disabled_hover_text("already the top chart");
+                                    if up.clicked() {
+                                        self.active_tab_mut().move_context_pane(slot, slot - 1);
+                                        ui.close_menu();
+                                    }
+                                    let down = ui
+                                        .add_enabled(
+                                            slot < context_panes,
+                                            egui::Button::new(format!("Chart {slot} down")),
+                                        )
+                                        .on_disabled_hover_text("already the bottom chart");
+                                    if down.clicked() {
+                                        self.active_tab_mut().move_context_pane(slot, slot + 1);
+                                        ui.close_menu();
+                                    }
+                                }
+                            });
+                        }
                         ui.separator();
                         let panels_label = if self.dock.visible() {
                             "Hide panels"
@@ -6275,8 +6477,7 @@ impl QuantickApp {
                         // and a trader reading "Collapse indicator legend"
                         // over two charts has no way to know which corner is
                         // about to change.
-                        let split = self.active_tab().layout == CanvasLayout::TimeAndFlow
-                            && self.active_tab().time_pane.is_some();
+                        let split = self.active_tab().shows_context_charts();
                         let pane_name = match self.active_tab().focused_side() {
                             PaneSide::Flow => "Flow",
                             PaneSide::Time => "Timeframe",
@@ -9844,7 +10045,7 @@ impl QuantickApp {
         // only honest option here: a stress scene photographed on the tape
         // pane would be a picture of twenty bars captioned as twenty-five
         // thousand.
-        if stress && self.active_tab_mut().time_pane.is_none() {
+        if stress && self.active_tab_mut().time_panes.is_empty() {
             return;
         }
         let slots = self.active_tab_mut().pane_mut(side).slots();
@@ -10393,10 +10594,11 @@ impl QuantickApp {
             tabs,
             config,
             style,
+            pane_ids,
             ..
         } = self;
         for tab in tabs.iter_mut() {
-            tab.apply_pending_layout(config, style);
+            tab.apply_pending_layout(config, style, pane_ids);
         }
         self.active_tab_mut().apply_spec_changes();
         self.draw_style_panel(ctx, now);
@@ -10717,11 +10919,12 @@ mod tests {
 
     use quantick_feed_binance::depth::DepthEvent;
 
+    use crate::canvas_layout::CANVAS_DIVIDER_PX;
     use crate::config::{AppConfig, FeedCapabilities, FeedConfig, ProviderKind};
     use crate::drawings::{ChartPoint, PresetHost};
     use crate::feed::{FeedConnectionState, FeedEvent, FeedNotice};
+    use crate::pane::DEFAULT_PANE_FRACTION;
     use crate::pane::DrawingDrag;
-    use crate::pane::{CANVAS_DIVIDER_PX, DEFAULT_PANE_FRACTION, MIN_PANE_FRACTION};
     use crate::tab::BOOK_GENERATION_STRIDE;
     use crate::time_header;
 
@@ -12029,6 +12232,7 @@ mod tests {
                     symbol: "TESTUSDT".to_owned(),
                     layout: crate::config::DeclaredLayout::Flow,
                     split_fraction: None,
+                    context_collapsed: false,
                     focus: None,
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
@@ -13406,8 +13610,7 @@ plot(close)
         run_frame(&mut app, &ctx);
         let time = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("the split is what this proof is about");
         assert!(
             time.footprint_visible,
@@ -17329,7 +17532,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
         assert!(
-            app.active_tab().time_pane.is_some(),
+            app.active_tab().has_time_pane(),
             "the split is what this proof is about"
         );
 
@@ -17405,8 +17608,7 @@ crosshair = false
         // below silently does nothing.
         let pane = app
             .active_tab_mut()
-            .time_pane
-            .as_mut()
+            .time_pane_mut()
             .expect("two frames is enough for the deferred layout to build it");
         pane.kind = crate::state::BarKind::Time;
         pane.time_interval_ms = 1_000;
@@ -17416,8 +17618,7 @@ crosshair = false
         run_frame(&mut app, ctx);
         assert!(
             app.active_tab()
-                .time_pane
-                .as_ref()
+                .time_pane()
                 .is_some_and(|pane| pane.slots() > 5),
             "the time pane must hold a real series, or these tests pass on a              gesture that never reached a bar"
         );
@@ -17464,8 +17665,7 @@ crosshair = false
     fn time_pane_projection(app: &QuantickApp) -> (egui::Rect, PriceScale) {
         let time_pane = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("the split built a time pane");
         let chart = time_pane.last_chart_area.expect("the time pane drew");
         let (lo, hi) = time_pane
@@ -17578,8 +17778,7 @@ crosshair = false
         let (mut app, _commands, on_the_time_pane) = split_with_a_shared_line(&ctx);
         let time_pane = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("the split built a time pane");
         let before = time_pane.viewport.right_edge_bar(time_pane.slots());
 
@@ -17592,8 +17791,7 @@ crosshair = false
 
         let time_pane = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("the split built a time pane");
         assert_eq!(
             time_pane.viewport.right_edge_bar(time_pane.slots()),
@@ -20954,8 +21152,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
         let time_pane = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("the split built a time pane");
         assert!(
             time_pane.price_view.is_inverted(),
@@ -21211,8 +21408,7 @@ crosshair = false
 
         let plot = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("the split has a time pane")
             .last_plot_area
             .expect("laid out by the frames above");
@@ -21256,8 +21452,7 @@ crosshair = false
 
     fn time_zoom(app: &QuantickApp) -> f32 {
         app.active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("time pane")
             .viewport
             .px_per_bar()
@@ -22043,8 +22238,7 @@ crosshair = false
 
         let time = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("Time + Flow builds the time pane")
             .last_chart_area
             .expect("the time pane was laid out");
@@ -22095,7 +22289,7 @@ crosshair = false
 
         app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
         assert!(
-            app.active_tab().time_pane.is_none(),
+            app.active_tab().time_panes.is_empty(),
             "the frame carrying the change does no work"
         );
         assert!(
@@ -22107,8 +22301,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
         let time = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("the next frame builds it");
         assert!(
             !time.state.trades().is_empty(),
@@ -22175,7 +22368,7 @@ crosshair = false
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 200);
 
-        let time = app.active_tab().time_pane.as_ref().expect("time pane");
+        let time = app.active_tab().time_pane().expect("time pane");
         assert_eq!(
             time.state.trades().len(),
             app.active_tab().flow_pane.state.trades().len(),
@@ -22191,8 +22384,7 @@ crosshair = false
         let flow_before = app.active_tab().flow_pane.state.trades().len();
         let time_before = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("time pane")
             .state
             .trades()
@@ -22206,8 +22398,7 @@ crosshair = false
         );
         assert_eq!(
             app.active_tab()
-                .time_pane
-                .as_ref()
+                .time_pane()
                 .expect("time pane")
                 .state
                 .trades()
@@ -22235,7 +22426,7 @@ crosshair = false
         // `enabling_the_split_paints_before_it_seeds`.
         run_frame(&mut app, &ctx);
 
-        let time = app.active_tab().time_pane.as_ref().expect("time pane");
+        let time = app.active_tab().time_pane().expect("time pane");
         assert_eq!(
             time.state.trades().len(),
             103,
@@ -22295,7 +22486,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
 
         let tab = app.active_tab();
-        let time = tab.time_pane.as_ref().expect("the pane was built");
+        let time = tab.time_pane().expect("the pane was built");
         assert_eq!(
             time.state.trades().len(),
             200,
@@ -22382,6 +22573,7 @@ crosshair = false
                 symbol: "TESTUSDT".to_owned(),
                 layout: crate::config::DeclaredLayout::TimeAndFlow,
                 split_fraction: Some(0.4),
+                context_collapsed: false,
                 focus: Some(ui_state::SavedFocus::Flow),
                 flow_bars: "dollar:250000".to_owned(),
                 time_bars: Some("time:5m".to_owned()),
@@ -22417,7 +22609,7 @@ crosshair = false
             "the flow pane opens on the rule the workspace recorded"
         );
         assert_eq!(
-            tab.time_pane.as_ref().map(|pane| pane.state.spec().clone()),
+            tab.time_pane().map(|pane| pane.state.spec().clone()),
             Some(BarSpec::Time(300_000)),
             "and the time pane on its saved interval, not the header default"
         );
@@ -22471,6 +22663,7 @@ crosshair = false
                 symbol: "TESTUSDT".to_owned(),
                 layout: crate::config::DeclaredLayout::TimeAndFlow,
                 split_fraction: Some(0.5),
+                context_collapsed: false,
                 focus: Some(ui_state::SavedFocus::Flow),
                 flow_bars: "tick:50".to_owned(),
                 time_bars: Some("time:1m".to_owned()),
@@ -22488,8 +22681,7 @@ crosshair = false
             "the flow pane reopens folded"
         );
         assert!(
-            tab.time_pane
-                .as_ref()
+            tab.time_pane()
                 .expect("the split was restored")
                 .legend_collapsed,
             "and so does the time pane, built a frame after the restore"
@@ -22517,6 +22709,7 @@ crosshair = false
                 symbol: "TESTUSDT".to_owned(),
                 layout: crate::config::DeclaredLayout::Flow,
                 split_fraction: None,
+                context_collapsed: false,
                 focus: None,
                 flow_bars: "tick:377".to_owned(),
                 time_bars: None,
@@ -23319,8 +23512,7 @@ crosshair = false
 
         assert_eq!(
             app.active_tab()
-                .time_pane
-                .as_ref()
+                .time_pane()
                 .expect("time pane")
                 .state
                 .spec(),
@@ -23381,8 +23573,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
         assert_eq!(
             app.active_tab()
-                .time_pane
-                .as_ref()
+                .time_pane()
                 .expect("built the frame after startup")
                 .state
                 .spec(),
@@ -23461,7 +23652,7 @@ crosshair = false
         app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
         settle_indicators(&mut app);
 
-        let time = app.active_tab().time_pane.as_ref().expect("time pane");
+        let time = app.active_tab().time_pane().expect("time pane");
         assert_eq!(
             time.indicators.all().len(),
             1,
@@ -23703,8 +23894,7 @@ crosshair = false
         settle_indicators(&mut app);
         let slot = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("time pane")
             .indicators
             .all()[0]
@@ -23722,8 +23912,7 @@ crosshair = false
         app.toggle_indicator_hidden_at(target);
         assert!(
             app.active_tab()
-                .time_pane
-                .as_ref()
+                .time_pane()
                 .expect("time pane")
                 .indicators
                 .all()[0]
@@ -23757,8 +23946,7 @@ crosshair = false
         assert_eq!(app.slot_kinds.len(), 2);
         let time_slot = app
             .active_tab()
-            .time_pane
-            .as_ref()
+            .time_pane()
             .expect("time pane")
             .indicators
             .all()[0]
@@ -23792,7 +23980,7 @@ crosshair = false
         app.apply_toolbar_action(ToolbarAction::SetBubbles(true));
         run_frame(&mut app, &ctx);
 
-        let time = app.active_tab().time_pane.as_ref().expect("time pane");
+        let time = app.active_tab().time_pane().expect("time pane");
         assert!(
             time.orderflow.is_none(),
             "no tape means no book worker behind it"
@@ -23857,18 +24045,83 @@ crosshair = false
             drag_chart(&mut app, &ctx, grab, egui::pos2(grab.x + 400.0, grab.y));
             run_frame(&mut app, &ctx);
         }
+        // Asserted on what is *drawn*, not on the stored share. The floor
+        // moved: it is a width in pixels applied by the splitter every frame,
+        // rather than a quarter of the canvas held on the field. A trader is
+        // promised a readable flow pane, not a particular fraction, and the
+        // fraction was the wrong thing to pin — holding it as a second floor
+        // is what made collapse-by-drag unreachable.
+        let flow_width = app
+            .active_tab()
+            .flow_pane
+            .last_chart_area
+            .expect("laid out")
+            .width();
+        // "Stops at the minimum" is the claim, so the test is that it stops:
+        // shove it further still and the pane must not move. Asserted this way
+        // rather than against the floor in pixels, because the floor governs
+        // the *pane* while the only rect a test can read is the chart inside
+        // it — the price axis and the tape both take a slice first, and a test
+        // that re-derives their widths is a second copy of the layout.
+        let settled = flow_width;
+        for _ in 0..4 {
+            let grab = app
+                .active_tab()
+                .canvas_divider_rect()
+                .expect("registered")
+                .center();
+            drag_chart(&mut app, &ctx, grab, egui::pos2(grab.x + 400.0, grab.y));
+            run_frame(&mut app, &ctx);
+        }
+        let after = app
+            .active_tab()
+            .flow_pane
+            .last_chart_area
+            .expect("laid out")
+            .width();
         assert!(
-            (app.active_tab().split_fraction - (1.0 - MIN_PANE_FRACTION)).abs() < 1e-3,
-            "the flow pane keeps its quarter, got {}",
-            app.active_tab().split_fraction
+            (after - settled).abs() < 1.0,
+            "the flow pane kept shrinking past its floor: {settled}px then {after}px"
         );
+        assert!(after > 0.0, "the flow pane was squeezed away entirely");
+    }
+
+    /// Collapse has to be reachable by the hand that asks for it.
+    ///
+    /// The rail was verified through `QUANTICK_PANE_COLLAPSED`, which sets the
+    /// flag directly and proves only that the rail *renders*. The gesture was
+    /// unreachable: `split_fraction` was re-floored to a quarter of the canvas
+    /// every frame, so a drag restarted at ~400px each time and crossing the
+    /// 120px threshold needed one impossible frame. A capability a trader
+    /// cannot reach is not a capability, so this drives the divider the way a
+    /// hand does — repeatedly, leftward — and asserts the column gives way.
+    #[test]
+    fn dragging_the_divider_to_the_edge_collapses_the_column() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
         assert!(
-            app.active_tab()
-                .flow_pane
-                .last_chart_area
-                .expect("laid out")
-                .width()
-                > 0.0
+            !app.active_tab().context_collapsed,
+            "the split opens with its context column shown"
+        );
+
+        for _ in 0..8 {
+            let Some(divider) = app.active_tab().canvas_divider_rect() else {
+                break;
+            };
+            let grab = divider.center();
+            drag_chart(&mut app, &ctx, grab, egui::pos2(grab.x - 400.0, grab.y));
+            run_frame(&mut app, &ctx);
+        }
+
+        assert!(
+            app.active_tab().context_collapsed,
+            "dragging the divider to the edge must dismiss the column, not              stall against a floor the gesture can never cross"
+        );
+        // And the width it springs back to survived the gesture that put it
+        // away, which is the whole promise of the rail.
+        assert!(
+            app.active_tab().split_fraction > 0.0,
+            "the collapse spent the width it was meant to remember"
         );
     }
 
@@ -24078,7 +24331,7 @@ crosshair = false
 
         assert_eq!(app.active_tab().layout, CanvasLayout::Single);
         assert!(
-            app.active_tab().time_pane.is_none(),
+            app.active_tab().time_panes.is_empty(),
             "an unsplit canvas builds no second pane, and no worker behind it"
         );
         let chart = app
@@ -31810,14 +32063,22 @@ plot(close)
             9 + crate::control::registered_action_count()
         );
         // Every observe-effect capability is read-only; everything else is an
-        // action of the annotate tier — discoverable to any client, reachable
-        // only under a profile the trader granted.
+        // action of a write tier — discoverable to any client, reachable only
+        // under a profile the trader granted.
+        //
+        // The list of write tiers is named rather than open on purpose. A
+        // capability arriving under an effect nobody added here is a capability
+        // whose consent text nobody wrote, and the trader has no surface on
+        // which to find it. Adding an effect is a deliberate act, and this is
+        // where it is acknowledged.
         for capability in capabilities {
             if capability["effect"] == "observe" {
                 assert_eq!(capability["read_only"], true, "{}", capability["id"]);
             } else {
                 assert!(
-                    capability["effect"] == "annotate" || capability["effect"] == "notify",
+                    capability["effect"] == "annotate"
+                        || capability["effect"] == "notify"
+                        || capability["effect"] == "cockpit",
                     "{} has an unexpected effect {}",
                     capability["id"],
                     capability["effect"]

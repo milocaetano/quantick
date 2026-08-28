@@ -34,6 +34,7 @@ pub(crate) enum CanvasLayoutDto {
     Flow,
     Time,
     TimeAndFlow,
+    TimeTimeAndFlow,
 }
 
 impl From<CanvasLayout> for CanvasLayoutDto {
@@ -42,6 +43,7 @@ impl From<CanvasLayout> for CanvasLayoutDto {
             CanvasLayout::Single => Self::Flow,
             CanvasLayout::Time => Self::Time,
             CanvasLayout::TimeAndFlow => Self::TimeAndFlow,
+            CanvasLayout::TimeTimeAndFlow => Self::TimeTimeAndFlow,
         }
     }
 }
@@ -134,7 +136,7 @@ pub(crate) fn unavailable(reason: &str) -> AvailabilitySnapshot {
 pub(crate) fn visible_panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {
     let mut panes = Vec::with_capacity(MAX_PANES_PER_TAB);
     if tab.layout.shows_time()
-        && let Some(time) = &tab.time_pane
+        && let Some(time) = tab.time_pane()
     {
         panes.push((time, PaneSide::Time));
     }

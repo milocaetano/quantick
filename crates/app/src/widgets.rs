@@ -34,7 +34,7 @@ pub const TOOLRAIL_ICON: IconSize = IconSize {
 /// Opacity of a disabled glyph.
 const DISABLED_OPACITY: f32 = 0.4;
 /// Corner radius of the hover/active backdrop.
-const CORNER_RADIUS: f32 = 4.0;
+pub(crate) const CORNER_RADIUS: f32 = 4.0;
 /// Thickness of the accent bar hugging an armed button's outer edge.
 pub const ACTIVE_MARKER_WIDTH_PX: f32 = 2.0;
 /// Inset of the accent bar from both ends of the button edge it hugs.

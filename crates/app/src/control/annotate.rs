@@ -525,7 +525,7 @@ fn annotated_panes(app: &QuantickApp) -> Vec<(usize, crate::pane::PaneSide)> {
     let mut panes = Vec::new();
     for index in 0..app.control_tabs().len() {
         panes.push((index, crate::pane::PaneSide::Flow));
-        if app.control_tabs()[index].time_pane.is_some() {
+        if app.control_tabs()[index].has_time_pane() {
             panes.push((index, crate::pane::PaneSide::Time));
         }
     }
@@ -581,7 +581,7 @@ fn resolve_target(
         None => tab.drawing_side(),
         Some(PaneSideDto::Flow) => crate::pane::PaneSide::Flow,
         Some(PaneSideDto::Time) => {
-            if tab.time_pane.is_none() {
+            if tab.time_panes.is_empty() {
                 return Err(capability_unavailable("that tab has no time pane open"));
             }
             crate::pane::PaneSide::Time

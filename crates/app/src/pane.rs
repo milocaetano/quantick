@@ -179,28 +179,18 @@ impl PaneSide {
     }
 }
 
-/// Width of the draggable divider between the two panes, in pixels.
-pub const CANVAS_DIVIDER_PX: f32 = 4.0;
 /// Half-width of the divider's grab area, which reaches a little into both
 /// panes so the handle is catchable without widening the rule itself.
 pub const CANVAS_DIVIDER_HANDLE_PX: f32 = 5.0;
-/// Neither pane may be squeezed below this share of the canvas (§11).
-pub const MIN_PANE_FRACTION: f32 = 0.25;
-/// Where the divider sits when the split is first shown (§11).
-pub const DEFAULT_PANE_FRACTION: f32 = 0.5;
 
-/// The canvas carved for the Time + Flow layout.
+/// Where the divider sits when the split is first shown.
 ///
-/// A named shape rather than three rects, because a caller should not have to
-/// remember that the middle one is the divider.
-pub struct CanvasAreas {
-    /// The time pane, header included.
-    pub time: egui::Rect,
-    /// The draggable rule between them; belongs to neither pane.
-    pub divider: egui::Rect,
-    /// The flow pane.
-    pub flow: egui::Rect,
-}
+/// Roughly a third to the context pane, the rest to the flow pane. An even
+/// split says the two charts matter equally, and in quantick they do not: the
+/// heatmap is what the product is for, and the timeframe chart beside it is
+/// context. The opening canvas should say so before the trader touches
+/// anything — a default is an argument about what matters.
+pub const DEFAULT_PANE_FRACTION: f32 = 0.35;
 
 /// A time pane's area, split into the strip its selector sits in and the
 /// chart below it.
@@ -209,31 +199,23 @@ pub struct TimePaneAreas {
     pub chart: egui::Rect,
 }
 
-/// Split the canvas for the Time + Flow layout: **time pane left, flow pane
-/// right**, with the divider's own strip between them (§11).
+/// Hold a stored split inside the canvas.
 ///
-/// `time_fraction` is the time pane's share of the width, clamped so neither
-/// pane can be squeezed below [`MIN_PANE_FRACTION`] — a pane too narrow to
-/// read is not a layout, it is a lost pane.
-#[must_use]
-pub fn split_canvas(area: egui::Rect, time_fraction: f32) -> CanvasAreas {
-    let fraction = clamp_pane_fraction(time_fraction);
-    let divider_x = area.left() + area.width() * fraction;
-    let half = CANVAS_DIVIDER_PX / 2.0;
-    CanvasAreas {
-        time: egui::Rect::from_min_max(area.min, egui::pos2(divider_x - half, area.bottom())),
-        divider: egui::Rect::from_min_max(
-            egui::pos2(divider_x - half, area.top()),
-            egui::pos2(divider_x + half, area.bottom()),
-        ),
-        flow: egui::Rect::from_min_max(egui::pos2(divider_x + half, area.top()), area.max),
-    }
-}
-
-/// Hold a canvas split inside the 25% minimum each pane is promised (§11).
+/// A sanity clamp, not a floor. The floor is
+/// [`canvas_layout::MIN_PANE_WIDTH_PX`], and it is applied where the canvas
+/// width is known — inside the splitter, on every frame, for every pane.
+/// Holding a *second* floor here as a share of the canvas is what made
+/// collapse-by-drag unreachable: the share (a quarter) always bound before the
+/// width (120 px) could, so a drag restarted at 400 px of a 1600 px canvas
+/// every frame and could never travel far enough in one to dismiss the column.
+/// One floor, one owner, and it is the one that knows how wide the canvas is.
 #[must_use]
 pub fn clamp_pane_fraction(fraction: f32) -> f32 {
-    fraction.clamp(MIN_PANE_FRACTION, 1.0 - MIN_PANE_FRACTION)
+    if fraction.is_finite() {
+        fraction.clamp(0.0, 1.0)
+    } else {
+        DEFAULT_PANE_FRACTION
+    }
 }
 
 /// Carve the time pane's header strip off the top of its area (§11); the rest
@@ -709,6 +691,13 @@ pub enum SharedEdit {
 /// A shared mark under the pointer, as the tab resolved it for one pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SharedPick {
+    /// Which pane's store holds it, as a [`PaneIndex`].
+    ///
+    /// Explicit rather than "the other pane": with a context stack beside the
+    /// flow pane there is more than one other, and a mark shared across three
+    /// panes has two panes mirroring it. An edit that guessed its owner would
+    /// land on whichever chart the guess named.
+    pub owner: PaneIndex,
     /// Its index in the owning pane's store.
     pub index: usize,
     /// Which handle was grabbed, or `None` for the body.
@@ -754,6 +743,13 @@ pub(crate) struct ControlPointerHit {
 /// chart gets, because it is the same gesture on the same object.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SharedInteraction {
+    /// The pane whose store this lands on.
+    ///
+    /// Carried rather than recomputed: a drag outlives the pick that started
+    /// it — `commit_gesture` fires on release, by which time the pointer may
+    /// be nowhere near the mark — so the owner is remembered with the gesture
+    /// or it is lost exactly when it is needed.
+    pub owner: Option<PaneIndex>,
     pub edit: Option<SharedEdit>,
     pub begin_gesture: bool,
     pub commit_gesture: bool,
@@ -787,6 +783,14 @@ struct SharedPointer {
     total: usize,
     magnet: bool,
 }
+
+/// Where a pane sits in its tab: `0` is the flow pane, `1..` the context
+/// stack, top to bottom.
+///
+/// An address, never a position on screen — the context stack is drawn left of
+/// the flow pane, and a reader who took this for a left-to-right order would
+/// mirror every edit.
+pub type PaneIndex = usize;
 
 /// A gesture a pane is running on another pane's mark.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1175,6 +1179,9 @@ pub struct ChartPane {
     /// drag threshold is still unmet, and the market instant and price the
     /// pointer was last over — what a body drag sends its deltas against.
     shared_drag: SharedDrag,
+    /// The pane whose mark [`Self::shared_drag`] is moving, for as long as it
+    /// is moving it.
+    shared_drag_owner: Option<PaneIndex>,
     shared_drag_pending_from: Option<egui::Pos2>,
     shared_pointer_mark: Option<(i64, f64)>,
     /// A re-anchor owed to the drawings, holding the slot count of the series
@@ -1311,6 +1318,7 @@ impl ChartPane {
             drawing_drag_pending_from: None,
             drawing_drag: DrawingDrag::None,
             shared_drag: SharedDrag::None,
+            shared_drag_owner: None,
             shared_drag_pending_from: None,
             shared_pointer_mark: None,
             pending_reanchor: None,
@@ -3131,7 +3139,9 @@ impl ChartPane {
         {
             // Selecting is not moving (§D9): the press takes the object
             // whether or not the drag that may follow is allowed.
+            chrome.shared.owner = Some(pick.owner);
             chrome.shared.edit = Some(SharedEdit::Select(pick.index));
+            self.shared_drag_owner = Some(pick.owner);
             self.shared_drag_pending_from = Some(position);
             self.shared_pointer_mark = mark(self, position);
             self.shared_drag = if pick.locked {
@@ -3168,8 +3178,10 @@ impl ChartPane {
         }
 
         if pointer.released {
+            chrome.shared.owner = self.shared_drag_owner;
             chrome.shared.commit_gesture = true;
             self.shared_drag = SharedDrag::None;
+            self.shared_drag_owner = None;
             self.shared_drag_pending_from = None;
             self.shared_pointer_mark = None;
             return;
@@ -3205,6 +3217,9 @@ impl ChartPane {
         let Some((time_ms, price)) = mark(self, position) else {
             return;
         };
+        // Every edit this gesture emits belongs to the pane the gesture took
+        // hold of, whatever the pointer is over now.
+        chrome.shared.owner = self.shared_drag_owner;
         match self.shared_drag {
             SharedDrag::Anchor { index, anchor } => {
                 chrome.shared.edit = Some(SharedEdit::MoveAnchor {
@@ -8757,62 +8772,6 @@ mod tests {
         assert_eq!(chip.width(), LIVE_CHIP_WIDTH_PX);
         assert_eq!(chip.top(), strip.top() + LIVE_CHIP_VPAD_PX);
         assert_eq!(chip.bottom(), strip.bottom() - LIVE_CHIP_VPAD_PX);
-    }
-
-    /// Time pane left, flow pane right, on a divider that costs both of them
-    /// nothing but its own width (§11).
-    #[test]
-    fn the_canvas_splits_time_left_flow_right_at_the_divider() {
-        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
-
-        let areas = split_canvas(area, 0.5);
-        assert!(
-            areas.time.right() <= areas.flow.left(),
-            "time is the left pane"
-        );
-        assert_eq!(areas.time.right(), areas.divider.left());
-        assert_eq!(areas.divider.right(), areas.flow.left());
-        assert_eq!(areas.divider.width(), CANVAS_DIVIDER_PX);
-        assert_eq!(areas.time.left(), area.left());
-        assert_eq!(areas.flow.right(), area.right());
-        assert_eq!(
-            areas.time.width() + areas.divider.width() + areas.flow.width(),
-            area.width(),
-            "the split spends the canvas exactly once"
-        );
-        // Both panes keep the full height: the split is vertical only.
-        assert_eq!(areas.time.top(), area.top());
-        assert_eq!(areas.flow.bottom(), area.bottom());
-    }
-
-    /// A pane too narrow to read is not a layout, it is a lost pane. §11
-    /// promises each of them a quarter of the canvas, whatever the drag says.
-    #[test]
-    fn neither_pane_can_be_dragged_below_a_quarter_of_the_canvas() {
-        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 600.0));
-
-        for (asked, expected) in [
-            (-3.0, 0.25),
-            (0.0, 0.25),
-            (0.1, 0.25),
-            (0.9, 0.75),
-            (7.0, 0.75),
-        ] {
-            let areas = split_canvas(area, asked);
-            // The divider sits *on* the split, so compare where the split is
-            // rather than a pane width that has half a divider taken out of it.
-            let split = (areas.divider.center().x - area.left()) / area.width();
-            assert!(
-                (split - expected).abs() < 1e-3,
-                "asking for {asked} must clamp to {expected}, got {split}"
-            );
-            let floor = area.width() * MIN_PANE_FRACTION - CANVAS_DIVIDER_PX;
-            assert!(
-                areas.time.width() >= floor,
-                "the time pane keeps its quarter"
-            );
-            assert!(areas.flow.width() >= floor, "and so does the flow pane");
-        }
     }
 
     /// The header is a strip carved off the pane, not an overlay: the selector

@@ -244,7 +244,7 @@ fn snapshot(app: &QuantickApp) -> ChartSnapshot {
             tab_index == active && focused == PaneSide::Flow,
             config,
         ));
-        if let Some(time) = &tab.time_pane {
+        if let Some(time) = tab.time_pane() {
             panes.push(pane_snapshot(
                 tab,
                 time,
@@ -480,8 +480,7 @@ pub(crate) fn chart_window_prevalidated(
     let (pane, side) = if tab.flow_pane.id == query.pane_id.get() {
         (&tab.flow_pane, PaneSide::Flow)
     } else if let Some(time) = tab
-        .time_pane
-        .as_ref()
+        .time_pane()
         .filter(|pane| pane.id == query.pane_id.get())
     {
         (time, PaneSide::Time)

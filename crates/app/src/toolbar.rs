@@ -207,6 +207,13 @@ pub struct ReplaySource {
 /// The toolbar's view of the app: fields it edits directly, and read-only
 /// context for gating and display.
 pub struct ToolbarModel<'a> {
+    /// The arrangement the canvas is showing, if it still matches a registered
+    /// preset. `None` marks a custom row and lights no cell.
+    pub layout_preset: Option<&'static crate::canvas_layout::LayoutPreset>,
+    /// Whether the layout popover is open.
+    pub layout_picker_open: &'a mut bool,
+    /// Open the layout popover this frame (the `QUANTICK_LAYOUT_PICKER` hook).
+    pub layout_picker_request_open: bool,
     /// `(id, display label)` for every configured feed.
     pub feeds: Vec<(String, String)>,
     /// The selected feed id.
@@ -325,6 +332,11 @@ pub struct IndicatorMenuEntry {
 /// A side effect the toolbar asks the app to perform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolbarAction {
+    /// Switch the canvas to a named arrangement from the layout registry.
+    ///
+    /// Carries the registry entry rather than a copy of its shape, so the
+    /// toolbar never holds a second opinion about what a layout contains.
+    SetLayout(&'static crate::canvas_layout::LayoutPreset),
     /// Fetch and prepend one page of older trades.
     LoadOlder,
     /// Fetch and prepend one more span of older venue candles.
@@ -421,6 +433,16 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                         if panels.clicked() {
                             actions.push(ToolbarAction::ToggleDock);
                         }
+                    }
+                    if let Some(preset) = crate::layout_picker::draw(
+                        ui,
+                        crate::layout_picker::PickerModel {
+                            current: model.layout_preset,
+                            open: model.layout_picker_open,
+                            request_open: model.layout_picker_request_open,
+                        },
+                    ) {
+                        actions.push(ToolbarAction::SetLayout(preset));
                     }
                     if plan.look_inline {
                         let look = IconButton::new(icons::PAINT_BRUSH, TOOLBAR_ICON)
@@ -1342,7 +1364,11 @@ mod tests {
         for replaying in [false, true] {
             for _ in 0..2 {
                 let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                    let mut layout_picker_open = false;
                     let mut model = ToolbarModel {
+                        layout_preset: None,
+                        layout_picker_open: &mut layout_picker_open,
+                        layout_picker_request_open: false,
                         feeds: vec![("binance".to_owned(), "Binance".to_owned())],
                         feed_id: &mut feed_id,
                         feed_display_name: "Binance".to_owned(),
@@ -1432,7 +1458,11 @@ mod tests {
         let mut painted = String::new();
         for _ in 0..2 {
             let output = ctx.run(input(), |ctx| {
+                let mut layout_picker_open = false;
                 let mut model = ToolbarModel {
+                    layout_preset: None,
+                    layout_picker_open: &mut layout_picker_open,
+                    layout_picker_request_open: false,
                     feeds: vec![("binance".to_owned(), "Binance".to_owned())],
                     feed_id: &mut feed_id,
                     feed_display_name: "Binance".to_owned(),
@@ -1506,7 +1536,11 @@ mod tests {
         for mut kind in BarKind::ALL {
             for _ in 0..2 {
                 let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                    let mut layout_picker_open = false;
                     let mut model = ToolbarModel {
+                        layout_preset: None,
+                        layout_picker_open: &mut layout_picker_open,
+                        layout_picker_request_open: false,
                         feeds: vec![("metatrader".to_owned(), "MetaTrader 5".to_owned())],
                         feed_id: &mut feed_id,
                         feed_display_name: "MetaTrader 5".to_owned(),
@@ -1575,7 +1609,11 @@ mod tests {
         };
         for _ in 0..2 {
             let output = ctx.run(input(), |ctx| {
+                let mut layout_picker_open = false;
                 let mut model = ToolbarModel {
+                    layout_preset: None,
+                    layout_picker_open: &mut layout_picker_open,
+                    layout_picker_request_open: false,
                     feeds: vec![("binance".to_owned(), "Binance".to_owned())],
                     feed_id: &mut feed_id,
                     feed_display_name: "Binance".to_owned(),

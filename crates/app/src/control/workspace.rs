@@ -111,7 +111,7 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
                     visible: active && tab.layout.shows_flow(),
                     focused: active && focused == PaneSide::Flow,
                 }];
-                if let Some(time) = &tab.time_pane {
+                if let Some(time) = tab.time_pane() {
                     panes.push(WorkspacePane {
                         pane_id: WireU64::new(time.id),
                         side: PaneSideDto::Time,
