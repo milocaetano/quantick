@@ -28,7 +28,7 @@ use crate::feed::{
     FeedNotice, MAX_REMEMBERED_GAPS, MIN_MARKED_GAP_MS, ReplayLink, past_resume_floor,
 };
 use crate::history_reach::{
-    Campaign, CampaignStep, EMPTY_PAGE_NOTICE, HistoryReach, REQUEST_REFUSED_NOTICE,
+    Campaign, CampaignEnd, CampaignStep, EMPTY_PAGE_NOTICE, HistoryReach, REQUEST_REFUSED_NOTICE,
 };
 use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
@@ -1002,8 +1002,7 @@ impl Tab {
         // The run belonged to the old session's tape; its reply is on a channel
         // about to be dropped, and whatever it had to say was about a record
         // this tab no longer shows.
-        self.campaign = None;
-        self.history_note = None;
+        self.abandon_history_run();
         self.loading.set_active(LoadingTask::VenueHistory, false);
         self.events = handle.events;
         self.book_events = handle.book_events;
@@ -2264,12 +2263,8 @@ impl Tab {
     /// arrived rather than the whole retained tape.
     fn settle_history_page(&mut self, page_len: usize) {
         let Some(mut campaign) = self.campaign.take() else {
-            // No run behind this page, so this reply is the whole of the
-            // press: the one-page reach, or a longer one that had no tape to
-            // page back from. An empty answer to it is the end of the matter,
-            // and before this it was as silent as a button that does nothing.
             if page_len == 0 {
-                self.raise_history_note(EMPTY_PAGE_NOTICE);
+                self.raise_history_note(self.empty_page_verdict());
             }
             return;
         };
@@ -2340,6 +2335,50 @@ impl Tab {
                 }
             }
         }
+    }
+
+    /// Why one page came back empty, in the words the run would have used.
+    ///
+    /// No campaign was behind this reply — the one-page reach, or a longer one
+    /// that had no tape to page back from — so nothing else is going to judge
+    /// it. It reads the same two facts [`Campaign::advance`] reads first, in
+    /// the same order, so the two paths cannot end up telling the trader
+    /// different stories about one empty block:
+    ///
+    /// - the feed having withdrawn paging is [`CampaignEnd::Exhausted`], not a
+    ///   request that happened to come back empty. Saying otherwise would
+    ///   leave a note about this request beside a button that has just greyed
+    ///   itself out, and the trader reading two accounts of one press.
+    /// - a chart with nothing on it is [`CampaignEnd::NothingCharted`]. The
+    ///   venue is not at fault for a press that had no anchor to reach back
+    ///   from, and blaming it there is the data-honesty rule broken in the
+    ///   trader's own words.
+    ///
+    /// Only what is left over is this reply's own: one empty answer, which is
+    /// not evidence that a record is spent.
+    fn empty_page_verdict(&self) -> &'static str {
+        if !self.feed_capabilities.borrow().history_paging {
+            return CampaignEnd::Exhausted.notice().unwrap_or(EMPTY_PAGE_NOTICE);
+        }
+        if self.flow_pane.state.trades().is_empty() {
+            return CampaignEnd::NothingCharted
+                .notice()
+                .unwrap_or(EMPTY_PAGE_NOTICE);
+        }
+        EMPTY_PAGE_NOTICE
+    }
+
+    /// Drop the run this tab was making and the verdict it produced.
+    ///
+    /// One call, because the two always travel together and always mean the
+    /// same thing: the run and everything it had to say belong to a tape this
+    /// tab no longer shows. Split across the three reset paths they were two
+    /// fields a fourth path could half-remember, and the half it forgot would
+    /// hang a sentence about the previous symbol's press over the new one's
+    /// chart.
+    fn abandon_history_run(&mut self) {
+        self.campaign = None;
+        self.history_note = None;
     }
 
     /// Put one sentence about the last press where the trader is looking.
@@ -3402,8 +3441,7 @@ impl Tab {
         // A run anchored to a tape that no longer exists cannot continue, and
         // `restart` below drops the waits its outstanding request would have
         // resolved. Its verdict goes with it.
-        self.campaign = None;
-        self.history_note = None;
+        self.abandon_history_run();
         self.latest_trade_latency_ms = None;
         self.latest_trade_ms = None;
         // The refill arrives as one backfill batch; keep the loading indicator

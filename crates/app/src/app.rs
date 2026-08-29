@@ -125,6 +125,19 @@ const ARM_DIALOG_MIN_BODY_PT: f32 = 200.0;
 /// hello and shorter than a person's patience with a frozen window.
 const LOAD_OLDER_HOOK_FRAMES: u32 = 600;
 
+/// Frames the `QUANTICK_HISTORY_NOTE` hook holds its sentence on screen for.
+///
+/// A *hold*, not a wait — which is why it is not
+/// [`LOAD_OLDER_HOOK_FRAMES`]: that one is sized against how long a bridge
+/// takes to say hello, and retuning it for bridge latency must not silently
+/// retune how long a capture has to photograph a note.
+///
+/// Comfortably past `tab::HISTORY_NOTE_LINGER`, so a run that waits out a
+/// slow source still finds the sentence up; the note keeps its ordinary
+/// linger from the last raise once the hold ends, so even a hooked run
+/// photographs a note that expires.
+const HISTORY_NOTE_HOOK_FRAMES: u32 = 900;
+
 /// Frames the `QUANTICK_LOAD_OLDER_CANDLES` hook has for the *whole* run.
 ///
 /// Much larger than the trade twin's, and for a reason the trade twin does
@@ -1796,24 +1809,36 @@ impl QuantickApp {
         // note rather than the wrong one. It raises the real sentence through
         // `Tab::raise_history_note` — the same call a settled run makes — so
         // the picture is the picture a refusing venue gives.
-        app.pending_history_note = std::env::var("QUANTICK_HISTORY_NOTE")
-            .ok()
-            .and_then(|value| crate::history_reach::CampaignEnd::from_action(&value))
-            .filter(|end| {
-                let has_words = end.notice().is_some();
-                if !has_words {
-                    tracing::warn!(
-                        target: "quantick::app",
-                        schema_version = 1_u8,
-                        event_code = "HISTORY_NOTE_HOOK_SILENT_ENDING",
-                        ending = end.action(),
-                        action = "no_note_raised",
-                        "QUANTICK_HISTORY_NOTE named the one ending that says nothing"
-                    );
+        if let Ok(token) = std::env::var("QUANTICK_HISTORY_NOTE") {
+            // Refused out loud, exactly as `QUANTICK_HISTORY_REACH` above
+            // refuses an unknown reach: a capture run that silently got no
+            // note reads the surface as broken, which is the conclusion this
+            // whole branch exists to make impossible.
+            match crate::history_reach::CampaignEnd::from_action(&token) {
+                Some(end) if end.notice().is_some() => {
+                    app.pending_history_note = Some((end, HISTORY_NOTE_HOOK_FRAMES));
                 }
-                has_words
-            })
-            .map(|end| (end, LOAD_OLDER_HOOK_FRAMES));
+                Some(end) => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "HISTORY_NOTE_HOOK_SILENT_ENDING",
+                    ending = end.action(),
+                    action = "no_note_raised",
+                    "QUANTICK_HISTORY_NOTE named the one ending that says nothing"
+                ),
+                None => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "HISTORY_NOTE_HOOK_UNKNOWN",
+                    token = %token,
+                    accepted = %crate::history_reach::CampaignEnd::ALL
+                        .map(crate::history_reach::CampaignEnd::action)
+                        .join(", "),
+                    action = "no_note_raised",
+                    "QUANTICK_HISTORY_NOTE names no ending this build has"
+                ),
+            }
+        }
         // How many anchors of the armed tool are already down when the run
         // opens — the half-placed state a screenshot cannot otherwise reach,
         // because it lives between two clicks. See `apply_drawing_draft`.
@@ -9276,7 +9301,7 @@ impl QuantickApp {
                 schema_version = 1_u8,
                 event_code = "HISTORY_NOTE_HOOK_RELEASED",
                 ending = end.action(),
-                frames_held = LOAD_OLDER_HOOK_FRAMES,
+                frames_held = HISTORY_NOTE_HOOK_FRAMES,
                 action = "note_left_to_expire",
                 "QUANTICK_HISTORY_NOTE let go of its sentence"
             );
@@ -9284,14 +9309,27 @@ impl QuantickApp {
             return;
         };
         self.pending_history_note = Some((end, left));
-        // Nothing charted yet, or the note is already up. Either way there is
-        // nothing to raise on this frame.
-        if self.active_tab().flow_pane.slots() == 0 || self.active_tab().history_note().is_some() {
+        let tab = self.active_tab();
+        // Nothing charted yet, or the note is already up: nothing to raise.
+        //
+        // And never while a request is out. Paired with `QUANTICK_LOAD_OLDER`
+        // — which the harness table pairs it with — the press clears the note
+        // and sends a real `load_older`, and re-raising here would paint a
+        // settled verdict over a request still in flight, with the spinner
+        // turning above it. That is the dishonesty this branch removes, and a
+        // hook has no business manufacturing it for a capture.
+        if tab.flow_pane.slots() == 0
+            || tab.history_note().is_some()
+            || tab.loading.is_active(LoadingTask::History)
+        {
             return;
         }
-        if let Some(notice) = end.notice() {
-            self.active_tab_mut().raise_history_note(notice);
-        }
+        // Always `Some`: the hook only ever holds an ending the env read above
+        // kept, and it keeps only endings that have words.
+        let Some(notice) = end.notice() else {
+            return;
+        };
+        self.active_tab_mut().raise_history_note(notice);
     }
 
     /// The `QUANTICK_LOAD_OLDER_CANDLES` hook: the history menu's "+ older
@@ -10943,7 +10981,6 @@ impl QuantickApp {
         self.last_frame = Some(now);
 
         self.drain_tabs();
-        self.apply_history_note_hook();
         // A "load older" outcome is a passing remark: it leaves after
         // `tab::HISTORY_NOTE_LINGER` whether or not anyone read it. Every tab,
         // not only the one on screen — a background tab keeps draining, so it
@@ -10952,6 +10989,11 @@ impl QuantickApp {
         for tab in &mut self.tabs {
             tab.expire_history_note(now);
         }
+        // After the expiry, never before it: the hook re-raises a note it
+        // finds absent, and running it first would let a note expire *after*
+        // it looked, drawing one frame with an empty lane before the next
+        // raise. A shutter timed on the linger catches exactly that frame.
+        self.apply_history_note_hook();
         if self.pending_control_access_enable {
             self.pending_control_access_enable = false;
             if let Some(access) = self.control_access.as_mut() {

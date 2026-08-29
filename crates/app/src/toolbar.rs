@@ -735,8 +735,17 @@ enum HistoryPagingOff {
     /// A run already has its one permitted request out.
     RunInFlight,
     /// This source has no venue to page prints from, but it does hold the
-    /// past in the *other* record. A market replay is exactly this.
+    /// past in the *other* record and the menu entry beside this button can
+    /// fetch it. A market replay with a run-up on disk is exactly this.
     CandlesInstead,
+    /// The same, except nothing on this chart is cut by time, so the candle
+    /// entry cannot be pressed either until the lead-in is switched on.
+    ///
+    /// A separate reason and not a wording of the one above, because sending
+    /// the trader to a control that is *itself* greyed out is the dead end
+    /// this whole branch exists to stop producing. On the order-flow default
+    /// — a tick chart, no time pane — this is the reason a recording gives.
+    LeadInNeeded,
     /// There are no older trades to be had, by any route.
     NothingToPage,
 }
@@ -746,16 +755,37 @@ impl HistoryPagingOff {
     ///
     /// A run in flight outranks the rest: it is *why* the button is off, and
     /// the candle record the source may also serve is not an answer to that.
-    fn of(feed_can_page: bool, serves_candles: bool, run_in_flight: bool) -> Option<Self> {
+    ///
+    /// `candles` is the candle entry's *own* state, not the raw capability, so
+    /// this refusal can never send the trader to a control that is greyed out
+    /// for a reason of its own. That is the whole point of pointing at all.
+    fn of(
+        feed_can_page: bool,
+        candles: crate::tab::OlderCandles,
+        run_in_flight: bool,
+    ) -> Option<Self> {
+        use crate::tab::OlderCandles;
         if history_button_enabled(feed_can_page, run_in_flight) {
-            None
-        } else if run_in_flight {
-            Some(Self::RunInFlight)
-        } else if serves_candles {
-            Some(Self::CandlesInstead)
-        } else {
-            Some(Self::NothingToPage)
+            return None;
         }
+        if run_in_flight {
+            return Some(Self::RunInFlight);
+        }
+        Some(match candles {
+            // Pressable now, or pressable as soon as the reply it is waiting
+            // on lands. Either way the entry is the way forward.
+            OlderCandles::Available | OlderCandles::Fetching | OlderCandles::NotArrivedYet => {
+                Self::CandlesInstead
+            }
+            // The candles exist and this chart cannot show them yet. The
+            // lead-in is the switch that changes that, and it is one the
+            // trader has to find — so the refusal names it rather than the
+            // entry it would send them bouncing off.
+            OlderCandles::NoChartCutByTime => Self::LeadInNeeded,
+            // No candle record, or one that reaches back no further than the
+            // chart already does. Neither is a way forward.
+            OlderCandles::FeedServesNone | OlderCandles::RecordStartsHere => Self::NothingToPage,
+        })
     }
 
     /// What the trader is told hovering the button in this state.
@@ -775,6 +805,11 @@ impl HistoryPagingOff {
                  candles: open the menu beside this button and use \"+ older \
                  candles\""
             }
+            Self::LeadInNeeded => {
+                "no older trades to fetch here — this source's past is venue \
+                 candles, and no chart here is cut by time: switch on the \
+                 venue lead-in under View to put them in front of these bars"
+            }
             Self::NothingToPage => {
                 "no older trades to fetch: this feed only streams forward, or \
                  its history is already all here"
@@ -790,7 +825,7 @@ impl HistoryPagingOff {
 fn history_disabled_hover(model: &ToolbarModel) -> &'static str {
     HistoryPagingOff::of(
         model.capabilities.history_paging,
-        model.capabilities.ohlcv_history,
+        model.older_candles,
         model.history_reach_running,
     )
     .map_or("", HistoryPagingOff::hover)
@@ -1850,23 +1885,24 @@ mod tests {
     /// precisely because they want the past.
     #[test]
     fn the_refusal_names_the_reason_the_button_is_actually_off() {
+        use crate::tab::OlderCandles;
         assert_eq!(
-            HistoryPagingOff::of(true, false, false),
+            HistoryPagingOff::of(true, OlderCandles::FeedServesNone, false),
             None,
             "a feed that pages, with no run out, takes the press"
         );
         assert_eq!(
-            HistoryPagingOff::of(true, true, true),
+            HistoryPagingOff::of(true, OlderCandles::Available, true),
             Some(HistoryPagingOff::RunInFlight),
             "a run in flight is the reason, whatever else the source holds"
         );
         assert_eq!(
-            HistoryPagingOff::of(false, true, false),
+            HistoryPagingOff::of(false, OlderCandles::Available, false),
             Some(HistoryPagingOff::CandlesInstead),
             "a recording's past is candles, and the refusal says so"
         );
         assert_eq!(
-            HistoryPagingOff::of(false, false, false),
+            HistoryPagingOff::of(false, OlderCandles::FeedServesNone, false),
             Some(HistoryPagingOff::NothingToPage),
             "and a source with neither gets the plain refusal"
         );
@@ -1882,6 +1918,45 @@ mod tests {
                 .contains("older candles"),
             "and a source without candles must not send the trader to a menu \
              entry that is not there"
+        );
+    }
+
+    /// The refusal must never end at a control that is itself greyed out.
+    ///
+    /// A recording with a run-up on disk, opened on the order-flow default —
+    /// a tick chart, no time pane — is the case: `+ older` is off because
+    /// there are no trades to page, and `+ older candles` is off because
+    /// `OlderCandles::NoChartCutByTime`. Pointing the first at the second
+    /// would send the trader bouncing between two dead controls, which is a
+    /// politer version of the silence this branch is fixing.
+    #[test]
+    fn a_refusal_never_points_at_a_control_that_is_also_off() {
+        use crate::tab::OlderCandles;
+        for candles in [
+            OlderCandles::NoChartCutByTime,
+            OlderCandles::FeedServesNone,
+            OlderCandles::RecordStartsHere,
+        ] {
+            let reason = HistoryPagingOff::of(false, candles, false).expect("the button is off");
+            assert_ne!(
+                reason,
+                HistoryPagingOff::CandlesInstead,
+                "{candles:?} cannot take a press, so it is not a way forward"
+            );
+            assert!(
+                candles.why_not().is_some(),
+                "the premise: {candles:?} is a disabled candle entry"
+            );
+        }
+        assert_eq!(
+            HistoryPagingOff::of(false, OlderCandles::NoChartCutByTime, false),
+            Some(HistoryPagingOff::LeadInNeeded),
+            "and a chart with no time pane is sent to the switch that fixes that"
+        );
+        assert!(
+            HistoryPagingOff::LeadInNeeded.hover().contains("lead-in"),
+            "named, so the trader knows what to look for: {}",
+            HistoryPagingOff::LeadInNeeded.hover()
         );
     }
 }

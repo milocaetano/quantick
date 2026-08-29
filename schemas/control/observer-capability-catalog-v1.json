@@ -8585,7 +8585,8 @@
                 ]
               },
               "history_reach_running": {
-                "description": "Whether a run of *load older* requests is in flight right now.",
+                "default": false,
+                "description": "Whether a run of *load older* requests is in flight right now.\n\n`#[serde(default)]` keeps it out of the schema's `required` list, which\nis what makes adding it here a *compatible* change to a v1 payload: the\ncontrol-plane contract (§5.6 of the development plan) counts a new\nrequired field as breaking, and a v1 payload recorded by an earlier\nbuild must keep deserializing. Absent reads as \"no run\", which is what\na build with no reach campaigns was in fact reporting.",
                 "type": "boolean"
               },
               "history_trade_count": {
@@ -8668,7 +8669,6 @@
               "capabilities",
               "provenance",
               "history_trade_count",
-              "history_reach_running",
               "live_trade_count"
             ],
             "type": "object"

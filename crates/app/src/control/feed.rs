@@ -39,6 +39,14 @@ pub(crate) struct FeedTabSnapshot {
     pub provenance: MarketDataProvenance,
     pub history_trade_count: WireU64,
     /// Whether a run of *load older* requests is in flight right now.
+    ///
+    /// `#[serde(default)]` keeps it out of the schema's `required` list, which
+    /// is what makes adding it here a *compatible* change to a v1 payload: the
+    /// control-plane contract (§5.6 of the development plan) counts a new
+    /// required field as breaking, and a v1 payload recorded by an earlier
+    /// build must keep deserializing. Absent reads as "no run", which is what
+    /// a build with no reach campaigns was in fact reporting.
+    #[serde(default)]
     pub history_reach_running: bool,
     /// What the last *load older* press had to say, while it is still on
     /// screen — the exact sentence the trader reads in the loading lane.

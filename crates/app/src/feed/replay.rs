@@ -392,6 +392,32 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
     }
 }
 
+/// Re-parse the context file only when it is not the one already in hand.
+///
+/// `seen` carries the modified time of the copy `context` was built from —
+/// `None` before any read, which is also the state a session opened with a
+/// context file already parsed is in, so the first request pays one parse and
+/// no later one does unless the file really moved. A file the platform will
+/// not stat is read: a missing timestamp is not evidence that nothing changed,
+/// and the honest cost of not knowing is the parse.
+///
+/// Only replaced on success, like the reload it wraps: a download that
+/// produced a malformed file must not blank out context already being read.
+fn reload_changed_context(
+    session: &Session,
+    seen: &mut Option<std::time::SystemTime>,
+) -> Option<quantick_replay::ContextSeries> {
+    let stamp = std::fs::metadata(quantick_replay::context_path(&session.path))
+        .and_then(|meta| meta.modified())
+        .ok();
+    if stamp.is_some() && stamp == *seen {
+        return None;
+    }
+    let fresh = reload_context(session)?;
+    *seen = stamp;
+    Some(fresh)
+}
+
 /// The candles to answer one `FetchOhlcv` with, from the session's context.
 ///
 /// The span is measured back from `until_ms`, and `until_ms` defaults to the
@@ -529,6 +555,10 @@ fn play(
     // Held apart from the session so "load older" can replace it without
     // touching the playhead or the trades being released.
     let mut context = session.context.clone();
+    // When the context file this copy came from was last written, so a request
+    // that finds it unchanged skips the parse. `None` until the first request
+    // asks — see `reload_changed_context`.
+    let mut context_seen: Option<std::time::SystemTime> = None;
     let mut last = Instant::now();
     let mut reported_finished = false;
 
@@ -545,21 +575,26 @@ fn play(
                 Ok(FeedCommand::FetchOhlcv {
                     span_ms, before_ms, ..
                 }) => {
-                    // Re-read from disk first, so a run-up downloaded *since*
-                    // this session opened is picked up rather than missed:
-                    // the trader starts the download from inside the replay,
-                    // and the copy parsed when the file was opened predates
-                    // it. Re-read rather than reopened, so the playhead never
-                    // moves — asking for more history mid-replay must not cost
-                    // the trader their place. Only replaced on success: a
-                    // download that produced a malformed file must not blank
-                    // out context already being read.
+                    // Pick up a context file that has *changed* since it was
+                    // parsed — the trader downloads more of the run-up from
+                    // inside the replay, and the copy taken when the session
+                    // opened predates it. Re-read rather than reopened, so the
+                    // playhead never moves: asking for more history mid-replay
+                    // must not cost the trader their place.
+                    //
+                    // Gated on the file's own timestamp, not done every time.
+                    // A quarter of 1-minute candles is well over a hundred
+                    // thousand rows, and this runs on the playback thread,
+                    // whose next step measures the wall time that passed — so
+                    // an unconditional parse on the *opening* request would be
+                    // charged to the playhead and released as a burst of
+                    // market. A `metadata` call is not.
                     //
                     // This lived on `LoadOlder` until the capability above
                     // stopped claiming a recording could page trades. It is
                     // the same act, now on the request that actually answers
                     // with candles.
-                    if let Some(fresh) = reload_context(&session) {
+                    if let Some(fresh) = reload_changed_context(&session, &mut context_seen) {
                         context = Some(fresh);
                     }
                     let reply =
@@ -886,30 +921,36 @@ mod tests {
     /// The behaviour that used to ride on `LoadOlder`, on the request that
     /// actually answers with candles.
     ///
-    /// A trader downloads the run-up while the replay is open, then asks for
-    /// it. The context file appears on disk *after* the session was parsed, so
-    /// answering from the copy held in memory would hand back nothing and the
-    /// download would look wasted.
+    /// The reachable half of it, which is narrower than it first looks.
+    /// `ohlcv_history` is fixed at spawn from `session.context.is_some()` and
+    /// the channel is never updated, so a recording opened with *no* context
+    /// file has no candle capability for the rest of the session and the app
+    /// will not send this request at all — the old `LoadOlder` path could not
+    /// reach that case either, since `history_paging` was the same expression.
+    /// What both could always do, and what this proves, is pick up a file that
+    /// **grew**: the trader downloads more of the run-up from inside the
+    /// replay, and the copy parsed when the session opened is short.
     #[test]
-    fn the_candle_reach_picks_up_context_downloaded_since_the_session_opened() {
-        let dir = std::env::temp_dir().join(format!(
-            "quantick-replay-context-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        std::fs::create_dir_all(&dir).expect("scratch dir");
+    fn the_candle_reach_picks_up_a_run_up_that_grew_since_the_session_opened() {
+        let dir = scratch_dir("grew");
         let path = dir.join("20260316.csv");
-        let mut text = String::from("# symbol=TEST\nDate,Time,Price,Volume,Side\n");
+        let mut tape = String::from("# symbol=TEST\nDate,Time,Price,Volume,Side\n");
         for i in 0..4_i64 {
-            text.push_str(&format!("2026-03-16,10:00:0{i}.000,{},1,B\n", 100 + i));
+            tape.push_str(&format!("2026-03-16,10:00:0{i}.000,{},1,B\n", 100 + i));
         }
-        std::fs::write(&path, &text).expect("tape on disk");
-        let session =
-            Arc::new(Session::from_text(&path, &text, ParseOptions::default()).expect("session"));
-        assert!(
-            session.context.is_none(),
-            "opened before the download finished"
-        );
+        std::fs::write(&path, &tape).expect("tape on disk");
+        let context_path = quantick_replay::context_path(&path);
+
+        // Opened with a short run-up: two candles, so the capability is on.
+        std::fs::write(&context_path, context_text(&path, &tape, 2)).expect("short context");
+        // `load`, not `from_text`: the sidecar is attached by the loader that
+        // touches the disk, which is the path the session browser takes.
+        let session = Arc::new(Session::load(&path, ParseOptions::default()).expect("session"));
+        let short = session
+            .context
+            .as_ref()
+            .expect("the file beside the tape was parsed at open");
+        assert_eq!(short.bars.len(), 2, "what the session opened holding");
 
         let mut handle = spawn(ReplayRequest {
             session: Arc::clone(&session),
@@ -919,19 +960,13 @@ mod tests {
                 ..ReplayOptions::default()
             },
         });
+        assert!(
+            handle.capabilities.borrow().ohlcv_history,
+            "a recording with a run-up beside it serves candles"
+        );
 
-        // The download lands now, beside the recording.
-        let first = session.start_ms();
-        let mut context =
-            String::from("# interval_ms=60000\nDate,Time,Open,High,Low,Close,Volume\n");
-        for i in 0..3_i64 {
-            let (date, time) = quantick_replay::format::format_datetime(
-                first - (3 - i) * 60_000,
-                quantick_replay::format::UtcOffset::UTC,
-            );
-            context.push_str(&format!("{date},{time},100,110,90,105,7\n"));
-        }
-        std::fs::write(quantick_replay::context_path(&path), context).expect("context on disk");
+        // The trader downloads more of it while the replay is open.
+        std::fs::write(&context_path, context_text(&path, &tape, 5)).expect("grown context");
 
         handle
             .commands
@@ -946,10 +981,44 @@ mod tests {
         assert_eq!(interval_ms, crate::feed::OHLCV_BASE_INTERVAL_MS);
         assert_eq!(
             bars.len(),
-            3,
-            "the run-up downloaded since this session opened is on the chart"
+            5,
+            "the run-up as it stands on disk now, not the copy taken at open"
         );
+    }
+
+    /// A scratch directory of this test's own, emptied before it is used.
+    ///
+    /// Cleared up front rather than only at the end: an assertion that fails
+    /// leaves the old one behind, Windows recycles pids freely, and a later
+    /// run inheriting a populated directory is the stale-temp-dir flake this
+    /// repo has already been bitten by elsewhere.
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "quantick-replay-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    /// `minutes` of broker candles in the hour before a tape starts — where a
+    /// real context file sits: the market's past, never overlapping the
+    /// recording.
+    fn context_text(path: &std::path::Path, tape: &str, minutes: i64) -> String {
+        let first = Session::from_text(path, tape, ParseOptions::default())
+            .expect("session")
+            .start_ms();
+        let mut text = String::from("# interval_ms=60000\nDate,Time,Open,High,Low,Close,Volume\n");
+        for i in 0..minutes {
+            let (date, time) = quantick_replay::format::format_datetime(
+                first - (minutes - i) * 60_000,
+                quantick_replay::format::UtcOffset::UTC,
+            );
+            text.push_str(&format!("{date},{time},100,110,90,105,7\n"));
+        }
+        text
     }
 
     #[test]

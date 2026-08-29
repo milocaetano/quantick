@@ -812,6 +812,39 @@ mod tests {
     /// Every other ending left the chart where it was or stopped short of what
     /// the press promised, and a press whose outcome is invisible is exactly
     /// how this feature shipped looking like a facade.
+    /// Every ending reaches the list it is discovered through.
+    ///
+    /// `ALL` is what [`CampaignEnd::from_action`] scans and what
+    /// `QUANTICK_HISTORY_NOTE` resolves through, so an ending missing from it
+    /// is unreachable by name and unphotographable — with every other test
+    /// still green, because they all iterate `ALL` too. The `match` below is
+    /// exhaustive on purpose: an eighth variant stops this file compiling, and
+    /// the fix is one line here and one in `ALL`, three lines apart.
+    #[test]
+    fn every_ending_reaches_the_list_it_is_discovered_through() {
+        for end in CampaignEnd::ALL {
+            let named = match end {
+                CampaignEnd::ReachMet => "reach_met",
+                CampaignEnd::Exhausted => "venue_exhausted",
+                CampaignEnd::PagesSpent => "page_budget_spent",
+                CampaignEnd::PrintsPulled => "print_budget_spent",
+                CampaignEnd::NothingComingBack => "nothing_coming_back",
+                CampaignEnd::SpanCovered => "span_cap_covered",
+                CampaignEnd::NothingCharted => "nothing_charted",
+            };
+            assert_eq!(end.action(), named, "the token this ending logs under");
+        }
+        let mut tokens: Vec<_> = CampaignEnd::ALL.iter().map(|end| end.action()).collect();
+        tokens.sort_unstable();
+        let listed = tokens.len();
+        tokens.dedup();
+        assert_eq!(
+            tokens.len(),
+            listed,
+            "two endings sharing a token would make one of them unreachable"
+        );
+    }
+
     /// An ending that exists is reachable by its own name, both ways.
     #[test]
     fn every_ending_survives_a_round_trip_through_its_token() {
