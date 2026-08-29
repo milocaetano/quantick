@@ -2030,12 +2030,18 @@ impl QuantickApp {
                 );
             }
         }
+        // One layout per pane, by name, in pane-address order (`flow,top,bottom`):
+        // a capture of two charts on two layouts side by side. Names the book
+        // lacks are created empty; an empty entry leaves that pane alone.
+        if let Ok(names) = std::env::var("QUANTICK_PANE_LAYOUTS") {
+            app.apply_pane_layouts_hook(&names);
+        }
         if std::env::var("QUANTICK_LAYOUT_RENAME").is_ok_and(|value| value == "1") {
-            let active = app.layouts().active_id();
+            let active = app.focused_pane_layout();
             app.begin_layout_rename(active);
         }
         if std::env::var("QUANTICK_LAYOUT_DELETE").is_ok_and(|value| value == "1") {
-            let active = app.layouts().active_id();
+            let active = app.focused_pane_layout();
             app.apply_strip_action(crate::layout_strip::StripAction::Delete(active));
         }
         // The settings dialog, reachable without a pointer: the index of the
@@ -3060,9 +3066,13 @@ impl QuantickApp {
             .active_tab()
             .time_pane()
             .map_or(flow_inverted, |pane| pane.price_view.is_inverted());
+        // The layout the trader is looking at is the one the new chart
+        // opens on — read before the new tab takes the focus.
+        let inherited_layout = (!self.tabs.is_empty()).then(|| self.focused_pane_layout());
         let flow_pane_id = self.pane_ids.alloc();
         let mut tab = Tab::new(id, flow_pane_id, feed_id, symbol, spec, feed, trades_dir);
         tab.paper.set_cmd_trading(cmd_trading);
+        tab.flow_pane.layout = inherited_layout;
         self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
         let config = self.config.clone();
@@ -4568,6 +4578,12 @@ impl QuantickApp {
                     .iter()
                     .map(|pane| pane.state.spec().to_config_string())
                     .collect(),
+                flow_layout: tab.flow_pane.layout.map(|layout| layout.0),
+                context_layouts: tab
+                    .time_panes
+                    .iter()
+                    .map(|pane| pane.layout.map(|layout| layout.0))
+                    .collect(),
                 flow_legend_collapsed: tab.flow_pane.legend_collapsed,
                 // A tab with no time pane has no second legend, and `false`
                 // is what it will restore into when one is opened: a pane
@@ -4702,6 +4718,7 @@ impl QuantickApp {
                     time: saved.time_legend_collapsed,
                 },
             );
+            self.tabs[target].set_opening_layouts(saved.flow_layout, &saved.context_layouts);
         }
         // The markets that were on screen before this workspace was opened.
         // Closed last, so the strip is never empty in between and `close_tab`
@@ -4899,6 +4916,9 @@ impl QuantickApp {
     /// back into the running app, because a cockpit that only changed on disk
     /// would be overwritten by this session's own save on exit.
     fn import_workspace_from(&mut self, path: &std::path::Path) {
+        // What the debounce still holds is written first, or a bundle with no
+        // layouts section would reload a file a second behind the screen.
+        self.flush_layouts();
         let outcome = crate::workspace_bundle::read(path).and_then(|bundle| {
             crate::workspace_bundle::apply(
                 &bundle,
@@ -5432,6 +5452,7 @@ impl QuantickApp {
                     time: saved.time_legend_collapsed,
                 },
             );
+            self.tabs[opened].set_opening_layouts(saved.flow_layout, &saved.context_layouts);
         }
         for _ in 0..replaced {
             self.close_tab(0);
@@ -6246,9 +6267,10 @@ impl QuantickApp {
                         // entry names the charts it shows — "Timeframe", not
                         // layout jargon (audit §3).
                         ui.menu_button("Layouts", |ui| {
-                            // The strip's tabs, from the book: switch by name,
-                            // and the three edits the strip's own menu holds.
-                            let active = self.layouts().active_id();
+                            // The strip's tabs, from the book: switch the
+                            // focused pane by name, and the three edits the
+                            // strip's own menu holds.
+                            let active = self.focused_pane_layout();
                             let names: Vec<(crate::layouts::LayoutId, String)> = self
                                 .layouts()
                                 .layouts()
@@ -12287,6 +12309,8 @@ mod tests {
                     focus: None,
                     focus_slot: 0,
                     context_bars: vec![],
+                    flow_layout: None,
+                    context_layouts: vec![],
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -12496,8 +12520,8 @@ plot(close)
         );
         assert_eq!(
             app.slot_kinds.len(),
-            2,
-            "a script the library lacks adds nothing, not a phantom slot"
+            3,
+            "a script the library lacks takes an error slot saying so, keeping the layout's positions aligned"
         );
         assert_eq!(app.slot_kinds[0].1, SavedKind::NativeEma);
         assert_eq!(app.slot_kinds[1].1, SavedKind::NativeCvd);
@@ -12526,8 +12550,8 @@ plot(close)
         );
         assert_eq!(
             app.slot_kinds.len(),
-            2,
-            "while only the two the library can build are on the chart"
+            3,
+            "and every entry has its slot on the chart"
         );
         assert!(
             !app.layouts_dirty,
@@ -22656,6 +22680,8 @@ crosshair = false
                 focus: Some(ui_state::SavedFocus::Flow),
                 focus_slot: 0,
                 context_bars: vec![],
+                flow_layout: None,
+                context_layouts: vec![],
                 flow_bars: "dollar:250000".to_owned(),
                 time_bars: Some("time:5m".to_owned()),
                 flow_legend_collapsed: false,
@@ -22748,6 +22774,8 @@ crosshair = false
                 focus: Some(ui_state::SavedFocus::Flow),
                 focus_slot: 0,
                 context_bars: vec![],
+                flow_layout: None,
+                context_layouts: vec![],
                 flow_bars: "tick:50".to_owned(),
                 time_bars: Some("time:1m".to_owned()),
                 flow_legend_collapsed: true,
@@ -22796,6 +22824,8 @@ crosshair = false
                 focus: None,
                 focus_slot: 0,
                 context_bars: vec![],
+                flow_layout: None,
+                context_layouts: vec![],
                 flow_bars: "tick:377".to_owned(),
                 time_bars: None,
                 flow_legend_collapsed: false,
@@ -24492,60 +24522,173 @@ crosshair = false
             .collect()
     }
 
-    /// Switching layout swaps the whole indicator set on every pane: the
-    /// EMA of layout 1 goes, the empty set of layout 2 shows, and switching
-    /// back brings the EMA back on both panes — with its inputs.
+    /// Each pane shows its own layout: creating a layout on the focused pane
+    /// changes that pane alone, an edit reaches only the panes on the same
+    /// layout, and a pane that opens inherits the focused pane's layout.
     #[test]
-    fn switching_layouts_swaps_the_indicator_set_on_every_pane() {
+    fn two_panes_show_two_layouts_side_by_side() {
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 200);
         app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
         settle_indicators(&mut app);
-        app.maintain_indicator_state();
         let first = app.layouts().active_id();
-        assert_eq!(app.layouts().active().indicators.len(), 1);
+        assert_eq!(app.layouts().get(first).unwrap().indicators.len(), 1);
 
-        let second = app.create_layout(Some("levels")).expect("a second layout");
-        assert_eq!(app.layouts().active_id(), second, "creating switches to it");
-        for side in [PaneSide::Flow, PaneSide::Time(0)] {
-            assert!(
-                app.active_tab().pane(side).indicators.all().is_empty(),
-                "the new layout is empty on {side:?}"
-            );
-        }
-        assert!(
-            app.slot_kinds.is_empty(),
-            "nothing of layout 1 is registered"
-        );
-
-        app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
-        settle_indicators(&mut app);
-        app.maintain_indicator_state();
+        // Focus the time pane and give it a layout of its own.
+        let point = pane_point(&app, PaneSide::Time(0));
+        click_chart(&mut app, &ctx, point);
+        let second = app.create_layout(Some("levels")).expect("second");
+        assert_eq!(app.focused_pane_layout(), second);
         assert_eq!(
-            app.layouts().active().indicators[0].kind,
-            crate::indicators::state_file::SavedKind::NativeCvd
+            app.pane_layout(app.active_tab().id, PaneSide::Flow),
+            first,
+            "the flow pane kept its layout"
         );
-
-        assert_eq!(app.switch_layout(first), Ok(true));
-        settle_indicators(&mut app);
-        for side in [PaneSide::Flow, PaneSide::Time(0)] {
-            let labels: Vec<String> = app
-                .active_tab()
-                .pane(side)
+        assert!(
+            app.active_tab()
+                .pane(PaneSide::Time(0))
                 .indicators
                 .all()
-                .iter()
-                .map(|view| view.label().to_owned())
-                .collect();
-            assert_eq!(labels.len(), 1, "layout 1 is back on {side:?}: {labels:?}");
-            assert!(labels[0].contains("EMA"), "and it is the EMA: {labels:?}");
-        }
-        assert_eq!(app.slot_kinds.len(), 2);
+                .is_empty(),
+            "the new layout is empty on the pane that took it"
+        );
         assert_eq!(
-            app.layouts().get(second).expect("kept").indicators.len(),
+            app.active_tab().flow_pane.indicators.all().len(),
+            1,
+            "and the flow pane still shows layout 1's EMA"
+        );
+
+        // An edit on the time pane reaches layout 2 only.
+        app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
+        settle_indicators(&mut app);
+        assert_eq!(
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .indicators
+                .all()
+                .len(),
+            1
+        );
+        assert_eq!(
+            app.active_tab().flow_pane.indicators.all().len(),
+            1,
+            "the flow pane gained nothing"
+        );
+        assert_eq!(app.layouts().get(second).unwrap().indicators.len(), 1);
+        assert_eq!(
+            app.layouts().get(second).unwrap().indicators[0].kind,
+            crate::indicators::state_file::SavedKind::NativeCvd
+        );
+        assert_eq!(app.layouts().get(first).unwrap().indicators.len(), 1);
+
+        // A pane that opens takes the focused pane's layout.
+        app.open_tab("binance".to_owned(), "ETHUSDT".to_owned(), None);
+        run_frame(&mut app, &ctx);
+        let opened = app.active_tab().id;
+        assert_eq!(app.pane_layout(opened, PaneSide::Flow), second);
+        assert_eq!(app.active_tab().flow_pane.layout_label, "levels");
+
+        // Switching the time pane back brings layout 1's set to it alone.
+        app.cycle_tab(-1);
+        let point = pane_point(&app, PaneSide::Time(0));
+        click_chart(&mut app, &ctx, point);
+        assert_eq!(app.switch_layout(first), Ok(true));
+        settle_indicators(&mut app);
+        let labels: Vec<String> = app
+            .active_tab()
+            .pane(PaneSide::Time(0))
+            .indicators
+            .all()
+            .iter()
+            .map(|view| view.label().to_owned())
+            .collect();
+        assert_eq!(
+            labels.len(),
+            1,
+            "layout 1 is back on the time pane: {labels:?}"
+        );
+        assert!(labels[0].contains("EMA"));
+        assert_eq!(
+            app.layouts().get(second).unwrap().indicators.len(),
             1,
             "layout 2 kept its own set while it was away"
         );
+    }
+
+    /// The strip and the file record the layout per pane: a workspace
+    /// captured with two panes on two layouts names both, and a pane told
+    /// its layout before seeding opens on it.
+    #[test]
+    fn per_pane_layouts_are_recorded_and_restored() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        let first = app.layouts().active_id();
+        let point = pane_point(&app, PaneSide::Time(0));
+        click_chart(&mut app, &ctx, point);
+        let second = app.create_layout(Some("levels")).expect("second");
+        app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
+        settle_indicators(&mut app);
+        app.flush_layouts();
+
+        let (tabs, _chrome) = app.capture_arrangement();
+        assert_eq!(tabs[0].flow_layout, Some(first.0));
+        assert_eq!(tabs[0].context_layouts, vec![Some(second.0)]);
+
+        let path = app.layouts_path.clone();
+        let (mut again, _commands2) = split_app(&ctx, 200);
+        again.layouts_path = path;
+        again.active_tab_mut().flow_pane.layout = Some(first);
+        again.active_tab_mut().pane_mut(PaneSide::Time(0)).layout = Some(second);
+        again.reload_layouts(&[]);
+        settle_indicators(&mut again);
+        assert_eq!(
+            again.pane_layout(again.active_tab().id, PaneSide::Time(0)),
+            second
+        );
+        assert_eq!(
+            again
+                .active_tab()
+                .pane(PaneSide::Time(0))
+                .indicators
+                .all()
+                .len(),
+            1,
+            "the restored context pane opened on layout 2 and its CVD"
+        );
+        assert!(
+            again.active_tab().flow_pane.indicators.all().is_empty(),
+            "layout 1 is empty here"
+        );
+        assert_eq!(
+            again.active_tab().pane(PaneSide::Time(0)).layout_label,
+            "levels"
+        );
+    }
+
+    /// Switching one pane's layout swaps that pane's drawings only.
+    #[test]
+    fn switching_one_panes_layout_swaps_only_its_drawings() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        place_level(&mut app, PaneSide::Time(0), 100.0);
+        place_level(&mut app, PaneSide::Flow, 50.0);
+        run_frame(&mut app, &ctx);
+        let first = app.layouts().active_id();
+        let point = pane_point(&app, PaneSide::Time(0));
+        click_chart(&mut app, &ctx, point);
+        let second = app.create_layout(None).expect("second");
+        assert!(
+            drawings_on(&app, PaneSide::Time(0)).is_empty(),
+            "the time pane's level went with layout 1"
+        );
+        assert_eq!(
+            drawings_on(&app, PaneSide::Flow),
+            vec![50.0],
+            "the flow pane, still on layout 1, kept its own"
+        );
+        app.switch_layout(first).expect("back");
+        assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0]);
+        assert_eq!(app.layouts().get(second).unwrap().drawing_count(), 0);
     }
 
     /// A drawing belongs to the layout, the market and the pane it was drawn
@@ -30345,7 +30488,16 @@ plot(close)
         let (mut app, _commands) = app_with_history(4);
         run_frame(&mut app, &ctx);
 
-        // The trader's own, on the tab that is already open.
+        // A second chart on a layout of its own, so the trader's script —
+        // a layout edit, mirrored onto every pane of its layout — does not
+        // take that chart's slot 0 before the operator gets there.
+        app.open_tab("binance".to_owned(), "ETHUSDT".to_owned(), None);
+        run_frame(&mut app, &ctx);
+        app.create_layout(Some("agent"))
+            .expect("a layout for the second chart");
+        app.cycle_tab(-1);
+
+        // The trader's own, on the first tab.
         let (traders_tab, _, traders_slot) =
             app.attach_script_indicator("the trader's".to_owned(), SCRIPT.to_owned(), false);
         for _ in 0..200 {
@@ -30355,8 +30507,8 @@ plot(close)
             }
         }
 
-        // A second chart, whose slot numbering starts over from zero.
-        app.open_tab("binance".to_owned(), "ETHUSDT".to_owned(), None);
+        // The second chart, whose slot numbering starts over from zero.
+        app.cycle_tab(1);
         run_frame(&mut app, &ctx);
         let (operators_tab, _, operators_slot) =
             app.attach_script_indicator("an assistant's".to_owned(), SCRIPT.to_owned(), true);

@@ -55,6 +55,8 @@ pub(crate) struct WorkspacePane {
     pub side: PaneSideDto,
     /// The pane's address within its tab — the number `layout.focus` takes.
     pub pane_index: WireU64,
+    /// The layout this pane shows, by id in the strip.
+    pub layout_id: WireU64,
     pub visible: bool,
     pub focused: bool,
 }
@@ -123,6 +125,7 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
                             pane_id: WireU64::new(pane.id),
                             side: side.into(),
                             pane_index: wire_usize(side.index()),
+                            layout_id: WireU64::new(app.pane_layout(tab.id, side).0),
                             visible: active && visible,
                             focused: active && focused == side,
                         }
