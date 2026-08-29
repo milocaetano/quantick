@@ -238,6 +238,17 @@ Landing with the drawing-defaults goal (`feat/fib-defaults-and-inline-text`):
 
 Once merged, move them into the table above.
 
+Landing with the feed-recovery goal (`feat/feed-recovery-controls`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_FEED_STALL=connecting\|reconnecting\|silent` | a **stalled feed**, and the two controls that recover it: the notice card carries `Reconnect` and `Reload` (the one that fixes this stall filled, the other beside it, and the caption saying what Reload costs), and the status bar's provenance section carries the same pair — which is the only place they appear on a chart that is *full*, since the card never covers bars. One value per branch of `feed::stall::assess`: `connecting` a first connection that never landed, `reconnecting` a transport that dropped and has not come back, `silent` a socket that stayed open while the terminal behind it stopped sending. Without it these surfaces are unreachable in a capture — every one of them appears only after tens of seconds of a genuinely failing feed, and no setting and no recording produces that. It **forges no measurement**: the feed keeps running, `tape_age_ms` and the connection state are untouched, and the words come from the same three constructors the real judgement uses, so a screenshot shows the sentence a trader would really be reading. Both controls do exactly what they always do when pressed. An unrecognized value is ignored and the real judgement stands, never a silently chosen shape |
+| `QUANTICK_FEED_GAP=<ms>` | the **gap seam**: a dashed amber mark, captioned with the silence (`4 min gap`), where a reconnect that kept the timeline left market time no print covers. Placed at the open of the bar halfway through the flow pane's series once there are bars to sit between, so it is on screen at the zoom a capture opens on; every pane resolves it against its own bars, because the gap is anchored in market time rather than in a slot. It goes through `Tab::record_gap`, the same function a real reconnect calls, so the run logs a real `FEED_GAP_MARKED` and the mark is the mark. Reaching it otherwise means breaking a live venue mid-capture and waiting for it to come back. A value under `MIN_MARKED_GAP_MS` (5 s) is refused rather than rounded up — a hook must not photograph a mark the application would not have drawn |
+
+Pair with `QUANTICK_LAYOUT=time+flow` and `QUANTICK_VENUE_HISTORY_DEMO=1` for the split the controls were designed against: a time pane full of the venue's candles beside a flow pane with nothing in it, which is where the card now draws instead of across both.
+
+Once merged, move it into the table above.
+
 Landing with the tape-switch goal (`feat/tape-chart-switch`):
 
 | Hook | Reaches |

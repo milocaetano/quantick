@@ -70,6 +70,19 @@ pub const SEAM_LINE: Color32 = Color32::from_rgba_premultiplied(0x3C, 0x3C, 0x3C
 pub const SEAM_LABEL: Color32 = Color32::from_rgba_premultiplied(0x50, 0x50, 0x50, 0x50);
 /// `warn` — threshold breaches and errors.
 pub const WARN: Color32 = Color32::from_rgb(0xFF, 0x63, 0x47);
+
+/// `gap/line` — the dashed mark where the tape has a hole a reconnect left.
+///
+/// Louder than [`SEAM_LINE`] and quieter than [`AMBER`], because it sits
+/// between the two things they mark. The venue seam is provenance a trader
+/// reads once; a gap is *missing data* under the bars beside it, and the
+/// honesty rule says it is labelled at the point of reading. It is still not
+/// an alarm: nothing is wrong with the chart, there is simply a stretch of the
+/// market it never saw.
+pub const GAP_LINE: Color32 = Color32::from_rgba_premultiplied(0x78, 0x5C, 0x0A, 0x96);
+/// `gap/label` — the caption beside [`GAP_LINE`], naming how long the silence
+/// was. Readable without competing with price.
+pub const GAP_LABEL: Color32 = Color32::from_rgb(0x9A, 0x82, 0x3A);
 /// `tag/bg` — tooltips and the axis price tag.
 pub const TAG_BG: Color32 = Color32::from_rgb(0x37, 0x3F, 0x50);
 /// `text/support` — small explanatory lines that carry real information

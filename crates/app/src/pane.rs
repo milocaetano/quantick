@@ -128,6 +128,15 @@ const EMPTY_VIEW_FONT_SIZE: f32 = 16.0;
 const SEAM_DASH_PX: f32 = 5.0;
 /// See [`SEAM_DASH_PX`].
 const SEAM_GAP_PX: f32 = 4.0;
+/// Font size of the caption beside a dashed vertical mark, in points.
+///
+/// Shared by the venue seam and the tape-gap mark rather than written at each:
+/// they are the same kind of caption answering the same question about the bars
+/// either side of a line, and two copies would drift the first time one moved.
+const SEAM_LABEL_PT: f32 = 11.0;
+/// Gap between a dashed vertical mark and its caption, in pixels — and the
+/// caption's drop from the top of the pane.
+const SEAM_LABEL_INSET_PX: f32 = 4.0;
 
 /// A dashed vertical rule down `rect` at `x`.
 ///
@@ -991,6 +1000,15 @@ pub struct PaneChrome<'a> {
     /// What this pane did to a shared mark, for the tab to apply to the pane
     /// that owns it.
     pub shared: SharedInteraction,
+    /// Stretches of market time this tab's tape does not cover, left by a
+    /// reconnect that kept the timeline (see [`crate::feed::FeedGap`]).
+    ///
+    /// Passed per frame rather than held per pane: the holes belong to the
+    /// tab's one tape, and every pane cuts its own bars from that same tape.
+    /// A copy per pane would be the same list written twice, and two lists
+    /// that can disagree about where the market went quiet is exactly the
+    /// class of bug the honesty rule exists to prevent.
+    pub feed_gaps: &'a [crate::feed::FeedGap],
     /// What the running source can actually produce. The layer menu offers a
     /// layer this feed has no data for as disabled-with-a-reason rather than as
     /// a switch that would do nothing — the wording the toolbar already uses.
@@ -1141,6 +1159,12 @@ pub struct ChartPane {
     // right-click of `QUANTICK_CONTEXT_MENU` — and computing the geometry a
     // second time is how two answers start to disagree.
     pub last_chart_rect: Option<egui::Rect>,
+    // The whole rect this pane was last painted into, gutters and time strip
+    // included — and set whether or not the pane had anything to draw, which
+    // is what separates it from `last_chart_rect`. The feed's notice card is
+    // placed against it: a wait belongs on the pane that is waiting, and the
+    // pane that is waiting is precisely the one with nothing in it.
+    pub last_area: Option<egui::Rect>,
     // The price gutter of the last draw, published for the same reason: the
     // scripted right-click of `QUANTICK_CONTEXT_MENU=axis` needs a point that
     // is really on the axis, not a guess about where the gutter probably is.
@@ -1419,6 +1443,7 @@ impl ChartPane {
             viewport: Viewport::new(),
             last_lane_divider_x: None,
             last_chart_rect: None,
+            last_area: None,
             last_price_gutter: None,
             last_time_strip: None,
             price_axis_levels: Vec::new(),
@@ -5129,6 +5154,9 @@ impl ChartPane {
         chrome: &mut PaneChrome<'_>,
     ) {
         self.paper_hud_anchor = None;
+        // Published before anything can return early, so an empty pane still
+        // says where it is.
+        self.last_area = Some(area);
         let canvas_background = background_color(chrome.style);
         painter.rect_filled(area, egui::Rounding::ZERO, canvas_background);
 
@@ -5976,6 +6004,12 @@ impl ChartPane {
         }
         if self.layer_visible(ChartLayer::BackfillDivider, chrome.style) {
             self.draw_backfill_divider(painter, history_rect, total, cw);
+        }
+        // Under the same switch as the venue seam: both answer "what is the
+        // provenance of the bars either side of this line?", and a trader who
+        // turned that class of mark off meant this one too.
+        if self.layer_visible(ChartLayer::SeamDivider, chrome.style) {
+            self.draw_feed_gaps(painter, history_rect, total, cw, chrome.feed_gaps);
         }
         self.draw_time_strip(
             painter,
@@ -7454,12 +7488,69 @@ impl ChartPane {
             theme::SEAM_LINE,
         );
         painter.text(
-            egui::pos2(x - 4.0, pane.top() + 4.0),
+            egui::pos2(x - SEAM_LABEL_INSET_PX, pane.top() + SEAM_LABEL_INSET_PX),
             egui::Align2::RIGHT_TOP,
             "venue",
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(SEAM_LABEL_PT),
             theme::SEAM_LABEL,
         );
+    }
+
+    /// The bar the tape resumed into after a gap: the first closed bar opening
+    /// at or after the gap's far side.
+    ///
+    /// A binary search rather than a scan. This runs per gap per frame, and a
+    /// linear walk over a chart holding thousands of bars would put that on the
+    /// render thread every frame of a session that reconnected once.
+    ///
+    /// Only the trade-derived series is searched. A gap is left by a live
+    /// reconnect, and the venue prefix in front of it is candle history the
+    /// venue summarized long before this session opened its socket.
+    fn gap_slot(&self, gap: crate::feed::FeedGap) -> Option<usize> {
+        let bars = self.state.bars();
+        let index = bars.partition_point(|bar| bar.open_time < gap.to_ms);
+        (index < bars.len()).then(|| self.history_prefix.len() + index)
+    }
+
+    /// Vertical markers where the tape has a hole no print covers.
+    ///
+    /// A reconnect that keeps the timeline is the whole point of having a
+    /// reconnect beside a reload — but the market that traded while nobody was
+    /// listening cannot be recovered, and butting the two halves of the session
+    /// against each other would draw one continuous tape that never existed.
+    /// So the hole is drawn: dashed, amber-ish, with the silence named beside
+    /// it, at the bar the stream resumed into.
+    fn draw_feed_gaps(
+        &self,
+        painter: &egui::Painter,
+        pane: egui::Rect,
+        total: usize,
+        candle_width: f32,
+        gaps: &[crate::feed::FeedGap],
+    ) {
+        for gap in gaps {
+            let Some(slot) = self.gap_slot(*gap) else {
+                continue;
+            };
+            if slot == 0 || slot >= total {
+                continue;
+            }
+            let x = self.viewport.x_center(slot, pane.right(), total) - candle_width / 2.0;
+            if x < pane.left() || x > pane.right() {
+                continue; // off-screen
+            }
+            draw_dashed_vertical(painter, x, pane, SEAM_DASH_PX, SEAM_GAP_PX, theme::GAP_LINE);
+            // On the right of its line, where the venue seam's caption is on
+            // the left: the two can land on the same bar, and a trader has to
+            // be able to tell which line each word belongs to.
+            painter.text(
+                egui::pos2(x + SEAM_LABEL_INSET_PX, pane.top() + SEAM_LABEL_INSET_PX),
+                egui::Align2::LEFT_TOP,
+                format!("{} gap", crate::feed::stall::spoken_ms(gap.duration_ms())),
+                egui::FontId::proportional(SEAM_LABEL_PT),
+                theme::GAP_LABEL,
+            );
+        }
     }
 
     /// A vertical marker separating backfilled history (left) from live (right),
@@ -8759,6 +8850,7 @@ mod tests {
                     begin_text_edit: &mut begin_text_edit,
                     style: &style,
                     tz: crate::timezone::TzOffset::default(),
+                    feed_gaps: &[],
                     symbol: "TESTUSDT",
                     paper: &mut paper,
                     paper_owns_input: false,
@@ -8798,6 +8890,7 @@ mod tests {
             begin_text_edit: &mut begin_text_edit,
             style: &style,
             tz: crate::timezone::TzOffset::default(),
+            feed_gaps: &[],
             symbol: "TESTUSDT",
             paper: &mut paper,
             paper_owns_input: false,

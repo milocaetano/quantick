@@ -5,8 +5,15 @@
 //! the mode text that used to be painted over candles: provenance on the
 //! left (state dot, venue, symbol, lag), content in the middle (bar spec,
 //! counts, honesty labels), machinery on the right (trades, fps, and the
-//! bar's only control — the timezone picker). A reading that breaches its
-//! threshold turns [`theme::WARN`]; the layout never moves.
+//! timezone picker). A reading that breaches its threshold turns
+//! [`theme::WARN`]; the layout never moves.
+//!
+//! The timezone picker was the bar's only control until the **recovery pair**
+//! joined the provenance section (`Reconnect` and `Reload`, drawn only while
+//! the feed is stalled). They are here because this is the one place they can
+//! be: the notice card refuses to cover a working chart, so a terminal that
+//! froze mid-session — bars on screen, none of them current — had nothing to
+//! press anywhere in the window.
 //!
 //! The section values are computed by the app and handed in as a plain
 //! [`StatusModel`], so every text and colour decision here stays pure and
@@ -15,6 +22,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
+use crate::feed::stall::{Recovery, Stall};
 use crate::feed::{FeedConnectionState, FeedLatency};
 use crate::metrics;
 use crate::orderflow;
@@ -25,6 +33,21 @@ use crate::timezone::TzOffset;
 pub const STATUS_BAR_HEIGHT: f32 = 28.0;
 /// Diameter of the provenance state dot, in pixels.
 const STATE_DOT_DIAMETER_PX: f32 = 8.0;
+/// Width reserved for the recovery pair, in pixels — held whether or not the
+/// feed is stalled.
+///
+/// Reserved rather than grown into, because this line's one invariant is that
+/// it never moves: a pair of buttons appearing mid-session would push the bar
+/// spec, the bar counts and every honesty label sideways at the exact moment
+/// the trader is reading them. It also buys the better half of the trade —
+/// the controls are always in the same place, so a trader who has used them
+/// once finds them without looking.
+const RECOVERY_SLOT_WIDTH_PX: f32 = 132.0;
+/// Height of a recovery button, in pixels. Inside the 28 px line with its
+/// 4 px margins.
+const RECOVERY_BUTTON_HEIGHT_PX: f32 = 18.0;
+/// Gap between the two recovery buttons, in pixels.
+const RECOVERY_BUTTON_GAP_PX: f32 = 6.0;
 /// Gap between neighbouring cells on the line, in pixels.
 const CELL_SPACING_PX: f32 = 8.0;
 
@@ -320,11 +343,25 @@ pub struct StatusResponse {
     /// The SIM cell was clicked: open the Trading dock tab, where the
     /// position it summarizes is managed.
     pub open_trading_tab: bool,
+    /// A recovery control in the provenance section was pressed.
+    ///
+    /// This is where a stalled feed is reachable on a chart that is *full*.
+    /// The notice card refuses to cover bars — correctly, a working chart is
+    /// worth more than an instruction — which used to leave the one case the
+    /// trader actually hits, a terminal that froze mid-session, with nothing
+    /// to press anywhere in the window.
+    pub recovery: Option<Recovery>,
 }
 
 /// Draw the status bar as the window's bottom panel. `tz` is the bar's
-/// resident control; the SIM cell clicks through to the Trading tab.
-pub fn draw(ctx: &egui::Context, model: &StatusModel, tz: &mut TzOffset) -> StatusResponse {
+/// resident control; the SIM cell clicks through to the Trading tab, and the
+/// recovery pair appears in the provenance section while `stall` is present.
+pub fn draw(
+    ctx: &egui::Context,
+    model: &StatusModel,
+    tz: &mut TzOffset,
+    stall: Option<&Stall>,
+) -> StatusResponse {
     let mut response = StatusResponse::default();
     egui::TopBottomPanel::bottom("status_bar")
         .exact_height(STATUS_BAR_HEIGHT)
@@ -336,7 +373,7 @@ pub fn draw(ctx: &egui::Context, model: &StatusModel, tz: &mut TzOffset) -> Stat
         .show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = CELL_SPACING_PX;
-                draw_provenance(ui, model);
+                response.recovery = draw_provenance(ui, model, stall);
                 ui.separator();
                 response.open_trading_tab = draw_content(ui, model);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -347,8 +384,17 @@ pub fn draw(ctx: &egui::Context, model: &StatusModel, tz: &mut TzOffset) -> Stat
     response
 }
 
-/// Left section: state dot, venue, symbol, lag.
-fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
+/// Left section: state dot, venue, symbol, lag — and, while the feed is
+/// stalled, the pair of controls that gets it back.
+///
+/// Returns which of them was pressed. They are drawn inline rather than behind
+/// a popover a click has to open first: recovery is one gesture from here, and
+/// the section never moves, so muscle memory finds them without a look.
+fn draw_provenance(
+    ui: &mut egui::Ui,
+    model: &StatusModel,
+    stall: Option<&Stall>,
+) -> Option<Recovery> {
     let state = feed_state(model.replay.is_some(), model.connection);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(STATE_DOT_DIAMETER_PX, STATE_DOT_DIAMETER_PX),
@@ -400,6 +446,94 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel) {
     .on_hover_ui(|ui| {
         ui.label(tape_tooltip(model.feed_arrival_ms, model.feed_latency));
     });
+    draw_recovery(ui, stall)
+}
+
+/// The recovery slot: always the same width, empty until there is a stall,
+/// then the control that fixes *this* one first with the other beside it.
+///
+/// Both carry the reason on hover rather than in the bar, because the bar is
+/// 28 px of fixed layout and a sentence would move every cell to its right —
+/// the one thing a status line must never do. The slot is claimed even when
+/// `stall` is `None` for the same reason.
+///
+/// The primary is filled only when the stall is unambiguous. A quiet tape is
+/// also what a closed exchange looks like, and this line would otherwise carry
+/// a filled amber control every night until the trader stopped seeing it; the
+/// tape cell beside it already turns [`theme::WARN`] past ten seconds and goes
+/// on carrying that warning.
+fn draw_recovery(ui: &mut egui::Ui, stall: Option<&Stall>) -> Option<Recovery> {
+    let height = RECOVERY_BUTTON_HEIGHT_PX;
+    let (slot, _) = ui.allocate_exact_size(
+        egui::vec2(RECOVERY_SLOT_WIDTH_PX, height),
+        egui::Sense::hover(),
+    );
+    let stall = stall?;
+    let width = (RECOVERY_SLOT_WIDTH_PX - RECOVERY_BUTTON_GAP_PX) / 2.0;
+    let button = |index: f32| {
+        egui::Rect::from_min_size(
+            egui::pos2(
+                slot.left() + index * (width + RECOVERY_BUTTON_GAP_PX),
+                slot.top(),
+            ),
+            egui::vec2(width, height),
+        )
+    };
+
+    let mut pressed = None;
+    let primary = stall.primary;
+    let primary_face = if stall.needs_attention {
+        egui::Button::new(
+            egui::RichText::new(primary.label())
+                .small()
+                .color(theme::CHIP_INK),
+        )
+        .fill(theme::AMBER)
+    } else {
+        egui::Button::new(egui::RichText::new(primary.label()).small()).fill(theme::CONTROL)
+    };
+    if ui
+        .put(button(0.0), primary_face)
+        .on_hover_ui(|ui| {
+            ui.label(&stall.headline);
+            ui.label(egui::RichText::new(&stall.next_step).color(theme::TEXT_MUTED));
+        })
+        .clicked()
+    {
+        pressed = Some(primary);
+    }
+    let secondary = primary.other();
+    if ui
+        .put(
+            button(1.0),
+            egui::Button::new(
+                egui::RichText::new(secondary.label())
+                    .small()
+                    .color(theme::TEXT_MUTED),
+            ),
+        )
+        .on_hover_ui(|ui| {
+            ui.label(&stall.headline);
+            ui.label(egui::RichText::new(recovery_cost(secondary)).color(theme::TEXT_MUTED));
+        })
+        .clicked()
+    {
+        pressed = Some(secondary);
+    }
+    pressed
+}
+
+/// What each control costs, in the trader's terms — the hover half of the
+/// caption the notice card prints in full.
+fn recovery_cost(recovery: Recovery) -> &'static str {
+    match recovery {
+        Recovery::Reconnect => {
+            "Keeps the chart as it is: bars, drawings, strategies and any open paper position."
+        }
+        Recovery::Reload => {
+            "Rebuilds the chart from scratch: closes any open paper position and disarms every strategy."
+        }
+    }
 }
 
 /// Middle section: bar spec, counts, honesty labels and navigation hints.
@@ -763,7 +897,7 @@ mod tests {
             };
             for _ in 0..2 {
                 let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                    let response = draw(ctx, &model, &mut tz);
+                    let response = draw(ctx, &model, &mut tz, None);
                     assert_eq!(
                         response,
                         StatusResponse::default(),
@@ -817,7 +951,7 @@ mod tests {
         let mut painted = String::new();
         for _ in 0..2 {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                let _ = draw(ctx, &model, &mut tz);
+                let _ = draw(ctx, &model, &mut tz, None);
             });
             painted.clear();
             for shape in output.shapes {

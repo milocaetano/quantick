@@ -22,9 +22,10 @@ use crate::canvas_layout::{
 };
 use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::{AppConfig, FeedCapabilities};
+use crate::feed::stall::{self, Stall, StallInput};
 use crate::feed::{
-    self, FeedCommand, FeedConnectionState, FeedEvent, FeedHandle, FeedLatency, FeedNotice,
-    ReplayLink,
+    self, FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedHandle, FeedLatency,
+    FeedNotice, MAX_REMEMBERED_GAPS, MIN_MARKED_GAP_MS, ReplayLink, past_resume_floor,
 };
 use crate::history_reach::{Campaign, CampaignStep, HistoryReach};
 use crate::loading::{LoadingTask, LoadingTracker};
@@ -373,6 +374,51 @@ pub struct Tab {
     /// blocks once and then goes quiet has to keep saying so — the chart it
     /// left empty will not.
     pub notice: FeedNotice,
+    /// Wall clock when [`Self::notice`] last changed.
+    ///
+    /// A feed cannot report that nothing is happening, because nothing
+    /// happening produces no event; the only way to tell a step in progress
+    /// from a step that has stopped progressing is how long it has stood.
+    /// Read by [`Self::stall_at`].
+    pub notice_since_ms: i64,
+    /// Wall clock when the running feed session was attached — the floor for
+    /// judging a first connection that never lands.
+    pub feed_attached_ms: i64,
+    /// Wall clock when [`Self::feed_connection`] last changed.
+    ///
+    /// The reconnect budget is measured from here rather than from the notice,
+    /// because a supervisor that alternates two lines — `Lost`, then `Waiting`,
+    /// then `Lost` — changes the notice every few seconds while the transport
+    /// stays exactly as broken as it was. Anchored on the notice, that pair
+    /// re-stamped the clock forever and the budget never ran out, which is the
+    /// failure this whole module exists to end.
+    pub connection_since_ms: i64,
+    /// After a reconnect that kept the timeline, the market time the chart had
+    /// already reached.
+    ///
+    /// Every print at or before it belongs to the window the new session
+    /// replays and is dropped rather than counted twice; the first print past
+    /// it clears the floor and decides whether a gap has to be marked. `None`
+    /// on a session that started from an empty chart, which has nothing to
+    /// overlap with. See [`crate::feed::past_resume_floor`].
+    pub resume_floor_ms: Option<i64>,
+    /// A stall forced by `QUANTICK_FEED_STALL`, for a scripted run that has to
+    /// photograph the recovery controls without breaking a real feed.
+    ///
+    /// Overrides the judgement when set, and set only from the hook — a live
+    /// session leaves it `None` and reads the real one, exactly as
+    /// [`Self::forced_latency`] does.
+    pub forced_stall: Option<stall::ForcedStall>,
+    /// A silence asked for by `QUANTICK_FEED_GAP`, still waiting for bars to
+    /// land it between. Taken once the chart has some, and cleared, so the
+    /// hook marks one gap rather than one per frame.
+    pub pending_demo_gap_ms: Option<i64>,
+    /// Silences in this tab's tape that no print covers, in market time,
+    /// oldest first and bounded by [`MAX_REMEMBERED_GAPS`].
+    ///
+    /// Written only by a reconnect that kept the timeline. A reload has no
+    /// gaps to record: it throws the timeline away, so there is no seam.
+    pub feed_gaps: Vec<FeedGap>,
     /// State reported by the live trade transport, independent from how often
     /// that market prints and from the last observed arrival latency.
     pub feed_connection: FeedConnectionState,
@@ -745,6 +791,13 @@ impl Tab {
             book_events: feed.book_events,
             notices: feed.notices,
             notice: FeedNotice::Clear,
+            notice_since_ms: metrics::wall_clock_ms(),
+            feed_attached_ms: metrics::wall_clock_ms(),
+            connection_since_ms: metrics::wall_clock_ms(),
+            resume_floor_ms: None,
+            forced_stall: stall::ForcedStall::from_env(),
+            pending_demo_gap_ms: feed::demo_gap_ms(),
+            feed_gaps: Vec::new(),
             feed_connection: FeedConnectionState::Connecting,
             feed_capabilities: feed.capabilities,
             feed_latency: feed.latency,
@@ -803,32 +856,72 @@ impl Tab {
     /// notice and the transport state start clean — switching away from a
     /// blocked source must not leave its instruction on screen.
     fn attach(&mut self, handle: FeedHandle) {
-        // The old market's candles describe the old market. Any reply still in
-        // flight belongs to a channel that is about to be dropped, so the wait
-        // restarts rather than draining to zero on an answer that never comes.
-        self.ohlcv_base = None;
+        self.attach_with(handle, false);
+    }
+
+    /// Take over a freshly spawned feed for the *same* market, keeping every
+    /// record built from the old session: candles, history prefixes and how far
+    /// back this tab has already reached.
+    ///
+    /// This is the half of a reconnect that makes it worth having beside a
+    /// reload. Switching markets must forget all of it — the old market's
+    /// candles describe the old market — but a socket that dropped and came
+    /// back is still the same instrument, and refetching a week of history
+    /// because a bridge hiccuped is the wait the trader was trying to escape.
+    fn attach_resuming(&mut self, handle: FeedHandle) {
+        self.attach_with(handle, true);
+    }
+
+    /// The shared body. `keep_timeline` decides only what is *forgotten*;
+    /// everything tied to the handle itself is replaced either way, because an
+    /// in-flight reply belongs to a channel that is about to be dropped.
+    fn attach_with(&mut self, handle: FeedHandle, keep_timeline: bool) {
+        if !keep_timeline {
+            // The old market's candles describe the old market.
+            self.ohlcv_base = None;
+            // A different market has a different record. Whatever this tab
+            // learned about how far back the last one reached says nothing
+            // here.
+            self.ohlcv_reaching_back = None;
+            self.ohlcv_older_exhausted = false;
+            self.ohlcv_capable = false;
+            for pane in self.panes_mut() {
+                pane.install_history_prefix(Vec::new());
+            }
+            // A seam and a resume floor both belong to the timeline being
+            // thrown away with them. Left standing across a market switch, the
+            // floor filters the *new* market's prints against the old one's
+            // clock and writes a fabricated gap on a chart that never
+            // reconnected.
+            self.feed_gaps.clear();
+            self.resume_floor_ms = None;
+        } else {
+            // A kept timeline needs no refill, so nothing restarts the history
+            // wait — but a request the old session never answered would spin
+            // its spinner for the rest of the session. Every outstanding one
+            // belonged to the channel about to be dropped.
+            self.loading.set_active(LoadingTask::History, false);
+        }
+        // Any reply still in flight belongs to a channel that is about to be
+        // dropped, so the wait restarts rather than draining to zero on an
+        // answer that never comes.
         self.ohlcv_pending = false;
         // The channel carrying any in-flight slices is dropped with the old
         // handle, so nothing survives to be dropped as stale.
         self.ohlcv_stale = false;
-        // A different market has a different record. Whatever this tab
-        // learned about how far back the last one reached says nothing here.
-        self.ohlcv_reaching_back = None;
-        self.ohlcv_older_exhausted = false;
-        self.ohlcv_capable = false;
-        // The run belonged to the old market's tape; its reply is on a channel
+        // The run belonged to the old session's tape; its reply is on a channel
         // about to be dropped.
         self.campaign = None;
         self.loading.set_active(LoadingTask::VenueHistory, false);
-        for pane in self.panes_mut() {
-            pane.install_history_prefix(Vec::new());
-        }
         self.events = handle.events;
         self.book_events = handle.book_events;
         self.notices = handle.notices;
         self.feed_capabilities = handle.capabilities;
         self.feed_latency = handle.latency;
         self.notice = FeedNotice::Clear;
+        self.notice_since_ms = metrics::wall_clock_ms();
+        self.feed_attached_ms = self.notice_since_ms;
+        self.connection_since_ms = self.notice_since_ms;
         self.feed_connection = FeedConnectionState::Connecting;
         self.commands = handle.commands;
         self.replay = handle.replay;
@@ -2642,6 +2735,14 @@ impl Tab {
             match self.events.try_recv() {
                 Ok(FeedEvent::Backfilled(trades)) => {
                     self.loading.end(LoadingTask::History);
+                    // A session that resumed onto a kept timeline opens by
+                    // replaying its recent window, which the chart already
+                    // holds. Whatever is genuinely newer is forwarded as live,
+                    // in order, exactly as the feed does inside one session.
+                    if self.resume_floor_ms.is_some() {
+                        live |= self.ingest_resumed(&trades);
+                        continue;
+                    }
                     self.history_trades += trades.len();
                     // History only seeds the simulator's mark — filling
                     // against the past would be look-ahead.
@@ -2658,6 +2759,14 @@ impl Tab {
                     // The reply — even an empty one — answers exactly one
                     // pending load; the indicator survives until the last one.
                     self.loading.end(LoadingTask::History);
+                    // The MetaTrader bridge delivers its recovery window on
+                    // this event rather than as backfill, so a resumed session
+                    // is filtered here too. Prepending it would put a block the
+                    // chart already holds in front of the bars it duplicates.
+                    if self.resume_floor_ms.is_some() {
+                        live |= self.ingest_resumed(&trades);
+                        continue;
+                    }
                     self.history_trades += trades.len();
                     // Each pane cuts the older trades into its own bars, so
                     // each shifts its own anchors by its own count.
@@ -2674,12 +2783,20 @@ impl Tab {
                     self.advance_history_campaign();
                 }
                 Ok(FeedEvent::Live(trade)) => {
+                    if self.resume_floor_ms.is_some() {
+                        live |= self.ingest_resumed(std::slice::from_ref(&trade));
+                        continue;
+                    }
                     let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
                     self.ingest_live_trade_at(&trade, received_at_ms);
                     live = true;
                 }
                 Ok(FeedEvent::LiveBatch(trades)) => {
                     if !trades.is_empty() {
+                        if self.resume_floor_ms.is_some() {
+                            live |= self.ingest_resumed(&trades);
+                            continue;
+                        }
                         let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
                         for trade in &trades {
                             self.ingest_live_trade_at(trade, received_at_ms);
@@ -2705,6 +2822,10 @@ impl Tab {
                 pane.publish_partial();
             }
         }
+        // After the bars exist, so the hooked gap has something to sit
+        // between. Costs one `Option` test per drain when the hook is unset,
+        // which is every run but a capture.
+        self.land_demo_gap();
         // A reset left the marks waiting for bars to anchor to, and this is
         // the drain that may have just delivered them. One flag test per pane
         // when nothing is owed.
@@ -2719,20 +2840,98 @@ impl Tab {
     /// a burst of bridge output must not queue up cards to show one by one.
     /// A closed channel (a feed with nothing to report) simply yields nothing.
     pub fn drain_notices(&mut self) {
+        self.drain_notices_at(metrics::wall_clock_ms());
+    }
+
+    /// Clock-injected half, so a test can drive a notice across its stall
+    /// budget without waiting for one.
+    pub fn drain_notices_at(&mut self, now_ms: i64) {
         while let Ok(notice) = self.notices.try_recv() {
-            match notice {
+            let next = match notice {
                 FeedNotice::Connected => {
-                    self.feed_connection = FeedConnectionState::Connected;
-                    self.notice = FeedNotice::Clear;
+                    self.set_connection(FeedConnectionState::Connected, now_ms);
+                    FeedNotice::Clear
                 }
                 FeedNotice::Reconnecting { .. } => {
-                    self.feed_connection = FeedConnectionState::Reconnecting;
-                    self.notice = notice;
+                    self.set_connection(FeedConnectionState::Reconnecting, now_ms);
+                    notice
                 }
-                FeedNotice::Working { .. } | FeedNotice::Attention { .. } => self.notice = notice,
-                FeedNotice::Clear => self.notice = FeedNotice::Clear,
+                FeedNotice::Working { .. } | FeedNotice::Attention { .. } => notice,
+                FeedNotice::Clear => FeedNotice::Clear,
+            };
+            // Stamped only on a *change*. A supervisor repeating the same line
+            // every few seconds would otherwise keep resetting the very budget
+            // it is supposed to run out of, and the chart would sit on
+            // "connecting" for as long as the retry loop lived — which is the
+            // failure this clock exists to end.
+            if next != self.notice {
+                self.notice = next;
+                self.notice_since_ms = now_ms;
             }
         }
+    }
+
+    /// Where a feed's trouble is actually visible: the painted pane with the
+    /// least on it, and how many bar slots that pane holds.
+    ///
+    /// One tab is one feed, so its notice is tab-scoped information — but its
+    /// *consequence* never is. A MetaTrader tab whose time panes are full of
+    /// the terminal's candle history and whose flow pane has not seen one tick
+    /// is starved in exactly one place, and the card explaining it was being
+    /// centred across all three. The trader read a sentence attached to
+    /// nothing, floating over two charts with nothing wrong with them.
+    ///
+    /// Fewest slots wins; the larger pane breaks a tie, so an all-empty canvas
+    /// puts the card on the biggest chart — which is where it landed before
+    /// this existed, and why a single-pane tab looks unchanged.
+    #[must_use]
+    pub fn starved_pane(&self) -> Option<(egui::Rect, usize)> {
+        self.panes()
+            .filter_map(|(pane, _)| pane.last_area.map(|area| (area, pane.slots())))
+            .min_by(|(left_area, left_slots), (right_area, right_slots)| {
+                left_slots
+                    .cmp(right_slots)
+                    .then_with(|| right_area.area().total_cmp(&left_area.area()))
+            })
+    }
+
+    /// Move the transport to `state`, stamping when it got there.
+    ///
+    /// Only a real transition stamps: a provider that reports the same state
+    /// twice has not changed anything, and treating it as a change would reset
+    /// the budget measured from it.
+    fn set_connection(&mut self, state: FeedConnectionState, now_ms: i64) {
+        if self.feed_connection != state {
+            self.feed_connection = state;
+            self.connection_since_ms = now_ms;
+        }
+    }
+
+    /// This tab's own judgement about a feed that has stopped delivering, or
+    /// `None` while it is merely slow.
+    ///
+    /// Deterministic half: the caller supplies wall clock, exactly as
+    /// [`Self::tape_age_at`] does. The decision itself lives in
+    /// [`crate::feed::stall`] and touches no clock at all.
+    #[must_use]
+    pub fn stall_at(&self, config: &AppConfig, now_ms: i64) -> Option<Stall> {
+        let provider = config.provider_of(&self.feed_id)?;
+        if let Some(forced) = self.forced_stall {
+            return Some(forced.stall(provider, self.feed_display_name(config)));
+        }
+        stall::assess(
+            &StallInput {
+                notice: &self.notice,
+                connection_since_ms: self.connection_since_ms,
+                connection: self.feed_connection,
+                tape_age_ms: self.tape_age_at(now_ms),
+                attached_ms: self.feed_attached_ms,
+                provider,
+                provider_name: self.feed_display_name(config),
+                replaying: self.replay.is_some(),
+            },
+            now_ms,
+        )
     }
 
     /// Deterministic half of live ingestion: `received_at_ms` is the UI's epoch
@@ -2974,6 +3173,11 @@ impl Tab {
                 .disarm_all(quantick_strategy::DisarmReason::TimelineReset);
         }
         self.drop_overlay_gestures();
+        // The timeline these describe is the one being rebuilt. A gap
+        // re-anchors itself by market time, so one left behind would paint
+        // itself onto the refilled series as though a reconnect had happened.
+        self.feed_gaps.clear();
+        self.resume_floor_ms = None;
         self.history_trades = 0;
         // A run anchored to a tape that no longer exists cannot continue, and
         // `restart` below drops the waits its outstanding request would have
@@ -3186,35 +3390,207 @@ impl Tab {
         self.reset_market_state();
     }
 
-    /// Start the current feed over, from the card that asked the user to fix
-    /// something.
+    /// Respawn the transport and keep everything the chart has built:
+    /// bars, drawings, indicators, armed strategies, the open paper position.
     ///
-    /// The same respawn a feed switch performs, minus the switch: after the
-    /// terminal is opened or the package installed, the way back has to be one
-    /// click, not a restart of quantick. A replay owns the chart while it
-    /// plays and has nothing to retry.
-    pub fn restart_feed(&mut self, config: &AppConfig) {
+    /// The cheap half of recovery, and the one a trader reaches for when the
+    /// feed hiccuped: nothing on screen moves. Before it existed the only
+    /// button on the notice card said "Try again" and quietly ran
+    /// [`Self::reload_feed`] — which flattens the position and disarms every
+    /// strategy. A control that costs a trader their position without saying so
+    /// is not a recovery control.
+    ///
+    /// The new session replays its own recent window, so the market time the
+    /// chart had already reached becomes a floor
+    /// ([`crate::feed::past_resume_floor`]): everything at or before it is
+    /// overlap and is dropped, and the first print past it decides whether the
+    /// silence was long enough to be a marked gap. A replay owns the chart
+    /// while it plays and has no transport to recover.
+    /// Returns whether the feed was really respawned. `false` means there was
+    /// nothing to respawn — a recorded session owns the chart, or the tab's
+    /// feed id is no longer in the feed table — and a caller told `true` when
+    /// nothing happened is exactly the inferred-versus-observed lie the
+    /// honesty rule forbids.
+    pub fn reconnect_feed(&mut self, config: &AppConfig) -> bool {
         if self.replay.is_some() {
-            return;
+            return false;
         }
         let Some(provider) = config.provider_of(&self.feed_id) else {
-            return;
+            return false;
         };
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
-            event_code = "FEED_RESTARTED_BY_USER",
+            event_code = "FEED_RECONNECTED_BY_USER",
+            feed = %self.feed_id,
+            symbol = %self.symbol,
+            action = "respawn_feed_keeping_timeline",
+            resume_floor_ms = self.latest_trade_ms,
+            "reconnecting the feed and keeping the timeline"
+        );
+        // Taken before the handle is swapped: it is a fact about the chart, not
+        // about the session, and it has to survive the attach.
+        self.resume_floor_ms = self.latest_trade_ms;
+        let handle = feed::spawn_live(provider, &self.symbol, config);
+        self.attach_resuming(handle);
+        // The book from the dropped socket is gone with it. Nothing is reset
+        // here on purpose: the new session opens with a complete snapshot, and
+        // a snapshot is exactly what replaces a book wholesale.
+        self.ensure_book_capture(config);
+        true
+    }
+
+    /// Throw the timeline away and rebuild it from zero.
+    ///
+    /// The expensive half, for the case the trader described: MetaTrader itself
+    /// froze, so the bars on screen are not merely behind, they are wrong.
+    /// Reconnecting a socket that is already open fixes nothing there; what
+    /// they did by hand was close quantick and open it again, and this is that
+    /// act without the restart.
+    ///
+    /// It costs what a restart costs, which is why the card says so before it
+    /// is pressed: [`Self::reset_market_state`] disarms every strategy and
+    /// [`PaperTrading::on_timeline_reset`] closes and journals an open
+    /// position. A position cannot honestly survive into a rebuilt timeline.
+    /// Returns whether the chart was really rebuilt; see
+    /// [`Self::reconnect_feed`] for why the answer is reported rather than
+    /// assumed.
+    pub fn reload_feed(&mut self, config: &AppConfig) -> bool {
+        if self.replay.is_some() {
+            return false;
+        }
+        let Some(provider) = config.provider_of(&self.feed_id) else {
+            return false;
+        };
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "FEED_RELOADED_BY_USER",
             feed = %self.feed_id,
             symbol = %self.symbol,
             action = "respawn_feed",
-            "restarting the feed from the notice card"
+            "rebuilding the chart from a new feed session"
         );
+        // A rebuild has no timeline to resume onto, so no floor and no seam.
+        self.resume_floor_ms = None;
         let handle = feed::spawn_live(provider, &self.symbol, config);
         self.attach(handle);
         self.reset_market_state();
         // The live market is back and it can stream depth again; start
         // recording immediately rather than waiting for the map to be opened.
         self.ensure_book_capture(config);
+        true
+    }
+
+    /// Take in a batch from a session that resumed onto a kept timeline,
+    /// keeping only what the chart has not already seen.
+    ///
+    /// The prints that survive reach the bars, the tape and the simulator's
+    /// *mark*, and nothing else — no fill, no strategy, no arrival-latency
+    /// reading. They are history: the market made them minutes ago while
+    /// nobody was listening. Run through the live path they would fill a
+    /// resting limit at a price the trader could never have been filled at,
+    /// fire a strategy on a bar that is already over, and report the length of
+    /// the outage as this feed's delay. `Backfilled` states the same rule in
+    /// its own words — history only seeds the mark — and this is the other
+    /// place history arrives.
+    ///
+    /// The floor lives for exactly one event, whatever that event contained.
+    /// A session replays its window once, at the start; leaving the floor up
+    /// past that swallowed the next *load older* answer whole (every older
+    /// print is below the floor), and on a venue that replays nothing it
+    /// waited for the next natural print and called the quiet in between a
+    /// gap.
+    ///
+    /// Returns whether anything was actually ingested, so the caller's live
+    /// flag means the same thing on this path as on the ordinary one.
+    fn ingest_resumed(&mut self, trades: &[quantick_engine::Trade]) -> bool {
+        let Some(floor) = self.resume_floor_ms.take() else {
+            return false;
+        };
+        let fresh = past_resume_floor(trades, floor);
+        let overlap = trades.len() - fresh.len();
+        if overlap > 0 {
+            // Logged rather than silent, like the same rule inside
+            // `quantick-feed-mt5`: a print that was dropped is a print the
+            // chart chose not to count, and that choice is reviewable.
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "FEED_RESUME_OVERLAP_DROPPED",
+                feed = %self.feed_id,
+                symbol = %self.symbol,
+                dropped = overlap,
+                floor_ms = floor,
+                "dropped the window a resumed session replayed"
+            );
+        }
+        let Some(first) = fresh.first() else {
+            return false;
+        };
+        self.record_gap(floor, first.timestamp_ms);
+        self.history_trades += fresh.len();
+        self.latest_trade_ms = Some(fresh[fresh.len() - 1].timestamp_ms);
+        for trade in fresh {
+            for pane in self.panes_mut() {
+                pane.ingest_live_trade(trade);
+            }
+        }
+        // The mark, and only the mark — the same seeding `Backfilled` does.
+        self.paper.seed(&fresh[fresh.len() - 1]);
+        true
+    }
+
+    /// Land the gap `QUANTICK_FEED_GAP` asked for, once the chart has bars for
+    /// it to sit between.
+    ///
+    /// Placed at the open of the bar halfway through the series, so the seam is
+    /// on screen at the zoom a capture opens on rather than off the left edge.
+    /// It goes through [`Self::record_gap`], so a hooked run and a real
+    /// reconnect draw the same mark from the same list.
+    fn land_demo_gap(&mut self) {
+        let Some(silence_ms) = self.pending_demo_gap_ms else {
+            return;
+        };
+        let bars = self.flow_pane.state.bars();
+        // Two bars at least: a seam is a boundary, and a boundary needs a bar
+        // on each side of it.
+        if bars.len() < 2 {
+            return;
+        }
+        let to_ms = bars[bars.len() / 2].open_time;
+        self.pending_demo_gap_ms = None;
+        self.record_gap(to_ms - silence_ms, to_ms);
+    }
+
+    /// Record the silence a reconnect left, when it is long enough to be worth
+    /// marking.
+    ///
+    /// Short silences are the recovery path working and marking them would be
+    /// noise that teaches the trader to stop reading marks; see
+    /// [`MIN_MARKED_GAP_MS`].
+    fn record_gap(&mut self, from_ms: i64, to_ms: i64) {
+        let gap = FeedGap { from_ms, to_ms };
+        if gap.duration_ms() < MIN_MARKED_GAP_MS {
+            return;
+        }
+        // Bounded: the newest gaps are the ones on screen, so the oldest is
+        // what falls off.
+        if self.feed_gaps.len() >= MAX_REMEMBERED_GAPS {
+            self.feed_gaps.remove(0);
+        }
+        self.feed_gaps.push(gap);
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "FEED_GAP_MARKED",
+            feed = %self.feed_id,
+            symbol = %self.symbol,
+            from_ms = gap.from_ms,
+            to_ms = gap.to_ms,
+            duration_ms = gap.duration_ms(),
+            "marked a stretch of market time no print covers"
+        );
     }
     /// Lay the canvas out and run every visible pane through it (§11).
     ///
@@ -3330,8 +3706,18 @@ impl Tab {
                 time_panes,
                 symbol,
                 paper,
+                feed_gaps,
                 ..
             } = self;
+            // Cleared before the loop, set by whichever panes it actually
+            // walks. A collapsed context column draws nothing and would
+            // otherwise keep the rect it had when it was last open, which
+            // `starved_pane` would then offer the notice card as somewhere to
+            // paint — off the visible canvas, on a chart that is not there.
+            flow_pane.last_area = None;
+            for pane in time_panes.iter_mut() {
+                pane.last_area = None;
+            }
             // The time pane has no tape of its own (§11), so its footprint
             // rows adopt the flow pane's capture bucket — the instrument's
             // grid is a fact about the market, not about which pane shows it.
@@ -3369,6 +3755,7 @@ impl Tab {
                 paper_owns_input: false,
                 shared_pick: None,
                 shared: SharedInteraction::default(),
+                feed_gaps: &feed_gaps[..],
                 capabilities: chrome.capabilities,
                 side_inferred: chrome.side_inferred,
                 footprint: chrome.footprint,

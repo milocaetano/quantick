@@ -12,7 +12,7 @@ use quantick_control::{
     handshake::{CURRENT_PROTOCOL_VERSION, ProtocolLimits},
     id::{
         CapabilityId, ConfirmationClassId, CostClassId, EffectId, InstanceId, ModuleId,
-        PermissionId, ProfileId, SnapshotScopeId,
+        PermissionId, ProfileId, RiskFlagId, SnapshotScopeId,
     },
     limits::{
         CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS, CONTROL_EVIDENCE_MAX_CHUNKS_PER_PAGE,
@@ -74,6 +74,18 @@ pub(crate) const COCKPIT_PERMISSION_ID: &str = "cockpit";
 pub(crate) const COCKPIT_LAYOUT_PERMISSION_ID: &str = "cockpit.layout";
 /// The effect every cockpit capability declares.
 pub(crate) const COCKPIT_EFFECT_ID: &str = "cockpit";
+/// Permission for the one cockpit act that can remove the trader's work.
+///
+/// Separate from `cockpit.layout` on purpose, and marked sensitive: a grant
+/// that lets an assistant rearrange panes must not silently also let it close
+/// an open position. The layout tier's own doc comment names that class of
+/// trust bug; this is the same rule applied to the tier that destroys.
+pub(crate) const COCKPIT_RECOVER_PERMISSION_ID: &str = "cockpit.recover";
+/// The effect for recovering a feed by rebuilding what it fed.
+pub(crate) const RECOVER_EFFECT_ID: &str = "cockpit.recover";
+/// What a capability under [`RECOVER_EFFECT_ID`] declares it may cost: the
+/// chart's timeline, and with it the paper position and every armed strategy.
+pub(crate) const TIMELINE_REBUILT_RISK_FLAG: &str = "timeline_rebuilt";
 pub(crate) const DESCRIBE_CAPABILITY_ID: &str = "control.describe";
 pub(crate) const SNAPSHOT_CAPABILITY_ID: &str = "snapshot.read";
 pub(crate) const CHART_WINDOW_CAPABILITY_ID: &str = "chart.window.read";
@@ -656,6 +668,18 @@ impl ObserverContract {
                 profile_ceilings: BTreeSet::from([cockpit.clone()]),
             },
             PermissionDescriptor {
+                id: permission(COCKPIT_RECOVER_PERMISSION_ID),
+                label: "Rebuild a stalled chart".to_owned(),
+                description: "Throw a stalled feed's timeline away and rebuild it, which closes any open paper position (journaled, with its reason) and disarms every strategy.".to_owned(),
+                // Marked, and off until ticked: this is the one cockpit act
+                // that ends something the trader started. Reconnecting — which
+                // keeps the timeline, the position and the strategies — needs
+                // none of this and stays under plain `cockpit`.
+                sensitive: true,
+                default_grant: DefaultGrant::Prompt,
+                profile_ceilings: BTreeSet::from([cockpit.clone()]),
+            },
+            PermissionDescriptor {
                 id: permission(ANNOTATE_ATTENTION_PERMISSION_ID),
                 label: "Create marks".to_owned(),
                 description: "Append marks carrying the resolved cursor target to the event journal.".to_owned(),
@@ -861,6 +885,48 @@ impl ObserverContract {
                 // off the screen.
                 allows_destructive: false,
                 durable_requires_reversible: true,
+                irreversible_transient_risk: None,
+                allows_risk_reducing: false,
+            },
+        })?;
+        registry.register_effect(EffectPolicy {
+            id: effect(RECOVER_EFFECT_ID),
+            permission_floor: permission(COCKPIT_RECOVER_PERMISSION_ID),
+            profile_ceilings: BTreeSet::from([cockpit.clone()]),
+            confirmation_class: confirmation(NO_CONFIRMATION_ID),
+            risk_reducing_confirmation_class: None,
+            mcp_hint_floor: McpHintFloor {
+                read_only: false,
+                // Follows the capabilities under it, which cannot claim
+                // `destructive` while this host refuses the expected-revision
+                // check the registry couples to it — see the note on the
+                // descriptor in `super::recovery`. The irreversibility is
+                // declared through the required risk flag below and through
+                // each capability's `reversible: false`.
+                destructive: false,
+                // Rebuilding twice rebuilds twice. Each call really does throw
+                // a timeline away, so a client must not be told a retry is
+                // free.
+                idempotent: false,
+                open_world: false,
+            },
+            // Every capability here says, in its own descriptor, that it can
+            // cost the trader their timeline.
+            required_risk_flags: BTreeSet::from([
+                RiskFlagId::new(TIMELINE_REBUILT_RISK_FLAG).expect("static risk flag is valid")
+            ]),
+            constraints: EffectConstraints {
+                required_read_only: Some(false),
+                // The one effect in this contract that may. It exists because
+                // the honest alternative was worse: a capability that destroys
+                // while declaring it does not, so that it could sit under the
+                // `cockpit` effect whose own words are "nothing here removes
+                // the trader's work".
+                allows_destructive: true,
+                // A rebuilt chart is durable and cannot be put back. Saying so
+                // here is what lets the descriptor say `reversible: false`
+                // instead of claiming a reversal it cannot perform.
+                durable_requires_reversible: false,
                 irreversible_transient_risk: None,
                 allows_risk_reducing: false,
             },
@@ -1665,7 +1731,17 @@ mod tests {
                 "{}: only read-only capabilities sit inside the observer ceiling",
                 capability.id
             );
-            assert!(!capability.destructive);
+            // No capability in this contract is destructive, and the reason
+            // is documented on `super::recovery`'s descriptor: the flag is
+            // coupled to an expected-revision check this host refuses, so
+            // claiming it would advertise a guarantee nothing delivers. The
+            // assertion that matters either way is that nothing which could
+            // end a trade is reachable from the observer ceiling.
+            assert!(
+                !(capability.destructive && reachable),
+                "{}: a destructive capability is inside the observer ceiling",
+                capability.id
+            );
         }
         assert!(
             capabilities
