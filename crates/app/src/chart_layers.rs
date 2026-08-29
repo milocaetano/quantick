@@ -320,10 +320,14 @@ impl ChartLayer {
             // clears the candles and still sees the book rolling on the tape
             // is looking at a setting, not at a bug.
             Self::Heatmap => {
-                "resting depth behind the candles. Recording never stops, so hiding it loses no                  history. The tape has a switch of its own and this one never moves it —                  right-click the tape to reach it"
+                "resting depth behind the candles. Recording never stops, so hiding it loses no \
+                 history. The tape has a switch of its own and this one never moves it — \
+                 right-click the tape to reach it"
             }
             Self::Bubbles => {
-                "confirmed executions from the trade stream, drawn where they printed, on the                  candles. The tape has a switch of its own and this one never moves it —                  right-click the tape to reach it"
+                "confirmed executions from the trade stream, drawn where they printed, on the \
+                 candles. The tape has a switch of its own and this one never moves it — \
+                 right-click the tape to reach it"
             }
             Self::Footprint => {
                 "the buy/sell split at each price inside every candle. Detail follows zoom: \
@@ -374,10 +378,10 @@ impl ChartLayer {
             // a height on the axis and always exists, a time belongs to a bar
             // and exists only where one is.
             Self::PointerPrice => {
-                "a tick and the price on the right axis, following the pointer while it is over                  the chart. Gone the moment it leaves. The crosshair tool draws its own, so the                  two never stack"
+                "a tick and the price on the right axis, following the pointer while it is over the chart. Gone the moment it leaves. The crosshair tool draws its own, so the two never stack"
             }
             Self::PointerTime => {
-                "a tick and a clock time on the bottom axis, for the bar under the pointer — how                  a chart whose bars are cut by ticks or volume answers 'when was this?'. Empty                  canvas past the newest bar holds no bar, so nothing is marked there rather than                  a time being extrapolated"
+                "a tick and a clock time on the bottom axis, for the bar under the pointer — how a chart whose bars are cut by ticks or volume answers 'when was this?'. Empty canvas past the newest bar holds no bar, so nothing is marked there rather than a time being extrapolated"
             }
             // Same honesty rule as the gap boundaries: what is hidden here is a
             // drawing of live state, so the entry says the state is still live.
@@ -629,6 +633,32 @@ mod tests {
         let dir = std::env::temp_dir().join("quantick-chart-layers-test");
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The words a trader actually reads, checked as words.
+    ///
+    /// Every label and hint here is rendered verbatim in three menus, and a
+    /// scripted edit that swallows a line join leaves a hole mid-sentence that
+    /// nothing else in the build can see — rustfmt does not reflow string
+    /// literals and clippy does not read them. Two of these shipped with one
+    /// for months. The sibling guard is `tests/source_encoding_guard.rs`,
+    /// which catches the same class of damage in comments.
+    #[test]
+    fn every_menu_string_reads_as_a_sentence() {
+        for layer in ChartLayer::ALL {
+            for (what, text) in [("label", layer.label()), ("hint", layer.hint())] {
+                assert!(
+                    !text.contains("  "),
+                    "{}'s {what} has a hole in it: {text:?}",
+                    layer.id()
+                );
+                assert!(
+                    !text.trim().is_empty() && text.trim() == text,
+                    "{}'s {what} is padded or empty: {text:?}",
+                    layer.id()
+                );
+            }
+        }
     }
 
     #[test]

@@ -5930,7 +5930,7 @@ impl ChartPane {
     /// ([`Self::draw_lane_time_axis`]).
     #[expect(
         clippy::too_many_arguments,
-        reason = "the frame's own geometry and window, passed rather than                   cached: reading a stale copy off the pane is how an axis                   ends up labelling a window it is no longer showing"
+        reason = "the frame's own geometry and window, passed rather than cached: reading a stale copy off the pane is how an axis ends up labelling a window it is no longer showing"
     )]
     fn draw_time_strip(
         &self,
@@ -7128,7 +7128,7 @@ impl ChartPane {
     /// a test against it.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the frame's geometry plus the bar the chip reports, passed                   rather than cached: both painters need them and this exists                   to hold their order, not to shorten their signatures"
+        reason = "the frame's geometry plus the bar the chip reports, passed rather than cached: both painters need them and this exists to hold their order, not to shorten their signatures"
     )]
     fn draw_axis_marks(
         &self,
@@ -7149,7 +7149,8 @@ impl ChartPane {
     }
 
     /// The levels the drawings declare, written on the price axis in each
-    /// object's own colour.    /// The levels the drawings declare, written on the price axis in each
+    /// object's own colour.
+    /// The levels the drawings declare, written on the price axis in each
     /// object's own colour.
     ///
     /// Rides the `Drawings` layer rather than carrying a switch of its own:
@@ -8576,7 +8577,8 @@ mod tests {
         );
     }
 
-    /// Drive `handle_navigation` for one frame with the given pointer events,    /// Drive `handle_navigation` for one frame with the given pointer events,
+    /// Drive `handle_navigation` for one frame with the given pointer events,
+    /// Drive `handle_navigation` for one frame with the given pointer events,
     /// and hand back whatever settings request the gestures raised.
     ///
     /// The pane's input pass needs a whole `PaneChrome` — the tool rail, the
@@ -8718,7 +8720,8 @@ mod tests {
         );
     }
 
-    /// Every level the pane would write on the price axis this frame.    /// Every level the pane would write on the price axis this frame.
+    /// Every level the pane would write on the price axis this frame.
+    /// Every level the pane would write on the price axis this frame.
     fn axis_levels_of(pane: &ChartPane, scale: &PriceScale) -> Vec<PriceAxisLevel> {
         let mut levels = Vec::new();
         pane.price_axis_levels(TEST_PLOT.right(), pane.slots(), scale, &mut levels);
@@ -8856,11 +8859,12 @@ mod tests {
             .expect("the last-price chip's ink is on the axis");
         assert!(
             level < last_price,
-            "the annotation goes down first, so the live price is legible over              it: {painted}"
+            "the annotation goes down first, so the live price is legible over it: {painted}"
         );
     }
 
-    /// Data honesty on the axis: a mark this chart's data does not back is    /// Data honesty on the axis: a mark this chart's data does not back is
+    /// Data honesty on the axis: a mark this chart's data does not back is
+    /// Data honesty on the axis: a mark this chart's data does not back is
     /// painted faded, and its tag is faded with it. A full-strength chip on
     /// the gutter would be the axis making a claim the stroke beside it is
     /// explicitly not making.
@@ -8888,7 +8892,8 @@ mod tests {
         );
     }
 
-    /// A level on an indicator pane is a value on *that* pane's axis.    /// A level on an indicator pane is a value on *that* pane's axis. Writing
+    /// A level on an indicator pane is a value on *that* pane's axis.
+    /// A level on an indicator pane is a value on *that* pane's axis. Writing
     /// it on the price gutter would put a CVD reading where a price goes.
     #[test]
     fn a_level_drawn_on_an_indicator_band_never_reaches_the_price_axis() {
@@ -8914,7 +8919,8 @@ mod tests {
         );
     }
 
-    /// A right-click at `pos`, driven through the pane's own input pass, and    /// A right-click at `pos`, driven through the pane's own input pass, and
+    /// A right-click at `pos`, driven through the pane's own input pass, and
+    /// A right-click at `pos`, driven through the pane's own input pass, and
     /// one more frame for the menu it opened to draw itself.
     fn right_click_menu(pane: &mut ChartPane, ctx: &egui::Context, pos: egui::Pos2) {
         for pressed in [true, false] {
@@ -9019,7 +9025,8 @@ mod tests {
         );
     }
 
-    /// A double click at `pos`, as two press/release pairs in two frames —    /// A double click at `pos`, as two press/release pairs in two frames —
+    /// A double click at `pos`, as two press/release pairs in two frames —
+    /// A double click at `pos`, as two press/release pairs in two frames —
     /// egui reports the second as `double_clicked`.
     fn double_click_at(
         pane: &mut ChartPane,

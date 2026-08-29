@@ -326,15 +326,24 @@ impl Viewport {
         self.right_edge_bar(total) - (chart_right - x - 0.5 * self.candle_width()) / self.px_per_bar
     }
 
-    /// The bar slot a fractional bar coordinate names: the nearest bar centre.
+    /// The bar slot a fractional bar coordinate names: the half-open interval
+    /// `(i - 0.5, i + 0.5]` belongs to bar `i`.
     ///
-    /// [`Self::bar_at_x`] answers in bar *centres*, so bar `i` reads exactly
-    /// `i` at its own centre and `i - 0.5` at its left edge. Truncating that
-    /// therefore names the bar to the *left* for the whole left half of every
-    /// candle — half the pixels of every candle on the chart — which is why
-    /// this rounds. Pointing at a candle has to name that candle: the axis
-    /// compass reads its time off this, and so does the magnet that snaps an
-    /// anchor to its high.
+    /// Two producers write these coordinates and they do not use the same
+    /// convention, which is why the rule is stated as an interval rather than
+    /// as "round" or "truncate":
+    ///
+    /// * [`Self::bar_at_x`] answers in bar *centres* — bar `i` reads exactly
+    ///   `i` at its centre and `i - 0.5` at its left edge. Truncating that
+    ///   names the bar to the *left* for the whole left half of every candle,
+    ///   which is half the pixels of every candle on the chart.
+    /// * `ChartPane::slot_of_time` writes a time-derived anchor at the slot's
+    ///   far *edge*, `i + 0.5`, deliberately. Rounding that to nearest sends
+    ///   it to `i + 1` — every re-anchored drawing a bar late, silently.
+    ///
+    /// Closing the interval at the top is what serves both: `i` reads `i`, and
+    /// so does `i + 0.5`. Written as `(bar - 0.5).ceil()` because that is the
+    /// arithmetic that says it, and `round` is the one that does not.
     ///
     /// `None` for a coordinate that is not a slot at all: not finite, or left
     /// of the first bar. Unbounded on the right, because the empty space past
@@ -345,7 +354,7 @@ impl Viewport {
         if !bar.is_finite() {
             return None;
         }
-        let slot = bar.round();
+        let slot = (bar - 0.5).ceil();
         (slot >= 0.0).then_some(slot as usize)
     }
 
@@ -425,6 +434,29 @@ mod tests {
         assert_eq!(viewport.slot_at_x(oldest - 40.0, right, total), None);
         assert_eq!(Viewport::slot_of(f32::NAN), None, "not a position at all");
         assert_eq!(Viewport::slot_of(-3.0), None, "before the first bar");
+    }
+
+    /// The other producer's convention, and the one a rounding rule silently
+    /// breaks: `ChartPane::slot_of_time` writes a time-derived anchor at the
+    /// slot's far edge, `i + 0.5`. Nearest-rounding sends it to `i + 1`, so
+    /// every drawing re-anchored across a timeframe switch would resolve one
+    /// bar late and claim the next candle's instant — with nothing on screen
+    /// saying so.
+    #[test]
+    fn an_anchor_written_at_a_slots_far_edge_still_names_that_slot() {
+        for slot in [0_usize, 1, 47, 1_000] {
+            #[allow(clippy::cast_precision_loss)]
+            let written = slot as f32 + 0.5;
+            assert_eq!(
+                Viewport::slot_of(written),
+                Some(slot),
+                "an anchor written at {written} is bar {slot}"
+            );
+        }
+        // And the interval is half-open at the bottom, so the two rules meet
+        // without overlapping: one boundary, one bar.
+        assert_eq!(Viewport::slot_of(0.5), Some(0));
+        assert_eq!(Viewport::slot_of(0.51), Some(1));
     }
 
     #[test]

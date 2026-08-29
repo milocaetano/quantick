@@ -11919,7 +11919,7 @@ mod tests {
             assert_eq!(
                 parse_pointer_fraction(refused),
                 None,
-                "{refused:?} is not a position, and a typo must photograph nothing                  rather than the wrong place"
+                "{refused:?} is not a position, and a typo must photograph nothing rather than the wrong place"
             );
         }
 
@@ -11963,7 +11963,8 @@ mod tests {
     }
 
     /// The discrete way to turn the chart over: right-click on the price
-    /// gutter opens the axis's own menu, with the Inverted chart toggle in    /// The discrete way to turn the chart over: right-click on the price
+    /// gutter opens the axis's own menu, with the Inverted chart toggle in
+    /// The discrete way to turn the chart over: right-click on the price
     /// gutter opens the axis's own menu, with the Inverted chart toggle in
     /// it. The canvas keeps its layer menu; the axis speaks for the scale.
     #[test]
