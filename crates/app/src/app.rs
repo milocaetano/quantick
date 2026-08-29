@@ -25269,6 +25269,58 @@ crosshair = false
         );
     }
 
+    /// The layouts are one shared library, whatever each pane is showing:
+    /// renaming one renames it on every pane that shows it — and on the strip
+    /// every pane reads — while a pane on another layout keeps its own name.
+    ///
+    /// The trader's way of putting it: rename `Layout 1` and it is renamed in
+    /// every window. The name lives in the book; a pane carries a copy only
+    /// for its own header, and this is what keeps that copy from becoming a
+    /// second source of truth.
+    #[test]
+    fn renaming_a_layout_renames_it_on_every_pane_that_shows_it() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        let first = app.layouts().active_id();
+        assert_eq!(
+            app.pane_layout(app.active_tab().id, PaneSide::Time(0)),
+            first,
+            "both panes open on the one layout there is"
+        );
+
+        assert_eq!(app.rename_layout(first, "opening"), Ok(true));
+        for side in [PaneSide::Flow, PaneSide::Time(0)] {
+            assert_eq!(
+                app.active_tab().pane(side).layout_label,
+                "opening",
+                "the rename reached {side:?}"
+            );
+        }
+
+        // Put the context pane on a second layout, and rename that one.
+        let point = pane_point(&app, PaneSide::Time(0));
+        click_chart(&mut app, &ctx, point);
+        let second = app.create_layout(Some("levels")).expect("second");
+        assert_eq!(app.rename_layout(second, "levels revisited"), Ok(true));
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time(0)).layout_label,
+            "levels revisited"
+        );
+        assert_eq!(
+            app.active_tab().flow_pane.layout_label,
+            "opening",
+            "the pane on the other layout kept its own name"
+        );
+
+        // The strip both panes read lists both layouts, under the new names.
+        let names: Vec<&str> = app
+            .layouts()
+            .layouts()
+            .iter()
+            .map(|layout| layout.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["opening", "levels revisited"]);
+    }
     /// The strip and the file record the layout per pane: a workspace
     /// captured with two panes on two layouts names both, and a pane told
     /// its layout before seeding opens on it.
