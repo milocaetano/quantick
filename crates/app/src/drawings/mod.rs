@@ -710,7 +710,13 @@ trait DrawingToolImpl: Sync {
     /// trend line crosses every price between its ends and names none of
     /// them, and an axis tagged with everything drawn on the chart is an axis
     /// nobody can read. Declaring a level is opting *in* to the gutter.
-    fn axis_levels(&self, _points: &[egui::Pos2]) -> AxisLevels {
+    ///
+    /// `chart_rect` is the same rect [`DrawingToolImpl::paint`] gets, and it
+    /// is here for one reason: a tool must not declare a level it is not
+    /// drawing. A horizontal ray whose anchor projects past the right edge
+    /// paints no stroke at all, and a chip on the gutter for a line that is
+    /// not there is the axis claiming something the canvas is not.
+    fn axis_levels(&self, _chart_rect: egui::Rect, _points: &[egui::Pos2]) -> AxisLevels {
         AxisLevels::new()
     }
     fn hit_test(
@@ -835,8 +841,8 @@ impl DrawingTool {
 
     /// See [`DrawingToolImpl::axis_levels`].
     #[must_use]
-    pub fn axis_levels(self, points: &[egui::Pos2]) -> AxisLevels {
-        self.0.axis_levels(points)
+    pub fn axis_levels(self, chart_rect: egui::Rect, points: &[egui::Pos2]) -> AxisLevels {
+        self.0.axis_levels(chart_rect, points)
     }
 
     /// See [`DrawingToolImpl::inline_text`].
@@ -3637,12 +3643,20 @@ mod tests {
     /// later either declares a level deliberately or is caught here — the
     /// gutter fills up one careless `axis_levels` at a time otherwise, and a
     /// price axis tagged with every anchor on the chart is unreadable.
+    /// A canvas every tool's own `test_geometry` anchors fit inside, so a
+    /// tool answering "not on this chart" is answering about the rect and not
+    /// about a fixture that missed it.
+    const AXIS_TEST_RECT: egui::Rect = egui::Rect {
+        min: egui::pos2(0.0, 0.0),
+        max: egui::pos2(600.0, 400.0),
+    };
+
     #[test]
     fn only_the_tools_that_name_a_price_ask_the_axis_to_say_it() {
         const DECLARING: [&str; 2] = ["horizontal-line", "horizontal-ray"];
         for tool in DRAWING_TOOLS {
             let (points, _) = tool.test_geometry();
-            let levels = tool.axis_levels(&points);
+            let levels = tool.axis_levels(AXIS_TEST_RECT, &points);
             if DECLARING.contains(&tool.id()) {
                 assert_eq!(
                     levels.as_slice(),
@@ -3667,21 +3681,49 @@ mod tests {
     fn a_declared_level_follows_the_object_that_declared_it() {
         let tool = DrawingTool::by_id("horizontal-line").expect("a registered tool");
         assert_eq!(
-            tool.axis_levels(&[egui::pos2(10.0, 40.0)]).as_slice(),
+            tool.axis_levels(AXIS_TEST_RECT, &[egui::pos2(10.0, 40.0)])
+                .as_slice(),
             &[40.0]
         );
         assert_eq!(
-            tool.axis_levels(&[egui::pos2(10.0, 175.5)]).as_slice(),
+            tool.axis_levels(AXIS_TEST_RECT, &[egui::pos2(10.0, 175.5)])
+                .as_slice(),
             &[175.5],
             "the projection moved and the tag went with it"
         );
         assert!(
-            tool.axis_levels(&[]).is_empty(),
+            tool.axis_levels(AXIS_TEST_RECT, &[]).is_empty(),
             "a draft with no anchor yet declares nothing"
         );
         assert!(
-            tool.axis_levels(&[egui::pos2(10.0, f32::NAN)]).is_empty(),
+            tool.axis_levels(AXIS_TEST_RECT, &[egui::pos2(10.0, f32::NAN)])
+                .is_empty(),
             "and a level that is not a position is not one the axis can write"
+        );
+    }
+
+    /// A tool may not tag a level it is not drawing.
+    ///
+    /// The horizontal ray runs from its anchor to the right edge, so an
+    /// anchor panned past that edge leaves no stroke at all — and a chip on
+    /// the gutter would then be the axis marking a level whose line is gone.
+    /// Its twin, the horizontal line, spans the whole width from any anchor
+    /// and so is never in that position.
+    #[test]
+    fn a_ray_panned_off_the_canvas_stops_claiming_the_axis() {
+        let ray = DrawingTool::by_id("horizontal-ray").expect("a registered tool");
+        let line = DrawingTool::by_id("horizontal-line").expect("a registered tool");
+        let on = [egui::pos2(100.0, 200.0)];
+        let past = [egui::pos2(AXIS_TEST_RECT.right() + 40.0, 200.0)];
+        assert_eq!(ray.axis_levels(AXIS_TEST_RECT, &on).as_slice(), &[200.0]);
+        assert!(
+            ray.axis_levels(AXIS_TEST_RECT, &past).is_empty(),
+            "no stroke on the canvas, so nothing on the gutter"
+        );
+        assert_eq!(
+            line.axis_levels(AXIS_TEST_RECT, &past).as_slice(),
+            &[200.0],
+            "a horizontal line is drawn edge to edge wherever its anchor sits"
         );
     }
 
@@ -3712,7 +3754,7 @@ mod tests {
             fn required_points(&self) -> usize {
                 2
             }
-            fn axis_levels(&self, points: &[egui::Pos2]) -> AxisLevels {
+            fn axis_levels(&self, _chart_rect: egui::Rect, points: &[egui::Pos2]) -> AxisLevels {
                 points.iter().map(|point| point.y).collect()
             }
             fn paint(
@@ -3746,7 +3788,7 @@ mod tests {
         let tool = DrawingTool(&BAND);
         let (points, _) = tool.test_geometry();
         assert_eq!(
-            tool.axis_levels(&points).as_slice(),
+            tool.axis_levels(AXIS_TEST_RECT, &points).as_slice(),
             &[30.0, 70.0],
             "both of its prices, in the order it declared them"
         );

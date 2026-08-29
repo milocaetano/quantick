@@ -66,7 +66,7 @@ fn scan(dir: &Path, violations: &mut Vec<String>) {
         for (line_no, line) in text.lines().enumerate() {
             if welded_doc_comments(line) {
                 violations.push(format!(
-                    "{}:{}: two doc comments welded onto one line — an edit joined                      them without the newline between",
+                    "{}:{}: two doc comments welded onto one line — an edit joined them without a newline",
                     path.display(),
                     line_no + 1,
                 ));

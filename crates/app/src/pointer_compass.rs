@@ -86,26 +86,65 @@ pub(crate) fn price_text(price: f64) -> String {
 /// once per frame on a chart with a few levels drawn on it.
 pub(crate) type AxisClaims = SmallVec<[f32; 2]>;
 
-/// Whether a gridline label centred at `at` would share pixels with something
+/// Whether a gridline label centred at `at` would share pixels with a chip
 /// already written on this axis, and should therefore stand aside.
 ///
-/// `extent` is the label's own size along the axis — its height on the price
-/// axis, its width on the time strip. Two boxes of that extent touch once
-/// their centres are within one extent, and a tag is a label plus its padding,
-/// so the separation is measured off the font rather than picked. [`TAG_PAD`]'s
-/// wider component is used for both axes: it errs by two pixels toward hiding
-/// a label that would only just clear, which is the right direction — the
-/// round number is the part nobody needs.
+/// `label` and `chip` are the two extents along the axis — heights on the
+/// price axis, widths on the time strip. They are asked for separately
+/// because they are not the same: the time strip drops its own labels to
+/// `HH:MM` when it runs out of room while the pointer's chip stays `HH:MM:SS`,
+/// so a rule that assumed one size left a 30 px label overlapping a 54 px chip
+/// by a dozen pixels — the very interleaving this exists to remove.
+///
+/// Two boxes touch once their centres are within half of each extent, plus
+/// the padding a chip wears over its text.
 ///
 /// The claims arrive as an iterator so a caller can chain the axis's own chips
 /// onto the levels it has already gathered, instead of building a third list
-/// every frame.
+/// every frame. Each is the coordinate the chip will *actually* be drawn at —
+/// not the pointer's, which the time strip clamps away from near its edges.
 #[must_use]
-pub(crate) fn claimed(at: f32, extent: f32, claims: impl IntoIterator<Item = f32>) -> bool {
-    let clearance = extent + TAG_PAD.x;
+pub(crate) fn claimed(
+    at: f32,
+    label: f32,
+    chip: f32,
+    claims: impl IntoIterator<Item = f32>,
+) -> bool {
+    let clearance = (label + chip) / 2.0 + TAG_PAD.x;
     claims
         .into_iter()
         .any(|claim| (claim - at).abs() < clearance)
+}
+
+/// Where the pointer's time chip will sit on `strip`, and how wide it is.
+///
+/// Asked by the strip before it writes its own labels and by the paint that
+/// puts the chip there, so the coordinate an axis stands aside for and the one
+/// a chip lands on are the same number by construction. `None` when there is
+/// no bar under the pointer and therefore no chip.
+#[must_use]
+pub(crate) fn time_tag(
+    painter: &egui::Painter,
+    strip: egui::Rect,
+    readout: &PointerReadout,
+) -> Option<(f32, f32)> {
+    readout.bar?;
+    // Monospace, so one measurement of the format answers for every instant
+    // written in it — the rule the strip's own labels are measured by.
+    let width = painter
+        .layout_no_wrap(
+            TimeLabelFormat::Full.sample().to_owned(),
+            egui::FontId::monospace(chart::TIME_LABEL_FONT_PX),
+            theme::TEXT_PRIMARY,
+        )
+        .size()
+        .x;
+    let half = width / 2.0 + TAG_PAD.x;
+    let centre = readout.position.x.clamp(
+        strip.left() + half,
+        (strip.right() - half).max(strip.left() + half),
+    );
+    Some((centre, width))
 }
 
 /// The bar under the pointer, and the instant it opened.
@@ -119,54 +158,55 @@ pub(crate) struct PointerBar {
 
 /// What the axes have to say about the pointer's position.
 ///
-/// Both halves are optional, and for different reasons — which is the honest
-/// shape rather than an omission:
+/// The price is unconditional and the time is not, and that asymmetry is the
+/// honest one rather than an omission: a height on the price axis *is* a
+/// price, whatever is drawn at it, while a time belongs to a bar. Past the
+/// newest bar there is none, and on a tick or volume chart no interval to add
+/// either, so nothing is marked rather than a clock being extrapolated that
+/// the tape never wrote.
 ///
-/// * the **price** is absent where the pointer is not over the price band. An
-///   indicator pane has units of its own and a gutter of its own; writing the
-///   candles' price for a pointer over a CVD curve would put a number on the
-///   axis that nothing on screen is at.
-/// * the **time** is absent where no bar is under the pointer. Past the newest
-///   bar there is none, and on a tick or volume chart no interval to add
-///   either, so nothing is marked rather than a clock being extrapolated that
-///   the tape never wrote.
-///
-/// The two are read against different rects for the same reason: the time axis
-/// runs under every pane and the price axis belongs to the candles alone.
+/// Both halves describe the world and neither is gated on a switch: a mark
+/// being off is not a statement about what is under the pointer, and the
+/// control plane's cursor scope reads the same resolver. The switches decide
+/// what is *painted*, in `ChartPane::pointer_compass`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct PointerReadout {
     /// Where the pointer is, in screen pixels.
     pub position: egui::Pos2,
-    /// The price at the pointer's height, when it is over the price band.
-    pub price: Option<f64>,
+    /// The price at the pointer's height on this pane's price scale.
+    pub price: f64,
     /// The bar under the pointer, when one is there.
     pub bar: Option<PointerBar>,
 }
 
 /// Resolve the pointer against the geometry a frame is painting.
 ///
-/// `panes` is everything the shared time axis runs under — the candles and the
-/// indicator band below them — and `price_band` is the candles alone. A
-/// pointer outside `panes` is not over the chart at all and answers `None`,
-/// which is what makes both marks disappear when the mouse leaves rather than
-/// freezing where it was last seen.
+/// `chart` is the candles' own area — which the live lane is part of, since it
+/// shares the price axis, and the indicator band below is not, since it does
+/// not. That is also as far as the pointer is reported: the pane learns where
+/// the mouse is from its own canvas response, so a pointer over an indicator
+/// pane is `None` here and gets no compass. Extending the time half down there
+/// — the clock is genuinely shared by every pane — needs a pointer the pane
+/// does not currently receive, and inventing a second source for it would put
+/// a mark under an open menu.
+///
+/// A pointer outside `chart`, or absent entirely, answers `None`: that is what
+/// makes both marks disappear when the mouse leaves rather than freezing where
+/// it was last seen.
 #[must_use]
 pub(crate) fn readout(
     pointer: Option<egui::Pos2>,
-    panes: egui::Rect,
-    price_band: egui::Rect,
+    chart: egui::Rect,
     scale: &PriceScale,
     bar: Option<PointerBar>,
 ) -> Option<PointerReadout> {
     let position = pointer?;
-    if !panes.contains(position) {
+    if !chart.contains(position) {
         return None;
     }
     Some(PointerReadout {
         position,
-        price: price_band
-            .contains(position)
-            .then(|| scale.price_at(position.y)),
+        price: scale.price_at(position.y),
         bar,
     })
 }
@@ -207,9 +247,6 @@ pub(crate) fn paint_price_tag(
 /// one more axis label: it joins the height the mouse is at to the number
 /// beside it, over the six pixels of gutter between them.
 pub(crate) fn paint_price_mark(painter: &egui::Painter, axis_x: f32, readout: &PointerReadout) {
-    let Some(price) = readout.price else {
-        return;
-    };
     let y = readout.position.y;
     painter.line_segment(
         [egui::pos2(axis_x, y), egui::pos2(axis_x + TICK_PX, y)],
@@ -219,7 +256,7 @@ pub(crate) fn paint_price_mark(painter: &egui::Painter, axis_x: f32, readout: &P
         painter,
         axis_x,
         y,
-        price_text(price),
+        price_text(readout.price),
         theme::TAG_BG,
         theme::TEXT_PRIMARY,
     );
@@ -244,14 +281,13 @@ pub(crate) fn paint_time_mark(
     readout: &PointerReadout,
     tz: TzOffset,
 ) {
-    let Some(bar) = readout.bar else {
+    let (Some(bar), Some((centre, _))) = (readout.bar, time_tag(painter, strip, readout)) else {
         return;
     };
-    let x = readout.position.x.clamp(strip.left(), strip.right());
     painter.line_segment(
         [
-            egui::pos2(x, strip.top()),
-            egui::pos2(x, strip.top() + TICK_PX),
+            egui::pos2(centre, strip.top()),
+            egui::pos2(centre, strip.top() + TICK_PX),
         ],
         egui::Stroke::new(1.0_f32, theme::TEXT_PRIMARY),
     );
@@ -266,11 +302,7 @@ pub(crate) fn paint_time_mark(
         theme::TEXT_PRIMARY,
     );
     let size = galley.size();
-    let left = (x - size.x / 2.0).clamp(
-        strip.left() + TAG_PAD.x,
-        (strip.right() - size.x - TAG_PAD.x).max(strip.left() + TAG_PAD.x),
-    );
-    let text_pos = egui::pos2(left, strip.center().y - size.y / 2.0);
+    let text_pos = egui::pos2(centre - size.x / 2.0, strip.center().y - size.y / 2.0);
     let background = egui::Rect::from_min_size(text_pos - TAG_PAD, size + TAG_PAD * 2.0);
     painter.rect_filled(
         background,
@@ -284,23 +316,19 @@ pub(crate) fn paint_time_mark(
 mod tests {
     use super::*;
 
-    /// The candles, and the indicator band under them. The shared time axis
-    /// runs under both; the price axis belongs to the candles alone.
-    const PANES: egui::Rect = egui::Rect {
-        min: egui::pos2(0.0, 0.0),
-        max: egui::pos2(400.0, 300.0),
-    };
-    const PRICE_BAND: egui::Rect = egui::Rect {
+    /// The candles' own area — the live lane included, since it shares the
+    /// price axis, and the indicator band below excluded, since it does not.
+    const CHART: egui::Rect = egui::Rect {
         min: egui::pos2(0.0, 0.0),
         max: egui::pos2(400.0, 200.0),
     };
 
     fn scale() -> PriceScale {
-        PriceScale::from_range(100.0, 200.0, PRICE_BAND.top(), PRICE_BAND.bottom())
+        PriceScale::from_range(100.0, 200.0, CHART.top(), CHART.bottom())
     }
 
     fn read(at: egui::Pos2, bar: Option<PointerBar>) -> Option<PointerReadout> {
-        readout(Some(at), PANES, PRICE_BAND, &scale(), bar)
+        readout(Some(at), CHART, &scale(), bar)
     }
 
     /// The rule the captures found: a chip and a gridline label on the same
@@ -308,19 +336,49 @@ mod tests {
     /// nobody needs, and the chip is the answer somebody asked for.
     #[test]
     fn a_label_under_a_chip_stands_aside() {
-        let extent = 14.0_f32;
+        let label = 14.0_f32;
         let chip = [400.0_f32];
-        assert!(claimed(400.0, extent, chip), "dead on the chip");
-        assert!(claimed(408.0, extent, chip), "half a label away, touching");
+        assert!(claimed(400.0, label, label, chip), "dead on the chip");
         assert!(
-            !claimed(430.0, extent, chip),
+            claimed(408.0, label, label, chip),
+            "half a label away, touching"
+        );
+        assert!(
+            !claimed(430.0, label, label, chip),
             "two labels clear, so the round number is worth writing"
         );
         // The axis's own chips and the levels a drawing declared are one
         // question asked of two lists, chained rather than copied together.
         let levels = [520.0_f32, 700.0];
-        assert!(claimed(521.0, extent, chip.into_iter().chain(levels)));
-        assert!(!claimed(600.0, extent, chip.into_iter().chain(levels)));
+        assert!(claimed(521.0, label, label, chip.into_iter().chain(levels)));
+        assert!(!claimed(
+            600.0,
+            label,
+            label,
+            chip.into_iter().chain(levels)
+        ));
+    }
+
+    /// The time strip thins its own labels to `HH:MM` when it runs out of
+    /// room while the pointer's chip stays `HH:MM:SS`, so the two extents are
+    /// asked for separately. A rule that took the label's size for both let a
+    /// 30 px label sit a dozen pixels inside a 54 px chip — the interleaving
+    /// this exists to remove, back again on exactly the narrow strip that
+    /// needed it most.
+    #[test]
+    fn a_narrow_strips_short_label_still_clears_the_full_width_chip() {
+        let (short, full) = (30.0_f32, 54.0_f32);
+        let chip = [400.0_f32];
+        assert!(
+            claimed(358.0, short, full, chip),
+            "42 px away, and the two boxes overlap by a dozen"
+        );
+        assert!(
+            !claimed(358.0, short, short, chip),
+            "which the old rule, measuring the label twice, allowed through"
+        );
+        assert!(claimed(400.0, short, full, chip));
+        assert!(!claimed(340.0, short, full, chip), "clear of the chip");
     }
 
     /// No claims, nothing hidden: an axis with no chip on it labels every
@@ -328,7 +386,7 @@ mod tests {
     #[test]
     fn an_axis_nothing_claims_hides_nothing() {
         for at in [0.0_f32, 123.0, 999.0] {
-            assert!(!claimed(at, 14.0, AxisClaims::new()));
+            assert!(!claimed(at, 14.0, 14.0, AxisClaims::new()));
         }
     }
 
@@ -336,10 +394,10 @@ mod tests {
     #[test]
     fn the_pointer_over_the_candles_reads_a_price() {
         let hit = read(egui::pos2(10.0, 100.0), None).expect("over the chart");
-        let price = hit.price.expect("the candles' own band");
         assert!(
-            (price - 150.0).abs() < 1e-9,
-            "half way down a 100..200 scale is 150, got {price}"
+            (hit.price - 150.0).abs() < 1e-9,
+            "half way down a 100..200 scale is 150, got {}",
+            hit.price
         );
     }
 
@@ -348,7 +406,7 @@ mod tests {
     #[test]
     fn a_pointer_off_the_chart_reads_nothing() {
         assert!(
-            readout(None, PANES, PRICE_BAND, &scale(), None).is_none(),
+            readout(None, CHART, &scale(), None).is_none(),
             "no pointer over this pane at all"
         );
         assert!(
@@ -357,25 +415,8 @@ mod tests {
         );
         assert!(
             read(egui::pos2(200.0, 400.0), None).is_none(),
-            "below the panes, on the time strip itself"
+            "below the canvas, on the time strip itself"
         );
-    }
-
-    /// An indicator pane has units of its own and a gutter of its own, so the
-    /// price axis says nothing for a pointer over it — but the time axis runs
-    /// under every pane, so the clock still answers.
-    #[test]
-    fn an_indicator_pane_answers_the_clock_and_not_the_price() {
-        let bar = PointerBar {
-            slot: 7,
-            open_time_unix_ms: 1_700_000_000_000,
-        };
-        let hit = read(egui::pos2(200.0, 250.0), Some(bar)).expect("still over the chart");
-        assert_eq!(
-            hit.price, None,
-            "the candles' price would be a number nothing on screen is at"
-        );
-        assert_eq!(hit.bar, Some(bar), "and the shared time axis still answers");
     }
 
     /// The time half is absent where no bar is, and the readout says so by
@@ -383,7 +424,7 @@ mod tests {
     #[test]
     fn empty_canvas_past_the_newest_bar_reads_a_price_but_no_time() {
         let hit = read(egui::pos2(390.0, 50.0), None).expect("over the chart");
-        assert!(hit.price.is_some(), "the height is still a price");
+        assert!(hit.price.is_finite(), "the height is still a price");
         assert_eq!(hit.bar, None, "no bar under the pointer, so no instant");
     }
 
@@ -396,7 +437,6 @@ mod tests {
         };
         let hit = read(egui::pos2(120.0, 50.0), Some(bar)).expect("over the chart");
         assert_eq!(hit.bar, Some(bar));
-        assert!(hit.price.is_some());
     }
 
     /// The scale is the one the axis labels are drawn from, upside down
@@ -405,18 +445,12 @@ mod tests {
     #[test]
     fn the_reading_follows_the_chart_upside_down() {
         let inverted = scale().with_inverted(true);
-        let hit = readout(
-            Some(egui::pos2(10.0, 0.0)),
-            PANES,
-            PRICE_BAND,
-            &inverted,
-            None,
-        )
-        .expect("over the chart");
-        let price = hit.price.expect("the candles' own band");
+        let hit =
+            readout(Some(egui::pos2(10.0, 0.0)), CHART, &inverted, None).expect("over the chart");
         assert!(
-            (price - 100.0).abs() < 1e-9,
-            "the top of an inverted 100..200 scale is the low, got {price}"
+            (hit.price - 100.0).abs() < 1e-9,
+            "the top of an inverted 100..200 scale is the low, got {}",
+            hit.price
         );
     }
 }

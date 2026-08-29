@@ -745,9 +745,12 @@ impl ContextMenuPane {
 
 /// Read a scripted pointer position off `QUANTICK_POINTER`.
 ///
-/// `<fx>,<fy>`, both fractions of the focused pane's *candle* area — `0,0` its
+/// `<fx>,<fy>`, both fractions of the flow pane's *candle* area — `0,0` its
 /// top-left corner, `1,1` its bottom-right, `0.99,0.5` out in the projection
-/// margin past the newest bar. Fractions rather than pixels because the thing
+/// margin past the newest bar. The flow pane and not the focused one, so this
+/// hook and `QUANTICK_CONTEXT_MENU` aim at the same canvas: a capture that
+/// opened an axis menu on one pane and parked the mouse on another would be
+/// photographing two different charts at once. Fractions rather than pixels because the thing
 /// a capture wants to point at is a candle, and the candles' pane moves with
 /// the window size, the lane divider and the indicator band: an absolute pair
 /// that framed the right bar at one window size frames a different one at the
@@ -8731,9 +8734,11 @@ impl QuantickApp {
     ///
     /// Resolved against the *drawing* area rather than the whole chart, so a
     /// fraction means a place among the candles whatever share of the canvas
-    /// the live lane has taken. `None` until the pane has drawn once — there
-    /// is no candle area to be a fraction of before then, and guessing one
-    /// would park the pointer somewhere the author did not ask for.
+    /// the live lane has taken, and against the flow pane for the same reason
+    /// [`Self::scripted_context_menu_pos`] does — one canvas per capture.
+    /// `None` until the pane has drawn once: there is no candle area to be a
+    /// fraction of before then, and guessing one would park the pointer
+    /// somewhere the author did not ask for.
     fn scripted_pointer_pos(&self) -> Option<egui::Pos2> {
         let fraction = self.scripted_pointer?;
         let flow = &self.active_tab().flow_pane;
@@ -8816,11 +8821,15 @@ impl eframe::App for QuantickApp {
             });
             return;
         }
+        // The parked pointer, re-delivered — before the menu branch and not
+        // inside its `else`, because a menu whose position never resolves
+        // returns early for ever. `QUANTICK_CONTEXT_MENU=tape` on a canvas
+        // with no lane is exactly that, and it used to take the pointer hook
+        // down with it: the capture showed no compass, no crosshair and no
+        // hover readout at all, and read as "the compass does not draw"
+        // rather than "the menu never opened".
+        self.push_scripted_pointer(raw_input);
         let Some(pane) = self.scripted_context_menu else {
-            // No menu left to open: the parked pointer, re-delivered. Last,
-            // so a frame that is opening a menu is not also moving the mouse
-            // out from under it.
-            self.push_scripted_pointer(raw_input);
             return;
         };
         // The divider is published by the draw, so the first frame has none:
@@ -11067,7 +11076,7 @@ mod tests {
 
     /// The slot a stored fractional anchor sits on, asked of the one owner.
     ///
-    /// A test that recomputed this — `bar.floor()`, as three of them used to —
+    /// A test that recomputes it — `bar.floor()`, as five of them used to —
     /// is a second copy of the projection rule, free to disagree with the
     /// production one and to keep passing while it does. See
     /// [`Viewport::slot_of`].
@@ -19979,7 +19988,7 @@ crosshair = false
         };
         let anchor = placed.points[0];
         assert_eq!(
-            anchor.bar.floor() as usize,
+            slot_of(anchor.bar),
             forming,
             "the click has to land on the forming slot for this to prove anything"
         );
@@ -21206,7 +21215,7 @@ crosshair = false
         );
         assert_eq!(
             app.active_tab().flow_pane.slot_at_time(anchor_time),
-            Some(point.bar.floor() as usize),
+            Some(slot_of(point.bar)),
             "and the bar it sits on is that instant, re-asked of the new series"
         );
         assert!(

@@ -63,8 +63,17 @@ impl DrawingToolImpl for HorizontalRay {
     }
     /// The price it names, tagged on the axis like the horizontal line's —
     /// the two say the same kind of thing and differ only in where they start.
-    fn axis_levels(&self, points: &[egui::Pos2]) -> AxisLevels {
-        single_level(points)
+    ///
+    /// And that difference is why this one asks about the rect: a ray runs
+    /// from its anchor to the right edge, so an anchor that has been panned
+    /// past that edge leaves [`span`] a zero-length stroke and nothing on the
+    /// canvas. A chip on the gutter then would be the axis marking a level
+    /// whose line is gone, which is exactly what the tags must not do.
+    fn axis_levels(&self, chart_rect: egui::Rect, points: &[egui::Pos2]) -> AxisLevels {
+        match points.first() {
+            Some(point) if point.x < chart_rect.right() => single_level(points),
+            _ => AxisLevels::new(),
+        }
     }
     fn hit_test(
         &self,

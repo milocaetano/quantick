@@ -56,7 +56,9 @@ impl DrawingToolImpl for HorizontalLine {
     }
     /// The price it names. This tool exists to say one, so the axis says it
     /// too — see [`DrawingToolImpl::axis_levels`].
-    fn axis_levels(&self, points: &[egui::Pos2]) -> AxisLevels {
+    fn axis_levels(&self, _chart_rect: egui::Rect, points: &[egui::Pos2]) -> AxisLevels {
+        // Edge to edge: this tool's stroke spans the whole width whatever its
+        // anchor's x, so there is no rect it can be outside of.
         single_level(points)
     }
     fn hit_test(
