@@ -32276,6 +32276,96 @@ plot(close)
         );
     }
 
+    /// Whatever acted is recorded. An order placed through the registry
+    /// carries its actor into the journal, so one an operator asked for is
+    /// never indistinguishable from one the trader placed by hand — the
+    /// authorship half of the data-honesty rule that labels an inferred
+    /// aggressor side, applied to who asked.
+    ///
+    /// A refusal records too: "it tried to buy here and was told no" is
+    /// exactly the line a trader reviewing a session wants to find.
+    #[test]
+    fn an_order_placed_through_the_registry_names_who_asked_for_it() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(40);
+        run_frame(&mut app, &ctx);
+        let mark = app
+            .active_tab()
+            .paper
+            .mark_price()
+            .expect("the history seeded a price");
+
+        let accepted = app
+            .control_action(
+                crate::control::trade::PLACE_CAPABILITY_ID,
+                crate::control::trade::CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "side": "buy",
+                    "kind": "limit",
+                    "quantity": "1",
+                    "price": (mark - rust_decimal::Decimal::ONE).to_string(),
+                }),
+            )
+            .expect("the action dispatches");
+        assert_eq!(accepted["accepted"], true, "{accepted}");
+
+        // And one the venue refuses: a buy limit above the market.
+        app.control_action(
+            crate::control::trade::PLACE_CAPABILITY_ID,
+            crate::control::trade::CAPABILITY_VERSION,
+            crate::control::ActionOrigin::Human,
+            serde_json::json!({
+                "side": "buy",
+                "kind": "limit",
+                "quantity": "1",
+                "price": (mark + rust_decimal::Decimal::ONE).to_string(),
+            }),
+        )
+        .expect("the action dispatches");
+
+        let events = app
+            .control_access
+            .as_ref()
+            .unwrap()
+            .journal()
+            .read(1, 64, 1 << 20)
+            .events;
+        let placed: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind.as_str() == "trade.order.placed")
+            .collect();
+        assert_eq!(placed.len(), 2, "both the acceptance and the refusal");
+
+        assert_eq!(placed[0].payload["accepted"], true);
+        assert!(
+            placed[0].payload["order_id"].is_u64(),
+            "the accepted one names the order it made"
+        );
+        assert_eq!(
+            placed[0].payload["simulated"], true,
+            "and says the fills are simulated, in the record as on every surface"
+        );
+        assert_eq!(
+            placed[0].actor.as_ref().expect("an actor is recorded").kind,
+            quantick_control::wire::ActorKind::HumanUi,
+            "the actor rides in the event, not beside it"
+        );
+
+        assert_eq!(placed[1].payload["accepted"], false);
+        assert!(
+            placed[1].payload["rejected_because"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("fill immediately")),
+            "the refusal keeps the venue's own words: {}",
+            placed[1].payload
+        );
+        assert_eq!(
+            placed[1].payload["asked"]["side"], "buy",
+            "and what was asked for, so the attempt is legible"
+        );
+    }
+
     /// A market order takes no price, and saying otherwise is refused before
     /// anything reaches the venue — the input is wrong, not the market.
     #[test]

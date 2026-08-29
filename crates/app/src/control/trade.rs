@@ -28,7 +28,7 @@ use std::collections::BTreeSet;
 
 use quantick_control::{
     error::ControlError,
-    id::{CapabilityId, CostClassId, ModuleId, RiskFlagId},
+    id::{CapabilityId, CostClassId, EventKind, ModuleId, RiskFlagId},
     registry::{
         Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
         RegistryError, RevisionPolicy,
@@ -41,18 +41,27 @@ use quantick_sim::{Bracket, EntryKind, OrderId, OrderIntent, VenueEvent};
 use rust_decimal::Decimal;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use crate::app::QuantickApp;
+use crate::{app::QuantickApp, metrics};
 
 use super::{
     actions::{ActionRegistry, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
     gateway::ControlAccess,
+    journal::{EventActor, NewEvent},
 };
 
 pub(crate) const TRADE_MODULE_ID: &str = "trade";
 pub(crate) const TRADE_EFFECT_ID: &str = "trade";
 pub(crate) const TRADE_PERMISSION_ID: &str = "trade";
+
+/// The journal kinds each action appends. An order that something other
+/// than the trader's own hand asked for has to be distinguishable from one
+/// they placed themselves — the same data-honesty rule that labels an
+/// inferred aggressor side, applied to authorship.
+pub(crate) const PLACE_EVENT_KIND: &str = "trade.order.placed";
+pub(crate) const BRACKET_EVENT_KIND: &str = "trade.order.bracketed";
+pub(crate) const CANCEL_EVENT_KIND: &str = "trade.order.cancelled";
 
 pub(crate) const PLACE_CAPABILITY_ID: &str = "trade.order.place";
 pub(crate) const BRACKET_CAPABILITY_ID: &str = "trade.order.bracket";
@@ -250,6 +259,42 @@ fn answer(app: &QuantickApp, events: &[VenueEvent]) -> TradeResult {
     }
 }
 
+/// Append one journal event naming who asked and what the venue answered.
+///
+/// Every `trade.*` action records, accepted or refused, and the actor rides
+/// in the event rather than beside it. An order placed by an operator that
+/// looked exactly like one the trader placed would be the authorship half of
+/// the honesty contract quietly dropped — and a refusal is worth recording
+/// too, since "the agent tried to buy here and was told no" is precisely the
+/// line a trader reviewing a session wants to find.
+fn journal(
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    kind: &str,
+    result: &TradeResult,
+    asked: Value,
+) {
+    let event_actor = EventActor {
+        kind: actor.actor_kind,
+        client_name: actor.client_name.clone(),
+    };
+    access.journal_mut().record(
+        NewEvent {
+            module_id: ModuleId::new(TRADE_MODULE_ID).expect("static module ID is valid"),
+            kind: EventKind::new(kind).expect("static event kind is valid"),
+            actor: Some(event_actor),
+            payload: json!({
+                "asked": asked,
+                "accepted": result.accepted,
+                "rejected_because": result.rejected_because,
+                "order_id": result.order_id,
+                "simulated": true,
+            }),
+        },
+        metrics::wall_clock_ms(),
+    );
+}
+
 fn to_value(result: TradeResult) -> Result<Value, ControlError> {
     serde_json::to_value(result)
         .map_err(|error| ControlError::invalid_request(format!("trade result: {error}")))
@@ -257,10 +302,11 @@ fn to_value(result: TradeResult) -> Result<Value, ControlError> {
 
 fn place_order(
     app: &mut QuantickApp,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
+    let asked = input.clone();
     let input: PlaceInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let quantity = parse_price("quantity", &input.quantity)?;
@@ -301,15 +347,18 @@ fn place_order(
     let events = app
         .control_active_paper_mut()
         .place_intent(intent.with_bracket(bracket));
-    to_value(answer(app, &events))
+    let result = answer(app, &events);
+    journal(access, actor, PLACE_EVENT_KIND, &result, asked);
+    to_value(result)
 }
 
 fn bracket_order(
     app: &mut QuantickApp,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
+    let asked = input.clone();
     let input: BracketInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let bracket = Bracket {
@@ -327,21 +376,26 @@ fn bracket_order(
     let events = app
         .control_active_paper_mut()
         .set_order_bracket(OrderId(input.order_id), bracket);
-    to_value(answer(app, &events))
+    let result = answer(app, &events);
+    journal(access, actor, BRACKET_EVENT_KIND, &result, asked);
+    to_value(result)
 }
 
 fn cancel_order(
     app: &mut QuantickApp,
-    _access: &mut ControlAccess,
-    _actor: &ActorContext,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
+    let asked = input.clone();
     let input: CancelInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let events = app
         .control_active_paper_mut()
         .cancel_order(OrderId(input.order_id));
-    to_value(answer(app, &events))
+    let result = answer(app, &events);
+    journal(access, actor, CANCEL_EVENT_KIND, &result, asked);
+    to_value(result)
 }
 
 /// The shared shape of every descriptor here — one place for the risk

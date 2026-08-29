@@ -2722,22 +2722,25 @@ impl PaperTrading {
     /// should consider it: working orders newest-first (they paint on top),
     /// then the open position.
     ///
-    /// Returned by value rather than as an iterator borrowing `self`, so a
-    /// caller may walk it while asking `self` about each entry. The vector
-    /// is one small allocation on the press path only — the paint walks the
-    /// orders directly.
-    fn bracket_owners(&self) -> Vec<BracketTarget> {
-        let mut owners: Vec<BracketTarget> = self
-            .venue
+    /// An iterator and not a `Vec`, because both callers run **per frame**,
+    /// not per press: `hover_cursor` asks `control_at` and `line_at` what is
+    /// under the pointer on every frame the hand is over the chart, and
+    /// `compute_cmd_preview` asks both again. A vector here was four small
+    /// allocations a frame for a list that is usually empty. Everything it
+    /// borrows is borrowed immutably, so a caller can walk it while asking
+    /// `self` about each entry.
+    fn bracket_owners(&self) -> impl Iterator<Item = BracketTarget> + '_ {
+        self.venue
             .working_orders()
             .iter()
             .rev()
             .map(|order| BracketTarget::Order(order.id))
-            .collect();
-        if self.venue.position().is_some() {
-            owners.push(BracketTarget::Position);
-        }
-        owners
+            .chain(
+                self.venue
+                    .position()
+                    .is_some()
+                    .then_some(BracketTarget::Position),
+            )
     }
 
     /// The preview the pointer and the held key describe this frame;
