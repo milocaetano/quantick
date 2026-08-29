@@ -1102,6 +1102,11 @@ pub struct ChartPane {
     // on the time axis, and past the lane divider the strip belongs to the
     // tape's own window rather than to this menu.
     pub last_time_strip: Option<egui::Rect>,
+    // The price-axis levels this frame's drawings declare. Per-frame by
+    // nature, reused as a container for the same reason the band carve is —
+    // and gathered before the axis labels itself, because the axis stands
+    // aside where one of these is going to land.
+    price_axis_levels: Vec<PriceAxisLevel>,
     // The automatic tape window at the last draw — the recent bars' typical
     // duration. Only the menu reads it, and only to state what "follows the
     // bars" currently amounts to; the drawing itself is handed the resolved
@@ -1368,6 +1373,7 @@ impl ChartPane {
             last_chart_rect: None,
             last_price_gutter: None,
             last_time_strip: None,
+            price_axis_levels: Vec::new(),
             last_lane_reference_ms: None,
             context_menu_on_tape: false,
             lane_rungs: 0,
@@ -5339,11 +5345,17 @@ impl ChartPane {
         {
             price_claims.push(scale.y(price));
         }
+        // Gathered once, read twice: the axis stands aside for these just
+        // below, and the same list is what gets painted onto the gutter
+        // further down. Borrowed out of the pane so the container survives
+        // the frame and the next one refills it rather than reallocating.
+        let mut levels = std::mem::take(&mut self.price_axis_levels);
         if self.layer_visible(ChartLayer::Drawings, chrome.style) {
-            self.for_each_price_axis_level(right, total, &scale, |level| {
-                price_claims.push(level.y);
-            });
+            self.price_axis_levels(right, total, &scale, &mut levels);
+        } else {
+            levels.clear();
         }
+        price_claims.extend(levels.iter().map(|level| level.y));
 
         // Grid + price labels first, behind the candles. Labels anchor on the
         // gutter's edge, past the live strip when one is shown.
@@ -5797,9 +5809,7 @@ impl ChartPane {
         // after the last price so a level the market has just reached is
         // legible over the chip announcing it — the moment those two prices
         // coincide is the moment the level matters.
-        if self.layer_visible(ChartLayer::Drawings, chrome.style) {
-            self.draw_drawing_axis_tags(painter, chart_rect, axis_x, right, total, &scale);
-        }
+        Self::draw_drawing_axis_tags(painter, chart_rect, axis_x, &levels);
         // The candles' own marks, so they are placed and clipped in their
         // pane: where venue candles give way to bars built from prints, and
         // where backfilled prints give way to live ones.
@@ -5867,6 +5877,10 @@ impl ChartPane {
             orderflow.draw_status_badge(painter, chart_rect, TAPE_SWITCH_RESERVED_PX);
         }
         self.draw_tape_switch(painter, chart_rect);
+
+        // The levels' container, back on the pane for the next frame to
+        // refill rather than reallocate.
+        self.price_axis_levels = levels;
 
         // Cache the auto range + height for next frame's input handler, which
         // runs before the draw and needs them for pixel↔price conversion.
@@ -6092,7 +6106,7 @@ impl ChartPane {
             painter.text(
                 egui::pos2(axis_x + chart::AXIS_LABEL_GAP_PX, y),
                 egui::Align2::LEFT_CENTER,
-                format!("{tick:.2}"),
+                pointer_compass::price_text(tick),
                 font.clone(),
                 theme::TEXT_MUTED,
             );
@@ -6153,7 +6167,7 @@ impl ChartPane {
             painter,
             axis_x,
             y,
-            format!("{price:.2}"),
+            pointer_compass::price_text(price),
             color,
             LAST_PRICE_CHIP_TEXT,
         );
@@ -7018,7 +7032,7 @@ impl ChartPane {
             painter,
             axis_x,
             pos.y,
-            format!("{:.2}", scale.price_at(pos.y)),
+            pointer_compass::price_text(scale.price_at(pos.y)),
             theme::TAG_BG,
             egui::Color32::WHITE,
         );
@@ -7033,20 +7047,24 @@ impl ChartPane {
     /// enumerate a trader's levels — a client, the assistant — asks this
     /// rather than the painter.
     ///
-    /// A callback rather than a returned list because this runs inside the
-    /// frame: the visitor allocates nothing, and the only caller with a list
-    /// to build is a test.
+    /// Into a buffer the caller owns, the way the band carve is: the levels
+    /// are per-frame by nature — they move with pan, zoom and the price scale
+    /// — but the container is not, so after the first frame this allocates
+    /// nothing. The frame gathers them once and both the axis and the tags
+    /// read that one answer; walking twice would let the coordinate an axis
+    /// stood aside for differ from the one a chip landed on.
     ///
     /// Objects on an indicator band are skipped. Their `y` means whatever that
     /// pane's axis means, and writing it on the price gutter would put a CVD
     /// reading where a price goes.
-    pub(crate) fn for_each_price_axis_level(
+    pub(crate) fn price_axis_levels(
         &self,
         history_right: f32,
         total: usize,
         scale: &PriceScale,
-        mut mark: impl FnMut(PriceAxisLevel),
+        out: &mut Vec<PriceAxisLevel>,
     ) {
+        out.clear();
         for (index, drawing) in self.drawings.items().iter().enumerate() {
             if !self.drawings.is_visible(index) || matches!(drawing.band, DrawingBand::Indicator(_))
             {
@@ -7054,7 +7072,7 @@ impl ChartPane {
             }
             let points = self.projected_drawing_points(drawing, history_right, total, scale);
             for y in drawing.tool.axis_levels(&points) {
-                mark(PriceAxisLevel {
+                out.push(PriceAxisLevel {
                     id: drawing.id,
                     y,
                     price: scale.price_at(y),
@@ -7073,17 +7091,14 @@ impl ChartPane {
     /// is gone would be the chart claiming something it is not drawing. The
     /// caller holds that gate, beside every other layer's.
     fn draw_drawing_axis_tags(
-        &self,
         painter: &egui::Painter,
         chart_rect: egui::Rect,
         axis_x: f32,
-        history_right: f32,
-        total: usize,
-        scale: &PriceScale,
+        levels: &[PriceAxisLevel],
     ) {
-        self.for_each_price_axis_level(history_right, total, scale, |level| {
+        for level in levels {
             if level.y < chart_rect.top() || level.y > chart_rect.bottom() {
-                return;
+                continue;
             }
             // The object's own colour, in the last-price chip's language,
             // because it is the same kind of statement: a price this chart is
@@ -7095,11 +7110,11 @@ impl ChartPane {
                 painter,
                 axis_x,
                 level.y,
-                format!("{:.2}", level.price),
+                pointer_compass::price_text(level.price),
                 level.color,
                 theme::ink_on(level.color),
             );
-        });
+        }
     }
 
     /// The bar under `x`, as data, with the instant it opened.
@@ -8639,9 +8654,7 @@ mod tests {
     /// Every level the pane would write on the price axis this frame.    /// Every level the pane would write on the price axis this frame.
     fn axis_levels_of(pane: &ChartPane, scale: &PriceScale) -> Vec<PriceAxisLevel> {
         let mut levels = Vec::new();
-        pane.for_each_price_axis_level(TEST_PLOT.right(), pane.slots(), scale, |level| {
-            levels.push(level);
-        });
+        pane.price_axis_levels(TEST_PLOT.right(), pane.slots(), scale, &mut levels);
         levels
     }
 

@@ -55,6 +55,20 @@ const TAG_PAD: egui::Vec2 = egui::vec2(3.0, 1.0);
 /// Corner radius of a tag.
 const TAG_ROUNDING: f32 = 2.0;
 
+/// How a price is written on the price axis, wherever it is written.
+///
+/// One owner for every mark that shares this gutter — the round-number
+/// labels, the last-price chip, the crosshair's tag, the compass's, and the
+/// level a drawing declares. Five spellings of one price an inch apart is how
+/// a gutter starts disagreeing with itself, and it is also why the precision
+/// is a single edit away: this is two decimals because every instrument the
+/// app has shipped against quotes in halves or cents, and an instrument finer
+/// than that needs this function changed rather than five call sites found.
+#[must_use]
+pub(crate) fn price_text(price: f64) -> String {
+    format!("{price:.2}")
+}
+
 /// Coordinates on an axis already spoken for by a chip — a `y` on the price
 /// axis, an `x` on the time strip.
 ///
@@ -198,7 +212,7 @@ pub(crate) fn paint_price_mark(painter: &egui::Painter, axis_x: f32, readout: &P
         painter,
         axis_x,
         y,
-        format!("{price:.2}"),
+        price_text(price),
         theme::TAG_BG,
         theme::TEXT_PRIMARY,
     );
