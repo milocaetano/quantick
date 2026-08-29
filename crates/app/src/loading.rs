@@ -36,9 +36,9 @@ const CORNER_RADIUS_PX: f32 = 4.0;
 ///
 /// A tab is one feed and several panes, and the waits are not all about the
 /// same one. Drawing every wait across the whole canvas put "loading venue
-/// history" over two panes already full of it, and — with the notice card
-/// doing the same thing — left a trader reading an explanation that belonged
-/// to a pane on the other side of the window.
+/// history" over two panes already full of it, and — with the feed's own
+/// notice doing the same thing — left a trader reading an explanation that
+/// belonged to a pane on the other side of the window.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LoadingScope {
     /// The order-flow pane, which owns the tape and its book.

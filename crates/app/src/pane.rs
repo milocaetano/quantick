@@ -1180,9 +1180,9 @@ pub struct ChartPane {
     pub last_chart_rect: Option<egui::Rect>,
     // The whole rect this pane was last painted into, gutters and time strip
     // included — and set whether or not the pane had anything to draw, which
-    // is what separates it from `last_chart_rect`. The feed's notice card is
-    // placed against it: a wait belongs on the pane that is waiting, and the
-    // pane that is waiting is precisely the one with nothing in it.
+    // is what separates it from `last_chart_rect`. The feed's one-line
+    // offline note is placed against it: an explanation belongs on the pane
+    // with nothing in it, which is precisely the pane that has room for one.
     pub last_area: Option<egui::Rect>,
     // The price gutter of the last draw, published for the same reason: the
     // scripted right-click of `QUANTICK_CONTEXT_MENU=axis` needs a point that

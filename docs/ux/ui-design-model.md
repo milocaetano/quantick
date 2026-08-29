@@ -275,25 +275,57 @@ mid-trade.
 One 28 px line, three sections, replacing the perf overlay, the floating
 timezone pill and the mode text painted over candles:
 
-- **Left — provenance:** state dot (green live · amber replay · red stalled),
-  venue, symbol, feed lag — and, **while the feed is stalled**, the pair of
-  controls that recovers it: `Reconnect` (respawns the transport, keeps the
-  timeline) and `Reload` (rebuilds the chart from zero), the one that fixes
-  this stall filled and the other beside it, each carrying the reason on
-  hover. They are the only recovery affordance on a chart that is *full* of
-  bars, since the notice card never covers a working chart; the reason lives
-  in the hover rather than the bar because a sentence in a 28 px line would
-  move every cell to its right.
+- **Left — provenance:** state dot (green live · amber replay · faint
+  connecting), venue, symbol, feed lag. While the chart is **not being fed**
+  the dot yields to the corner (§8.1): it wears the corner's colour and the
+  corner's word, `offline`. It may not say `live` about a chart the corner
+  calls offline — a frozen terminal is exactly the case where the socket's
+  opinion and the tape's disagree, and two ends of one window answering the
+  same question differently is worse than either answer alone.
 - **Middle — content:** bar spec, bar counts (`240+61 bars` keeps today's
   backfilled+live split), honesty labels such as `side: inferred (tick rule)`
   for feeds without true aggressor sides (the MT5/B3 case). Indicator
   recompute progress borrows this section, then yields it back.
 - **Right — machinery:** trades ingested, fps + frame time, timezone picker
-  (kept at the far edge). This was the bar's only control until the recovery
-  pair joined the provenance section; both are resident rather than
-  appearing-on-hover, so nothing in the line moves under the pointer.
+  (kept at the far edge). The picker is the line's only control: recovery
+  briefly lived here too, and moved to the corner, which is in one place
+  whatever the chart holds.
 
 A reading that breaches its threshold turns `warn` — the layout never moves.
+
+### 8.1 The offline corner
+
+The feed's own report, at three sizes, and the trader picks which one they
+want. The rule behind all three is theirs: **seeing no data at all is worse
+than not being connected.**
+
+- **The chip** — a dot and the word `offline`, in the chart's bottom-right
+  corner, on any frame where the chart is not being fed. Red when the
+  transport is broken however you read it, amber when the tape has merely
+  gone quiet: a closed exchange is not an alarm, and a red dot every night is
+  how a warning stops being read. One word for four faults, because it answers
+  the question the trader actually has — *is what I am looking at live?* — and
+  leaves *why* one click away.
+- **The popup** — headline, next step, and the pair that recovers the feed:
+  `Reconnect` (respawns the transport, keeps bars, drawings, indicators,
+  armed strategies and any open paper position) and `Reload` (rebuilds the
+  chart from zero), the one that fixes *this* stall filled and the other
+  beside it, with a caption saying what Reload costs. It grows out of the chip
+  and it opens on a click on the chip, on nothing else.
+- **One muted line** on a pane with no bars on it, carrying the headline and
+  no more — no border, no fill, no buttons. A blank canvas has room to say
+  why; the way out is still the corner.
+
+Progress never reaches the corner. A first connection and a history block
+still arriving are a *wait*, and a wait already has the loading overlay on the
+pane that is waiting.
+
+This replaced a 420 px card with two buttons, drawn across whichever pane was
+empty because the application decided the trader needed to see it. That is
+right for a terminal that froze mid-session and wrong every morning: the chart
+a trader opens before the open has nothing wrong with it, and an error panel
+over the whole canvas taught them to close the application rather than read
+it.
 While a recording plays, the **transport strip** (30 px) appears directly
 above the status line: play/pause, speed, seek bar, session label, close —
 all amber-marked. The transport is thus part of the status system, not an
@@ -380,8 +412,8 @@ budget is unchanged.
 - **Switching never tears down feeds.** Background tabs keep draining their
   bounded channels every frame (a stalled channel would back the feed thread
   up); only the active tab renders.
-- **Provenance follows the active tab**: status bar, side-honesty note,
-  notice cards and the transport strip all read from it. A background tab
+- **Provenance follows the active tab**: status bar, side-honesty note, the
+  offline corner and the transport strip all read from it. A background tab
   with a dead feed shows an amber dot on its chip — honesty at a glance.
 - Replay is **per-tab**: a recording opens inside the tab that requested it,
   replacing that tab's SOURCE group with the amber session label (existing
@@ -405,7 +437,7 @@ budget is unchanged.
   the bridge's own port-in-use notice. One port per *symbol* is what
   `[metatrader.ports]` buys; one port per tab is not on offer.
 - MT5 tabs each need their own bridge port (`[metatrader.ports]` ↔ the EA's
-  `InpPort`); a port collision surfaces as that tab's notice card, never as
+  `InpPort`); a port collision surfaces in that tab's own corner, never as
   another tab's problem.
 
 ### Split view (per tab: zones 4–6 + 9 duplicate)

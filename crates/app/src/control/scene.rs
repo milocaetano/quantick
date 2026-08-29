@@ -59,10 +59,13 @@ use quantick_control::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use eframe::egui;
+
 use crate::{
     app::QuantickApp,
     chart_layers::ChartLayer,
     dock::DockTab,
+    feed::stall::Recovery,
     pane::{ChartPane, PaneSide},
     tab::Tab,
     toolbar::LayerToggle,
@@ -89,6 +92,13 @@ const TOOLBAR_LAYERS_OWNER_ID: &str = "toolbar.layers";
 const TOOL_RAIL_OWNER_ID: &str = "tool_rail";
 /// The right-hand dock and its tab strip.
 const DOCK_OWNER_ID: &str = "dock";
+/// The feed's offline corner: the chip, and the popup it opens.
+const FEED_STATUS_OWNER_ID: &str = "feed_status";
+/// The chip itself.
+const FEED_CHIP_CONTROL_ID: &str = "feed_status.chip";
+/// The popup's two controls, named for the capability each one calls.
+const FEED_RECONNECT_CONTROL_ID: &str = "feed_status.reconnect";
+const FEED_RELOAD_CONTROL_ID: &str = "feed_status.reload";
 
 /// What is on screen right now, as controls an operator can name.
 ///
@@ -187,6 +197,12 @@ pub(crate) enum SceneRoleDto {
     Tool,
     /// A chart surface: the thing the pointer resolves against.
     Canvas,
+    /// A control that does one thing and returns, leaving no mode behind.
+    ///
+    /// The first role whose controls carry a `capability_id`: pressing one is
+    /// exactly a call, so the scene can say which call it is instead of
+    /// leaving an operator to guess from the label.
+    Action,
 }
 
 /// Which region of the window a control belongs to.
@@ -212,6 +228,13 @@ pub(crate) enum SceneOwnerKindDto {
     Dock,
     /// One open chart tab, owning its panes.
     Tab,
+    /// The feed's offline corner, bottom-right of the chart.
+    ///
+    /// Present only while the chart is not being fed — which is the whole
+    /// point of it, and why a capture with no `feed_status` control in it is
+    /// an operator's evidence that the feed is healthy rather than a gap in
+    /// the walk.
+    FeedStatus,
 }
 
 /// A control's rectangle in window coordinates, in **logical points**.
@@ -330,6 +353,7 @@ pub(crate) fn scene_snapshot(app: &QuantickApp) -> SceneSnapshot {
     push_layer_toggles(&mut controls, app, active);
     push_tool_rail(&mut controls, app);
     push_dock(&mut controls, app);
+    push_feed_status(&mut controls, app);
     // Bounded like every other projection, and honest about it. Every registry
     // behind the scene is fixed-size except the trader's own tab strip, which
     // is why the strip is walked last and why it is the one walk told when to
@@ -372,11 +396,12 @@ pub(crate) fn scene_snapshot(app: &QuantickApp) -> SceneSnapshot {
 /// The list a capture publishes as its own bound. Adding a region here without
 /// adding the walk that fills it would be the one lie this module cannot
 /// tolerate, so the two live one above the other.
-const COVERED_REGIONS: [SceneOwnerKindDto; 5] = [
+const COVERED_REGIONS: [SceneOwnerKindDto; 6] = [
     SceneOwnerKindDto::Tab,
     SceneOwnerKindDto::Toolbar,
     SceneOwnerKindDto::ToolRail,
     SceneOwnerKindDto::Dock,
+    SceneOwnerKindDto::FeedStatus,
     SceneOwnerKindDto::TabStrip,
 ];
 
@@ -500,6 +525,68 @@ fn push_dock(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
     }
 }
 
+/// The feed's offline corner, while there is one.
+///
+/// Unlike every other region here, this one is usually empty: the chip is
+/// drawn only when the chart is not being fed, so an operator reading a
+/// capture with no `feed_status` control has been told the feed is healthy.
+/// The two recovery controls join it only while the popup is open, because a
+/// control behind a click is not on screen — and they are the first entries in
+/// this module to name the capability that operates them, which is the whole
+/// reason `capability_id` exists.
+fn push_feed_status(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
+    let Some(chip) = app.control_feed_chip_rect() else {
+        return;
+    };
+    let owner = || SceneOwnerSnapshot {
+        kind: SceneOwnerKindDto::FeedStatus,
+        id: FEED_STATUS_OWNER_ID.to_owned(),
+    };
+    let popup_open = app.control_feed_popup_open();
+    let chip_bounds = rect_bounds(chip);
+    controls.push(SceneControlSnapshot {
+        control_id: FEED_CHIP_CONTROL_ID.to_owned(),
+        // The word the chip paints, not one assembled here.
+        label: crate::feed_notice::OFFLINE_LABEL.to_owned(),
+        role: SceneRoleDto::Toggle,
+        owner: owner(),
+        selected: popup_open,
+        availability: available(),
+        bounds_availability: match &chip_bounds {
+            Bounds::Rect(_) => available(),
+            Bounds::NotDrawn => unavailable("the_chip_has_not_been_drawn_yet"),
+            Bounds::NotReportable => unavailable("the_chips_rectangle_is_not_a_reportable_number"),
+        },
+        bounds: chip_bounds.into_snapshot(),
+        // Opening the popup is a gesture, not a call: everything behind it is
+        // reachable directly, so a capability whose only effect is to show a
+        // human something would be a second way to say the same thing.
+        capability_id: None,
+    });
+    if !popup_open {
+        return;
+    }
+    for (control_id, recovery) in [
+        (FEED_RECONNECT_CONTROL_ID, Recovery::Reconnect),
+        (FEED_RELOAD_CONTROL_ID, Recovery::Reload),
+    ] {
+        controls.push(SceneControlSnapshot {
+            control_id: control_id.to_owned(),
+            label: recovery.label().to_owned(),
+            role: SceneRoleDto::Action,
+            owner: owner(),
+            // Which of the two leads is the application's judgement about
+            // *this* stall, and it is a matter of emphasis rather than of
+            // state: neither control is chosen until it is pressed.
+            selected: false,
+            availability: available(),
+            bounds: None,
+            bounds_availability: bounds_not_recorded(),
+            capability_id: Some(super::recovery::capability_id(recovery).to_owned()),
+        });
+    }
+}
+
 /// The chart canvases of the active tab.
 ///
 /// These are the one place the scene has real bounds: a pane records the
@@ -567,6 +654,12 @@ fn pane_bounds(pane: &ChartPane) -> Bounds {
     let Some(rect) = pane.last_chart_area else {
         return Bounds::NotDrawn;
     };
+    rect_bounds(rect)
+}
+
+/// One recorded rectangle, in the units and with the refusals this scope
+/// promises.
+fn rect_bounds(rect: egui::Rect) -> Bounds {
     // `egui::Rect` does not normalise, so a degenerate layout can hand back a
     // rectangle whose corners are the wrong way round. A negative width is a
     // number a client would happily halve to find a centre, landing outside

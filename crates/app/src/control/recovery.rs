@@ -1,6 +1,7 @@
 //! The cockpit tier's recovery capabilities: getting a stalled feed back.
 //!
-//! Both call the same `Tab` method the button on the notice card calls. That
+//! Both call the same `Tab` method the button in the chart's offline corner
+//! calls. That
 //! is the point rather than a tidiness preference — a capability with its own
 //! copy of "start the feed over" would drift from the one a click takes, and
 //! the drift would be an assistant and a trader disagreeing about what just
@@ -31,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::app::QuantickApp;
+use crate::feed::stall::Recovery;
 
 use super::{
     actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
@@ -46,6 +48,19 @@ pub(crate) const RECOVERY_MODULE_ID: &str = "feed";
 
 const RECONNECT_ID: &str = "feed.reconnect";
 const RELOAD_ID: &str = "feed.reload";
+
+/// The capability a recovery control calls.
+///
+/// `control::scene` names it beside the button, so an operator reading the
+/// screen can invoke exactly what a click invokes. One mapping, and it lives
+/// beside the registrations it names — a second copy in the projection would
+/// be a string that goes stale the day either ID changes.
+pub(crate) const fn capability_id(recovery: Recovery) -> &'static str {
+    match recovery {
+        Recovery::Reconnect => RECONNECT_ID,
+        Recovery::Reload => RELOAD_ID,
+    }
+}
 
 /// Which tab to recover. Omitted means the one the trader is looking at — the
 /// same default every other cockpit call takes.
@@ -76,7 +91,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
         descriptor(
             RECONNECT_ID,
             "Reconnect a stalled feed",
-            "Respawns the transport and keeps everything the chart has built: bars, drawings, indicators, armed strategies and any open paper position. The window the new session replays is dropped rather than counted twice, and a silence long enough to leave a hole in the tape is marked on the chart. The same call the Reconnect button on the notice card makes.",
+            "Respawns the transport and keeps everything the chart has built: bars, drawings, indicators, armed strategies and any open paper position. The window the new session replays is dropped rather than counted twice, and a silence long enough to leave a hole in the tape is marked on the chart. The same call the Reconnect button in the chart's offline corner makes.",
             false,
             generated_schema::<RecoveryInput>(),
         ),
@@ -86,7 +101,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
         descriptor(
             RELOAD_ID,
             "Reload a chart from a new feed session",
-            "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button on the notice card makes.",
+            "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button in the chart's offline corner makes.",
             true,
             generated_schema::<RecoveryInput>(),
         ),
