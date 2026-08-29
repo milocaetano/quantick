@@ -2364,6 +2364,42 @@ impl PaperTrading {
     /// Route pointer input to the simulated lines. Returns true when paper
     /// trading owns the gesture this frame — the chart must not pan and the
     /// drawings must not select under it.
+    /// Where `QUANTICK_PAPER_ORDER_HOVER` parks the hand a capture run does
+    /// not have — on the first working order's line, in the tag column.
+    ///
+    /// The hook forces the *tag* open, but the bracket handles are drawn
+    /// only where a pointer actually is, so that a pane the hand is not on
+    /// never offers a press it will not take. Without a parked pointer the
+    /// handles would be unreachable from a scripted run — the ParkedHand
+    /// problem the aim's own `CmdPreviewForce` already solves this way.
+    ///
+    /// Only the pane feeding paper input asks, so parking one hand cannot
+    /// put handles on two charts. It paints and never places: this is read
+    /// by the draw, and the press side reads the real pointer alone.
+    #[must_use]
+    pub fn forced_hover_pointer(
+        &self,
+        chart: egui::Rect,
+        tag_right: f32,
+        scale: &PriceScale,
+    ) -> Option<egui::Pos2> {
+        if !self.order_hover_force {
+            return None;
+        }
+        // The first order whose line this pane can actually show. Not
+        // simply the first order: panes hold different price ranges, and a
+        // hand parked on a line that is off-range here would be a hand on
+        // nothing — the handles would stay unreachable on exactly the pane
+        // the capture was pointed at.
+        self.venue
+            .working_orders()
+            .iter()
+            .filter_map(|order| order.price)
+            .map(|level| scale.y(level.to_f64().unwrap_or_default()))
+            .find(|y| *y >= chart.top() && *y <= chart.bottom())
+            .map(|y| egui::pos2(tag_right - TAG_GAP_PX - TAG_BUTTON_PX / 2.0, y))
+    }
+
     /// Whether a chart gesture this module owns is in flight — a line being
     /// dragged, a bracket leg being pulled into existence.
     ///

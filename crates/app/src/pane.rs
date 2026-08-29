@@ -5976,7 +5976,11 @@ impl ChartPane {
             // still paints the lines themselves — an order is a fact about
             // the account, true on whichever chart you are looking at.
             let paper_pointer = if chrome.paper_takes_input {
-                self.hover_pos
+                self.hover_pos.or_else(|| {
+                    chrome
+                        .paper
+                        .forced_hover_pointer(chart_rect, tag_right, &scale)
+                })
             } else {
                 None
             };
