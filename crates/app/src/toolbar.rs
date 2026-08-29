@@ -676,7 +676,10 @@ fn param_summary(model: &ToolbarModel) -> String {
 /// is exactly that), and gating the menu on the button's capability would
 /// leave the candle reach behind a control the trader cannot open.
 fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<ToolbarAction>) {
-    let paging = model.capabilities.history_paging;
+    let paging = history_button_enabled(
+        model.capabilities.history_paging,
+        model.history_reach_running,
+    );
     let menu = history_menu_reachable(model);
     let load = ui
         .add_enabled(paging, egui::Button::new(format!("{} older", icons::PLUS)))
@@ -685,10 +688,7 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
         // whole session and one that fetches two thousand prints are different
         // acts, and the trader chose which.
         .on_hover_text(history_button_hover(model))
-        .on_disabled_hover_text(
-            "no older trades to fetch: this feed only streams forward, or its \
-             history is already all here",
-        );
+        .on_disabled_hover_text(history_disabled_hover(model.history_reach_running));
     if load.clicked() {
         actions.push(ToolbarAction::LoadOlder);
     }
@@ -704,13 +704,34 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
 ///
 /// One owner, read by the bar's button and the overflow entry alike.
 fn history_button_hover(model: &ToolbarModel) -> String {
-    if model.history_reach_running {
-        return "paging — each answer asks for the next until the reach is met".to_owned();
-    }
     format!(
         "fetch older trades and prepend them: {}",
         model.history_reach.hover()
     )
+}
+
+/// Whether the load button takes a press.
+///
+/// Two facts, one owner, read by the bar's button and the overflow entry
+/// alike. A run already has its one permitted request out and the reply is
+/// what sends the next, so a press during one does nothing — drawn as disabled
+/// rather than left live to swallow it, because a trader who presses again and
+/// gets silence reads the button as broken, and a run is exactly when they are
+/// most likely to press: the chart is visibly still filling.
+fn history_button_enabled(feed_can_page: bool, run_in_flight: bool) -> bool {
+    feed_can_page && !run_in_flight
+}
+
+/// Why the load button is greyed out — the run it is waiting on, or the feed
+/// that has nothing to give. Two reasons, and the trader is told which.
+fn history_disabled_hover(run_in_flight: bool) -> &'static str {
+    if run_in_flight {
+        "paging — each answer asks for the next until the reach is met; pick \
+         \"one page\" above to stop"
+    } else {
+        "no older trades to fetch: this feed only streams forward, or its \
+         history is already all here"
+    }
 }
 
 /// Whether the history menu has anything in it — trade paging, candle reach,
@@ -740,8 +761,19 @@ fn draw_history_menu(
         // either way.
         ui.label("one press reaches");
         for reach in crate::history_reach::HistoryReach::ALL {
+            // While a run is in flight the reach is also the way out of it, and
+            // this is where the trader would look — it is the control that
+            // started the run. Said on the chip rather than only in the log.
+            let hover = if model.history_reach_running && !reach.runs_a_campaign() {
+                format!(
+                    "{} — picking this now also stops the run in flight",
+                    reach.hover()
+                )
+            } else {
+                reach.hover().to_owned()
+            };
             ui.selectable_value(model.history_reach, reach, reach.label())
-                .on_hover_text(reach.hover());
+                .on_hover_text(hover);
         }
         ui.label("page size (trades per load)");
         ui.add(
@@ -1150,17 +1182,17 @@ fn draw_overflow(
         }
         if !plan.history_inline {
             ui.separator();
-            let paging = model.capabilities.history_paging;
+            let paging = history_button_enabled(
+                model.capabilities.history_paging,
+                model.history_reach_running,
+            );
             let load = ui
                 .add_enabled(
                     paging,
                     egui::Button::new(format!("{} Load older", icons::PLUS)),
                 )
                 .on_hover_text(history_button_hover(model))
-                .on_disabled_hover_text(
-                    "no older trades to fetch: this feed only streams forward, or \
-                     its history is already all here",
-                );
+                .on_disabled_hover_text(history_disabled_hover(model.history_reach_running));
             if load.clicked() {
                 actions.push(ToolbarAction::LoadOlder);
                 ui.close_menu();
@@ -1714,6 +1746,33 @@ mod tests {
         assert!(
             painted.contains("SELL 1 (closes 1 of 2)"),
             "the state-aware label never reached the toolbar; painted: {painted}"
+        );
+    }
+
+    /// The two facts the load button reads, and the reason it shows for each
+    /// way of being off.
+    #[test]
+    fn the_load_button_goes_quiet_while_a_run_is_paging() {
+        assert!(
+            history_button_enabled(true, false),
+            "a feed that pages and no run in flight takes the press"
+        );
+        assert!(
+            !history_button_enabled(true, true),
+            "a press during a run does nothing, so the button must not invite one"
+        );
+        assert!(
+            !history_button_enabled(false, false),
+            "and a feed that only streams forward never took one"
+        );
+        assert!(
+            history_disabled_hover(true).contains("one page"),
+            "the run's reason has to name the way out: {}",
+            history_disabled_hover(true)
+        );
+        assert!(
+            history_disabled_hover(false).contains("only streams forward"),
+            "and a feed that cannot page gets the other reason, not the run's"
         );
     }
 }

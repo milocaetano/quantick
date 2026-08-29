@@ -1,0 +1,8 @@
+version = 1
+active = 1
+next_id = 2
+
+[[layouts]]
+id = 1
+name = "Layout 1"
+indicators = []
