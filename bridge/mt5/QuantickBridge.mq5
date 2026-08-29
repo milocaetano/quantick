@@ -66,21 +66,21 @@ input int    InpPumpIntervalMs   = 25;          // Safety-net pump interval (OnT
 // The opening backfill's window is anchored on the clock, which is the wrong
 // anchor whenever the market is shut: at 07:00 `now - InpBackfillMinutes` is
 // last night, and B3 last printed the afternoon before. When that window comes
-// back empty the anchor moves to the tape — these bound the search for it.
-// They mirror the Python bridge's load_older walk (quantick_bridge.py), which
-// crosses the same dead time for the same reason.
+// back empty the anchor moves to the tape — these bound the search for it, and
+// they are the same two numbers the Python bridge uses for the same search
+// (OPENING_REACH_* in quantick_bridge.py).
 //
-// First window the search looks back over, in seconds.
-#define REACH_FIRST_WINDOW_S 300
-// Widest it grows to. Reached only over dead time, where the point is to cross
-// a weekend in a few calls rather than five minutes at a time.
-#define REACH_MAX_WINDOW_S   (4 * 60 * 60)
-// How much wider each empty window gets.
-#define REACH_WINDOW_GROWTH  4
-// Terminal calls the search may make before it gives up and sends nothing.
-// Twenty-four of these reach back about three and a half days, which is past
-// any weekend or holiday the search exists to cross.
-#define REACH_MAX_CALLS      24
+// One step of the search, in seconds. Fixed rather than widening: the caller
+// has already been told the recent window is empty, so every step but the last
+// is over dead time, and a step that lands inside a session answers on its
+// newest tick whatever else it returned. Nothing is kept but a timestamp, so a
+// wide step costs the terminal one search and this EA nothing.
+#define REACH_WINDOW_S   (4 * 60 * 60)
+// Steps the search may take before it gives up and sends an empty block.
+// Forty-eight of these reach back eight days. B3 shuts for Carnival — Friday
+// afternoon to Wednesday morning, about 86 h — and for Easter, and a search
+// sized to a weekend gives up in the middle of both.
+#define REACH_MAX_CALLS  48
 
 // Bounds for InpPumpIntervalMs: fast enough that the safety net is a net, slow
 // enough that a mistyped 0 cannot spin the terminal's timer thread.
@@ -621,20 +621,24 @@ bool StartSession()
 // never held still returns 0.
 int ReachLastSession(MqlTick &out[], long now_msc, long window_msc)
   {
-   long    cursor_msc = now_msc;
-   long    window_s   = REACH_FIRST_WINDOW_S;
+   // Starts where the clock's window ended, not at `now`: that interval has
+   // just been reported empty, and re-scanning it would spend the first steps
+   // proving the same thing twice.
+   long    cursor_msc = now_msc - window_msc;
+   int     calls      = 0;
    MqlTick probe[];
-   for(int call = 0; call < REACH_MAX_CALLS; call++)
+   while(calls < REACH_MAX_CALLS && cursor_msc > 0)
      {
-      long from_msc = cursor_msc - window_s * 1000;
+      long from_msc = cursor_msc - (long)REACH_WINDOW_S * 1000;
       if(from_msc < 0)
          from_msc = 0;
+      calls++;
       int found = CopyTicksRange(_Symbol, probe, TickFlagsWanted(), from_msc, cursor_msc);
       if(found < 0)
         {
          LogEvent("BRIDGE_BACKFILL_REACH_FAILED",
                   StringFormat("\"mql_error\":%d,\"calls\":%d,\"action\":\"send_an_empty_block\"",
-                               GetLastError(), call + 1));
+                               GetLastError(), calls));
          return(0);
         }
       if(found > 0)
@@ -646,28 +650,28 @@ int ReachLastSession(MqlTick &out[], long now_msc, long window_msc)
          int block = CopyTicksRange(_Symbol, out, TickFlagsWanted(), start_msc, last_msc);
          if(block < 0)
            {
-            // The window the search itself proved is populated. A poorer
-            // answer than the re-anchored one, and a far better answer than
-            // throwing away the only history known to exist.
+            // The wide ask failed where the search succeeded, so fall back to
+            // the step the search itself proved is populated. A poorer answer
+            // than the re-anchored one, and a far better answer than throwing
+            // away the only history known to exist.
             block = CopyTicksRange(_Symbol, out, TickFlagsWanted(), from_msc, cursor_msc);
             if(block < 0)
                block = 0;
            }
          LogEvent("BRIDGE_BACKFILL_REANCHORED",
                   StringFormat("\"last_print_ms\":%I64d,\"behind_s\":%I64d,\"count\":%d,\"calls\":%d",
-                               last_msc, (now_msc - last_msc) / 1000, block, call + 1));
+                               last_msc, (now_msc - last_msc) / 1000, block, calls));
          return(block);
         }
-      if(from_msc <= 0)
-         break;
       cursor_msc = from_msc;
-      window_s  *= REACH_WINDOW_GROWTH;
-      if(window_s > REACH_MAX_WINDOW_S)
-         window_s = REACH_MAX_WINDOW_S;
      }
+   // The count the search really made, not the budget it was allowed: the walk
+   // also ends by reaching the epoch, and a log that always printed the cap
+   // would tell whoever is diagnosing an empty block that the budget ran out
+   // when it did not. The Python bridge reports the same number.
    LogEvent("BRIDGE_BACKFILL_NO_HISTORY",
             StringFormat("\"calls\":%d,\"note\":\"the terminal holds no ticks for this symbol\"",
-                         REACH_MAX_CALLS));
+                         calls));
    return(0);
   }
 

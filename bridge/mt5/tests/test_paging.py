@@ -167,13 +167,19 @@ def session_for(bridge, terminal, **args):
 def session_at(bridge, terminal, now_s: int, **args):
     """A session whose server clock reads exactly `now_s`.
 
-    `backfill` asks the wall clock and adds the broker's offset, so the offset
-    is what a test can set. Deterministic despite the real clock: the fraction
-    of a second `time.time()` carries is exactly what `int()` drops on the way
-    in and cannot survive the addition.
+    The clock is frozen rather than offset. Deriving the offset from one
+    `time.time()` while the code under test takes another leaves the two in
+    different seconds whenever the first read lands late enough in one, and
+    the failure surfaces as an off-by-one assertion inside the bridge — which
+    is the wrong place to go looking for a flaky helper. `monotonic` is passed
+    through: the heartbeat and the load-older walk measure elapsed time with
+    it, and freezing that would be a different lie.
     """
     session = session_for(bridge, terminal, **args)
-    session.offset_s = now_s - int(time.time())
+    bridge.time = types.SimpleNamespace(
+        time=lambda: float(now_s), monotonic=time.monotonic
+    )
+    session.offset_s = 0
     return session
 
 
@@ -872,7 +878,7 @@ def test_the_reach_crosses_a_weekend():
     )
     check(
         "and crossing it costs a handful of calls, not a budget",
-        len(term.tick_calls) <= bridge.LOAD_OLDER_MAX_PAGES,
+        len(term.tick_calls) <= 1 + 62 // 4 + 1,
         len(term.tick_calls),
     )
 
@@ -913,14 +919,63 @@ def test_the_reach_gives_up_rather_than_walking_forever():
     session.backfill()
 
     check(
-        "the reach is bounded by the page budget",
-        len(term.tick_calls) <= bridge.LOAD_OLDER_MAX_PAGES + 1,
+        "the reach is bounded by its own budget",
+        len(term.tick_calls) <= bridge.OPENING_REACH_MAX_CALLS + 1,
         len(term.tick_calls),
     )
     check(
         "and answers with an empty block rather than hanging",
         [msg["type"] for msg in session.sent] == ["backfill_start", "backfill_end"],
         session.sent,
+    )
+
+
+def test_the_reach_crosses_a_four_day_holiday():
+    """Carnival: B3 shuts Friday afternoon and reopens Wednesday morning.
+
+    Eighty-six hours is past what a weekend-sized search reaches, and it is a
+    date the exchange this repo names keeps every year.
+    """
+    now_s = NOW
+    close_s = now_s - 86 * 3600
+    term = FakeTerminal(0, now_s)
+    term.ticks = session_ending_at(close_s)
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.backfill()
+
+    check(
+        "a holiday is crossed, not given up on",
+        len(block_ticks(session)) == CLOSED_SESSION_TICKS,
+        len(block_ticks(session)),
+    )
+
+
+def test_the_reach_starts_where_the_clock_window_ended():
+    """The interval the clock already proved empty is not searched twice."""
+    now_s = NOW
+    close_s = now_s - 14 * 3600
+    term = FakeTerminal(0, now_s)
+    term.ticks = session_ending_at(close_s)
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.backfill()
+
+    clock_from, clock_to, _ = term.tick_calls[0]
+    check(
+        "the clock's window is asked for once",
+        (clock_from, clock_to) == (now_s - 720 * 60, now_s),
+        term.tick_calls[0],
+    )
+    check(
+        "and the search picks up where it ended",
+        term.tick_calls[1][1] == clock_from,
+        term.tick_calls[1],
+    )
+    check(
+        "so no step re-scans it",
+        all(call[0] >= 0 and call[1] <= clock_from for call in term.tick_calls[1:-1]),
+        term.tick_calls[1:-1],
     )
 
 

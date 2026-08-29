@@ -173,7 +173,21 @@ pub fn assess(input: &StallInput<'_>, now_ms: i64) -> Option<Stall> {
         // fixes nothing; what the trader does by hand today is close the
         // application and start it again, which is this branch's control.
         FeedConnectionState::Connected => {
-            let silent = input.tape_age_ms?;
+            // A tape that has *never* printed is silent in the way that
+            // matters, and the reading this arm used to require is precisely
+            // the one it does not have. Measured from when the transport
+            // landed instead: a socket open for four minutes with nothing
+            // down it says the same thing as one that went quiet four minutes
+            // ago, and the trader needs the same way out of both.
+            //
+            // Before this it returned `None` forever, which was survivable
+            // only because a card drew on any empty pane and the status bar
+            // carried a recovery pair. Both are gone — the corner is the one
+            // recovery surface now — so the branch that reports nothing is
+            // the branch that leaves a chart with no way out.
+            let silent = input
+                .tape_age_ms
+                .unwrap_or_else(|| now_ms.saturating_sub(input.connection_since_ms));
             (silent >= SILENT_BUDGET_MS).then(|| gone_quiet(provider, name, silent))
         }
     }
@@ -302,7 +316,12 @@ pub(crate) fn spoken_ms(ms: i64) -> String {
     } else if minutes < HOURS_ABOVE_MIN {
         format!("{minutes} min")
     } else {
-        format!("{} h", minutes / 60)
+        // Rounded, where the tiers above truncate. Each of those loses at
+        // most one unit of its own scale; an hour truncated loses up to
+        // fifty-nine minutes, which is the same order as the reading itself
+        // — `1 h` for a tape nearly two hours old is the cell answering "is
+        // my data current" with the wrong half of the answer.
+        format!("{} h", (minutes + 30) / 60)
     }
 }
 
@@ -488,16 +507,52 @@ mod tests {
         );
     }
 
-    /// Nothing has ever arrived on a connected transport: there is no age to
-    /// judge, and inventing one would report a fresh feed as stalled.
+    /// Nothing has ever arrived on a connected transport. A fresh one is not
+    /// stalled — but one that has been open past the budget with nothing down
+    /// it is, and it used to be the one shape that reported nothing at all.
+    ///
+    /// This reverses a deliberate call. When the budget was written, silence
+    /// from birth was survivable without a report: the notice card drew on any
+    /// empty pane and the status bar carried a recovery pair on a full one.
+    /// The corner replaced both, so a branch that reports nothing is now a
+    /// chart with no way out — a trader watching a spinner over an empty chart
+    /// whose only exit is closing the application, which is the exact failure
+    /// the card was built to end.
+    ///
+    /// No age is invented. "How long has this socket been open with nothing
+    /// down it" is measured from the transport's own state change, and the
+    /// budget is what keeps a fresh feed quiet.
     #[test]
-    fn a_connected_feed_with_no_events_yet_is_not_stalled() {
+    fn a_connected_feed_with_nothing_on_it_stalls_once_the_budget_runs_out() {
         let notice = FeedNotice::Clear;
-        let input = StallInput {
+        let fresh = StallInput {
             tape_age_ms: None,
             ..healthy(&notice)
         };
-        assert_eq!(assess(&input, 10_000_000), None);
+        assert_eq!(
+            assess(&fresh, SILENT_BUDGET_MS - 1),
+            None,
+            "a feed that just landed is not stalled, it is new"
+        );
+
+        let stall = assess(&fresh, SILENT_BUDGET_MS).expect("an open socket with nothing on it");
+        assert!(
+            stall.headline.contains("sent nothing"),
+            "the words are the ones a tape that went quiet gets: {}",
+            stall.headline
+        );
+        assert_eq!(
+            stall.primary,
+            Recovery::Reload,
+            "reconnecting a socket that is already open fixes nothing"
+        );
+        // And a tape that *has* printed is still judged on its own age rather
+        // than on how long the socket has been up.
+        let printed = StallInput {
+            tape_age_ms: Some(0),
+            ..healthy(&notice)
+        };
+        assert_eq!(assess(&printed, 10_000_000), None);
     }
 
     #[test]
@@ -508,7 +563,12 @@ mod tests {
         assert_eq!(spoken_ms(MINUTES_ABOVE_S * 1_000), "1 min");
         assert_eq!(spoken_ms(600_000), "10 min");
         assert_eq!(spoken_ms(HOURS_ABOVE_MIN * 60_000 - 1), "89 min");
-        assert_eq!(spoken_ms(HOURS_ABOVE_MIN * 60_000), "1 h");
+        assert_eq!(spoken_ms(HOURS_ABOVE_MIN * 60_000), "2 h");
+        assert_eq!(
+            spoken_ms(119 * 60_000),
+            "2 h",
+            "an hour truncated loses the same order as the reading"
+        );
         // The case this tier exists for: a chart opened before the open, on
         // the session that closed the afternoon before.
         assert_eq!(spoken_ms(14 * 3_600_000), "14 h");

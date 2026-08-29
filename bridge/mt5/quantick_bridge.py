@@ -167,6 +167,22 @@ LOAD_OLDER_MAX_TICKS = 200_000
 # window is not wildly larger than the page asked for.
 LOAD_OLDER_WINDOW_GROWTH = 4
 
+# The opening reach's own window, in seconds, and its own budget in calls.
+#
+# Deliberately not `load_older`'s. That walk answers a click by *collecting*
+# pages, so it starts narrow to avoid fetching ticks it will throw away, and it
+# stops early because the trader can always click again. This one answers a
+# different question — *when did this instrument last print* — and it keeps
+# nothing but a timestamp, so a wide window costs the terminal one search and
+# this process nothing at all. It also has no second chance: an empty block
+# here is a chart with nothing on it until the market opens.
+#
+# Four hours a step, forty-eight steps, is eight days of reach. B3 shuts for
+# Carnival (Friday afternoon to Wednesday morning, about 86 h) and for Easter,
+# and a search sized to a weekend gives up in the middle of both.
+OPENING_REACH_WINDOW_S = 4 * 60 * 60
+OPENING_REACH_MAX_CALLS = 48
+
 # Bytes read from the socket per pass. The inbound direction carries one short
 # JSON object per trader click, so this is never the constraint — it is sized
 # like any read buffer, not like the traffic.
@@ -579,25 +595,22 @@ class Session:
         preparing, and the session they want to read is already on the
         terminal's disk. Nothing was missing but the question.
 
-        So the anchor moves from the clock to the tape. `walk_back` finds the
-        newest print there is — the same widening walk `load_older` uses to
-        cross dead time, which is exactly what stands between now and the last
-        session — and the *same* window is asked for again, ending there
-        instead of ending at `now`. One extra concept, and the trader's
+        So the anchor moves from the clock to the tape. `last_print_before`
+        steps back over the dead time between now and the last session, and the
+        *same* window is asked for again, ending on the print it found instead
+        of ending at `now`. One extra concept, and the trader's
         `--backfill-minutes` keeps meaning what it says.
+
+        The search starts where the clock's window ended rather than at `now`:
+        that interval has just been reported empty, and re-scanning it would
+        spend the reach's first steps proving the same thing twice.
 
         Nothing here invents data. An instrument the terminal has never held
         returns an empty block, as it did before; what changed is that a
         closed market no longer looks like one.
         """
-        # One tick is the whole question: *when* did this instrument last
-        # print? The walk answers it in a handful of calls over dead time, and
-        # keeps quiet on the socket while it does — this runs before
-        # `backfill_start`, where the session shape has no heartbeat.
-        newest, _exhausted, _scanned_to_ms, calls = self.walk_back(
-            1, now_s * 1000, heartbeat=False
-        )
-        if not len(newest):
+        last_ms, calls = self.last_print_before(now_s - window_s)
+        if last_ms is None:
             log(
                 "BRIDGE_BACKFILL_NO_HISTORY",
                 symbol=self.symbol,
@@ -605,26 +618,29 @@ class Session:
                 note="the terminal holds no ticks for this symbol; sending an empty block",
             )
             return []
-        last_ms = int(newest[0]["time_msc"])
-        # Rounded outward, as the walk itself rounds: `copy_ticks_range` takes
-        # whole seconds, and rounding the other way would drop the very print
-        # the anchor was found by.
+        # Rounded outward: `copy_ticks_range` takes whole seconds, and rounding
+        # the other way would drop the very print the anchor was found by.
         to_s = -(-last_ms // 1000)
         from_s = max(0, to_s - window_s)
         found = mt5.copy_ticks_range(self.symbol, from_s, to_s, self.tick_flags())
         if found is None or not len(found):
+            # The wide ask failed where the search succeeded, so fall back to
+            # the one second the print is known to be in. A chart holding a
+            # handful of prints is a poor chart and an honest one; an empty
+            # block here would throw away the only thing that is known.
+            narrow = mt5.copy_ticks_range(
+                self.symbol, max(0, to_s - 1), to_s, self.tick_flags()
+            )
             log(
                 "BRIDGE_BACKFILL_REANCHOR_FAILED",
                 symbol=self.symbol,
                 from_s=from_s,
                 to_s=to_s,
                 mt5_error=str(mt5.last_error()),
-                action="send_the_print_the_walk_found",
+                recovered=0 if narrow is None else len(narrow),
+                action="send_the_second_the_print_is_in",
             )
-            # The walk proved this one exists. A chart holding one print is a
-            # poor chart and an honest one; an empty block here would throw
-            # away the only thing that is known.
-            return list(newest)
+            return [] if narrow is None else list(narrow)
         log(
             "BRIDGE_BACKFILL_REANCHORED",
             symbol=self.symbol,
@@ -636,6 +652,50 @@ class Session:
             searched_calls=calls,
         )
         return list(found)
+
+    def last_print_before(self, before_s: int) -> tuple[int | None, int]:
+        """When this instrument last printed at or before `before_s`.
+
+        Answers a timestamp and how many terminal calls it took, or `(None, n)`
+        when the search reached its budget, the terminal's own floor, or an
+        error, with nothing found.
+
+        Steps back in fixed windows rather than widening into one: the caller
+        has already been told the recent window is empty, so every step but the
+        last is over dead time, and a step that lands inside a session answers
+        on its newest tick whatever else it returned. Nothing is collected —
+        `found[-1]` is one index into what the terminal handed back, not a copy
+        of it — which is what separates this from `walk_back`, whose job is to
+        bring pages home and which would build half a million ticks here to
+        keep one.
+
+        Silent on the socket by construction: it runs before `backfill_start`,
+        where the session shape in PROTOCOL.md has no heartbeat.
+        """
+        floor_ms = self.earliest_tick_ms()
+        flags = self.tick_flags()
+        cursor_s = before_s
+        for call in range(1, OPENING_REACH_MAX_CALLS + 1):
+            if cursor_s <= 0:
+                return None, call - 1
+            if floor_ms is not None and cursor_s * 1000 <= floor_ms:
+                return None, call - 1
+            from_s = max(0, cursor_s - OPENING_REACH_WINDOW_S)
+            found = mt5.copy_ticks_range(self.symbol, from_s, cursor_s, flags)
+            if found is None:
+                log(
+                    "BRIDGE_BACKFILL_REACH_FAILED",
+                    symbol=self.symbol,
+                    from_s=from_s,
+                    to_s=cursor_s,
+                    mt5_error=str(mt5.last_error()),
+                    action="send_an_empty_block",
+                )
+                return None, call
+            if len(found):
+                return int(found[-1]["time_msc"]), call
+            cursor_s = from_s
+        return None, OPENING_REACH_MAX_CALLS
 
     # -- back-channel ------------------------------------------------------
 
@@ -752,9 +812,7 @@ class Session:
             elapsed_ms=int((time.monotonic() - started) * 1000),
         )
 
-    def walk_back(
-        self, wanted: int, before_ms: int, *, heartbeat: bool = True
-    ) -> tuple[list, bool, int, int]:
+    def walk_back(self, wanted: int, before_ms: int) -> tuple[list, bool, int, int]:
         """Collect up to `wanted` ticks from before `before_ms`.
 
         Walks backwards in windows rather than asking for one wide range: the
@@ -822,14 +880,7 @@ class Session:
             # The walk can take seconds and nothing else runs while it does. A
             # heartbeat here is what keeps the feed from declaring the bridge
             # silent mid-answer and dropping the session the answer belongs to.
-            #
-            # `heartbeat=False` is for the one caller that runs *before*
-            # `backfill_start`: the session shape in PROTOCOL.md has no
-            # heartbeat there, and a line the feed's state machine never
-            # expected is a worse trade than a few silent seconds on a
-            # connection that has just said hello.
-            if heartbeat:
-                self.maybe_heartbeat()
+            self.maybe_heartbeat()
 
         # Oldest page first, and the surplus trimmed off the *front*: the ticks
         # nearest the chart are the ones the trader is about to look at.

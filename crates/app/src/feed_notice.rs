@@ -128,6 +128,27 @@ const EMPTY_NOTE_BIAS: f32 = 0.08;
 const RELOAD_CAPTION: &str = "Reload rebuilds the chart from scratch: it closes any open paper position and \
      disarms every strategy.";
 
+/// What each control costs, in the trader's terms, on its own hover.
+///
+/// The caption below the buttons names what the destructive one ends, and for
+/// a while that was the only sentence either button had. A warning beside one
+/// control and silence beside the other does not read as "that one is safe" —
+/// it reads as "one of these is dangerous and I cannot tell which", which
+/// pushes a trader toward pressing neither at the moment they most need to
+/// press one. This is the status line's old hover text, restored to the
+/// surface that inherited its job.
+#[must_use]
+fn recovery_cost(recovery: Recovery) -> &'static str {
+    match recovery {
+        Recovery::Reconnect => {
+            "Keeps the chart as it is: bars, drawings, strategies and any open paper position."
+        }
+        Recovery::Reload => {
+            "Rebuilds the chart from scratch: closes any open paper position and disarms every strategy."
+        }
+    }
+}
+
 /// What the person watching asked of the popup this frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NoticeAction {
@@ -271,14 +292,68 @@ pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Re
 /// popup about a healthy feed being a thing the application must never show.
 #[must_use]
 pub fn popup_open_from_env() -> bool {
-    std::env::var("QUANTICK_FEED_POPUP").is_ok_and(|value| value == "1")
+    popup_open_from(std::env::var("QUANTICK_FEED_POPUP").ok().as_deref())
+}
+
+/// The rule the hook applies, separated from the reading of it.
+///
+/// Split so the rule can be tested without setting the real variable. A test
+/// that set `QUANTICK_FEED_POPUP` would be setting it for every other test in
+/// the process — `cargo test` runs them as threads — and the neighbour that
+/// builds a `QuantickApp` reads exactly this variable in its constructor. The
+/// failure would land on that neighbour, on a green branch, at random.
+#[must_use]
+fn popup_open_from(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+/// Whether the recovery popup is still up after a frame.
+///
+/// The chip is its only door, in both directions — the rule the trader asked
+/// for, after a card that opened itself over the chart every morning.
+/// Everything else here closes it: a click that landed somewhere else, a
+/// control that was pressed and is now under way, and a feed that recovered on
+/// its own while the trader was reading about it.
+///
+/// Pure, because the rule is worth a table rather than four frames of
+/// clicking, and because the frame that applies it has three other jobs on the
+/// same line.
+///
+/// `offline` is checked before anything else, and deliberately: no chip, no
+/// popup, in every combination. Today the frame cannot report a click on a
+/// chip it did not draw, so the case is unreachable — which is exactly why it
+/// is worth pinning here rather than leaving to hold by luck. A popup carries
+/// a `Report`; with no report there is nothing to draw in it.
+#[must_use]
+pub fn popup_still_open(
+    was_open: bool,
+    chip_clicked: bool,
+    offline: bool,
+    dismissed: bool,
+    action: NoticeAction,
+) -> bool {
+    if !offline {
+        return false;
+    }
+    if chip_clicked {
+        return !was_open;
+    }
+    was_open && !dismissed && action == NoticeAction::None
 }
 
 /// Where the chip lands inside `area`.
 ///
 /// Measured from the word it carries rather than fixed, so a future state word
-/// cannot silently overflow the pill. Pure, and shared by the drawing and the
-/// hit test, so the two can never disagree about where the trader clicked.
+/// cannot silently overflow the pill.
+///
+/// **Call this once a frame and pass the answer down.** Laying out even a
+/// seven-character static string allocates it, and the corner is drawn on
+/// every frame of a chart that is not being fed — which, since the opening
+/// backfill learned to reach the last session, is the ordinary state of a
+/// chart opened outside market hours and can be hours at a time. Passing the
+/// rectangle rather than re-deriving it also makes the drawing, the hit test
+/// and the popup's anchor share one measurement by construction rather than
+/// by three callers agreeing.
 #[must_use]
 pub fn chip_rect(painter: &egui::Painter, area: egui::Rect) -> egui::Rect {
     let label = painter.layout_no_wrap(
@@ -315,8 +390,7 @@ pub fn chip_rect(painter: &egui::Painter, area: egui::Rect) -> egui::Rect {
 /// rather than `on_hover_text`, for the reason the status line gives: the
 /// closure runs only while someone is pointing at it.
 #[must_use]
-pub fn draw_chip(ui: &mut egui::Ui, area: egui::Rect, report: &Report<'_>, open: bool) -> bool {
-    let rect = chip_rect(ui.painter(), area);
+pub fn draw_chip(ui: &mut egui::Ui, rect: egui::Rect, report: &Report<'_>, open: bool) -> bool {
     let response = ui
         .interact(
             rect,
@@ -416,7 +490,12 @@ struct Geometry {
 ///
 /// Text height depends on the fonts, so this needs a painter — but it takes no
 /// other state, and both the drawing and the tests go through it.
-fn geometry(painter: &egui::Painter, area: egui::Rect, report: &Report<'_>) -> Geometry {
+fn geometry(
+    painter: &egui::Painter,
+    area: egui::Rect,
+    chip: egui::Rect,
+    report: &Report<'_>,
+) -> Geometry {
     let accent = report.accent();
 
     // Wrap against the width the popup will actually have, not the width it
@@ -466,7 +545,6 @@ fn geometry(painter: &egui::Painter, area: egui::Rect, report: &Report<'_>) -> G
     // out of the thing that was clicked, so the eye does not have to travel to
     // find the answer it just asked for. Clamped into the chart, because a
     // popup taller than the pane it explains would otherwise start above it.
-    let chip = chip_rect(painter, area);
     let bottom = (chip.top() - POPUP_GAP_PX).max(area.top() + height);
     let popup = egui::Rect::from_min_size(
         egui::pos2(
@@ -501,17 +579,36 @@ fn geometry(painter: &egui::Painter, area: egui::Rect, report: &Report<'_>) -> G
 
 /// Where the popup lands for `report` inside `area` — the outline only.
 ///
-/// Production asks so it can tell a click *outside* the popup from one inside
-/// it, which is how the popup closes; the tests ask so the placement rule this
-/// file exists to keep is measured rather than eyeballed.
+/// Test-only, like the `card_rect` before it. Production has no reason to ask:
+/// [`draw_popup`] hands back the rectangle it already measured, so the frame
+/// can tell a click *outside* the popup from one inside it without laying the
+/// whole thing out a second time. What the tests want is the placement rule
+/// measured rather than eyeballed, and that is worth a function the shipped
+/// binary does not carry.
+#[cfg(test)]
 #[must_use]
-pub fn popup_rect(painter: &egui::Painter, area: egui::Rect, report: &Report<'_>) -> egui::Rect {
-    geometry(painter, area, report).popup
+pub fn popup_rect(
+    painter: &egui::Painter,
+    area: egui::Rect,
+    chip: egui::Rect,
+    report: &Report<'_>,
+) -> egui::Rect {
+    geometry(painter, area, chip, report).popup
 }
 
 /// Draw the popup above the chip in `area`. Call only while it is open.
+///
+/// Answers what was pressed *and where the popup landed*, because the caller
+/// needs the rectangle to tell a click on the popup from a click that
+/// dismisses it — and measuring it a second time would re-wrap three strings
+/// on a path that runs every frame the chart is offline.
 #[must_use]
-pub fn draw_popup(ui: &mut egui::Ui, area: egui::Rect, report: &Report<'_>) -> NoticeAction {
+pub fn draw_popup(
+    ui: &mut egui::Ui,
+    area: egui::Rect,
+    chip: egui::Rect,
+    report: &Report<'_>,
+) -> (NoticeAction, egui::Rect) {
     let painter = ui.painter().clone();
     let Geometry {
         popup,
@@ -521,7 +618,22 @@ pub fn draw_popup(ui: &mut egui::Ui, area: egui::Rect, report: &Report<'_>) -> N
         caption,
         primary,
         secondary,
-    } = geometry(&painter, area, report);
+    } = geometry(&painter, area, chip, report);
+
+    // The body claims the pointer before anything is drawn into it. A painted
+    // rectangle registers no widget, so without this a click on the headline
+    // — or a drag across the caption — reaches the chart underneath and pans
+    // it, or drops a drawing anchor on it. The card this replaced could
+    // mostly ignore that by only ever covering a pane with no bars; the
+    // corner's whole point is to work on a chart that is full.
+    //
+    // Registered before the buttons so they win inside their own rectangles,
+    // and after the canvas so this wins over it.
+    let _ = ui.interact(
+        popup,
+        ui.id().with("feed_recovery_popup"),
+        egui::Sense::click_and_drag(),
+    );
 
     // Chrome, not canvas: this belongs to the interface reporting on the chart
     // rather than to the chart. Opaque, because an instruction someone has to
@@ -570,6 +682,7 @@ pub fn draw_popup(ui: &mut egui::Ui, area: egui::Rect, report: &Report<'_>) -> N
             egui::Button::new(egui::RichText::new(primary_recovery.label()).color(theme::CHIP_INK))
                 .fill(accent),
         )
+        .on_hover_text(recovery_cost(primary_recovery))
         .clicked()
     {
         action = primary_recovery.into();
@@ -580,6 +693,7 @@ pub fn draw_popup(ui: &mut egui::Ui, area: egui::Rect, report: &Report<'_>) -> N
             secondary_rect,
             egui::Button::new(secondary_recovery.label()).fill(theme::CONTROL),
         )
+        .on_hover_text(recovery_cost(secondary_recovery))
         .clicked()
     {
         action = secondary_recovery.into();
@@ -589,7 +703,7 @@ pub fn draw_popup(ui: &mut egui::Ui, area: egui::Rect, report: &Report<'_>) -> N
         caption,
         theme::TEXT_FAINT,
     );
-    action
+    (action, popup)
 }
 
 #[cfg(test)]
@@ -617,6 +731,25 @@ mod tests {
             primary: Recovery::Reload,
             needs_attention: false,
         }
+    }
+
+    /// Draw the chip the way the frame does: one measurement, handed down.
+    fn chip_at(ui: &mut egui::Ui, area: egui::Rect, report: &Report<'_>, open: bool) -> bool {
+        let rect = chip_rect(ui.painter(), area);
+        draw_chip(ui, rect, report, open)
+    }
+
+    /// The popup, anchored on that same measurement. Answers what was
+    /// pressed; the rectangle it also returns is the caller's business in
+    /// production and nobody's here.
+    fn popup_at(ui: &mut egui::Ui, area: egui::Rect, report: &Report<'_>) -> NoticeAction {
+        let rect = chip_rect(ui.painter(), area);
+        draw_popup(ui, area, rect, report).0
+    }
+
+    /// The popup's geometry inside `area`, with the chip it grows out of.
+    fn geometry_in(painter: &egui::Painter, area: egui::Rect, report: &Report<'_>) -> Geometry {
+        geometry(painter, area, chip_rect(painter, area), report)
     }
 
     /// A painter over a headless context, for the geometry tests.
@@ -732,8 +865,12 @@ mod tests {
         let area = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 700.0));
         let stall = silent_stall();
         let report = from_stall(&stall);
-        let (chip, popup) =
-            with_painter(|painter| (chip_rect(painter, area), popup_rect(painter, area, &report)));
+        let (chip, popup) = with_painter(|painter| {
+            (
+                chip_rect(painter, area),
+                geometry_in(painter, area, &report).popup,
+            )
+        });
 
         assert!(
             area.contains_rect(popup),
@@ -756,7 +893,7 @@ mod tests {
         let area = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 90.0));
         let stall = silent_stall();
         let report = from_stall(&stall);
-        let popup = with_painter(|painter| popup_rect(painter, area, &report));
+        let popup = with_painter(|painter| geometry_in(painter, area, &report).popup);
         assert!(
             popup.top() >= area.top() - 0.5,
             "the popup never starts above the chart: {popup:?}"
@@ -814,7 +951,7 @@ mod tests {
                         let Some(report) = report(notice, stall) else {
                             continue;
                         };
-                        let geometry = geometry(ui.painter(), area, &report);
+                        let geometry = geometry_in(ui.painter(), area, &report);
                         let (primary, primary_recovery) = geometry.primary;
                         let (secondary, secondary_recovery) = geometry.secondary;
                         assert_ne!(
@@ -860,11 +997,11 @@ mod tests {
                         );
                         let report = report(notice, None).expect("something to say");
                         assert!(
-                            !draw_chip(ui, area, &report, false),
+                            !chip_at(ui, area, &report, false),
                             "an un-clicked frame presses nothing"
                         );
                         assert_eq!(
-                            draw_popup(ui, area, &report),
+                            popup_at(ui, area, &report),
                             NoticeAction::None,
                             "an un-clicked frame asks for nothing"
                         );
@@ -895,9 +1032,9 @@ mod tests {
             let mut expected = NoticeAction::None;
             let _ = ctx.run(egui::RawInput::default(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let action = draw_popup(ui, area, &report);
+                    let action = popup_at(ui, area, &report);
                     assert_eq!(action, NoticeAction::None, "nothing was pressed yet");
-                    let geometry = geometry(ui.painter(), area, &report);
+                    let geometry = geometry_in(ui.painter(), area, &report);
                     let (rect, recovery) = if secondary {
                         geometry.secondary
                     } else {
@@ -935,7 +1072,7 @@ mod tests {
             let mut action = NoticeAction::None;
             let _ = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    action = draw_popup(ui, area, &report);
+                    action = popup_at(ui, area, &report);
                 });
             });
             assert_eq!(
@@ -958,7 +1095,7 @@ mod tests {
         let mut target = egui::Pos2::ZERO;
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                assert!(!draw_chip(ui, area, &report, false));
+                assert!(!chip_at(ui, area, &report, false));
                 target = chip_rect(ui.painter(), area).center();
             });
         });
@@ -984,7 +1121,7 @@ mod tests {
         let mut clicked = false;
         let _ = ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                clicked = draw_chip(ui, area, &report, false);
+                clicked = chip_at(ui, area, &report, false);
             });
         });
         assert!(clicked, "the corner has to answer the pointer");
@@ -1022,7 +1159,7 @@ mod tests {
                         egui::pos2(0.0, 0.0),
                         egui::pos2(chart_width, 600.0),
                     );
-                    let geometry = geometry(ui.painter(), area, &report);
+                    let geometry = geometry_in(ui.painter(), area, &report);
                     assert!(
                         geometry.popup.width() <= area.width() + f32::EPSILON,
                         "popup {} wider than chart {chart_width}",
@@ -1085,7 +1222,7 @@ mod tests {
                 for chart in charts {
                     for stall in [None, Some(&stall)] {
                         let report = report(&notice, stall).expect("something to say");
-                        let popup = popup_rect(ui.painter(), chart, &report);
+                        let popup = geometry_in(ui.painter(), chart, &report).popup;
                         assert!(
                             chart.contains_rect(popup),
                             "popup {popup:?} left its chart {chart:?}"
@@ -1110,9 +1247,9 @@ mod tests {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(200.0, 150.0));
-                assert_eq!(draw_popup(ui, area, &report), NoticeAction::None);
+                assert_eq!(popup_at(ui, area, &report), NoticeAction::None);
                 // The popup is clamped to the chart, and its buttons with it.
-                let geometry = geometry(ui.painter(), area, &report);
+                let geometry = geometry_in(ui.painter(), area, &report);
                 assert!(
                     geometry.secondary.0.right() <= area.right(),
                     "button {:?} is outside the chart",
@@ -1122,24 +1259,63 @@ mod tests {
         });
     }
 
+    /// Every way the popup can close, and the one way it opens.
+    #[test]
+    fn every_way_the_popup_closes_and_the_one_way_it_opens() {
+        let shut = |chip, offline, dismissed, action| {
+            popup_still_open(false, chip, offline, dismissed, action)
+        };
+        let open = |chip, offline, dismissed, action| {
+            popup_still_open(true, chip, offline, dismissed, action)
+        };
+
+        assert!(
+            shut(true, true, false, NoticeAction::None),
+            "the chip opens it"
+        );
+        assert!(
+            !shut(false, true, false, NoticeAction::None),
+            "and nothing else does"
+        );
+        assert!(
+            !open(true, true, false, NoticeAction::None),
+            "the chip closes it again"
+        );
+        assert!(
+            open(false, true, false, NoticeAction::None),
+            "an untouched frame leaves it up"
+        );
+        assert!(
+            !open(false, true, true, NoticeAction::None),
+            "a click somewhere else puts it away"
+        );
+        assert!(
+            !open(false, false, false, NoticeAction::None),
+            "so does a feed that came back on its own"
+        );
+        for action in [NoticeAction::Reconnect, NoticeAction::Reload] {
+            assert!(
+                !open(false, true, false, action),
+                "a control that was pressed is under way, not still being read: {action:?}"
+            );
+        }
+        // No chip, no popup, whatever else is true on the frame. A click on a
+        // chip that was never drawn cannot reach this today; the rule holds it
+        // anyway rather than resting on that.
+        assert!(!shut(true, false, false, NoticeAction::None));
+        assert!(!open(true, false, false, NoticeAction::None));
+    }
+
     /// The hook stands in for a click and for nothing else.
+    ///
+    /// The rule, not the reading: setting the real variable here would set it
+    /// for every other test in the process.
     #[test]
     fn the_popup_hook_asks_for_exactly_one_value() {
-        // Serialised against nothing: this is the only test that reads the
-        // variable, and it restores what it found.
-        let restore = std::env::var_os("QUANTICK_FEED_POPUP");
-        // SAFETY: single-threaded test body, and the value is put back below.
-        unsafe {
-            std::env::remove_var("QUANTICK_FEED_POPUP");
-            assert!(!popup_open_from_env(), "unset means closed");
-            std::env::set_var("QUANTICK_FEED_POPUP", "0");
-            assert!(!popup_open_from_env(), "a typo must not open it");
-            std::env::set_var("QUANTICK_FEED_POPUP", "1");
-            assert!(popup_open_from_env());
-            match restore {
-                Some(value) => std::env::set_var("QUANTICK_FEED_POPUP", value),
-                None => std::env::remove_var("QUANTICK_FEED_POPUP"),
-            }
-        }
+        assert!(!popup_open_from(None), "unset means closed");
+        assert!(!popup_open_from(Some("")), "and so does empty");
+        assert!(!popup_open_from(Some("0")), "a typo must not open it");
+        assert!(!popup_open_from(Some("true")), "nor a near miss");
+        assert!(popup_open_from(Some("1")));
     }
 }

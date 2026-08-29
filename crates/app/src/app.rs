@@ -875,15 +875,21 @@ pub struct QuantickApp {
     /// is recorded on a healthy chart, which is every frame of a normal
     /// session.
     feed_chip_rect: Option<egui::Rect>,
-    /// Whether the feed's recovery popup is open.
+    /// The tab whose chip opened the feed's recovery popup, if any.
     ///
     /// Opened by clicking the offline chip and by nothing else — the rule the
     /// trader asked for, after a card that opened itself over the chart every
-    /// morning. Held on the window rather than on the tab because the chip is
-    /// window chrome speaking for the active market, like the status bar: a
-    /// tab whose feed is healthy has no chip to open it with, so the flag
-    /// cannot survive into a chart it does not belong to.
-    feed_popup_open: bool,
+    /// morning. It is the *tab's* id rather than a window-wide flag because
+    /// one dead terminal stalls every MT5 tab at once: a bare flag opened on
+    /// one chart and then found the next chart already offline, and drew
+    /// itself there with nobody having clicked anything. The chip is window
+    /// chrome speaking for the active market, and this says which market it
+    /// was speaking for.
+    ///
+    /// Leaving that chart closes it, the way clicking elsewhere does: the
+    /// frame answers for the tab it is drawing, so a switch clears the flag.
+    /// A glance, not a mode — nothing waits on a chart nobody is looking at.
+    feed_popup_tab: Option<u64>,
     /// Whether the toolbar's layout popover is open.
     layout_picker_open: bool,
     /// A pending request to open that popover, from the
@@ -1602,7 +1608,9 @@ impl QuantickApp {
             history_reach: crate::history_reach::HistoryReach::default(),
             venue_lead_in: false,
             feed_chip_rect: None,
-            feed_popup_open: feed_notice::popup_open_from_env(),
+            // The hook stands in for a click on the opening tab's chip, which
+            // is the first tab there is.
+            feed_popup_tab: feed_notice::popup_open_from_env().then_some(FIRST_TAB_ID),
             tz: TzOffset::default(),
             trades_dir,
             trades_dir_picker: None,
@@ -2781,9 +2789,10 @@ impl QuantickApp {
         self.feed_chip_rect
     }
 
-    /// Whether the recovery popup that chip opens is showing.
+    /// Whether the recovery popup that chip opens is showing, on the chart
+    /// the trader is looking at.
     pub(crate) fn control_feed_popup_open(&self) -> bool {
-        self.feed_popup_open
+        self.feed_popup_tab == Some(self.active_tab().id)
     }
 
     /// The right-hand dock: whether it is shown, and which tab is open.
@@ -11082,7 +11091,8 @@ impl QuantickApp {
 
         let mut notice_action = feed_notice::NoticeAction::None;
         // Read before the canvas borrows `self`, and answered after it lets go.
-        let popup_open = self.feed_popup_open;
+        let popup_tab = self.active_tab().id;
+        let popup_open = self.feed_popup_tab == Some(popup_tab);
         let mut chip_clicked = false;
         let mut dismissed = false;
         // Where the corner landed, and so whether there was one at all. A feed
@@ -11169,8 +11179,12 @@ impl QuantickApp {
                 if let Some(report) = feed_notice::report(&tab.notice, stall.as_ref())
                     && report.is_offline()
                 {
-                    chip_rect = Some(feed_notice::chip_rect(ui.painter(), area));
-                    chip_clicked = feed_notice::draw_chip(ui, area, &report, popup_open);
+                    // Measured once, then handed to everything that needs
+                    // it: the chip's own hit test, the popup's anchor, the
+                    // dismissal test, and the scene's bounds.
+                    let chip = feed_notice::chip_rect(ui.painter(), area);
+                    chip_rect = Some(chip);
+                    chip_clicked = feed_notice::draw_chip(ui, chip, &report, popup_open);
                     // A pane with nothing on it has room to say why, and a
                     // corner chip alone on a blank canvas is a puzzle. One
                     // muted line, no border and no buttons — the way out is
@@ -11184,18 +11198,19 @@ impl QuantickApp {
                         feed_notice::draw_empty_pane_note(ui.painter(), pane_rect, &report);
                     }
                     if popup_open {
-                        notice_action = feed_notice::draw_popup(ui, area, &report);
-                        // A click anywhere else puts it away. Measured from the
-                        // same two rectangles that were drawn, so a click on
-                        // the edge of what the trader can see is never read as
-                        // a click outside it.
-                        let popup = feed_notice::popup_rect(ui.painter(), area, &report);
+                        // A click anywhere else puts it away, measured against
+                        // the rectangles that were actually drawn — so a click
+                        // on the edge of what the trader can see is never read
+                        // as a click outside it, and the popup is laid out
+                        // once rather than measured again to ask.
+                        let popup;
+                        (notice_action, popup) = feed_notice::draw_popup(ui, area, chip, &report);
                         dismissed = ui.input(|input| {
                             input.pointer.any_click()
-                                && input.pointer.interact_pos().is_some_and(|at| {
-                                    !popup.contains(at)
-                                        && !chip_rect.is_some_and(|chip| chip.contains(at))
-                                })
+                                && input
+                                    .pointer
+                                    .interact_pos()
+                                    .is_some_and(|at| !popup.contains(at) && !chip.contains(at))
                         });
                     }
                 }
@@ -11238,18 +11253,14 @@ impl QuantickApp {
             }
         }
         self.feed_chip_rect = chip_rect;
-        // The chip is the popup's only door, in both directions. Everything
-        // else here closes it: a click that landed elsewhere, a control that
-        // was pressed and is now under way, and a feed that recovered on its
-        // own while the trader was reading about it.
-        self.feed_popup_open = if chip_clicked {
-            !popup_open
-        } else {
-            popup_open
-                && chip_rect.is_some()
-                && !dismissed
-                && notice_action == feed_notice::NoticeAction::None
-        };
+        self.feed_popup_tab = feed_notice::popup_still_open(
+            popup_open,
+            chip_clicked,
+            chip_rect.is_some(),
+            dismissed,
+            notice_action,
+        )
+        .then_some(popup_tab);
         // Live feed: keep polling the channel ~60×/s without busy-spinning.
         ctx.request_repaint_after(Duration::from_millis(16));
     }
@@ -13674,7 +13685,7 @@ plot(close)
                     !chip.intersects(time),
                     "chip {chip:?} covered the working time pane {time:?}"
                 );
-                let popup = feed_notice::popup_rect(ui.painter(), canvas, &report);
+                let popup = feed_notice::popup_rect(ui.painter(), canvas, chip, &report);
                 assert!(
                     canvas.contains_rect(popup),
                     "popup {popup:?} left the canvas {canvas:?}"
@@ -13815,6 +13826,148 @@ plot(close)
             says_it(&output),
             1,
             "the popup takes the line's job rather than joining it: {headline}"
+        );
+    }
+
+    /// A click on the chart puts the popup away. The rule is a table in
+    /// `feed_notice`; this proves the frame feeds it the right answer, which
+    /// means measuring the click against the two rectangles that were drawn.
+    #[test]
+    fn a_click_on_the_chart_puts_the_popup_away() {
+        let (mut app, _notices, _channels) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        run_frame(&mut app, &ctx);
+        let chip = app.control_feed_chip_rect().expect("the corner is up");
+        click_chart(&mut app, &ctx, chip.center());
+        assert!(app.control_feed_popup_open(), "the chip opened it");
+
+        // Far from both rectangles: the popup grows up and left of the chip,
+        // and this is the other side of the canvas.
+        click_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(chip.left() - 600.0, chip.top() - 500.0),
+        );
+        assert!(
+            !app.control_feed_popup_open(),
+            "a click on the chart is a click somewhere else"
+        );
+        assert!(
+            app.control_feed_chip_rect().is_some(),
+            "and the corner itself stays, because the feed is still stalled"
+        );
+    }
+
+    /// One dead terminal stalls every MetaTrader tab at once, and the popup
+    /// must not follow the trader into a chart whose chip they never pressed.
+    ///
+    /// Leaving the chart closes it, which is the second half of the same rule:
+    /// the popup is a glance, not a mode, so it never waits on a chart the
+    /// trader walked away from.
+    #[test]
+    fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
+        let (mut app, _notices, _channels) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        app.open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
+        for tab in &mut app.tabs {
+            tab.forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        }
+        app.active_tab = 0;
+        run_frame(&mut app, &ctx);
+        let chip = app.control_feed_chip_rect().expect("the corner is up");
+        click_chart(&mut app, &ctx, chip.center());
+        assert!(app.control_feed_popup_open(), "opened on the first chart");
+
+        app.active_tab = 1;
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.control_feed_chip_rect().is_some(),
+            "the second chart is stalled too, so it has its own corner"
+        );
+        assert!(
+            !app.control_feed_popup_open(),
+            "but nobody pressed that corner"
+        );
+
+        app.active_tab = 0;
+        run_frame(&mut app, &ctx);
+        assert!(
+            !app.control_feed_popup_open(),
+            "and leaving the chart put it away, the way clicking elsewhere does"
+        );
+        assert!(
+            app.control_feed_chip_rect().is_some(),
+            "the corner itself stays: the feed is still stalled"
+        );
+    }
+
+    /// The popup is chrome over a chart that may be full of bars, so it takes
+    /// the pointer rather than letting it through to the candles underneath.
+    ///
+    /// Before this the body was painted, not allocated: a click on the
+    /// headline reached the pane's own `click_and_drag` sense and panned the
+    /// chart, or dropped a drawing anchor on it, while the dismissal logic
+    /// counted the same click as landing inside the popup and left it open.
+    #[test]
+    fn a_click_on_the_popup_never_reaches_the_chart() {
+        let (mut app, _notices, (events, _book)) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        events
+            .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2), trade(3)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+        app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        run_frame(&mut app, &ctx);
+        let chip = app.control_feed_chip_rect().expect("the corner is up");
+        click_chart(&mut app, &ctx, chip.center());
+        assert!(app.control_feed_popup_open());
+
+        // Where the popup landed, derived rather than assumed: the corner is
+        // measured against the canvas, and on a flow-only layout the pane *is*
+        // the canvas — which the chip's own rectangle proves before the popup
+        // is measured from it.
+        let stall = app
+            .active_tab()
+            .stall_at(&app.config, metrics::wall_clock_ms());
+        let report = feed_notice::report(&app.active_tab().notice, stall.as_ref())
+            .expect("a stalled feed speaks");
+        let area = app
+            .active_tab()
+            .flow_pane
+            .last_area
+            .expect("the pane painted");
+        let mut popup = egui::Rect::NOTHING;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            assert_eq!(
+                feed_notice::chip_rect(&painter, area),
+                chip,
+                "the pane is the canvas on this layout"
+            );
+            popup = feed_notice::popup_rect(&painter, area, chip, &report);
+        });
+
+        // The headline's own row: painted text, which registers no widget.
+        let on_the_sentence = egui::pos2(popup.center().x, popup.top() + 12.0);
+        let held = app.active_tab().flow_pane.state.trades().len();
+        let before = {
+            let viewport = &app.active_tab().flow_pane.viewport;
+            (viewport.px_per_bar(), viewport.right_edge_bar(held))
+        };
+        click_chart(&mut app, &ctx, on_the_sentence);
+
+        assert!(
+            app.control_feed_popup_open(),
+            "a click on the popup is not a click somewhere else"
+        );
+        let after = {
+            let viewport = &app.active_tab().flow_pane.viewport;
+            (viewport.px_per_bar(), viewport.right_edge_bar(held))
+        };
+        assert_eq!(
+            after, before,
+            "and it must not have moved the chart under it"
         );
     }
 

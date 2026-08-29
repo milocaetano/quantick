@@ -293,6 +293,15 @@ timezone pill and the mode text painted over candles:
 
 A reading that breaches its threshold turns `warn` — the layout never moves.
 
+While a recording plays, the **transport strip** (30 px) appears directly
+above the status line: play/pause, speed, seek bar, session label, close —
+all amber-marked. The transport is thus part of the status system, not an
+island.
+
+The chart canvas keeps only: overlay legend (§9), the amber backfill divider,
+the history-loading spinner, and the L2 connection badge — things that mark
+*positions or data on the chart itself*.
+
 ### 8.1 The offline corner
 
 The feed's own report, at three sizes, and the trader picks which one they
@@ -326,14 +335,6 @@ right for a terminal that froze mid-session and wrong every morning: the chart
 a trader opens before the open has nothing wrong with it, and an error panel
 over the whole canvas taught them to close the application rather than read
 it.
-While a recording plays, the **transport strip** (30 px) appears directly
-above the status line: play/pause, speed, seek bar, session label, close —
-all amber-marked. The transport is thus part of the status system, not an
-island.
-
-The chart canvas keeps only: overlay legend (§9), the amber backfill divider,
-the history-loading spinner, and the L2 connection badge — things that mark
-*positions or data on the chart itself*.
 
 ## 9. Indicator surfaces
 

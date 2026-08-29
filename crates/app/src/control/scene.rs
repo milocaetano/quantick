@@ -353,6 +353,11 @@ pub(crate) fn scene_snapshot(app: &QuantickApp) -> SceneSnapshot {
     push_layer_toggles(&mut controls, app, active);
     push_tool_rail(&mut controls, app);
     push_dock(&mut controls, app);
+    // With the other fixed-size regions, ahead of the strip. At most three
+    // entries, and they are the ones worth keeping if a workspace ever reaches
+    // the ceiling: the chip is the only control on screen with no capability
+    // behind it, so an operator that loses it loses its only way to the corner
+    // at all.
     push_feed_status(&mut controls, app);
     // Bounded like every other projection, and honest about it. Every registry
     // behind the scene is fixed-size except the trader's own tab strip, which
