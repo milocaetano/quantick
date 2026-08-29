@@ -2189,6 +2189,18 @@ impl PaperTrading {
     /// Route pointer input to the simulated lines. Returns true when paper
     /// trading owns the gesture this frame — the chart must not pan and the
     /// drawings must not select under it.
+    /// Whether a chart gesture this module owns is in flight — a line being
+    /// dragged, a bracket leg being pulled into existence.
+    ///
+    /// The tab asks so it can keep the gesture with the pane that started
+    /// it: the price under a grabbed line is read against one pane's scale,
+    /// and letting the pointer wander into a neighbour mid-drag would
+    /// reprice the order to whatever that pane's scale says.
+    #[must_use]
+    pub fn gesture_active(&self) -> bool {
+        self.drag != PaperDrag::None
+    }
+
     /// Cancel the transient chart interaction — an armed placement or a
     /// grabbed line (dropped without submitting). Called from the app's
     /// escape stack; returns true when there was something to cancel, so
@@ -8483,6 +8495,146 @@ mod tests {
         assert!(paper.toast.is_some(), "the refusal teaches, never silent");
     }
 
+    /// The headline gesture: a working order, hovered, offers labelled
+    /// SL/TP handles; pressing one and dragging sets that leg; the tape
+    /// then fills the order and the position opens already protected.
+    ///
+    /// This is the whole promise in one test — the handle the trader
+    /// presses, the venue call it produces, and the fill that arms it.
+    #[test]
+    fn dragging_a_working_orders_handle_arms_the_position_it_opens() {
+        let mut paper = PaperTrading::new();
+        paper.venue.seed(&print(0, 100));
+        // A buy limit at 95, below the market: the kind the tape can fill.
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
+        let id = paper.working_orders()[0].id;
+
+        // 80..120 over 400 px, price falling with y: 95 is y 250, 90 is y 300.
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let order_center = clamp_tag_center(250.0, chart.top(), chart.bottom());
+        // The SL handle sits on the losing side of a buy — below it.
+        let handle = bracket_handle_rect(chart.right(), order_center, false);
+        assert_eq!(
+            paper.control_at(handle.center(), chart, &scale),
+            Some(PaperControl::Handle {
+                owner: BracketTarget::Order(id),
+                leg: Leg::StopLoss,
+            }),
+            "a working order offers the same handles the position does"
+        );
+
+        // Press the handle, drag down to 90, release.
+        paper.handle_chart_input(&frame_at(chart, &scale, handle.center(), true, true, false));
+        assert_eq!(
+            paper.drag,
+            PaperDrag::CreateLeg {
+                owner: BracketTarget::Order(id),
+                leg: Leg::StopLoss,
+            },
+            "the press started a create-drag on the order, not the position"
+        );
+        paper.handle_chart_input(&frame(chart, &scale, 300.0, false, true, false));
+        paper.handle_chart_input(&frame(chart, &scale, 300.0, false, false, true));
+
+        assert_eq!(
+            paper.working_orders()[0].bracket.stop_loss,
+            Some(Decimal::from(90)),
+            "the drag set the order's own stop, before it ever filled"
+        );
+        assert!(
+            paper.venue.position().is_none(),
+            "and opened no position doing it"
+        );
+
+        // The tape reaches the limit: the position arrives protected.
+        paper.on_trade(&print(1, 95));
+        let position = paper.venue.position().expect("the limit filled");
+        assert_eq!(
+            position.stop_loss,
+            Some(Decimal::from(90)),
+            "the leg armed itself on the fill - no window without a stop"
+        );
+    }
+
+    /// A leg that exists is its own handle: its line is grabbable, and its
+    /// tag cross clears it without touching the other leg.
+    #[test]
+    fn a_working_orders_legs_are_draggable_and_clearable() {
+        let mut paper = PaperTrading::new();
+        paper.venue.seed(&print(0, 100));
+        paper.stop_offset_text = "5".to_owned();
+        paper.profit_offset_text = "15".to_owned();
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
+        let id = paper.working_orders()[0].id;
+        assert_eq!(
+            paper.working_orders()[0].bracket,
+            Bracket {
+                stop_loss: Some(Decimal::from(90)),
+                take_profit: Some(Decimal::from(110)),
+            },
+            "the ticket offsets rode along on the resting order"
+        );
+
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        // Price 90 is y 300: the order's stop line.
+        assert_eq!(
+            paper.line_at(egui::pos2(400.0, 300.0), &scale),
+            Some(PaperDrag::Leg {
+                owner: BracketTarget::Order(id),
+                leg: Leg::StopLoss,
+            }),
+            "the order's stop line is grabbable like the position's"
+        );
+
+        // Its tag cross clears that leg and leaves the target alone.
+        let stop_center = clamp_tag_center(300.0, chart.top(), chart.bottom());
+        let cross = close_button_rect(chart.right(), stop_center);
+        assert_eq!(
+            paper.control_at(cross.center(), chart, &scale),
+            Some(PaperControl::ClearLeg {
+                owner: BracketTarget::Order(id),
+                leg: Leg::StopLoss,
+            })
+        );
+        paper.amend_leg(BracketTarget::Order(id), Leg::StopLoss, None);
+        assert_eq!(
+            paper.working_orders()[0].bracket,
+            Bracket {
+                stop_loss: None,
+                take_profit: Some(Decimal::from(110)),
+            },
+            "clearing one leg never drops the other"
+        );
+    }
+
+    /// A leg the venue refuses snaps back and says why — the order's own
+    /// price is the reference, so a buy limit at 95 cannot take a stop at
+    /// 96 even though 96 is below the market at 100.
+    #[test]
+    fn a_working_orders_leg_is_judged_against_the_order_not_the_market() {
+        let mut paper = PaperTrading::new();
+        paper.venue.seed(&print(0, 100));
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
+        let id = paper.working_orders()[0].id;
+
+        paper.amend_leg(
+            BracketTarget::Order(id),
+            Leg::StopLoss,
+            Some(Decimal::from(96)),
+        );
+        assert_eq!(
+            paper.working_orders()[0].bracket.stop_loss,
+            None,
+            "the refusal left the order as it was"
+        );
+        let toast = paper.toast.as_ref().expect("the refusal teaches");
+        assert!(
+            toast.message.contains("stop loss"),
+            "and says which leg was wrong: {}",
+            toast.message
+        );
+    }
+
     /// A 800×400 chart over the given price range, plus the input for one
     /// pointer frame at `(x, y)`.
     fn chart_and_scale(lo: f64, hi: f64) -> (egui::Rect, PriceScale) {
@@ -8490,6 +8642,7 @@ mod tests {
         (chart, PriceScale::from_range(lo, hi, 0.0, 400.0))
     }
 
+    /// One pointer frame mid-chart, where nothing right-anchored lives.
     fn frame<'a>(
         chart: egui::Rect,
         scale: &'a PriceScale,
@@ -8498,10 +8651,23 @@ mod tests {
         down: bool,
         released: bool,
     ) -> ChartInput<'a> {
+        frame_at(chart, scale, egui::pos2(400.0, y), pressed, down, released)
+    }
+
+    /// One pointer frame at an exact position — for the controls that live
+    /// against the plot's right edge, which `frame`'s mid-chart x misses.
+    fn frame_at<'a>(
+        chart: egui::Rect,
+        scale: &'a PriceScale,
+        pointer: egui::Pos2,
+        pressed: bool,
+        down: bool,
+        released: bool,
+    ) -> ChartInput<'a> {
         ChartInput {
             chart,
             scale: Some(scale),
-            pointer: Some(egui::pos2(400.0, y)),
+            pointer: Some(pointer),
             primary_pressed: pressed,
             primary_down: down,
             primary_released: released,

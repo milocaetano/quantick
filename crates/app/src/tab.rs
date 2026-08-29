@@ -517,6 +517,14 @@ pub struct Tab {
     /// Per tab, because a simulated position belongs to a tape. Two tabs on
     /// two markets hold two independent positions, and a position can never
     /// be marked against prints it was not opened against — the invariant
+    /// Which pane the order-entry gesture belonged to last frame.
+    ///
+    /// Only consulted while a paper drag is in progress: the pointer may
+    /// wander out of the pane that owns the grabbed line — or into another
+    /// one — and the price under the drag must keep being read against the
+    /// scale the gesture started on. Between gestures the pointer decides
+    /// afresh every frame, so this never pins anything.
+    paper_drag_pane: Option<PaneIndex>,
     /// [`PaperTrading::on_timeline_reset`] protects when one tab switches
     /// symbol is the same one tab-scoping protects between tabs.
     pub paper: PaperTrading,
@@ -651,6 +659,45 @@ pub struct Tab {
     canvas_divider: Option<egui::Rect>,
     #[cfg(test)]
     collapsed_rail: Option<egui::Rect>,
+}
+
+/// Which pane order entry belongs to this frame.
+///
+/// Every visible pane is a trading surface (§11): a price level is as true
+/// on a context chart as on the flow chart, so the aim follows the
+/// **pointer** rather than focus, and holding the buy modifier over any
+/// pane places there without a focusing click first. That is the whole
+/// change from "the focused pane trades" — a trader reading a level on the
+/// context chart no longer has to click it into focus before they can act
+/// on what they just saw.
+///
+/// A drag in flight overrides the pointer. The grabbed line is read against
+/// one pane's price scale, and letting the pointer cross into a neighbour
+/// mid-drag would reprice the order to whatever *that* pane's scale says —
+/// a stop that jumps because the hand strayed. So the pane that started the
+/// drag keeps it until the release.
+///
+/// With the pointer outside every pane (over the dock, off the window, or
+/// on the chrome between panes) the focused pane answers, which is also the
+/// unsplit case: one pane, always the answer, nothing changes.
+fn trading_pane(
+    pointer: Option<egui::Pos2>,
+    panes: &[(PaneIndex, egui::Rect)],
+    dragging: bool,
+    pinned: Option<PaneIndex>,
+    focused: PaneIndex,
+) -> PaneIndex {
+    if dragging && let Some(pinned) = pinned {
+        return pinned;
+    }
+    pointer
+        .and_then(|pointer| {
+            panes
+                .iter()
+                .find(|(_, rect)| rect.contains(pointer))
+                .map(|(side, _)| *side)
+        })
+        .unwrap_or(focused)
 }
 
 impl Tab {
@@ -817,6 +864,7 @@ impl Tab {
             live_trades: 0,
             pending_alarm_sounds: Vec::new(),
             paper: PaperTrading::with_trades_dir(trades_dir),
+            paper_drag_pane: None,
             flow_pane: ChartPane::flow(flow_pane_id, spec, symbol.clone()),
             chip_label: String::new(),
             ohlcv_base: None,
@@ -1597,7 +1645,7 @@ impl Tab {
         // focus: a click set `self.focus` and every reader threw it away,
         // because `TimeTimeAndFlow` was not in the arm.
         // A collapsed column is not on screen, and focus on a pane nobody can
-        // see is worse than useless: `paper_owns_input` goes false for the one
+        // see is worse than useless: `paper_hud_here` goes false for the one
         // pane that *is* drawn, so order entry, the ladder and the trade HUD
         // all go dead on the heatmap until the trader expands again.
         if !self.has_time_pane() || !self.layout.shows_time() {
@@ -3707,6 +3755,7 @@ impl Tab {
                 symbol,
                 paper,
                 feed_gaps,
+                paper_drag_pane,
                 ..
             } = self;
             // Cleared before the loop, set by whichever panes it actually
@@ -3744,6 +3793,22 @@ impl Tab {
             ) {
                 time.state.set_footprint_group(base);
             }
+            // Context panes carry addresses `1..`, the flow pane `0` — the
+            // order `Tab::pane_at` uses, never the order they sit in.
+            let addressed: SmallVec<[(PaneIndex, egui::Rect); MAX_CANVAS_PANES]> = context_charts
+                .iter()
+                .enumerate()
+                .map(|(slot, rect)| (slot + 1, *rect))
+                .chain(show_flow.then_some((0 as PaneIndex, flow_area)))
+                .collect();
+            let trading_pane = trading_pane(
+                ui.ctx().pointer_latest_pos(),
+                &addressed,
+                paper.gesture_active(),
+                *paper_drag_pane,
+                focused,
+            );
+            *paper_drag_pane = paper.gesture_active().then_some(trading_pane);
             let mut chrome = PaneChrome {
                 toolrail: chrome.toolrail,
                 presets: chrome.presets,
@@ -3752,7 +3817,8 @@ impl Tab {
                 tz: chrome.tz,
                 symbol,
                 paper,
-                paper_owns_input: false,
+                paper_takes_input: false,
+                paper_hud_here: false,
                 shared_pick: None,
                 shared: SharedInteraction::default(),
                 feed_gaps: &feed_gaps[..],
@@ -3774,12 +3840,10 @@ impl Tab {
                 .map(|(slot, (pane, chart))| (pane, chart, slot + 1));
             let flow = show_flow.then_some((&mut *flow_pane, flow_area, 0 as PaneIndex));
             for (pane, rect, side) in context.chain(flow) {
-                // Order entry follows the focused pane (§11): both charts are
-                // trading surfaces — a level is as true on the time pane as on
-                // the flow pane — and focus lands on the press that acts, so
-                // the first click already trades where the accent rule is.
-                // Unsplit, the flow pane is the only pane and nothing changes.
-                chrome.paper_owns_input = side == focused;
+                chrome.paper_takes_input = side == trading_pane;
+                // The HUD is one card and follows focus, so it does not
+                // flicker from pane to pane as the hand crosses them.
+                chrome.paper_hud_here = side == focused;
                 chrome.shared_pick = picks.for_pane(side);
                 chrome.shared = SharedInteraction::default();
                 pane.handle_navigation(ui, rect, &mut chrome);
@@ -4596,7 +4660,7 @@ mod collapse_path_tests {
     /// flag must not decide its focus.
     ///
     /// Read the other way round, `Ctrl+0` on the Timeframe layout pointed
-    /// focus at a pane nobody draws: `paper_owns_input` went false for the one
+    /// focus at a pane nobody draws: `paper_hud_here` went false for the one
     /// chart on screen, so order entry, the ladder and the trade HUD all went
     /// dead — and with no split there is no rail to click to undo it.
     #[test]
@@ -4613,6 +4677,79 @@ mod collapse_path_tests {
             tab.focused_side(),
             PaneSide::Time(0),
             "the only chart drawn has to be the one the chrome speaks for"
+        );
+    }
+}
+
+/// Which pane the order-entry gesture lands on, per pointer and per drag.
+#[cfg(test)]
+mod trading_pane_tests {
+    use super::*;
+
+    /// Every visible pane is a trading surface: the aim follows the pointer,
+    /// so holding the buy modifier over a pane that is *not* focused places
+    /// there — no focusing click first. This is the whole of "trade on any
+    /// chart that is on screen".
+    #[test]
+    fn order_entry_follows_the_pointer_onto_an_unfocused_pane() {
+        let top = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 200.0));
+        let bottom = egui::Rect::from_min_max(egui::pos2(0.0, 200.0), egui::pos2(800.0, 400.0));
+        // Pane 1 is the context chart on top, pane 0 the flow chart below.
+        let panes = [(1 as PaneIndex, top), (0 as PaneIndex, bottom)];
+        let focused: PaneIndex = 0;
+
+        assert_eq!(
+            trading_pane(Some(top.center()), &panes, false, None, focused),
+            1,
+            "the pointer is on the unfocused context pane, so the aim is there"
+        );
+        assert_eq!(
+            trading_pane(Some(bottom.center()), &panes, false, None, focused),
+            0,
+            "and on the flow pane it is there"
+        );
+    }
+
+    /// With the pointer nowhere near a pane — over the dock, off the window
+    /// — the focused pane answers. That is also the unsplit case: one pane,
+    /// always the answer, nothing about today changes.
+    #[test]
+    fn order_entry_falls_back_to_focus_with_the_pointer_off_the_canvas() {
+        let flow = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        let panes = [(0 as PaneIndex, flow)];
+        assert_eq!(
+            trading_pane(Some(egui::pos2(900.0, 200.0)), &panes, false, None, 0),
+            0,
+            "a pointer over the dock leaves entry where focus is"
+        );
+        assert_eq!(
+            trading_pane(None, &panes, false, None, 0),
+            0,
+            "and so does no pointer at all"
+        );
+    }
+
+    /// A drag keeps the pane it started in. The grabbed line is read against
+    /// that pane's price scale; handing the gesture to a neighbour halfway
+    /// through would reprice the order to a different scale — a stop that
+    /// jumps because the hand strayed across a divider.
+    #[test]
+    fn a_paper_drag_stays_with_the_pane_it_started_in() {
+        let top = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 200.0));
+        let bottom = egui::Rect::from_min_max(egui::pos2(0.0, 200.0), egui::pos2(800.0, 400.0));
+        let panes = [(1 as PaneIndex, top), (0 as PaneIndex, bottom)];
+
+        // The drag began on pane 1; the pointer has since crossed into 0.
+        assert_eq!(
+            trading_pane(Some(bottom.center()), &panes, true, Some(1), 0),
+            1,
+            "the gesture stays where it started"
+        );
+        // Released, the pointer decides again immediately.
+        assert_eq!(
+            trading_pane(Some(bottom.center()), &panes, false, Some(1), 0),
+            0,
+            "and the pin is spent the moment the drag ends"
         );
     }
 }

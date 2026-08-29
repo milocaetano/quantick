@@ -989,7 +989,20 @@ pub struct PaneChrome<'a> {
     /// grabbed line and one armed placement for the whole tab, so exactly one
     /// pane may drive them. Running both would let the second pane inherit a
     /// drag the first started and re-clamp it into the wrong rectangle.
-    pub paper_owns_input: bool,
+    /// Whether this pane's pointer drives order entry this frame.
+    ///
+    /// True on the pane the pointer is *in* — every visible pane is a
+    /// trading surface, and a level is as true on a context chart as on the
+    /// flow chart, so holding the buy modifier over any of them aims there.
+    /// While a paper line is being dragged it stays with the pane the drag
+    /// started in: the grabbed price must not jump to a different scale
+    /// halfway through the gesture.
+    pub paper_takes_input: bool,
+    /// Whether the position HUD anchors on this pane. Follows *focus*, not
+    /// the pointer: there is one HUD, it must not flicker between panes as
+    /// the hand crosses them, and focus is the app's existing answer to
+    /// "which pane is the trader working in".
+    pub paper_hud_here: bool,
     /// What the pointer grabs among the *other* pane's shared marks, and
     /// whether that mark is locked.
     ///
@@ -2180,9 +2193,9 @@ impl ChartPane {
                 None => self.context_menu_drawing = None,
             }
         }
-        // The trade section rides on top, on the pane that owns order
-        // entry, anchored at the price the right-click landed on.
-        if chrome.paper_owns_input
+        // The trade section rides on top, anchored at the price the
+        // right-click landed on — on whichever pane was right-clicked.
+        if chrome.paper_takes_input
             && let Some(price) = self.context_menu_price
         {
             chrome.paper.context_trade_actions(ui, price);
@@ -4417,7 +4430,7 @@ impl ChartPane {
                             }))
             });
         let paper_layer_visible = self.layer_visible(ChartLayer::PaperTrading, chrome.style);
-        let paper_gesture = if chrome.paper_owns_input && !tool_armed {
+        let paper_gesture = if chrome.paper_takes_input && !tool_armed {
             chrome.paper.handle_chart_input(&ChartInput {
                 chart: drawing_area,
                 scale: drawing_scale.as_ref(),
@@ -4430,7 +4443,7 @@ impl ChartPane {
                 layer_visible: paper_layer_visible,
             })
         } else {
-            if chrome.paper_owns_input {
+            if chrome.paper_takes_input {
                 // A drawing tool owns the hand this frame; a stale cmd
                 // preview must not keep painting under it.
                 chrome.paper.clear_cmd_preview();
@@ -4443,7 +4456,7 @@ impl ChartPane {
         // band refuse a pan with no explanation at all.
         // The layer gate lives inside `hover_cursor` itself, next to the
         // frame's other decisions, so it cannot be forgotten by a caller.
-        if chrome.paper_owns_input
+        if chrome.paper_takes_input
             && !over_chrome
             && !tool_armed
             && let Some(position) =
@@ -5823,12 +5836,12 @@ impl ChartPane {
         // position is open, and one row per indicator chip — so nothing at the
         // top-left prints over anything else.
         //
-        // The HUD's row counts only where the HUD paints: on the pane that
-        // owns order entry (the focused one) — exactly the condition this pane
-        // caches its anchor under, further down this same draw. The anchor is
-        // not readable yet this frame (it is written after the paper layer),
-        // so the condition is restated here rather than read back.
-        let hud_here = chrome.paper_owns_input && chrome.paper.position_summary().is_some();
+        // The HUD's row counts only where the HUD paints: on the focused
+        // pane — exactly the condition this pane caches its anchor under,
+        // further down this same draw. The anchor is not readable yet this
+        // frame (it is written after the paper layer), so the condition is
+        // restated here rather than read back.
+        let hud_here = chrome.paper_hud_here && chrome.paper.position_summary().is_some();
         let legend_inset = crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX
             + crate::indicator_legend::hud_offset_px(hud_here)
             + crate::indicator_legend::stack_height_px(
@@ -5959,8 +5972,10 @@ impl ChartPane {
             // agree about where it is.
             let tag_right = self.last_lane_divider_x.unwrap_or(chart_rect.right());
             // Hover affordances paint only on the pane whose pointer feeds
-            // the paper input; the other pane keeps display-only tags.
-            let paper_pointer = if chrome.paper_owns_input {
+            // the paper input; the others keep display-only tags. Every pane
+            // still paints the lines themselves — an order is a fact about
+            // the account, true on whichever chart you are looking at.
+            let paper_pointer = if chrome.paper_takes_input {
                 self.hover_pos
             } else {
                 None
@@ -5974,7 +5989,7 @@ impl ChartPane {
                 reserved_chip_y,
                 paper_pointer,
             );
-            if chrome.paper_owns_input {
+            if chrome.paper_hud_here {
                 self.paper_hud_anchor = Some((chart_rect, scale));
             }
         }
@@ -8853,7 +8868,8 @@ mod tests {
                     feed_gaps: &[],
                     symbol: "TESTUSDT",
                     paper: &mut paper,
-                    paper_owns_input: false,
+                    paper_takes_input: false,
+                    paper_hud_here: false,
                     shared_pick: None,
                     shared: SharedInteraction::default(),
                     capabilities: crate::config::FeedCapabilities::none(),
@@ -8893,7 +8909,8 @@ mod tests {
             feed_gaps: &[],
             symbol: "TESTUSDT",
             paper: &mut paper,
-            paper_owns_input: false,
+            paper_takes_input: false,
+            paper_hud_here: false,
             shared_pick: None,
             shared: SharedInteraction::default(),
             capabilities: crate::config::FeedCapabilities::none(),

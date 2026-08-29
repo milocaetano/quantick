@@ -14257,7 +14257,8 @@ plot(close)
             feed_gaps: &[],
             symbol: &tab.symbol,
             paper: &mut tab.paper,
-            paper_owns_input: true,
+            paper_takes_input: true,
+            paper_hud_here: true,
             // One pane in hand and no tab around it: there is no other pane
             // whose shared marks could be under the pointer.
             shared_pick: None,
