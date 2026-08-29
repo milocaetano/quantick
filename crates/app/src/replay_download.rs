@@ -400,6 +400,23 @@ pub struct DownloadJob {
     cancelled: Arc<AtomicBool>,
 }
 
+#[cfg(test)]
+impl DownloadJob {
+    /// A job whose worker is already gone: the receiver end alone, with
+    /// nothing behind it.
+    ///
+    /// What a cancel, a killed terminal and a crashed exporter all look like
+    /// to the panel draining it — a channel that only ever says
+    /// `Disconnected`. Lets the paths that have to survive that be tested
+    /// without a process, which is the only way they are exercised at all.
+    pub(crate) fn stopped_for_test(events: Receiver<DownloadEvent>) -> Self {
+        Self {
+            events,
+            cancelled: Arc::new(AtomicBool::new(true)),
+        }
+    }
+}
+
 impl DownloadJob {
     /// Ask the download to stop.
     ///

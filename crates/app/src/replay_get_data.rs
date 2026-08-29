@@ -379,6 +379,28 @@ impl GetDataPanel {
                 ),
             };
         }
+        // The second half's worker is gone without a word — cancelled, killed,
+        // or dead. The day the trader actually asked for is already on disk,
+        // and it must reach the browser: stranding `pending_tape` here would
+        // leave them with a downloaded day the session list never scanned,
+        // which looks exactly like a download that did nothing.
+        if disconnected
+            && let Some(DayBeforeStage::Running { day, .. }) = self.day_before_stage.as_ref()
+        {
+            let day = day.clone();
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "REPLAY_DAY_BEFORE_STOPPED",
+                day = day.as_str(),
+                "the day before stopped before finishing; the chosen day is on disk"
+            );
+            self.day_before_stage = Some(DayBeforeStage::Failed {
+                day,
+                headline: "it stopped before finishing".to_string(),
+            });
+            action = action.or_else(|| self.pending_tape.take().map(GetDataAction::Downloaded));
+        }
         if ended {
             self.job = None;
         }
@@ -1036,14 +1058,29 @@ impl GetDataPanel {
         // before is an addition, and its absence is not this download failing.
         match &self.day_before_stage {
             Some(DayBeforeStage::Running { day, ticks }) => {
-                crate::loading::inline(
-                    ui,
-                    &format!(
-                        "{day} — the day before, {} prints so far",
-                        thousands(*ticks)
-                    ),
-                );
-                ui.add_space(6.0);
+                // Its own row, with its own Cancel, and then out — exactly as
+                // the first half does. Falling through to the button would
+                // draw it disabled with a reason that is not the reason
+                // ("pick a day from the calendar", with a day picked), and
+                // would leave 70 MB downloading with nothing to stop it.
+                ui.horizontal(|ui| {
+                    crate::loading::inline(
+                        ui,
+                        &format!(
+                            "{day} — the day before, {} prints so far",
+                            thousands(*ticks)
+                        ),
+                    );
+                    if ui
+                        .button("Cancel")
+                        .on_hover_text("The day you picked is already downloaded and stays")
+                        .clicked()
+                        && let Some(job) = self.job.as_ref()
+                    {
+                        job.cancel();
+                    }
+                });
+                return;
             }
             Some(DayBeforeStage::Done { day, ticks }) => {
                 ui.label(
@@ -1096,15 +1133,15 @@ impl GetDataPanel {
                 let bytes = TYPICAL_TICKS_PER_SESSION * BYTES_PER_TICK;
                 // Two tapes cost twice one tape, and nobody may find that out
                 // from a progress bar that keeps going after they expected it
-                // to stop.
-                let tapes = if self.day_before_to_fetch().is_some() {
-                    2
-                } else {
-                    1
+                // to stop. Both days are named, because "2 tapes from the
+                // 28th" is not what is about to be downloaded.
+                let (days, tapes) = match self.day_before_to_fetch() {
+                    Some(earlier) => (format!("{day} + {earlier}"), 2),
+                    None => (day.clone(), 1),
                 };
                 ui.label(
                     egui::RichText::new(format!(
-                        "{tapes} tape(s) from {day} · about {} · run-up {} session(s) · under 1 MB",
+                        "Tape {days} · about {} · run-up {} session(s) · under 1 MB",
                         size_label(bytes * tapes),
                         self.context_sessions
                     ))
@@ -1644,6 +1681,38 @@ mod tests {
             oldest.day_before_note().contains("no earlier day"),
             "{}",
             oldest.day_before_note()
+        );
+    }
+
+    /// Cancelling the second half, or losing it to a killed terminal, must
+    /// still hand over the day the trader asked for. It is already on disk;
+    /// a browser that is never told never rescans, and a downloaded day that
+    /// does not appear in the list is a download that did nothing.
+    #[test]
+    fn a_second_half_that_stops_without_a_word_still_hands_the_day_over() {
+        let mut panel = panel_on("2026-08-31");
+        let tape = PathBuf::from("replay/WINV26/20260831.csv");
+        panel.pending_tape = Some(tape.clone());
+        panel.day_before_stage = Some(DayBeforeStage::Running {
+            day: "2026-08-28".to_string(),
+            ticks: 400,
+        });
+        // A job whose sender is already gone: what cancel, a killed terminal
+        // and a crashed exporter all look like from here.
+        let (_, events) = std::sync::mpsc::channel::<DownloadEvent>();
+        panel.job = Some(DownloadJob::stopped_for_test(events));
+
+        let action = panel.poll("replay");
+
+        assert!(matches!(action, Some(GetDataAction::Downloaded(p)) if p == tape));
+        assert!(
+            matches!(panel.day_before_stage, Some(DayBeforeStage::Failed { .. })),
+            "and the row says the day before did not come"
+        );
+        assert!(panel.pending_tape.is_none(), "handed over exactly once");
+        assert!(
+            !matches!(panel.phase, Phase::Failed { .. }),
+            "the chosen day's download did not fail"
         );
     }
 
