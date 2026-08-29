@@ -69,7 +69,10 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ("engine", &[]),
     ("orderbook", &[]),
     ("replay", &["engine"]),
-    ("sim", &["engine"]),
+    // The venue-neutral trading vocabulary sits beside `engine`, not above
+    // it: it is what `sim` and any future broker adapter both speak.
+    ("trading", &["engine"]),
+    ("sim", &["engine", "trading"]),
     ("strategy", &["engine", "sim"]),
     ("indicators", &["engine"]),
     ("pine", &["indicators"]),
