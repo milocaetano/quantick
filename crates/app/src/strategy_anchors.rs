@@ -56,6 +56,15 @@ pub struct AnchoredInstance {
     pub drawing: DrawingId,
     /// The preset name the badge and tooltip show ("BF compra 1x1").
     pub preset: String,
+    /// The stored form this instance was compiled from.
+    ///
+    /// Kept so a *copy* of the drawing can be armed through the same door
+    /// the dialog uses — `StoredPreset::to_kernel` — rather than through a
+    /// second construction path that would drift from it. The compiled
+    /// halves (`params`, the trigger, the alarm) cannot be read back out of
+    /// a running instance: `ArmedStrategy` hands out `&dyn Trigger`, which
+    /// deliberately has no way to surrender its own parameters.
+    pub spec: crate::strategy_presets::StoredPreset,
     pub armed: ArmedStrategy,
     /// The signal alarm, when the preset asked for one. `None` is the
     /// silent instance every preset written before the alarm existed
@@ -308,6 +317,10 @@ pub fn badge_text(instance: &AnchoredInstance) -> String {
     // The alarm's own word comes last, where the eye lands after the name:
     // it is the most recent thing that happened, and the one a trader who
     // heard a sound is looking for.
+    // The refusal is deliberately *not* joined here. Only the pane knows
+    // whether the region itself is what is refusing, and its word replaces
+    // the kernel's rather than sitting beside it — see
+    // `ChartPane::badge_text_for`, which is what the chart paints.
     let parts = [mode, state, instance.mark.label().unwrap_or_default()];
     let mut badge = format!("⚡ {}", instance.preset);
     for part in parts.into_iter().filter(|part| !part.is_empty()) {
@@ -329,6 +342,7 @@ mod tests {
         AnchoredInstance {
             drawing,
             preset: "test".to_owned(),
+            spec: crate::strategy_presets::StoredPreset::starting_point(Side::Buy),
             armed: ArmedStrategy::new(
                 StrategyParams {
                     side: Side::Buy,
@@ -394,6 +408,7 @@ mod tests {
         let mut riding = AnchoredInstance {
             drawing: DrawingId(3),
             preset: "test".to_owned(),
+            spec: crate::strategy_presets::StoredPreset::starting_point(Side::Buy),
             armed: ArmedStrategy::new(
                 StrategyParams {
                     side: Side::Buy,
@@ -473,6 +488,7 @@ mod tests {
         let mut riding = AnchoredInstance {
             drawing: DrawingId(5),
             preset: "test".to_owned(),
+            spec: crate::strategy_presets::StoredPreset::starting_point(Side::Buy),
             armed: ArmedStrategy::new(
                 StrategyParams {
                     side: Side::Buy,
