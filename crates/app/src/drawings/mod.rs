@@ -33,6 +33,14 @@ use crate::theme;
 /// allocates nothing per frame.
 pub type Handles = SmallVec<[egui::Pos2; 6]>;
 
+/// The price-axis heights one drawing asks to be tagged at, in screen `y`.
+///
+/// Two, because the tools that declare a level today name exactly one and the
+/// obvious next candidates (a price range's two edges) name two — so the pass
+/// over every visible object allocates nothing per frame, the same reason
+/// [`Handles`] is sized the way it is.
+pub type AxisLevels = SmallVec<[f32; 2]>;
+
 pub const DEFAULT_DRAWING_COLOR: egui::Color32 = egui::Color32::from_rgb(138, 180, 248);
 /// A drawing is an annotation *on* the chart, never a second series: the
 /// stock stroke is a hairline, thinner than the candle bodies it sits over
@@ -683,6 +691,28 @@ trait DrawingToolImpl: Sync {
         _ctxt: &DrawContext<'_>,
     ) {
     }
+    /// The heights on the price axis this object *is*, for the axis to tag.
+    ///
+    /// A horizontal line does not merely cross a price, it names one: the
+    /// price is the whole object, and the trader who drew it wants to read it
+    /// off the axis without hunting for where the line meets the gutter — the
+    /// yellow tag every other platform puts there. So the tool declares its
+    /// levels and [`crate::pane::ChartPane::draw_drawing_axis_tags`] writes
+    /// them, in the object's own colour.
+    ///
+    /// Screen `y`, not price, because `points` are already projected and the
+    /// projection has exactly one owner: a tool that converted back to price
+    /// itself would be a second copy of the price scale, free to drift from
+    /// the one the axis labels are drawn with. The axis reads the price back
+    /// off the same scale it labels.
+    ///
+    /// The default is empty, and that is the answer for almost every tool: a
+    /// trend line crosses every price between its ends and names none of
+    /// them, and an axis tagged with everything drawn on the chart is an axis
+    /// nobody can read. Declaring a level is opting *in* to the gutter.
+    fn axis_levels(&self, _points: &[egui::Pos2]) -> AxisLevels {
+        AxisLevels::new()
+    }
     fn hit_test(
         &self,
         chart_rect: egui::Rect,
@@ -801,6 +831,12 @@ impl DrawingTool {
     #[must_use]
     pub fn painted_bounds(self, anchors: egui::Rect, chart: egui::Rect) -> egui::Rect {
         self.0.painted_bounds(anchors, chart)
+    }
+
+    /// See [`DrawingToolImpl::axis_levels`].
+    #[must_use]
+    pub fn axis_levels(self, points: &[egui::Pos2]) -> AxisLevels {
+        self.0.axis_levels(points)
     }
 
     /// See [`DrawingToolImpl::inline_text`].
@@ -3593,6 +3629,127 @@ mod tests {
             content_editing: false,
         };
         assert!(line.hit_test(chart, &points, egui::pos2(450.0, 123.0), 5.0, &ctxt));
+    }
+
+    /// The two tools that *are* a price say so, and nothing else does.
+    ///
+    /// The registry is walked rather than the two named, so a tool added
+    /// later either declares a level deliberately or is caught here — the
+    /// gutter fills up one careless `axis_levels` at a time otherwise, and a
+    /// price axis tagged with every anchor on the chart is unreadable.
+    #[test]
+    fn only_the_tools_that_name_a_price_ask_the_axis_to_say_it() {
+        const DECLARING: [&str; 2] = ["horizontal-line", "horizontal-ray"];
+        for tool in DRAWING_TOOLS {
+            let (points, _) = tool.test_geometry();
+            let levels = tool.axis_levels(&points);
+            if DECLARING.contains(&tool.id()) {
+                assert_eq!(
+                    levels.as_slice(),
+                    &[points[0].y],
+                    "{} is one price and the axis says which",
+                    tool.id()
+                );
+            } else {
+                assert!(
+                    levels.is_empty(),
+                    "{} crosses prices without naming one, so it tags nothing",
+                    tool.id()
+                );
+            }
+        }
+    }
+
+    /// A level moves with the object: the tag is read off the *projected*
+    /// points, so the same anchor at another zoom or scroll tags where the
+    /// line actually is rather than where it was placed.
+    #[test]
+    fn a_declared_level_follows_the_object_that_declared_it() {
+        let tool = DrawingTool::by_id("horizontal-line").expect("a registered tool");
+        assert_eq!(
+            tool.axis_levels(&[egui::pos2(10.0, 40.0)]).as_slice(),
+            &[40.0]
+        );
+        assert_eq!(
+            tool.axis_levels(&[egui::pos2(10.0, 175.5)]).as_slice(),
+            &[175.5],
+            "the projection moved and the tag went with it"
+        );
+        assert!(
+            tool.axis_levels(&[]).is_empty(),
+            "a draft with no anchor yet declares nothing"
+        );
+        assert!(
+            tool.axis_levels(&[egui::pos2(10.0, f32::NAN)]).is_empty(),
+            "and a level that is not a position is not one the axis can write"
+        );
+    }
+
+    /// The port docks: a tool the axis has never heard of gets its level
+    /// tagged by declaring one, with no edit to the axis, the pane or this
+    /// registry's other members.
+    #[test]
+    fn a_new_tool_reaches_the_price_axis_by_declaring_a_level() {
+        /// A fake tool that is two prices — the shape the next declaring tool
+        /// will most likely have, and one no shipped tool has yet.
+        struct BandTool;
+        impl DrawingToolImpl for BandTool {
+            fn id(&self) -> &'static str {
+                "band"
+            }
+            fn name(&self) -> &'static str {
+                "Band"
+            }
+            fn settings_title(&self) -> &'static str {
+                "Band settings"
+            }
+            fn icon(&self) -> &'static str {
+                "B"
+            }
+            fn hover_text(&self) -> &'static str {
+                "A fake tool that names two prices"
+            }
+            fn required_points(&self) -> usize {
+                2
+            }
+            fn axis_levels(&self, points: &[egui::Pos2]) -> AxisLevels {
+                points.iter().map(|point| point.y).collect()
+            }
+            fn paint(
+                &self,
+                _painter: &egui::Painter,
+                _chart_rect: egui::Rect,
+                _style: DrawingStyle,
+                _points: &[egui::Pos2],
+                _ctxt: &DrawContext<'_>,
+            ) {
+            }
+            fn hit_test(
+                &self,
+                _chart_rect: egui::Rect,
+                _points: &[egui::Pos2],
+                _position: egui::Pos2,
+                _radius_px: f32,
+                _ctxt: &DrawContext<'_>,
+            ) -> bool {
+                false
+            }
+            #[cfg(test)]
+            fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2) {
+                (
+                    vec![egui::pos2(10.0, 30.0), egui::pos2(90.0, 70.0)],
+                    egui::pos2(50.0, 30.0),
+                )
+            }
+        }
+        static BAND: BandTool = BandTool;
+        let tool = DrawingTool(&BAND);
+        let (points, _) = tool.test_geometry();
+        assert_eq!(
+            tool.axis_levels(&points).as_slice(),
+            &[30.0, 70.0],
+            "both of its prices, in the order it declared them"
+        );
     }
 
     /// The handle port with a second implementation on it — one implementer

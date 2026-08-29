@@ -55,6 +55,7 @@ mod paper_home;
 mod paper_hud;
 mod paper_state;
 mod paper_trading;
+mod pointer_compass;
 mod popup;
 mod price_view;
 mod replay_download;

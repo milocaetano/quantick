@@ -1,8 +1,8 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::line_core::LINES_FAMILY;
-use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, drawing_stroke};
+use super::line_core::{LINES_FAMILY, single_level};
+use super::{AxisLevels, DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, drawing_stroke};
 
 pub(super) static TOOL: HorizontalRay = HorizontalRay;
 
@@ -60,6 +60,11 @@ impl DrawingToolImpl for HorizontalRay {
             let (from, to) = span(chart_rect, *point);
             painter.line_segment([from, to], drawing_stroke(style));
         }
+    }
+    /// The price it names, tagged on the axis like the horizontal line's —
+    /// the two say the same kind of thing and differ only in where they start.
+    fn axis_levels(&self, points: &[egui::Pos2]) -> AxisLevels {
+        single_level(points)
     }
     fn hit_test(
         &self,

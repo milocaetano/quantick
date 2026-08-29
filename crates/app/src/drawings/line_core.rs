@@ -10,7 +10,24 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::{Constrain, DrawingStyle, ToolFamily, distance_to_segment, drawing_stroke, level_with};
+use super::{
+    AxisLevels, Constrain, DrawingStyle, ToolFamily, distance_to_segment, drawing_stroke,
+    level_with,
+};
+
+/// The one level a single-anchor horizontal object names, for the price axis
+/// to tag — [`super::DrawingToolImpl::axis_levels`]'s answer for the two tools
+/// whose whole meaning is a price.
+///
+/// Shared for the same reason the segment maths is: "this object is one price"
+/// is one rule, and a horizontal line and a horizontal ray that answered it
+/// separately would be free to tag different pixels for the same anchor.
+pub(super) fn single_level(points: &[egui::Pos2]) -> AxisLevels {
+    points
+        .first()
+        .filter(|point| point.y.is_finite())
+        .map_or_else(AxisLevels::new, |point| AxisLevels::from_elem(point.y, 1))
+}
 
 /// The far end of a two-point line while the trader holds Shift: level with
 /// the end it started from, and still free to slide along the tape.

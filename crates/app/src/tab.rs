@@ -1488,6 +1488,8 @@ impl Tab {
             | ChartLayer::BackfillDivider
             | ChartLayer::SeamDivider
             | ChartLayer::Crosshair
+            | ChartLayer::PointerPrice
+            | ChartLayer::PointerTime
             | ChartLayer::PaperTrading
             | ChartLayer::TradePaint
             | ChartLayer::Drawings => self.focused_side(),

@@ -113,6 +113,11 @@ pub(crate) enum ChartLayer {
     SeamDivider,
     /// The hover crosshair and its axis tags.
     Crosshair,
+    /// The pointer's price, marked on the price axis while it is over the
+    /// chart.
+    PointerPrice,
+    /// The time of the bar under the pointer, marked on the time axis.
+    PointerTime,
     /// Simulated orders, the position line and their chips.
     PaperTrading,
     /// Entry/exit marks for closed simulated trades and their connectors.
@@ -183,7 +188,7 @@ impl ChartLayer {
     /// in the menu test that counts it. The two paper layers sit together:
     /// live orders and closed-trade marks are switched apart, because hiding
     /// history must never hide the position you are in.
-    pub(crate) const ALL: [Self; 19] = [
+    pub(crate) const ALL: [Self; 21] = [
         Self::TapeChart,
         Self::TapeHeatmap,
         Self::TapeBubbles,
@@ -200,6 +205,8 @@ impl ChartLayer {
         Self::BackfillDivider,
         Self::SeamDivider,
         Self::Crosshair,
+        Self::PointerPrice,
+        Self::PointerTime,
         Self::PaperTrading,
         Self::TradePaint,
         Self::Drawings,
@@ -236,6 +243,8 @@ impl ChartLayer {
             Self::BackfillDivider => "backfill_divider",
             Self::SeamDivider => "seam_divider",
             Self::Crosshair => "crosshair",
+            Self::PointerPrice => "pointer_price",
+            Self::PointerTime => "pointer_time",
             Self::PaperTrading => "paper_trading",
             Self::TradePaint => "trade_paint",
             Self::Drawings => "drawings",
@@ -273,6 +282,11 @@ impl ChartLayer {
             Self::BackfillDivider => "backfill divider",
             Self::SeamDivider => "venue/prints seam",
             Self::Crosshair => "crosshair",
+            // The words the two axis menus wear, so the entry a trader finds
+            // by right-clicking an axis and the one in this menu are visibly
+            // the same switch.
+            Self::PointerPrice => "track pointer price",
+            Self::PointerTime => "track pointer time",
             Self::PaperTrading => "paper orders & position",
             Self::TradePaint => "closed trade marks",
             Self::Drawings => "drawings",
@@ -355,6 +369,16 @@ impl ChartLayer {
             }
             Self::SeamDivider => "where venue candles give way to bars built from prints",
             Self::Crosshair => "the hover cross and its price/time tags",
+            // The compass. Both entries say what the mark is read off, because
+            // that is what decides whether it can be there at all: a price is
+            // a height on the axis and always exists, a time belongs to a bar
+            // and exists only where one is.
+            Self::PointerPrice => {
+                "a tick and the price on the right axis, following the pointer while it is over                  the chart. Gone the moment it leaves. The crosshair tool draws its own, so the                  two never stack"
+            }
+            Self::PointerTime => {
+                "a tick and a clock time on the bottom axis, for the bar under the pointer — how                  a chart whose bars are cut by ticks or volume answers 'when was this?'. Empty                  canvas past the newest bar holds no bar, so nothing is marked there rather than                  a time being extrapolated"
+            }
             // Same honesty rule as the gap boundaries: what is hidden here is a
             // drawing of live state, so the entry says the state is still live.
             Self::PaperTrading => {
@@ -741,6 +765,19 @@ mod tests {
             Some(&false),
             "the one layer a fresh chart holds back"
         );
+        // The compass, on. The bars here are cut by ticks and volume, so
+        // without it the only way to learn when a candle happened is to arm
+        // the crosshair tool — a fresh install that cannot answer "when was
+        // this?" while you point at a candle is the gap this project's own
+        // bar types create.
+        for layer in [ChartLayer::PointerPrice, ChartLayer::PointerTime] {
+            assert_eq!(
+                shipped.get(&layer),
+                Some(&true),
+                "{} opens on, and each axis's menu is where it is switched off",
+                layer.id()
+            );
+        }
         // Every layer this file owns is stated, so no reader has to know which
         // ones fall through to a struct initialiser.
         for layer in ChartLayer::ALL.into_iter().filter(|l| l.persisted()) {
@@ -774,6 +811,10 @@ mod tests {
             (ChartLayer::Grid, false),
             (ChartLayer::Heatmap, true),
             (ChartLayer::Drawings, true),
+            // The two axis switches, apart: a trader who wants the price and
+            // not the clock has to get exactly that back next launch.
+            (ChartLayer::PointerPrice, true),
+            (ChartLayer::PointerTime, false),
         ]);
         save(&path, &states);
         // Every answer written comes back, and the layers this file says

@@ -40,6 +40,7 @@ use crate::orderflow::{
 };
 use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
 use crate::paper_trading::{ChartInput, PaperTrading};
+use crate::pointer_compass;
 use crate::price_view::PriceView;
 use crate::state::{BarKind, BarSpec, ChartState, ImbalanceUnit};
 use crate::style::ChartStyle;
@@ -751,6 +752,38 @@ pub(crate) struct ControlDrawingHit {
     pub locked: bool,
 }
 
+/// One price a drawing declares for the price axis to tag.
+///
+/// Carries both the pixel and the price because the two answer different
+/// questions and are read off one scale: the painter needs the height, and
+/// anything reading the trader's levels as data needs the number.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct PriceAxisLevel {
+    /// The object that declared it.
+    pub id: drawings::DrawingId,
+    /// Where it sits on the axis, in screen pixels.
+    pub y: f32,
+    /// What that height reads as on the pane's price scale.
+    pub price: f64,
+    /// The object's own colour — the tag is the object, said on the axis.
+    pub color: egui::Color32,
+}
+
+/// What the pointer's compass will draw this frame, and where.
+///
+/// One decision, read twice: the axes consult it before labelling themselves
+/// so they can leave the coordinate alone, and the paint pass draws exactly
+/// what it says.
+struct PointerCompass {
+    readout: pointer_compass::PointerReadout,
+    /// The price half is drawn — its layer is on, the pointer is over the
+    /// price band, and the crosshair is not already writing one.
+    price: bool,
+    /// The time half is drawn — its layer is on and a bar is under the
+    /// pointer.
+    time: bool,
+}
+
 /// Semantic meaning of the pointer over one chart pane.
 ///
 /// Coordinates are kept internal here. `app::control` owns the transport DTO
@@ -1064,6 +1097,11 @@ pub struct ChartPane {
     // scripted right-click of `QUANTICK_CONTEXT_MENU=axis` needs a point that
     // is really on the axis, not a guess about where the gutter probably is.
     pub last_price_gutter: Option<egui::Rect>,
+    // The candles' segment of the bottom time strip, published for the same
+    // reason again: `QUANTICK_CONTEXT_MENU=time` needs a point that is really
+    // on the time axis, and past the lane divider the strip belongs to the
+    // tape's own window rather than to this menu.
+    pub last_time_strip: Option<egui::Rect>,
     // The automatic tape window at the last draw — the recent bars' typical
     // duration. Only the menu reads it, and only to state what "follows the
     // bars" currently amounts to; the drawing itself is handed the resolved
@@ -1329,6 +1367,7 @@ impl ChartPane {
             last_lane_divider_x: None,
             last_chart_rect: None,
             last_price_gutter: None,
+            last_time_strip: None,
             last_lane_reference_ms: None,
             context_menu_on_tape: false,
             lane_rungs: 0,
@@ -1494,6 +1533,8 @@ impl ChartPane {
             | ChartLayer::BackfillDivider
             | ChartLayer::SeamDivider
             | ChartLayer::Crosshair
+            | ChartLayer::PointerPrice
+            | ChartLayer::PointerTime
             | ChartLayer::PaperTrading
             | ChartLayer::TradePaint => !self.hidden_layers.contains(&layer),
         }
@@ -1565,6 +1606,8 @@ impl ChartPane {
             | ChartLayer::BackfillDivider
             | ChartLayer::SeamDivider
             | ChartLayer::Crosshair
+            | ChartLayer::PointerPrice
+            | ChartLayer::PointerTime
             | ChartLayer::PaperTrading
             | ChartLayer::TradePaint => {
                 if visible {
@@ -1882,6 +1925,40 @@ impl ChartPane {
         );
     }
 
+    /// One layer's checkbox, wherever it is offered.
+    ///
+    /// Three menus show these — the candles' layer menu, the tape's, and each
+    /// axis's own for the switch that belongs to it — and all three call this
+    /// so a layer wears one label, one hover text and one disabled reason
+    /// whichever door a trader came through. It reads and writes the field
+    /// that owns the layer, never a copy.
+    ///
+    /// Returns why the layer could not be switched, for the caller that has a
+    /// sub-entry to gate on the same answer.
+    fn layer_checkbox(
+        &mut self,
+        ui: &mut egui::Ui,
+        layer: ChartLayer,
+        chrome: &mut PaneChrome<'_>,
+    ) -> Option<LayerBlock> {
+        let blocked = self.layer_blocked(layer, chrome.capabilities);
+        let mut visible = self.layer_visible(layer, chrome.style);
+        let response = ui
+            .add_enabled(
+                blocked.is_none(),
+                egui::Checkbox::new(&mut visible, layer.label()),
+            )
+            .on_hover_text(layer.hint());
+        #[cfg(test)]
+        self.layer_menu_rects.push((layer, response.rect));
+        if let Some(reason) = blocked {
+            response.on_disabled_hover_text(reason.explanation);
+        } else if response.changed() {
+            self.set_layer_visible(layer, visible, chrome.layers);
+        }
+        blocked
+    }
+
     /// The candles' layer checkboxes: the list the menu has always shown.
     ///
     /// The tape's own entries are filtered out here and drawn by
@@ -1890,21 +1967,7 @@ impl ChartPane {
     /// beside it.
     fn draw_chart_layer_entries(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
         for layer in ChartLayer::ALL.into_iter().filter(|layer| !layer.on_tape()) {
-            let blocked = self.layer_blocked(layer, chrome.capabilities);
-            let mut visible = self.layer_visible(layer, chrome.style);
-            let response = ui
-                .add_enabled(
-                    blocked.is_none(),
-                    egui::Checkbox::new(&mut visible, layer.label()),
-                )
-                .on_hover_text(layer.hint());
-            #[cfg(test)]
-            self.layer_menu_rects.push((layer, response.rect));
-            if let Some(reason) = blocked {
-                response.on_disabled_hover_text(reason.explanation);
-            } else if response.changed() {
-                self.set_layer_visible(layer, visible, chrome.layers);
-            }
+            let blocked = self.layer_checkbox(ui, layer, chrome);
             // The footprint's knobs live in a window of their own (the
             // Profitchart-style properties dialog, the boss's ask); the menu
             // offers the door. Available with the layer off too — configuring
@@ -1948,21 +2011,7 @@ impl ChartPane {
         // `layer_visible` / `set_layer_visible`, which is also what puts these
         // three in the layer state file.
         for layer in ChartLayer::ALL.into_iter().filter(|layer| layer.on_tape()) {
-            let blocked = self.layer_blocked(layer, chrome.capabilities);
-            let mut visible = self.layer_visible(layer, chrome.style);
-            let response = ui
-                .add_enabled(
-                    blocked.is_none(),
-                    egui::Checkbox::new(&mut visible, layer.label()),
-                )
-                .on_hover_text(layer.hint());
-            #[cfg(test)]
-            self.layer_menu_rects.push((layer, response.rect));
-            if let Some(reason) = blocked {
-                response.on_disabled_hover_text(reason.explanation);
-            } else if response.changed() {
-                self.set_layer_visible(layer, visible, chrome.layers);
-            }
+            let _ = self.layer_checkbox(ui, layer, chrome);
         }
 
         let reference_ms = self.last_lane_reference_ms;
@@ -3128,10 +3177,10 @@ impl ChartPane {
     /// data-honesty failure this repo refuses, and refusing the click
     /// outright would read as a bug.
     fn bar_extreme(&self, band: &Band, bar: f32, high: bool) -> Option<f64> {
-        if !matches!(band.key, DrawingBand::Price) || !bar.is_finite() || bar < 0.0 {
+        if !matches!(band.key, DrawingBand::Price) {
             return None;
         }
-        let slot = bar.floor() as usize;
+        let slot = Viewport::slot_of(bar)?;
         // The forming bar counts. Marking the bar that is running *is* the
         // live use of this tool — marking a closed one is review — and
         // `closed_bar` stops one slot short of it, which would drop the mark
@@ -3317,10 +3366,7 @@ impl ChartPane {
         pointer_y: f32,
         scale: &PriceScale,
     ) -> Option<f64> {
-        if !bar.is_finite() || bar < 0.0 {
-            return None;
-        }
-        let row = bar.floor() as usize;
+        let row = Viewport::slot_of(bar)?;
         match &band.key {
             DrawingBand::Price => {
                 magnet_price_of(self.closed_bar(row)?, pointer_y, scale, MAGNET_REACH_PX)
@@ -3347,10 +3393,10 @@ impl ChartPane {
         pointer_y: f32,
         scale: &PriceScale,
     ) -> Option<f64> {
-        if !matches!(band.key, DrawingBand::Price) || !bar.is_finite() || bar < 0.0 {
+        if !matches!(band.key, DrawingBand::Price) {
             return None;
         }
-        let slot = bar.floor() as usize;
+        let slot = Viewport::slot_of(bar)?;
         let candle = self.candle_at_slot(slot)?;
         magnet_price_of(candle, pointer_y, scale, MAGNET_REACH_UNLIMITED_PX)
     }
@@ -3363,10 +3409,7 @@ impl ChartPane {
     /// naming a time there would be an invention. `None` is the honest answer
     /// there, and it is what keeps such an anchor out of a shared drawing.
     fn anchor_time(&self, bar: f32) -> Option<i64> {
-        if !bar.is_finite() || bar < 0.0 {
-            return None;
-        }
-        let slot = bar.floor() as usize;
+        let slot = Viewport::slot_of(bar)?;
         let slots = self.slots();
         if slot < slots {
             return self.slot_open_time(slot);
@@ -4711,6 +4754,14 @@ impl ChartPane {
                 self.viewport.zoom(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
             }
         }
+        // The time axis's own menu, the price gutter's twin: what an axis
+        // writes is switched from that axis. This one had no menu at all until
+        // the compass gave it something to say.
+        time.context_menu(|ui| {
+            #[cfg(test)]
+            self.layer_menu_rects.clear();
+            let _ = self.layer_checkbox(ui, ChartLayer::PointerTime, chrome);
+        });
         // Jump-to-live (audit F6): panned into history, the way back is one
         // click at the axis' live end. Registered after the strip gesture so
         // the click is the chip's, not a zoom-drag's — the lane divider's
@@ -4761,10 +4812,15 @@ impl ChartPane {
             auto,
             true,
         );
-        // The axis's own menu: about the scale, not the canvas — the layer
-        // menu stays the canvas's right-click. One entry today; anything else
-        // the axis learns to do belongs here with it.
+        // The axis's own menu: about the scale and about what is written on
+        // it, not about the canvas — the layer menu stays the canvas's
+        // right-click. The compass's price half is offered here rather than
+        // only in the layer menu because this is where a trader looks for
+        // something about *this* axis, and where the mark it switches
+        // actually appears.
         price_gutter.context_menu(|ui| {
+            #[cfg(test)]
+            self.layer_menu_rects.clear();
             let mut inverted = self.price_view.is_inverted();
             if ui
                 .checkbox(&mut inverted, "Inverted chart")
@@ -4778,6 +4834,8 @@ impl ChartPane {
                 self.price_view.set_inverted(inverted);
                 ui.close_menu();
             }
+            ui.separator();
+            let _ = self.layer_checkbox(ui, ChartLayer::PointerPrice, chrome);
         });
 
         // The same gesture, once per pane, over the gutter band beside it.
@@ -5015,6 +5073,7 @@ impl ChartPane {
         // rect the candles scale to is the same one the input handler uses.
         let chart_rect = areas.chart;
         self.last_price_gutter = Some(areas.price_gutter);
+        self.last_time_strip = Some(split_time_strip(areas.time_strip, self.last_lane_divider_x).0);
         let pane_rects = areas.indicator_panes.clone();
         if total == 0 {
             painter.text(
@@ -5256,10 +5315,40 @@ impl ChartPane {
             },
         );
 
+        // What the compass will say, decided before either axis labels itself:
+        // both axes stand aside where a chip is going to land, and a decision
+        // made twice is a decision two surfaces can disagree about.
+        let compass =
+            self.pointer_compass(chart_rect, areas.time_strip, right, total, &scale, chrome);
+        let mut price_claims = pointer_compass::AxisClaims::new();
+        let mut time_claims = pointer_compass::AxisClaims::new();
+        if let Some(compass) = compass.as_ref() {
+            if compass.price {
+                price_claims.push(compass.readout.position.y);
+            }
+            if compass.time {
+                time_claims.push(compass.readout.position.x);
+            }
+        }
+        // The market's own chip, and the trader's levels beside it. Both are
+        // written on this axis further down; the round number they land on
+        // has nothing to add.
+        if self.layer_visible(ChartLayer::LastPrice, chrome.style)
+            && let Some(bar) = partial.or_else(|| closed.last())
+            && let Some(price) = bar.close.to_f64()
+        {
+            price_claims.push(scale.y(price));
+        }
+        if self.layer_visible(ChartLayer::Drawings, chrome.style) {
+            self.for_each_price_axis_level(right, total, &scale, |level| {
+                price_claims.push(level.y);
+            });
+        }
+
         // Grid + price labels first, behind the candles. Labels anchor on the
         // gutter's edge, past the live strip when one is shown.
         let axis_x = areas.price_gutter.left();
-        self.draw_price_axis(painter, chart_rect, axis_x, &scale, chrome);
+        self.draw_price_axis(painter, chart_rect, axis_x, &scale, &price_claims, chrome);
 
         // Candles, clipped to their own pane: panning far enough into history
         // sends the newest bars off the right of it, and they scroll out of
@@ -5704,6 +5793,13 @@ impl ChartPane {
         {
             self.draw_last_price(painter, chart_rect, axis_x, &scale, bar, chrome);
         }
+        // The trader's own levels, on the axis beside the market's. Drawn
+        // after the last price so a level the market has just reached is
+        // legible over the chip announcing it — the moment those two prices
+        // coincide is the moment the level matters.
+        if self.layer_visible(ChartLayer::Drawings, chrome.style) {
+            self.draw_drawing_axis_tags(painter, chart_rect, axis_x, right, total, &scale);
+        }
         // The candles' own marks, so they are placed and clipped in their
         // pane: where venue candles give way to bars built from prints, and
         // where backfilled prints give way to live ones.
@@ -5713,7 +5809,15 @@ impl ChartPane {
         if self.layer_visible(ChartLayer::BackfillDivider, chrome.style) {
             self.draw_backfill_divider(painter, history_rect, total, cw);
         }
-        self.draw_time_strip(painter, areas.time_strip, start, end, total, chrome);
+        self.draw_time_strip(
+            painter,
+            areas.time_strip,
+            start,
+            end,
+            total,
+            &time_claims,
+            chrome,
+        );
         if let Some(orderflow) = self.orderflow.as_ref() {
             self.draw_lane_time_axis(
                 painter,
@@ -5749,6 +5853,12 @@ impl ChartPane {
         if self.layer_visible(ChartLayer::Crosshair, chrome.style) {
             self.draw_crosshair(painter, chart_rect, axis_x, &scale, chrome);
         }
+        // Last of the canvas marks, so the answer the trader is asking for by
+        // holding the mouse where they are holding it is on top of the ones
+        // the chart volunteers. Decided far above, where the axes read it too.
+        if let Some(compass) = compass.as_ref() {
+            self.draw_pointer_compass(painter, compass, axis_x, areas.time_strip, chrome);
+        }
         // The status badge is not a layer: it reports whether the source is
         // healthy, and a chart with every layer off must still say that. It
         // shares the top-right corner with the tape switch, which is drawn last
@@ -5771,6 +5881,10 @@ impl ChartPane {
     /// The labels stay under the candles' own pane; the segment past the lane's
     /// divider is the tape's time axis and reads its window instead
     /// ([`Self::draw_lane_time_axis`]).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the frame's own geometry and window, passed rather than                   cached: reading a stale copy off the pane is how an axis                   ends up labelling a window it is no longer showing"
+    )]
     fn draw_time_strip(
         &self,
         painter: &egui::Painter,
@@ -5778,6 +5892,7 @@ impl ChartPane {
         start: usize,
         end: usize,
         total: usize,
+        claims: &pointer_compass::AxisClaims,
         chrome: &PaneChrome<'_>,
     ) {
         painter.line_segment(
@@ -5823,7 +5938,8 @@ impl ChartPane {
                     label_width,
                     history_strip.left(),
                     history_strip.right(),
-                ) {
+                ) && !pointer_compass::claimed(claims, x, label_width)
+                {
                     painter.text(
                         egui::pos2(x, y),
                         egui::Align2::CENTER_CENTER,
@@ -5933,22 +6049,36 @@ impl ChartPane {
     /// Right-hand price axis: round-number gridlines and labels. `axis_x` is
     /// the gutter's left edge — the chart's right edge normally, the live
     /// strip's right edge while the strip sits between them.
+    /// `claims` are the heights this axis has already promised to a chip —
+    /// the pointer's tag, the last price, a level a drawing declared. A
+    /// gridline label lands there in silence rather than on top of one.
     fn draw_price_axis(
         &self,
         painter: &egui::Painter,
         chart_rect: egui::Rect,
         axis_x: f32,
         scale: &PriceScale,
+        claims: &pointer_compass::AxisClaims,
         chrome: &PaneChrome<'_>,
     ) {
         let grid = grid_color(chrome.style);
         let (lo, hi) = scale.range();
         let font = egui::FontId::monospace(chart::AXIS_LABEL_FONT_PX);
+        // Measured once per frame, the way the time strip measures its own:
+        // every label on this axis is one line of the same font, so one
+        // layout answers for all of them.
+        let label_height = painter
+            .layout_no_wrap("0".to_owned(), font.clone(), theme::TEXT_MUTED)
+            .size()
+            .y;
         for tick in crate::chart::nice_ticks(lo, hi, 8) {
             let y = scale.y(tick);
             if y < chart_rect.top() || y > chart_rect.bottom() {
                 continue;
             }
+            // The *line* is drawn either way: a gridline under a chip is
+            // still the grid, and hiding it would put a gap in the chart
+            // wherever the pointer went.
             painter.line_segment(
                 [
                     egui::pos2(chart_rect.left(), y),
@@ -5956,6 +6086,9 @@ impl ChartPane {
                 ],
                 egui::Stroke::new(1.0_f32, grid),
             );
+            if pointer_compass::claimed(claims, y, label_height) {
+                continue;
+            }
             painter.text(
                 egui::pos2(axis_x + chart::AXIS_LABEL_GAP_PX, y),
                 egui::Align2::LEFT_CENTER,
@@ -6014,20 +6147,16 @@ impl ChartPane {
             LAST_PRICE_GAP_PX,
         ));
 
-        // Same geometry as the crosshair tag, so the two never disagree about
-        // where a price sits on the axis.
-        let galley = painter.layout_no_wrap(
+        // Same geometry as the crosshair tag and the compass's, because it is
+        // the same code: one owner for where a price sits on this axis.
+        pointer_compass::paint_price_tag(
+            painter,
+            axis_x,
+            y,
             format!("{price:.2}"),
-            egui::FontId::monospace(chart::AXIS_LABEL_FONT_PX),
+            color,
             LAST_PRICE_CHIP_TEXT,
         );
-        let text_pos = egui::pos2(axis_x + chart::AXIS_LABEL_GAP_PX, y - galley.size().y / 2.0);
-        let bg = egui::Rect::from_min_size(
-            text_pos - egui::vec2(3.0, 1.0),
-            galley.size() + egui::vec2(6.0, 2.0),
-        );
-        painter.rect_filled(bg, egui::Rounding::same(2.0), color);
-        painter.galley(text_pos, galley, LAST_PRICE_CHIP_TEXT);
     }
 
     fn drawing_screen_point(
@@ -6042,6 +6171,22 @@ impl ChartPane {
                 .x_at_bar_position(point.bar, history_right, total),
             scale.y(point.price),
         )
+    }
+
+    /// The colour an object is really painted in, honesty fade included.
+    ///
+    /// A mark whose anchors are outside the loaded series, or that was drawn
+    /// on the instrument this tab used to show, is painted faded rather than
+    /// passed off as a level on this market. Its axis tag wears the same fade
+    /// for the same reason and through the same call: a full-strength chip on
+    /// the gutter would be the axis making a claim the stroke beside it is
+    /// explicitly not making.
+    fn painted_color(drawing: &Drawing) -> egui::Color32 {
+        if drawing.off_series || drawing.foreign_market {
+            drawing.style.color.gamma_multiply(Self::CLAMPED_OPACITY)
+        } else {
+            drawing.style.color
+        }
     }
 
     /// Opacity a drawing is painted at on a pane whose series does not reach
@@ -6198,7 +6343,7 @@ impl ChartPane {
     /// across it was drawing over the flow. Placement already refused to put
     /// an anchor there; paint, geometry and hit-test agree with it now, which
     /// also keeps a line's painted end and its grabbable end the same pixel.
-    fn drawing_area(&self, chart: egui::Rect) -> egui::Rect {
+    pub(crate) fn drawing_area(&self, chart: egui::Rect) -> egui::Rect {
         let right = self
             .last_lane_divider_x
             .unwrap_or(chart.right())
@@ -6238,11 +6383,12 @@ impl ChartPane {
         let history_right = self.last_lane_divider_x.unwrap_or_else(|| chart.right());
         let total = self.slots();
 
+        // The same question the axis compass paints the answer to, asked
+        // through the same owner: a client reading the cursor and a trader
+        // reading the axis may not be told two different bars.
         let slot = (total > 0 && position.x <= history_right)
-            .then(|| self.viewport.bar_at_x(position.x, history_right, total))
-            .filter(|bar| bar.is_finite() && *bar >= 0.0)
-            .map(|bar| bar.floor() as usize)
-            .filter(|slot| *slot < total);
+            .then(|| self.viewport.slot_at_x(position.x, history_right, total))
+            .flatten();
         let axis_value = band.scale.as_ref().map(|scale| scale.price_at(position.y));
         // What the pointer's y means on this band. A time-only band has no
         // value axis of its own, so y is read on the pane's price axis, which
@@ -6712,7 +6858,7 @@ impl ChartPane {
             // the mirrored marks use for the same reason.
             let style = if drawing.off_series || drawing.foreign_market {
                 DrawingStyle {
-                    color: drawing.style.color.gamma_multiply(Self::CLAMPED_OPACITY),
+                    color: Self::painted_color(drawing),
                     fill_alpha: 0,
                     ..drawing.style
                 }
@@ -6865,23 +7011,197 @@ impl ChartPane {
             stroke,
         );
 
-        // Price tag on the axis at the cursor height.
-        let price = scale.price_at(pos.y);
-        let galley = painter.layout_no_wrap(
-            format!("{price:.2}"),
-            egui::FontId::monospace(chart::AXIS_LABEL_FONT_PX),
+        // Price tag on the axis at the cursor height, through the axis's one
+        // tag owner — the compass and the last-price chip write theirs the
+        // same way, so the marks that share this gutter cannot drift apart.
+        pointer_compass::paint_price_tag(
+            painter,
+            axis_x,
+            pos.y,
+            format!("{:.2}", scale.price_at(pos.y)),
+            theme::TAG_BG,
             egui::Color32::WHITE,
         );
-        let text_pos = egui::pos2(
-            axis_x + chart::AXIS_LABEL_GAP_PX,
-            pos.y - galley.size().y / 2.0,
+    }
+
+    /// Every price a visible drawing on the price band declares, in the order
+    /// they were drawn, handed one at a time to `mark`.
+    ///
+    /// The read half of the axis tags: what the gutter says about the objects
+    /// on the chart is data before it is pixels, so a test asserts on the
+    /// levels rather than on a shape count, and anything that later needs to
+    /// enumerate a trader's levels — a client, the assistant — asks this
+    /// rather than the painter.
+    ///
+    /// A callback rather than a returned list because this runs inside the
+    /// frame: the visitor allocates nothing, and the only caller with a list
+    /// to build is a test.
+    ///
+    /// Objects on an indicator band are skipped. Their `y` means whatever that
+    /// pane's axis means, and writing it on the price gutter would put a CVD
+    /// reading where a price goes.
+    pub(crate) fn for_each_price_axis_level(
+        &self,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+        mut mark: impl FnMut(PriceAxisLevel),
+    ) {
+        for (index, drawing) in self.drawings.items().iter().enumerate() {
+            if !self.drawings.is_visible(index) || matches!(drawing.band, DrawingBand::Indicator(_))
+            {
+                continue;
+            }
+            let points = self.projected_drawing_points(drawing, history_right, total, scale);
+            for y in drawing.tool.axis_levels(&points) {
+                mark(PriceAxisLevel {
+                    id: drawing.id,
+                    y,
+                    price: scale.price_at(y),
+                    color: Self::painted_color(drawing),
+                });
+            }
+        }
+    }
+
+    /// The levels the drawings declare, written on the price axis in each
+    /// object's own colour.
+    ///
+    /// Rides the `Drawings` layer rather than carrying a switch of its own:
+    /// the tag *is* the object, said on the axis, so hiding the objects has to
+    /// take their tags with it — a gutter still marked at a level whose line
+    /// is gone would be the chart claiming something it is not drawing. The
+    /// caller holds that gate, beside every other layer's.
+    fn draw_drawing_axis_tags(
+        &self,
+        painter: &egui::Painter,
+        chart_rect: egui::Rect,
+        axis_x: f32,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) {
+        self.for_each_price_axis_level(history_right, total, scale, |level| {
+            if level.y < chart_rect.top() || level.y > chart_rect.bottom() {
+                return;
+            }
+            // The object's own colour, in the last-price chip's language,
+            // because it is the same kind of statement: a price this chart is
+            // telling you about, at the height it sits. The ink is *computed*
+            // rather than borrowed from that chip — the last price wears one
+            // of two saturated colours and a drawing wears whatever the
+            // trader picked, dark navy included.
+            pointer_compass::paint_price_tag(
+                painter,
+                axis_x,
+                level.y,
+                format!("{:.2}", level.price),
+                level.color,
+                theme::ink_on(level.color),
+            );
+        });
+    }
+
+    /// The bar under `x`, as data, with the instant it opened.
+    ///
+    /// `history_right` is the candles' own right edge: past it lies the live
+    /// lane, which is not made of bar slots at all. A pointer out there, or
+    /// out in the projection margin past the newest bar, is over no bar — and
+    /// this says so rather than naming the nearest one, because a compass that
+    /// rounds empty canvas onto the last candle would put a time on a place
+    /// where nothing happened.
+    #[must_use]
+    pub(crate) fn pointer_bar(
+        &self,
+        x: f32,
+        history_right: f32,
+        total: usize,
+    ) -> Option<pointer_compass::PointerBar> {
+        if total == 0 || x > history_right {
+            return None;
+        }
+        let slot = self.viewport.slot_at_x(x, history_right, total)?;
+        Some(pointer_compass::PointerBar {
+            slot,
+            open_time_unix_ms: self.slot_open_time(slot)?,
+        })
+    }
+
+    /// What the compass will draw this frame.
+    ///
+    /// Decided once, before either axis labels itself: the axes read it to
+    /// know which coordinates are already spoken for, and the paint reads the
+    /// same answer several hundred lines later rather than working it out
+    /// again. A decision made twice is a decision two surfaces can disagree
+    /// about, and here the disagreement would be an axis hiding a label for a
+    /// chip that never arrived.
+    fn pointer_compass(
+        &self,
+        chart_rect: egui::Rect,
+        time_strip: egui::Rect,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+        chrome: &PaneChrome<'_>,
+    ) -> Option<PointerCompass> {
+        let price_on = self.layer_visible(ChartLayer::PointerPrice, chrome.style);
+        let time_on = self.layer_visible(ChartLayer::PointerTime, chrome.style);
+        if !price_on && !time_on {
+            return None;
+        }
+        // Everything the shared time axis runs under: the candles and the
+        // indicator band below them, down to the strip itself. A trader
+        // hovering a CVD curve is still pointing at a bar, and the clock is
+        // the one question every pane answers the same way.
+        let panes = egui::Rect::from_min_max(
+            chart_rect.min,
+            egui::pos2(chart_rect.right(), time_strip.top()),
         );
-        let bg = egui::Rect::from_min_size(
-            text_pos - egui::vec2(3.0, 1.0),
-            galley.size() + egui::vec2(6.0, 2.0),
-        );
-        painter.rect_filled(bg, egui::Rounding::same(2.0), theme::TAG_BG);
-        painter.galley(text_pos, galley, egui::Color32::WHITE);
+        // The bar lookup costs a division and a slot read, so it is paid for
+        // only by the axis that spends it.
+        let bar = time_on
+            .then(|| {
+                self.hover_pos
+                    .map(|pointer| self.pointer_bar(pointer.x, history_right, total))
+            })
+            .flatten()
+            .flatten();
+        let readout = pointer_compass::readout(self.hover_pos, panes, chart_rect, scale, bar)?;
+        // The armed crosshair already writes a price on this axis. Two chips
+        // stacked on one pixel is not two facts, so the mode that draws the
+        // cross keeps the tag that belongs to it — the compass still supplies
+        // the time half, which the crosshair has never drawn.
+        let crosshair_owns_the_price = chrome.toolrail.tool() == Tool::Crosshair
+            && self.layer_visible(ChartLayer::Crosshair, chrome.style);
+        Some(PointerCompass {
+            price: price_on && !crosshair_owns_the_price && readout.price.is_some(),
+            time: time_on && readout.bar.is_some(),
+            readout,
+        })
+    }
+
+    /// The pointer's compass: its price on the price axis, and the time of the
+    /// bar it is over on the time axis.
+    ///
+    /// Two switches, one per axis ([`ChartLayer::PointerPrice`] and
+    /// [`ChartLayer::PointerTime`]), each reached from that axis's own
+    /// right-click menu. See [`crate::pointer_compass`] for why this exists
+    /// and why it is not a crosshair.
+    fn draw_pointer_compass(
+        &self,
+        painter: &egui::Painter,
+        compass: &PointerCompass,
+        axis_x: f32,
+        time_strip: egui::Rect,
+        chrome: &PaneChrome<'_>,
+    ) {
+        if compass.price {
+            pointer_compass::paint_price_mark(painter, axis_x, &compass.readout);
+        }
+        if compass.time {
+            let (history_strip, _) = split_time_strip(time_strip, self.last_lane_divider_x);
+            pointer_compass::paint_time_mark(painter, history_strip, &compass.readout, chrome.tz);
+        }
     }
 
     /// A vertical marker where venue candles give way to bars this app built
@@ -8053,7 +8373,128 @@ mod tests {
         pane
     }
 
-    /// Drive `handle_navigation` for one frame with the given pointer events,
+    /// A pane holding `count` closed bars, each opening one minute after the
+    /// last — so a test can ask what time a slot is and get an answer that
+    /// could only have come from that slot.
+    fn pane_with_timed_bars(count: usize) -> ChartPane {
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+        pane.history_prefix = (0..count)
+            .map(|index| quantick_engine::Bar {
+                open_time: BAR_ZERO_MS + index as i64 * 60_000,
+                close_time: BAR_ZERO_MS + index as i64 * 60_000 + 59_999,
+                open: rust_decimal::Decimal::ONE,
+                high: rust_decimal::Decimal::TWO,
+                low: rust_decimal::Decimal::ONE,
+                close: rust_decimal::Decimal::TWO,
+                buy_volume: rust_decimal::Decimal::ZERO,
+                sell_volume: rust_decimal::Decimal::ZERO,
+                trade_count: 1,
+            })
+            .collect();
+        pane.last_chart_area = Some(TEST_PLOT);
+        pane.last_chart_top = TEST_PLOT.top();
+        pane.last_chart_height = TEST_PLOT.height();
+        pane.last_auto_range = Some((0.0, 100.0));
+        pane
+    }
+
+    /// When the fixture's first bar opened. An arbitrary instant, named once
+    /// so a failure prints a difference rather than two magic numbers.
+    const BAR_ZERO_MS: i64 = 1_700_000_000_000;
+
+    /// The mission in one assertion: point at a candle, learn *its* time.
+    ///
+    /// Every pixel of the candle, because the left half is where this used to
+    /// answer with the bar before it — see
+    /// `every_pixel_of_a_candle_names_that_candle`, which holds the rule this
+    /// reads through.
+    #[test]
+    fn the_compass_names_the_candle_under_the_pointer() {
+        let pane = pane_with_timed_bars(200);
+        let (right, total) = (TEST_PLOT.right(), pane.slots());
+        let width = pane.viewport.candle_width();
+        for slot in [120_usize, 199] {
+            let centre = pane.viewport.x_center(slot, right, total);
+            for x in [
+                centre - width / 2.0 + 0.01,
+                centre,
+                centre + width / 2.0 - 0.01,
+            ] {
+                assert_eq!(
+                    pane.pointer_bar(x, right, total),
+                    Some(pointer_compass::PointerBar {
+                        slot,
+                        open_time_unix_ms: BAR_ZERO_MS + slot as i64 * 60_000,
+                    }),
+                    "every pixel of candle {slot} reads candle {slot}'s own instant"
+                );
+            }
+        }
+    }
+
+    /// Data honesty: the empty canvas past the newest bar holds no bar, and
+    /// neither does the tape's own band. Nothing is marked in either place
+    /// rather than the nearest candle's clock being stretched over it.
+    #[test]
+    fn the_compass_names_no_time_where_there_is_no_bar() {
+        let pane = pane_with_timed_bars(200);
+        let (right, total) = (TEST_PLOT.right(), pane.slots());
+        assert_eq!(
+            pane.pointer_bar(right + 60.0, right, total),
+            None,
+            "the projection margin is future the tape has not written"
+        );
+        let oldest = pane.viewport.x_center(0, right, total);
+        assert_eq!(
+            pane.pointer_bar(oldest - 60.0, right, total),
+            None,
+            "and before the first bar there is nothing either"
+        );
+        // The lane is a rolling window of market time, not bar slots: a bar
+        // time written under it would be the wrong axis's answer.
+        let divider = right - 150.0;
+        assert_eq!(pane.pointer_bar(right - 40.0, divider, total), None);
+        assert_eq!(
+            pane_with_timed_bars(0).pointer_bar(500.0, right, 0),
+            None,
+            "and a chart with no bars at all names none"
+        );
+    }
+
+    /// Two surfaces that must agree: the tag a trader reads off the axis and
+    /// the slot a control client reads out of the cursor scope are one answer,
+    /// because they come through one owner. Written as a test rather than
+    /// trusted from the diff — the two are computed in different files.
+    #[test]
+    fn the_axis_tag_and_the_control_cursor_name_one_bar() {
+        let mut pane = pane_with_timed_bars(200);
+        let ctx = egui::Context::default();
+        let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+        let areas = test_areas(&pane, TEST_PLOT);
+        pane.last_bands = pane.bands(&areas);
+        let right = pane.last_lane_divider_x.unwrap_or(areas.chart.right());
+        let total = pane.slots();
+        // Deliberately in the left half of a candle, the half that used to
+        // answer with its neighbour.
+        let slot = 140_usize;
+        let x =
+            pane.viewport.x_center(slot, right, total) - pane.viewport.candle_width() / 2.0 + 0.5;
+        pane.hover_pos = Some(egui::pos2(x, areas.chart.center().y));
+        let compass = pane
+            .pointer_bar(x, right, total)
+            .expect("the pointer is on a candle");
+        let cursor = pane
+            .control_pointer_hit()
+            .expect("and the control plane can see the same pointer");
+        assert_eq!(compass.slot, slot);
+        assert_eq!(
+            cursor.slot,
+            Some(compass.slot),
+            "the axis and the cursor scope may not name two different bars"
+        );
+    }
+
+    /// Drive `handle_navigation` for one frame with the given pointer events,    /// Drive `handle_navigation` for one frame with the given pointer events,
     /// and hand back whatever settings request the gestures raised.
     ///
     /// The pane's input pass needs a whole `PaneChrome` — the tool rail, the
@@ -8108,7 +8549,343 @@ mod tests {
         pane.take_settings_request()
     }
 
-    /// A double click at `pos`, as two press/release pairs in two frames —
+    /// Run `paint` with a full `PaneChrome` and the given tool armed, and hand
+    /// back everything it put on the canvas.
+    fn painted_with_tool(
+        pane: &ChartPane,
+        tool: Tool,
+        paint: impl Fn(&ChartPane, &egui::Painter, &PaneChrome<'_>),
+    ) -> String {
+        let mut toolrail = crate::toolrail::ToolRail::new();
+        toolrail.arm(tool);
+        let presets =
+            drawings::presets::PresetStore::load_from(std::env::temp_dir().join("no-such.toml"));
+        let mut begin_text_edit = false;
+        let style = crate::style::ChartStyle::default();
+        let mut paper = crate::paper_trading::PaperTrading::new();
+        let footprint = crate::footprint_config::FootprintConfig::default();
+        let mut layers = crate::chart_layers::LayerActions::default();
+        let chrome = PaneChrome {
+            toolrail: &mut toolrail,
+            presets: &presets,
+            begin_text_edit: &mut begin_text_edit,
+            style: &style,
+            tz: crate::timezone::TzOffset::default(),
+            symbol: "TESTUSDT",
+            paper: &mut paper,
+            paper_owns_input: false,
+            shared_pick: None,
+            shared: SharedInteraction::default(),
+            capabilities: crate::config::FeedCapabilities::none(),
+            side_inferred: false,
+            footprint: &footprint,
+            layers: &mut layers,
+        };
+        painted(|painter| paint(pane, painter, &chrome))
+    }
+
+    /// One price, one tag. The crosshair is a mode that writes its own price
+    /// on the axis; while it is armed the compass steps off that half rather
+    /// than stacking a second chip on the same pixel — and still supplies the
+    /// time half, which the crosshair has never drawn.
+    #[test]
+    fn the_armed_crosshair_keeps_the_price_tag_to_itself() {
+        let mut pane = pane_with_timed_bars(200);
+        let areas = test_areas(&pane, TEST_PLOT);
+        let scale = test_scale();
+        let mut discarded = crate::chart_layers::LayerActions::default();
+        // The time half off, so this measures the price half alone.
+        pane.set_layer_visible(ChartLayer::PointerTime, false, &mut discarded);
+        pane.hover_pos = Some(areas.chart.center());
+        let compass = |pane: &ChartPane, painter: &egui::Painter, chrome: &PaneChrome<'_>| {
+            if let Some(decided) = pane.pointer_compass(
+                areas.chart,
+                areas.time_strip,
+                areas.chart.right(),
+                pane.slots(),
+                &scale,
+                chrome,
+            ) {
+                pane.draw_pointer_compass(
+                    painter,
+                    &decided,
+                    areas.chart.right(),
+                    areas.time_strip,
+                    chrome,
+                );
+            }
+        };
+        let alone = painted_with_tool(&pane, Tool::Pointer, compass);
+        assert!(
+            alone.contains("Text"),
+            "the plain pointer gets the compass's price tag"
+        );
+        let with_crosshair = painted_with_tool(&pane, Tool::Crosshair, compass);
+        assert_eq!(
+            with_crosshair, "[]",
+            "and the armed crosshair writes it instead, so the compass adds nothing"
+        );
+
+        // Switched off, the crosshair is no longer writing anything and the
+        // compass takes the half back — the guard is about who is drawing, not
+        // about which tool is armed.
+        pane.set_layer_visible(ChartLayer::Crosshair, false, &mut discarded);
+        assert!(
+            painted_with_tool(&pane, Tool::Crosshair, compass).contains("Text"),
+            "a crosshair that draws nothing cannot own the tag"
+        );
+    }
+
+    /// Every level the pane would write on the price axis this frame.    /// Every level the pane would write on the price axis this frame.
+    fn axis_levels_of(pane: &ChartPane, scale: &PriceScale) -> Vec<PriceAxisLevel> {
+        let mut levels = Vec::new();
+        pane.for_each_price_axis_level(TEST_PLOT.right(), pane.slots(), scale, |level| {
+            levels.push(level);
+        });
+        levels
+    }
+
+    fn test_scale() -> PriceScale {
+        PriceScale::from_range(100.0, 200.0, TEST_PLOT.top(), TEST_PLOT.bottom())
+    }
+
+    /// How exact a tag can be. A declared level is a screen `y`, so the price
+    /// on the tag has been through an f32 pixel and back: it is as exact as
+    /// the axis is and no more, which is the right answer — the tag has to
+    /// agree with the *pixel* the line is painted on. A tenth of a pixel's
+    /// worth of price is far inside that and far outside f32 noise.
+    fn a_tenth_of_a_pixel() -> f64 {
+        let (lo, hi) = test_scale().range();
+        (hi - lo) / f64::from(TEST_PLOT.height()) / 10.0
+    }
+
+    /// The ProfitChart ask: a horizontal line marks where it is on the price
+    /// axis, in its own colour, so the level can be read without hunting for
+    /// where the line meets the gutter.
+    #[test]
+    fn a_horizontal_level_marks_itself_on_the_price_axis() {
+        let mut pane = pane_with_timed_bars(200);
+        let scale = test_scale();
+        let red = egui::Color32::from_rgb(200, 40, 40);
+        for (id, price) in [("horizontal-line", 150.0_f64), ("horizontal-ray", 120.0)] {
+            let tool = drawings::DrawingTool::by_id(id).expect("a registered tool");
+            assert!(pane.drawings.place(tool, ChartPoint::at(100.0, price)));
+        }
+        for item in pane.drawings.items_mut() {
+            item.style.color = red;
+        }
+
+        let levels = axis_levels_of(&pane, &scale);
+        assert_eq!(levels.len(), 2, "one tag per level: {levels:?}");
+        for (level, price) in levels.iter().zip([150.0_f64, 120.0]) {
+            assert!(
+                (level.price - price).abs() < a_tenth_of_a_pixel(),
+                "the tag reads the level's own price, got {}",
+                level.price
+            );
+            assert!(
+                (level.y - scale.y(price)).abs() < 1e-3,
+                "and sits where the axis puts that price"
+            );
+            assert_eq!(level.color, red, "in the object's own colour");
+        }
+    }
+
+    /// The tag is the object, said on the axis — so it moves when the object
+    /// moves, and it goes when the objects go.
+    #[test]
+    fn an_axis_tag_follows_its_object_and_leaves_with_it() {
+        let mut pane = pane_with_timed_bars(200);
+        let scale = test_scale();
+        let tool = drawings::DrawingTool::by_id("horizontal-line").expect("a registered tool");
+        assert!(pane.drawings.place(tool, ChartPoint::at(100.0, 150.0)));
+
+        let before = axis_levels_of(&pane, &scale);
+        assert_eq!(before.len(), 1);
+        pane.drawings.select(Some(0));
+        pane.drawings.begin_gesture();
+        // Down the axis by a tenth of the visible range.
+        pane.drawings.translate_selected(0.0, -10.0);
+        pane.drawings.commit_gesture();
+        let after = axis_levels_of(&pane, &scale);
+        assert_eq!(after.len(), 1);
+        assert!(
+            (after[0].price - 140.0).abs() < a_tenth_of_a_pixel(),
+            "the tag went with the line, to {}",
+            after[0].price
+        );
+
+        // The layer that hides the objects hides what the axis says about
+        // them: a gutter still marked at a level whose line is gone would be
+        // the chart claiming something it is not drawing.
+        let mut discarded = crate::chart_layers::LayerActions::default();
+        pane.set_layer_visible(ChartLayer::Drawings, false, &mut discarded);
+        assert!(
+            axis_levels_of(&pane, &scale).is_empty(),
+            "no objects on the chart, no levels on the axis"
+        );
+    }
+
+    /// Data honesty on the axis: a mark this chart's data does not back is
+    /// painted faded, and its tag is faded with it. A full-strength chip on
+    /// the gutter would be the axis making a claim the stroke beside it is
+    /// explicitly not making.
+    #[test]
+    fn a_tag_wears_the_same_honesty_fade_its_stroke_does() {
+        let mut pane = pane_with_timed_bars(200);
+        let scale = test_scale();
+        let tool = drawings::DrawingTool::by_id("horizontal-line").expect("a registered tool");
+        assert!(pane.drawings.place(tool, ChartPoint::at(100.0, 150.0)));
+        let full = axis_levels_of(&pane, &scale)[0].color;
+
+        // The tab changed the instrument under the mark: the level is real,
+        // the price means nothing on the chart it is now over.
+        pane.drawings.items_mut()[0].foreign_market = true;
+        let faded = axis_levels_of(&pane, &scale)[0].color;
+        assert_ne!(faded, full, "the tag says the mark is not backed here");
+        assert!(
+            faded.a() < full.a(),
+            "and says it by fading, not by shouting: {faded:?} vs {full:?}"
+        );
+        assert_eq!(
+            faded,
+            ChartPane::painted_color(&pane.drawings.items()[0]),
+            "through the same call the stroke goes through"
+        );
+    }
+
+    /// A level on an indicator pane is a value on *that* pane's axis.    /// A level on an indicator pane is a value on *that* pane's axis. Writing
+    /// it on the price gutter would put a CVD reading where a price goes.
+    #[test]
+    fn a_level_drawn_on_an_indicator_band_never_reaches_the_price_axis() {
+        let mut pane = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0, -20.0]]);
+        pane.last_chart_area = Some(TEST_PLOT);
+        pane.last_auto_range = Some((0.0, 100.0));
+        let band = DrawingBand::Indicator(
+            pane.indicators.pane_key(
+                pane.indicators
+                    .visible_panes()
+                    .next()
+                    .expect("one pane indicator"),
+            ),
+        );
+        let tool = drawings::DrawingTool::by_id("horizontal-line").expect("a registered tool");
+        assert!(
+            pane.drawings
+                .place_on(tool, &band, ChartPoint::at(1.0, 20.0))
+        );
+        assert!(
+            axis_levels_of(&pane, &test_scale()).is_empty(),
+            "the price axis says nothing about another pane's units"
+        );
+    }
+
+    /// A right-click at `pos`, driven through the pane's own input pass, and    /// A right-click at `pos`, driven through the pane's own input pass, and
+    /// one more frame for the menu it opened to draw itself.
+    fn right_click_menu(pane: &mut ChartPane, ctx: &egui::Context, pos: egui::Pos2) {
+        for pressed in [true, false] {
+            let events = vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                },
+            ];
+            let _ = drive_navigation(pane, ctx, TEST_PLOT, events);
+        }
+        // The frame the open menu is laid out on.
+        let _ = drive_navigation(pane, ctx, TEST_PLOT, Vec::new());
+    }
+
+    /// Each axis carries the switch for the mark it wears, because that is
+    /// where a trader looks for something about that axis.
+    ///
+    /// Driven through the right-click itself rather than by setting the
+    /// field: a switch that exists in the code and not in the menu is a
+    /// switch nobody can reach.
+    #[test]
+    fn each_axis_offers_the_half_of_the_compass_it_wears() {
+        let ctx = egui::Context::default();
+        let mut pane = pane_with_timed_bars(200);
+        // One frame to publish the geometry the menus are opened on.
+        let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+        let areas = test_areas(&pane, TEST_PLOT);
+
+        right_click_menu(&mut pane, &ctx, areas.price_gutter.center());
+        assert!(
+            pane.layer_menu_rects
+                .iter()
+                .any(|(layer, _)| *layer == ChartLayer::PointerPrice),
+            "the price axis offers the price half: {:?}",
+            pane.layer_menu_rects
+        );
+        assert!(
+            pane.layer_menu_rects
+                .iter()
+                .all(|(layer, _)| *layer != ChartLayer::PointerTime),
+            "and not the other axis's half"
+        );
+
+        let strip = split_time_strip(areas.time_strip, pane.last_lane_divider_x).0;
+        right_click_menu(&mut pane, &ctx, strip.center());
+        assert!(
+            pane.layer_menu_rects
+                .iter()
+                .any(|(layer, _)| *layer == ChartLayer::PointerTime),
+            "the time axis offers the time half: {:?}",
+            pane.layer_menu_rects
+        );
+        assert!(
+            pane.layer_menu_rects
+                .iter()
+                .all(|(layer, _)| *layer != ChartLayer::PointerPrice),
+            "and not the other axis's half"
+        );
+    }
+
+    /// Clicking that entry really switches the layer — the checkbox writes
+    /// the field the painter reads, not a copy beside it.
+    #[test]
+    fn the_axis_menu_entry_switches_the_layer_it_names() {
+        let ctx = egui::Context::default();
+        let mut pane = pane_with_timed_bars(200);
+        let style = crate::style::ChartStyle::default();
+        let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+        let areas = test_areas(&pane, TEST_PLOT);
+        assert!(
+            pane.layer_visible(ChartLayer::PointerPrice, &style),
+            "the fixture opens with the compass on"
+        );
+
+        right_click_menu(&mut pane, &ctx, areas.price_gutter.center());
+        let checkbox = pane
+            .layer_menu_rects
+            .iter()
+            .find(|(layer, _)| *layer == ChartLayer::PointerPrice)
+            .expect("the price axis offers the switch")
+            .1
+            .center();
+        for pressed in [true, false] {
+            let events = vec![
+                egui::Event::PointerMoved(checkbox),
+                egui::Event::PointerButton {
+                    pos: checkbox,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                },
+            ];
+            let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, events);
+        }
+        assert!(
+            !pane.layer_visible(ChartLayer::PointerPrice, &style),
+            "the click switched the layer the painter reads"
+        );
+    }
+
+    /// A double click at `pos`, as two press/release pairs in two frames —    /// A double click at `pos`, as two press/release pairs in two frames —
     /// egui reports the second as `double_clicked`.
     fn double_click_at(
         pane: &mut ChartPane,

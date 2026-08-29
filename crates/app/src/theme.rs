@@ -223,6 +223,49 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+/// WCAG relative luminance of an opaque colour — how *light* it looks, which
+/// is not how light its channels average to.
+///
+/// A saturated blue and a saturated yellow can share a channel average and sit
+/// twenty L\* apart; only one of them can carry dark ink. Green weighs seven
+/// times what blue does here, and that is the whole reason to spell the
+/// formula out rather than take a mean.
+#[must_use]
+pub fn relative_luminance(color: Color32) -> f32 {
+    let linear = |channel: u8| -> f32 {
+        let value = f32::from(channel) / 255.0;
+        if value <= 0.03928 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(color.r()) + 0.7152 * linear(color.g()) + 0.0722 * linear(color.b())
+}
+
+/// Above this relative luminance a fill takes dark ink.
+///
+/// The sRGB midpoint for contrast: at 0.179 a colour is exactly 4.5:1 against
+/// both black and white, so it is the one threshold that cannot leave either
+/// side of the flip below the readable line.
+const INK_FLIP_LUMINANCE: f32 = 0.179;
+
+/// The ink to write on a chip filled with `fill`.
+///
+/// Where a chip's colour is a constant the ink can be one too — the last-price
+/// chip is only ever one of two saturated greens or reds, so it simply wears
+/// [`CHIP_INK`]. A chip carrying a *drawing's* colour cannot: the trader picks
+/// that colour, and dark navy and pale yellow are both legal. This is the
+/// answer for those, computed once per chip rather than assumed.
+#[must_use]
+pub fn ink_on(fill: Color32) -> Color32 {
+    if relative_luminance(fill) > INK_FLIP_LUMINANCE {
+        CHIP_INK
+    } else {
+        TEXT_PRIMARY
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,5 +333,46 @@ mod tests {
     #[test]
     fn support_text_matches_the_redesign_spec() {
         assert_eq!(TEXT_SUPPORT, Color32::from_rgb(0x86, 0x92, 0xA4));
+    }
+
+    /// Every ink the flip can hand out has to be readable on the fill that
+    /// asked for it — that is the only promise this rule makes, and a
+    /// threshold nudged for looks would quietly break it.
+    #[test]
+    fn the_ink_flip_stays_readable_on_both_sides() {
+        let ratio = |a: Color32, b: Color32| {
+            let (x, y) = (relative_luminance(a), relative_luminance(b));
+            (x.max(y) + 0.05) / (x.min(y) + 0.05)
+        };
+        for fill in [
+            Color32::from_rgb(0x8A, 0xB4, 0xF8), // the stock drawing blue
+            Color32::from_rgb(0xFF, 0xE0, 0x66), // a pale yellow
+            Color32::from_rgb(0x0B, 0x1B, 0x3A), // dark navy, a legal pick
+            Color32::WHITE,
+            Color32::BLACK,
+            WARN,
+            ACCENT,
+        ] {
+            let ink = ink_on(fill);
+            assert!(
+                ratio(fill, ink) >= 4.5,
+                "{fill:?} got ink {ink:?} at only {:.2}:1",
+                ratio(fill, ink)
+            );
+        }
+    }
+
+    /// Light colours take the dark ink and dark ones the light ink — stated
+    /// outright, so a threshold moved by accident fails here rather than in a
+    /// screenshot nobody looks at twice.
+    #[test]
+    fn the_ink_flips_on_how_light_the_fill_looks_not_on_its_average() {
+        assert_eq!(ink_on(Color32::WHITE), CHIP_INK);
+        assert_eq!(ink_on(Color32::BLACK), TEXT_PRIMARY);
+        // Same channel average, opposite answers: green carries the weight.
+        let yellow = Color32::from_rgb(0xC0, 0xC0, 0x00);
+        let blue = Color32::from_rgb(0x00, 0x00, 0xC0);
+        assert_eq!(ink_on(yellow), CHIP_INK);
+        assert_eq!(ink_on(blue), TEXT_PRIMARY);
     }
 }

@@ -49,6 +49,14 @@ last_price = true
 seam_divider = true
 crosshair = true
 
+# The pointer's compass. On, because the bars here are cut by ticks, volume or
+# dollars rather than by the clock: without it the only way to learn when a
+# candle happened is to arm the crosshair tool, and a chart that cannot answer
+# "when was this?" while you point at it is the gap this project's own bar
+# types create. Two switches, one per axis, reached by right-clicking that axis.
+pointer_price = true
+pointer_time = true
+
 # What the trader put on the chart. Never hidden by default — the two paper
 # layers are switched apart on purpose, because hiding trade history must never
 # hide the position you are in.

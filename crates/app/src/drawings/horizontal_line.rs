@@ -1,8 +1,8 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::line_core::{Axis, LINES_FAMILY, hit_axis, paint_axis};
-use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, ToolShortcut};
+use super::line_core::{Axis, LINES_FAMILY, hit_axis, paint_axis, single_level};
+use super::{AxisLevels, DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, ToolShortcut};
 
 pub(super) static TOOL: HorizontalLine = HorizontalLine;
 
@@ -53,6 +53,11 @@ impl DrawingToolImpl for HorizontalLine {
         _ctxt: &DrawContext<'_>,
     ) {
         paint_axis(painter, chart_rect, style, points, Axis::Horizontal);
+    }
+    /// The price it names. This tool exists to say one, so the axis says it
+    /// too — see [`DrawingToolImpl::axis_levels`].
+    fn axis_levels(&self, points: &[egui::Pos2]) -> AxisLevels {
+        single_level(points)
     }
     fn hit_test(
         &self,

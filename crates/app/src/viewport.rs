@@ -326,6 +326,39 @@ impl Viewport {
         self.right_edge_bar(total) - (chart_right - x - 0.5 * self.candle_width()) / self.px_per_bar
     }
 
+    /// The bar slot a fractional bar coordinate names: the nearest bar centre.
+    ///
+    /// [`Self::bar_at_x`] answers in bar *centres*, so bar `i` reads exactly
+    /// `i` at its own centre and `i - 0.5` at its left edge. Truncating that
+    /// therefore names the bar to the *left* for the whole left half of every
+    /// candle — half the pixels of every candle on the chart — which is why
+    /// this rounds. Pointing at a candle has to name that candle: the axis
+    /// compass reads its time off this, and so does the magnet that snaps an
+    /// anchor to its high.
+    ///
+    /// `None` for a coordinate that is not a slot at all: not finite, or left
+    /// of the first bar. Unbounded on the right, because the empty space past
+    /// the newest bar is a real place a trader draws in — the caller decides
+    /// what a slot out there means (see `ChartPane::anchor_time`).
+    #[must_use]
+    pub fn slot_of(bar: f32) -> Option<usize> {
+        if !bar.is_finite() {
+            return None;
+        }
+        let slot = bar.round();
+        (slot >= 0.0).then_some(slot as usize)
+    }
+
+    /// The bar under `x` pixels, bounded by a series of `total` bars.
+    ///
+    /// The one question "which candle am I pointing at?" — asked by the axis
+    /// compass, by the control plane's cursor scope and by every hit test that
+    /// needs a whole bar rather than a fraction of one.
+    #[must_use]
+    pub fn slot_at_x(&self, x: f32, chart_right: f32, total: usize) -> Option<usize> {
+        Self::slot_of(self.bar_at_x(x, chart_right, total)).filter(|slot| *slot < total)
+    }
+
     /// The `[start, end)` bar indices at least partly visible in a chart `width`
     /// pixels wide over `total` bars. Generous by up to a bar at each edge (the
     /// caller clips), so nothing pops in late.
@@ -346,6 +379,53 @@ impl Viewport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The whole reason [`Viewport::slot_of`] rounds.
+    ///
+    /// A candle occupies its slot centred on [`Viewport::x_center`], so the
+    /// left half of every candle reads as `i - something` and truncating names
+    /// the candle to its *left*. Half the pixels of every candle on the chart
+    /// answered with the wrong bar — which the axis compass would have
+    /// inherited, and the candle magnet already had.
+    #[test]
+    fn every_pixel_of_a_candle_names_that_candle() {
+        let mut viewport = Viewport::new();
+        viewport.set_px_per_bar(20.0);
+        let (right, total) = (1000.0_f32, 300_usize);
+        let width = viewport.candle_width();
+        for slot in [10_usize, 150, 299] {
+            let centre = viewport.x_center(slot, right, total);
+            for (where_on_the_candle, x) in [
+                ("left edge", centre - width / 2.0 + 0.01),
+                ("centre", centre),
+                ("right edge", centre + width / 2.0 - 0.01),
+            ] {
+                assert_eq!(
+                    viewport.slot_at_x(x, right, total),
+                    Some(slot),
+                    "the {where_on_the_candle} of candle {slot} is candle {slot}"
+                );
+            }
+        }
+    }
+
+    /// Off either end there is no bar, and the answer says so rather than
+    /// clamping onto the nearest one: a compass that named the newest candle
+    /// while the pointer sat in the empty margin past it would put a time on
+    /// a place where nothing happened.
+    #[test]
+    fn there_is_no_slot_off_the_ends_of_the_tape() {
+        let mut viewport = Viewport::new();
+        viewport.set_px_per_bar(20.0);
+        let (right, total) = (1000.0_f32, 300_usize);
+        // Past the newest bar: the projection margin, where traders draw.
+        assert_eq!(viewport.slot_at_x(right + 40.0, right, total), None);
+        // And left of the oldest.
+        let oldest = viewport.x_center(0, right, total);
+        assert_eq!(viewport.slot_at_x(oldest - 40.0, right, total), None);
+        assert_eq!(Viewport::slot_of(f32::NAN), None, "not a position at all");
+        assert_eq!(Viewport::slot_of(-3.0), None, "before the first bar");
+    }
 
     #[test]
     fn new_follows_live() {
