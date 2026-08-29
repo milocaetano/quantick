@@ -30328,7 +30328,24 @@ crosshair = false
             )
             .unwrap();
         wait_for_queued_gateway_requests(&app, 1);
-        run_frame(&mut app, &ctx);
+        // Frames until the answer is on the socket, not exactly one. What this
+        // asserts is that a *parked wait blocks nothing* — the read is served
+        // while one is registered, and the assertion above already proves the
+        // wait holds no UI request slot. How many frames the gateway needs to
+        // drain its queue is scheduling, not contract, and pinning it to one
+        // made the test fail under load with `control.timeout`: the reply had
+        // not been written yet, so `read()` blocked until the request's own
+        // five-second deadline turned a slow frame into a wrong answer. Same
+        // bounded loop the parked waiter below already uses.
+        let mut served = false;
+        for _ in 0..400 {
+            run_frame(&mut app, &ctx);
+            if reader.reply_pending(std::time::Duration::from_millis(5)) {
+                served = true;
+                break;
+            }
+        }
+        assert!(served, "the concurrent read was never answered");
         let snapshot = reader.read().unwrap();
         assert_eq!(snapshot.request_id, snapshot_id);
         assert!(matches!(
