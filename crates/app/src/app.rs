@@ -11175,7 +11175,12 @@ impl QuantickApp {
                     // corner chip alone on a blank canvas is a puzzle. One
                     // muted line, no border and no buttons — the way out is
                     // still the corner.
-                    if let Some((pane_rect, 0)) = tab.starved_pane() {
+                    //
+                    // Not while the popup is up. The line and the popup carry
+                    // the same headline, and on the empty chart that is
+                    // exactly where both of them draw: one sentence, twice, a
+                    // hand apart.
+                    if !popup_open && let Some((pane_rect, 0)) = tab.starved_pane() {
                         feed_notice::draw_empty_pane_note(ui.painter(), pane_rect, &report);
                     }
                     if popup_open {
@@ -13739,6 +13744,44 @@ plot(close)
             .expect("the corner is still up");
         click_chart(&mut app, &ctx, chip.center());
         assert!(!app.control_feed_popup_open(), "and the chip closes it");
+    }
+
+    /// One sentence, once. The muted line and the popup carry the same
+    /// headline, and on an empty chart both of them draw in the same place —
+    /// which is how a capture caught the same words twice, a hand apart.
+    #[test]
+    fn the_empty_chart_never_says_the_same_thing_twice() {
+        let (mut app, _notices, _channels) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        let output = run_frame(&mut app, &ctx);
+        let headline = app
+            .active_tab()
+            .stall_at(&app.config, metrics::wall_clock_ms())
+            .expect("the stall is forced")
+            .headline;
+
+        let says_it = |output: &egui::FullOutput| {
+            painted_text(output)
+                .iter()
+                .filter(|text| *text == &headline)
+                .count()
+        };
+        assert_eq!(
+            says_it(&output),
+            1,
+            "the empty pane explains itself once: {headline}"
+        );
+
+        let chip = app.control_feed_chip_rect().expect("the corner is up");
+        click_chart(&mut app, &ctx, chip.center());
+        let output = run_frame(&mut app, &ctx);
+        assert!(app.control_feed_popup_open(), "the popup is up");
+        assert_eq!(
+            says_it(&output),
+            1,
+            "the popup takes the line's job rather than joining it: {headline}"
+        );
     }
 
     /// A feed that recovered while the trader was reading about it takes the
