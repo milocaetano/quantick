@@ -1029,14 +1029,15 @@ pub struct QuantickApp {
     /// the frame budget it has left to wait for a chart to ask from.
     pending_load_older: Option<(usize, u32)>,
     /// The ending whose sentence the `QUANTICK_HISTORY_NOTE` hook asks the
-    /// loading lane to carry, until the first frame raises it. Consumed once.
+    /// loading lane to carry, and the frame budget it has left to wait for a
+    /// chart to carry it over. Consumed once.
     ///
     /// A settled reach speaks only when a real venue really refuses, which is
     /// a market condition and not a setting: on the feeds a validation run can
     /// arrange, the reach either lands its session or the source declares it
     /// cannot page at all and the button never takes a press. Without this the
     /// whole surface is invisible to anything but a bad afternoon.
-    pending_history_note: Option<crate::history_reach::CampaignEnd>,
+    pending_history_note: Option<(crate::history_reach::CampaignEnd, u32)>,
     /// Spans of older *candles* the `QUANTICK_LOAD_OLDER_CANDLES` hook still
     /// owes, and the frame budget it has left to wait for a first reply to
     /// reach back from. The trade twin of this is `pending_load_older`; they
@@ -1811,7 +1812,8 @@ impl QuantickApp {
                     );
                 }
                 has_words
-            });
+            })
+            .map(|end| (end, LOAD_OLDER_HOOK_FRAMES));
         // How many anchors of the armed tool are already down when the run
         // opens — the half-placed state a screenshot cannot otherwise reach,
         // because it lives between two clicks. See `apply_drawing_draft`.
@@ -9248,6 +9250,50 @@ impl QuantickApp {
         self.pending_load_older = (pages > 1).then_some((pages - 1, budget));
     }
 
+    /// The `QUANTICK_HISTORY_NOTE` hook: the sentence a settled reach leaves,
+    /// held up over a chart for as long as the hook's budget lasts.
+    ///
+    /// Re-applied every frame rather than raised once, the way
+    /// `QUANTICK_PAN_PX` re-applies its drag — and for a reason a one-shot
+    /// could not survive. Switching source clears the note along with the run
+    /// that raised it, exactly as it should: a new market has nothing to say
+    /// about the last one's press. But a launch under `QUANTICK_REPLAY_AUTOSTART`
+    /// *is* a source switch, arriving a second after the first bars, so a note
+    /// raised once was swept away before any shutter could open on it.
+    ///
+    /// Holding it re-raises only while it is absent, so the surface itself is
+    /// unchanged — the same sentence, from the same call, in the same lane.
+    /// When the budget runs out the note keeps its ordinary
+    /// [`crate::tab::HISTORY_NOTE_LINGER`] from the last raise and then leaves
+    /// on its own, so even a hooked run photographs a note that expires.
+    fn apply_history_note_hook(&mut self) {
+        let Some((end, budget)) = self.pending_history_note else {
+            return;
+        };
+        let Some(left) = budget.checked_sub(1) else {
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HISTORY_NOTE_HOOK_RELEASED",
+                ending = end.action(),
+                frames_held = LOAD_OLDER_HOOK_FRAMES,
+                action = "note_left_to_expire",
+                "QUANTICK_HISTORY_NOTE let go of its sentence"
+            );
+            self.pending_history_note = None;
+            return;
+        };
+        self.pending_history_note = Some((end, left));
+        // Nothing charted yet, or the note is already up. Either way there is
+        // nothing to raise on this frame.
+        if self.active_tab().flow_pane.slots() == 0 || self.active_tab().history_note().is_some() {
+            return;
+        }
+        if let Some(notice) = end.notice() {
+            self.active_tab_mut().raise_history_note(notice);
+        }
+    }
+
     /// The `QUANTICK_LOAD_OLDER_CANDLES` hook: the history menu's "+ older
     /// candles" entry, pressed without a hand, once per frame at most.
     ///
@@ -10897,13 +10943,7 @@ impl QuantickApp {
         self.last_frame = Some(now);
 
         self.drain_tabs();
-        // The hook's note, raised once the tab exists to hold it — before the
-        // expiry below, so it gets its full linger rather than a frame less.
-        if let Some(end) = self.pending_history_note.take()
-            && let Some(notice) = end.notice()
-        {
-            self.active_tab_mut().raise_history_note(notice);
-        }
+        self.apply_history_note_hook();
         // A "load older" outcome is a passing remark: it leaves after
         // `tab::HISTORY_NOTE_LINGER` whether or not anyone read it. Every tab,
         // not only the one on screen — a background tab keeps draining, so it
@@ -28485,6 +28525,42 @@ crosshair = false
         assert!(
             !app.active_tab().loading.is_active(LoadingTask::History),
             "and nothing is left waiting on a reply"
+        );
+    }
+
+    /// The sentence has to reach the glass, not just the field.
+    ///
+    /// Every other test here proves the tab *holds* the right words. This one
+    /// proves a trader can read them, which is the entire complaint: the
+    /// outcome existed in a log line and nowhere a person looks.
+    #[test]
+    fn the_settled_reach_paints_its_sentence_over_the_chart() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+        let quiet = painted_text(&run_frame(&mut app, &ctx));
+        let sentence = crate::history_reach::CampaignEnd::NothingComingBack
+            .notice()
+            .expect("the ending's own sentence");
+        assert!(
+            !quiet.iter().any(|text| text == sentence),
+            "a chart nobody pressed anything on says nothing; painted: {quiet:?}"
+        );
+
+        app.active_tab_mut().raise_history_note(sentence);
+        let spoken = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            spoken.iter().any(|text| text == sentence),
+            "the outcome of the press has to be on screen; painted: {spoken:?}"
+        );
+
+        // And it leaves on its own, with nothing to dismiss.
+        app.active_tab_mut()
+            .expire_history_note(std::time::Instant::now() + crate::tab::HISTORY_NOTE_LINGER);
+        let after = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            !after.iter().any(|text| text == sentence),
+            "and it is gone again without a click; painted: {after:?}"
         );
     }
 
