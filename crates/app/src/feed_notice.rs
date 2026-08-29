@@ -308,14 +308,27 @@ pub fn chip_rect(painter: &egui::Painter, area: egui::Rect) -> egui::Rect {
 /// `open` is whether the popup it opens is showing, which the chip carries as
 /// a pressed look — the trader must be able to tell the click landed even
 /// though the thing it opened is above their pointer rather than under it.
+///
+/// The reason rides on the hover. The chip is one word by design, and one word
+/// answers "am I live?" and nothing else; a trader mid-session who wants *why*
+/// should not have to spend a click and a dismissal to read it. `on_hover_ui`
+/// rather than `on_hover_text`, for the reason the status line gives: the
+/// closure runs only while someone is pointing at it.
 #[must_use]
 pub fn draw_chip(ui: &mut egui::Ui, area: egui::Rect, report: &Report<'_>, open: bool) -> bool {
     let rect = chip_rect(ui.painter(), area);
-    let response = ui.interact(
-        rect,
-        ui.id().with("feed_offline_chip"),
-        egui::Sense::click(),
-    );
+    let response = ui
+        .interact(
+            rect,
+            ui.id().with("feed_offline_chip"),
+            egui::Sense::click(),
+        )
+        .on_hover_ui(|ui| {
+            ui.label(report.headline);
+            if let Some(step) = report.next_step {
+                ui.label(egui::RichText::new(step).color(theme::TEXT_MUTED));
+            }
+        });
     let accent = report.accent();
     let hovered = response.hovered();
     let painter = ui.painter();

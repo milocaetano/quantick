@@ -274,21 +274,35 @@ impl ForcedStall {
 /// replaced.
 const MINUTES_ABOVE_S: i64 = 90;
 
+/// Where a duration stops being read in minutes, in minutes.
+///
+/// Ninety, for the same reason [`MINUTES_ABOVE_S`] is ninety seconds. It earns
+/// its place on a different case, though: an overnight close is fourteen hours
+/// of silence, and a chart that opens on the last session — which is now the
+/// ordinary way to open one outside market hours — would otherwise report it
+/// as `840 min`, a number nobody converts while looking for whether the data
+/// in front of them is current.
+const HOURS_ABOVE_MIN: i64 = 90;
+
 /// A duration in the words a status line uses: seconds while seconds still
-/// mean something, minutes after that.
+/// mean something, then minutes, then hours.
 ///
-/// Shared with the gap mark the chart draws, so a four-minute silence is
-/// called the same thing by the card that offers to fix it and by the seam
-/// that records it.
+/// Shared with the gap mark the chart draws and with the status line's own
+/// staleness cell, so a four-minute silence is called the same thing by the
+/// popup that offers to fix it, the seam that records it and the line that
+/// measures it.
 ///
-/// See [`MINUTES_ABOVE_S`] for where the two readings meet.
+/// See [`MINUTES_ABOVE_S`] and [`HOURS_ABOVE_MIN`] for where the readings meet.
 #[must_use]
 pub(crate) fn spoken_ms(ms: i64) -> String {
     let seconds = ms.max(0) / 1_000;
+    let minutes = seconds / 60;
     if seconds < MINUTES_ABOVE_S {
         format!("{seconds} s")
+    } else if minutes < HOURS_ABOVE_MIN {
+        format!("{minutes} min")
     } else {
-        format!("{} min", seconds / 60)
+        format!("{} h", minutes / 60)
     }
 }
 
@@ -493,6 +507,11 @@ mod tests {
         assert_eq!(spoken_ms(MINUTES_ABOVE_S * 1_000 - 1), "89 s");
         assert_eq!(spoken_ms(MINUTES_ABOVE_S * 1_000), "1 min");
         assert_eq!(spoken_ms(600_000), "10 min");
+        assert_eq!(spoken_ms(HOURS_ABOVE_MIN * 60_000 - 1), "89 min");
+        assert_eq!(spoken_ms(HOURS_ABOVE_MIN * 60_000), "1 h");
+        // The case this tier exists for: a chart opened before the open, on
+        // the session that closed the afternoon before.
+        assert_eq!(spoken_ms(14 * 3_600_000), "14 h");
         assert_eq!(
             spoken_ms(-5),
             "0 s",

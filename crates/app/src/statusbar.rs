@@ -193,7 +193,8 @@ pub fn tape_arrival_ms(arrival_ms: Option<i64>, latency: Option<FeedLatency>) ->
     latency.map(|split| split.arrival_lag_ms).or(arrival_ms)
 }
 
-/// The tape cell: `arrival 123 ms` live, `stale 12 s` when the tape has gone
+/// The tape cell: `arrival 123 ms` live, `stale 12 s` / `stale 14 h` when the
+/// tape has gone
 /// quiet, `10× 45%` while replaying, `arrival —` before the first trade.
 ///
 /// Two different measurements, and the distinction is the point. *Arrival* is
@@ -235,7 +236,11 @@ pub fn tape_text(
     }
     match (tape_age_ms, tape_arrival_ms(arrival_ms, latency)) {
         (Some(age), _) if age > metrics::STALE_TAPE_MS => {
-            format!("stale {} s", age / 1_000)
+            // The same words the corner's popup and the chart's gap seam use.
+            // A tape fourteen hours old is the ordinary state of a chart
+            // opened before the open, and `stale 50400 s` is a true sentence
+            // nobody reads as "yesterday".
+            format!("stale {}", crate::feed::stall::spoken_ms(age))
         }
         (_, Some(arrival)) => {
             // Gated on the figure shown, which is the figure the hop was
@@ -632,6 +637,14 @@ mod tests {
             tape_text(None, Some(42), Some(12_000), None),
             "stale 12 s",
             "a wedged socket keeps a healthy-looking arrival forever"
+        );
+        // A chart opened before the open, on the session that closed the
+        // afternoon before. This cell is the always-visible half of how old
+        // the tape is; the corner is the other half.
+        assert_eq!(
+            tape_text(None, Some(42), Some(14 * 3_600_000), None),
+            "stale 14 h",
+            "an overnight close is not fifty thousand seconds"
         );
         assert_eq!(tape_text(None, None, None, None), "arrival —");
     }

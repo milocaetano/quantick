@@ -13746,6 +13746,40 @@ plot(close)
         assert!(!app.control_feed_popup_open(), "and the chip closes it");
     }
 
+    /// The reason is one hover away, not one click: a trader mid-session who
+    /// wants to know *why* the tape stopped should not have to open something
+    /// and then put it away again.
+    #[test]
+    fn the_corner_answers_a_hover_without_being_opened() {
+        let (mut app, _notices, (events, _book)) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        // Bars, so the empty pane's own line cannot be what the hover finds.
+        events
+            .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+        app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        run_frame(&mut app, &ctx);
+        let chip = app.control_feed_chip_rect().expect("the corner is up");
+        let headline = app
+            .active_tab()
+            .stall_at(&app.config, metrics::wall_clock_ms())
+            .expect("the stall is forced")
+            .headline;
+
+        let at = chip.center();
+        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        let output = run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        assert!(
+            painted_text(&output).iter().any(|text| text == &headline),
+            "the hover has to carry the reason: {headline}"
+        );
+        assert!(
+            !app.control_feed_popup_open(),
+            "and it must not open anything"
+        );
+    }
+
     /// One sentence, once. The muted line and the popup carry the same
     /// headline, and on an empty chart both of them draw in the same place —
     /// which is how a capture caught the same words twice, a hand apart.
