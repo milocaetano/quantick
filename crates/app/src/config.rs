@@ -543,6 +543,59 @@ impl PaperSettings {
     }
 }
 
+/// How far a *load older* press reaches (`[history]` in the TOML).
+///
+/// Two shapes of market, one reach. The defaults are sized against B3's index
+/// future — the tape they were verified on — and neither of them is a fact
+/// about every venue: a market with a real lunch break wants a longer gap
+/// before a pause reads as a close, and a trader comparing an opening range
+/// may want more of yesterday than three hours. Both are the kind of value
+/// `arch-review` puts in a config file rather than a `const`: a `const` still
+/// costs a rebuild, and a rebuild is the one thing the trader cannot do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct HistorySettings {
+    /// A stretch with no prints longer than this reads as the market having
+    /// been closed rather than as a quiet patch. Minutes.
+    pub session_gap_minutes: u32,
+    /// How far past a session's last print the *previous session* reach keeps
+    /// going, so the day before is on screen to compare against rather than
+    /// merely touched. Minutes.
+    pub previous_session_lead_minutes: u32,
+}
+
+impl Default for HistorySettings {
+    fn default() -> Self {
+        Self {
+            session_gap_minutes: (crate::history_reach::SESSION_GAP_MS / 60_000) as u32,
+            previous_session_lead_minutes: (crate::history_reach::PREVIOUS_SESSION_LEAD_MS / 60_000)
+                as u32,
+        }
+    }
+}
+
+impl HistorySettings {
+    /// The two settings as the reach reads them: milliseconds.
+    #[must_use]
+    pub fn reach_bounds(&self) -> crate::history_reach::ReachBounds {
+        crate::history_reach::ReachBounds {
+            session_gap_ms: i64::from(self.session_gap_minutes) * 60_000,
+            previous_session_lead_ms: i64::from(self.previous_session_lead_minutes) * 60_000,
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.session_gap_minutes == 0 {
+            return Err(
+                "history.session_gap_minutes must be at least 1 - a gap of zero \
+                 would read every print as a new session"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+}
+
 /// The whole feed/asset configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AppConfig {
@@ -558,6 +611,10 @@ pub struct AppConfig {
     /// Paper-trading settings; defaults apply when the section is absent.
     #[serde(default)]
     pub paper: PaperSettings,
+    /// How far a *load older* press reaches; defaults apply when the section
+    /// is absent.
+    #[serde(default)]
+    pub history: HistorySettings,
 }
 
 impl AppConfig {
@@ -762,6 +819,7 @@ impl AppConfig {
     pub fn validate(&self) -> Result<(), String> {
         self.metatrader.validate()?;
         self.paper.validate()?;
+        self.history.validate()?;
         if self.feeds.is_empty() {
             return Err("no feeds configured; add at least one [[feeds]] entry".to_string());
         }
@@ -2221,6 +2279,66 @@ mod tests {
         "#;
         let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap_err();
         assert!(matches!(err, ConfigError::Parse { .. }), "{err}");
+    }
+
+    /// The reach's shipped numbers and its defaults are one number each — a
+    /// file that says nothing must behave exactly like the constants the
+    /// module documents, or the two records start drifting the first time one
+    /// of them is tuned.
+    #[test]
+    fn an_absent_history_section_defaults_to_the_reach_constants() {
+        let (config, _) = sample();
+        let bounds = config.history.reach_bounds();
+        assert_eq!(bounds.session_gap_ms, crate::history_reach::SESSION_GAP_MS);
+        assert_eq!(
+            bounds.previous_session_lead_ms,
+            crate::history_reach::PREVIOUS_SESSION_LEAD_MS
+        );
+    }
+
+    /// And a venue with different hours reaches the campaign through the file,
+    /// with no rebuild.
+    #[test]
+    fn a_configured_session_gap_and_lead_reach_the_campaign() {
+        let text = r#"
+            default_feed = "binance"
+            default_symbol = "BTCUSDT"
+            [[feeds]]
+            id = "binance"
+            name = "Binance"
+            provider = "binance"
+            symbols = ["BTCUSDT"]
+            [history]
+            session_gap_minutes = 90
+            previous_session_lead_minutes = 360
+        "#;
+        let config = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap();
+        let bounds = config.history.reach_bounds();
+        assert_eq!(bounds.session_gap_ms, 90 * 60_000);
+        assert_eq!(bounds.previous_session_lead_ms, 360 * 60_000);
+    }
+
+    /// A gap of zero would make every print its own session, so the file is
+    /// refused rather than quietly repaired.
+    #[test]
+    fn a_session_gap_of_zero_is_refused() {
+        let text = r#"
+            default_feed = "binance"
+            default_symbol = "BTCUSDT"
+            [[feeds]]
+            id = "binance"
+            name = "Binance"
+            provider = "binance"
+            symbols = ["BTCUSDT"]
+            [history]
+            session_gap_minutes = 0
+        "#;
+        let err = parse(text, ConfigSource::Embedded, &AddedSymbols::default())
+            .expect_err("a zero gap is not a configuration");
+        assert!(
+            format!("{err}").contains("session_gap_minutes"),
+            "the message has to name the key: {err}"
+        );
     }
 
     /// A minimal valid config for lookups in tests.

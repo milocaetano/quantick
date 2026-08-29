@@ -31,6 +31,7 @@ mod footprint_presets;
 mod footprint_render;
 mod footprint_series;
 mod frvp;
+mod history_reach;
 mod indicator_legend;
 mod indicator_panel;
 mod indicator_render;

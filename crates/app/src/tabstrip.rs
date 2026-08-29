@@ -380,6 +380,7 @@ mod tests {
             }],
             metatrader: MetaTraderSettings::default(),
             paper: Default::default(),
+            history: Default::default(),
         }
     }
 

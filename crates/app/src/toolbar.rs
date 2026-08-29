@@ -243,6 +243,13 @@ pub struct ToolbarModel<'a> {
     pub imbalance_unit: &'a mut ImbalanceUnit,
     /// Trades pulled per "+ older" click.
     pub history_step: &'a mut usize,
+    /// How far one "+ older" press reaches: one page, or the previous session
+    /// with a lead into it. Written straight through, as the page size is —
+    /// the reach is a stored choice, not an event.
+    pub history_reach: &'a mut crate::history_reach::HistoryReach,
+    /// Whether a reach beyond one page is paging right now, so the button can
+    /// say it is working instead of looking idle while pages land.
+    pub history_reach_running: bool,
     /// Trades backfilled so far, for the history menu readout.
     pub history_trades: usize,
     /// Venue candles held so far, for the history menu readout. Zero on a
@@ -669,15 +676,19 @@ fn param_summary(model: &ToolbarModel) -> String {
 /// is exactly that), and gating the menu on the button's capability would
 /// leave the candle reach behind a control the trader cannot open.
 fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<ToolbarAction>) {
-    let paging = model.capabilities.history_paging;
+    let paging = history_button_enabled(
+        model.capabilities.history_paging,
+        model.history_reach_running,
+    );
     let menu = history_menu_reachable(model);
     let load = ui
         .add_enabled(paging, egui::Button::new(format!("{} older", icons::PLUS)))
-        .on_hover_text("fetch older trades and prepend them")
-        .on_disabled_hover_text(
-            "no older trades to fetch: this feed only streams forward, or its \
-             history is already all here",
-        );
+        // The reach's own words, so the button says what this press will do
+        // rather than what the button generally does. A press that pages a
+        // whole session and one that fetches two thousand prints are different
+        // acts, and the trader chose which.
+        .on_hover_text(history_button_hover(model))
+        .on_disabled_hover_text(history_disabled_hover(model.history_reach_running));
     if load.clicked() {
         actions.push(ToolbarAction::LoadOlder);
     }
@@ -686,6 +697,41 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
             draw_history_menu(ui, model, actions);
         });
     });
+}
+
+/// What one press of the load button promises right now: the reach's own
+/// sentence, or what it is already doing.
+///
+/// One owner, read by the bar's button and the overflow entry alike.
+fn history_button_hover(model: &ToolbarModel) -> String {
+    format!(
+        "fetch older trades and prepend them: {}",
+        model.history_reach.hover()
+    )
+}
+
+/// Whether the load button takes a press.
+///
+/// Two facts, one owner, read by the bar's button and the overflow entry
+/// alike. A run already has its one permitted request out and the reply is
+/// what sends the next, so a press during one does nothing — drawn as disabled
+/// rather than left live to swallow it, because a trader who presses again and
+/// gets silence reads the button as broken, and a run is exactly when they are
+/// most likely to press: the chart is visibly still filling.
+fn history_button_enabled(feed_can_page: bool, run_in_flight: bool) -> bool {
+    feed_can_page && !run_in_flight
+}
+
+/// Why the load button is greyed out — the run it is waiting on, or the feed
+/// that has nothing to give. Two reasons, and the trader is told which.
+fn history_disabled_hover(run_in_flight: bool) -> &'static str {
+    if run_in_flight {
+        "paging — each answer asks for the next until the reach is met; pick \
+         \"one page\" above to stop"
+    } else {
+        "no older trades to fetch: this feed only streams forward, or its \
+         history is already all here"
+    }
 }
 
 /// Whether the history menu has anything in it — trade paging, candle reach,
@@ -710,6 +756,25 @@ fn draw_history_menu(
     // enabled page-size box on such a feed is a control that will never be
     // read — the same honesty the disabled-reason enum below is about.
     if model.capabilities.history_paging {
+        // The reach first: it decides whether one press is one request or a
+        // run of them, and the page size below is the size of each request
+        // either way.
+        ui.label("one press reaches");
+        for reach in crate::history_reach::HistoryReach::ALL {
+            // While a run is in flight the reach is also the way out of it, and
+            // this is where the trader would look — it is the control that
+            // started the run. Said on the chip rather than only in the log.
+            let hover = if model.history_reach_running && !reach.runs_a_campaign() {
+                format!(
+                    "{} — picking this now also stops the run in flight",
+                    reach.hover()
+                )
+            } else {
+                reach.hover().to_owned()
+            };
+            ui.selectable_value(model.history_reach, reach, reach.label())
+                .on_hover_text(hover);
+        }
         ui.label("page size (trades per load)");
         ui.add(
             egui::DragValue::new(model.history_step)
@@ -1117,16 +1182,17 @@ fn draw_overflow(
         }
         if !plan.history_inline {
             ui.separator();
-            let paging = model.capabilities.history_paging;
+            let paging = history_button_enabled(
+                model.capabilities.history_paging,
+                model.history_reach_running,
+            );
             let load = ui
                 .add_enabled(
                     paging,
                     egui::Button::new(format!("{} Load older", icons::PLUS)),
                 )
-                .on_disabled_hover_text(
-                    "no older trades to fetch: this feed only streams forward, or \
-                     its history is already all here",
-                );
+                .on_hover_text(history_button_hover(model))
+                .on_disabled_hover_text(history_disabled_hover(model.history_reach_running));
             if load.clicked() {
                 actions.push(ToolbarAction::LoadOlder);
                 ui.close_menu();
@@ -1361,6 +1427,7 @@ mod tests {
         let mut imbalance_target = 100_u64;
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
+        let mut history_reach = crate::history_reach::HistoryReach::default();
         for replaying in [false, true] {
             for _ in 0..2 {
                 let _ = ctx.run(egui::RawInput::default(), |ctx| {
@@ -1386,6 +1453,8 @@ mod tests {
                         imbalance_target: &mut imbalance_target,
                         imbalance_unit: &mut imbalance_unit,
                         history_step: &mut history_step,
+                        history_reach: &mut history_reach,
+                        history_reach_running: false,
                         history_trades: 1_000,
                         history_candles: 0,
                         older_candles: crate::tab::OlderCandles::NotArrivedYet,
@@ -1446,6 +1515,7 @@ mod tests {
         let mut imbalance_target = 100_u64;
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
+        let mut history_reach = crate::history_reach::HistoryReach::default();
         // Wide enough that the §6 plan folds nothing — the point is the
         // inline chip row, not the overflow menu.
         let input = || egui::RawInput {
@@ -1477,6 +1547,8 @@ mod tests {
                     imbalance_target: &mut imbalance_target,
                     imbalance_unit: &mut imbalance_unit,
                     history_step: &mut history_step,
+                    history_reach: &mut history_reach,
+                    history_reach_running: false,
                     history_trades: 1_000,
                     history_candles: 0,
                     older_candles: crate::tab::OlderCandles::NotArrivedYet,
@@ -1530,6 +1602,7 @@ mod tests {
         let mut imbalance_target = 100_u64;
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
+        let mut history_reach = crate::history_reach::HistoryReach::default();
         // Every kind, including the two the feed cannot back: selecting one is
         // still possible from config or a previous session, and the toolbar
         // must draw it rather than panic.
@@ -1555,6 +1628,8 @@ mod tests {
                         imbalance_target: &mut imbalance_target,
                         imbalance_unit: &mut imbalance_unit,
                         history_step: &mut history_step,
+                        history_reach: &mut history_reach,
+                        history_reach_running: false,
                         history_trades: 200_000,
                         history_candles: 0,
                         older_candles: crate::tab::OlderCandles::NotArrivedYet,
@@ -1597,6 +1672,7 @@ mod tests {
         let mut imbalance_target = 100_u64;
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
+        let mut history_reach = crate::history_reach::HistoryReach::default();
         let mut painted = String::new();
         // Wide enough that the §6 plan folds nothing — the point is the
         // inline button, not the overflow menu.
@@ -1628,6 +1704,8 @@ mod tests {
                     imbalance_target: &mut imbalance_target,
                     imbalance_unit: &mut imbalance_unit,
                     history_step: &mut history_step,
+                    history_reach: &mut history_reach,
+                    history_reach_running: false,
                     history_trades: 1_000,
                     history_candles: 0,
                     older_candles: crate::tab::OlderCandles::NotArrivedYet,
@@ -1668,6 +1746,33 @@ mod tests {
         assert!(
             painted.contains("SELL 1 (closes 1 of 2)"),
             "the state-aware label never reached the toolbar; painted: {painted}"
+        );
+    }
+
+    /// The two facts the load button reads, and the reason it shows for each
+    /// way of being off.
+    #[test]
+    fn the_load_button_goes_quiet_while_a_run_is_paging() {
+        assert!(
+            history_button_enabled(true, false),
+            "a feed that pages and no run in flight takes the press"
+        );
+        assert!(
+            !history_button_enabled(true, true),
+            "a press during a run does nothing, so the button must not invite one"
+        );
+        assert!(
+            !history_button_enabled(false, false),
+            "and a feed that only streams forward never took one"
+        );
+        assert!(
+            history_disabled_hover(true).contains("one page"),
+            "the run's reason has to name the way out: {}",
+            history_disabled_hover(true)
+        );
+        assert!(
+            history_disabled_hover(false).contains("only streams forward"),
+            "and a feed that cannot page gets the other reason, not the run's"
         );
     }
 }
