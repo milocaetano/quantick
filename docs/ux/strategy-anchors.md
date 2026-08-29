@@ -84,7 +84,7 @@ headless over recorded sessions. Never fork strategy logic per consumer.
     trigger bar's close, but the entry prices at the *edge*. A leg landing
     on the wrong side of that edge would be dropped at fill time, and an
     entry is never armed unprotected — so the instance refuses the cut
-    instead ("retest bracket does not clear the edge — held fire"). A
+    instead ("trigger held: the retest bracket does not clear the edge"). A
     tight `sl_mult` on a bar that closed just past the edge is the usual
     way to meet this.
   - **No take-profit leg means no expiry.** The cancel-at level *is* the
@@ -128,9 +128,35 @@ stops. Deleting the drawing removes its instance outright — a live
 position keeps its bracket and becomes the human's. **Hiding** the
 drawing pauses the bot instead: the badge stays painted (it is the one
 mark that never hides) and says `region hidden — paused`; showing the
-drawing resumes it. The badge also counts the queued entry as occupying
-the account, which is what stops two instances co-triggered by one bar
-from stacking orders.
+drawing resumes it. A drawing that lost its footing on the series, or
+that belongs to another market, pauses it the same way and says which
+(`region off its series — paused`, `region on another market — paused`).
+
+A region whose **drawn span** no longer reaches the next bar to close
+pauses it too, and this one the trader reaches by accident: the band is
+a rectangle they move all session, and a tape that walks past its right
+edge — or a drag back over history — leaves it covering no future bar.
+The badge says `region ended — stretch it right`. It is a hold and not a
+disarm: the instance stays armed, its alarm keeps listening, and the
+moment the band covers the future again it fires on the next bar with no
+button pressed. Turning on **extend right** is the standing answer.
+
+The badge also carries the last refusal itself — `opposite side`,
+`the body never cut the region`, `account not flat` — and keeps it after
+the bar it happened on, because a trader reads the chart *after* the
+move and a single quiet bar used to erase the reason. The badge also
+counts the queued entry as occupying the account, which is what stops
+two instances co-triggered by one bar from stacking orders: the
+simulator models one netted position carrying one bracket, so a second
+fill would silently replace the first instance's stop.
+
+**Duplicating** a band (Ctrl+D) carries its bot: the copy is armed from
+the same preset, with a fresh ruler, a fresh alarm and no inherited
+state. A band whose bot was stopped — disarmed, or a spent one shot —
+copies as a plain rectangle; the copy does not resurrect what the trader
+stopped. When the copy cannot be armed (it is hidden, off its series, or
+on another market) the status line says so rather than leaving a silent
+band that looks armed.
 
 ## The bank (`quantick-strategies.toml`)
 

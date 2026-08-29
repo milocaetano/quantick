@@ -65,8 +65,8 @@ mod trigger;
 
 pub use alarm::{AlarmEvent, AlarmParams, AlarmWhen, RepeatPolicy, SignalAlarm};
 pub use armed::{
-    ArmedState, ArmedStrategy, BreakPolicy, DisarmReason, Execution, Opportunity, Rearm,
-    StrategyParams,
+    ArmedState, ArmedStrategy, BreakPolicy, DisarmReason, Execution, HoldReason, Opportunity,
+    Rearm, StrategyParams,
 };
 pub use force::{BarVerdict, ForceBar, ForceParams, ForceWindow};
 pub use region::{BodyCut, Region};

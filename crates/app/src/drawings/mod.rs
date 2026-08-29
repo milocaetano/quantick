@@ -1274,6 +1274,20 @@ pub enum DrawingBand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DrawingId(pub u64);
 
+/// What [`Drawings::duplicate_selected`] made: the object it copied, and the
+/// copy.
+///
+/// The pair is returned rather than acted on because everything that rides a
+/// drawing without living in it — an armed strategy today, whatever docks
+/// next — is owned a layer up. `Drawings` stays a store of marks and learns
+/// nothing about strategies; the pane that owns both reads this and carries
+/// the passengers across.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Duplicated {
+    pub source: DrawingId,
+    pub copy: DrawingId,
+}
+
 /// Who placed an object, when it was not the trader's own hand.
 ///
 /// Data honesty, at the level the eye works: an object an assistant put on
@@ -1785,10 +1799,13 @@ impl Drawings {
 
     /// Duplicate the selected object as one undo entry: the copy lands
     /// `offset_bars` to the right, unlocked, and becomes the selection.
-    pub fn duplicate_selected(&mut self, offset_bars: f32) {
-        let Some(index) = self.selected.filter(|&index| index < self.items.len()) else {
-            return;
-        };
+    ///
+    /// Returns the pair so the layer above can carry whatever rides the
+    /// drawing without living in it. `#[must_use]`: dropping the answer is
+    /// how a copied band silently loses its bot.
+    #[must_use]
+    pub fn duplicate_selected(&mut self, offset_bars: f32) -> Option<Duplicated> {
+        let index = self.selected.filter(|&index| index < self.items.len())?;
         let before = self.snapshot();
         let mut copy = self.items[index].clone();
         // A copy is a new object: its own identity, and never the
@@ -1798,11 +1815,28 @@ impl Drawings {
         copy.name = None;
         for point in &mut copy.points {
             point.bar += offset_bars;
+            // The offset moves the copy in *bar* space, and the instant an
+            // anchor remembers is what survives a re-cut: `reanchor` puts
+            // every timestamped anchor back where its own market moment
+            // landed. Carrying the source's instants would therefore snap
+            // the copy onto the original at the next bar-spec change,
+            // replay seek, reconnect or symbol switch — two rectangles at
+            // one place, and since this branch hangs a bot on the copy, two
+            // bots there too. The copy is a mark the trader placed just
+            // now, at no market moment of its own; that is what an anchor
+            // dropped past the newest bar already carries, and it is the
+            // honest reading here.
+            point.time_ms = None;
         }
         copy.locked = false;
+        let duplicated = Duplicated {
+            source: self.items[index].id,
+            copy: copy.id,
+        };
         self.items.push(copy);
         self.selected = Some(self.items.len() - 1);
         self.record(before);
+        Some(duplicated)
     }
 
     /// Re-express every anchor against a series that was cut again — a
@@ -2948,7 +2982,8 @@ mod tests {
         let mut drawings = Drawings::default();
         drawings.place(tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
         drawings.rename_at(0, "congestão 108k");
-        drawings.duplicate_selected(2.0);
+        // These assert on the store, not on what rode across.
+        let _ = drawings.duplicate_selected(2.0);
         let [original, copy] = drawings.items() else {
             panic!("one original and one copy");
         };
@@ -3145,7 +3180,8 @@ mod tests {
         drawings.set_selected_locked(true);
         let depth = drawings.undo_depth();
 
-        drawings.duplicate_selected(2.0);
+        // These assert on the store, not on what rode across.
+        let _ = drawings.duplicate_selected(2.0);
 
         assert_eq!(drawings.items().len(), 2);
         assert_eq!(drawings.selected(), Some(1), "the copy becomes selected");

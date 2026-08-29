@@ -206,10 +206,10 @@ fn signal_is_ours(
     signal: &Signal,
 ) -> Result<(), &'static str> {
     if signal.side != params.side {
-        return Err("trigger held: opposite side");
+        return Err("opposite side");
     }
     if !region_active {
-        return Err("trigger held: region not active on this bar");
+        return Err("region not active on this bar");
     }
     Ok(())
 }
@@ -240,15 +240,53 @@ fn entry_geometry(
         // blaming a bar that did its part.
         BodyCut::CutThrough { edge } => match params.on_break {
             BreakPolicy::RetestLimit => Ok(Opportunity::Retest { edge }),
-            BreakPolicy::Ignore => Err("trigger held: cut the region, retest option off"),
+            BreakPolicy::Ignore => Err("cut the region, retest option off"),
         },
         // The bar closed past the edge but opened past it too: it travelled
         // beyond a region it never crossed into. Resting a limit on that
         // edge would put an order in a band this bar has no claim on. True
         // whatever the policy says, so the geometry is the honest reason.
-        BodyCut::NoCut => Err("trigger held: the body never cut the region"),
-        BodyCut::ClosedAway => Err("trigger held: closed outside region"),
+        BodyCut::NoCut => Err("the body never cut the region"),
+        BodyCut::ClosedAway => Err("closed outside region"),
     }
+}
+
+/// What the last judged bar left standing on an instance.
+///
+/// Two shapes, because they are two different sentences. A [`Note::Held`] is
+/// a gate refusing a signal — the badge frames it as "trigger held" and, once
+/// the bar has passed, keeps it as *the last thing that was refused*. A
+/// [`Note::Aside`] is a remark about the instance itself, true for as long as
+/// it is armed and not worth remembering across bars.
+///
+/// The distinction earns its keep because a single quiet bar used to erase
+/// the reason the last setup was declined, and the trader reads the badge
+/// *after* the move, never during it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Note {
+    Held(&'static str),
+    Aside(&'static str),
+}
+
+impl Note {
+    /// The line as the badge shows it on the bar it happened.
+    fn line(self) -> String {
+        match self {
+            Self::Held(reason) => format!("trigger held: {reason}"),
+            Self::Aside(remark) => remark.to_owned(),
+        }
+    }
+}
+
+/// A gate's refusal, and whether it is about the bar that just closed.
+///
+/// `fresh` is the difference between "this is why nothing happened just now"
+/// and "this is the last thing that was refused". Both are worth showing;
+/// only one of them is a statement about the present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HoldReason {
+    pub reason: &'static str,
+    pub fresh: bool,
 }
 
 /// One strategy armed on one region.
@@ -256,9 +294,18 @@ pub struct ArmedStrategy {
     params: StrategyParams,
     trigger: Box<dyn Trigger>,
     state: ArmedState,
-    /// One-line note about the last non-fire (an invalid projection), for
-    /// status honesty.
-    note: Option<&'static str>,
+    /// What the bar just judged left standing, cleared by the next bar the
+    /// trigger had nothing to say about.
+    note: Option<Note>,
+    /// The most recent gate that refused a signal, kept **across** the quiet
+    /// bars that follow it.
+    ///
+    /// `note` alone was the whole story, and it was erased by the first bar
+    /// carrying no signal — so the badge forgot why the setup the trader was
+    /// watching had been declined, usually within seconds of them looking
+    /// away. A refusal is cleared by something happening, not by nothing
+    /// happening: an order going out, a re-arm, a re-warm.
+    last_hold: Option<&'static str>,
     /// Whether the bar most recently fed to [`ArmedStrategy::on_closed_bar`]
     /// presented this instance's setup — judged with the account and the
     /// state machine deliberately left out. The alarm's closed-bar reading;
@@ -284,6 +331,7 @@ impl ArmedStrategy {
             trigger,
             state: ArmedState::Armed,
             note: None,
+            last_hold: None,
             last_close_opportunity: None,
         }
     }
@@ -340,9 +388,22 @@ impl ArmedStrategy {
     }
 
     /// Feed one closed bar. `region_active` is the caller's answer to "does
-    /// the drawing still cover this bar in time?"; `account_flat` must
-    /// reflect the whole account, not just this instance's operation — a
-    /// bot never trades against an open manual position.
+    /// the drawing still cover this bar in time?".
+    ///
+    /// `account_flat` must reflect the whole account, not just this
+    /// instance's operation — a bot never trades against an open manual
+    /// position, and it decides two things: whether a signal becomes an
+    /// order, and whether a live operation has finished.
+    ///
+    /// It reads as a cross-region coupling, and one region's parked order
+    /// muting another region's setup is a real complaint. It cannot be
+    /// lifted here: `quantick-sim` models **one** netted position carrying
+    /// **one** bracket, and a second entry on the same side overwrites
+    /// `position.stop_loss` with its own, emitting nothing — the first
+    /// instance keeps a badge reading "in position" over a position whose
+    /// protection it no longer owns. Giving each region its own account is
+    /// a simulator change, and until it lands this flag is what keeps a
+    /// stop attached to the operation that projected it.
     ///
     /// The trigger is fed **unconditionally** so its running averages stay
     /// warm across disarmed stretches; the gates only decide whether a
@@ -383,13 +444,14 @@ impl ArmedStrategy {
         // Every gate that holds a seen trigger names itself in the note, so
         // the badge never shows a bare "armed" over a force bar that did
         // nothing — the mystery that reads as a broken bot. A bar with no
-        // signal clears the note and lets the trigger's own status narrate.
+        // signal clears the note and lets the trigger's own status narrate;
+        // `last_hold` is what carries the refusal past it.
         let Some(signal) = signal else {
             self.note = None;
             return Vec::new();
         };
-        if let Err(note) = signal_is_ours(&self.params, region_active, &signal) {
-            self.note = Some(note);
+        if let Err(reason) = signal_is_ours(&self.params, region_active, &signal) {
+            self.hold(reason);
             return Vec::new();
         }
         // The geometry runs before the account and before the projection: a
@@ -400,8 +462,8 @@ impl ArmedStrategy {
         // gate that actually decided.
         let opportunity = match entry_geometry(&self.params, region, bar) {
             Ok(opportunity) => opportunity,
-            Err(note) => {
-                self.note = Some(note);
+            Err(reason) => {
+                self.hold(reason);
                 return Vec::new();
             }
         };
@@ -411,11 +473,16 @@ impl ArmedStrategy {
         // and not spent: it keeps watching, which is the whole reason a
         // trader arms one.
         if self.params.execution == Execution::AlarmOnly {
-            self.note = Some("alarm only — no order placed");
+            // Something *was* judged and it qualified, so the standing
+            // refusal is spent: a badge reading "last held: opposite side"
+            // over a bar that just rang the alarm is the misinformation
+            // `last_hold` exists to end.
+            self.last_hold = None;
+            self.note = Some(Note::Aside("alarm only — no order placed"));
             return Vec::new();
         }
         if !account_flat {
-            self.note = Some("trigger held: account not flat");
+            self.hold("account not flat");
             return Vec::new();
         }
         let edge = match opportunity {
@@ -423,7 +490,7 @@ impl ArmedStrategy {
                 let Some(bracket) = self.project(&signal) else {
                     return Vec::new();
                 };
-                self.note = None;
+                self.clear_notes();
                 self.state = ArmedState::Fired {
                     order_id: None,
                     retest: false,
@@ -454,10 +521,10 @@ impl ArmedStrategy {
             }
         };
         if !legs_clear_edge {
-            self.note = Some("retest bracket does not clear the edge — held fire");
+            self.hold("the retest bracket does not clear the edge");
             return Vec::new();
         }
-        self.note = None;
+        self.clear_notes();
         self.state = ArmedState::Fired {
             order_id: None,
             retest: true,
@@ -494,7 +561,7 @@ impl ArmedStrategy {
             self.params.sl_mult,
         );
         if bracket.is_none() {
-            self.note = Some("projection invalid — held fire");
+            self.hold("the projection is not priceable");
         }
         bracket
     }
@@ -651,11 +718,11 @@ impl ArmedStrategy {
         match &self.state {
             ArmedState::Disarmed { reason } if reason.resets_series() => {
                 self.trigger.reset();
-                self.note = None;
+                self.clear_notes();
                 self.state = ArmedState::Armed;
             }
             ArmedState::Done | ArmedState::Disarmed { .. } => {
-                self.note = None;
+                self.clear_notes();
                 self.state = ArmedState::Armed;
             }
             ArmedState::Armed | ArmedState::Fired { .. } | ArmedState::InPosition => {}
@@ -671,16 +738,69 @@ impl ArmedStrategy {
         for bar in bars {
             let _ = self.trigger.on_closed_bar(bar);
         }
+        self.clear_notes();
+    }
+
+    /// Forget both the bar's note and the standing refusal — used where
+    /// something actually happened: an order went out, or the instance was
+    /// re-warmed onto a series it has not judged yet.
+    fn clear_notes(&mut self) {
         self.note = None;
+        self.last_hold = None;
+    }
+
+    /// Record a gate's refusal: the badge shows it on this bar, and keeps
+    /// it as the last refusal after the bar has passed. One door, so a new
+    /// gate cannot be added that names itself on the badge today and is
+    /// forgotten by the next quiet bar.
+    fn hold(&mut self, reason: &'static str) {
+        self.note = Some(Note::Held(reason));
+        self.last_hold = Some(reason);
+    }
+
+    /// The refusal standing over this instance: the reason, and whether it
+    /// is about the bar that just closed.
+    ///
+    /// Both halves, because the reason alone is a claim about *now* and a
+    /// standing refusal is not one. "account not flat" printed flat over an
+    /// account the trader has since closed out of is the badge saying the
+    /// bot is blocked when it is not — the same misinformation in the
+    /// opposite direction from the silence this exists to end. A surface
+    /// that shows a stale reason owes it a word (`last held`), and one with
+    /// no room for that word shows only the fresh one.
+    ///
+    /// Handed out unframed so every surface phrases it for itself, and so
+    /// an operator that is not looking at any of them can compare a value
+    /// instead of parsing English out of `status_line`.
+    #[must_use]
+    pub fn hold_reason(&self) -> Option<HoldReason> {
+        match self.note {
+            Some(Note::Held(reason)) => Some(HoldReason {
+                reason,
+                fresh: true,
+            }),
+            Some(Note::Aside(_)) => None,
+            None => self.last_hold.map(|reason| HoldReason {
+                reason,
+                fresh: false,
+            }),
+        }
     }
 
     /// One line for the on-chart badge.
     #[must_use]
     pub fn status_line(&self) -> String {
         match &self.state {
-            ArmedState::Armed => match self.note {
-                Some(note) => format!("armed · {note}"),
-                None => format!("armed · {}", self.trigger.status()),
+            // Fresh first: the bar just judged is the most useful sentence
+            // there is. Once it has passed, the ruler's live reading leads
+            // and the last refusal rides behind it — the trader reads this
+            // badge after the move, not during it.
+            ArmedState::Armed => match (self.note, self.last_hold) {
+                (Some(note), _) => format!("armed · {}", note.line()),
+                (None, Some(held)) => {
+                    format!("armed · {} · last held: {held}", self.trigger.status())
+                }
+                (None, None) => format!("armed · {}", self.trigger.status()),
             },
             ArmedState::Fired { retest: false, .. } => "fired · waiting for fill".to_owned(),
             // Only promise the self-cancel when the order actually carries
@@ -912,7 +1032,8 @@ mod tests {
                 .is_empty()
         );
 
-        // Account not flat.
+        // Account not flat — the gate the simulator's single netted
+        // position still requires.
         let mut instance = force_instance(Side::Buy);
         instance.on_closed_bar(&bar("100", "101"), &region, true, true);
         instance.on_closed_bar(&bar("101", "102"), &region, true, true);
@@ -1710,6 +1831,102 @@ mod tests {
         );
     }
 
+    /// The account gate, restored after a branch that removed it: an
+    /// instance holds while the account carries a position, and the badge
+    /// names that gate like any other.
+    ///
+    /// It reads as a cross-region coupling and the trader asked for it
+    /// gone. It cannot go while `quantick-sim` models **one** netted
+    /// position with **one** bracket: a second entry on the same side
+    /// overwrites `position.stop_loss` with its own with no event emitted
+    /// (`simulator.rs`), so the first instance keeps a badge reading "in
+    /// position" over a position whose stop it no longer owns. Removing
+    /// this gate is a simulator change — per-region accounts — not a
+    /// kernel one.
+    #[test]
+    fn a_busy_account_holds_the_order_and_still_reports_the_opportunity() {
+        let region = Region::new(dec("100"), dec("110"));
+        let mut instance = force_instance(Side::Buy);
+        instance.on_closed_bar(&bar("100", "101"), &region, true, false);
+        instance.on_closed_bar(&bar("101", "102"), &region, true, false);
+        let commands = instance.on_closed_bar(&bar("102", "106"), &region, true, false);
+
+        assert!(commands.is_empty(), "a busy account places nothing");
+        assert_eq!(
+            instance.status_line(),
+            "armed · trigger held: account not flat"
+        );
+        assert_eq!(
+            instance.hold_reason(),
+            Some(HoldReason {
+                reason: "account not flat",
+                fresh: true,
+            })
+        );
+        assert_eq!(
+            instance.last_close_opportunity(),
+            Some(Opportunity::Market),
+            "the setup happened, whoever was holding the account"
+        );
+    }
+
+    /// A refusal is a statement about a bar, and it stops being one when
+    /// the next bar closes. A surface that prints it flat says "the bot is
+    /// blocked" about an account that may have gone flat twenty bars ago —
+    /// the same misinformation as the silence this exists to end, pointing
+    /// the other way. So the reason travels with its tense.
+    #[test]
+    fn a_refusal_says_whether_it_is_about_the_bar_that_just_closed() {
+        // Wide enough that the bar which finally fires still closes inside
+        // it: the point here is the tense of the reason, not the geometry.
+        let region = Region::new(dec("100"), dec("115"));
+        let mut instance = force_instance(Side::Buy);
+        assert_eq!(instance.hold_reason(), None, "nothing refused yet");
+
+        // A busy account holds this bar's force bar.
+        instance.on_closed_bar(&bar("100", "101"), &region, true, false);
+        instance.on_closed_bar(&bar("101", "102"), &region, true, false);
+        instance.on_closed_bar(&bar("102", "106"), &region, true, false);
+        assert_eq!(
+            instance.hold_reason(),
+            Some(HoldReason {
+                reason: "account not flat",
+                fresh: true,
+            }),
+            "about the bar that just closed"
+        );
+
+        // The next bar carries no signal: the refusal stands, and says so.
+        instance.on_closed_bar(&bar("106", "107"), &region, true, true);
+        assert_eq!(
+            instance.hold_reason(),
+            Some(HoldReason {
+                reason: "account not flat",
+                fresh: false,
+            }),
+            "still readable, no longer a claim about now"
+        );
+        assert!(
+            instance
+                .status_line()
+                .ends_with("· last held: account not flat"),
+            "and the sentence carries the tense too: {}",
+            instance.status_line()
+        );
+
+        // Something happening clears it: the order goes out.
+        let commands = instance.on_closed_bar(&bar("107", "113"), &region, true, true);
+        assert!(
+            matches!(commands.as_slice(), [Command::PlaceMarket { .. }]),
+            "the setup fired: {commands:?}"
+        );
+        assert_eq!(
+            instance.hold_reason(),
+            None,
+            "a refusal is cleared by something happening, never by nothing"
+        );
+    }
+
     /// A projected leg that does not clear the entry edge would be dropped
     /// at fill time — so it holds fire instead, and says why.
     #[test]
@@ -1734,7 +1951,7 @@ mod tests {
         assert_eq!(instance.state(), &ArmedState::Armed);
         assert_eq!(
             instance.status_line(),
-            "armed · retest bracket does not clear the edge — held fire"
+            "armed · trigger held: the retest bracket does not clear the edge"
         );
     }
 
@@ -1762,21 +1979,27 @@ mod tests {
             "armed · trigger held: region not active on this bar"
         );
 
-        // Account not flat.
-        let mut instance = force_instance(Side::Buy);
-        instance.on_closed_bar(&bar("100", "101"), &region, true, true);
-        instance.on_closed_bar(&bar("101", "102"), &region, true, true);
-        instance.on_closed_bar(&bar("102", "106"), &region, true, false);
-        assert_eq!(
-            instance.status_line(),
-            "armed · trigger held: account not flat"
+        // The next quiet bar hands the badge back to the ruler — and keeps
+        // the refusal behind it. A trader reads this badge after the move,
+        // and a single quiet bar used to erase the only sentence explaining
+        // why the setup they watched go by was declined.
+        instance.on_closed_bar(&bar("106", "107"), &region, true, true);
+        let line = instance.status_line();
+        assert!(
+            line.starts_with("armed · quiet"),
+            "the ruler speaks again: {line}"
+        );
+        assert!(
+            line.ends_with("· last held: region not active on this bar"),
+            "and the refusal is still readable: {line}"
         );
 
-        // The next quiet bar clears the note: the ruler speaks again.
-        instance.on_closed_bar(&bar("106", "107"), &region, true, true);
+        // Something *happening* is what clears it: an order going out.
+        let mut instance = force_instance(Side::Buy);
+        warm_then_force(&mut instance, &region);
         assert!(
-            instance.status_line().starts_with("armed · quiet"),
-            "a signal-less bar hands the badge back to the ruler: {}",
+            !instance.status_line().contains("last held"),
+            "a fired instance carries no standing refusal: {}",
             instance.status_line()
         );
     }
@@ -1802,30 +2025,6 @@ mod tests {
                 min_body: Decimal::ZERO,
             })),
         )
-    }
-
-    /// The sentence the whole alarm was built for: a busy account silences
-    /// the *order* and says so, and the opportunity is reported anyway. A
-    /// trader executing on another platform does not care that this
-    /// simulator is occupied — the setup is the thing they armed to hear.
-    #[test]
-    fn a_busy_account_holds_the_order_and_still_reports_the_opportunity() {
-        let region = Region::new(dec("100"), dec("110"));
-        let mut instance = force_instance(Side::Buy);
-        instance.on_closed_bar(&bar("100", "101"), &region, true, false);
-        instance.on_closed_bar(&bar("101", "102"), &region, true, false);
-        let commands = instance.on_closed_bar(&bar("102", "106"), &region, true, false);
-
-        assert!(commands.is_empty(), "a busy account places nothing");
-        assert_eq!(
-            instance.status_line(),
-            "armed · trigger held: account not flat"
-        );
-        assert_eq!(
-            instance.last_close_opportunity(),
-            Some(Opportunity::Market),
-            "the setup happened, whoever was holding the account"
-        );
     }
 
     /// A spent one-shot instance has stopped trading, not stopped watching.
