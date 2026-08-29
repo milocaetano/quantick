@@ -1,5 +1,78 @@
 # Mission
 
+An armed strategy on a price-band rectangle must fire on every bar its band
+covers — and say so on the chart when it cannot — and duplicating the band must
+carry its armed strategy with it.
+
+The investigation that produced this mission is kept in
+`.claude/GOAL-investigation-notes.md`: the trader's 2026-08-28 WINV26 session
+replayed tick for tick, proving the bar at ~16:02:50 (O 177885 / C 177775, body
+110) was `FORCE Sell` on both rulers and `ClosedInside` the band — a valid
+`Opportunity::Market` that produced neither an order nor an alarm, with the
+account flat and the instance armed before the bar closed.
+
+## Acceptance criteria
+
+1. **The silent hold is reproduced before it is fixed.** A test through the
+   real chart path (the `pane` + `tab` sweep, not the kernel alone) arms an
+   instance on a band, closes a qualifying bar, and asserts no command comes
+   out — failing before the fix, passing after.
+2. **A region never expires in silence.** Whatever the span rule ends up being,
+   a bar the band cannot judge is named on the **badge**, in words, on the
+   chart — not only in `status_line()` behind the drawing's context menu.
+   `off_series` gets the clause `hidden` already has; today it pauses the bot
+   mute.
+3. **The held-fire reason outlives the next quiet bar.** `note` is currently
+   cleared by every closed bar carrying no signal, so the reason for the bar
+   that mattered is gone one bar later. The last *decided* reason stays until
+   another decision replaces it.
+4. **One order per region, and nothing outside the region blocks it.** The
+   trader's ruling. The account-wide `account_flat` flag stops deciding for
+   every armed region on the chart; each region owns its one order and its own
+   alarm. Stated consequence, carried into the PR body: two regions may then
+   hold positions at once, and `quantick-sim` nets them into one — that is the
+   accepted trade, not an oversight.
+
+   **Boundary, stated rather than glossed:** the rule is applied to the
+   *strategy's* entry gate, which is the thing that silences a setup. It is
+   **not** applied to `quantick-sim`'s own fill model: a resting limit that
+   would fill into an open position still stands down
+   (`CancelReason::AccountOccupied` -> `DisarmReason::AccountOccupied`).
+   Lifting that means giving the simulator per-region accounts instead of one
+   net position — a different mission, and one that touches the conservative
+   tape-based fill model the crate is built on.
+
+   It is also worth the trader knowing: this gate was **not** what silenced
+   the 2026-08-28 setup. The account was flat. The rule is being applied
+   because it is the shape they want, not because it was the cause.
+5. **A duplicated band carries its strategy.** `Ctrl+D` over a band with an
+   armed instance yields a copy carrying its own instance: same preset, same
+   trigger params, **fresh** state — `ArmedState::Armed`, no inherited order
+   id, no inherited alarm cooldown or preview mark — warmed on the same series.
+   `Drawings::duplicate_selected` stays ignorant of strategies; the pane docks
+   the instance onto the new id.
+6. **Test-first in the kernel.** Any `quantick-strategy` change lands fixture +
+   expected output before the code, and the determinism golden test still
+   guards it.
+7. **Every artifact in English.**
+8. **Performance impact declared** — every touched path classified by rate
+   (per-trade / per-depth / per-frame / rare). The strategy sweep and
+   `strategy_region` are per-trade; the badge is per-frame; duplication is rare.
+9. **User-visible surfaces**: `ui-harness` hook added in the same change for
+   every new/changed surface, `visual-qa` pass, `trader-ux-review` with no
+   unresolved Blocker.
+10. **Four checks green** after rebasing on latest `main`:
+    `cargo fmt --all -- --check`,
+    `cargo clippy --workspace --all-targets -- -D warnings`,
+    `cargo build --workspace`, `cargo test --workspace`.
+11. **`arch-review`** run over `git diff main...HEAD`, every Blocker and
+    Should-fix resolved or deferred in the PR body.
+12. **PR opened.** Merging is not part of the mission.
+
+---
+
+# Investigation record
+
 Find why the `SellGainAlarm` instance armed on the WINV26 red region placed no
 order and sounded no alarm on 2026-08-28, name the gate that held it, explain
 what changed since it last fired, and fix whatever the diagnosis shows is a

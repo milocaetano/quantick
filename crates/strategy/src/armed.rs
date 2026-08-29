@@ -387,9 +387,18 @@ impl ArmedStrategy {
     }
 
     /// Feed one closed bar. `region_active` is the caller's answer to "does
-    /// the drawing still cover this bar in time?"; `account_flat` must
-    /// reflect the whole account, not just this instance's operation — a
-    /// bot never trades against an open manual position.
+    /// the drawing still cover this bar in time?".
+    ///
+    /// `account_flat` reports whether the account shows **no open
+    /// position**, and it decides exactly one thing: whether a live
+    /// operation has finished, so the instance can complete or re-arm. It
+    /// is deliberately *not* an entry gate. A region owns its one order,
+    /// and what the rest of the account is doing — another region's
+    /// position, a hand-placed trade — is not this region's business; a
+    /// flag about the whole account used to hold every armed region on the
+    /// chart at once. The consequence is real and accepted: two regions can
+    /// hold positions together, and the simulator nets them into the one
+    /// position it models.
     ///
     /// The trigger is fed **unconditionally** so its running averages stay
     /// warm across disarmed stretches; the gates only decide whether a
@@ -440,12 +449,11 @@ impl ArmedStrategy {
             self.hold(reason);
             return Vec::new();
         }
-        // The geometry runs before the account and before the projection: a
-        // bar whose body never came near the region could not have traded
-        // under any multiplier or any account state, and blaming an
-        // unpriceable leg — or a busy account — there sends the trader
-        // tuning something that was never the reason. The badge names the
-        // gate that actually decided.
+        // The geometry runs before the projection: a bar whose body never
+        // came near the region could not have traded under any multiplier,
+        // and blaming an unpriceable leg there sends the trader tuning
+        // something that was never the reason. The badge names the gate
+        // that actually decided.
         let opportunity = match entry_geometry(&self.params, region, bar) {
             Ok(opportunity) => opportunity,
             Err(reason) => {

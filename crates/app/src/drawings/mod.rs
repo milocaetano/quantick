@@ -1744,6 +1744,11 @@ impl Drawings {
 
     /// Duplicate the selected object as one undo entry: the copy lands
     /// `offset_bars` to the right, unlocked, and becomes the selection.
+    ///
+    /// Returns the pair so the layer above can carry whatever rides the
+    /// drawing without living in it. `#[must_use]`: dropping the answer is
+    /// how a copied band silently loses its bot.
+    #[must_use]
     pub fn duplicate_selected(&mut self, offset_bars: f32) -> Option<Duplicated> {
         let index = self.selected.filter(|&index| index < self.items.len())?;
         let before = self.snapshot();
@@ -2910,7 +2915,8 @@ mod tests {
         let mut drawings = Drawings::default();
         drawings.place(tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
         drawings.rename_at(0, "congestão 108k");
-        drawings.duplicate_selected(2.0);
+        // These assert on the store, not on what rode across.
+        let _ = drawings.duplicate_selected(2.0);
         let [original, copy] = drawings.items() else {
             panic!("one original and one copy");
         };
@@ -3107,7 +3113,8 @@ mod tests {
         drawings.set_selected_locked(true);
         let depth = drawings.undo_depth();
 
-        drawings.duplicate_selected(2.0);
+        // These assert on the store, not on what rode across.
+        let _ = drawings.duplicate_selected(2.0);
 
         assert_eq!(drawings.items().len(), 2);
         assert_eq!(drawings.selected(), Some(1), "the copy becomes selected");

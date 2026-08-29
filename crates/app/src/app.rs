@@ -7026,14 +7026,7 @@ impl QuantickApp {
                 .set_selected_hidden(!hidden);
         }
         if keys.duplicate {
-            let side = self.active_tab().drawing_side();
-            if let Some(duplicated) = self
-                .drawing_pane_mut()
-                .drawings
-                .duplicate_selected(DUPLICATE_OFFSET_BARS)
-            {
-                self.carry_strategy_to_duplicate(side, duplicated);
-            }
+            self.duplicate_selected_drawing();
         }
         if (keys.nudge_bars != 0.0 || keys.nudge_px != 0.0)
             && self.drawing_pane().drawings.selected().is_some()
@@ -8257,14 +8250,7 @@ impl QuantickApp {
             self.inspector_last_selection = None;
         }
         if intent.duplicate {
-            let side = self.active_tab().drawing_side();
-            if let Some(duplicated) = self
-                .drawing_pane_mut()
-                .drawings
-                .duplicate_selected(DUPLICATE_OFFSET_BARS)
-            {
-                self.carry_strategy_to_duplicate(side, duplicated);
-            }
+            self.duplicate_selected_drawing();
         }
         if let Some(before) = before {
             self.apply_inspector_actions(ctx, actions, index, before, now);
@@ -9641,6 +9627,28 @@ impl QuantickApp {
     /// the bars already closed (gates shut, so nothing fires from history),
     /// attach it, and start the paper host listening. `Err` carries the
     /// human-readable refusal for the dialog to show.
+    /// Duplicate the selected drawing with everything riding it.
+    ///
+    /// The one door, because a duplication is not only a copied mark: an
+    /// armed strategy rides the drawing today and whatever docks next will
+    /// ride it too. Two call sites — the hotkey and the context bar — each
+    /// spelling out "copy, then carry" is a third one that copies and
+    /// forgets, and a band that silently loses its bot is exactly the class
+    /// of silence this change exists to end.
+    ///
+    /// Rate: rare — one keystroke or one click.
+    fn duplicate_selected_drawing(&mut self) {
+        let side = self.active_tab().drawing_side();
+        let Some(duplicated) = self
+            .drawing_pane_mut()
+            .drawings
+            .duplicate_selected(DUPLICATE_OFFSET_BARS)
+        else {
+            return;
+        };
+        self.carry_strategy_to_duplicate(side, duplicated);
+    }
+
     /// Carry an armed strategy across a duplication.
     ///
     /// A copied region is a region the trader wants watched the same way —
