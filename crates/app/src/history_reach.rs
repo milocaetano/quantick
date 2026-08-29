@@ -74,7 +74,10 @@ pub const MAX_CAMPAIGN_PRINTS: usize = 250_000;
 /// rate-limiting or broken costs three requests instead of sixty-four. That
 /// second case is the one this number is really sized against: Binance never
 /// withdraws its paging capability, and a 429 answered as an empty block is
-/// indistinguishable here from a market that was closed.
+/// indistinguishable here from a market that was closed. It is also why
+/// [`CampaignEnd::NothingComingBack`]'s sentence asks the trader to wait a
+/// moment rather than to press again: a note that invited an immediate retry
+/// would hand back, one press at a time, the burst this budget just refused.
 pub const MAX_IDLE_PAGES: u32 = 3;
 
 /// Span one campaign may cover *while the tape has shown no close at all*.
@@ -96,8 +99,7 @@ pub const MAX_CAMPAIGN_SPAN_MS: i64 = 48 * 60 * 60 * 1_000;
 /// Separate from [`CampaignEnd::NothingComingBack`], which is a *run* giving
 /// up after several such replies in a row: one empty answer is not evidence
 /// that a record is spent, so this sentence claims less than that one does.
-pub const EMPTY_PAGE_NOTICE: &str =
-    "no older trades came back from that request; press again to retry";
+pub const EMPTY_PAGE_NOTICE: &str = "no older trades came back from that request";
 
 /// What a press is told when its request could not even be queued.
 ///
@@ -305,8 +307,8 @@ impl CampaignEnd {
             Self::ReachMet => None,
             Self::Exhausted => Some("no older trades: this source has given everything it has"),
             Self::NothingComingBack => Some(
-                "nothing older came back — the venue has run out or is \
-                 refusing; press again to retry",
+                "nothing older came back — the venue has run out, or is \
+                 refusing for now; give it a moment before pressing again",
             ),
             Self::NothingCharted => Some("no bars on the chart to page back from yet"),
             Self::PagesSpent | Self::PrintsPulled => {

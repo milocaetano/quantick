@@ -688,10 +688,7 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
         // whole session and one that fetches two thousand prints are different
         // acts, and the trader chose which.
         .on_hover_text(history_button_hover(model))
-        .on_disabled_hover_text(history_disabled_hover(
-            model.history_reach_running,
-            model.capabilities.ohlcv_history,
-        ));
+        .on_disabled_hover_text(history_disabled_hover(model));
     if load.clicked() {
         actions.push(ToolbarAction::LoadOlder);
     }
@@ -725,26 +722,78 @@ fn history_button_enabled(feed_can_page: bool, run_in_flight: bool) -> bool {
     feed_can_page && !run_in_flight
 }
 
-/// Why the load button is greyed out — the run it is waiting on, or the feed
-/// that has nothing to give. Three reasons, and the trader is told which.
+/// Why the load button is not taking a press.
 ///
-/// The third exists because "no older trades" is true and useless on a source
-/// that holds the past in the *other* record: a market replay has no venue to
-/// page prints from, and its run-up is a candle file one menu entry away. A
-/// trader presses this button because they want yesterday on the chart, and a
-/// refusal that stops at "no" sends them looking for a bug. So when the source
-/// serves candles, the refusal names them.
-fn history_disabled_hover(run_in_flight: bool, offers_candles: bool) -> &'static str {
-    if run_in_flight {
-        "paging — each answer asks for the next until the reach is met; pick \
-         \"one page\" above to stop"
-    } else if offers_candles {
-        "no older trades to fetch here — this source's past is venue candles: \
-         open the menu beside this button and use \"+ older candles\""
-    } else {
-        "no older trades to fetch: this feed only streams forward, or its \
-         history is already all here"
+/// One value rather than the pair of bools this grew into, for the reason
+/// [`crate::tab::OlderCandles`] states beside the candle entry: a bool is
+/// enough to grey a control out and not enough to say *why*, and a control
+/// offering two reasons while being off for a third tells the trader
+/// something untrue. One enum, so the reason shown is the reason — and a
+/// fourth reason is an arm here rather than a third flag at both call sites.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HistoryPagingOff {
+    /// A run already has its one permitted request out.
+    RunInFlight,
+    /// This source has no venue to page prints from, but it does hold the
+    /// past in the *other* record. A market replay is exactly this.
+    CandlesInstead,
+    /// There are no older trades to be had, by any route.
+    NothingToPage,
+}
+
+impl HistoryPagingOff {
+    /// Which reason the button is off for, or `None` while it takes a press.
+    ///
+    /// A run in flight outranks the rest: it is *why* the button is off, and
+    /// the candle record the source may also serve is not an answer to that.
+    fn of(feed_can_page: bool, serves_candles: bool, run_in_flight: bool) -> Option<Self> {
+        if history_button_enabled(feed_can_page, run_in_flight) {
+            None
+        } else if run_in_flight {
+            Some(Self::RunInFlight)
+        } else if serves_candles {
+            Some(Self::CandlesInstead)
+        } else {
+            Some(Self::NothingToPage)
+        }
     }
+
+    /// What the trader is told hovering the button in this state.
+    ///
+    /// [`Self::CandlesInstead`] exists because "no older trades" is true and
+    /// useless on a source whose past is a candle file one menu entry away. A
+    /// trader presses this button because they want yesterday on the chart,
+    /// and a refusal that stops at "no" sends them looking for a bug.
+    const fn hover(self) -> &'static str {
+        match self {
+            Self::RunInFlight => {
+                "paging — each answer asks for the next until the reach is \
+                 met; pick \"one page\" above to stop"
+            }
+            Self::CandlesInstead => {
+                "no older trades to fetch here — this source's past is venue \
+                 candles: open the menu beside this button and use \"+ older \
+                 candles\""
+            }
+            Self::NothingToPage => {
+                "no older trades to fetch: this feed only streams forward, or \
+                 its history is already all here"
+            }
+        }
+    }
+}
+
+/// The button's refusal, read off the model. One owner, called by the bar's
+/// button and by the overflow entry — written twice it would drift, and the
+/// drift would be two different refusals for one source depending on which
+/// control the trader happened to hover.
+fn history_disabled_hover(model: &ToolbarModel) -> &'static str {
+    HistoryPagingOff::of(
+        model.capabilities.history_paging,
+        model.capabilities.ohlcv_history,
+        model.history_reach_running,
+    )
+    .map_or("", HistoryPagingOff::hover)
 }
 
 /// Whether the history menu has anything in it — trade paging, candle reach,
@@ -1205,10 +1254,7 @@ fn draw_overflow(
                     egui::Button::new(format!("{} Load older", icons::PLUS)),
                 )
                 .on_hover_text(history_button_hover(model))
-                .on_disabled_hover_text(history_disabled_hover(
-                    model.history_reach_running,
-                    model.capabilities.ohlcv_history,
-                ));
+                .on_disabled_hover_text(history_disabled_hover(model));
             if load.clicked() {
                 actions.push(ToolbarAction::LoadOlder);
                 ui.close_menu();
@@ -1782,37 +1828,60 @@ mod tests {
             "and a feed that only streams forward never took one"
         );
         assert!(
-            history_disabled_hover(true, false).contains("one page"),
+            HistoryPagingOff::RunInFlight.hover().contains("one page"),
             "the run's reason has to name the way out: {}",
-            history_disabled_hover(true, false)
-        );
-        assert_eq!(
-            history_disabled_hover(true, true),
-            history_disabled_hover(true, false),
-            "a run in flight is why the button is off; the candle record it              could also serve is not the answer to that"
+            HistoryPagingOff::RunInFlight.hover()
         );
         assert!(
-            history_disabled_hover(false, false).contains("only streams forward"),
+            HistoryPagingOff::NothingToPage
+                .hover()
+                .contains("only streams forward"),
             "and a feed that cannot page gets the other reason, not the run's"
         );
     }
 
-    /// A source with no older trades but a run-up on disk — a market replay is
-    /// exactly this — must point at the record it *can* serve.
+    /// Which of the three reasons the button shows, from the facts it reads.
     ///
-    /// "No older trades" alone is true and useless: the trader pressed because
-    /// they want the past, and on this source the past is candles, one menu
-    /// entry away. The refusal names it.
+    /// A run in flight outranks everything: it is why the button is off, and
+    /// the candle record the source could also serve is not the answer to
+    /// that. A source with no tape to page but a run-up on disk — a market
+    /// replay is exactly this — points at the record it *can* serve, because
+    /// "no older trades" alone is true and useless to a trader who pressed
+    /// precisely because they want the past.
     #[test]
-    fn a_source_with_candles_but_no_tape_to_page_points_at_the_candle_reach() {
-        let refusal = history_disabled_hover(false, true);
-        assert!(
-            refusal.contains("older candles"),
-            "the way forward has to be named: {refusal}"
+    fn the_refusal_names_the_reason_the_button_is_actually_off() {
+        assert_eq!(
+            HistoryPagingOff::of(true, false, false),
+            None,
+            "a feed that pages, with no run out, takes the press"
+        );
+        assert_eq!(
+            HistoryPagingOff::of(true, true, true),
+            Some(HistoryPagingOff::RunInFlight),
+            "a run in flight is the reason, whatever else the source holds"
+        );
+        assert_eq!(
+            HistoryPagingOff::of(false, true, false),
+            Some(HistoryPagingOff::CandlesInstead),
+            "a recording's past is candles, and the refusal says so"
+        );
+        assert_eq!(
+            HistoryPagingOff::of(false, false, false),
+            Some(HistoryPagingOff::NothingToPage),
+            "and a source with neither gets the plain refusal"
         );
         assert!(
-            !history_disabled_hover(false, false).contains("older candles"),
-            "and a source without candles must not send the trader to a menu              entry that is not there"
+            HistoryPagingOff::CandlesInstead
+                .hover()
+                .contains("older candles"),
+            "the way forward has to be named"
+        );
+        assert!(
+            !HistoryPagingOff::NothingToPage
+                .hover()
+                .contains("older candles"),
+            "and a source without candles must not send the trader to a menu \
+             entry that is not there"
         );
     }
 }
