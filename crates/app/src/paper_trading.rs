@@ -921,6 +921,99 @@ impl CmdModifier {
     }
 }
 
+/// Which entry kind the aim places.
+///
+/// The fill model leaves exactly one *resting* kind valid at any price: a
+/// buy above the market can only stop in (a buy limit there would fill at
+/// once), and below it can only wait at a limit. So this is not a way to
+/// place a stop where a limit belongs — no venue would take it. It is a way
+/// to state **which order you came to place**, so the aim shows nothing
+/// rather than quietly handing you the other kind when the market is on the
+/// wrong side of your level.
+///
+/// That case is not hypothetical: the mark moves. A level a hand's breadth
+/// above the last price is a buy stop now and a buy limit after two ticks
+/// up, and under [`Self::Auto`] the same click at the same level places a
+/// different order depending on when it lands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CmdEntryKind {
+    /// Whichever kind can rest at the aimed price — the mark decides.
+    #[default]
+    Auto,
+    /// Only a limit. Where a limit cannot rest, the aim stands down.
+    Limit,
+    /// Only a stop. Where a stop cannot arm, the aim stands down.
+    Stop,
+}
+
+impl CmdEntryKind {
+    /// Every choice the selector offers.
+    pub const ALL: [Self; 3] = [Self::Auto, Self::Limit, Self::Stop];
+
+    /// Stable token for the state file.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Limit => "limit",
+            Self::Stop => "stop",
+        }
+    }
+
+    /// The inverse of [`Self::as_str`]; unknown tokens are refused.
+    #[must_use]
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "auto" => Some(Self::Auto),
+            "limit" => Some(Self::Limit),
+            "stop" => Some(Self::Stop),
+            _ => None,
+        }
+    }
+
+    /// Display label for the selector.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Limit => "limit",
+            Self::Stop => "stop",
+        }
+    }
+}
+
+/// The kind the aim places at `price`, or `None` where nothing may rest
+/// there.
+///
+/// [`CmdEntryKind::Auto`] reads the market: above the mark a buy stops in,
+/// below it a buy waits at a limit; a sell mirrors. On the mark exactly,
+/// nothing can rest — a resting order there would fill on the next print,
+/// which is a market order wearing the wrong name.
+///
+/// A stated kind is honoured only where it is valid. Returning `None`
+/// instead of the other kind is the point: the aim's promise is that the
+/// label can never advertise an order the press will not make, and a
+/// silent substitution would break it in the most expensive way — placing
+/// a breakout stop for a trader who came to buy a pullback.
+#[must_use]
+fn resolve_cmd_kind(
+    choice: CmdEntryKind,
+    side: Side,
+    price: Decimal,
+    mark: Decimal,
+) -> Option<EntryKind> {
+    let available = match (price > mark, price < mark, side) {
+        (true, _, Side::Buy) | (_, true, Side::Sell) => EntryKind::Stop,
+        (true, _, Side::Sell) | (_, true, Side::Buy) => EntryKind::Limit,
+        _ => return None,
+    };
+    match choice {
+        CmdEntryKind::Auto => Some(available),
+        CmdEntryKind::Limit => (available == EntryKind::Limit).then_some(EntryKind::Limit),
+        CmdEntryKind::Stop => (available == EntryKind::Stop).then_some(EntryKind::Stop),
+    }
+}
+
 /// Cmd trading: hold a key over the chart and a dashed line shows exactly
 /// where the order will rest, with a label riding beside the cursor; the
 /// click places it. Safer than the right-click menu because the price is
@@ -930,6 +1023,8 @@ pub struct CmdTradingSettings {
     pub enabled: bool,
     pub buy: CmdModifier,
     pub sell: CmdModifier,
+    /// Which entry kind the aim places; see [`CmdEntryKind`].
+    pub kind: CmdEntryKind,
 }
 
 impl Default for CmdTradingSettings {
@@ -938,6 +1033,9 @@ impl Default for CmdTradingSettings {
             enabled: true,
             buy: CmdModifier::Shift,
             sell: CmdModifier::Ctrl,
+            // Auto is right at almost every price, and it is what shipped;
+            // the choice exists for the trader who wants to be sure.
+            kind: CmdEntryKind::Auto,
         }
     }
 }
@@ -960,6 +1058,11 @@ impl CmdTradingSettings {
                 .as_deref()
                 .and_then(CmdModifier::parse)
                 .unwrap_or(defaults.sell),
+            kind: state
+                .cmd_entry_kind
+                .as_deref()
+                .and_then(CmdEntryKind::parse)
+                .unwrap_or(defaults.kind),
         }
     }
 }
@@ -1511,6 +1614,42 @@ impl PaperTrading {
     /// immediate answer back for the instance to attribute.
     pub fn apply_strategy_command(&mut self, command: Command) -> Vec<VenueEvent> {
         let events = self.dispatch(command);
+        self.handle_events(events.clone());
+        events
+    }
+
+    /// The last price the venue was shown, or `None` before the first
+    /// print — what a caller with no chart in front of it needs before it
+    /// can name a price at all.
+    #[must_use]
+    pub fn mark_price(&self) -> Option<Decimal> {
+        self.venue.mark_price()
+    }
+
+    /// Place one order, stated in full — the control plane's entry point,
+    /// and the shape a hotkey or a hook uses too.
+    ///
+    /// Unlike the chart's aim this takes the kind rather than inferring it:
+    /// a caller with no pointer has no "where I am relative to the mark" to
+    /// infer from, and an action whose meaning depends on the market at the
+    /// instant it lands is an action nobody can replay.
+    pub fn place_intent(&mut self, intent: OrderIntent) -> Vec<VenueEvent> {
+        let events = self.venue.submit(intent);
+        self.handle_events(events.clone());
+        events
+    }
+
+    /// Replace a working order's protective prices — the chart's drag, said
+    /// in words.
+    pub fn set_order_bracket(&mut self, id: OrderId, bracket: Bracket) -> Vec<VenueEvent> {
+        let events = self.venue.amend_bracket(BracketTarget::Order(id), bracket);
+        self.handle_events(events.clone());
+        events
+    }
+
+    /// Remove one working order without trading.
+    pub fn cancel_order(&mut self, id: OrderId) -> Vec<VenueEvent> {
+        let events = self.venue.cancel(id);
         self.handle_events(events.clone());
         events
     }
@@ -2606,14 +2745,10 @@ impl PaperTrading {
         let mark = self.venue.mark_price()?;
         let raw_price = scale.price_at(pointer.y);
         let price = self.snap(raw_price);
-        // The context menu's own validity table: above the mark a buy
-        // stops in, below it a buy waits at a limit; a sell mirrors. On
-        // the mark exactly nothing can rest.
-        let kind = match (price > mark, price < mark, side) {
-            (true, _, Side::Buy) | (_, true, Side::Sell) => EntryKind::Stop,
-            (true, _, Side::Sell) | (_, true, Side::Buy) => EntryKind::Limit,
-            _ => return None,
-        };
+        // The context menu's own validity table, plus the trader's stated
+        // kind. `None` stands the aim down rather than substituting the
+        // other kind — see `resolve_cmd_kind`.
+        let kind = resolve_cmd_kind(self.cmd_trading.kind, side, price, mark)?;
         Some(CmdPreview {
             side,
             kind,
@@ -3419,6 +3554,51 @@ impl PaperTrading {
                     });
             }
         });
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Place")
+                    .color(theme::TEXT_MUTED)
+                    .small(),
+            );
+            let current = self.cmd_trading.kind;
+            egui::ComboBox::from_id_salt("cmd_trading_entry_kind")
+                .width(64.0)
+                .selected_text(current.label())
+                .show_ui(ui, |ui| {
+                    for kind in CmdEntryKind::ALL {
+                        if ui.selectable_label(current == kind, kind.label()).clicked()
+                            && current != kind
+                        {
+                            self.cmd_trading.kind = kind;
+                            changed = true;
+                        }
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "which order the aim places - auto takes whichever kind can rest at \
+                     the price, limit and stop place only that one and show nothing where \
+                     it cannot rest",
+                );
+        });
+        if self.cmd_trading.enabled && self.cmd_trading.kind != CmdEntryKind::Auto {
+            // A stated kind is valid on one side of the market only, so the
+            // aim is silent on the other half of the chart. Said here, or a
+            // trader spends a minute wondering why the gesture died.
+            ui.label(
+                egui::RichText::new(format!(
+                    "the aim shows only where a {} can rest: {} the market",
+                    self.cmd_trading.kind.label(),
+                    if self.cmd_trading.kind == CmdEntryKind::Limit {
+                        "below it to buy, above it to sell"
+                    } else {
+                        "above it to buy, below it to sell"
+                    },
+                ))
+                .color(theme::TEXT_SUPPORT)
+                .small(),
+            );
+        }
         if self.cmd_trading.enabled && self.cmd_trading.buy == self.cmd_trading.sell {
             // A shared key is ambiguous, so the gesture shows nothing —
             // said here rather than discovered over the chart.
@@ -8633,6 +8813,140 @@ mod tests {
             "and says which leg was wrong: {}",
             toast.message
         );
+    }
+
+    /// The stated kind wins where both are conceivable to a trader but only
+    /// one can rest — which is every price except the mark.
+    ///
+    /// The pairing to read here is the second and third assertion: at 95,
+    /// with the market at 100, `Auto` yields a limit. Ask for a stop at that
+    /// same price and the aim stands down instead of handing you the limit.
+    /// That is the whole feature: the click that lands is the order you came
+    /// to place, or no click at all.
+    #[test]
+    fn a_stated_entry_kind_is_honoured_or_the_aim_stands_down() {
+        let mark = Decimal::from(100);
+        let below = Decimal::from(95);
+        let above = Decimal::from(105);
+
+        // Auto reads the market, exactly as it always has.
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Auto, Side::Buy, below, mark),
+            Some(EntryKind::Limit),
+            "a buy below the market waits at a limit"
+        );
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Auto, Side::Buy, above, mark),
+            Some(EntryKind::Stop),
+            "and above it stops in"
+        );
+
+        // A stated kind takes the price where it is valid...
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Limit, Side::Buy, below, mark),
+            Some(EntryKind::Limit)
+        );
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Stop, Side::Buy, above, mark),
+            Some(EntryKind::Stop)
+        );
+
+        // ...and stands the aim down where it is not, rather than silently
+        // placing the other kind. A trader who came to buy a pullback must
+        // never be handed a breakout stop.
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Stop, Side::Buy, below, mark),
+            None,
+            "a buy stop cannot arm below the market, so nothing is offered"
+        );
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Limit, Side::Buy, above, mark),
+            None,
+            "and a buy limit above it would fill at once"
+        );
+
+        // A sell mirrors, on every choice.
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Limit, Side::Sell, above, mark),
+            Some(EntryKind::Limit)
+        );
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Stop, Side::Sell, below, mark),
+            Some(EntryKind::Stop)
+        );
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Limit, Side::Sell, below, mark),
+            None
+        );
+
+        // On the mark nothing rests, whatever was asked for: a resting order
+        // there fills on the next print, which is a market order wearing the
+        // wrong name.
+        for choice in CmdEntryKind::ALL {
+            assert_eq!(
+                resolve_cmd_kind(choice, Side::Buy, mark, mark),
+                None,
+                "{choice:?} rests nothing on the mark"
+            );
+        }
+    }
+
+    /// The choice survives a restart, and an unknown token in a
+    /// hand-edited sidecar falls back rather than refusing to open.
+    #[test]
+    fn the_entry_kind_choice_is_remembered_and_unknown_tokens_fall_back() {
+        let state = crate::paper_state::PaperState {
+            cmd_entry_kind: Some("stop".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(
+            CmdTradingSettings::from_state(&state).kind,
+            CmdEntryKind::Stop
+        );
+
+        let state = crate::paper_state::PaperState {
+            cmd_entry_kind: Some("teleport".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(
+            CmdTradingSettings::from_state(&state).kind,
+            CmdEntryKind::Auto,
+            "a token this build does not know is the default, not a crash"
+        );
+    }
+
+    /// The aim itself obeys the choice: same pointer, same market, one
+    /// preview and one silence.
+    #[test]
+    fn the_aim_obeys_the_stated_kind() {
+        let mut paper = PaperTrading::new();
+        paper.venue.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        // y 250 is price 95 — below the market, where a buy limit rests.
+        let aim = egui::pos2(400.0, 250.0);
+
+        paper.cmd_trading.kind = CmdEntryKind::Auto;
+        paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, false));
+        assert_eq!(
+            paper.cmd_preview.map(|preview| preview.kind),
+            Some(EntryKind::Limit),
+            "auto offers the kind that can rest there"
+        );
+
+        paper.cmd_trading.kind = CmdEntryKind::Stop;
+        paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, false));
+        assert!(
+            paper.cmd_preview.is_none(),
+            "a trader who asked for a stop is shown no limit"
+        );
+
+        // And the press places nothing where the aim shows nothing.
+        assert!(!paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, true)));
+        assert!(paper.working_orders().is_empty());
     }
 
     /// A 800×400 chart over the given price range, plus the input for one

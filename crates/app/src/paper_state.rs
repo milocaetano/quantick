@@ -45,6 +45,10 @@ pub(crate) struct PaperState {
     /// See [`Self::cmd_buy_modifier`]; the sell side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cmd_sell_modifier: Option<String>,
+    /// Which entry kind the aim places (`auto`/`limit`/`stop`); an unknown
+    /// token falls back to the default at read time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cmd_entry_kind: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -195,6 +199,7 @@ mod tests {
             cmd_trading_enabled: Some(false),
             cmd_buy_modifier: Some("alt".to_owned()),
             cmd_sell_modifier: Some("ctrl".to_owned()),
+            cmd_entry_kind: Some("limit".to_owned()),
         };
         save(&path, &state);
         assert_eq!(load(&path), state);

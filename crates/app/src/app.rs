@@ -2492,6 +2492,7 @@ impl QuantickApp {
         let mut state = crate::paper_state::load(&path);
         state.cmd_trading_enabled = Some(settings.enabled);
         state.cmd_buy_modifier = Some(settings.buy.as_str().to_owned());
+        state.cmd_entry_kind = Some(settings.kind.as_str().to_owned());
         state.cmd_sell_modifier = Some(settings.sell.as_str().to_owned());
         crate::paper_state::save(&path, &state);
     }
@@ -2542,6 +2543,15 @@ impl QuantickApp {
     ) -> Option<(&mut Tab, &AppConfig)> {
         let Self { tabs, config, .. } = self;
         tabs.get_mut(index).map(|tab| (tab, &*config))
+    }
+
+    /// The trading host of the tab on screen — where the `trade.*` actions
+    /// land. The active tab and not an addressed one: an order belongs to
+    /// the symbol the trader is looking at, and a call that could quietly
+    /// trade a chart nobody has open is a call nobody should be able to
+    /// make.
+    pub(crate) fn control_active_paper_mut(&mut self) -> &mut crate::paper_trading::PaperTrading {
+        &mut self.tabs[self.active_tab].paper
     }
 
     pub(crate) fn control_tabs(&self) -> &[Tab] {
@@ -32151,6 +32161,148 @@ plot(close)
         std::fs::remove_dir_all(directory).ok();
     }
 
+    /// The second operator places an order, brackets it and reads it back —
+    /// the whole chart gesture, without a chart.
+    ///
+    /// `CLAUDE.md`'s *operable without a hand*: a capability a trader does
+    /// exists as a named call, not only inside a click handler. This is that
+    /// call for the one class of capability that had no registry entry at
+    /// all until now.
+    #[test]
+    fn the_trade_actions_place_bracket_and_read_back_an_order() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(40);
+        run_frame(&mut app, &ctx);
+
+        let mark = app
+            .active_tab()
+            .paper
+            .mark_price()
+            .expect("the history seeded a price");
+        // A buy limit a whole point below the market: below is where a buy
+        // limit can rest, whatever the fixture's absolute prices are.
+        let price = mark - rust_decimal::Decimal::ONE;
+
+        let placed = app
+            .control_action(
+                crate::control::trade::PLACE_CAPABILITY_ID,
+                crate::control::trade::CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "side": "buy",
+                    "kind": "limit",
+                    "quantity": "2",
+                    "price": price.to_string(),
+                }),
+            )
+            .expect("the action dispatches");
+        assert_eq!(placed["accepted"], true, "{placed}");
+        assert_eq!(placed["simulated"], true, "every result says so");
+        let order_id = placed["order_id"].as_u64().expect("the venue named it");
+        assert_eq!(
+            placed["working_orders"][0]["kind"], "limit",
+            "the kind was stated, not inferred from where a pointer was"
+        );
+
+        // Brackets on the working order, through the same door the chart's
+        // drag uses.
+        let stop = price - rust_decimal::Decimal::ONE;
+        let target = price + rust_decimal::Decimal::from(2);
+        let bracketed = app
+            .control_action(
+                crate::control::trade::BRACKET_CAPABILITY_ID,
+                crate::control::trade::CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "order_id": order_id,
+                    "stop_loss": stop.to_string(),
+                    "take_profit": target.to_string(),
+                }),
+            )
+            .expect("the action dispatches");
+        assert_eq!(bracketed["accepted"], true, "{bracketed}");
+        assert_eq!(
+            bracketed["working_orders"][0]["stop_loss"],
+            stop.to_string(),
+            "and the read-back carries the leg that will arm on the fill"
+        );
+        assert_eq!(
+            bracketed["working_orders"][0]["take_profit"],
+            target.to_string()
+        );
+
+        // A refusal comes back as an answer, in the venue's own words —
+        // never as a bare status a caller can forget to render. A stop on
+        // the profit side of the entry would exit the instant it filled.
+        let refused = app
+            .control_action(
+                crate::control::trade::BRACKET_CAPABILITY_ID,
+                crate::control::trade::CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "order_id": order_id,
+                    "stop_loss": (price + rust_decimal::Decimal::ONE).to_string(),
+                }),
+            )
+            .expect("the action dispatches");
+        assert_eq!(refused["accepted"], false);
+        assert!(
+            refused["rejected_because"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("stop loss")),
+            "the reason teaches: {refused}"
+        );
+        assert_eq!(
+            refused["working_orders"][0]["stop_loss"],
+            stop.to_string(),
+            "and a refusal changed nothing"
+        );
+
+        // And it can be taken away again.
+        let cancelled = app
+            .control_action(
+                crate::control::trade::CANCEL_CAPABILITY_ID,
+                crate::control::trade::CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({ "order_id": order_id }),
+            )
+            .expect("the action dispatches");
+        assert_eq!(cancelled["accepted"], true, "{cancelled}");
+        assert!(
+            cancelled["working_orders"]
+                .as_array()
+                .is_some_and(|orders| orders.is_empty()),
+            "nothing is working now"
+        );
+    }
+
+    /// A market order takes no price, and saying otherwise is refused before
+    /// anything reaches the venue — the input is wrong, not the market.
+    #[test]
+    fn a_market_action_with_a_price_is_refused_as_a_bad_request() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(40);
+        run_frame(&mut app, &ctx);
+
+        let error = app
+            .control_action(
+                crate::control::trade::PLACE_CAPABILITY_ID,
+                crate::control::trade::CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "side": "buy",
+                    "kind": "market",
+                    "quantity": "1",
+                    "price": "100",
+                }),
+            )
+            .expect_err("a market order has no price of its own");
+        assert!(
+            format!("{error:?}").contains("market order has no price"),
+            "{error:?}"
+        );
+    }
+
     /// Criterion 7 and the gap #223 left: the trace records the *resolved*
     /// input, so a rerun marks the bar that was marked rather than wherever
     /// the pointer happens to be during the rerun.
@@ -34298,7 +34450,12 @@ plot(close)
                         // in the trader's words that it closes an open paper
                         // position and disarms every strategy, and which is
                         // marked sensitive so it is off until ticked.
-                        || capability["effect"] == "cockpit.recover",
+                        || capability["effect"] == "cockpit.recover"
+                        // The trade tier. Discoverable like the rest, and
+                        // reachable by nothing a trader can currently grant:
+                        // its permission's only ceiling is the `trader`
+                        // profile, which the access panel does not offer.
+                        || capability["effect"] == "trade",
                     "{} has an unexpected effect {}",
                     capability["id"],
                     capability["effect"]

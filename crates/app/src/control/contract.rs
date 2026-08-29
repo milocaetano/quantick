@@ -32,6 +32,7 @@ use serde_json::{Value, json};
 
 use crate::app::QuantickApp;
 
+use super::trade::{TRADE_EFFECT_ID, TRADE_MODULE_ID, TRADE_PERMISSION_ID};
 use super::{
     actions::{
         ANNOTATE_ATTENTION_PERMISSION_ID, ANNOTATE_EFFECT_ID, ANNOTATE_PERMISSION_ID,
@@ -86,6 +87,21 @@ pub(crate) const RECOVER_EFFECT_ID: &str = "cockpit.recover";
 /// What a capability under [`RECOVER_EFFECT_ID`] declares it may cost: the
 /// chart's timeline, and with it the paper position and every armed strategy.
 pub(crate) const TIMELINE_REBUILT_RISK_FLAG: &str = "timeline_rebuilt";
+/// The ceiling the `trade.*` family sits under.
+///
+/// It exists because the registry requires every permission to name one, and
+/// because naming it is better than the alternatives: a trade cannot borrow
+/// the annotate tier (whose own description promises it never affects a
+/// position), and a permission with no ceiling at all is not representable.
+///
+/// **Nothing hands this profile out.** The access panel does not offer it,
+/// `default_grant` is `Denied`, and the handshake can only reach a profile
+/// the trader has granted — so today the only caller that gets past the
+/// gateway to a `trade.*` capability is the in-process operator: a hotkey,
+/// a harness hook, a deterministic test. Deciding that some connection may
+/// trade is a decision about a real account, and it is not this change's to
+/// make. The carve-out is here so that decision has somewhere to land.
+pub(crate) const TRADER_PROFILE_ID: &str = "trader";
 pub(crate) const DESCRIBE_CAPABILITY_ID: &str = "control.describe";
 pub(crate) const SNAPSHOT_CAPABILITY_ID: &str = "snapshot.read";
 pub(crate) const CHART_WINDOW_CAPABILITY_ID: &str = "chart.window.read";
@@ -630,6 +646,7 @@ impl ObserverContract {
         let observer = profile(OBSERVER_PROFILE_ID);
         let annotator = profile(ANNOTATOR_PROFILE_ID);
         let cockpit = profile(COCKPIT_PROFILE_ID);
+        let trader = profile(TRADER_PROFILE_ID);
         let mut permissions = vec![
             PermissionDescriptor {
                 id: permission(OBSERVE_PERMISSION_ID),
@@ -650,6 +667,22 @@ impl ObserverContract {
                 sensitive: false,
                 default_grant: DefaultGrant::Prompt,
                 profile_ceilings: BTreeSet::from([annotator.clone()]),
+            },
+            // The trade tier. Its ceiling set is deliberately **empty**: no
+            // shipped profile may hold it, so the gateway refuses every
+            // `trade.*` capability before dispatch while the in-process
+            // operator — a hotkey, a harness hook, a test — reaches them
+            // normally. `annotate` promises it never affects a position, so
+            // a trade cannot borrow it, and deciding which profile *may*
+            // trade is a decision about a real account rather than a detail
+            // of the change that carved this out.
+            PermissionDescriptor {
+                id: permission(TRADE_PERMISSION_ID),
+                label: "Trade".to_owned(),
+                description: "Place, bracket and cancel orders on the charted symbol. Fills are simulated today; the permission exists so that the day they are not, nothing has to be re-decided in a hurry.".to_owned(),
+                sensitive: true,
+                default_grant: DefaultGrant::Denied,
+                profile_ceilings: BTreeSet::from([trader.clone()]),
             },
             PermissionDescriptor {
                 id: permission(COCKPIT_PERMISSION_ID),
@@ -754,6 +787,17 @@ impl ObserverContract {
                 permissions: BTreeSet::new(),
             },
             ProfileDescriptor {
+                id: trader.clone(),
+                label: "Trader".to_owned(),
+                // Above the cockpit, so the chain stays a chain and any two
+                // profiles remain comparable — the property the handshake
+                // depends on. Inheriting is not granting: what a connection
+                // may call is its ceiling intersected with what the trader
+                // ticked, and nothing ticks this one.
+                inherits: BTreeSet::from([cockpit.clone()]),
+                permissions: BTreeSet::new(),
+            },
+            ProfileDescriptor {
                 id: cockpit.clone(),
                 label: "Cockpit".to_owned(),
                 // Inherits the annotator, and through it the observer's reads
@@ -795,6 +839,13 @@ impl ObserverContract {
             id: module("snapshot"),
             title: "Snapshot".to_owned(),
             description: "Coherent multi-module semantic captures.".to_owned(),
+        })?;
+        registry.register_module(ModuleDescriptor {
+            id: module(TRADE_MODULE_ID),
+            title: "Trade".to_owned(),
+            description:
+                "Placing, bracketing and cancelling orders on the charted symbol. Fills are simulated."
+                    .to_owned(),
         })?;
         registry.register_module(ModuleDescriptor {
             id: module(EVENTS_MODULE_ID),
@@ -927,6 +978,31 @@ impl ObserverContract {
                 // here is what lets the descriptor say `reversible: false`
                 // instead of claiming a reversal it cannot perform.
                 durable_requires_reversible: false,
+                irreversible_transient_risk: None,
+                allows_risk_reducing: false,
+            },
+        })?;
+        registry.register_effect(EffectPolicy {
+            id: effect(TRADE_EFFECT_ID),
+            permission_floor: permission(TRADE_PERMISSION_ID),
+            profile_ceilings: BTreeSet::from([trader.clone()]),
+            confirmation_class: confirmation(NO_CONFIRMATION_ID),
+            risk_reducing_confirmation_class: None,
+            mcp_hint_floor: McpHintFloor {
+                read_only: false,
+                // Cancelling removes working state, and the floor is the
+                // strictest thing the family does.
+                destructive: true,
+                // Placing the same order twice places two orders; there is
+                // no key that could make a retry safe.
+                idempotent: false,
+                open_world: false,
+            },
+            required_risk_flags: BTreeSet::new(),
+            constraints: EffectConstraints {
+                required_read_only: Some(false),
+                allows_destructive: true,
+                durable_requires_reversible: true,
                 irreversible_transient_risk: None,
                 allows_risk_reducing: false,
             },
