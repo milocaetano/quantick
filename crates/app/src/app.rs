@@ -1484,7 +1484,10 @@ impl QuantickApp {
             layout_rename: None,
             layout_delete_confirm: None,
             last_script_poll: Instant::now(),
-            replay_view: ReplayView::new(workspace.replay_folder.as_deref()),
+            replay_view: ReplayView::new(
+                workspace.replay_folder.as_deref(),
+                workspace.replay_day_before,
+            ),
             dock: Dock::new(),
             toolrail: ToolRail::new(),
             drawing_delete_confirm: false,
@@ -2212,6 +2215,24 @@ impl QuantickApp {
                 }
             }
         }
+        // Whether a recording opens with the day before it joined in front.
+        // Read before anything loads a session, because that is the frame the
+        // setting is consulted on. Staged rather than chosen: a validation run
+        // states the screen it wants to photograph, and must not write a QA
+        // preference into the trader's workspace — the same rule the replay
+        // folder follows.
+        if let Ok(value) = std::env::var("QUANTICK_REPLAY_DAY_BEFORE") {
+            let enabled = matches!(value.trim(), "1" | "true" | "on");
+            app.replay_view.stage_day_before(enabled);
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "REPLAY_DAY_BEFORE_STAGED",
+                enabled,
+                requested = value.trim(),
+                "the day before was staged for this run"
+            );
+        }
         // Same convenience for Market Replay: scan the folder in force — the
         // hook, else the stored pick, else the documents home — and play its
         // first session. The same code path a click takes, so a scripted run
@@ -2742,6 +2763,15 @@ impl QuantickApp {
     /// whether one press is one request or a run of them.
     pub(crate) fn control_history_settings(&self) -> (crate::history_reach::HistoryReach, bool) {
         (self.history_reach, self.venue_lead_in)
+    }
+
+    /// Whether a recording opens with the session day before it joined in
+    /// front, and a download fetches that day's tape too.
+    ///
+    /// A choice an operator without a mouse has to be able to read back after
+    /// setting it: it decides what a replay they are about to open will hold.
+    pub(crate) fn control_replay_day_before(&self) -> bool {
+        self.replay_view.day_before()
     }
 
     /// Invoke one registered control action from inside the application,
@@ -4656,6 +4686,7 @@ impl QuantickApp {
         // `QUANTICK_REPLAY_DIR` must not write a QA scratch path into their
         // workspace, and accepting the default home is not a choice either.
         .with_replay_folder(self.replay_view.stored_pick().map(str::to_owned))
+        .with_replay_day_before(self.replay_view.stored_day_before())
         // And the starred tools, for the third time and the same reason. They
         // are already on disk the moment the star is clicked; riding along
         // here keeps a full-file write from erasing what the star wrote.
@@ -5452,6 +5483,32 @@ impl QuantickApp {
                 "forget_replay_folder"
             },
             "the replay folder is now the one this workspace opens on"
+        );
+    }
+
+    /// Write down the *day before* choice the trader just made, without
+    /// disturbing anything else the workspace file holds.
+    ///
+    /// The same read-swap-write as [`Self::write_replay_folder`], and for the
+    /// same reason: whether yesterday is on the chart is a standing choice,
+    /// not a description of the screen, so it must not wait for a clean exit.
+    fn write_replay_day_before(&mut self, enabled: bool) {
+        let written = self.edit_workspace_file("REPLAY_DAY_BEFORE_REMEMBERED", |file| {
+            file.replay_day_before = Some(enabled);
+        });
+        self.workspace_saved |= written;
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "REPLAY_DAY_BEFORE_REMEMBERED",
+            enabled,
+            written,
+            action = if enabled {
+                "join_day_before"
+            } else {
+                "chosen_day_only"
+            },
+            "the day before is now what this workspace opens recordings with"
         );
     }
 
@@ -10827,6 +10884,12 @@ impl QuantickApp {
         if let Some(pick) = self.replay_view.take_folder_change() {
             self.write_replay_folder(pick.as_deref());
         }
+        // The same, for the tick that decides whether yesterday is on the
+        // chart. Either row can have been the one clicked; the browser owns
+        // the setting, so there is one place to pick the change up.
+        if let Some(enabled) = self.replay_view.take_day_before_change() {
+            self.write_replay_day_before(enabled);
+        }
         {
             // The focused pane's objects: the toolbox lists and manages what a
             // click on the canvas would act on.
@@ -12853,7 +12916,7 @@ mod tests {
     #[test]
     fn a_workspace_save_carries_the_pick_that_was_made() {
         let (mut app, _evt, _cmd, _book) = test_app();
-        app.replay_view = ReplayView::new(Some("D:/tape"));
+        app.replay_view = ReplayView::new(Some("D:/tape"), None);
         assert_eq!(
             app.capture_workspace().replay_folder.as_deref(),
             Some("D:/tape")

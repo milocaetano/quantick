@@ -160,6 +160,11 @@
     "progressive_venue_history": {
       "type": "boolean"
     },
+    "replay_day_before": {
+      "default": false,
+      "description": "Whether opening a recording joins the session day before it, and a\ndownload fetches that day's tape as well.\n\nAdditive within v1 (contract §4). It decides what a replay an operator\nis about to open will actually hold, so it has to be readable before\nthey open one — the bar counts afterwards are too late to plan with.",
+      "type": "boolean"
+    },
     "save_on_exit": {
       "type": "boolean"
     },

@@ -71,6 +71,11 @@ pub struct ReplayOptions {
     /// Speed to start at.
     pub speed: f32,
     /// Whether to start playing immediately.
+    ///
+    /// Off by default. A replay is a rehearsal, and it begins when the trader
+    /// says so: a session that runs while they are still reading the chart
+    /// costs them the open, and the only way back is a seek that rebuilds
+    /// every bar. A scripted run that wants a moving tape asks for it outright.
     pub autoplay: bool,
     /// Market time that may pass with no prints before the clock skips ahead.
     pub skip_idle_over_ms: Option<i64>,
@@ -80,7 +85,7 @@ impl Default for ReplayOptions {
     fn default() -> Self {
         Self {
             speed: 1.0,
-            autoplay: true,
+            autoplay: false,
             skip_idle_over_ms: Some(quantick_replay::clock::DEFAULT_SKIP_IDLE_MS),
         }
     }
@@ -300,7 +305,15 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
         skip_idle_over_ms: request.options.skip_idle_over_ms,
         ..PlaybackConfig::default()
     };
-    let mut playhead = Playhead::new(&request.session.trades, config);
+    // Opening past the day joined in front of the recording, when there is
+    // one: those prints are context the chart is handed as history, not part
+    // of the session being rehearsed. `day_before_trades` is 0 without a join,
+    // which is exactly the playhead that was always built here.
+    let mut playhead = Playhead::opening_at(
+        &request.session.trades,
+        config,
+        request.session.day_before_trades(),
+    );
     if request.options.autoplay {
         playhead.play();
     }
@@ -470,12 +483,17 @@ fn play(
         span_ms = session.span_ms(),
         speed = playhead.speed(),
         playing = playhead.is_playing(),
+        day_before = session.day_before_label().unwrap_or_default().as_str(),
+        day_before_trades = session.day_before_trades(),
         "replaying a recorded session"
     );
 
-    // The chart opens empty and fills as the session plays; an empty backfill
-    // resolves the UI's initial "loading history" state right away.
-    if tx.blocking_send(FeedEvent::Backfilled(Vec::new())).is_err() {
+    // The chart opens on whatever the playhead has already passed: nothing at
+    // all for a lone day, and the whole of a joined one in front of a session
+    // that has the day before it. Either way the backfill resolves the UI's
+    // initial "loading history" state right away.
+    let opening = session.trades[..playhead.cursor()].to_vec();
+    if tx.blocking_send(FeedEvent::Backfilled(opening)).is_err() {
         return;
     }
 
@@ -924,6 +942,149 @@ mod tests {
         assert!(
             older.iter().all(|bar| bar.open_time < oldest_held),
             "and every bar of it is older than what was already held"
+        );
+    }
+
+    /// The same session, with its first `joined` prints declared as the day
+    /// before it — the shape `Session::load_with_day_before` produces.
+    fn session_with_day_before(count: usize, joined: usize) -> Arc<Session> {
+        let mut session = Session::clone(&session(count));
+        session.day_before = Some(quantick_replay::JoinedDay {
+            path: PathBuf::from("replay/TEST/20260313.csv"),
+            date: quantick_replay::SessionDate::parse("20260313"),
+            trades: joined,
+        });
+        Arc::new(session)
+    }
+
+    /// Drain up to the next backfill, or fail the test rather than hang.
+    fn next_backfill(handle: &mut FeedHandle) -> Vec<Trade> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(
+                Instant::now() < deadline,
+                "no backfill: the chart would wait"
+            );
+            match handle.events.try_recv() {
+                Ok(FeedEvent::Backfilled(batch)) => break batch,
+                Ok(_) => {}
+                Err(mpsc::error::TryRecvError::Empty) => std::thread::sleep(TICK_PAUSED),
+                Err(mpsc::error::TryRecvError::Disconnected) => panic!("worker gone"),
+            }
+        }
+    }
+
+    /// What the trader who asked for this feature gets: yesterday's order flow
+    /// already on the chart, the playhead parked on today's first print, and
+    /// nothing moving until they say so.
+    #[test]
+    fn a_joined_day_opens_on_the_chart_with_the_tape_waiting() {
+        let session = session_with_day_before(40, 12);
+        let expected_open = session.trades[12].timestamp_ms;
+        let mut handle = spawn(ReplayRequest {
+            session,
+            options: ReplayOptions::default(),
+        });
+        let link = handle.replay.clone().expect("replay link");
+
+        let opening = next_backfill(&mut handle);
+        assert_eq!(
+            opening.len(),
+            12,
+            "the day before is handed over as history, whole"
+        );
+        assert!(
+            !link.status.is_playing(),
+            "and the default is to wait for the trader"
+        );
+        assert_eq!(link.status.played(), 12, "parked past what is on the chart");
+        assert_eq!(
+            link.status.start_ms(),
+            expected_open,
+            "the session opens on its own day, not on the joined one"
+        );
+        assert_eq!(link.status.progress(), 0.0, "at the open, not half way");
+    }
+
+    #[test]
+    fn a_session_with_nothing_joined_still_opens_on_an_empty_chart() {
+        let mut handle = spawn(ReplayRequest {
+            session: session(20),
+            options: ReplayOptions::default(),
+        });
+        assert!(
+            next_backfill(&mut handle).is_empty(),
+            "today's behaviour, unchanged, when there is no day before"
+        );
+        let link = handle.replay.clone().expect("replay link");
+        assert_eq!(link.status.played(), 0);
+    }
+
+    #[test]
+    fn playing_a_joined_session_releases_only_the_day_that_was_chosen() {
+        let mut handle = spawn(ReplayRequest {
+            session: session_with_day_before(40, 12),
+            options: ReplayOptions {
+                speed: 50.0,
+                autoplay: true,
+                skip_idle_over_ms: Some(2_000),
+            },
+        });
+        // The opening backfill is the joined day; everything after it is the
+        // session playing. 40 prints, 12 of them already on the chart.
+        let opening = next_backfill(&mut handle);
+        assert_eq!(opening.len(), 12);
+        let played = collect(&mut handle, 28);
+        assert_eq!(played.len(), 28, "the day, and never the day before again");
+        assert_eq!(
+            played[0].price,
+            Decimal::from(112),
+            "play begins on the day's own first print"
+        );
+    }
+
+    #[test]
+    fn restarting_a_joined_session_puts_the_day_before_back_and_no_more() {
+        let mut handle = spawn(ReplayRequest {
+            session: session_with_day_before(40, 12),
+            options: ReplayOptions {
+                speed: 50.0,
+                autoplay: true,
+                skip_idle_over_ms: Some(2_000),
+            },
+        });
+        let link = handle.replay.clone().expect("replay link");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while link.status.played() <= 12 && Instant::now() < deadline {
+            std::thread::sleep(TICK_PLAYING);
+        }
+        assert!(link.status.played() > 12, "playback started");
+
+        handle
+            .commands
+            .blocking_send(FeedCommand::Replay(ReplayControl::Restart))
+            .expect("the worker is listening");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut saw_reset = false;
+        let mut history = Vec::new();
+        while Instant::now() < deadline {
+            match handle.events.try_recv() {
+                Ok(FeedEvent::Reset) => saw_reset = true,
+                Ok(FeedEvent::Backfilled(batch)) if saw_reset => {
+                    history = batch;
+                    break;
+                }
+                Ok(_) => {}
+                Err(mpsc::error::TryRecvError::Empty) => std::thread::sleep(TICK_PLAYING),
+                Err(mpsc::error::TryRecvError::Disconnected) => break,
+            }
+        }
+        assert!(saw_reset, "a restart rebuilds the chart");
+        assert_eq!(
+            history.len(),
+            12,
+            "back to the day's open, with yesterday still behind it"
         );
     }
 

@@ -15,6 +15,10 @@
 //! - [`context`] — the sibling file of broker candles that fills the empty
 //!   space to the left of a recording, so a replay opens with the market's
 //!   recent past visible instead of blank canvas.
+//! - [`session`] — one loaded recording: a day's tape, the run-up beside it,
+//!   and optionally the session day before it joined in front of its prints,
+//!   so a rehearsed open has real order flow behind it rather than candles
+//!   that carry none.
 //!
 //! Like [`quantick_engine`], this crate is headless and deterministic: no UI, no
 //! network, no async, and no wall-clock read anywhere. The playhead is *told*
@@ -65,4 +69,7 @@ pub use format::{
     UtcOffset,
 };
 pub use library::{Library, Problem, ProblemKind, SessionEntry, scan};
-pub use session::{Session, SessionDate, SessionError};
+pub use session::{
+    DayBeforeProblem, JoinedDay, MAX_DAY_BEFORE_GAP_DAYS, Session, SessionDate, SessionError,
+    day_before_path,
+};

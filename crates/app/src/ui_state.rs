@@ -379,6 +379,23 @@ pub struct Workspace {
     /// nothing.
     #[serde(default)]
     pub replay_folder: Option<String>,
+    /// Whether opening a recording joins the session day before it, and a
+    /// download fetches that day's tape as well.
+    ///
+    /// Top-level beside `replay_folder`, and written the moment the tick
+    /// changes, for the same reason: it is a standing choice about how the
+    /// trader rehearses, not a description of one arrangement of panes.
+    ///
+    /// Deliberately *not* in [`LOCAL_KEYS`], unlike the folder above. The
+    /// folder names a path on this machine and cannot travel; wanting
+    /// yesterday on the chart is a way of working, and travels with a shared
+    /// cockpit exactly as a starred tool does.
+    ///
+    /// `None` means "never chosen" — which is what every file written before
+    /// this field existed says — and resolves to joining the day before, the
+    /// answer a trader rehearsing an open gave when asked.
+    #[serde(default)]
+    pub replay_day_before: Option<bool>,
     /// Starred drawing tools pinned to the rail, by tool id, in the order the
     /// trader starred them.
     ///
@@ -485,6 +502,7 @@ impl Default for Workspace {
             chrome: None,
             saved: Vec::new(),
             replay_folder: None,
+            replay_day_before: None,
             favorite_tools: Vec::new(),
             recent_workspaces: Vec::new(),
         }
@@ -514,6 +532,7 @@ impl Workspace {
             chrome,
             saved: Vec::new(),
             replay_folder: None,
+            replay_day_before: None,
             favorite_tools: Vec::new(),
             recent_workspaces: Vec::new(),
         }
@@ -539,6 +558,19 @@ impl Workspace {
     #[must_use]
     pub fn with_replay_folder(mut self, folder: Option<String>) -> Self {
         self.replay_folder = folder;
+        self
+    }
+
+    /// The same, carrying the *day before* choice through.
+    ///
+    /// Threaded like the folder above and for the same reason: it is a
+    /// standing choice read off disk, not something the live window describes.
+    /// `None` is "never chosen" and stays that way — a capture must not
+    /// materialise today's default into the file, or tomorrow's default could
+    /// never reach a trader who simply never touched the tick.
+    #[must_use]
+    pub fn with_replay_day_before(mut self, enabled: Option<bool>) -> Self {
+        self.replay_day_before = enabled;
         self
     }
 
@@ -1027,6 +1059,7 @@ mod tests {
             }),
             saved: Vec::new(),
             replay_folder: Some("D:/tape".to_owned()),
+            replay_day_before: Some(false),
             favorite_tools: vec!["parallel-channel".to_owned()],
             recent_workspaces: vec!["D:/desk/scalp.qws.toml".to_owned()],
         }

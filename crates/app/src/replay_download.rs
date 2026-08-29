@@ -692,6 +692,23 @@ mod tests {
         assert!(!args.iter().any(|a| a == "--probe"));
     }
 
+    /// The second half of a two-day download: the same command line, the day
+    /// before, and no run-up of its own. A zero has to be *stated* — the
+    /// exporter's own default is five sessions, so an omitted flag would
+    /// download the same week of candles a second time.
+    #[test]
+    fn the_day_before_is_fetched_with_no_run_up_of_its_own() {
+        let day_before = DownloadRequest {
+            day: Some("2026-08-11".to_string()),
+            context_sessions: 0,
+            ..request()
+        };
+        let args = Mt5SessionSource::arguments(Path::new("tools/export.py"), &day_before, None);
+        assert!(args.windows(2).any(|w| w == ["--day", "2026-08-11"]));
+        assert!(args.windows(2).any(|w| w == ["--context-sessions", "0"]));
+        assert!(!args.iter().any(|a| a == "--probe"));
+    }
+
     #[test]
     fn a_probe_asks_for_nothing_but_the_days() {
         let probe = DownloadRequest {
