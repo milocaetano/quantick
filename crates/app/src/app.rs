@@ -1751,7 +1751,7 @@ impl QuantickApp {
         // like a press that ignored the run it was told to make.
         if let Ok(token) = std::env::var("QUANTICK_HISTORY_REACH") {
             match crate::history_reach::HistoryReach::from_token(&token) {
-                Some(reach) => app.history_reach = reach,
+                Some(reach) => app.set_history_reach(reach),
                 None => tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
@@ -2655,6 +2655,17 @@ impl QuantickApp {
         (self.save_on_exit, self.show_perf, self.progressive_history)
     }
 
+    /// Choose how far one press of *load older* reaches.
+    ///
+    /// The named call behind the history menu's reach chips and the
+    /// `QUANTICK_HISTORY_REACH` hook — one path, so an operator without a
+    /// mouse sets what a click sets. Mirrored onto every tab by `drain_tabs`,
+    /// where a run in flight also reads it: withdrawing the longer reach is
+    /// how a trader calls that run off.
+    pub(crate) fn set_history_reach(&mut self, reach: crate::history_reach::HistoryReach) {
+        self.history_reach = reach;
+    }
+
     /// How far the window's *load older* press reaches, and whether a chart
     /// cut by trades carries the venue's candles.
     ///
@@ -3395,7 +3406,7 @@ impl QuantickApp {
         // resets every frame and the button never reads as open.
         drop(model);
         self.layout_picker_open = layout_picker_open;
-        self.history_reach = history_reach;
+        self.set_history_reach(history_reach);
         // A newly picked feed may not offer the current symbol. Never during
         // a replay: the recorded instrument belongs to no live feed's menu,
         // and snapping it away would relabel the whole session — the status
