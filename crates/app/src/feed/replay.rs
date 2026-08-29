@@ -895,7 +895,15 @@ mod tests {
     /// exists to keep shut.
     #[test]
     fn a_recording_never_claims_to_page_trades() {
-        for session in [session(4), session_with_context(4, 90)] {
+        // Every shape a recording comes in, the joined day included: that one
+        // hands the trader the day before through the *opening backfill*, once,
+        // and never through a request — so it is more tape behind the chart and
+        // still nothing this source could page if asked.
+        for session in [
+            session(4),
+            session_with_context(4, 90),
+            session_with_day_before(4, 2),
+        ] {
             let handle = spawn(ReplayRequest {
                 session: Arc::clone(&session),
                 options: ReplayOptions {
@@ -907,7 +915,7 @@ mod tests {
             let capabilities = *handle.capabilities.borrow();
             assert!(
                 !capabilities.history_paging,
-                "a recording has no older trades to serve, context file or not"
+                "a recording has no older trades to serve — not with a context                  file beside it, and not with the day before joined in front"
             );
             assert_eq!(
                 capabilities.ohlcv_history,

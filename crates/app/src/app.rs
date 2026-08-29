@@ -11345,13 +11345,7 @@ impl QuantickApp {
                 // their rects on the draw just above, so these are this
                 // frame's geometry rather than the previous one's.
                 let history_note = tab.history_note();
-                loading::overlay_scoped(
-                    ui,
-                    area,
-                    &tab.loading,
-                    LoadingScope::Whole,
-                    history_note,
-                );
+                loading::overlay_scoped(ui, area, &tab.loading, LoadingScope::Whole, history_note);
                 // A scope whose surface is not on screen falls back to the
                 // canvas rather than dropping its wait: the flow pane is not
                 // painted in the Time layout, and a flow-only layout has no
