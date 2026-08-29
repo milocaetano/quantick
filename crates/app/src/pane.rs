@@ -769,6 +769,29 @@ pub(crate) struct PriceAxisLevel {
     pub color: egui::Color32,
 }
 
+/// What the price axis may not write a round number over this frame.
+///
+/// Two sources, kept apart because they are *stored* differently and not
+/// because they mean different things: the chips the axis draws itself are a
+/// pair that fits inline, and the levels are the list already gathered for
+/// painting, borrowed rather than copied into a third container once a frame.
+struct PriceAxisClaims<'a> {
+    /// The pointer's tag and the last-price chip.
+    marks: pointer_compass::AxisClaims,
+    /// One per level a drawing declared.
+    levels: &'a [PriceAxisLevel],
+}
+
+impl PriceAxisClaims<'_> {
+    /// Every claimed height, from both sources, allocating nothing.
+    fn heights(&self) -> impl Iterator<Item = f32> + '_ {
+        self.marks
+            .iter()
+            .copied()
+            .chain(self.levels.iter().map(|level| level.y))
+    }
+}
+
 /// What the pointer's compass will draw this frame, and where.
 ///
 /// One decision, read twice: the axes consult it before labelling themselves
@@ -5348,18 +5371,23 @@ impl ChartPane {
         // Gathered once, read twice: the axis stands aside for these just
         // below, and the same list is what gets painted onto the gutter
         // further down. Borrowed out of the pane so the container survives
-        // the frame and the next one refills it rather than reallocating.
+        // the frame and the next one refills it rather than reallocating —
+        // and lent to the axis as a slice, so the claims list stays the two
+        // chips the axis draws itself and never spills onto the heap.
         let mut levels = std::mem::take(&mut self.price_axis_levels);
         if self.layer_visible(ChartLayer::Drawings, chrome.style) {
             self.price_axis_levels(right, total, &scale, &mut levels);
         } else {
             levels.clear();
         }
-        price_claims.extend(levels.iter().map(|level| level.y));
 
         // Grid + price labels first, behind the candles. Labels anchor on the
         // gutter's edge, past the live strip when one is shown.
         let axis_x = areas.price_gutter.left();
+        let price_claims = PriceAxisClaims {
+            marks: price_claims,
+            levels: &levels,
+        };
         self.draw_price_axis(painter, chart_rect, axis_x, &scale, &price_claims, chrome);
 
         // Candles, clipped to their own pane: panning far enough into history
@@ -5957,7 +5985,7 @@ impl ChartPane {
                     label_width,
                     history_strip.left(),
                     history_strip.right(),
-                ) && !pointer_compass::claimed(claims, x, label_width)
+                ) && !pointer_compass::claimed(x, label_width, claims.iter().copied())
                 {
                     painter.text(
                         egui::pos2(x, y),
@@ -6068,16 +6096,15 @@ impl ChartPane {
     /// Right-hand price axis: round-number gridlines and labels. `axis_x` is
     /// the gutter's left edge — the chart's right edge normally, the live
     /// strip's right edge while the strip sits between them.
-    /// `claims` are the heights this axis has already promised to a chip —
-    /// the pointer's tag, the last price, a level a drawing declared. A
-    /// gridline label lands there in silence rather than on top of one.
+    /// A gridline label landing on a height `claims` has already promised to a
+    /// chip stays unwritten, rather than being drawn under one.
     fn draw_price_axis(
         &self,
         painter: &egui::Painter,
         chart_rect: egui::Rect,
         axis_x: f32,
         scale: &PriceScale,
-        claims: &pointer_compass::AxisClaims,
+        claims: &PriceAxisClaims<'_>,
         chrome: &PaneChrome<'_>,
     ) {
         let grid = grid_color(chrome.style);
@@ -6105,7 +6132,7 @@ impl ChartPane {
                 ],
                 egui::Stroke::new(1.0_f32, grid),
             );
-            if pointer_compass::claimed(claims, y, label_height) {
+            if pointer_compass::claimed(y, label_height, claims.heights()) {
                 continue;
             }
             painter.text(

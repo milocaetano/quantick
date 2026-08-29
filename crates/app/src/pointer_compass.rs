@@ -79,11 +79,12 @@ pub(crate) fn price_text(price: f64) -> String {
 /// compass found `09:33:1` and `09:34:26` interleaved on the time axis, which
 /// reads as neither.
 ///
-/// Eight, because the claims on one axis are the pointer's tag, the last-price
-/// chip and one per level a drawing declares; past that the axis is spoken for
-/// several times over and one more claim changes nothing. Sized so the gather
-/// allocates nothing per frame.
-pub(crate) type AxisClaims = SmallVec<[f32; 8]>;
+/// Two, and no more: this holds the chips an axis draws *itself* — the
+/// pointer's tag and the last-price chip. The levels a drawing declares are
+/// already gathered for painting, so they are chained in at the check rather
+/// than copied in here, which is what keeps this from spilling onto the heap
+/// once per frame on a chart with a few levels drawn on it.
+pub(crate) type AxisClaims = SmallVec<[f32; 2]>;
 
 /// Whether a gridline label centred at `at` would share pixels with something
 /// already written on this axis, and should therefore stand aside.
@@ -95,10 +96,16 @@ pub(crate) type AxisClaims = SmallVec<[f32; 8]>;
 /// wider component is used for both axes: it errs by two pixels toward hiding
 /// a label that would only just clear, which is the right direction — the
 /// round number is the part nobody needs.
+///
+/// The claims arrive as an iterator so a caller can chain the axis's own chips
+/// onto the levels it has already gathered, instead of building a third list
+/// every frame.
 #[must_use]
-pub(crate) fn claimed(claims: &AxisClaims, at: f32, extent: f32) -> bool {
+pub(crate) fn claimed(at: f32, extent: f32, claims: impl IntoIterator<Item = f32>) -> bool {
     let clearance = extent + TAG_PAD.x;
-    claims.iter().any(|claim| (claim - at).abs() < clearance)
+    claims
+        .into_iter()
+        .any(|claim| (claim - at).abs() < clearance)
 }
 
 /// The bar under the pointer, and the instant it opened.
@@ -301,31 +308,31 @@ mod tests {
     /// nobody needs, and the chip is the answer somebody asked for.
     #[test]
     fn a_label_under_a_chip_stands_aside() {
-        let mut claims = AxisClaims::new();
-        claims.push(400.0);
         let extent = 14.0_f32;
-        assert!(claimed(&claims, 400.0, extent), "dead on the chip");
+        let chip = [400.0_f32];
+        assert!(claimed(400.0, extent, chip), "dead on the chip");
+        assert!(claimed(408.0, extent, chip), "half a label away, touching");
         assert!(
-            claimed(&claims, 408.0, extent),
-            "half a label away, touching"
-        );
-        assert!(
-            !claimed(&claims, 430.0, extent),
+            !claimed(430.0, extent, chip),
             "two labels clear, so the round number is worth writing"
         );
+        // The axis's own chips and the levels a drawing declared are one
+        // question asked of two lists, chained rather than copied together.
+        let levels = [520.0_f32, 700.0];
+        assert!(claimed(521.0, extent, chip.into_iter().chain(levels)));
+        assert!(!claimed(600.0, extent, chip.into_iter().chain(levels)));
     }
 
     /// No claims, nothing hidden: an axis with no chip on it labels every
     /// gridline exactly as it always did.
     #[test]
     fn an_axis_nothing_claims_hides_nothing() {
-        let claims = AxisClaims::new();
         for at in [0.0_f32, 123.0, 999.0] {
-            assert!(!claimed(&claims, at, 14.0));
+            assert!(!claimed(at, 14.0, AxisClaims::new()));
         }
     }
 
-    /// Over the candles, the height is a price and the axis can say which.    /// Over the candles, the height is a price and the axis can say which.
+    /// Over the candles, the height is a price and the axis can say which.
     #[test]
     fn the_pointer_over_the_candles_reads_a_price() {
         let hit = read(egui::pos2(10.0, 100.0), None).expect("over the chart");
