@@ -136,6 +136,10 @@
     "active_tab_index": {
       "$ref": "#/$defs/WireU64"
     },
+    "history_reach": {
+      "description": "How far one press of *load older* reaches, as the reach registry's own\ntoken (`page`, `previous-session`) — the same string the harness hook\ntakes, so what an operator sets is what it reads back.",
+      "type": "string"
+    },
     "layouts": {
       "default": [],
       "description": "The layout strip: every layout, and which is active. Additive.",
@@ -165,6 +169,10 @@
     "timezone_offset_minutes": {
       "format": "int32",
       "type": "integer"
+    },
+    "venue_lead_in": {
+      "description": "Whether a chart cut by trades carries the venue's candles in front of\nits bars. Read with each pane's `venue_prefix_present`: this is what\nthe trader asked for, that is what the pane actually holds.",
+      "type": "boolean"
     }
   },
   "required": [
@@ -175,6 +183,8 @@
     "save_on_exit",
     "performance_readings_visible",
     "progressive_venue_history",
+    "history_reach",
+    "venue_lead_in",
     "tabs"
   ],
   "title": "WorkspaceSnapshot",

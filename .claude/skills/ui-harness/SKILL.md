@@ -374,6 +374,15 @@ capture from a launch and logs the manifest as `CONTROL_EVIDENCE_CAPTURED`.
 Bundles live in memory for fifteen minutes, are cleared when access is turned
 off, and are never written to disk.
 
+Landing with the history-reach goal (*a load-older press that reaches the previous session*):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_HISTORY_REACH=<token>` | pins how far one `+ older` press reaches, overriding what the workspace saved: `page` (one request of the page size — the press every release before this one had) or `previous-session` (keep asking until the tape reaches past the market's last close plus a lead into the session before it). The tokens come from `HistoryReach::ALL`, the same list the history menu is drawn from, so a hook can reach every reach a trader can. A token this build does not know is refused out loud (`HISTORY_REACH_HOOK_UNKNOWN`) and leaves the current reach alone — a silent fallback would look like a press ignoring the run it was told to make. Pair it with `QUANTICK_LOAD_OLDER=1` to photograph a run in flight: with `previous-session` a single press keeps paging, so the loading indicator stays up across several replies |
+| `QUANTICK_VENUE_LEAD_IN=1` | pins the View → *venue candles on charts cut by trades* switch on. Off by default and off for anything but `1`, because that is the whole point of the switch: a tick, volume, dollar or imbalance chart has always opened holding only the prints this session saw, and nothing goes in front of them unasked. On, the venue's own 1-minute candles are installed unfolded in front of a chart cut by trades — the only state in which a tick chart shows yesterday, and one no capture reaches without a hand in the View menu. Reaches `Tab::set_venue_lead_in`, the function the checkbox calls, so a hooked run refolds exactly as a click does |
+
+Once merged, move these into the table above.
+
 ## Adding a new hook
 
 New surface → new `QUANTICK_*` env hook in the same commit: read the var next

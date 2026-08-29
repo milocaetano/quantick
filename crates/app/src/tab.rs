@@ -26,6 +26,7 @@ use crate::feed::{
     self, FeedCommand, FeedConnectionState, FeedEvent, FeedHandle, FeedLatency, FeedNotice,
     ReplayLink,
 };
+use crate::history_reach::{Campaign, CampaignStep, HistoryReach};
 use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
 use crate::orderflow_view::OrderflowView;
@@ -215,21 +216,28 @@ fn merge_older_candles(base: &mut Vec<quantick_engine::Bar>, older: Vec<quantick
 /// With no engine bars yet the whole prefix stands — there is nothing to
 /// overlap.
 fn trim_to_seam(
-    mut folded: Vec<quantick_engine::Bar>,
+    folded: &[quantick_engine::Bar],
     first_engine_bar: Option<&quantick_engine::Bar>,
     partial: Option<&quantick_engine::Bar>,
     interval_ms: i64,
 ) -> Vec<quantick_engine::Bar> {
     let Some(first) = first_engine_bar.or(partial) else {
-        return folded;
+        return folded.to_vec();
     };
     // Buckets, not stamps. A venue candle's `open_time` is its bucket start; an
     // engine bar's is its *first trade*, which sits strictly inside the bucket.
     // Comparing the two raw would keep the venue candle covering the same
     // window and put a later-closing bar in an earlier slot.
     let seam = crate::resample::bucket_start(first.open_time, interval_ms);
-    folded.retain(|bar| bar.open_time < seam);
+    // Copied out rather than retained in place, so the caller may hand over a
+    // borrowed base: the lead-in trims the venue's whole block for every pane
+    // that is not cut by time, and cloning a week of minutes first — to throw
+    // most of it away — is a copy per refold with nothing to show for it.
     folded
+        .iter()
+        .filter(|bar| bar.open_time < seam)
+        .cloned()
+        .collect()
 }
 
 /// Whether the chart can reach further back for venue candles, and when it
@@ -268,9 +276,11 @@ impl OlderCandles {
         match self {
             Self::Available => None,
             Self::FeedServesNone => Some("this feed publishes no candle history"),
-            Self::NoChartCutByTime => {
-                Some("no chart here is cut by time, so there are no venue candles to extend")
-            }
+            Self::NoChartCutByTime => Some(
+                "no chart here is cut by time, so there are no venue candles \
+                 to extend — switch on the venue lead-in to put them in front \
+                 of a chart cut by trades",
+            ),
             Self::Fetching => Some("a request is already out; this is what it is fetching"),
             Self::NotArrivedYet => Some("the first span has not arrived yet"),
             Self::RecordStartsHere => Some("this is as far back as the venue's record goes"),
@@ -364,6 +374,31 @@ pub struct Tab {
     // trades have been backfilled in total (for the readout).
     pub history_step: usize,
     pub history_trades: usize,
+    /// How far one press of "load older" reaches: one page, or back past the
+    /// market's last close with a lead into the session before it.
+    ///
+    /// A tab-level copy of the window's standing choice, pushed on change the
+    /// way `progressive_history` is — the reach is a habit, not a per-market
+    /// setting, and a trader who picked it once must not have to pick it again
+    /// in the next tab.
+    pub history_reach: HistoryReach,
+    /// The run of requests a reach beyond one page started, or `None` when
+    /// nothing is paging.
+    ///
+    /// One per tab, because the transports serve one request at a time: the
+    /// reply is what sends the next request, so this is a state machine and
+    /// never a loop. See [`crate::history_reach`].
+    campaign: Option<Campaign>,
+    /// Whether a pane that is *not* cut by time may carry the venue's own
+    /// candles in front of its bars.
+    ///
+    /// Off by default, so a tick chart opens exactly as it always has: with
+    /// the prints this session saw and nothing invented in front of them. On,
+    /// the venue's 1-minute candles are installed unfolded — real candles,
+    /// counted apart from built bars on the status bar — which is the only way
+    /// a chart cut by trades can show yesterday at all. A minute is not a tick
+    /// bar and never becomes one; the two simply sit side by side, named.
+    pub venue_lead_in: bool,
     // Every wait currently in flight in this tab, drawn by one overlay (see
     // crate::loading) while the tab is on screen.
     pub loading: LoadingTracker,
@@ -678,6 +713,9 @@ impl Tab {
             replay: feed.replay,
             history_step: 2000,
             history_trades: 0,
+            history_reach: HistoryReach::default(),
+            campaign: None,
+            venue_lead_in: false,
             loading,
             book_capture_epoch: 0,
             book_channel_closed_reported: false,
@@ -738,6 +776,9 @@ impl Tab {
         self.ohlcv_reaching_back = None;
         self.ohlcv_older_exhausted = false;
         self.ohlcv_capable = false;
+        // The run belonged to the old market's tape; its reply is on a channel
+        // about to be dropped.
+        self.campaign = None;
         self.loading.set_active(LoadingTask::VenueHistory, false);
         for pane in self.panes_mut() {
             pane.install_history_prefix(Vec::new());
@@ -824,27 +865,37 @@ impl Tab {
     /// pane object it is. `bars → time` on the flow pane earns the same span
     /// the split's time pane gets.
     fn any_pane_wants_venue_history(&self) -> bool {
-        std::iter::once(&self.flow_pane)
-            .chain(self.time_pane())
-            .any(|pane| {
-                pane.state
-                    .spec()
-                    .time_interval_ms()
-                    .is_some_and(crate::resample::is_foldable)
-            })
+        // The lead-in wants them on every chart, whatever it is cut by — that
+        // is the whole of what the switch buys, and a tab that never asked for
+        // candles could never install them.
+        self.venue_lead_in
+            || std::iter::once(&self.flow_pane)
+                .chain(self.time_pane())
+                .any(|pane| {
+                    pane.state
+                        .spec()
+                        .time_interval_ms()
+                        .is_some_and(crate::resample::is_foldable)
+                })
     }
 
     /// Ask the venue for its candle history, if there is anything to ask.
     ///
     /// Gated on the capability, never on the provider: a feed that serves no
-    /// candles, and a recording — which is a fixed span of prints with no
-    /// venue behind it — are both simply not asked. One request at a time, and
-    /// a base already held is not re-fetched: changing a pane's interval is
-    /// a different fold over the same bars.
+    /// candles is not asked, and neither is a recording with no context file
+    /// beside it — but a recording that *has* one is, because that file is the
+    /// run-up it was downloaded to carry. One request at a time, and a base
+    /// already held is not re-fetched: changing a pane's interval is a
+    /// different fold over the same bars.
     fn request_ohlcv_history(&mut self, config: &AppConfig) {
         let progressive = self.progressive_history;
+        // Not gated on the source. A recording answers this from the context
+        // file downloaded beside it — the run-up it exists to carry — and the
+        // capability is already false on one that has none, so a replay
+        // without context is simply never asked. Refusing here instead meant
+        // a recording opened with no context at all and only picked it up if
+        // the trader happened to press *load older*.
         if !self.any_pane_wants_venue_history()
-            || self.replay.is_some()
             || self.ohlcv_pending
             || self.ohlcv_base.is_some()
             || !self.capabilities(config).ohlcv_history
@@ -1200,6 +1251,20 @@ impl Tab {
         }
     }
 
+    /// Put the venue's candles in front of a chart cut by trades, or take
+    /// them away again.
+    ///
+    /// The named call behind the window's switch: it refolds on the spot, so
+    /// the answer is on screen in the frame that flips it rather than at the
+    /// next candle arrival. Idempotent, and cheap when nothing changes.
+    pub fn set_venue_lead_in(&mut self, enabled: bool) {
+        if self.venue_lead_in == enabled {
+            return;
+        }
+        self.venue_lead_in = enabled;
+        self.refold_history_prefix();
+    }
+
     /// Shorthand for the one caller that only needs the yes/no.
     #[must_use]
     pub fn can_load_older_candles(&self, capabilities: FeedCapabilities) -> bool {
@@ -1307,8 +1372,10 @@ impl Tab {
             ohlcv_base,
             flow_pane,
             time_panes,
+            venue_lead_in,
             ..
         } = self;
+        let venue_lead_in = *venue_lead_in;
         let Some(base) = ohlcv_base.as_ref() else {
             return false;
         };
@@ -1322,12 +1389,25 @@ impl Tab {
                 Some(interval) => {
                     let folded = crate::resample::fold(base, interval);
                     trim_to_seam(
-                        folded,
+                        &folded,
                         pane.state.bars().first(),
                         pane.state.partial(),
                         interval,
                     )
                 }
+                // A pane not cutting by time has no interval to fold *to*, so
+                // the base goes in unfolded: the venue's own minutes, in front
+                // of bars cut by trades. Real candles, counted apart from
+                // built bars on the status bar — a minute never becomes a tick
+                // bar, the two sit side by side and each says what it is.
+                // Asked for, never assumed: without the switch the honest
+                // answer is still no prefix at all.
+                None if venue_lead_in => trim_to_seam(
+                    base,
+                    pane.state.bars().first(),
+                    pane.state.partial(),
+                    crate::feed::OHLCV_BASE_INTERVAL_MS,
+                ),
                 None => Vec::new(),
             };
             changed |= pane.install_history_prefix(prefix);
@@ -1851,10 +1931,50 @@ impl Tab {
         self.forced_latency.or(*self.feed_latency.borrow())
     }
 
-    /// Ask the feed thread to fetch and prepend `history_step` older trades.
-    /// Non-blocking: if a request is already queued, this frame's click is
-    /// dropped rather than piling up commands.
+    /// Reach into the past, as far as [`Self::history_reach`] says.
+    ///
+    /// The named call behind the `+ older` button, the overflow entry and the
+    /// `QUANTICK_LOAD_OLDER` hook — one path, so an operator without a mouse
+    /// reaches exactly what a click reaches. Non-blocking: with a reach of one
+    /// page this is the single request it always was, and with a longer reach
+    /// it is the first of a run each reply continues
+    /// ([`Self::advance_history_campaign`]).
     pub fn request_older_history(&mut self) {
+        if self.campaign.is_some() {
+            // A run already has its one permitted request out, and the reply
+            // is what sends the next. Pressing again would raise a second wait
+            // on the same indicator and ask the transport for two pages it
+            // will not serve at once.
+            tracing::debug!(
+                target: "quantick::app",
+                event_code = "HISTORY_REACH_ALREADY_RUNNING",
+                tab = self.id,
+                action = "ignore_press",
+                "a reach is already paging; this press changes nothing"
+            );
+            return;
+        }
+        // Read before the request goes out: the anchor is where the chart
+        // reached *before* this run, and everything older arrived because of
+        // it. That is what makes a second press fetch the session before the
+        // one the first press brought in, rather than finding its work done.
+        let anchor_ms = self.oldest_retained_trade_ms();
+        if !self.send_load_older() {
+            return;
+        }
+        if self.history_reach == HistoryReach::PreviousSession {
+            // A chart holding no prints has nothing to page back *from*, so
+            // the single request above is the whole of this press: the next
+            // one, with a tape under it, starts the run.
+            self.campaign = anchor_ms.map(Campaign::new);
+        }
+    }
+
+    /// Queue one `load_older` and raise the wait its reply will resolve.
+    ///
+    /// Returns whether the command went out. A refusal is the end of whatever
+    /// asked for it: nothing will answer, so nothing may keep waiting.
+    fn send_load_older(&mut self) -> bool {
         match self.commands.try_send(FeedCommand::LoadOlder {
             count: self.history_step.max(1),
         }) {
@@ -1863,16 +1983,90 @@ impl Tab {
                 tracing::info!(
                     target: "quantick::app",
                     count = self.history_step,
+                    reach = self.history_reach.token(),
                     "requested older history"
                 );
+                true
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
                 tracing::debug!(target: "quantick::app", "older-history request already pending");
+                false
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 tracing::warn!(target: "quantick::app", "feed command channel closed");
+                false
             }
         }
+    }
+
+    /// The oldest print this tab still holds.
+    ///
+    /// Read off the flow pane: every pane is fed the same tape and cuts it its
+    /// own way, and the flow pane is the one that always exists.
+    fn oldest_retained_trade_ms(&self) -> Option<i64> {
+        self.flow_pane
+            .state
+            .trades()
+            .first()
+            .map(|trade| trade.timestamp_ms)
+    }
+
+    /// Decide what a page that just landed means for the reach that asked.
+    ///
+    /// Rate: **rare** — once per history reply. The scan inside
+    /// [`Campaign::advance`] stops at the anchor, so its cost is the page that
+    /// arrived rather than the whole retained tape.
+    fn advance_history_campaign(&mut self) {
+        let Some(mut campaign) = self.campaign.take() else {
+            return;
+        };
+        // The feed's own answer, not the configured one: `history_paging` goes
+        // false the moment a venue reports its record exhausted, and asking
+        // again after that spins a run against a wall.
+        let can_page = self.feed_capabilities.borrow().history_paging;
+        match campaign.advance(self.flow_pane.state.trades(), can_page) {
+            CampaignStep::Ask => {
+                if self.send_load_older() {
+                    self.campaign = Some(campaign);
+                } else {
+                    // Nothing will answer, so the run is over. Said out loud
+                    // rather than retried in silence: a closed channel is a
+                    // feed that is gone, and a full one is a frame so busy
+                    // that pressing again is the honest recovery.
+                    tracing::warn!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "HISTORY_REACH_STALLED",
+                        tab = self.id,
+                        symbol = %self.symbol,
+                        pages = campaign.pages_spent(),
+                        action = "stop_and_wait_for_another_press",
+                        "a load-older reach could not queue its next page"
+                    );
+                }
+            }
+            CampaignStep::Stop(end) => tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HISTORY_REACH_SETTLED",
+                tab = self.id,
+                symbol = %self.symbol,
+                pages = campaign.pages_spent(),
+                anchor_ms = campaign.anchor_ms(),
+                reached_ms = self.oldest_retained_trade_ms().unwrap_or(0),
+                action = end.action(),
+                "a load-older reach finished"
+            ),
+        }
+    }
+
+    /// Whether a run of *load older* requests is in flight.
+    ///
+    /// Read by the toolbar, so the button can say what it is doing rather than
+    /// look idle while pages land behind it.
+    #[must_use]
+    pub const fn history_reach_running(&self) -> bool {
+        self.campaign.is_some()
     }
 
     /// Allocate a capture generation well above all reconnect generations from
@@ -2408,6 +2602,10 @@ impl Tab {
                     // the prefix was trimmed against where it used to be. Any
                     // venue candle now covering a re-cut minute has to go.
                     self.refold_history_prefix();
+                    // And the reach that asked for this page decides whether
+                    // to ask for another. After the prepend, so it judges the
+                    // tape the trader can actually see.
+                    self.advance_history_campaign();
                 }
                 Ok(FeedEvent::Live(trade)) => {
                     let received_at_ms = *received_at_ms.get_or_insert_with(&mut wall_clock_ms);
@@ -2711,6 +2909,10 @@ impl Tab {
         }
         self.drop_overlay_gestures();
         self.history_trades = 0;
+        // A run anchored to a tape that no longer exists cannot continue, and
+        // `restart` below drops the waits its outstanding request would have
+        // resolved.
+        self.campaign = None;
         self.latest_trade_latency_ms = None;
         self.latest_trade_ms = None;
         // The refill arrives as one backfill batch; keep the loading indicator

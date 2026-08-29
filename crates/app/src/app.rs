@@ -1210,6 +1210,23 @@ pub struct QuantickApp {
     /// requests, and because a setting whose "off" is not the old behaviour is
     /// not a setting the user can fall back to.
     progressive_history: bool,
+    /// How far one press of the chart's *load older* button reaches — one
+    /// page of trades, or back past the market's last close with a lead into
+    /// the session before it.
+    ///
+    /// A standing choice of the window rather than of a market: a trader who
+    /// wants to see yesterday wants it in the tab they open next too. Mirrored
+    /// onto every tab each frame, which is where the press is actually served.
+    history_reach: crate::history_reach::HistoryReach,
+    /// Whether a chart *not* cut by time may carry the venue's own candles in
+    /// front of its bars.
+    ///
+    /// Off by default: a tick chart has always opened on the prints this
+    /// session saw, and nothing is put in front of them unasked. On, a chart
+    /// cut by trades gets the venue's 1-minute candles as a labelled prefix —
+    /// the only way such a chart can show yesterday at all, since a candle
+    /// cannot be folded into a tick bar and must never pretend to be one.
+    venue_lead_in: bool,
 
     // Fixed UTC offset the time axis is displayed in (default UTC−03:00).
     tz: TzOffset,
@@ -1511,6 +1528,8 @@ impl QuantickApp {
             last_style_change: None,
             show_perf: true,
             progressive_history: true,
+            history_reach: crate::history_reach::HistoryReach::default(),
+            venue_lead_in: false,
             tz: TzOffset::default(),
             trades_dir,
             trades_dir_picker: None,
@@ -1726,6 +1745,26 @@ impl QuantickApp {
         // The switch itself, so both sides of it are reachable without a
         // click. Set explicitly, it also overrides what the workspace saved:
         // a validation run must be able to pin the state it is photographing.
+        // The same registry the menu lists from, so a hook can reach every
+        // reach the trader can — and an unknown token is refused out loud
+        // rather than silently leaving the default in place, which would look
+        // like a press that ignored the run it was told to make.
+        if let Ok(token) = std::env::var("QUANTICK_HISTORY_REACH") {
+            match crate::history_reach::HistoryReach::from_token(&token) {
+                Some(reach) => app.history_reach = reach,
+                None => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "HISTORY_REACH_HOOK_UNKNOWN",
+                    token = %token,
+                    action = "keep_current_reach",
+                    "QUANTICK_HISTORY_REACH names no reach this build has"
+                ),
+            }
+        }
+        if let Ok(value) = std::env::var("QUANTICK_VENUE_LEAD_IN") {
+            app.venue_lead_in = value.trim() == "1";
+        }
         if let Ok(value) = std::env::var("QUANTICK_PROGRESSIVE_HISTORY") {
             match value.trim() {
                 "1" => app.progressive_history = true,
@@ -2600,6 +2639,16 @@ impl QuantickApp {
         (self.save_on_exit, self.show_perf, self.progressive_history)
     }
 
+    /// How far the window's *load older* press reaches, and whether a chart
+    /// cut by trades carries the venue's candles.
+    ///
+    /// Both are choices an operator without a mouse has to be able to read
+    /// back after setting them — the reach especially, since it decides
+    /// whether one press is one request or a run of them.
+    pub(crate) fn control_history_settings(&self) -> (crate::history_reach::HistoryReach, bool) {
+        (self.history_reach, self.venue_lead_in)
+    }
+
     /// Invoke one registered control action from inside the application,
     /// attributed to the human at this window (or to automation when a
     /// control trace replays it). The hotkey, the `QUANTICK_CONTROL_MARK`
@@ -3263,6 +3312,12 @@ impl QuantickApp {
             .collect();
         let dock_visible = self.dock.visible();
         let show_style = self.show_style;
+        // Read before the tab is borrowed mutably. The reach is the window's
+        // standing choice, like the progressive-history switch — a trader who
+        // picked "previous session" once means it in the next tab too — so it
+        // is split off and written back the way the layout picker's flags are.
+        let history_reach_running = self.active_tab().history_reach_running();
+        let mut history_reach = self.history_reach;
         // The SOURCE group writes straight into the active tab: a feed or
         // symbol change is that tab's market switch. The BARS group writes
         // into the *focused pane* — the pane the status bar reads and every
@@ -3299,6 +3354,8 @@ impl QuantickApp {
             imbalance_target: &mut pane.imbalance_target,
             imbalance_unit: &mut pane.imbalance_unit,
             history_step: &mut tab.history_step,
+            history_reach: &mut history_reach,
+            history_reach_running,
             history_trades: tab.history_trades,
             history_candles: candles_held,
             older_candles,
@@ -3322,6 +3379,7 @@ impl QuantickApp {
         // resets every frame and the button never reads as open.
         drop(model);
         self.layout_picker_open = layout_picker_open;
+        self.history_reach = history_reach;
         // A newly picked feed may not offer the current symbol. Never during
         // a replay: the recorded instrument belongs to no live feed's menu,
         // and snapping it away would relabel the whole session — the status
@@ -4539,6 +4597,18 @@ impl QuantickApp {
         self.toolrail.set_visible(chrome.rail_visible);
         self.show_perf = chrome.perf_readings;
         self.progressive_history = chrome.progressive_history;
+        // A token this release does not know keeps the reach it had — the
+        // default on startup, whatever the trader picked when a bookmark is
+        // opened mid-session. Never a silent fallback to something else: the
+        // reach decides how much a press fetches.
+        if let Some(reach) = chrome
+            .history_reach
+            .as_deref()
+            .and_then(crate::history_reach::HistoryReach::from_token)
+        {
+            self.history_reach = reach;
+        }
+        self.venue_lead_in = chrome.venue_lead_in;
         self.restore_inspector_position(chrome.inspector_position);
     }
 
@@ -4587,6 +4657,12 @@ impl QuantickApp {
             // be an arrangement that could overwrite them on open.
             legacy_favorite_tools: Vec::new(),
             progressive_history: self.progressive_history,
+            // The default writes no key: a workspace that says nothing about
+            // the reach restores the press the button has always had, which is
+            // exactly what the default is.
+            history_reach: (self.history_reach != crate::history_reach::HistoryReach::default())
+                .then(|| self.history_reach.token().to_owned()),
+            venue_lead_in: self.venue_lead_in,
             inspector_position: self.remembered_inspector_position(),
         };
         (tabs, chrome)
@@ -6474,6 +6550,15 @@ impl QuantickApp {
                                  a time, so the chart fills in while the rest arrives. Off asks \
                                  for the whole span in one request: fewer calls, nothing on \
                                  screen until all of it lands.",
+                            );
+                        ui.checkbox(&mut self.venue_lead_in, "Venue candles on charts cut by trades")
+                            .on_hover_text(
+                                "A tick, volume, dollar or imbalance chart cannot fold venue \
+                                 candles into its own bars, so it opens holding only the prints \
+                                 this session saw. Switch this on to put the venue's 1-minute \
+                                 candles in front of them anyway — counted apart from built bars \
+                                 on the status bar — so yesterday is on screen to compare \
+                                 against. They stay candles: a minute never becomes a tick bar.",
                             );
                         ui.separator();
                         ui.menu_button("Timezone", |ui| {
@@ -10729,6 +10814,8 @@ impl QuantickApp {
     fn drain_tabs(&mut self) {
         let config = &self.config;
         let progressive_history = self.progressive_history;
+        let history_reach = self.history_reach;
+        let venue_lead_in = self.venue_lead_in;
         let mut trades = 0_u64;
         for tab in &mut self.tabs {
             let before = tab.live_trades;
@@ -10753,6 +10840,12 @@ impl QuantickApp {
             // tab: mirrored here so every tab asks the way the trader last
             // said, including one opened after the choice was made.
             tab.progressive_history = progressive_history;
+            tab.history_reach = history_reach;
+            // Through the setter, not the field: flipping the lead-in refolds
+            // the prefix, and a tab that only had the field written would keep
+            // drawing the answer to the previous choice until the next candle
+            // landed. Idempotent, so the steady state costs one comparison.
+            tab.set_venue_lead_in(venue_lead_in);
             tab.poll_ohlcv_capability(config);
             trades += tab.live_trades - before;
         }
@@ -18554,6 +18647,8 @@ crosshair = false
             perf_readings: false,
             legacy_favorite_tools: Vec::new(),
             progressive_history: true,
+            history_reach: None,
+            venue_lead_in: false,
             inspector_position: position,
         }
     }
@@ -22670,6 +22765,8 @@ crosshair = false
                 perf_readings: false,
                 legacy_favorite_tools: Vec::new(),
                 progressive_history: false,
+                history_reach: None,
+                venue_lead_in: false,
                 inspector_position: Some([260.0, 480.0]),
             }),
         ));
@@ -26620,9 +26717,11 @@ crosshair = false
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// (h) A recording is a fixed span of prints with no venue behind it.
+    /// (h) A recording with no context file beside it has no venue behind it,
+    /// and nothing to ask. One that *does* is the test after this one: the
+    /// capability, never the source, is what decides.
     #[test]
-    fn a_replaying_tab_never_asks_for_venue_history() {
+    fn a_replaying_tab_with_no_context_asks_for_no_venue_history() {
         let ctx = egui::Context::default();
         let (mut app, _events, mut commands) = history_app(&ctx);
         drain_ohlcv_requests(&mut commands);
@@ -26660,6 +26759,304 @@ crosshair = false
                 .is_active(LoadingTask::VenueHistory),
             "a recording has no venue to wait on"
         );
+    }
+
+    /// The run-up a recording was downloaded with lands when the session
+    /// opens, with nobody pressing anything.
+    ///
+    /// The context file exists precisely so a replay does not start at a
+    /// wall — and until now the tab refused to ask for it while replaying, so
+    /// the only way to see it was to press *load older* and hope. A recording
+    /// with no context still asks for nothing: the capability decides, and
+    /// `feed::replay` publishes it as `context.is_some()`.
+    #[test]
+    fn a_replay_installs_its_downloaded_context_without_a_press() {
+        let ctx = egui::Context::default();
+        let (mut app, _events, mut commands) = history_app(&ctx);
+        drain_ohlcv_requests(&mut commands);
+
+        let text = "# quantick,csv,1\n# symbol=WINJ26\n# timezone=-03:00\n\
+                    Date,Time,Price,Volume,Side\n\
+                    2026-03-16,10:01:08.000,182035,12,B\n";
+        let mut session = quantick_replay::Session::from_text(
+            std::path::Path::new("WINJ26_2026-03-16.csv"),
+            text,
+            quantick_replay::ParseOptions::default(),
+        )
+        .expect("fixture session parses");
+        // The previous day's close, downloaded beside the tape.
+        let context = "# quantick-context 1\n# symbol=WINJ26\n# timezone=-03:00\n\
+                       # interval_ms=60000\n# complete=true\n\
+                       Date,Time,Open,High,Low,Close,Volume,Trades\n\
+                       2026-03-13,17:57:00.000,181900,182000,181850,181950,120,0\n\
+                       2026-03-13,17:58:00.000,181950,182050,181900,182000,130,0\n\
+                       2026-03-13,17:59:00.000,182000,182100,181950,182050,140,0\n";
+        session.context =
+            Some(quantick_replay::parse_context(context).expect("context fixture parses"));
+        with_config(&mut app, |tab, config| {
+            tab.open_replay(
+                config,
+                crate::feed::ReplayRequest {
+                    session: std::sync::Arc::new(session),
+                    options: crate::feed::ReplayOptions {
+                        autoplay: false,
+                        ..Default::default()
+                    },
+                },
+            )
+        });
+        // The replay feed runs on its own thread; give it frames to answer in.
+        for _ in 0..200 {
+            run_frame(&mut app, &ctx);
+            app.drain_tabs();
+            if app.active_tab().venue_candles_held() > 0 {
+                break;
+            }
+        }
+        assert_eq!(
+            app.active_tab().venue_candles_held(),
+            3,
+            "the run-up downloaded beside the recording is on the chart, unpressed"
+        );
+        // And with the lead-in on, it reaches the chart cut by trades too —
+        // the whole point of a run-up during a replay, where there are no
+        // older *trades* to page: the tape in the file is the whole day.
+        app.venue_lead_in = true;
+        app.drain_tabs();
+        assert_eq!(
+            app.active_tab().flow_pane.seam_slot(),
+            3,
+            "the previous session sits in front of the tick chart's own bars"
+        );
+    }
+
+    /// A chart cut by trades carries no venue candle until the trader asks —
+    /// and then carries the venue's own minutes, unfolded.
+    ///
+    /// The default half is the important one: a tick chart has always opened
+    /// on the prints this session saw, and a candle appearing in front of them
+    /// unasked would be this change taking a decision that is the trader's.
+    #[test]
+    fn a_chart_cut_by_trades_takes_the_venue_lead_in_only_when_asked() {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands) = history_app(&ctx);
+        events
+            .try_send(FeedEvent::OhlcvHistory {
+                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                bars: venue_history(120),
+                slice: crate::feed::OhlcvSlice::Last { complete: true },
+            })
+            .unwrap();
+        app.drain_tabs();
+
+        let tab = app.active_tab();
+        assert_eq!(
+            tab.pane(PaneSide::Time(0)).seam_slot(),
+            120,
+            "the time pane wears the prefix, as it always has"
+        );
+        assert_eq!(
+            tab.flow_pane.seam_slot(),
+            0,
+            "and the tick chart beside it is untouched by default"
+        );
+
+        app.venue_lead_in = true;
+        app.drain_tabs();
+        assert_eq!(
+            app.active_tab().flow_pane.seam_slot(),
+            120,
+            "switched on, the tick chart carries the venue's own minutes"
+        );
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
+            120,
+            "and the time pane is unaffected by a switch that is not about it"
+        );
+
+        app.venue_lead_in = false;
+        app.drain_tabs();
+        assert_eq!(
+            app.active_tab().flow_pane.seam_slot(),
+            0,
+            "and switching it back off takes them away again"
+        );
+    }
+
+    /// The reach the trader picked is the reach the tab keeps, in every tab.
+    #[test]
+    fn the_reach_is_a_standing_choice_mirrored_onto_every_tab() {
+        let ctx = egui::Context::default();
+        let (mut app, _events, _commands) = history_app(&ctx);
+        assert_eq!(
+            app.active_tab().history_reach,
+            crate::history_reach::HistoryReach::Page,
+            "the press the button has always had is what a chart opens on"
+        );
+        app.history_reach = crate::history_reach::HistoryReach::PreviousSession;
+        app.drain_tabs();
+        assert_eq!(
+            app.active_tab().history_reach,
+            crate::history_reach::HistoryReach::PreviousSession
+        );
+    }
+
+    /// Every `LoadOlder` sitting in the command channel, as the counts asked
+    /// for. The reach turns one press into a run of these.
+    fn drain_load_older(commands: &mut mpsc::Receiver<FeedCommand>) -> Vec<usize> {
+        let mut asks = Vec::new();
+        while let Ok(command) = commands.try_recv() {
+            if let FeedCommand::LoadOlder { count } = command {
+                asks.push(count);
+            }
+        }
+        asks
+    }
+
+    /// A reach of one page is one request and no more, however the answer
+    /// looks — the behaviour every release before this one had.
+    #[test]
+    fn a_reach_of_one_page_asks_once_and_stops() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_load_older(&mut commands);
+
+        app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+        assert_eq!(
+            drain_load_older(&mut commands).len(),
+            1,
+            "one press, one request"
+        );
+        // Answer it with prints still deep inside the same session.
+        events
+            .try_send(FeedEvent::HistoryPrepended(
+                (-60..0).map(minute_trade_at).collect(),
+            ))
+            .unwrap();
+        app.drain_tabs();
+        assert!(
+            drain_load_older(&mut commands).is_empty(),
+            "and the answer asks for nothing further"
+        );
+        assert!(
+            !app.active_tab().history_reach_running(),
+            "a single page is never a run"
+        );
+    }
+
+    /// A press with the longer reach keeps asking, page after page, until the
+    /// tape reaches past the market's last close and the lead beyond it.
+    #[test]
+    fn the_previous_session_reach_pages_until_the_lead_past_the_close_lands() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_load_older(&mut commands);
+        app.history_reach = crate::history_reach::HistoryReach::PreviousSession;
+        app.drain_tabs();
+
+        app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+        assert_eq!(drain_load_older(&mut commands).len(), 1, "the press");
+        assert!(
+            app.active_tab().history_reach_running(),
+            "and the run is on"
+        );
+
+        // A page still inside today's session: no break has been crossed.
+        events
+            .try_send(FeedEvent::HistoryPrepended(
+                (-120..0).map(minute_trade_at).collect(),
+            ))
+            .unwrap();
+        app.drain_tabs();
+        assert_eq!(
+            drain_load_older(&mut commands).len(),
+            1,
+            "so the run asks for another page by itself"
+        );
+
+        // The next page crosses the overnight break and lands the lead. The
+        // previous session's last print sits a minute further back than the
+        // gap threshold, so the stretch between the two sessions is wider than
+        // a quiet market ever is; in front of it, exactly the lead.
+        const MINUTE_MS: i64 = crate::feed::OHLCV_BASE_INTERVAL_MS;
+        let close_minute = -120 - (crate::history_reach::SESSION_GAP_MS / MINUTE_MS) - 1;
+        let lead_minutes = crate::history_reach::PREVIOUS_SESSION_LEAD_MS / MINUTE_MS;
+        events
+            .try_send(FeedEvent::HistoryPrepended(
+                (close_minute - lead_minutes..=close_minute)
+                    .map(minute_trade_at)
+                    .collect(),
+            ))
+            .unwrap();
+        app.drain_tabs();
+        assert!(
+            drain_load_older(&mut commands).is_empty(),
+            "the previous session is on screen with its lead; the run is done"
+        );
+        assert!(
+            !app.active_tab().history_reach_running(),
+            "and nothing is left waiting on a reply"
+        );
+    }
+
+    /// A venue that reports its record exhausted is not asked once more.
+    ///
+    /// The feed withdraws `history_paging` on that report, and a run that read
+    /// its own page count instead would spend the whole budget against a wall
+    /// with the button already greyed out beside it.
+    #[test]
+    fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
+        let ctx = egui::Context::default();
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (_book_tx, book_rx) = mpsc::channel(64);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
+        let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
+            book_capture: false,
+            history_paging: true,
+            traded_volume: true,
+            ohlcv_history: false,
+            ohlcv_generation: 0,
+        });
+        let mut app = QuantickApp::new(
+            test_config(),
+            "binance",
+            "TESTUSDT",
+            BarSpec::Tick(1),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: caps_rx,
+                latency: feed::unsplit_latency(),
+                commands: cmd_tx,
+                replay: None,
+            },
+        );
+        evt_tx
+            .try_send(FeedEvent::Backfilled((0..50).map(minute_trade).collect()))
+            .unwrap();
+        app.drain_tabs();
+        run_frame(&mut app, &ctx);
+        app.history_reach = crate::history_reach::HistoryReach::PreviousSession;
+        app.drain_tabs();
+        drain_load_older(&mut cmd_rx);
+
+        app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+        assert_eq!(drain_load_older(&mut cmd_rx).len(), 1);
+        // The terminal reached its own oldest tick and the feed withdrew the
+        // capability, then answered the outstanding request.
+        caps_tx.send_modify(|caps| caps.history_paging = false);
+        evt_tx
+            .try_send(FeedEvent::HistoryPrepended(
+                (-10..0).map(minute_trade_at).collect(),
+            ))
+            .unwrap();
+        app.drain_tabs();
+        assert!(
+            drain_load_older(&mut cmd_rx).is_empty(),
+            "nothing is asked of a venue that has said it has no more"
+        );
+        assert!(!app.active_tab().history_reach_running());
     }
 
     /// (i) The status bar names all three sources, in the order the chart puts

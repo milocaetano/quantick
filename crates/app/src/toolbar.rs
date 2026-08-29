@@ -243,6 +243,13 @@ pub struct ToolbarModel<'a> {
     pub imbalance_unit: &'a mut ImbalanceUnit,
     /// Trades pulled per "+ older" click.
     pub history_step: &'a mut usize,
+    /// How far one "+ older" press reaches: one page, or the previous session
+    /// with a lead into it. Written straight through, as the page size is —
+    /// the reach is a stored choice, not an event.
+    pub history_reach: &'a mut crate::history_reach::HistoryReach,
+    /// Whether a reach beyond one page is paging right now, so the button can
+    /// say it is working instead of looking idle while pages land.
+    pub history_reach_running: bool,
     /// Trades backfilled so far, for the history menu readout.
     pub history_trades: usize,
     /// Venue candles held so far, for the history menu readout. Zero on a
@@ -673,7 +680,11 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
     let menu = history_menu_reachable(model);
     let load = ui
         .add_enabled(paging, egui::Button::new(format!("{} older", icons::PLUS)))
-        .on_hover_text("fetch older trades and prepend them")
+        // The reach's own words, so the button says what this press will do
+        // rather than what the button generally does. A press that pages a
+        // whole session and one that fetches two thousand prints are different
+        // acts, and the trader chose which.
+        .on_hover_text(history_button_hover(model))
         .on_disabled_hover_text(
             "no older trades to fetch: this feed only streams forward, or its \
              history is already all here",
@@ -686,6 +697,20 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
             draw_history_menu(ui, model, actions);
         });
     });
+}
+
+/// What one press of the load button promises right now: the reach's own
+/// sentence, or what it is already doing.
+///
+/// One owner, read by the bar's button and the overflow entry alike.
+fn history_button_hover(model: &ToolbarModel) -> String {
+    if model.history_reach_running {
+        return "paging — each answer asks for the next until the reach is met".to_owned();
+    }
+    format!(
+        "fetch older trades and prepend them: {}",
+        model.history_reach.hover()
+    )
 }
 
 /// Whether the history menu has anything in it — trade paging, candle reach,
@@ -710,6 +735,14 @@ fn draw_history_menu(
     // enabled page-size box on such a feed is a control that will never be
     // read — the same honesty the disabled-reason enum below is about.
     if model.capabilities.history_paging {
+        // The reach first: it decides whether one press is one request or a
+        // run of them, and the page size below is the size of each request
+        // either way.
+        ui.label("one press reaches");
+        for reach in crate::history_reach::HistoryReach::ALL {
+            ui.selectable_value(model.history_reach, reach, reach.label())
+                .on_hover_text(reach.hover());
+        }
         ui.label("page size (trades per load)");
         ui.add(
             egui::DragValue::new(model.history_step)
@@ -1123,6 +1156,7 @@ fn draw_overflow(
                     paging,
                     egui::Button::new(format!("{} Load older", icons::PLUS)),
                 )
+                .on_hover_text(history_button_hover(model))
                 .on_disabled_hover_text(
                     "no older trades to fetch: this feed only streams forward, or \
                      its history is already all here",
@@ -1361,6 +1395,7 @@ mod tests {
         let mut imbalance_target = 100_u64;
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
+        let mut history_reach = crate::history_reach::HistoryReach::default();
         for replaying in [false, true] {
             for _ in 0..2 {
                 let _ = ctx.run(egui::RawInput::default(), |ctx| {
@@ -1386,6 +1421,8 @@ mod tests {
                         imbalance_target: &mut imbalance_target,
                         imbalance_unit: &mut imbalance_unit,
                         history_step: &mut history_step,
+                        history_reach: &mut history_reach,
+                        history_reach_running: false,
                         history_trades: 1_000,
                         history_candles: 0,
                         older_candles: crate::tab::OlderCandles::NotArrivedYet,
@@ -1446,6 +1483,7 @@ mod tests {
         let mut imbalance_target = 100_u64;
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
+        let mut history_reach = crate::history_reach::HistoryReach::default();
         // Wide enough that the §6 plan folds nothing — the point is the
         // inline chip row, not the overflow menu.
         let input = || egui::RawInput {
@@ -1477,6 +1515,8 @@ mod tests {
                     imbalance_target: &mut imbalance_target,
                     imbalance_unit: &mut imbalance_unit,
                     history_step: &mut history_step,
+                    history_reach: &mut history_reach,
+                    history_reach_running: false,
                     history_trades: 1_000,
                     history_candles: 0,
                     older_candles: crate::tab::OlderCandles::NotArrivedYet,
@@ -1530,6 +1570,7 @@ mod tests {
         let mut imbalance_target = 100_u64;
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
+        let mut history_reach = crate::history_reach::HistoryReach::default();
         // Every kind, including the two the feed cannot back: selecting one is
         // still possible from config or a previous session, and the toolbar
         // must draw it rather than panic.
@@ -1555,6 +1596,8 @@ mod tests {
                         imbalance_target: &mut imbalance_target,
                         imbalance_unit: &mut imbalance_unit,
                         history_step: &mut history_step,
+                        history_reach: &mut history_reach,
+                        history_reach_running: false,
                         history_trades: 200_000,
                         history_candles: 0,
                         older_candles: crate::tab::OlderCandles::NotArrivedYet,
@@ -1597,6 +1640,7 @@ mod tests {
         let mut imbalance_target = 100_u64;
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
+        let mut history_reach = crate::history_reach::HistoryReach::default();
         let mut painted = String::new();
         // Wide enough that the §6 plan folds nothing — the point is the
         // inline button, not the overflow menu.
@@ -1628,6 +1672,8 @@ mod tests {
                     imbalance_target: &mut imbalance_target,
                     imbalance_unit: &mut imbalance_unit,
                     history_step: &mut history_step,
+                    history_reach: &mut history_reach,
+                    history_reach_running: false,
                     history_trades: 1_000,
                     history_candles: 0,
                     older_candles: crate::tab::OlderCandles::NotArrivedYet,

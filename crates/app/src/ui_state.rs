@@ -286,6 +286,25 @@ pub struct SavedChrome {
     /// no way to know why.
     #[serde(default = "yes")]
     pub progressive_history: bool,
+    /// How far one press of *load older* reaches, as
+    /// [`crate::history_reach::HistoryReach::token`] writes it.
+    ///
+    /// A token rather than a variant name, so a release may reword the menu
+    /// label without orphaning every saved workspace. Absent — or a token a
+    /// later release wrote and this one does not know — restores the default
+    /// reach, which is the single page the button has always fetched: the one
+    /// answer that is never a surprise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_reach: Option<String>,
+    /// Whether a chart cut by trades carried the venue's candles in front of
+    /// its bars.
+    ///
+    /// Defaults to off, which is also what a file written before the switch
+    /// existed means: that cockpit's owner never asked for a prefix on a tick
+    /// chart, and reading their silence as "on" would put candles in front of
+    /// bars they never chose to see.
+    #[serde(default)]
+    pub venue_lead_in: bool,
     /// Where the trader parked the drawing-properties popup, in screen points,
     /// or absent while it still places itself beside the object it configures.
     ///
@@ -1002,6 +1021,8 @@ mod tests {
                 perf_readings: true,
                 legacy_favorite_tools: Vec::new(),
                 progressive_history: false,
+                history_reach: None,
+                venue_lead_in: false,
                 inspector_position: Some([412.5, 640.0]),
             }),
             saved: Vec::new(),
@@ -1242,6 +1263,42 @@ mod tests {
         let path = temp_path("garbage");
         std::fs::write(&path, "this is not toml {{{").unwrap();
         assert_eq!(load(&path), Workspace::default());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The reach the trader picked comes back at the next launch, and the
+    /// default writes no key at all.
+    ///
+    /// Both halves matter. A reach that did not survive a restart would have
+    /// to be re-picked every morning, and a default written down would turn a
+    /// silent file into an opinion the moment the default moved.
+    #[test]
+    fn the_history_reach_survives_a_save_and_a_reload() {
+        let path = temp_path("history-reach-chrome");
+        let mut workspace = sample();
+        let chrome = workspace.chrome.as_mut().expect("the sample has chrome");
+        chrome.history_reach = Some("previous-session".to_owned());
+        chrome.venue_lead_in = true;
+        save(&path, &workspace);
+        let text = std::fs::read_to_string(&path).expect("the file was written");
+        assert!(
+            text.contains("previous-session"),
+            "the token is what is written, never the menu's wording:\n{text}"
+        );
+        let reloaded = load(&path).chrome.expect("the chrome came back");
+        assert_eq!(reloaded.history_reach.as_deref(), Some("previous-session"));
+        assert!(reloaded.venue_lead_in);
+
+        // The default is silence.
+        save(&path, &sample());
+        let text = std::fs::read_to_string(&path).expect("the file was written");
+        assert!(
+            !text.contains("history_reach"),
+            "a default reach writes no key:\n{text}"
+        );
+        let reloaded = load(&path).chrome.expect("the chrome came back");
+        assert_eq!(reloaded.history_reach, None);
+        assert!(!reloaded.venue_lead_in, "and the lead-in stays off");
         let _ = std::fs::remove_file(&path);
     }
 
