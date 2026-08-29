@@ -45,6 +45,18 @@ const EXPORT_SCRIPT: &str = "tools/mt5/export_session.py";
 /// megabyte against tens for the tape.
 pub const DEFAULT_CONTEXT_SESSIONS: u32 = 5;
 
+/// Whether a trader who has never said otherwise gets the day before.
+///
+/// On. The run-up above it is broker candles, and the panel says in as many
+/// words that they carry no order flow — so a rehearsed open had nothing to
+/// read behind it, which is the report this exists to answer. A trader who
+/// wants one day unticks it once and the workspace remembers.
+///
+/// A `const` rather than a line in a TOML, following the run-up default above
+/// it: the trader's own answer lives in their workspace file the moment they
+/// give one, and this is only what is true before they have.
+pub const DEFAULT_JOIN_DAY_BEFORE: bool = true;
+
 /// What one download is for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DownloadRequest {
@@ -400,6 +412,23 @@ pub struct DownloadJob {
     cancelled: Arc<AtomicBool>,
 }
 
+#[cfg(test)]
+impl DownloadJob {
+    /// A job whose worker is already gone: the receiver end alone, with
+    /// nothing behind it.
+    ///
+    /// What a cancel, a killed terminal and a crashed exporter all look like
+    /// to the panel draining it — a channel that only ever says
+    /// `Disconnected`. Lets the paths that have to survive that be tested
+    /// without a process, which is the only way they are exercised at all.
+    pub(crate) fn stopped_for_test(events: Receiver<DownloadEvent>) -> Self {
+        Self {
+            events,
+            cancelled: Arc::new(AtomicBool::new(true)),
+        }
+    }
+}
+
 impl DownloadJob {
     /// Ask the download to stop.
     ///
@@ -689,6 +718,23 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["--symbol", "WINQ26"]));
         assert!(args.windows(2).any(|w| w == ["--day", "2026-08-12"]));
         assert!(args.windows(2).any(|w| w == ["--context-sessions", "5"]));
+        assert!(!args.iter().any(|a| a == "--probe"));
+    }
+
+    /// The second half of a two-day download: the same command line, the day
+    /// before, and no run-up of its own. A zero has to be *stated* — the
+    /// exporter's own default is five sessions, so an omitted flag would
+    /// download the same week of candles a second time.
+    #[test]
+    fn the_day_before_is_fetched_with_no_run_up_of_its_own() {
+        let day_before = DownloadRequest {
+            day: Some("2026-08-11".to_string()),
+            context_sessions: 0,
+            ..request()
+        };
+        let args = Mt5SessionSource::arguments(Path::new("tools/export.py"), &day_before, None);
+        assert!(args.windows(2).any(|w| w == ["--day", "2026-08-11"]));
+        assert!(args.windows(2).any(|w| w == ["--context-sessions", "0"]));
         assert!(!args.iter().any(|a| a == "--probe"));
     }
 

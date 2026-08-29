@@ -105,6 +105,7 @@ pub struct Playhead {
     start_ms: i64,
     end_ms: i64,
     cursor: usize,
+    first: usize,
     total: usize,
     playing: bool,
     config: PlaybackConfig,
@@ -116,12 +117,36 @@ impl Playhead {
     /// An empty session yields a playhead that is immediately finished.
     #[must_use]
     pub fn new(trades: &[Trade], config: PlaybackConfig) -> Self {
-        let start_ms = trades.first().map_or(0, |t| t.timestamp_ms);
+        Self::opening_at(trades, config, 0)
+    }
+
+    /// A playhead whose session opens at `first`, paused on that print.
+    ///
+    /// The prints before `first` are not part of the session being played:
+    /// they are the day joined in front of it, and the caller has already put
+    /// them on the chart as history. So the clock treats `first` as the open —
+    /// [`Playhead::restart`] returns there, a seek stays at or after it, and
+    /// [`Playhead::progress`] measures the session, not the joined stream.
+    /// They are still *in* the slice, because index and timestamp have to keep
+    /// meaning the same thing to every caller.
+    ///
+    /// `first` past the end parks a finished playhead: a joined day with no
+    /// session behind it has played out before it began.
+    #[must_use]
+    pub fn opening_at(trades: &[Trade], config: PlaybackConfig, first: usize) -> Self {
+        let first = first.min(trades.len());
+        // The session's own first print. Past the end there is none, and the
+        // last print of what was joined is the only honest reading left.
+        let start_ms = trades
+            .get(first)
+            .or_else(|| trades.last())
+            .map_or(0, |t| t.timestamp_ms);
         Self {
             position_ms: start_ms,
             start_ms,
             end_ms: trades.last().map_or(0, |t| t.timestamp_ms),
-            cursor: 0,
+            cursor: first,
+            first,
             total: trades.len(),
             playing: false,
             config: PlaybackConfig {
@@ -215,10 +240,14 @@ impl Playhead {
         self.seek_to(trades, self.start_ms.saturating_add(offset))
     }
 
-    /// Park back on the first trade, keeping speed and play state.
+    /// Park back on the session's first trade, keeping speed and play state.
+    ///
+    /// Back to *the session's* open, never into a day joined in front of it: a
+    /// trader restarting a rehearsal is asking for the day again, not for its
+    /// run-up to replay.
     pub fn restart(&mut self) {
         self.position_ms = self.start_ms;
-        self.cursor = 0;
+        self.cursor = self.first;
     }
 
     /// Start playing. A finished session restarts from the open, which is what
@@ -303,10 +332,17 @@ impl Playhead {
         (elapsed / span as f64).clamp(0.0, 1.0) as f32
     }
 
-    /// How many trades the session holds.
+    /// How many trades the session holds, the joined day included.
     #[must_use]
     pub fn total(&self) -> usize {
         self.total
+    }
+
+    /// Index of the session's own first trade: how many prints in front of it
+    /// came from a joined day, and `0` when none did.
+    #[must_use]
+    pub fn first(&self) -> usize {
+        self.first
     }
 }
 
@@ -600,5 +636,106 @@ mod tests {
         assert!((head.progress() - 0.5).abs() < 0.001);
         head.advance(&trades, 60_000.0);
         assert_eq!(head.progress(), 1.0);
+    }
+
+    /// A session with the day before joined in front of it: 4 prints of
+    /// yesterday, then 11 of the day being rehearsed.
+    fn joined() -> (Vec<Trade>, usize) {
+        (ticks(15), 4)
+    }
+
+    #[test]
+    fn a_session_opening_past_a_joined_day_parks_on_its_own_first_print() {
+        let (trades, first) = joined();
+        let head = Playhead::opening_at(&trades, PlaybackConfig::default(), first);
+        assert_eq!(
+            head.cursor(),
+            first,
+            "the joined day is already on the chart"
+        );
+        assert_eq!(head.first(), first);
+        assert_eq!(head.position_ms(), trades[first].timestamp_ms);
+        assert_eq!(head.start_ms(), trades[first].timestamp_ms);
+        assert_eq!(
+            head.total(),
+            trades.len(),
+            "the whole stream is still there"
+        );
+        assert!(!head.is_finished());
+        assert_eq!(head.progress(), 0.0, "at the open of the day, not half way");
+    }
+
+    #[test]
+    fn playing_a_joined_session_never_replays_the_day_before() {
+        let (trades, first) = joined();
+        let mut head = Playhead::opening_at(
+            &trades,
+            PlaybackConfig {
+                speed: 1.0,
+                ..Default::default()
+            },
+            first,
+        );
+        head.play();
+        let batch = head.advance(&trades, 0.0);
+        assert_eq!(
+            batch.range().start,
+            first,
+            "the first print released is the day's own"
+        );
+        let mut emitted = batch.len();
+        for _ in 0..12 {
+            emitted += head.advance(&trades, 1_000.0).len();
+        }
+        assert_eq!(emitted, trades.len() - first, "the day, and only the day");
+        assert!(head.is_finished());
+    }
+
+    #[test]
+    fn restarting_a_joined_session_returns_to_the_days_open() {
+        let (trades, first) = joined();
+        let mut head = Playhead::opening_at(&trades, PlaybackConfig::default(), first);
+        head.play();
+        head.advance(&trades, 5_000.0);
+        head.restart();
+        assert_eq!(head.cursor(), first, "not back into yesterday");
+        assert_eq!(head.position_ms(), trades[first].timestamp_ms);
+        assert_eq!(head.progress(), 0.0);
+    }
+
+    #[test]
+    fn a_seek_on_a_joined_session_stays_inside_the_day() {
+        let (trades, first) = joined();
+        let mut head = Playhead::opening_at(&trades, PlaybackConfig::default(), first);
+        head.play();
+        head.advance(&trades, 60_000.0);
+        // Fully back: the earliest a seek may land is the day's own open.
+        head.seek_to_fraction(&trades, 0.0);
+        assert!(
+            head.cursor() > first,
+            "the day's first print has been served"
+        );
+        assert_eq!(head.position_ms(), trades[first].timestamp_ms);
+        // And below it, clamped rather than reaching into the joined day.
+        head.seek_to(&trades, trades[0].timestamp_ms);
+        assert_eq!(head.position_ms(), trades[first].timestamp_ms);
+        assert!(head.cursor() > first);
+    }
+
+    #[test]
+    fn a_joined_day_with_no_session_behind_it_is_finished() {
+        let trades = ticks(4);
+        let head = Playhead::opening_at(&trades, PlaybackConfig::default(), trades.len());
+        assert!(head.is_finished(), "there is no day left to play");
+        assert_eq!(head.progress(), 1.0);
+    }
+
+    #[test]
+    fn a_playhead_with_nothing_joined_is_the_one_that_was_always_there() {
+        let trades = ticks(6);
+        assert_eq!(
+            Playhead::opening_at(&trades, PlaybackConfig::default(), 0),
+            Playhead::new(&trades, PlaybackConfig::default())
+        );
     }
 }

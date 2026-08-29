@@ -51,6 +51,14 @@ pub(crate) struct WorkspaceSnapshot {
     /// the trader asked for, that is what the pane actually holds.
     #[serde(default)]
     pub venue_lead_in: bool,
+    /// Whether opening a recording joins the session day before it, and a
+    /// download fetches that day's tape as well.
+    ///
+    /// Additive within v1 (contract §4). It decides what a replay an operator
+    /// is about to open will actually hold, so it has to be readable before
+    /// they open one — the bar counts afterwards are too late to plan with.
+    #[serde(default)]
+    pub replay_day_before: bool,
     pub tabs: Vec<WorkspaceTab>,
     /// The layout strip: every layout, and which is active. Additive.
     #[serde(default)]
@@ -136,6 +144,7 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
         history_reach: history_reach.token().to_owned(),
         history_reach_running,
         venue_lead_in,
+        replay_day_before: app.control_replay_day_before(),
         tabs: tabs
             .iter()
             .enumerate()

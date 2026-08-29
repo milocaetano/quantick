@@ -118,6 +118,29 @@ pub struct ReplayView {
     show_format: bool,
     speed: f32,
     autoplay: bool,
+    /// Whether opening a session joins the day before it, and whether a
+    /// download fetches that day's tape alongside the one being asked for.
+    ///
+    /// One field behind two rows — the session list's and the download's —
+    /// because to a trader they are one question: *is yesterday on the chart?*
+    /// Two switches that could disagree would let them download a day they
+    /// never see, or open a session reaching for a tape nobody fetched.
+    day_before: bool,
+    /// Whether the trader has changed [`Self::day_before`] since it was last
+    /// written down.
+    ///
+    /// Raised by [`Self::set_day_before`] alone — the checkbox and the named
+    /// call — never by [`Self::stage_day_before`], which dresses a screen for
+    /// one run and must not redefine the trader's cockpit.
+    day_before_dirty: bool,
+    /// The choice as the workspace file holds it, `None` when the trader has
+    /// never made one.
+    ///
+    /// Deliberately *not* [`Self::day_before`], for the reason [`Self::stored`]
+    /// is not [`Self::folder`]: a run under the environment hook wears the
+    /// setting for that run, and a validation capture must never come back as
+    /// a permanent choice.
+    day_before_stored: Option<bool>,
     /// Where the seek handle is being held, while it is being held.
     ///
     /// Seeking rebuilds the chart from the session's history, which is work
@@ -149,7 +172,7 @@ pub struct ReplayView {
 
 impl Default for ReplayView {
     fn default() -> Self {
-        Self::new(None)
+        Self::new(None, None)
     }
 }
 
@@ -157,8 +180,13 @@ impl ReplayView {
     /// A closed browser on the folder [`crate::replay_home`] resolves: the
     /// environment hook, else the trader's `stored` pick, else the documents
     /// home. Never nowhere.
+    ///
+    /// `day_before` is the standing choice read off the workspace file;
+    /// `None` means the trader has never expressed one — including every file
+    /// written before the setting existed — and the day before is joined,
+    /// which is what a trader rehearsing an open asked for.
     #[must_use]
-    pub fn new(stored: Option<&str>) -> Self {
+    pub fn new(stored: Option<&str>, day_before: Option<bool>) -> Self {
         Self {
             browser_open: false,
             folder: crate::replay_home::resolve(stored),
@@ -170,12 +198,79 @@ impl ReplayView {
             error: None,
             show_format: false,
             speed: 1.0,
-            autoplay: true,
+            // Paused: a recording opens on its first print and waits. See
+            // `feed::replay::ReplayOptions::autoplay`.
+            autoplay: false,
+            day_before: day_before.unwrap_or(crate::replay_download::DEFAULT_JOIN_DAY_BEFORE),
+            day_before_dirty: false,
+            day_before_stored: day_before,
             scrub: None,
             tab: BrowserTab::Sessions,
             get_data: GetDataPanel::new(),
             folder_dirty: false,
         }
+    }
+
+    /// Whether a session opens with the day before it on the chart, and a
+    /// download fetches that day's tape too.
+    #[must_use]
+    pub fn day_before(&self) -> bool {
+        self.day_before
+    }
+
+    /// Make that choice — the one call behind the checkbox in either row, and
+    /// the one any future caller acting for the trader goes through.
+    ///
+    /// A choice, so it is written down: see [`Self::take_day_before_change`].
+    /// The launch-time hook deliberately does *not* come here; it stages the
+    /// setting for one run through [`Self::stage_day_before`]. No registered
+    /// control-plane action reaches this yet — the state is readable in the
+    /// workspace summary and this is the call an action would make, but the
+    /// capability descriptor is its own change.
+    pub fn set_day_before(&mut self, enabled: bool) {
+        if self.day_before == enabled && self.day_before_stored == Some(enabled) {
+            return;
+        }
+        self.day_before = enabled;
+        self.day_before_stored = Some(enabled);
+        self.day_before_dirty = true;
+    }
+
+    /// The choice as the workspace file should hold it, `None` when the trader
+    /// has never made one.
+    ///
+    /// Deliberately not [`Self::day_before`]: a run under the environment hook
+    /// is wearing a setting for that run, and must not freeze it into the file.
+    #[must_use]
+    pub fn stored_day_before(&self) -> Option<bool> {
+        self.day_before_stored
+    }
+
+    /// The same for this run only, with nothing written down.
+    ///
+    /// What the environment hook does. A validation run states a screen it
+    /// wants to photograph; it does not make a standing choice on the
+    /// trader's behalf — the same rule the replay folder follows.
+    pub fn stage_day_before(&mut self, enabled: bool) {
+        self.day_before = enabled;
+    }
+
+    /// The choice to write down, once, on the frame it was made. `None` when
+    /// nothing has changed since the last write.
+    ///
+    /// Taken rather than read for the reason [`Self::take_folder_change`] is:
+    /// a standing choice must survive a crash, not just a clean exit.
+    pub fn take_day_before_change(&mut self) -> Option<bool> {
+        if !self.day_before_dirty {
+            return None;
+        }
+        self.day_before_dirty = false;
+        // The *stored* choice, never the live one: only `set_day_before`
+        // raises the flag and it writes both, so the two agree here today.
+        // Reading the live field would make that an accident of call order —
+        // one staging path that ran after a click would write a QA run's
+        // setting into the trader's workspace.
+        self.day_before_stored
     }
 
     /// Whose instruments the download half can actually fetch.
@@ -272,16 +367,69 @@ impl ReplayView {
     /// scripted run exercises is what a person gets. Returns whether a session
     /// was found to load; a folder that yields nothing opens the browser
     /// instead, where the reason is already spelled out.
-    pub fn autostart(&mut self, speed: f32) -> bool {
+    ///
+    /// `play` is the scripted press of the transport's own button. A capture
+    /// wants it: a paused replay of a lone day is a capture of an empty chart,
+    /// which is the one thing loading a tape was for. It is *not* the default a
+    /// person meets — see `feed::replay::ReplayOptions::autoplay` — and a run
+    /// that wants the state they actually get asks for the paused one, which
+    /// is the only way that state is reachable with no hand on the mouse.
+    pub fn autostart(&mut self, speed: f32, day: Option<&str>, play: bool) -> bool {
         self.speed = speed;
-        self.autoplay = true;
+        self.autoplay = play;
         self.rescan();
+        // A named day, or the first the scan found. Naming one matters as
+        // soon as a folder holds more than one recording: the scan sorts by
+        // instrument and then by day, so a bare autostart takes the first
+        // instrument's *oldest* day — the one recording that can have nothing
+        // joined in front of it.
+        if let Some(day) = day
+            && !self.select_day(day)
+        {
+            // A day the folder does not hold is a typo, and photographing a
+            // different session instead would be a capture of the wrong thing.
+            // The browser opens on the list, where what is there is spelled
+            // out — with nothing selected, because `rescan` picks the first
+            // session and leaving that armed puts a different recording one
+            // click from playing under a run that asked for another.
+            self.selected = None;
+            self.browser_open = true;
+            return false;
+        }
         if self.selected_entry().is_none() {
             self.browser_open = true;
             return false;
         }
         self.load_selected();
         true
+    }
+
+    /// Select the session whose day — or, failing that, whose file name — is
+    /// `wanted`. Returns whether one matched.
+    ///
+    /// By name rather than by index: a scripted run asks for *a day*, and the
+    /// index of a day moves every time the folder gains a recording.
+    ///
+    /// A bare day names the first instrument holding it, in the scan's own
+    /// order — instrument, then day. A folder carrying two contracts for one
+    /// date is named precisely by the file stem instead (`WINV26-20260828`),
+    /// which is why both spellings are accepted.
+    pub fn select_day(&mut self, wanted: &str) -> bool {
+        let wanted = wanted.trim();
+        let Some(library) = self.library.as_ref() else {
+            return false;
+        };
+        let found = library.sessions.iter().position(|entry| {
+            entry.date.is_some_and(|date| date.label() == wanted)
+                || entry
+                    .path
+                    .file_stem()
+                    .is_some_and(|stem| stem.eq_ignore_ascii_case(wanted))
+        });
+        if let Some(index) = found {
+            self.selected = Some(index);
+        }
+        found.is_some()
     }
 
     /// Draw the browser and, while a session is playing, the transport bar.
@@ -313,6 +461,17 @@ impl ReplayView {
         let loading = self.loading.as_ref()?;
         match loading.result.try_recv() {
             Ok(Ok(session)) => {
+                if let Some(problem) = session.day_before_problem.as_ref() {
+                    tracing::warn!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "REPLAY_DAY_BEFORE_UNUSABLE",
+                        session = %session.label(),
+                        detail = problem.detail.as_str(),
+                        advice = problem.advice,
+                        "the day before this session will not join it"
+                    );
+                }
                 self.loading = None;
                 self.browser_open = false;
                 self.error = None;
@@ -418,10 +577,19 @@ impl ReplayView {
         };
         let (tx, rx) = std::sync::mpsc::channel();
         let path = entry.path.clone();
+        let day_before = self.day_before;
         std::thread::Builder::new()
             .name("quantick-replay-load".into())
             .spawn(move || {
-                let _ = tx.send(Session::load(&path, ParseOptions::default()));
+                // Two loads or one, on the worker either way: the day before
+                // is a second tape to parse, and neither belongs on the thread
+                // drawing the chart.
+                let loaded = if day_before {
+                    Session::load_with_day_before(&path, ParseOptions::default())
+                } else {
+                    Session::load(&path, ParseOptions::default())
+                };
+                let _ = tx.send(loaded);
             })
             .expect("spawn replay loader thread");
         self.loading = Some(Loading {
@@ -472,6 +640,7 @@ impl ReplayView {
         let mut open = true;
         let mut load_clicked = false;
         let mut downloaded = None;
+        let mut day_before_change = None;
 
         egui::Window::new("Market Replay")
             .open(&mut open)
@@ -498,15 +667,30 @@ impl ReplayView {
                     BrowserTab::GetData => {
                         let folder = self.folder.clone();
                         let offered = self.offered_symbols(market);
-                        downloaded = self
-                            .get_data
-                            .draw(ui, &folder, self.library.as_ref(), &offered)
-                            .map(|GetDataAction::Downloaded(tape)| tape);
+                        let day_before = self.day_before;
+                        if let Some(GetDataAction::Downloaded(tape)) = self.get_data.draw(
+                            ui,
+                            &folder,
+                            self.library.as_ref(),
+                            &offered,
+                            day_before,
+                        ) {
+                            downloaded = Some(tape);
+                        }
+                        // Drained apart from the action, so a tick and a
+                        // landed tape in the same frame do not compete for the
+                        // one slot an action has.
+                        day_before_change = self.get_data.take_day_before_change();
                     }
                 }
             });
 
         self.browser_open = open;
+        // The download half and the session list edit one setting, so the tick
+        // made on either row is applied to the browser that owns it.
+        if let Some(enabled) = day_before_change {
+            self.set_day_before(enabled);
+        }
         // A finished download lands the trader where the session now is: back
         // on the list, with the new day scanned and already picked. Making
         // them find it again would be the one avoidable step in the whole flow.
@@ -762,6 +946,11 @@ impl ReplayView {
         }
 
         let mut clicked = false;
+        // Two rows, not one. The speed chips, two ticks and the button did not
+        // fit the dialog's width, and what a right-to-left button takes is
+        // taken from the label beside it: the day-before tick was drawn cut in
+        // half. Speeds and the button first, because that is the pair a trader
+        // ends on, then the two questions about how it opens.
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Start at").color(TEXT_MUTED).small());
             for speed in SPEEDS {
@@ -770,9 +959,6 @@ impl ReplayView {
                     self.speed = speed;
                 }
             }
-            ui.add_space(8.0);
-            ui.checkbox(&mut self.autoplay, "and play")
-                .on_hover_text("Leave unticked to open the session paused on its first print");
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some(loading) = &self.loading {
@@ -792,6 +978,22 @@ impl ReplayView {
                     clicked = true;
                 }
             });
+        });
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.autoplay, "and play")
+                .on_hover_text("Leave unticked to open the session paused on its first print");
+            ui.add_space(8.0);
+            let mut day_before = self.day_before;
+            if ui
+                .checkbox(&mut day_before, "with the day before")
+                .on_hover_text(
+                    "Join the previous session's tape in front of this one, already played, so the chart opens with yesterday's order flow behind the day you picked",
+                )
+                .changed()
+            {
+                self.set_day_before(day_before);
+            }
         });
         clicked
     }
@@ -840,6 +1042,18 @@ impl ReplayView {
 
                     badge(ui, "REPLAY");
                     ui.label(egui::RichText::new(link.label()).color(TEXT_PRIMARY));
+                    // Two days on one chart is never left to be inferred from
+                    // the bars: the recording says which day was joined in
+                    // front of it, or why none was when one was there to join.
+                    if let Some(joined) = link.session.day_before_label() {
+                        ui.label(egui::RichText::new(format!("+ {joined}")).color(TEXT_MUTED).small())
+                            .on_hover_text(
+                                "The day before, joined in front of this session: its order flow is already on the chart, and play starts on the day you picked",
+                            );
+                    } else if let Some(problem) = link.session.day_before_problem.as_ref() {
+                        ui.label(egui::RichText::new("no day before").color(WARN).small())
+                            .on_hover_text(format!("{}\n{}", problem.detail, problem.advice));
+                    }
                     ui.label(
                         egui::RichText::new(clock_text(status.position_ms(), timezone))
                             .monospace()
@@ -861,11 +1075,18 @@ impl ReplayView {
                         {
                             action = Some(ReplayAction::Close);
                         }
+                        // Counted over the session being rehearsed, like the
+                        // seek track beside it: a joined day is context the
+                        // chart was handed, and counting its prints here would
+                        // open a fresh replay at "half played". Asked of the
+                        // link rather than worked out here, so the control
+                        // plane cannot answer the same question differently.
+                        let (played, total) = link.day_prints();
                         ui.label(
                             egui::RichText::new(format!(
                                 "{} / {} prints",
-                                thousands(status.played()),
-                                thousands(status.total())
+                                thousands(played),
+                                thousands(total)
                             ))
                             .color(TEXT_MUTED)
                             .small(),
@@ -1024,18 +1245,130 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_view_is_closed_and_starts_at_one_times() {
-        let view = ReplayView::new(None);
+    fn a_fresh_view_is_closed_paused_and_starts_at_one_times() {
+        let view = ReplayView::new(None, None);
         assert!(!view.browser_open);
         assert_eq!(view.speed, 1.0);
-        assert!(view.autoplay);
+        assert!(
+            !view.autoplay,
+            "a replay opens on its first print and waits for the trader"
+        );
+        assert!(view.day_before, "yesterday comes unless it was turned off");
+        assert_eq!(
+            view.stored_day_before(),
+            None,
+            "and a default nobody chose is not a choice to write down"
+        );
         assert!(view.library.is_none());
         assert!(!view.is_loading(), "nothing is being parsed yet");
     }
 
+    /// The scan lists sessions oldest first and the browser selects the first,
+    /// so on a folder holding a day and the day before it a bare autostart
+    /// always picks the older one — the single day that can have nothing
+    /// joined in front of it. Naming the day is what makes the other reachable.
+    #[test]
+    fn naming_a_day_selects_it_over_the_one_the_scan_lists_first() {
+        let folder = std::env::temp_dir().join(format!(
+            "quantick-replay-view-select-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let instrument = folder.join("WINJ26");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&instrument).expect("scratch folder");
+        for (name, day) in [
+            ("20260313.csv", "2026-03-13"),
+            ("20260316.csv", "2026-03-16"),
+        ] {
+            std::fs::write(
+                instrument.join(name),
+                format!(
+                    "# quantick-replay 1\n# symbol=WINJ26\n# timezone=-03:00\n\
+                     Date,Time,Price,Volume,Side\n\
+                     {day},10:00:00.000,182035,12,B\n"
+                ),
+            )
+            .expect("write a session");
+        }
+
+        let mut view = ReplayView::new(None, None);
+        view.folder = folder.display().to_string();
+        view.rescan();
+        assert_eq!(
+            view.selected_entry()
+                .and_then(|e| e.date)
+                .map(|d| d.label()),
+            Some("2026-03-13".to_string()),
+            "the scan hands back the oldest, which is the one with no day before it"
+        );
+
+        assert!(view.select_day("2026-03-16"), "the folder holds that day");
+        assert_eq!(
+            view.selected_entry()
+                .and_then(|e| e.date)
+                .map(|d| d.label()),
+            Some("2026-03-16".to_string())
+        );
+
+        assert!(
+            !view.select_day("2026-03-14"),
+            "a day the folder does not hold selects nothing"
+        );
+        assert_eq!(
+            view.selected_entry()
+                .and_then(|e| e.date)
+                .map(|d| d.label()),
+            Some("2026-03-16".to_string()),
+            "and leaves the pick that was already made alone"
+        );
+
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn a_named_day_that_is_not_there_opens_the_list_instead_of_the_wrong_one() {
+        let mut view = ReplayView::new(None, None);
+        view.folder = String::new();
+        assert!(
+            !view.autostart(1.0, Some("2026-08-28"), true),
+            "no folder, so no day"
+        );
+        assert!(view.browser_open, "and the list says what is there");
+        assert!(!view.select_day("2026-08-28"), "nothing was scanned");
+    }
+
+    #[test]
+    fn a_tick_is_written_down_once_and_a_staged_hook_never_is() {
+        let mut view = ReplayView::new(Some("D:/tape"), Some(true));
+        assert!(view.day_before());
+        assert_eq!(view.take_day_before_change(), None, "nothing has changed");
+
+        view.set_day_before(false);
+        assert!(!view.day_before());
+        assert_eq!(view.take_day_before_change(), Some(false));
+        assert_eq!(
+            view.take_day_before_change(),
+            None,
+            "one choice is written once"
+        );
+        assert_eq!(view.stored_day_before(), Some(false));
+
+        // A validation run wears the setting for that run and leaves the
+        // trader's own cockpit exactly as it found it.
+        view.stage_day_before(true);
+        assert!(view.day_before(), "the run sees what the hook asked for");
+        assert_eq!(view.take_day_before_change(), None);
+        assert_eq!(
+            view.stored_day_before(),
+            Some(false),
+            "and the file still holds the trader's answer"
+        );
+    }
+
     #[test]
     fn opening_the_browser_with_no_folder_scans_nothing() {
-        let mut view = ReplayView::new(None);
+        let mut view = ReplayView::new(None, None);
         view.folder = String::new();
         view.open_browser();
         assert!(view.browser_open);
@@ -1047,7 +1380,7 @@ mod tests {
     /// starting the next launch on nowhere.
     #[test]
     fn a_folder_the_trader_chose_is_offered_for_remembering_once() {
-        let mut view = ReplayView::new(None);
+        let mut view = ReplayView::new(None, None);
         view.folder = "D:/tape".to_string();
         view.choose_folder();
         assert_eq!(
@@ -1069,7 +1402,7 @@ mod tests {
     /// folder, into the workspace.
     #[test]
     fn a_scan_the_app_started_stores_nothing() {
-        let mut view = ReplayView::new(None);
+        let mut view = ReplayView::new(None, None);
         view.rescan();
         assert_eq!(view.take_folder_change(), None);
         assert_eq!(view.stored_pick(), None, "still never chosen");
@@ -1079,7 +1412,7 @@ mod tests {
     /// file and replace the folder that was working.
     #[test]
     fn typing_in_the_field_alone_changes_nothing() {
-        let mut view = ReplayView::new(Some("D:/tape"));
+        let mut view = ReplayView::new(Some("D:/tape"), None);
         view.folder = "D:/ta".to_string();
         assert_eq!(view.take_folder_change(), None);
         assert_eq!(view.stored_pick(), Some("D:/tape"));
@@ -1089,7 +1422,7 @@ mod tests {
     /// is what used to resolve to the process's working directory.
     #[test]
     fn an_emptied_field_forgets_the_pick_rather_than_storing_nothing() {
-        let mut view = ReplayView::new(Some("D:/tape"));
+        let mut view = ReplayView::new(Some("D:/tape"), None);
         view.folder = String::new();
         view.choose_folder();
         assert_eq!(view.take_folder_change(), Some(None));
@@ -1100,7 +1433,7 @@ mod tests {
     /// environment variable in sight.
     #[test]
     fn a_stored_pick_is_where_the_browser_opens() {
-        let view = ReplayView::new(Some("D:/tape"));
+        let view = ReplayView::new(Some("D:/tape"), None);
         assert_eq!(view.folder_in_use(), "D:/tape");
         assert_eq!(view.stored_pick(), Some("D:/tape"));
     }
@@ -1109,7 +1442,7 @@ mod tests {
     /// already on disk after that — each named once.
     #[test]
     fn the_offered_contracts_lead_with_the_chart_and_never_repeat() {
-        let mut view = ReplayView::new(None);
+        let mut view = ReplayView::new(None, None);
         view.library = Some(library::scan(std::path::Path::new("definitely/not/here")));
         let offered = view.offered_symbols(&MarketMenu {
             current: Some("WINV26"),
@@ -1120,7 +1453,7 @@ mod tests {
 
     #[test]
     fn scanning_a_missing_folder_reports_it_instead_of_failing() {
-        let mut view = ReplayView::new(None);
+        let mut view = ReplayView::new(None, None);
         view.folder = "definitely/not/here".to_string();
         view.rescan();
         let library = view.library.as_ref().expect("scanned");
