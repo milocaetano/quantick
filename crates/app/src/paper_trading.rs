@@ -370,9 +370,16 @@ impl Leg {
         }
     }
 
-    /// Whether this leg sits on the winning side of the entry for `side` —
-    /// the question both the handle layout and the create-drag ask.
-    fn on_profit_side(self, side: Side) -> bool {
+    /// Whether this leg's price sits **above** the entry, for `side`.
+    ///
+    /// Named for the geometry and not for the meaning, because the two part
+    /// company on a short: a short's stop is above its entry *and* on the
+    /// losing side. The callers want the geometry — it is what decides
+    /// which side of the line a handle is drawn on — so calling this
+    /// "profit side" would be an invitation to fold
+    /// `decide_pending_leg`'s own profit-side test into it and swap stop
+    /// for target on every short.
+    fn sits_above_entry(self, side: Side) -> bool {
         matches!(
             (self, side),
             (Self::TakeProfit, Side::Buy) | (Self::StopLoss, Side::Sell)
@@ -985,13 +992,17 @@ impl CmdEntryKind {
     }
 
     /// Display label for the selector.
+    ///
+    /// The same words as [`Self::as_str`] today, and delegating rather than
+    /// repeating them so it stays that way by accident only where it is
+    /// harmless: written out twice, renaming the selector's "stop" would
+    /// silently change the on-disk token and every remembered choice would
+    /// fall back to `Auto` on the next launch. Give this its own `match`
+    /// the day the label and the token should differ, which is what
+    /// [`CmdModifier`] already does.
     #[must_use]
     pub fn label(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Limit => "limit",
-            Self::Stop => "stop",
-        }
+        self.as_str()
     }
 }
 
@@ -1172,9 +1183,6 @@ pub struct PaperTrading {
     /// Whether `QUANTICK_PAPER_ORDER_BRACKET` asked the capture hook's
     /// resting orders to carry protective legs.
     order_bracket_demo: bool,
-    /// Reusable buffer for [`TradingVenue::in_flight_entries`] — see
-    /// `draw_pending_orders`, which asks every frame.
-    in_flight_scratch: Vec<OrderId>,
     /// Symbol the journal writes under; follows the app's active symbol.
     symbol: String,
     dir: PathBuf,
@@ -1347,7 +1355,6 @@ impl PaperTrading {
     pub fn with_trades_dir(dir: PathBuf) -> Self {
         Self {
             venue: Box::new(Simulator::new()),
-            in_flight_scratch: Vec::new(),
             order_bracket_demo: std::env::var(PAPER_ORDER_BRACKET_ENV)
                 .is_ok_and(|value| value == "1"),
             symbol: String::new(),
@@ -1581,7 +1588,16 @@ impl PaperTrading {
                 // price, which is what the venue validates against — the
                 // hook cannot place one the venue would refuse.
                 let bracket = if self.order_bracket_demo {
-                    let reach = (mark * PAPER_ORDER_BRACKET_FRACTION).round_dp(mark.scale());
+                    // The same floor the rung `step` carries, for the same
+                    // reason: on a coarsely quoted market 15 bp rounds to
+                    // nothing, both legs price *at* the order, and
+                    // `validate_bracket` then refuses the whole
+                    // `PlaceLimit` — the hook would rest no orders at all
+                    // and photograph an empty chart with nothing to explain
+                    // it.
+                    let reach = (mark * PAPER_ORDER_BRACKET_FRACTION)
+                        .round_dp(mark.scale())
+                        .max(tick);
                     match side {
                         Side::Buy => Bracket {
                             stop_loss: Some(price.saturating_sub(reach)),
@@ -2026,7 +2042,16 @@ impl PaperTrading {
                 level.to_f64().unwrap_or_default()
             };
             let y = ctx.scale.y(price);
-            if !ctx.in_range(y) {
+            // The order's own line may be scrolled off while a leg of its
+            // bracket is still on screen, so the legs are painted before
+            // this gate rather than after it. `control_at` offers a leg's
+            // cross whenever that leg is visible; skipping the paint here
+            // left a cross that cleared a take profit on what looked like
+            // empty chart — the inversion of "an invisible control is not a
+            // control", and the more dangerous half of it.
+            let entry_visible = ctx.in_range(y);
+            if !entry_visible {
+                self.draw_bracket_of(&ctx, BracketTarget::Order(order.id), true, false);
                 continue;
             }
             // At rest the tag is a pill; it opens under the pointer. Read,
@@ -2278,8 +2303,24 @@ impl PaperTrading {
             dragging,
         );
         ctx.gutter_chip(y, color, &fmt_decimal(shown));
+        // A leg riding an unfilled order names the order it belongs to and
+        // says it is not protecting anything yet.
+        //
+        // Both halves are honesty, not decoration. Without the id, two
+        // resting orders put two identical `SL` tags on the chart and no
+        // way to tell which is whose. Without `on fill`, `SL 90.0 -5.0
+        // pts` reads exactly like a live position's stop — a trader would
+        // read protection they do not have, which is the same class of
+        // mistake as reading a simulated fill as a real one. Dashing the
+        // line says it too, but a dash is not a sentence, and this is the
+        // number the eye lands on.
+        let owner = match paint.owner {
+            BracketTarget::Order(id) => format!("#{} ", id.0),
+            BracketTarget::Position => String::new(),
+        };
         let mut text = format!(
-            "{} {} {} pts",
+            "{}{} {} {} pts",
+            owner,
             paint.leg.word(),
             fmt_decimal(shown),
             fmt_signed_points(signed_points(
@@ -2289,6 +2330,9 @@ impl PaperTrading {
                 paint.quantity
             )),
         );
+        if paint.pending {
+            text.push_str(" · on fill");
+        }
         if dragging && let Some(ratio) = rr_ratio(paint, shown) {
             text.push_str(&format!(" · R:R {ratio}"));
         }
@@ -2348,7 +2392,7 @@ impl PaperTrading {
             .filter(|leg| leg.level(bracket).is_none());
         let over_handle = ctx.pointer.is_some_and(|pointer| {
             missing.clone().any(|leg| {
-                bracket_handle_rect(ctx.tag_right, center, leg.on_profit_side(side) != flip)
+                bracket_handle_rect(ctx.tag_right, center, leg.sits_above_entry(side) != flip)
                     .contains(pointer)
             })
         });
@@ -2356,7 +2400,8 @@ impl PaperTrading {
             return;
         }
         for leg in missing {
-            let rect = bracket_handle_rect(ctx.tag_right, center, leg.on_profit_side(side) != flip);
+            let rect =
+                bracket_handle_rect(ctx.tag_right, center, leg.sits_above_entry(side) != flip);
             ctx.bracket_handle(rect, leg.word(), leg.color());
         }
     }
@@ -2700,7 +2745,7 @@ impl PaperTrading {
                             && bracket_handle_rect(
                                 tag_right,
                                 center_y,
-                                leg.on_profit_side(side) != scale.is_inverted(),
+                                leg.sits_above_entry(side) != scale.is_inverted(),
                             )
                             .contains(pointer)
                         {
@@ -2719,8 +2764,16 @@ impl PaperTrading {
     }
 
     /// Everything that can carry a bracket right now, in the order a press
-    /// should consider it: working orders newest-first (they paint on top),
-    /// then the open position.
+    /// should consider it — which is **the reverse of the paint**, topmost
+    /// first.
+    ///
+    /// `draw_layer` paints the working orders and then the position, so the
+    /// position's lines and tag sit on top of them. A press has to resolve
+    /// the same way or the two disagree wherever they overlap: a position
+    /// stopped at 90 and a resting entry whose own stop is also 90 show the
+    /// position's solid leg, and a hit-test that reached the order first
+    /// would clear the entry's protection while the trader was looking at
+    /// the position's.
     ///
     /// An iterator and not a `Vec`, because both callers run **per frame**,
     /// not per press: `hover_cursor` asks `control_at` and `line_at` what is
@@ -2731,15 +2784,16 @@ impl PaperTrading {
     /// `self` about each entry.
     fn bracket_owners(&self) -> impl Iterator<Item = BracketTarget> + '_ {
         self.venue
-            .working_orders()
-            .iter()
-            .rev()
-            .map(|order| BracketTarget::Order(order.id))
+            .position()
+            .is_some()
+            .then_some(BracketTarget::Position)
+            .into_iter()
             .chain(
                 self.venue
-                    .position()
-                    .is_some()
-                    .then_some(BracketTarget::Position),
+                    .working_orders()
+                    .iter()
+                    .rev()
+                    .map(|order| BracketTarget::Order(order.id)),
             )
     }
 
@@ -3734,15 +3788,13 @@ impl PaperTrading {
     }
 
     fn draw_pending_orders(&mut self, ui: &mut egui::Ui) {
-        // The buffer is a field so a panel drawn every frame does not
-        // allocate one to discover that nothing is in flight, which is the
-        // answer on all but a handful of frames per session.
-        let mut in_flight = std::mem::take(&mut self.in_flight_scratch);
-        in_flight.clear();
+        let mut in_flight = Vec::new();
         self.venue.in_flight_entries(&mut in_flight);
         let queued_entries = in_flight.len();
-        let queued_closes = self.venue.in_flight() - queued_entries;
-        self.in_flight_scratch = in_flight;
+        // Saturating, because the two reads cross a trait boundary and are
+        // documented independently: a venue whose `in_flight_entries` says
+        // more than its `in_flight` counts must not panic the render loop.
+        let queued_closes = self.venue.in_flight().saturating_sub(queued_entries);
         let orders: Vec<_> = self.working_orders().to_vec();
         ui.label(caption(&format!("WORKING ORDERS · {}", orders.len())));
         if queued_entries > 0 {

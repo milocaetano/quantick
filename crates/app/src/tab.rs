@@ -525,6 +525,13 @@ pub struct Tab {
     /// scale the gesture started on. Between gestures the pointer decides
     /// afresh every frame, so this never pins anything.
     paper_drag_pane: Option<PaneIndex>,
+
+    /// Paper trading for this market: the deterministic simulator plus its
+    /// journal, chart layer, dock tab and report.
+    ///
+    /// Per tab, because a simulated position belongs to a tape. Two tabs on
+    /// two markets hold two independent positions, and a position can never
+    /// be marked against prints it was not opened against — the invariant
     /// [`PaperTrading::on_timeline_reset`] protects when one tab switches
     /// symbol is the same one tab-scoping protects between tabs.
     pub paper: PaperTrading,
@@ -3808,7 +3815,6 @@ impl Tab {
                 *paper_drag_pane,
                 focused,
             );
-            *paper_drag_pane = paper.gesture_active().then_some(trading_pane);
             let mut chrome = PaneChrome {
                 toolrail: chrome.toolrail,
                 presets: chrome.presets,
@@ -3855,6 +3861,15 @@ impl Tab {
                     edits.push((side, chrome.shared));
                 }
             }
+            // Written *after* the loop, not before it. The drag begins
+            // inside `handle_chart_input`, so on the frame of the press
+            // `gesture_active()` is still false up there and the pin would
+            // be stored as `None` — leaving the very next frame, the first
+            // one that actually drags, to fall through to the pointer. A
+            // flick across a divider in one frame then repriced the order
+            // against the neighbour's scale, which is the whole thing the
+            // pin exists to stop.
+            *paper_drag_pane = paper.gesture_active().then_some(trading_pane);
         }
         self.apply_shared_interactions(&edits);
 

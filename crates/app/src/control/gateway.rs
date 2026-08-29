@@ -502,12 +502,19 @@ impl ClientRateLimiter {
 
 /// Whether a permission belongs to the annotate tier — the `annotate` floor
 /// itself or one of its scopes.
-fn is_annotate_permission(permission: &PermissionId) -> bool {
+/// Whether a permission belongs to the trade tier — see the access
+/// panel's read-scope filter for why it is excluded from every section.
+pub(super) fn is_trade_permission(permission: &PermissionId) -> bool {
+    permission.as_str() == super::trade::TRADE_PERMISSION_ID
+        || permission.as_str().starts_with("trade.")
+}
+
+pub(super) fn is_annotate_permission(permission: &PermissionId) -> bool {
     permission.as_str() == ANNOTATE_PERMISSION_ID || is_annotate_scope(permission)
 }
 
 /// Any permission of the cockpit tier — the floor or one of its scopes.
-fn is_cockpit_permission(permission: &PermissionId) -> bool {
+pub(super) fn is_cockpit_permission(permission: &PermissionId) -> bool {
     permission.as_str() == COCKPIT_PERMISSION_ID || is_cockpit_scope(permission)
 }
 
@@ -2048,7 +2055,19 @@ impl ControlAccess {
         ui.strong("Read scopes for the next connection");
         let can_edit = matches!(self.state, AccessState::Disabled);
         for descriptor in self.contract.selectable_permissions().filter(|descriptor| {
-            !is_annotate_permission(&descriptor.id) && !is_cockpit_permission(&descriptor.id)
+            !is_annotate_permission(&descriptor.id)
+                && !is_cockpit_permission(&descriptor.id)
+                // The trade tier is not offered here at all. It is not a
+                // read scope — this heading promises reading only, and the
+                // cockpit section exists because that same mistake was made
+                // once already — and it is not offered anywhere else either,
+                // because nothing can currently grant it: no profile the
+                // handshake reaches holds it, so a checkbox would take the
+                // trader's tick and change nothing. An honest absence beats
+                // a control that lies about what it does. The section that
+                // grants it belongs to the change that decides some
+                // connection may trade.
+                && !is_trade_permission(&descriptor.id)
         }) {
             let mut selected = self.configured_scopes.contains(&descriptor.id);
             // The description is the label — a first-week user reads "Chart

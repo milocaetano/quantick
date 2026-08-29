@@ -980,15 +980,6 @@ pub struct PaneChrome<'a> {
     pub paper: &'a mut PaperTrading,
     /// Whether this pane is the one paper trading takes its pointer from.
     ///
-    /// Set for the flow pane, and only for it: order entry belongs to the
-    /// chart trading happens on. The time pane is the *context* view (§11) —
-    /// a 90-day 1-minute chart is not a surface to place a stop on, and its
-    /// price span is nothing like the one an order is sized against.
-    ///
-    /// It is also what keeps the gesture coherent: the simulator holds one
-    /// grabbed line and one armed placement for the whole tab, so exactly one
-    /// pane may drive them. Running both would let the second pane inherit a
-    /// drag the first started and re-clamp it into the wrong rectangle.
     /// Whether this pane's pointer drives order entry this frame.
     ///
     /// True on the pane the pointer is *in* — every visible pane is a
@@ -2194,10 +2185,14 @@ impl ChartPane {
             }
         }
         // The trade section rides on top, anchored at the price the
-        // right-click landed on — on whichever pane was right-clicked.
-        if chrome.paper_takes_input
-            && let Some(price) = self.context_menu_price
-        {
+        // right-click landed on. Gated on *this pane owning the menu*, not
+        // on the pointer: the menu body re-runs every frame, and a popup
+        // opened near a pane's edge extends past it, so a pointer-derived
+        // gate dropped the section the moment the hand travelled onto a row
+        // outside the originating pane — the menu reflowing under the
+        // cursor mid-reach. `context_menu_price` is per pane and stable for
+        // the menu's whole life, which is exactly the lifetime wanted.
+        if let Some(price) = self.context_menu_price {
             chrome.paper.context_trade_actions(ui, price);
             ui.separator();
         }

@@ -6902,8 +6902,8 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Removes one working order without trading. Destructive in the registry's sense: the order is gone, and re-placing it is a new order at the back of the queue.",
-      "destructive": true,
+      "description": "Removes one working order without trading. Risk-reducing: it can only ever take exposure off, never add any. Re-placing the same order afterwards is a new order at the back of the queue.",
+      "destructive": false,
       "dry_run_supported": false,
       "effect": "trade",
       "examples": [],
@@ -7036,10 +7036,11 @@
       "required_permissions": [
         "trade"
       ],
-      "reversible": false,
-      "revision_policy": "required",
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
       "risk_flags": [],
-      "risk_reducing": false,
+      "risk_reducing": true,
+      "stale_input_safety": "The order is named by id, and ids are never reused, so a stale cancel removes the order it meant or reports that there is no such order. It can never cancel a different one that happens to be working now.",
       "title": "Cancel a working order",
       "version": 1
     },

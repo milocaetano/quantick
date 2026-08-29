@@ -9,8 +9,12 @@
 //!
 //! # Why nothing can invoke these remotely yet
 //!
-//! Every action here sits behind its own effect and its own permission, and
-//! that permission is granted by **no shipped profile**. Not an oversight:
+//! Every action here sits behind its own effect and its own permission,
+//! ceilinged at a `trader` profile that **nothing hands out**: the access
+//! panel does not offer the scope and `configured_profile` never returns
+//! that profile, so no connection can reach one. (The ceiling itself is not
+//! the gate — a permission with no ceiling is not even representable.) Not
+//! an oversight:
 //! `annotate`'s own description promises it "never [affects] a position", so
 //! a trade cannot borrow it, and inventing a profile that may trade is a
 //! decision about a real account rather than a detail of this change. Until
@@ -405,7 +409,7 @@ fn descriptor(
     title: &str,
     description: &str,
     input_schema: Value,
-    destructive: bool,
+    risk_reducing: bool,
     stale_input_safety: &str,
 ) -> CapabilityDescriptor {
     CapabilityDescriptor {
@@ -425,24 +429,23 @@ fn descriptor(
         // that could make that safe to retry, so the policy says so rather
         // than offering one that does not hold.
         idempotency: IdempotencyPolicy::Forbidden,
-        // A cancel removes the trader's working order, so the registry
-        // asks the caller to say which state it believed it was acting on.
-        // Placing and bracketing add to or amend by id and need no such
-        // proof - see `stale_input_safety`.
-        revision_policy: if destructive {
-            RevisionPolicy::Required
-        } else {
-            RevisionPolicy::OptionalForAdditive
-        },
-        // Only an additive action may argue that stale input is safe;
-        // a destructive one is asked for an expected revision instead.
-        stale_input_safety: (!destructive).then(|| stale_input_safety.to_owned()),
+        revision_policy: RevisionPolicy::OptionalForAdditive,
+        stale_input_safety: Some(stale_input_safety.to_owned()),
         dry_run_supported: false,
         // An order dies with the session, like every simulated position.
         persistence: EffectPersistence::Transient,
-        reversible: !destructive,
-        destructive,
-        risk_reducing: false,
+        reversible: true,
+        // Cancelling is not `destructive` in this registry's sense, and the
+        // first attempt at it here said so wrongly. Destructive means the
+        // trader's *work* is gone — a drawing, a layout, an annotation —
+        // and the registry answers that by demanding an expected revision,
+        // which this tier's envelopes forbid outright
+        // (`ObserverContract::prepare`), so the guard could never have run.
+        // A working order is an instruction, re-issuable in one call, and
+        // removing one only ever reduces exposure: that is exactly what
+        // `risk_reducing` is for, and it is the honest flag.
+        destructive: false,
+        risk_reducing,
         required_permissions: [TRADE_PERMISSION_ID]
             .into_iter()
             .map(|id| quantick_control::id::PermissionId::new(id).expect("static permission"))
@@ -486,12 +489,10 @@ fn cancel_descriptor() -> CapabilityDescriptor {
     descriptor(
         CANCEL_CAPABILITY_ID,
         "Cancel a working order",
-        "Removes one working order without trading. Destructive in the registry's sense: the order is gone, and re-placing it is a new order at the back of the queue.",
+        "Removes one working order without trading. Risk-reducing: it can only ever take exposure off, never add any. Re-placing the same order afterwards is a new order at the back of the queue.",
         generated_schema::<CancelInput>(),
         true,
-        // Unused: a destructive action is asked for an expected revision
-        // rather than for an argument that staleness is harmless.
-        "",
+        "The order is named by id, and ids are never reused, so a stale cancel removes the order it meant or reports that there is no such order. It can never cancel a different one that happens to be working now.",
     )
 }
 
@@ -576,8 +577,12 @@ mod tests {
         let registry = super::super::actions::standard_actions().unwrap();
         let cancel = registry.lookup(CANCEL_CAPABILITY_ID, 1).unwrap();
         assert!(
-            cancel.descriptor.destructive,
-            "cancelling removes working state and says so"
+            !cancel.descriptor.destructive,
+            "a working order is an instruction, not the trader's work"
+        );
+        assert!(
+            cancel.descriptor.risk_reducing,
+            "and taking one off the book can only ever reduce exposure"
         );
         assert!(
             !cancel

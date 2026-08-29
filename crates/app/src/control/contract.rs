@@ -668,14 +668,17 @@ impl ObserverContract {
                 default_grant: DefaultGrant::Prompt,
                 profile_ceilings: BTreeSet::from([annotator.clone()]),
             },
-            // The trade tier. Its ceiling set is deliberately **empty**: no
-            // shipped profile may hold it, so the gateway refuses every
-            // `trade.*` capability before dispatch while the in-process
-            // operator — a hotkey, a harness hook, a test — reaches them
-            // normally. `annotate` promises it never affects a position, so
-            // a trade cannot borrow it, and deciding which profile *may*
-            // trade is a decision about a real account rather than a detail
-            // of the change that carved this out.
+            // The trade tier, ceilinged at the `trader` profile — which
+            // nothing hands out. A permission with no ceiling at all is not
+            // representable (`register_permission` refuses it), so the gate
+            // is not the ceiling: it is that `configured_profile` never
+            // returns `trader` and the access panel never offers the scope.
+            // Say that here rather than something tidier, because the next
+            // person hardening this tier will read this comment and go
+            // looking for the gate it names. `annotate` promises it never
+            // affects a position, so a trade cannot borrow it, and deciding
+            // which profile *may* trade is a decision about a real account
+            // rather than a detail of the change that carved this out.
             PermissionDescriptor {
                 id: permission(TRADE_PERMISSION_ID),
                 label: "Trade".to_owned(),
@@ -987,12 +990,13 @@ impl ObserverContract {
             permission_floor: permission(TRADE_PERMISSION_ID),
             profile_ceilings: BTreeSet::from([trader.clone()]),
             confirmation_class: confirmation(NO_CONFIRMATION_ID),
-            risk_reducing_confirmation_class: None,
+            // Cancelling is risk-reducing and crosses no extra gate: taking
+            // an order off the book is the direction a trader must never be
+            // slowed down in — the same reason flatten is instant.
+            risk_reducing_confirmation_class: Some(confirmation(NO_CONFIRMATION_ID)),
             mcp_hint_floor: McpHintFloor {
                 read_only: false,
-                // Cancelling removes working state, and the floor is the
-                // strictest thing the family does.
-                destructive: true,
+                destructive: false,
                 // Placing the same order twice places two orders; there is
                 // no key that could make a retry safe.
                 idempotent: false,
@@ -1001,10 +1005,10 @@ impl ObserverContract {
             required_risk_flags: BTreeSet::new(),
             constraints: EffectConstraints {
                 required_read_only: Some(false),
-                allows_destructive: true,
+                allows_destructive: false,
                 durable_requires_reversible: true,
                 irreversible_transient_risk: None,
-                allows_risk_reducing: false,
+                allows_risk_reducing: true,
             },
         })?;
         registry.register_effect(super::notify::effect_policy(&annotator))?;
