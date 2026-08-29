@@ -5800,16 +5800,21 @@ impl ChartPane {
 
         // Above the flow layers: everything else on the canvas is read against
         // it. Drawn on the unclipped painter so the chip reaches the gutter.
-        if self.layer_visible(ChartLayer::LastPrice, chrome.style)
-            && let Some(bar) = partial.or_else(|| closed.last())
-        {
-            self.draw_last_price(painter, chart_rect, axis_x, &scale, bar, chrome);
-        }
-        // The trader's own levels, on the axis beside the market's. Drawn
-        // after the last price so a level the market has just reached is
-        // legible over the chip announcing it — the moment those two prices
-        // coincide is the moment the level matters.
-        Self::draw_drawing_axis_tags(painter, chart_rect, axis_x, &levels);
+        // The trader's own levels on the axis, and then the market's price
+        // over them. That order and not the other way round: a level is a
+        // static annotation whose value the trader already knows, the last
+        // price is live market data, and the moment the two coincide — price
+        // arriving at the level — is exactly the moment the live number must
+        // not be the one that gets covered.
+        self.draw_axis_marks(
+            painter,
+            chart_rect,
+            axis_x,
+            &scale,
+            &levels,
+            partial.or_else(|| closed.last()),
+            chrome,
+        );
         // The candles' own marks, so they are placed and clipped in their
         // pane: where venue candles give way to bars built from prints, and
         // where backfilled prints give way to live ones.
@@ -7082,7 +7087,42 @@ impl ChartPane {
         }
     }
 
+    /// The price gutter's own two marks, in the order they have to be painted.
+    ///
+    /// A level is a static annotation whose value the trader chose and already
+    /// knows; the last price is live market data. The two land on the same
+    /// pixel exactly when price arrives at the level — the moment the level
+    /// was drawn for — so the annotation goes down first and the market's own
+    /// number is the one that stays legible.
+    ///
+    /// One function rather than two adjacent statements, because the order
+    /// *is* the rule: written inline it is a pair of lines any later edit can
+    /// swap without noticing, and here it is a decision with a name on it and
+    /// a test against it.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the frame's geometry plus the bar the chip reports, passed                   rather than cached: both painters need them and this exists                   to hold their order, not to shorten their signatures"
+    )]
+    fn draw_axis_marks(
+        &self,
+        painter: &egui::Painter,
+        chart_rect: egui::Rect,
+        axis_x: f32,
+        scale: &PriceScale,
+        levels: &[PriceAxisLevel],
+        newest: Option<&quantick_engine::Bar>,
+        chrome: &PaneChrome<'_>,
+    ) {
+        Self::draw_drawing_axis_tags(painter, chart_rect, axis_x, levels);
+        if self.layer_visible(ChartLayer::LastPrice, chrome.style)
+            && let Some(bar) = newest
+        {
+            self.draw_last_price(painter, chart_rect, axis_x, scale, bar, chrome);
+        }
+    }
+
     /// The levels the drawings declare, written on the price axis in each
+    /// object's own colour.    /// The levels the drawings declare, written on the price axis in each
     /// object's own colour.
     ///
     /// Rides the `Drawings` layer rather than carrying a switch of its own:
@@ -8739,7 +8779,61 @@ mod tests {
         );
     }
 
-    /// Data honesty on the axis: a mark this chart's data does not back is
+    /// Precedence on a shared gutter: live market data over a static
+    /// annotation.
+    ///
+    /// The last-price chip and a drawing's level land on the same pixel
+    /// exactly when price arrives at the level — the moment the level was
+    /// drawn for — and the one that has to stay legible then is the market's,
+    /// not the number the trader chose themselves and already knows.
+    ///
+    /// Asserted on the shapes the pair really emits, in a paint call that
+    /// draws nothing else: whichever chip goes down last is the one a reader
+    /// sees, so the order in the shape list *is* the rule.
+    #[test]
+    fn the_live_price_is_painted_over_a_level_and_not_under_it() {
+        let mut pane = pane_with_timed_bars(60);
+        let scale = test_scale();
+        // A level at the same price the last-price chip will report, which is
+        // the only interesting case: anywhere else they do not overlap.
+        let mut bar = pane.closed_bar(59).expect("the newest bar").clone();
+        // Mid-range on the fixture's scale, so both chips land inside the
+        // gutter the test paints rather than off the top of it.
+        let close = 150.0_f64;
+        bar.close = rust_decimal::Decimal::from(150);
+        let tool = drawings::DrawingTool::by_id("horizontal-line").expect("a registered tool");
+        assert!(pane.drawings.place(tool, ChartPoint::at(30.0, close)));
+        // Dark, so `theme::ink_on` gives it the light ink and the two chips
+        // are told apart by their text as well as by their fill.
+        let level_colour = egui::Color32::from_rgb(0x0B, 0x1B, 0x3A);
+        pane.drawings.items_mut()[0].style.color = level_colour;
+        let levels = axis_levels_of(&pane, &scale);
+        assert_eq!(levels.len(), 1, "one level to be covered or not");
+
+        let painted = painted_with_tool(&pane, Tool::Pointer, |pane, painter, chrome| {
+            pane.draw_axis_marks(
+                painter,
+                TEST_PLOT,
+                TEST_PLOT.right(),
+                &scale,
+                &levels,
+                Some(&bar),
+                chrome,
+            );
+        });
+        let level = painted
+            .find(&format!("{level_colour:?}"))
+            .expect("the level's chip is on the axis");
+        let last_price = painted
+            .find(&format!("{:?}", theme::CHIP_INK))
+            .expect("the last-price chip's ink is on the axis");
+        assert!(
+            level < last_price,
+            "the annotation goes down first, so the live price is legible over              it: {painted}"
+        );
+    }
+
+    /// Data honesty on the axis: a mark this chart's data does not back is    /// Data honesty on the axis: a mark this chart's data does not back is
     /// painted faded, and its tag is faded with it. A full-strength chip on
     /// the gutter would be the axis making a claim the stroke beside it is
     /// explicitly not making.
