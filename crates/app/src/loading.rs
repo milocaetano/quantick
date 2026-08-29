@@ -32,6 +32,23 @@ const BACKDROP_ALPHA: u8 = 150;
 /// Backdrop corner radius, in pixels.
 const CORNER_RADIUS_PX: f32 = 4.0;
 
+/// Which surface a wait belongs on.
+///
+/// A tab is one feed and several panes, and the waits are not all about the
+/// same one. Drawing every wait across the whole canvas put "loading venue
+/// history" over two panes already full of it, and — with the notice card
+/// doing the same thing — left a trader reading an explanation that belonged
+/// to a pane on the other side of the window.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LoadingScope {
+    /// The order-flow pane, which owns the tape and its book.
+    Flow,
+    /// Every time pane, which is where the venue's own candles land.
+    TimePanes,
+    /// The whole canvas: a wait about the tab's data rather than one pane's.
+    Whole,
+}
+
 /// Something slow the interface may be waiting on. One variant per kind of
 /// wait; the label is what the user reads next to the spinner.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -70,6 +87,25 @@ impl LoadingTask {
             Self::BookSync => "syncing order book",
             Self::ReplaySession => "loading replay session",
             Self::VenueHistory => "loading venue history",
+        }
+    }
+
+    /// Where this wait is drawn.
+    ///
+    /// Conservative on purpose: only the two waits that genuinely belong to
+    /// one surface claim one. Trade history feeds *every* pane through
+    /// `ChartPane::ingest_backfill`, and a bar rebuild re-cuts every pane's
+    /// series, so pinning either to a single pane would be a placement that
+    /// lies about which chart is waiting.
+    #[must_use]
+    pub fn scope(self) -> LoadingScope {
+        match self {
+            // The book, the heatmap and the live lane are all the flow pane's.
+            Self::BookSync => LoadingScope::Flow,
+            // Venue candles exist for the time panes and nothing else asks for
+            // them.
+            Self::VenueHistory => LoadingScope::TimePanes,
+            Self::History | Self::BarRebuild | Self::ReplaySession => LoadingScope::Whole,
         }
     }
 
@@ -160,9 +196,15 @@ pub fn inline(ui: &mut egui::Ui, label: &str) {
     ui.label(egui::RichText::new(format!("{label}…")).color(TEXT_PRIMARY));
 }
 
-/// The one loading overlay: every active task as a spinner + label row on a
-/// shared backdrop, centred at the top of `area` so it never covers the
-/// symbol header on the left or the book status badge on the right.
+/// The loading overlay for one surface: every active task in `scope` as a
+/// spinner + label row on a shared backdrop, centred at the top of `area` so
+/// it never covers the symbol header on the left or the book status badge on
+/// the right.
+///
+/// Called once per scope with that surface's own rect, so a wait is drawn on
+/// the pane it is about rather than across a canvas whose other panes have
+/// nothing to wait for. A scope with nothing active draws nothing at all — no
+/// backdrop, no reserved space — which is what keeps a quiet pane quiet.
 ///
 /// It draws in a layer of its own, above the chart's floating chrome. Painted
 /// straight onto the canvas it sat *underneath* anything the panes put in an
@@ -171,8 +213,15 @@ pub fn inline(ui: &mut egui::Ui, label: &str) {
 /// was being read through a card on top of it. A statement about the app
 /// still working is not something to half-hide behind chrome, and it is gone
 /// again in seconds, so it takes the front.
-pub fn overlay(ui: &mut egui::Ui, area: egui::Rect, tracker: &LoadingTracker) {
-    if !tracker.any_active() {
+pub fn overlay_scoped(
+    ui: &mut egui::Ui,
+    area: egui::Rect,
+    tracker: &LoadingTracker,
+    scope: LoadingScope,
+) {
+    // Cheap first: most frames have nothing in flight at all, and this is now
+    // called once per surface rather than once per frame.
+    if !tracker.any_active() || !tracker.active().any(|task| task.scope() == scope) {
         return;
     }
     // A layer rather than an `egui::Area`: an area is laid out from the
@@ -183,16 +232,17 @@ pub fn overlay(ui: &mut egui::Ui, area: egui::Rect, tracker: &LoadingTracker) {
     let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("loading_overlay"));
     ui.with_layer_id(layer, |ui| {
         ui.set_clip_rect(area);
-        draw_rows(ui, area, tracker);
+        draw_rows(ui, area, tracker, scope);
     });
 }
 
 /// The overlay's rows, in whatever layer the caller put them in.
-fn draw_rows(ui: &mut egui::Ui, area: egui::Rect, tracker: &LoadingTracker) {
+fn draw_rows(ui: &mut egui::Ui, area: egui::Rect, tracker: &LoadingTracker, scope: LoadingScope) {
     let font = egui::FontId::proportional(LABEL_FONT_SIZE);
     let painter = ui.painter().clone();
     let galleys: Vec<_> = tracker
         .active()
+        .filter(|task| task.scope() == scope)
         .map(|task| {
             painter.layout_no_wrap(format!("{}…", task.label()), font.clone(), TEXT_PRIMARY)
         })

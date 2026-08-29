@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     app::QuantickApp,
-    feed::{FeedConnectionState, FeedNotice},
+    feed::{FeedConnectionState, FeedNotice, stall::Recovery},
 };
 
 use super::registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError};
@@ -45,6 +45,57 @@ pub(crate) struct FeedTabSnapshot {
     pub latest_arrival_latency_ms: Option<i64>,
     #[schemars(extend("x-unit" = "milliseconds"))]
     pub tape_age_ms: Option<i64>,
+    /// The application's own judgement that this feed has stopped delivering,
+    /// or absent while it is merely slow.
+    ///
+    /// Distinct from `notice`, which is what the *provider* said. A transport
+    /// that reports itself connected while nothing comes down it produces no
+    /// notice at all, and this is the only field that reports it — which is
+    /// exactly the case a client watching for a frozen terminal has to see.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stall: Option<FeedStallSnapshot>,
+    /// Stretches of market time this tab's tape does not cover, left by a
+    /// reconnect that kept the timeline. Bounded, oldest first.
+    ///
+    /// Omitted when there are none, so a reader written against the scope
+    /// before this field existed keeps parsing every payload from a tab that
+    /// never reconnected — which is nearly all of them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tape_gaps: Vec<FeedGapSnapshot>,
+}
+
+/// A feed the chart has decided is stalled.
+///
+/// Carries no free text, for the same reason [`FeedNoticeSnapshot`] carries
+/// none: the words name the venue and the terminal behind it, and the observe
+/// tier does not publish them. What it does carry is the part a client can act
+/// on — which of the two recovery capabilities the application is offering
+/// first, and how long the feed has been like this.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct FeedStallSnapshot {
+    /// `reconnect` or `reload` — the capability that addresses this stall.
+    /// The other one is always available too.
+    pub primary_recovery: String,
+    /// Whether the trader is being shown words about it on this frame.
+    pub headline_present: bool,
+    /// Whether those words carry a next step.
+    pub next_step_present: bool,
+    /// Why the text is not in this payload.
+    pub text_availability: String,
+}
+
+/// A hole in the tape, in market time.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct FeedGapSnapshot {
+    /// The last print before the silence.
+    #[schemars(extend("x-unit" = "unix_milliseconds"))]
+    pub from_unix_ms: i64,
+    /// The first print after it.
+    #[schemars(extend("x-unit" = "unix_milliseconds"))]
+    pub to_unix_ms: i64,
+    /// How long nothing was heard.
+    #[schemars(extend("x-unit" = "milliseconds"))]
+    pub duration_ms: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -171,9 +222,35 @@ fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
                     latest_trade_unix_ms: tab.latest_trade_ms,
                     latest_arrival_latency_ms: tab.trade_arrival_ms(),
                     tape_age_ms: now_ms.and_then(|now| tab.tape_age_at(now)),
+                    stall: now_ms
+                        .and_then(|now| tab.stall_at(config, now))
+                        .map(|stall| FeedStallSnapshot {
+                            primary_recovery: recovery(stall.primary).to_owned(),
+                            headline_present: true,
+                            next_step_present: true,
+                            text_availability: "redacted_pending_attention_scope".to_owned(),
+                        }),
+                    tape_gaps: tab
+                        .feed_gaps
+                        .iter()
+                        .map(|gap| FeedGapSnapshot {
+                            from_unix_ms: gap.from_ms,
+                            to_unix_ms: gap.to_ms,
+                            duration_ms: gap.duration_ms(),
+                        })
+                        .collect(),
                 }
             })
             .collect(),
+    }
+}
+
+/// The wire name of a recovery control, so the snapshot and the capability
+/// registry call the same act the same thing.
+fn recovery(recovery: Recovery) -> &'static str {
+    match recovery {
+        Recovery::Reconnect => "reconnect",
+        Recovery::Reload => "reload",
     }
 }
 

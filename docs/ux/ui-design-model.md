@@ -276,13 +276,22 @@ One 28 px line, three sections, replacing the perf overlay, the floating
 timezone pill and the mode text painted over candles:
 
 - **Left — provenance:** state dot (green live · amber replay · red stalled),
-  venue, symbol, feed lag.
+  venue, symbol, feed lag — and, **while the feed is stalled**, the pair of
+  controls that recovers it: `Reconnect` (respawns the transport, keeps the
+  timeline) and `Reload` (rebuilds the chart from zero), the one that fixes
+  this stall filled and the other beside it, each carrying the reason on
+  hover. They are the only recovery affordance on a chart that is *full* of
+  bars, since the notice card never covers a working chart; the reason lives
+  in the hover rather than the bar because a sentence in a 28 px line would
+  move every cell to its right.
 - **Middle — content:** bar spec, bar counts (`240+61 bars` keeps today's
   backfilled+live split), honesty labels such as `side: inferred (tick rule)`
   for feeds without true aggressor sides (the MT5/B3 case). Indicator
   recompute progress borrows this section, then yields it back.
 - **Right — machinery:** trades ingested, fps + frame time, timezone picker
-  (the bar's only control, kept at the far edge).
+  (kept at the far edge). This was the bar's only control until the recovery
+  pair joined the provenance section; both are resident rather than
+  appearing-on-hover, so nothing in the line moves under the pointer.
 
 A reading that breaches its threshold turns `warn` — the layout never moves.
 While a recording plays, the **transport strip** (30 px) appears directly

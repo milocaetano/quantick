@@ -19,6 +19,7 @@ pub mod metatrader;
 pub mod mt5_bridge;
 pub mod ohlcv_plan;
 pub mod replay;
+pub mod stall;
 
 use tokio::sync::{mpsc, watch};
 
@@ -317,6 +318,89 @@ pub enum FeedConnectionState {
     Reconnecting,
     /// The provider confirmed that the live trade transport is established.
     Connected,
+}
+
+/// A stretch of market time no print covers, left by a reconnect that kept the
+/// chart's timeline instead of rebuilding it.
+///
+/// [`Tab::reconnect_feed`](crate::tab::Tab::reconnect_feed) exists so a feed
+/// that hiccuped costs the trader nothing: the bars, drawings, indicators,
+/// armed strategies and any open paper position all survive the new session.
+/// What cannot survive is the market that traded while nobody was listening,
+/// and the honesty rule is explicit about it — inferred or incomplete data is
+/// labelled as such, never silently patched. So the hole is recorded here and
+/// drawn on the chart at the seam it falls in, rather than closed by butting
+/// the two halves of the session against each other as if nothing happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FeedGap {
+    /// Timestamp of the last print before the silence.
+    pub from_ms: i64,
+    /// Timestamp of the first print after it.
+    pub to_ms: i64,
+}
+
+impl FeedGap {
+    /// How long nothing was heard, in milliseconds.
+    #[must_use]
+    pub fn duration_ms(self) -> i64 {
+        self.to_ms.saturating_sub(self.from_ms).max(0)
+    }
+}
+
+/// A gap asked for by `QUANTICK_FEED_GAP`, in milliseconds of silence.
+///
+/// The seam a reconnect leaves is drawn only after a feed has dropped and come
+/// back with real market time missing in between, which a scripted run cannot
+/// arrange: it would have to break a live venue mid-capture and wait. So the
+/// hook asks for one, and the tab records it through
+/// [`Tab::record_gap`](crate::tab::Tab::record_gap) — the same function the
+/// real path calls, at a market time taken from bars the chart really built,
+/// so the mark lands where a real silence of that length would have put it.
+///
+/// Unset or unparseable means no demo gap, and a value under
+/// [`MIN_MARKED_GAP_MS`] is refused rather than rounded up: a hook must not
+/// photograph a mark the application would not have drawn.
+#[must_use]
+pub fn demo_gap_ms() -> Option<i64> {
+    let requested: i64 = std::env::var("QUANTICK_FEED_GAP").ok()?.parse().ok()?;
+    (requested >= MIN_MARKED_GAP_MS).then_some(requested)
+}
+
+/// The shortest silence worth marking, in milliseconds.
+///
+/// A reconnect always costs *something* — spawning a thread, opening a socket,
+/// the bridge's own handshake — and a mark for every one of them would be
+/// noise on the chart that taught the trader to stop reading marks. Five
+/// seconds is longer than the recovery path takes when it works and shorter
+/// than any silence a trader would want unlabelled.
+pub const MIN_MARKED_GAP_MS: i64 = 5_000;
+
+/// How many gaps one tab remembers.
+///
+/// Bounded because nothing else bounds it: a session left reconnecting on a
+/// dead terminal could otherwise grow this list for hours. The newest are the
+/// ones on screen, so the oldest is what falls off.
+pub const MAX_REMEMBERED_GAPS: usize = 32;
+
+/// The trades in `batch` the chart has not already seen, given the market time
+/// it had already reached.
+///
+/// Every feed session replays a recent window when it connects — that is what
+/// makes a reconnect useful — so resuming onto a timeline that was kept means
+/// the overlap arrives a second time. Ids cannot separate the two: the
+/// MetaTrader bridge restarts its synthetic ids on every session, and the only
+/// key stable across sessions is time. So the rule `quantick-feed-mt5` already
+/// applies *within* a session is applied here across one, and for every
+/// provider: strictly newer than what the chart holds, or it is overlap.
+///
+/// A print sharing the floor's own millisecond is dropped with the rest.
+/// Losing one same-millisecond tick to a reconnect is honest; silently
+/// inflating a bar with a print it already counted is not.
+///
+/// `batch` must be ordered by timestamp, which every feed's batches are.
+#[must_use]
+pub fn past_resume_floor(batch: &[Trade], floor_ms: i64) -> &[Trade] {
+    &batch[batch.partition_point(|trade| trade.timestamp_ms <= floor_ms)..]
 }
 
 /// What a feed wants the person watching the chart to know.
@@ -633,5 +717,76 @@ mod tests {
             FeedNotice::Reconnecting { headline }
                 if headline == "Binance disconnected — reconnecting"
         ));
+    }
+
+    /// A batch at three timestamps, so the split can be read off the result.
+    fn batch(stamps: &[i64]) -> Vec<Trade> {
+        stamps
+            .iter()
+            .map(|&timestamp_ms| Trade {
+                timestamp_ms,
+                price: rust_decimal::Decimal::ONE,
+                quantity: rust_decimal::Decimal::ONE,
+                side: quantick_engine::Side::Buy,
+                agg_id: 0,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_resumed_session_keeps_only_what_the_chart_has_not_seen() {
+        let replayed = batch(&[10, 20, 30, 40]);
+        let stamps = |kept: &[Trade]| kept.iter().map(|t| t.timestamp_ms).collect::<Vec<_>>();
+
+        assert_eq!(
+            stamps(past_resume_floor(&replayed, 20)),
+            vec![30, 40],
+            "everything at or before the floor is the window being replayed"
+        );
+        assert_eq!(
+            stamps(past_resume_floor(&replayed, 5)),
+            vec![10, 20, 30, 40],
+            "a floor older than the batch keeps all of it"
+        );
+        assert!(
+            past_resume_floor(&replayed, 40).is_empty(),
+            "a batch entirely inside the overlap contributes nothing"
+        );
+    }
+
+    /// The same-millisecond rule, stated in `past_resume_floor`'s own words:
+    /// a print sharing the floor's millisecond is dropped rather than counted
+    /// twice into a bar.
+    #[test]
+    fn a_print_on_the_floors_own_millisecond_is_overlap() {
+        let replayed = batch(&[100, 100, 101]);
+        assert_eq!(
+            past_resume_floor(&replayed, 100)
+                .iter()
+                .map(|t| t.timestamp_ms)
+                .collect::<Vec<_>>(),
+            vec![101]
+        );
+    }
+
+    #[test]
+    fn a_gap_measures_the_silence_and_never_goes_backwards() {
+        assert_eq!(
+            FeedGap {
+                from_ms: 1_000,
+                to_ms: 61_000
+            }
+            .duration_ms(),
+            60_000
+        );
+        assert_eq!(
+            FeedGap {
+                from_ms: 5_000,
+                to_ms: 1_000
+            }
+            .duration_ms(),
+            0,
+            "a venue clock that stepped back is not a negative silence"
+        );
     }
 }

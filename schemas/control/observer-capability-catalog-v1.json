@@ -4421,6 +4421,192 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Respawns the transport and keeps everything the chart has built: bars, drawings, indicators, armed strategies and any open paper position. The window the new session replays is dropped rather than counted twice, and a silence long enough to leave a hole in the tape is marked on the chart. The same call the Reconnect button on the notice card makes.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "feed.reconnect",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Which tab to recover. Omitted means the one the trader is looking at — the\nsame default every other cockpit call takes.",
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.feed.status` reports it."
+          }
+        },
+        "title": "RecoveryInput",
+        "type": "object"
+      },
+      "module": "feed",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a recovery call did.",
+        "properties": {
+          "respawned": {
+            "description": "Whether the feed was actually respawned. `false` is a real answer, not\na failure: a tab playing a recorded session has no transport to\nrecover, and says so here rather than pretending to have acted.",
+            "type": "boolean"
+          },
+          "symbol": {
+            "description": "The market it is showing.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the call acted on."
+          },
+          "timeline_kept": {
+            "description": "Whether the chart's timeline survived the call.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tab_id",
+          "symbol",
+          "respawned",
+          "timeline_kept"
+        ],
+        "title": "RecoveryResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A stale caller can only reconnect a transport that had already reconnected, which costs it the overlap window it would otherwise have dropped. The call names the tab and the market it acted on, so a caller that guessed wrong can see it did.",
+      "title": "Reconnect a stalled feed",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button on the notice card makes.",
+      "destructive": true,
+      "dry_run_supported": false,
+      "effect": "cockpit.recover",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "feed.reload",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Which tab to recover. Omitted means the one the trader is looking at — the\nsame default every other cockpit call takes.",
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.feed.status` reports it."
+          }
+        },
+        "title": "RecoveryInput",
+        "type": "object"
+      },
+      "module": "feed",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a recovery call did.",
+        "properties": {
+          "respawned": {
+            "description": "Whether the feed was actually respawned. `false` is a real answer, not\na failure: a tab playing a recorded session has no transport to\nrecover, and says so here rather than pretending to have acted.",
+            "type": "boolean"
+          },
+          "symbol": {
+            "description": "The market it is showing.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab the call acted on."
+          },
+          "timeline_kept": {
+            "description": "Whether the chart's timeline survived the call.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tab_id",
+          "symbol",
+          "respawned",
+          "timeline_kept"
+        ],
+        "title": "RecoveryResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.recover"
+      ],
+      "reversible": false,
+      "revision_policy": "required",
+      "risk_flags": [
+        "timeline_rebuilt"
+      ],
+      "risk_reducing": false,
+      "title": "Reload a chart from a new feed session",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Captures bounded structured application, indicator, and order-flow health.",
       "destructive": false,
       "dry_run_supported": false,
@@ -6743,6 +6929,16 @@
       "sensitive": false
     },
     {
+      "default_grant": "prompt",
+      "description": "Throw a stalled feed's timeline away and rebuild it, which closes any open paper position (journaled, with its reason) and disarms every strategy.",
+      "id": "cockpit.recover",
+      "label": "Rebuild a stalled chart",
+      "profile_ceilings": [
+        "cockpit"
+      ],
+      "sensitive": true
+    },
+    {
       "default_grant": "granted",
       "description": "Invoke read-only observer capabilities.",
       "id": "observe",
@@ -7729,6 +7925,35 @@
             ],
             "type": "object"
           },
+          "FeedGapSnapshot": {
+            "description": "A hole in the tape, in market time.",
+            "properties": {
+              "duration_ms": {
+                "description": "How long nothing was heard.",
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "milliseconds"
+              },
+              "from_unix_ms": {
+                "description": "The last print before the silence.",
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              },
+              "to_unix_ms": {
+                "description": "The first print after it.",
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "from_unix_ms",
+              "to_unix_ms",
+              "duration_ms"
+            ],
+            "type": "object"
+          },
           "FeedNoticeSnapshot": {
             "properties": {
               "headline_present": {
@@ -7746,6 +7971,34 @@
             },
             "required": [
               "kind",
+              "headline_present",
+              "next_step_present",
+              "text_availability"
+            ],
+            "type": "object"
+          },
+          "FeedStallSnapshot": {
+            "description": "A feed the chart has decided is stalled.\n\nCarries no free text, for the same reason [`FeedNoticeSnapshot`] carries\nnone: the words name the venue and the terminal behind it, and the observe\ntier does not publish them. What it does carry is the part a client can act\non — which of the two recovery capabilities the application is offering\nfirst, and how long the feed has been like this.",
+            "properties": {
+              "headline_present": {
+                "description": "Whether the trader is being shown words about it on this frame.",
+                "type": "boolean"
+              },
+              "next_step_present": {
+                "description": "Whether those words carry a next step.",
+                "type": "boolean"
+              },
+              "primary_recovery": {
+                "description": "`reconnect` or `reload` — the capability that addresses this stall.\nThe other one is always available too.",
+                "type": "string"
+              },
+              "text_availability": {
+                "description": "Why the text is not in this payload.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "primary_recovery",
               "headline_present",
               "next_step_present",
               "text_availability"
@@ -7806,6 +8059,17 @@
               "source_mode": {
                 "type": "string"
               },
+              "stall": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/FeedStallSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The application's own judgement that this feed has stopped delivering,\nor absent while it is merely slow.\n\nDistinct from `notice`, which is what the *provider* said. A transport\nthat reports itself connected while nothing comes down it produces no\nnotice at all, and this is the only field that reports it — which is\nexactly the case a client watching for a frozen terminal has to see."
+              },
               "tab_id": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -7816,6 +8080,13 @@
                   "null"
                 ],
                 "x-unit": "milliseconds"
+              },
+              "tape_gaps": {
+                "description": "Stretches of market time this tab's tape does not cover, left by a\nreconnect that kept the timeline. Bounded, oldest first.\n\nOmitted when there are none, so a reader written against the scope\nbefore this field existed keeps parsing every payload from a tab that\nnever reconnected — which is nearly all of them.",
+                "items": {
+                  "$ref": "#/$defs/FeedGapSnapshot"
+                },
+                "type": "array"
               }
             },
             "required": [

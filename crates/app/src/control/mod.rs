@@ -20,6 +20,7 @@ mod journal;
 mod layout;
 mod notify;
 mod orderflow;
+mod recovery;
 pub(crate) use interaction::drawing_band_name;
 mod registry;
 mod scene;

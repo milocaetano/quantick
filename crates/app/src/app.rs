@@ -36,7 +36,7 @@ use crate::indicators::IndicatorView;
 use crate::indicators::library::ScriptLibrary;
 use crate::indicators::preset_file;
 use crate::indicators::state_file::{self, SavedInput, SavedKind};
-use crate::loading::{self, LoadingTask};
+use crate::loading::{self, LoadingScope, LoadingTask};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
 use crate::orderflow::LaneWindow;
@@ -2529,6 +2529,19 @@ impl QuantickApp {
     /// canvas into the feed or the simulator.
     pub(crate) fn control_tab_at_mut(&mut self, index: usize) -> Option<&mut Tab> {
         self.tabs.get_mut(index)
+    }
+
+    /// One tab beside the configuration it reads, by position.
+    ///
+    /// [`Self::active_with_config`] for a tab that is not necessarily the
+    /// active one — a capability names the tab it acts on, and respawning a
+    /// feed needs the feed table the same way a click on the notice card does.
+    pub(crate) fn control_tab_with_config(
+        &mut self,
+        index: usize,
+    ) -> Option<(&mut Tab, &AppConfig)> {
+        let Self { tabs, config, .. } = self;
+        tabs.get_mut(index).map(|tab| (tab, &*config))
     }
 
     pub(crate) fn control_tabs(&self) -> &[Tab] {
@@ -10775,10 +10788,30 @@ impl QuantickApp {
         self.poll_script_files();
         self.maintain_indicator_state();
         self.maintain_chart_layers();
+        // This tab's judgement about its own feed, taken once for the frame:
+        // the status bar reads it here and the notice card reads it below, and
+        // two readings a millisecond apart could disagree about whether a
+        // budget had run out.
+        let stall = self
+            .active_tab()
+            .stall_at(&self.config, metrics::wall_clock_ms());
         let status = self.status_model();
-        let status_response = statusbar::draw(ctx, &status, &mut self.tz);
+        let status_response = statusbar::draw(ctx, &status, &mut self.tz, stall.as_ref());
         if status_response.open_trading_tab {
             self.dock.open_tab(DockTab::Trading);
+        }
+        // Recovery from the status bar is the same act as recovery from the
+        // card, so it goes through the same two methods.
+        match status_response.recovery {
+            None => {}
+            Some(crate::feed::stall::Recovery::Reconnect) => {
+                let (tab, config) = self.active_with_config();
+                tab.reconnect_feed(config);
+            }
+            Some(crate::feed::stall::Recovery::Reload) => {
+                let (tab, config) = self.active_with_config();
+                tab.reload_feed(config);
+            }
         }
         // Above the status bar, below the canvas: the layout tabs.
         self.draw_layout_strip(ctx);
@@ -11021,10 +11054,28 @@ impl QuantickApp {
                 // The grid and the indicator state belong to the window, not
                 // to the pane whose menu switched them.
                 self.apply_layer_actions();
-                loading::overlay(ui, area, &self.active_tab().loading);
                 let tab = self.active_tab();
-                if notice_card::should_draw(&tab.notice, tab.flow_pane.state.bars().len()) {
-                    notice_action = notice_card::draw(ui, area, &tab.notice);
+                // Each wait on the surface it is about. The panes published
+                // their rects on the draw just above, so these are this
+                // frame's geometry rather than the previous one's.
+                loading::overlay_scoped(ui, area, &tab.loading, LoadingScope::Whole);
+                if let Some(flow) = tab.flow_pane.last_area {
+                    loading::overlay_scoped(ui, flow, &tab.loading, LoadingScope::Flow);
+                }
+                for (pane, side) in tab.panes() {
+                    if matches!(side, PaneSide::Time(_))
+                        && let Some(rect) = pane.last_area
+                    {
+                        loading::overlay_scoped(ui, rect, &tab.loading, LoadingScope::TimePanes);
+                    }
+                }
+                // And the card on the pane that is actually waiting, rather
+                // than across a canvas whose other panes are painting fine.
+                if let Some(report) = notice_card::report(&tab.notice, stall.as_ref())
+                    && let Some((pane_rect, slots)) = tab.starved_pane()
+                    && notice_card::should_draw(&report, slots)
+                {
+                    notice_action = notice_card::draw(ui, pane_rect, &report);
                 }
             });
         // Floating drawing controls must be registered after the opaque
@@ -11050,9 +11101,19 @@ impl QuantickApp {
         let tz = self.tz;
         self.active_tab_mut().paper.draw_report_window(ctx, tz);
         self.active_tab_mut().paper.draw_toast(ctx, now);
-        if notice_action == notice_card::NoticeAction::Retry {
-            let (tab, config) = self.active_with_config();
-            tab.restart_feed(config);
+        // Both controls go through the tab's own methods, which are also what
+        // the registered control-plane actions call: a click and a named call
+        // must be able to disagree about nothing.
+        match notice_action {
+            notice_card::NoticeAction::None => {}
+            notice_card::NoticeAction::Reconnect => {
+                let (tab, config) = self.active_with_config();
+                tab.reconnect_feed(config);
+            }
+            notice_card::NoticeAction::Reload => {
+                let (tab, config) = self.active_with_config();
+                tab.reload_feed(config);
+            }
         }
         // Live feed: keep polling the channel ~60×/s without busy-spinning.
         ctx.request_repaint_after(Duration::from_millis(16));
@@ -13427,6 +13488,148 @@ plot(close)
 
     /// A trade a tenth of a second after the last, one unit at a walking
     /// price, so bars carry distinct times and a readable price range.
+    /// The session this change came from: a MetaTrader tab whose time pane was
+    /// full of the terminal's candle history and whose flow pane had not seen
+    /// one tick, with the explanation floating in the middle of both.
+    #[test]
+    fn the_notice_lands_on_the_pane_that_is_waiting() {
+        let (mut app, _notices, _feed_ends) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+        // One frame builds the time pane, the next lets both panes paint and
+        // publish where they landed.
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.active_tab().has_time_pane(),
+            "the split is what this proof is about"
+        );
+        // The venue's candles reach the time pane; no trade reaches anything,
+        // so the flow pane stays empty exactly as it did on screen.
+        app.active_tab_mut()
+            .time_panes
+            .first_mut()
+            .expect("the split built one")
+            .install_history_prefix(venue_history(120));
+        run_frame(&mut app, &ctx);
+
+        let tab = app.active_tab();
+        let flow = tab.flow_pane.last_area.expect("the flow pane painted");
+        let time = tab.time_panes[0].last_area.expect("the time pane painted");
+        let (chosen, slots) = tab.starved_pane().expect("a painted pane");
+        assert_eq!(slots, 0, "the starved pane is the one with nothing on it");
+        assert_eq!(chosen, flow, "the card belongs to the pane that is waiting");
+        assert_ne!(
+            chosen, time,
+            "a pane full of candles is not waiting for anything"
+        );
+
+        // And the card really fits there, rather than spilling over the chart
+        // beside it.
+        let notice = FeedNotice::working("loading WINV26 history from MetaTrader");
+        let report = notice_card::report(&notice, None).expect("a card");
+        assert!(notice_card::should_draw(&report, slots));
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let card = notice_card::card_rect(ui.painter(), chosen, &report);
+                assert!(
+                    flow.contains_rect(card),
+                    "card {card:?} left the flow pane {flow:?}"
+                );
+                assert!(
+                    !card.intersects(time),
+                    "card {card:?} covered the working time pane {time:?}"
+                );
+            });
+        });
+    }
+
+    /// A reconnect that keeps the timeline: the bars survive, the window the
+    /// new session replays is dropped rather than counted twice, and the
+    /// silence in between is marked instead of stitched over.
+    #[test]
+    fn a_resumed_session_keeps_the_timeline_and_marks_the_hole() {
+        let (mut app, _notices, (events, _book)) = test_app_with_notices();
+        // A first session prints, so there is a timeline to keep.
+        events
+            .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2), trade(3)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+        let held = app.active_tab().flow_pane.state.trades().len();
+        let floor = app.active_tab().latest_trade_ms.expect("a print landed");
+        assert!(held > 0, "the timeline this test keeps has to exist");
+
+        // What `reconnect_feed` sets before it swaps the handle. Set here
+        // rather than by calling it, because respawning the feed would open a
+        // real socket and this is a proof about the filter, not the transport.
+        app.active_tab_mut().resume_floor_ms = Some(floor);
+
+        // The new session opens by replaying its recent window — the same
+        // prints, plus one from after the silence.
+        let resumed = quantick_engine::Trade {
+            agg_id: 1,
+            timestamp_ms: floor + 4 * 60_000,
+            ..trade(1)
+        };
+        events
+            .blocking_send(FeedEvent::LiveBatch(vec![
+                trade(1),
+                trade(2),
+                trade(3),
+                resumed.clone(),
+            ]))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+
+        let tab = app.active_tab();
+        assert_eq!(
+            tab.flow_pane.state.trades().len(),
+            held + 1,
+            "the replayed window is overlap, not three new prints"
+        );
+        assert_eq!(
+            tab.resume_floor_ms, None,
+            "one print past the floor is what retires it"
+        );
+        assert_eq!(
+            tab.feed_gaps,
+            vec![crate::feed::FeedGap {
+                from_ms: floor,
+                to_ms: resumed.timestamp_ms,
+            }],
+            "four minutes nobody was listening is marked, not stitched over"
+        );
+    }
+
+    /// The short silence a working reconnect costs is not a hole worth
+    /// drawing: a mark for every one of them is noise that teaches the trader
+    /// to stop reading marks.
+    #[test]
+    fn a_reconnect_that_worked_leaves_no_mark() {
+        let (mut app, _notices, (events, _book)) = test_app_with_notices();
+        events
+            .blocking_send(FeedEvent::LiveBatch(vec![trade(1)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+        let floor = app.active_tab().latest_trade_ms.expect("a print landed");
+        app.active_tab_mut().resume_floor_ms = Some(floor);
+
+        let resumed = quantick_engine::Trade {
+            agg_id: 2,
+            timestamp_ms: floor + crate::feed::MIN_MARKED_GAP_MS - 1,
+            ..trade(2)
+        };
+        events
+            .blocking_send(FeedEvent::LiveBatch(vec![trade(1), resumed]))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+
+        assert!(
+            app.active_tab().feed_gaps.is_empty(),
+            "a recovery that took under the threshold has nothing to declare"
+        );
+    }
+
     fn trade(agg_id: u64) -> quantick_engine::Trade {
         quantick_engine::Trade {
             agg_id,
@@ -13889,6 +14092,7 @@ plot(close)
             begin_text_edit: pending_text_edit,
             style,
             tz: *tz,
+            feed_gaps: &[],
             symbol: &tab.symbol,
             paper: &mut tab.paper,
             paper_owns_input: true,
@@ -33923,7 +34127,15 @@ plot(close)
                 assert!(
                     capability["effect"] == "annotate"
                         || capability["effect"] == "notify"
-                        || capability["effect"] == "cockpit",
+                        || capability["effect"] == "cockpit"
+                        // Acknowledged deliberately, as the paragraph above
+                        // asks: the one effect in this contract that permits
+                        // destruction. Its consent text is the
+                        // `cockpit.recover` permission descriptor, which says
+                        // in the trader's words that it closes an open paper
+                        // position and disarms every strategy, and which is
+                        // marked sensitive so it is off until ticked.
+                        || capability["effect"] == "cockpit.recover",
                     "{} has an unexpected effect {}",
                     capability["id"],
                     capability["effect"]

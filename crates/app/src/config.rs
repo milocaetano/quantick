@@ -119,6 +119,34 @@ impl ProviderKind {
             },
         }
     }
+
+    /// The one line to try when this provider has stopped delivering and the
+    /// feed itself has no more specific reason to give.
+    ///
+    /// Sibling of [`capabilities`](Self::capabilities) and answered the same
+    /// way: the interface asks the provider, never branches on its name. A
+    /// venue added later writes its own sentence here and every stall readout
+    /// in the application gets it, rather than a generic instruction that fits
+    /// none of them — the chains genuinely differ, and "check that the
+    /// terminal is running" is nonsense for a public WebSocket.
+    ///
+    /// One sentence, capitalized, ending in a full stop: it is shown on its own
+    /// under a headline, and also embedded after a clause (see
+    /// [`crate::feed::stall`]).
+    #[must_use]
+    pub fn recovery_hint(self) -> &'static str {
+        match self {
+            ProviderKind::Binance | ProviderKind::Hyperliquid => {
+                "Check this machine's internet connection, then reconnect."
+            }
+            // The one provider whose data path runs through another
+            // application the trader can see and restart, which is why its
+            // hint names that application rather than the network.
+            ProviderKind::MetaTrader => {
+                "Check that MetaTrader 5 is running and the QuantickBridge chart is still attached."
+            }
+        }
+    }
 }
 
 /// What a feed's backend can actually do, so UI affordances follow capability

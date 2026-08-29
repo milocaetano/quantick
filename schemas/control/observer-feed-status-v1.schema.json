@@ -27,6 +27,35 @@
       ],
       "type": "object"
     },
+    "FeedGapSnapshot": {
+      "description": "A hole in the tape, in market time.",
+      "properties": {
+        "duration_ms": {
+          "description": "How long nothing was heard.",
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "milliseconds"
+        },
+        "from_unix_ms": {
+          "description": "The last print before the silence.",
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "to_unix_ms": {
+          "description": "The first print after it.",
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        }
+      },
+      "required": [
+        "from_unix_ms",
+        "to_unix_ms",
+        "duration_ms"
+      ],
+      "type": "object"
+    },
     "FeedNoticeSnapshot": {
       "properties": {
         "headline_present": {
@@ -44,6 +73,34 @@
       },
       "required": [
         "kind",
+        "headline_present",
+        "next_step_present",
+        "text_availability"
+      ],
+      "type": "object"
+    },
+    "FeedStallSnapshot": {
+      "description": "A feed the chart has decided is stalled.\n\nCarries no free text, for the same reason [`FeedNoticeSnapshot`] carries\nnone: the words name the venue and the terminal behind it, and the observe\ntier does not publish them. What it does carry is the part a client can act\non — which of the two recovery capabilities the application is offering\nfirst, and how long the feed has been like this.",
+      "properties": {
+        "headline_present": {
+          "description": "Whether the trader is being shown words about it on this frame.",
+          "type": "boolean"
+        },
+        "next_step_present": {
+          "description": "Whether those words carry a next step.",
+          "type": "boolean"
+        },
+        "primary_recovery": {
+          "description": "`reconnect` or `reload` — the capability that addresses this stall.\nThe other one is always available too.",
+          "type": "string"
+        },
+        "text_availability": {
+          "description": "Why the text is not in this payload.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "primary_recovery",
         "headline_present",
         "next_step_present",
         "text_availability"
@@ -104,6 +161,17 @@
         "source_mode": {
           "type": "string"
         },
+        "stall": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FeedStallSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The application's own judgement that this feed has stopped delivering,\nor absent while it is merely slow.\n\nDistinct from `notice`, which is what the *provider* said. A transport\nthat reports itself connected while nothing comes down it produces no\nnotice at all, and this is the only field that reports it — which is\nexactly the case a client watching for a frozen terminal has to see."
+        },
         "tab_id": {
           "$ref": "#/$defs/WireU64"
         },
@@ -114,6 +182,13 @@
             "null"
           ],
           "x-unit": "milliseconds"
+        },
+        "tape_gaps": {
+          "description": "Stretches of market time this tab's tape does not cover, left by a\nreconnect that kept the timeline. Bounded, oldest first.\n\nOmitted when there are none, so a reader written against the scope\nbefore this field existed keeps parsing every payload from a tab that\nnever reconnected — which is nearly all of them.",
+          "items": {
+            "$ref": "#/$defs/FeedGapSnapshot"
+          },
+          "type": "array"
         }
       },
       "required": [
