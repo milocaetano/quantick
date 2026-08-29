@@ -358,21 +358,58 @@ impl ReplayView {
     /// was found to load; a folder that yields nothing opens the browser
     /// instead, where the reason is already spelled out.
     ///
-    /// It plays, where the browser's own default no longer does. The hook is a
-    /// scripted *"play this session"* — a capture of a paused replay is a
-    /// capture of an empty chart, which is the one thing the tape was loaded to
-    /// avoid. A person who wants a moving tape presses the same play button
-    /// this stands in for.
-    pub fn autostart(&mut self, speed: f32) -> bool {
+    /// `play` is the scripted press of the transport's own button. A capture
+    /// wants it: a paused replay of a lone day is a capture of an empty chart,
+    /// which is the one thing loading a tape was for. It is *not* the default a
+    /// person meets — see `feed::replay::ReplayOptions::autoplay` — and a run
+    /// that wants the state they actually get asks for the paused one, which
+    /// is the only way that state is reachable with no hand on the mouse.
+    pub fn autostart(&mut self, speed: f32, day: Option<&str>, play: bool) -> bool {
         self.speed = speed;
-        self.autoplay = true;
+        self.autoplay = play;
         self.rescan();
+        // A named day, or the first the scan found. Naming one matters as soon
+        // as a folder holds more than one recording: the scan lists them
+        // oldest first, so the day *with* a day before it — the only one that
+        // can show a join — is never the one a bare autostart picks.
+        if let Some(day) = day
+            && !self.select_day(day)
+        {
+            // A day the folder does not hold is a typo, and photographing a
+            // different session instead would be a capture of the wrong thing.
+            // The browser opens on the list, where what is there is spelled out.
+            self.browser_open = true;
+            return false;
+        }
         if self.selected_entry().is_none() {
             self.browser_open = true;
             return false;
         }
         self.load_selected();
         true
+    }
+
+    /// Select the session whose day — or, failing that, whose file name — is
+    /// `wanted`. Returns whether one matched.
+    ///
+    /// By name rather than by index: a scripted run asks for *a day*, and the
+    /// index of a day moves every time the folder gains a recording.
+    pub fn select_day(&mut self, wanted: &str) -> bool {
+        let wanted = wanted.trim();
+        let Some(library) = self.library.as_ref() else {
+            return false;
+        };
+        let found = library.sessions.iter().position(|entry| {
+            entry.date.is_some_and(|date| date.label() == wanted)
+                || entry
+                    .path
+                    .file_stem()
+                    .is_some_and(|stem| stem.eq_ignore_ascii_case(wanted))
+        });
+        if let Some(index) = found {
+            self.selected = Some(index);
+        }
+        found.is_some()
     }
 
     /// Draw the browser and, while a session is playing, the transport bar.
@@ -889,6 +926,11 @@ impl ReplayView {
         }
 
         let mut clicked = false;
+        // Two rows, not one. The speed chips, two ticks and the button did not
+        // fit the dialog's width, and what a right-to-left button takes is
+        // taken from the label beside it: the day-before tick was drawn cut in
+        // half. Speeds and the button first, because that is the pair a trader
+        // ends on, then the two questions about how it opens.
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Start at").color(TEXT_MUTED).small());
             for speed in SPEEDS {
@@ -896,19 +938,6 @@ impl ReplayView {
                 if speed_chip(ui, speed, selected).clicked() {
                     self.speed = speed;
                 }
-            }
-            ui.add_space(8.0);
-            ui.checkbox(&mut self.autoplay, "and play")
-                .on_hover_text("Leave unticked to open the session paused on its first print");
-            let mut day_before = self.day_before;
-            if ui
-                .checkbox(&mut day_before, "with the day before")
-                .on_hover_text(
-                    "Join the previous session's tape in front of this one, already played, so the chart opens with yesterday's order flow behind the day you picked",
-                )
-                .changed()
-            {
-                self.set_day_before(day_before);
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -929,6 +958,22 @@ impl ReplayView {
                     clicked = true;
                 }
             });
+        });
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.autoplay, "and play")
+                .on_hover_text("Leave unticked to open the session paused on its first print");
+            ui.add_space(8.0);
+            let mut day_before = self.day_before;
+            if ui
+                .checkbox(&mut day_before, "with the day before")
+                .on_hover_text(
+                    "Join the previous session's tape in front of this one, already played, so the chart opens with yesterday's order flow behind the day you picked",
+                )
+                .changed()
+            {
+                self.set_day_before(day_before);
+            }
         });
         clicked
     }
@@ -1194,6 +1239,18 @@ mod tests {
         );
         assert!(view.library.is_none());
         assert!(!view.is_loading(), "nothing is being parsed yet");
+    }
+
+    #[test]
+    fn a_named_day_that_is_not_there_opens_the_list_instead_of_the_wrong_one() {
+        let mut view = ReplayView::new(None, None);
+        view.folder = String::new();
+        assert!(
+            !view.autostart(1.0, Some("2026-08-28"), true),
+            "no folder, so no day"
+        );
+        assert!(view.browser_open, "and the list says what is there");
+        assert!(!view.select_day("2026-08-28"), "nothing was scanned");
     }
 
     #[test]

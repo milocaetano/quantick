@@ -901,30 +901,54 @@ impl GetDataPanel {
     /// reading that has just been told what is missing. Returns the new value
     /// when it was changed here; the browser owns it, and draws the same
     /// setting beside **Play session**.
-    fn draw_day_before_row(&self, ui: &mut egui::Ui) -> Option<bool> {
+    fn draw_day_before_row(&mut self, ui: &mut egui::Ui) -> Option<bool> {
         ui.add_space(8.0);
         let mut wanted = self.day_before;
         let changed = ui
             .checkbox(&mut wanted, "The day before, as a full tape")
             .on_hover_text(
-                "Downloads the previous session's prints as well, and replays them in front of                  the day you picked",
+                "Downloads the previous session's prints too, and replays them in front of the day you picked",
             )
             .changed();
-        // What the tick will actually reach for, said before it is clicked:
-        // the broker's own day list is the calendar, so this is the day that
-        // download would ask for, not a guess about weekends.
-        let note = match (self.day.as_deref(), self.day_before.then_some(())) {
-            (Some(day), Some(())) => match self.day_before_of(day) {
-                Some(earlier) => format!(
-                    "{earlier} comes too, so the open you are rehearsing has real order flow                      behind it."
-                ),
-                None => "The broker holds no earlier day for this contract.".to_string(),
-            },
-            _ => "Only the day you pick is downloaded; the run-up above stays broker candles."
-                .to_string(),
-        };
-        ui.label(egui::RichText::new(note).color(TEXT_MUTED).small());
+        // The mirror follows the tick on the frame it was clicked. The browser
+        // that owns the setting is told below and answers next frame; without
+        // this the box would draw its old state for one frame, which is a tick
+        // that visibly does not take.
+        self.day_before = wanted;
+        ui.label(
+            egui::RichText::new(self.day_before_note())
+                .color(TEXT_MUTED)
+                .small(),
+        );
         changed.then_some(wanted)
+    }
+
+    /// The sentence under the tick: which day the download would actually
+    /// reach for, or why it would reach for none.
+    ///
+    /// The broker's own list of days is the calendar, so this names the day
+    /// that *would* be fetched rather than guessing at weekends. The tick
+    /// decides which sentence is true — never the chosen day, which only
+    /// decides how precise it can be. Split from the draw for the reason
+    /// [`Self::on_arrival`] is: a caption that contradicts the box above it is
+    /// a defect nobody catches except by looking, and this is a shape a test
+    /// can look at.
+    fn day_before_note(&self) -> String {
+        if !self.day_before {
+            return "Only the day you pick is downloaded; the run-up above stays broker candles."
+                .to_string();
+        }
+        let Some(day) = self.day.as_deref() else {
+            return "The session before the day you pick comes with it.".to_string();
+        };
+        match self.day_before_of(day) {
+            Some(earlier) => {
+                format!(
+                    "{earlier} comes too, so the open you rehearse has real order flow behind it."
+                )
+            }
+            None => "The broker holds no earlier day for this contract.".to_string(),
+        }
     }
 
     /// The broker-clock control, shown only once the provider has said it
@@ -1582,6 +1606,44 @@ mod tests {
         assert!(
             !matches!(panel.phase, Phase::Failed { .. }),
             "the chosen day's download did not fail"
+        );
+    }
+
+    /// The caption under the tick and the tick itself are one statement. They
+    /// disagreed once — the caption keyed off whether a day had been picked,
+    /// so a ticked box sat over "only the day you pick is downloaded" — and a
+    /// trader reading that has been told the feature is off while it is on.
+    #[test]
+    fn the_note_under_the_tick_never_contradicts_it() {
+        let mut panel = panel_on("2026-08-31");
+        assert!(
+            panel.day_before_note().contains("2026-08-28"),
+            "{}",
+            panel.day_before_note()
+        );
+
+        // No day picked yet: still coming, it just cannot be named yet.
+        panel.day = None;
+        assert!(
+            panel.day_before_note().contains("comes with it"),
+            "{}",
+            panel.day_before_note()
+        );
+
+        panel.day_before = false;
+        assert!(
+            panel.day_before_note().starts_with("Only the day you pick"),
+            "{}",
+            panel.day_before_note()
+        );
+
+        // The oldest day the broker holds has nothing behind it, and says so
+        // rather than promising a day that will never arrive.
+        let oldest = panel_on("2026-08-25");
+        assert!(
+            oldest.day_before_note().contains("no earlier day"),
+            "{}",
+            oldest.day_before_note()
         );
     }
 

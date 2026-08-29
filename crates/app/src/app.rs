@@ -2237,13 +2237,32 @@ impl QuantickApp {
         // hook, else the stored pick, else the documents home — and play its
         // first session. The same code path a click takes, so a scripted run
         // and a person get the same behaviour.
-        if std::env::var("QUANTICK_REPLAY_AUTOSTART").is_ok_and(|value| value == "1") {
+        // `1` loads and plays, as it always has. `paused` loads and waits,
+        // which is what a person now gets when they open a recording, and a
+        // state no other hook can reach.
+        let autostart_play = match std::env::var("QUANTICK_REPLAY_AUTOSTART")
+            .unwrap_or_default()
+            .trim()
+        {
+            "1" => Some(true),
+            "paused" => Some(false),
+            _ => None,
+        };
+        if let Some(play) = autostart_play {
             let speed = std::env::var("QUANTICK_REPLAY_SPEED")
                 .ok()
                 .and_then(|value| value.trim().parse::<f32>().ok())
                 .filter(|speed| *speed > 0.0)
                 .unwrap_or(1.0);
-            let started = app.replay_view.autostart(speed);
+            // Which recording, when the folder holds more than one. The
+            // scan lists them oldest first, so without this a folder of days
+            // always opens the one that can have nothing joined in front of
+            // it — the single state this hook family exists to avoid.
+            let day = std::env::var("QUANTICK_REPLAY_SESSION")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            let started = app.replay_view.autostart(speed, day.as_deref(), play);
             tracing::info!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -2254,6 +2273,9 @@ impl QuantickApp {
                 // one — a log that lies about the input it acted on.
                 folder = app.replay_view.folder_in_use(),
                 speed,
+                day = day.as_deref().unwrap_or("(first)"),
+                day_before = app.replay_view.day_before(),
+                play,
                 started,
                 action = if started { "load_first_session" } else { "open_browser" },
                 "market replay autostart"
