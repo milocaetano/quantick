@@ -732,8 +732,13 @@ enum ContextMenuPane {
     Chart,
     /// The rolling tape, right of it.
     Tape,
-    /// The price gutter — the axis's own menu (Inverted chart).
+    /// The price gutter — the axis's own menu (Inverted chart, and the
+    /// compass's price half).
     Axis,
+    /// The bottom time strip — the time axis's own menu (the compass's time
+    /// half). The candles' segment of it: past the lane divider the strip is
+    /// the tape's window and carries no menu.
+    Time,
 }
 
 impl ContextMenuPane {
@@ -744,9 +749,33 @@ impl ContextMenuPane {
             "chart" | "candles" => Some(Self::Chart),
             "tape" | "lane" => Some(Self::Tape),
             "axis" | "scale" => Some(Self::Axis),
+            "time" | "clock" => Some(Self::Time),
             _ => None,
         }
     }
+}
+
+/// Read a scripted pointer position off `QUANTICK_POINTER`.
+///
+/// `<fx>,<fy>`, both fractions of the flow pane's *candle* area — `0,0` its
+/// top-left corner, `1,1` its bottom-right, `0.99,0.5` out in the projection
+/// margin past the newest bar. The flow pane and not the focused one, so this
+/// hook and `QUANTICK_CONTEXT_MENU` aim at the same canvas: a capture that
+/// opened an axis menu on one pane and parked the mouse on another would be
+/// photographing two different charts at once. Fractions rather than pixels because the thing
+/// a capture wants to point at is a candle, and the candles' pane moves with
+/// the window size, the lane divider and the indicator band: an absolute pair
+/// that framed the right bar at one window size frames a different one at the
+/// next, and a capture that photographs the wrong bar and calls it a pass is
+/// worse than one that photographs nothing.
+///
+/// `None` for anything else — a typo must not silently place the pointer
+/// somewhere the author did not ask for.
+fn parse_pointer_fraction(value: &str) -> Option<egui::Vec2> {
+    let (x, y) = value.trim().split_once(',')?;
+    let x: f32 = x.trim().parse().ok()?;
+    let y: f32 = y.trim().parse().ok()?;
+    ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)).then(|| egui::vec2(x, y))
 }
 
 /// Read a tape window off `QUANTICK_TAPE_WINDOW`.
@@ -1152,6 +1181,12 @@ pub struct QuantickApp {
     /// hook can click it rather than guess at a coordinate.
     workspace_menu_rect: Option<egui::Rect>,
     scripted_context_menu: Option<ContextMenuPane>,
+    /// Where `QUANTICK_POINTER` parks the mouse, as a fraction of the focused
+    /// pane's candle area. Re-delivered every frame, because a pointer is a
+    /// position the app is *told* about continuously: one event and the next
+    /// frame with no pointer over the canvas would take the compass away
+    /// again.
+    scripted_pointer: Option<egui::Vec2>,
     /// The strategy bank: named presets, loaded once and written back on
     /// every save — the declarative store a future natural-language layer
     /// would write into.
@@ -1505,6 +1540,7 @@ impl QuantickApp {
             workspace_menu_rect: None,
             scripted_context_menu: None,
             scripted_context_menu_release: None,
+            scripted_pointer: None,
             strategy_bank: crate::strategy_presets::StrategyBank::load_from(
                 crate::strategy_presets::StrategyBank::default_path(),
             ),
@@ -1830,6 +1866,24 @@ impl QuantickApp {
         app.scripted_context_menu = std::env::var("QUANTICK_CONTEXT_MENU")
             .ok()
             .and_then(|value| ContextMenuPane::from_env_value(&value));
+
+        // The mouse, parked over the candles. The pointer compass, the
+        // crosshair and every hover readout exist only while a pointer is over
+        // the chart, so without this the whole class of them is invisible to
+        // anything but a hand on the mouse. Delivered as a real
+        // `PointerMoved` through `raw_input_hook`, so what the chart does with
+        // it is what it does with a trader's own mouse.
+        app.scripted_pointer = std::env::var("QUANTICK_POINTER").ok().and_then(|value| {
+            let parsed = parse_pointer_fraction(&value);
+            if parsed.is_none() {
+                tracing::warn!(
+                    target: "quantick",
+                    value = %value,
+                    "POINTER_HOOK_REJECTED: expected <fx>,<fy> with both in 0..=1"
+                );
+            }
+            parsed
+        });
 
         // A rectangle with an armed force-bar strategy riding it (`1`), or
         // the arming dialog open over it (`popup`) — the strategy-anchor
@@ -8668,16 +8722,48 @@ impl QuantickApp {
         if pane == ContextMenuPane::Axis {
             return Some(flow.last_price_gutter?.center());
         }
+        // The time axis, likewise off the canvas — and its own published band,
+        // because the segment past the lane divider is the tape's.
+        if pane == ContextMenuPane::Time {
+            return Some(flow.last_time_strip?.center());
+        }
         let rect = flow.last_chart_rect?;
         let divider = flow.last_lane_divider_x;
         let x = match (pane, divider) {
             (ContextMenuPane::Tape, Some(divider)) => (divider + rect.right()) / 2.0,
             (ContextMenuPane::Tape, None) => return None,
-            // Axis returned above; anything else is the candles' canvas.
+            // Axis and Time returned above; anything else is the candles'
+            // canvas.
             (_, Some(divider)) => (rect.left() + divider) / 2.0,
             (_, None) => rect.center().x,
         };
         Some(egui::pos2(x, rect.center().y))
+    }
+
+    /// Where `QUANTICK_POINTER` puts the mouse this frame, in window points.
+    ///
+    /// Resolved against the *drawing* area rather than the whole chart, so a
+    /// fraction means a place among the candles whatever share of the canvas
+    /// the live lane has taken, and against the flow pane for the same reason
+    /// [`Self::scripted_context_menu_pos`] does — one canvas per capture.
+    /// `None` until the pane has drawn once: there is no candle area to be a
+    /// fraction of before then, and guessing one would park the pointer
+    /// somewhere the author did not ask for.
+    fn scripted_pointer_pos(&self) -> Option<egui::Pos2> {
+        let fraction = self.scripted_pointer?;
+        let flow = &self.active_tab().flow_pane;
+        let candles = flow.drawing_area(flow.last_chart_rect?);
+        Some(egui::pos2(
+            candles.left() + fraction.x * candles.width(),
+            candles.top() + fraction.y * candles.height(),
+        ))
+    }
+
+    /// Deliver the parked pointer, every frame it is parked.
+    fn push_scripted_pointer(&self, raw_input: &mut egui::RawInput) {
+        if let Some(position) = self.scripted_pointer_pos() {
+            raw_input.events.push(egui::Event::PointerMoved(position));
+        }
     }
 }
 
@@ -8745,6 +8831,14 @@ impl eframe::App for QuantickApp {
             });
             return;
         }
+        // The parked pointer, re-delivered — before the menu branch and not
+        // inside its `else`, because a menu whose position never resolves
+        // returns early for ever. `QUANTICK_CONTEXT_MENU=tape` on a canvas
+        // with no lane is exactly that, and it used to take the pointer hook
+        // down with it: the capture showed no compass, no crosshair and no
+        // hover readout at all, and read as "the compass does not draw"
+        // rather than "the menu never opened".
+        self.push_scripted_pointer(raw_input);
         let Some(pane) = self.scripted_context_menu else {
             return;
         };
@@ -11105,6 +11199,17 @@ mod tests {
     use crate::pane::DrawingDrag;
     use crate::tab::BOOK_GENERATION_STRIDE;
     use crate::time_header;
+    use crate::viewport::Viewport;
+
+    /// The slot a stored fractional anchor sits on, asked of the one owner.
+    ///
+    /// A test that recomputes it — `bar.floor()`, as five of them used to —
+    /// is a second copy of the projection rule, free to disagree with the
+    /// production one and to keep passing while it does. See
+    /// [`Viewport::slot_of`].
+    fn slot_of(bar: f32) -> usize {
+        Viewport::slot_of(bar).expect("a placed anchor sits on a slot")
+    }
 
     /// Run a tab operation that needs the config, splitting the borrow the
     /// way the frame loop does.
@@ -11886,6 +11991,115 @@ mod tests {
         );
     }
 
+    /// `QUANTICK_CONTEXT_MENU=time` reaches the time axis's own menu, the
+    /// gutter hook's twin — and lands on the *candles'* segment of the strip,
+    /// because past the lane divider the strip is the tape's rolling window
+    /// and carries no menu.
+    #[test]
+    fn the_time_menu_hook_lands_on_the_time_strip() {
+        assert_eq!(
+            ContextMenuPane::from_env_value("time"),
+            Some(ContextMenuPane::Time)
+        );
+        assert_eq!(
+            ContextMenuPane::from_env_value("clock"),
+            Some(ContextMenuPane::Time)
+        );
+        assert_eq!(
+            ContextMenuPane::from_env_value("tiem"),
+            None,
+            "a typo opens no menu rather than the wrong one"
+        );
+
+        let (mut app, _cmd_rx) = app_with_history(50);
+        let ctx = egui::Context::default();
+        assert_eq!(
+            app.scripted_context_menu_pos(ContextMenuPane::Time),
+            None,
+            "no draw yet, so no strip to click"
+        );
+        run_frame(&mut app, &ctx);
+        let strip = app
+            .active_tab()
+            .flow_pane
+            .last_time_strip
+            .expect("the draw published the strip");
+        let position = app
+            .scripted_context_menu_pos(ContextMenuPane::Time)
+            .expect("one frame published it");
+        assert!(strip.contains(position));
+        let chart = app
+            .active_tab()
+            .flow_pane
+            .last_chart_rect
+            .expect("the canvas laid out");
+        assert!(
+            position.y > chart.bottom(),
+            "the axis, not the canvas: {position:?} vs {chart:?}"
+        );
+    }
+
+    /// `QUANTICK_POINTER` parks the mouse over the candles, which is the only
+    /// way a scripted run photographs anything that exists while a pointer is
+    /// over the chart — the compass, the crosshair, every hover readout.
+    ///
+    /// Fractions of the *candles'* pane, so `0.5,0.5` frames the same place
+    /// whatever the window size and whatever share the live lane has taken.
+    #[test]
+    fn the_pointer_hook_parks_the_mouse_among_the_candles() {
+        assert_eq!(
+            parse_pointer_fraction("0.25, 0.75"),
+            Some(egui::vec2(0.25, 0.75))
+        );
+        for refused in ["0.5", "2,0.5", "-0.1,0.5", "half,half", ""] {
+            assert_eq!(
+                parse_pointer_fraction(refused),
+                None,
+                "{refused:?} is not a position, and a typo must photograph nothing rather than the wrong place"
+            );
+        }
+
+        let (mut app, _cmd_rx) = app_with_history(50);
+        let ctx = egui::Context::default();
+        app.scripted_pointer = Some(egui::vec2(0.5, 0.5));
+        assert_eq!(
+            app.scripted_pointer_pos(),
+            None,
+            "no draw yet, so no candle area to be a fraction of"
+        );
+        run_frame(&mut app, &ctx);
+        let pane = &app.active_tab().flow_pane;
+        let candles = pane.drawing_area(pane.last_chart_rect.expect("the canvas laid out"));
+        let position = app.scripted_pointer_pos().expect("one frame published it");
+        assert!(candles.contains(position), "{position:?} vs {candles:?}");
+        assert!((position.x - candles.center().x).abs() < 0.5);
+        assert!((position.y - candles.center().y).abs() < 0.5);
+
+        // And it is delivered as a real pointer event on the app's own input
+        // path — never a field the paint reads — so what the chart does with
+        // it is what it does with a trader's own mouse. `raw_input_hook` is
+        // where eframe hands the frame's input over, so the test calls it
+        // exactly where eframe does and feeds the frame what it produced.
+        let mut raw = egui::RawInput::default();
+        eframe::App::raw_input_hook(&mut app, &ctx, &mut raw);
+        assert!(
+            matches!(
+                raw.events.as_slice(),
+                [egui::Event::PointerMoved(moved)] if *moved == position
+            ),
+            "one pointer move, where the hook said: {:?}",
+            raw.events
+        );
+        run_frame_with_events(&mut app, &ctx, raw.events);
+        assert_eq!(
+            app.active_tab().flow_pane.hover_pos,
+            Some(position),
+            "and the pane is hovering there, which is what every readout gates on"
+        );
+    }
+
+    /// The discrete way to turn the chart over: right-click on the price
+    /// gutter opens the axis's own menu, with the Inverted chart toggle in
     /// The discrete way to turn the chart over: right-click on the price
     /// gutter opens the axis's own menu, with the Inverted chart toggle in
     /// it. The canvas keeps its layer menu; the axis speaks for the scale.
@@ -18071,7 +18285,7 @@ crosshair = false
             app.active_tab()
                 .flow_pane
                 .slot_at_time(after.time_ms.expect("a mark on a bar has an instant")),
-            Some(after.bar.floor() as usize),
+            Some(slot_of(after.bar)),
             "the bar and the instant say the same thing"
         );
     }
@@ -20006,7 +20220,7 @@ crosshair = false
         };
         let anchor = placed.points[0];
         assert_eq!(
-            anchor.bar.floor() as usize,
+            slot_of(anchor.bar),
             forming,
             "the click has to land on the forming slot for this to prove anything"
         );
@@ -20597,7 +20811,7 @@ crosshair = false
         let candle = app
             .active_tab()
             .flow_pane
-            .closed_bar(anchor.bar.floor() as usize)
+            .closed_bar(slot_of(anchor.bar))
             .expect("the click landed on a bar")
             .clone();
         let low = rust_decimal::prelude::ToPrimitive::to_f64(&candle.low).unwrap();
@@ -20617,7 +20831,7 @@ crosshair = false
             (second.price - anchor.price).abs() < 1e-9,
             "two clicks on one bar, 90 px apart, must give one price"
         );
-        assert!((second.bar.floor() - anchor.bar.floor()).abs() < f32::EPSILON);
+        assert_eq!(slot_of(second.bar), slot_of(anchor.bar));
     }
 
     #[test]
@@ -20631,7 +20845,7 @@ crosshair = false
         let candle = app
             .active_tab()
             .flow_pane
-            .closed_bar(anchor.bar.floor() as usize)
+            .closed_bar(slot_of(anchor.bar))
             .expect("the click landed on a bar")
             .clone();
         let high = rust_decimal::prelude::ToPrimitive::to_f64(&candle.high).unwrap();
@@ -21233,7 +21447,7 @@ crosshair = false
         );
         assert_eq!(
             app.active_tab().flow_pane.slot_at_time(anchor_time),
-            Some(point.bar.floor() as usize),
+            Some(slot_of(point.bar)),
             "and the bar it sits on is that instant, re-asked of the new series"
         );
         assert!(

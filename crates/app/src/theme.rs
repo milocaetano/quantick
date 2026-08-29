@@ -223,6 +223,79 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+/// WCAG relative luminance of an opaque colour — how *light* it looks, which
+/// is not how light its channels average to.
+///
+/// A saturated blue and a saturated yellow can share a channel average and sit
+/// twenty L\* apart; only one of them can carry dark ink. Green weighs seven
+/// times what blue does here, and that is the whole reason to spell the
+/// formula out rather than take a mean.
+#[must_use]
+pub fn relative_luminance(color: Color32) -> f32 {
+    let linear = |channel: u8| -> f32 {
+        let value = f32::from(channel) / 255.0;
+        if value <= 0.03928 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(color.r()) + 0.7152 * linear(color.g()) + 0.0722 * linear(color.b())
+}
+
+/// WCAG contrast ratio between two opaque colours.
+#[must_use]
+pub fn contrast_ratio(a: Color32, b: Color32) -> f32 {
+    let (x, y) = (relative_luminance(a), relative_luminance(b));
+    (x.max(y) + 0.05) / (x.min(y) + 0.05)
+}
+
+/// `fill` as it will actually look: composited over the canvas it is drawn on.
+///
+/// A chip carrying a *faded* colour — the honesty fade a mark wears when this
+/// chart's data does not back it — is translucent, and egui's premultiplied
+/// `gamma_multiply` scales the channels with the alpha. Grading those channels
+/// as if they were opaque asks how the colour reads on **black**, not how it
+/// reads on this chart, and a white line faded to 45% then measured that way
+/// looks dark enough to want light ink when the composited chip is pale.
+#[must_use]
+fn over_canvas(fill: Color32) -> Color32 {
+    let blend = |channel: u8, base: u8| -> u8 {
+        let transparency = f32::from(255 - fill.a()) / 255.0;
+        (f32::from(channel) + f32::from(base) * transparency).min(255.0) as u8
+    };
+    Color32::from_rgb(
+        blend(fill.r(), CANVAS.r()),
+        blend(fill.g(), CANVAS.g()),
+        blend(fill.b(), CANVAS.b()),
+    )
+}
+
+/// The ink to write on a chip filled with `fill`: whichever of the two reads
+/// better on it.
+///
+/// Where a chip's colour is a constant the ink can be one too — the last-price
+/// chip is only ever one of two saturated greens or reds, so it simply wears
+/// [`CHIP_INK`]. A chip carrying a *drawing's* colour cannot: the trader picks
+/// that colour, and dark navy and pale yellow are both legal.
+///
+/// Chosen by measuring, not by a lightness threshold. A threshold is only
+/// equivalent to measuring when the two inks are black and white; these two
+/// are `#0E121A` and `#D2DAE2`, and against that pair the crossover sits where
+/// *neither* ink clears 4.5:1 — so a threshold placed at the sRGB midpoint
+/// hands some fills the worse of the two options while looking principled.
+/// Picking the better one is the most this pair can promise, and
+/// `the_ink_is_always_the_better_of_the_two` is what states that honestly.
+#[must_use]
+pub fn ink_on(fill: Color32) -> Color32 {
+    let composited = over_canvas(fill);
+    if contrast_ratio(composited, CHIP_INK) >= contrast_ratio(composited, TEXT_PRIMARY) {
+        CHIP_INK
+    } else {
+        TEXT_PRIMARY
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,5 +363,73 @@ mod tests {
     #[test]
     fn support_text_matches_the_redesign_spec() {
         assert_eq!(TEXT_SUPPORT, Color32::from_rgb(0x86, 0x92, 0xA4));
+    }
+
+    /// The promise this rule makes, and the only one it can: whichever ink is
+    /// handed out is the better of the two on that fill.
+    ///
+    /// Not "always 4.5:1" — with `CHIP_INK` and `TEXT_PRIMARY` as the pair,
+    /// fills in a narrow mid band clear neither, and a test asserting the
+    /// stronger claim passes only for as long as nobody picks a colour inside
+    /// it. Widening the guarantee needs a third ink, not a moved threshold.
+    #[test]
+    fn the_ink_is_always_the_better_of_the_two() {
+        for fill in [
+            Color32::from_rgb(0x8A, 0xB4, 0xF8), // the stock drawing blue
+            Color32::from_rgb(0xFF, 0xE0, 0x66), // a pale yellow
+            Color32::from_rgb(0x0B, 0x1B, 0x3A), // dark navy, a legal pick
+            Color32::from_rgb(0x7F, 0x7F, 0x7F), // mid grey, inside the band
+            Color32::from_rgb(0x6B, 0x6B, 0x2E), // olive, likewise
+            Color32::WHITE,
+            Color32::BLACK,
+            WARN,
+            ACCENT,
+        ] {
+            let ink = ink_on(fill);
+            let other = if ink == CHIP_INK {
+                TEXT_PRIMARY
+            } else {
+                CHIP_INK
+            };
+            assert!(
+                contrast_ratio(fill, ink) >= contrast_ratio(fill, other),
+                "{fill:?} took {ink:?} at {:.2}:1 when the other gave {:.2}:1",
+                contrast_ratio(fill, ink),
+                contrast_ratio(fill, other)
+            );
+        }
+    }
+
+    /// A faded chip is graded as it will be *seen*, composited over the canvas
+    /// — not as its premultiplied channels read on black.
+    ///
+    /// The honesty fade is exactly where this matters: a pale line faded to
+    /// 45% is still a pale chip, and grading it on black flipped it to the
+    /// light ink at under 3:1 while the dark ink it rejected cleared 4.5:1.
+    #[test]
+    fn a_faded_fill_is_graded_as_it_will_be_seen() {
+        let faded = Color32::WHITE.gamma_multiply(0.45);
+        assert_eq!(
+            ink_on(faded),
+            CHIP_INK,
+            "a white line faded over a dark canvas is still a light chip"
+        );
+        assert_eq!(
+            ink_on(Color32::WHITE),
+            CHIP_INK,
+            "and fading it does not change which ink it wants"
+        );
+    }
+
+    /// Light colours take the dark ink and dark ones the light ink — stated
+    /// outright, so a rule broken by accident fails here rather than in a
+    /// screenshot nobody looks at twice.
+    #[test]
+    fn the_ink_follows_how_light_the_fill_looks_not_its_average() {
+        assert_eq!(ink_on(Color32::WHITE), CHIP_INK);
+        assert_eq!(ink_on(Color32::BLACK), TEXT_PRIMARY);
+        // Same channel average, opposite answers: green carries the weight.
+        assert_eq!(ink_on(Color32::from_rgb(0xC0, 0xC0, 0x00)), CHIP_INK);
+        assert_eq!(ink_on(Color32::from_rgb(0x00, 0x00, 0xC0)), TEXT_PRIMARY);
     }
 }

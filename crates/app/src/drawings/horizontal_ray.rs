@@ -1,8 +1,8 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::line_core::LINES_FAMILY;
-use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, drawing_stroke};
+use super::line_core::{LINES_FAMILY, single_level};
+use super::{AxisLevels, DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, drawing_stroke};
 
 pub(super) static TOOL: HorizontalRay = HorizontalRay;
 
@@ -59,6 +59,20 @@ impl DrawingToolImpl for HorizontalRay {
         if let Some(point) = points.first() {
             let (from, to) = span(chart_rect, *point);
             painter.line_segment([from, to], drawing_stroke(style));
+        }
+    }
+    /// The price it names, tagged on the axis like the horizontal line's —
+    /// the two say the same kind of thing and differ only in where they start.
+    ///
+    /// And that difference is why this one asks about the rect: a ray runs
+    /// from its anchor to the right edge, so an anchor that has been panned
+    /// past that edge leaves [`span`] a zero-length stroke and nothing on the
+    /// canvas. A chip on the gutter then would be the axis marking a level
+    /// whose line is gone, which is exactly what the tags must not do.
+    fn axis_levels(&self, chart_rect: egui::Rect, points: &[egui::Pos2]) -> AxisLevels {
+        match points.first() {
+            Some(point) if point.x < chart_rect.right() => single_level(points),
+            _ => AxisLevels::new(),
         }
     }
     fn hit_test(

@@ -1784,27 +1784,16 @@ fn heat_ink(step: usize) -> egui::Color32 {
     }
 }
 
-/// WCAG relative luminance of an opaque colour. Test-only now that the
-/// ramp is a table: what it guards is the contract, not the construction.
-#[cfg(test)]
-fn relative_luminance(color: egui::Color32) -> f32 {
-    let linear = |channel: u8| -> f32 {
-        let value = f32::from(channel) / 255.0;
-        if value <= 0.03928 {
-            value / 12.92
-        } else {
-            ((value + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    0.2126 * linear(color.r()) + 0.7152 * linear(color.g()) + 0.0722 * linear(color.b())
-}
-
 /// WCAG contrast ratio between two opaque colours. Used by the tests that pin
 /// every number the layer draws against the background it is drawn on.
+///
+/// The luminance under it comes from `theme`, the module that owns colour:
+/// one spelling of that formula is what keeps this guard and `theme::ink_on`
+/// grading on the same scale.
 #[cfg(test)]
 fn contrast_ratio(a: egui::Color32, b: egui::Color32) -> f32 {
     let (high, low) = {
-        let (x, y) = (relative_luminance(a), relative_luminance(b));
+        let (x, y) = (theme::relative_luminance(a), theme::relative_luminance(b));
         (x.max(y), x.min(y))
     };
     (high + 0.05) / (low + 0.05)
@@ -2692,8 +2681,8 @@ mod tests {
     fn the_heat_ramp_is_ordered_and_isoluminant() {
         for side in [Side::Buy, Side::Sell] {
             for step in 1..HEAT_STEP_COUNT {
-                let previous = relative_luminance(heat_fill(side, step - 1));
-                let current = relative_luminance(heat_fill(side, step));
+                let previous = theme::relative_luminance(heat_fill(side, step - 1));
+                let current = theme::relative_luminance(heat_fill(side, step));
                 assert!(
                     current > previous,
                     "{side:?} step {step} is not brighter than {}",
@@ -2702,8 +2691,8 @@ mod tests {
             }
         }
         for step in 0..HEAT_STEP_COUNT {
-            let buy = relative_luminance(heat_fill(Side::Buy, step));
-            let sell = relative_luminance(heat_fill(Side::Sell, step));
+            let buy = theme::relative_luminance(heat_fill(Side::Buy, step));
+            let sell = theme::relative_luminance(heat_fill(Side::Sell, step));
             assert!(
                 (buy - sell).abs() < 0.02,
                 "step {step}: buy L={buy:.3} vs sell L={sell:.3} — the sides must weigh the same"
