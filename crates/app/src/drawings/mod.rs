@@ -1760,6 +1760,18 @@ impl Drawings {
         copy.name = None;
         for point in &mut copy.points {
             point.bar += offset_bars;
+            // The offset moves the copy in *bar* space, and the instant an
+            // anchor remembers is what survives a re-cut: `reanchor` puts
+            // every timestamped anchor back where its own market moment
+            // landed. Carrying the source's instants would therefore snap
+            // the copy onto the original at the next bar-spec change,
+            // replay seek, reconnect or symbol switch — two rectangles at
+            // one place, and since this branch hangs a bot on the copy, two
+            // bots there too. The copy is a mark the trader placed just
+            // now, at no market moment of its own; that is what an anchor
+            // dropped past the newest bar already carries, and it is the
+            // honest reading here.
+            point.time_ms = None;
         }
         copy.locked = false;
         let duplicated = Duplicated {

@@ -278,6 +278,17 @@ impl Note {
     }
 }
 
+/// A gate's refusal, and whether it is about the bar that just closed.
+///
+/// `fresh` is the difference between "this is why nothing happened just now"
+/// and "this is the last thing that was refused". Both are worth showing;
+/// only one of them is a statement about the present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HoldReason {
+    pub reason: &'static str,
+    pub fresh: bool,
+}
+
 /// One strategy armed on one region.
 pub struct ArmedStrategy {
     params: StrategyParams,
@@ -747,21 +758,32 @@ impl ArmedStrategy {
         self.last_hold = Some(reason);
     }
 
-    /// The refusal standing over this instance, as the reason alone.
+    /// The refusal standing over this instance: the reason, and whether it
+    /// is about the bar that just closed.
     ///
-    /// The bar just judged first, the last refusal behind it. Handed out
-    /// unframed so every surface can phrase it for itself — the badge in
-    /// three words at the region's corner, the menu in a sentence, and an
-    /// operator that is not looking at either as a value it can compare.
-    /// `status_line` is a rendering of this, not the only way to reach it:
-    /// a reason a script can only obtain by parsing English is a reason it
-    /// cannot act on.
+    /// Both halves, because the reason alone is a claim about *now* and a
+    /// standing refusal is not one. "account not flat" printed flat over an
+    /// account the trader has since closed out of is the badge saying the
+    /// bot is blocked when it is not — the same misinformation in the
+    /// opposite direction from the silence this exists to end. A surface
+    /// that shows a stale reason owes it a word (`last held`), and one with
+    /// no room for that word shows only the fresh one.
+    ///
+    /// Handed out unframed so every surface phrases it for itself, and so
+    /// an operator that is not looking at any of them can compare a value
+    /// instead of parsing English out of `status_line`.
     #[must_use]
-    pub fn hold_reason(&self) -> Option<&'static str> {
+    pub fn hold_reason(&self) -> Option<HoldReason> {
         match self.note {
-            Some(Note::Held(reason)) => Some(reason),
+            Some(Note::Held(reason)) => Some(HoldReason {
+                reason,
+                fresh: true,
+            }),
             Some(Note::Aside(_)) => None,
-            None => self.last_hold,
+            None => self.last_hold.map(|reason| HoldReason {
+                reason,
+                fresh: false,
+            }),
         }
     }
 
@@ -1834,7 +1856,13 @@ mod tests {
             instance.status_line(),
             "armed · trigger held: account not flat"
         );
-        assert_eq!(instance.hold_reason(), Some("account not flat"));
+        assert_eq!(
+            instance.hold_reason(),
+            Some(HoldReason {
+                reason: "account not flat",
+                fresh: true,
+            })
+        );
         assert_eq!(
             instance.last_close_opportunity(),
             Some(Opportunity::Market),
@@ -1842,7 +1870,64 @@ mod tests {
         );
     }
 
-    /// A projected leg that does not clear the entry edge would be dropped    /// A projected leg that does not clear the entry edge would be dropped
+    /// A refusal is a statement about a bar, and it stops being one when
+    /// the next bar closes. A surface that prints it flat says "the bot is
+    /// blocked" about an account that may have gone flat twenty bars ago —
+    /// the same misinformation as the silence this exists to end, pointing
+    /// the other way. So the reason travels with its tense.
+    #[test]
+    fn a_refusal_says_whether_it_is_about_the_bar_that_just_closed() {
+        // Wide enough that the bar which finally fires still closes inside
+        // it: the point here is the tense of the reason, not the geometry.
+        let region = Region::new(dec("100"), dec("115"));
+        let mut instance = force_instance(Side::Buy);
+        assert_eq!(instance.hold_reason(), None, "nothing refused yet");
+
+        // A busy account holds this bar's force bar.
+        instance.on_closed_bar(&bar("100", "101"), &region, true, false);
+        instance.on_closed_bar(&bar("101", "102"), &region, true, false);
+        instance.on_closed_bar(&bar("102", "106"), &region, true, false);
+        assert_eq!(
+            instance.hold_reason(),
+            Some(HoldReason {
+                reason: "account not flat",
+                fresh: true,
+            }),
+            "about the bar that just closed"
+        );
+
+        // The next bar carries no signal: the refusal stands, and says so.
+        instance.on_closed_bar(&bar("106", "107"), &region, true, true);
+        assert_eq!(
+            instance.hold_reason(),
+            Some(HoldReason {
+                reason: "account not flat",
+                fresh: false,
+            }),
+            "still readable, no longer a claim about now"
+        );
+        assert!(
+            instance
+                .status_line()
+                .ends_with("· last held: account not flat"),
+            "and the sentence carries the tense too: {}",
+            instance.status_line()
+        );
+
+        // Something happening clears it: the order goes out.
+        let commands = instance.on_closed_bar(&bar("107", "113"), &region, true, true);
+        assert!(
+            matches!(commands.as_slice(), [Command::PlaceMarket { .. }]),
+            "the setup fired: {commands:?}"
+        );
+        assert_eq!(
+            instance.hold_reason(),
+            None,
+            "a refusal is cleared by something happening, never by nothing"
+        );
+    }
+
+    /// A projected leg that does not clear the entry edge would be dropped
     /// at fill time — so it holds fire instead, and says why.
     #[test]
     fn a_bracket_leg_that_does_not_clear_the_edge_holds_fire() {

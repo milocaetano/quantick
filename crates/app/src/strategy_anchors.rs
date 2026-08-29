@@ -317,13 +317,11 @@ pub fn badge_text(instance: &AnchoredInstance) -> String {
     // The alarm's own word comes last, where the eye lands after the name:
     // it is the most recent thing that happened, and the one a trader who
     // heard a sound is looking for.
-    // The refusal standing over the instance, in the three words that fit a
-    // corner. This is the whole point of the badge and it was reaching only
-    // the right-click menu: the trader watches the chart, not a context
-    // menu, and "why did nothing happen" is answerable only where they are
-    // already looking.
-    let held = instance.armed.hold_reason().unwrap_or_default();
-    let parts = [mode, state, held, instance.mark.label().unwrap_or_default()];
+    // The refusal is deliberately *not* joined here. Only the pane knows
+    // whether the region itself is what is refusing, and its word replaces
+    // the kernel's rather than sitting beside it — see
+    // `ChartPane::badge_text_for`, which is what the chart paints.
+    let parts = [mode, state, instance.mark.label().unwrap_or_default()];
     let mut badge = format!("⚡ {}", instance.preset);
     for part in parts.into_iter().filter(|part| !part.is_empty()) {
         badge.push_str(" · ");

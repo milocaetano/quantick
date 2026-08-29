@@ -632,13 +632,12 @@ pub fn grid_color(style: &ChartStyle) -> egui::Color32 {
         .map_or(egui::Color32::TRANSPARENT, color32)
 }
 
-/// Convert a UI `f64` parameter to a positive `Decimal` for a builder threshold.
 /// Why an armed instance's region cannot honestly be tested right now, or
 /// `None` when it can.
 ///
-/// One rule, two readers: [`Pane::strategy_region`] shuts the gate on it and
-/// [`Pane::paint_strategy_badge`] prints it. Two copies would let the chart
-/// paint a running bot over a region the sweep refuses on every bar — the
+/// One rule, two readers: [`ChartPane::strategy_region`] shuts the gate on it
+/// and [`ChartPane::badge_text_for`] prints it. Two copies would let the chart
+/// paint a running bot over a region every bar is refused against — the
 /// divergence a trader only discovers by watching a setup go by, which is
 /// exactly how this was found.
 ///
@@ -658,6 +657,7 @@ fn region_pause(drawing: &drawings::Drawing, all_hidden: bool) -> Option<&'stati
     None
 }
 
+/// Convert a UI `f64` parameter to a positive `Decimal` for a builder threshold.
 fn dec_from_f64(x: f64) -> Decimal {
     Decimal::from_f64(x.max(1e-8)).unwrap_or(Decimal::ONE)
 }
@@ -2201,13 +2201,35 @@ impl ChartPane {
         drawing: &drawings::Drawing,
     ) -> String {
         let mut text = crate::strategy_anchors::badge_text(instance);
+        // The region's own state first, and *instead of* the kernel's
+        // reason rather than beside it. A paused or expired region makes
+        // `strategy_region` refuse, which the kernel records as "region not
+        // active on this bar" — true of the span, and a lie about a band
+        // that is merely hidden. Two vocabularies for one fact leave the
+        // trader deciding which clause to believe; the specific one wins,
+        // and it is the only one carrying a way out.
+        let armed = matches!(instance.armed.state(), quantick_strategy::ArmedState::Armed);
         if let Some(pause) = region_pause(drawing, self.drawings.all_hidden()) {
             text.push_str(" · ");
             text.push_str(pause);
-        } else if matches!(instance.armed.state(), quantick_strategy::ArmedState::Armed)
-            && !self.strategy_region_can_fire(drawing.id)
-        {
+            return text;
+        }
+        if armed && !self.strategy_region_can_fire(drawing.id) {
             text.push_str(" · region ended — stretch it right");
+            return text;
+        }
+        // Otherwise the gate that actually decided, in the words that fit a
+        // corner — and never present-tense about a bar it is not about.
+        // This is the whole point of the badge and it was reaching only the
+        // right-click menu: the trader watches the chart, and "why did
+        // nothing happen" is answerable only where they are already looking.
+        if let Some(held) = instance.armed.hold_reason() {
+            text.push_str(if held.fresh {
+                " · "
+            } else {
+                " · last held: "
+            });
+            text.push_str(held.reason);
         }
         text
     }
@@ -2347,7 +2369,7 @@ impl ChartPane {
                 // named disarms exist to prevent.
                 let footed = {
                     let drawing = &self.drawings.items()[index];
-                    !drawing.foreign_market && !drawing.off_series
+                    region_pause(drawing, self.drawings.all_hidden()).is_none()
                 };
                 let span_alive = self.strategy_region_can_fire(id);
                 let rearm = ui
@@ -7095,57 +7117,6 @@ mod tests {
     /// The two panes are configured apart, so the right-click has to say which
     /// one it landed on — and it says so from the divider the draw published,
     /// not from a second copy of the lane's geometry.
-    /// Every reason a region cannot be tested is one rule, and both readers
-    /// of it must agree: the sweep shuts the gate, the badge prints the
-    /// word. `off_series` used to shut the gate in silence — the bot paused
-    /// and the badge went on reading a bare "armed" — which is how a trader
-    /// watches a setup go by with nothing on the chart to explain it.
-    #[test]
-    fn every_paused_region_has_a_word_for_the_badge_and_shuts_the_gate() {
-        let rectangle = drawings::DRAWING_TOOLS
-            .into_iter()
-            .find(|tool| tool.id() == drawings::RECTANGLE_TOOL_ID)
-            .expect("the rectangle tool is registered");
-        let mut drawings_store = drawings::Drawings::default();
-        drawings_store.place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
-        drawings_store.place(rectangle, drawings::ChartPoint::at(30.0, 110.0));
-
-        // Nothing wrong: no word, and the gate is open.
-        assert_eq!(region_pause(&drawings_store.items()[0], false), None);
-
-        // Each fault in turn, most actionable first.
-        /// One way a drawing can lose its footing, and the word it is owed.
-        type Fault = (fn(&mut drawings::Drawing), &'static str);
-        let cases: [Fault; 3] = [
-            (
-                |drawing| drawing.foreign_market = true,
-                "region on another market — paused",
-            ),
-            (
-                |drawing| drawing.off_series = true,
-                "region off its series — paused",
-            ),
-            (|drawing| drawing.hidden = true, "region hidden — paused"),
-        ];
-        for (break_it, word) in cases {
-            let mut store = drawings::Drawings::default();
-            store.place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
-            store.place(rectangle, drawings::ChartPoint::at(30.0, 110.0));
-            break_it(&mut store.items_mut()[0]);
-            assert_eq!(
-                region_pause(&store.items()[0], false),
-                Some(word),
-                "the badge is owed a word for this one"
-            );
-        }
-
-        // "Hide all" is the same pause reached from the toolbar.
-        assert_eq!(
-            region_pause(&drawings_store.items()[0], true),
-            Some("region hidden — paused")
-        );
-    }
-
     #[test]
     fn a_right_click_is_the_tapes_only_on_the_tapes_side_of_the_divider() {
         let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
@@ -9009,5 +8980,150 @@ mod tests {
                 "{label}: dragging right stretches again"
             );
         }
+    }
+
+    /// Every reason a region cannot honestly be tested is one rule, and both
+    /// readers of it must agree: the gate shuts on it and the badge prints
+    /// the word. `off_series` used to shut the gate in silence — the bot
+    /// paused and the badge went on reading a bare "armed" — which is how a
+    /// trader watches a setup go by with nothing on the chart to explain it.
+    #[test]
+    fn every_paused_region_has_a_word_for_the_badge_and_shuts_the_gate() {
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == drawings::RECTANGLE_TOOL_ID)
+            .expect("the rectangle tool is registered");
+        let mut drawings_store = drawings::Drawings::default();
+        drawings_store.place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
+        drawings_store.place(rectangle, drawings::ChartPoint::at(30.0, 110.0));
+
+        // Nothing wrong: no word, and the gate is open.
+        assert_eq!(region_pause(&drawings_store.items()[0], false), None);
+
+        // Each fault in turn, most actionable first.
+        /// One way a drawing can lose its footing, and the word it is owed.
+        type Fault = (fn(&mut drawings::Drawing), &'static str);
+        let cases: [Fault; 3] = [
+            (
+                |drawing| drawing.foreign_market = true,
+                "region on another market — paused",
+            ),
+            (
+                |drawing| drawing.off_series = true,
+                "region off its series — paused",
+            ),
+            (|drawing| drawing.hidden = true, "region hidden — paused"),
+        ];
+        for (break_it, word) in cases {
+            let mut store = drawings::Drawings::default();
+            store.place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
+            store.place(rectangle, drawings::ChartPoint::at(30.0, 110.0));
+            break_it(&mut store.items_mut()[0]);
+            assert_eq!(
+                region_pause(&store.items()[0], false),
+                Some(word),
+                "the badge is owed a word for this one"
+            );
+        }
+
+        // "Hide all" is the same pause reached from the toolbar.
+        assert_eq!(
+            region_pause(&drawings_store.items()[0], true),
+            Some("region hidden — paused")
+        );
+
+        // The gate half of "one rule, two readers": whenever there is a
+        // word, `strategy_region` refuses — so the badge can never paint a
+        // running bot over a region every bar is being refused against.
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+        pane.drawings
+            .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
+        pane.drawings
+            .place(rectangle, drawings::ChartPoint::at(30.0, 110.0));
+        let id = pane.drawings.items()[0].id;
+        assert!(
+            pane.strategy_region(id, 5).is_some(),
+            "nothing wrong: the region is testable"
+        );
+        for break_it in [
+            (|drawing: &mut drawings::Drawing| drawing.foreign_market = true) as fn(&mut _),
+            |drawing: &mut drawings::Drawing| drawing.off_series = true,
+            |drawing: &mut drawings::Drawing| drawing.hidden = true,
+        ] {
+            let index = pane.drawings.index_of(id).expect("drawing lives");
+            let mut drawing = pane.drawings.items()[index].clone();
+            break_it(&mut drawing);
+            let word = region_pause(&drawing, false);
+            pane.drawings.items_mut()[index] = drawing;
+            assert!(word.is_some(), "this fault owes the badge a word");
+            assert!(
+                pane.strategy_region(id, 5).is_none(),
+                "and shuts the gate: {word:?}"
+            );
+            // Put it back for the next fault.
+            let index = pane.drawings.index_of(id).expect("drawing lives");
+            pane.drawings.items_mut()[index].foreign_market = false;
+            pane.drawings.items_mut()[index].off_series = false;
+            pane.drawings.items_mut()[index].hidden = false;
+        }
+    }
+
+    /// The badge states one condition once, in the words that carry the way
+    /// out. A paused region makes `strategy_region` refuse, which the kernel
+    /// records as "region not active on this bar" — true of a span, and a
+    /// lie about a band that is merely hidden. Two vocabularies for one fact
+    /// leave the trader deciding which clause to believe.
+    #[test]
+    fn a_paused_regions_badge_says_the_specific_thing_and_not_the_general_one() {
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == drawings::RECTANGLE_TOOL_ID)
+            .expect("the rectangle tool is registered");
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+        pane.drawings
+            .place(rectangle, drawings::ChartPoint::at(0.0, 100.0));
+        pane.drawings
+            .place(rectangle, drawings::ChartPoint::at(30.0, 110.0));
+        let id = pane.drawings.items()[0].id;
+        let index = pane.drawings.index_of(id).expect("drawing lives");
+        pane.drawings.items_mut()[index].hidden = true;
+
+        let instance = crate::strategy_anchors::AnchoredInstance {
+            drawing: id,
+            preset: "BF".to_owned(),
+            spec: crate::strategy_presets::StoredPreset::starting_point(
+                quantick_engine::Side::Sell,
+            ),
+            armed: quantick_strategy::ArmedStrategy::new(
+                quantick_strategy::StrategyParams {
+                    side: quantick_engine::Side::Sell,
+                    quantity: rust_decimal::Decimal::ONE,
+                    tp_mult: rust_decimal::Decimal::ONE,
+                    sl_mult: rust_decimal::Decimal::ONE,
+                    rearm: quantick_strategy::Rearm::OneShot,
+                    on_break: quantick_strategy::BreakPolicy::Ignore,
+                    execution: quantick_strategy::Execution::Paper,
+                },
+                Box::new(quantick_strategy::ForceTrigger::new(
+                    quantick_strategy::ForceParams::default_band(),
+                )),
+            ),
+            alarm: None,
+            cue: crate::audio::Cue::default(),
+            mark: crate::strategy_anchors::AlarmMark::Quiet,
+        };
+        // Nothing was armed here before, so there is no replaced instance
+        // whose resting order would need sweeping.
+        assert!(pane.strategies.arm(instance).is_empty());
+
+        let badge = pane.strategy_badge_text(id);
+        assert!(
+            badge.contains("region hidden — paused"),
+            "the specific fault, with the fix in it: {badge}"
+        );
+        assert!(
+            !badge.contains("region not active"),
+            "and not the general one beside it, which is false here — the              span covers this bar perfectly, the band is hidden: {badge}"
+        );
     }
 }

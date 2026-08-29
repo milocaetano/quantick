@@ -14629,7 +14629,7 @@ crosshair = false
             assert_eq!(
                 instance.armed.state(),
                 &quantick_strategy::ArmedState::Armed,
-                "past the right anchor the region is inactive — a hold, not                  a disarm, so dragging the band forward resumes it"
+                "past the right anchor the region is inactive: a hold, not a disarm, so dragging the band forward resumes it"
             );
             assert_eq!(
                 instance.armed.status_line(),
@@ -15023,22 +15023,25 @@ crosshair = false
             assert!(
                 instance.alarm.is_some()
                     && instance.armed.state() == &quantick_strategy::ArmedState::Armed,
-                "it is still armed and still listening — the alarm is the                  half a trader executing elsewhere depends on",
+                "it is still armed and still listening: the alarm is the half a trader executing elsewhere depends on",
             );
             assert_eq!(
                 instance.armed.hold_reason(),
-                Some("region not active on this bar"),
+                Some(quantick_strategy::HoldReason {
+                    reason: "region not active on this bar",
+                    fresh: true,
+                }),
                 "the reason is readable as a value, not only as a sentence",
             );
             tab.flow_pane.strategy_badge_text(drawing)
         };
         assert!(
             badge.contains("region ended — stretch it right"),
-            "and the chart says it where the trader is looking, with the              way out: {badge}",
+            "the chart says it where the trader is looking, with the way out: {badge}",
         );
     }
 
-    /// The user's retest flow end to end in the app:    /// The user's retest flow end to end in the app: a sell preset with the
+    /// The user's retest flow end to end in the app: a sell preset with the
     /// retest option armed on a region, a force bar cutting below it, the
     /// limit resting at the cut edge — then the tape reaching the target
     /// first, the order removing itself, and the badge saying so.
@@ -15303,7 +15306,7 @@ crosshair = false
             .count();
         assert_eq!(
             fired, 1,
-            "the queued entry blocks the second instance: the simulator              models one netted position with one bracket, so a second fill              would overwrite the first's stop with no event"
+            "the queued entry blocks the second instance: the simulator models one netted position carrying one bracket, so a second fill would overwrite the first's stop with no event"
         );
     }
 
