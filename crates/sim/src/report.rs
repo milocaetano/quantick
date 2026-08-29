@@ -8,8 +8,7 @@ use quantick_engine::Side;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
 
-use crate::events::ExitReason;
-use crate::simulator::ClosedTrade;
+use quantick_trading::{ClosedTrade, ExitReason};
 
 /// Every exit reason, in the fixed order the report presents them.
 const EXIT_REASONS: [ExitReason; 5] = [
@@ -373,7 +372,6 @@ fn stddev(trades: &[ClosedTrade], net: Decimal, total: Decimal) -> Option<Decima
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::ExitReason;
 
     fn trade(side: Side, pnl: i64) -> ClosedTrade {
         ClosedTrade {

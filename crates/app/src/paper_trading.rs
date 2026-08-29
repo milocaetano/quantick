@@ -18,8 +18,9 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::{Side, Trade};
 use quantick_sim::{
-    Bracket, ClosedTrade, Command, EntryKind, OrderId, PerformanceReport, Position, QueuedAction,
-    SideReport, SimEvent, Simulator, history,
+    Bracket, BracketTarget, CloseAmount, ClosedTrade, Command, EntryKind, OrderId, OrderIntent,
+    PerformanceReport, Position, SideReport, Simulator, TradingVenue, VenueEvent, history,
+    signed_points,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
@@ -47,6 +48,19 @@ const PAPER_DEMO_ENV: &str = "QUANTICK_PAPER_DEMO";
 /// a sell limit above**: a move in either direction can fill only one side
 /// of it, so a resting tag always survives on screen.
 const PAPER_ORDERS_ENV: &str = "QUANTICK_PAPER_ORDERS";
+/// `=1` gives every order `QUANTICK_PAPER_ORDERS` rests a protective stop
+/// and target, so the working-order bracket — its two dashed leg lines,
+/// their gutter chips and their tags — can be photographed without a hand
+/// to drag them into being. Pairs with `QUANTICK_PAPER_ORDER_HOVER`, which
+/// opens one order's tag and with it the labelled `SL`/`TP` handles for the
+/// legs it does *not* have; set both and one capture holds every state the
+/// bracket has.
+const PAPER_ORDER_BRACKET_ENV: &str = "QUANTICK_PAPER_ORDER_BRACKET";
+/// How far a hooked bracket's legs sit from the order, as a fraction of the
+/// mark. Wider than the rung step so the legs never land on a neighbouring
+/// order's line, and wide enough apart that stop and target read as two
+/// levels rather than one thick one.
+const PAPER_ORDER_BRACKET_FRACTION: Decimal = Decimal::from_parts(15, 0, 0, false, 4);
 /// How far the first rung sits from the mark, as a fraction of it. Small
 /// on purpose: a line outside the chart's autoscaled price range paints no
 /// tag, so an order that cannot be reached also cannot be seen.
@@ -272,23 +286,105 @@ pub struct PositionSummary {
 enum PaperDrag {
     #[default]
     None,
+    /// Moving a protective leg that already exists.
+    Leg { owner: BracketTarget, leg: Leg },
+    /// Pulling a leg into existence, from its owner's line or its labelled
+    /// handle; release submits it, exactly like repricing an existing one.
+    CreateLeg { owner: BracketTarget, leg: Leg },
+    /// Repricing a working order.
+    Order(OrderId),
+    /// The press landed on the position's entry line: an average entry is
+    /// history, not an order, so the geometry stays put — but the gesture
+    /// still belongs to the line (the chart must not pan under it). This is
+    /// the state for a fully bracketed position, whose legs are their own
+    /// handles.
+    Blocked,
+    /// The press landed on the position's entry line and at least one leg
+    /// is missing: the first committed pull decides which leg the drag
+    /// creates (profit side → take profit, losing side → stop loss). A
+    /// working order needs no such state — its line already means
+    /// "reprice", so its legs are born from their handles alone.
+    CreatePending,
+}
+
+/// Which side of a bracket a gesture is about.
+///
+/// The two legs are not symmetric — one caps the loss and one takes the
+/// win — but every gesture that touches either does the same thing to it,
+/// so they travel as one value rather than as a `bool` nobody can read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Leg {
     StopLoss,
     TakeProfit,
-    Order(OrderId),
-    /// The press landed on the entry line: an average entry is history, not
-    /// an order, so the geometry stays put — but the gesture still belongs
-    /// to the line (the chart must not pan under it). This is the state for
-    /// a fully bracketed position, whose legs are their own handles.
-    Blocked,
-    /// The press landed on the entry line and at least one bracket leg is
-    /// missing: the first committed pull decides which leg the drag creates
-    /// (profit side → take profit, losing side → stop loss).
-    CreatePending,
-    /// Dragging a stop loss into existence from the entry line or its
-    /// handle; release submits it, exactly like repricing an existing one.
-    CreateStopLoss,
-    /// Dragging a take profit into existence (see `CreateStopLoss`).
-    CreateTakeProfit,
+}
+
+impl Leg {
+    /// The two-letter word on the line's tag and on its handle.
+    fn word(self) -> &'static str {
+        match self {
+            Self::StopLoss => "SL",
+            Self::TakeProfit => "TP",
+        }
+    }
+
+    /// The leg's colour: a stop is an exit at a loss, a target an exit at a
+    /// gain, whatever side the trade is.
+    fn color(self) -> egui::Color32 {
+        match self {
+            Self::StopLoss => theme::SELL,
+            Self::TakeProfit => theme::BUY,
+        }
+    }
+
+    /// The *other* leg's level within a bracket — the one the R:R read is
+    /// measured against while this one is being dragged.
+    fn other(self, bracket: Bracket) -> Option<Decimal> {
+        match self {
+            Self::StopLoss => bracket.take_profit,
+            Self::TakeProfit => bracket.stop_loss,
+        }
+    }
+
+    /// This leg's level within a bracket.
+    fn level(self, bracket: Bracket) -> Option<Decimal> {
+        match self {
+            Self::StopLoss => bracket.stop_loss,
+            Self::TakeProfit => bracket.take_profit,
+        }
+    }
+
+    /// The bracket with this leg set to `level` (`None` clears it) and the
+    /// other leg untouched — every amendment in this module goes through
+    /// here, so "replace wholesale" can never accidentally drop the leg
+    /// nobody was touching.
+    fn applied(self, bracket: Bracket, level: Option<Decimal>) -> Bracket {
+        match self {
+            Self::StopLoss => Bracket {
+                stop_loss: level,
+                take_profit: bracket.take_profit,
+            },
+            Self::TakeProfit => Bracket {
+                stop_loss: bracket.stop_loss,
+                take_profit: level,
+            },
+        }
+    }
+
+    /// Whether this leg's price sits **above** the entry, for `side`.
+    ///
+    /// Named for the geometry and not for the meaning, because the two part
+    /// company on a short: a short's stop is above its entry *and* on the
+    /// losing side. The callers want the geometry — it is what decides
+    /// which side of the line a handle is drawn on — so calling this
+    /// "profit side" would be an invitation to fold
+    /// `decide_pending_leg`'s own profit-side test into it and swap stop
+    /// for target on every short.
+    fn sits_above_entry(self, side: Side) -> bool {
+        matches!(
+            (self, side),
+            (Self::TakeProfit, Side::Buy) | (Self::StopLoss, Side::Sell)
+        )
+    }
 }
 
 /// A painted overlay control from the last paint pass: a tag's ✕ or a
@@ -299,16 +395,13 @@ enum PaperDrag {
 enum PaperControl {
     /// ✕ on the position tag: exit at the next print.
     ClosePosition,
-    /// ✕ on the stop-loss tag: clear the protective stop.
-    ClearStopLoss,
-    /// ✕ on the take-profit tag: clear the profit target.
-    ClearTakeProfit,
+    /// ✕ on a protective leg's tag: clear that leg, keeping the other.
+    ClearLeg { owner: BracketTarget, leg: Leg },
     /// ✕ on a working order's tag: cancel it.
     CancelOrder(OrderId),
-    /// Labelled `SL` handle on the entry line: press starts a create-drag.
-    HandleStopLoss,
-    /// Labelled `TP` handle on the entry line.
-    HandleTakeProfit,
+    /// Labelled `SL`/`TP` handle beside a line that owns brackets: the
+    /// press starts a create-drag for that leg.
+    Handle { owner: BracketTarget, leg: Leg },
 }
 
 /// One transient message; rejections double as the tutorial.
@@ -848,6 +941,103 @@ impl CmdModifier {
     }
 }
 
+/// Which entry kind the aim places.
+///
+/// The fill model leaves exactly one *resting* kind valid at any price: a
+/// buy above the market can only stop in (a buy limit there would fill at
+/// once), and below it can only wait at a limit. So this is not a way to
+/// place a stop where a limit belongs — no venue would take it. It is a way
+/// to state **which order you came to place**, so the aim shows nothing
+/// rather than quietly handing you the other kind when the market is on the
+/// wrong side of your level.
+///
+/// That case is not hypothetical: the mark moves. A level a hand's breadth
+/// above the last price is a buy stop now and a buy limit after two ticks
+/// up, and under [`Self::Auto`] the same click at the same level places a
+/// different order depending on when it lands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CmdEntryKind {
+    /// Whichever kind can rest at the aimed price — the mark decides.
+    #[default]
+    Auto,
+    /// Only a limit. Where a limit cannot rest, the aim stands down.
+    Limit,
+    /// Only a stop. Where a stop cannot arm, the aim stands down.
+    Stop,
+}
+
+impl CmdEntryKind {
+    /// Every choice the selector offers.
+    pub const ALL: [Self; 3] = [Self::Auto, Self::Limit, Self::Stop];
+
+    /// Stable token for the state file.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Limit => "limit",
+            Self::Stop => "stop",
+        }
+    }
+
+    /// The inverse of [`Self::as_str`]; unknown tokens are refused.
+    #[must_use]
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "auto" => Some(Self::Auto),
+            "limit" => Some(Self::Limit),
+            "stop" => Some(Self::Stop),
+            _ => None,
+        }
+    }
+
+    /// Display label for the selector.
+    ///
+    /// The same words as [`Self::as_str`] today, and delegating rather than
+    /// repeating them so it stays that way by accident only where it is
+    /// harmless: written out twice, renaming the selector's "stop" would
+    /// silently change the on-disk token and every remembered choice would
+    /// fall back to `Auto` on the next launch. Give this its own `match`
+    /// the day the label and the token should differ, which is what
+    /// [`CmdModifier`] already does.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        self.as_str()
+    }
+}
+
+/// The kind the aim places at `price`, or `None` where nothing may rest
+/// there.
+///
+/// [`CmdEntryKind::Auto`] reads the market: above the mark a buy stops in,
+/// below it a buy waits at a limit; a sell mirrors. On the mark exactly,
+/// nothing can rest — a resting order there would fill on the next print,
+/// which is a market order wearing the wrong name.
+///
+/// A stated kind is honoured only where it is valid. Returning `None`
+/// instead of the other kind is the point: the aim's promise is that the
+/// label can never advertise an order the press will not make, and a
+/// silent substitution would break it in the most expensive way — placing
+/// a breakout stop for a trader who came to buy a pullback.
+#[must_use]
+fn resolve_cmd_kind(
+    choice: CmdEntryKind,
+    side: Side,
+    price: Decimal,
+    mark: Decimal,
+) -> Option<EntryKind> {
+    let available = match (price > mark, price < mark, side) {
+        (true, _, Side::Buy) | (_, true, Side::Sell) => EntryKind::Stop,
+        (true, _, Side::Sell) | (_, true, Side::Buy) => EntryKind::Limit,
+        _ => return None,
+    };
+    match choice {
+        CmdEntryKind::Auto => Some(available),
+        CmdEntryKind::Limit => (available == EntryKind::Limit).then_some(EntryKind::Limit),
+        CmdEntryKind::Stop => (available == EntryKind::Stop).then_some(EntryKind::Stop),
+    }
+}
+
 /// Cmd trading: hold a key over the chart and a dashed line shows exactly
 /// where the order will rest, with a label riding beside the cursor; the
 /// click places it. Safer than the right-click menu because the price is
@@ -857,6 +1047,8 @@ pub struct CmdTradingSettings {
     pub enabled: bool,
     pub buy: CmdModifier,
     pub sell: CmdModifier,
+    /// Which entry kind the aim places; see [`CmdEntryKind`].
+    pub kind: CmdEntryKind,
 }
 
 impl Default for CmdTradingSettings {
@@ -865,6 +1057,9 @@ impl Default for CmdTradingSettings {
             enabled: true,
             buy: CmdModifier::Shift,
             sell: CmdModifier::Ctrl,
+            // Auto is right at almost every price, and it is what shipped;
+            // the choice exists for the trader who wants to be sure.
+            kind: CmdEntryKind::Auto,
         }
     }
 }
@@ -887,6 +1082,11 @@ impl CmdTradingSettings {
                 .as_deref()
                 .and_then(CmdModifier::parse)
                 .unwrap_or(defaults.sell),
+            kind: state
+                .cmd_entry_kind
+                .as_deref()
+                .and_then(CmdEntryKind::parse)
+                .unwrap_or(defaults.kind),
         }
     }
 }
@@ -970,10 +1170,19 @@ impl CmdPreviewForce {
     }
 }
 
-/// The app-side paper-trading host: simulator, order-entry form state,
+/// The app-side trading host: the venue, order-entry form state,
 /// chart-layer interaction, journal and report.
 pub struct PaperTrading {
-    sim: Simulator,
+    /// Where orders actually go. A [`TradingVenue`] rather than a
+    /// `Simulator`, so the chart's gestures, the ticket and the
+    /// control-plane actions are all written against the port a real
+    /// broker will one day implement — see `quantick-trading`. Today the
+    /// only venue constructed here is the deterministic paper simulator,
+    /// and every surface still says `SIM`.
+    venue: Box<dyn TradingVenue>,
+    /// Whether `QUANTICK_PAPER_ORDER_BRACKET` asked the capture hook's
+    /// resting orders to carry protective legs.
+    order_bracket_demo: bool,
     /// Symbol the journal writes under; follows the app's active symbol.
     symbol: String,
     dir: PathBuf,
@@ -1078,7 +1287,7 @@ pub struct PaperTrading {
     /// Per-print events buffered for the strategy instances since the last
     /// drain. Only ever non-empty while `bot_listening`, and prints with
     /// nothing to report push nothing.
-    bot_events: Vec<SimEvent>,
+    bot_events: Vec<VenueEvent>,
     // Trades ledger.
     /// Which saved history the ledger lists — see [`LedgerScope`].
     ledger_scope: LedgerScope,
@@ -1145,7 +1354,9 @@ impl PaperTrading {
     #[must_use]
     pub fn with_trades_dir(dir: PathBuf) -> Self {
         Self {
-            sim: Simulator::new(),
+            venue: Box::new(Simulator::new()),
+            order_bracket_demo: std::env::var(PAPER_ORDER_BRACKET_ENV)
+                .is_ok_and(|value| value == "1"),
             symbol: String::new(),
             dir,
             journal_path: None,
@@ -1272,7 +1483,7 @@ impl PaperTrading {
     /// to reach.
     #[cfg(test)]
     pub(crate) fn apply_sim_command_for_tests(&mut self, command: Command) {
-        let events = self.sim.apply(command);
+        let events = self.dispatch(command);
         self.handle_events(events);
     }
 
@@ -1329,12 +1540,12 @@ impl PaperTrading {
 
     /// Seed the mark from backfilled history — never fills (look-ahead).
     pub fn seed(&mut self, trade: &Trade) {
-        self.sim.seed(trade);
+        self.venue.seed(trade);
     }
 
     /// Feed one live print through the simulator and act on what it did.
     pub fn on_trade(&mut self, trade: &Trade) {
-        let events = self.sim.on_trade(trade);
+        let events = self.venue.on_trade(trade);
         self.handle_events(events);
         if self.orders_demo.is_some() {
             self.rest_capture_orders();
@@ -1359,7 +1570,7 @@ impl PaperTrading {
         let Some(rungs) = self.orders_demo else {
             return;
         };
-        let Some(mark) = self.sim.mark_price() else {
+        let Some(mark) = self.venue.mark_price() else {
             return;
         };
         let tick = Decimal::ONE
@@ -1373,18 +1584,40 @@ impl PaperTrading {
                 (Side::Buy, mark.saturating_sub(step)),
                 (Side::Sell, mark.saturating_add(step)),
             ] {
-                let events = self.sim.apply(Command::PlaceLimit {
-                    side,
-                    quantity: Decimal::ONE,
-                    price,
-                    bracket: Bracket::none(),
-                    cancel_at: None,
-                    flat_only: false,
-                });
+                // The legs go on the correct side of the *order's own*
+                // price, which is what the venue validates against — the
+                // hook cannot place one the venue would refuse.
+                let bracket = if self.order_bracket_demo {
+                    // The same floor the rung `step` carries, for the same
+                    // reason: on a coarsely quoted market 15 bp rounds to
+                    // nothing, both legs price *at* the order, and
+                    // `validate_bracket` then refuses the whole
+                    // `PlaceLimit` — the hook would rest no orders at all
+                    // and photograph an empty chart with nothing to explain
+                    // it.
+                    let reach = (mark * PAPER_ORDER_BRACKET_FRACTION)
+                        .round_dp(mark.scale())
+                        .max(tick);
+                    match side {
+                        Side::Buy => Bracket {
+                            stop_loss: Some(price.saturating_sub(reach)),
+                            take_profit: Some(price.saturating_add(reach)),
+                        },
+                        Side::Sell => Bracket {
+                            stop_loss: Some(price.saturating_add(reach)),
+                            take_profit: Some(price.saturating_sub(reach)),
+                        },
+                    }
+                } else {
+                    Bracket::none()
+                };
+                let events = self
+                    .venue
+                    .submit(OrderIntent::limit(side, Decimal::ONE, price).with_bracket(bracket));
                 self.handle_events(events);
             }
         }
-        if self.sim.orders().is_empty() {
+        if self.venue.working_orders().is_empty() {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -1411,7 +1644,7 @@ impl PaperTrading {
     /// Everything the simulator reported on prints since the last drain,
     /// for the strategy instances to attribute by order id.
     #[must_use]
-    pub fn drain_bot_events(&mut self) -> Vec<SimEvent> {
+    pub fn drain_bot_events(&mut self) -> Vec<VenueEvent> {
         std::mem::take(&mut self.bot_events)
     }
 
@@ -1423,16 +1656,52 @@ impl PaperTrading {
     /// orders and nothing queued — the human's included.
     #[must_use]
     pub fn is_flat(&self) -> bool {
-        self.sim.position().is_none()
-            && self.sim.orders().is_empty()
-            && self.sim.queued().is_empty()
+        self.venue.position().is_none()
+            && self.venue.working_orders().is_empty()
+            && self.venue.in_flight() == 0
     }
 
     /// Apply a strategy-issued command through the same funnel manual
     /// orders use — journal, toasts, everything — and hand the simulator's
     /// immediate answer back for the instance to attribute.
-    pub fn apply_strategy_command(&mut self, command: Command) -> Vec<SimEvent> {
-        let events = self.sim.apply(command);
+    pub fn apply_strategy_command(&mut self, command: Command) -> Vec<VenueEvent> {
+        let events = self.dispatch(command);
+        self.handle_events(events.clone());
+        events
+    }
+
+    /// The last price the venue was shown, or `None` before the first
+    /// print — what a caller with no chart in front of it needs before it
+    /// can name a price at all.
+    #[must_use]
+    pub fn mark_price(&self) -> Option<Decimal> {
+        self.venue.mark_price()
+    }
+
+    /// Place one order, stated in full — the control plane's entry point,
+    /// and the shape a hotkey or a hook uses too.
+    ///
+    /// Unlike the chart's aim this takes the kind rather than inferring it:
+    /// a caller with no pointer has no "where I am relative to the mark" to
+    /// infer from, and an action whose meaning depends on the market at the
+    /// instant it lands is an action nobody can replay.
+    pub fn place_intent(&mut self, intent: OrderIntent) -> Vec<VenueEvent> {
+        let events = self.venue.submit(intent);
+        self.handle_events(events.clone());
+        events
+    }
+
+    /// Replace a working order's protective prices — the chart's drag, said
+    /// in words.
+    pub fn set_order_bracket(&mut self, id: OrderId, bracket: Bracket) -> Vec<VenueEvent> {
+        let events = self.venue.amend_bracket(BracketTarget::Order(id), bracket);
+        self.handle_events(events.clone());
+        events
+    }
+
+    /// Remove one working order without trading.
+    pub fn cancel_order(&mut self, id: OrderId) -> Vec<VenueEvent> {
+        let events = self.venue.cancel(id);
         self.handle_events(events.clone());
         events
     }
@@ -1444,12 +1713,12 @@ impl PaperTrading {
         let Some(demo) = &mut self.demo else { return };
         demo.prints += 1;
         let prints = demo.prints;
-        let Some(mark) = self.sim.mark_price() else {
+        let Some(mark) = self.venue.mark_price() else {
             return;
         };
         // Scale-free distance: 0.2% of the mark, snapped to its precision.
         let offset = (mark * Decimal::new(2, 3)).round_dp(mark.scale());
-        let has_position = self.sim.position().is_some();
+        let has_position = self.venue.position().is_some();
         let command = match prints {
             5 => Command::PlaceMarket {
                 side: Side::Buy,
@@ -1480,7 +1749,7 @@ impl PaperTrading {
             340 if has_position => Command::ClosePosition,
             _ => return,
         };
-        let events = self.sim.apply(command);
+        let events = self.dispatch(command);
         self.handle_events(events);
     }
 
@@ -1488,12 +1757,12 @@ impl PaperTrading {
     /// restart): pending orders are swept and the position flattens at the
     /// last mark, labeled `reset` — never silently.
     pub fn on_timeline_reset(&mut self) {
-        let had_position = self.sim.position().is_some();
-        let had_orders = !self.sim.orders().is_empty() || !self.sim.queued().is_empty();
-        let events = self.sim.reset();
+        let had_position = self.venue.position().is_some();
+        let had_orders = !self.venue.working_orders().is_empty() || self.venue.in_flight() > 0;
+        let events = self.venue.reset();
         let mut all_saved = true;
         for event in &events {
-            if let SimEvent::Closed(trade) = event {
+            if let VenueEvent::Closed(trade) = event {
                 all_saved &= self.journal(&trade.clone());
             }
         }
@@ -1523,7 +1792,7 @@ impl PaperTrading {
     /// buttons disable themselves (with the reason) until this is true.
     #[must_use]
     pub fn ready(&self) -> bool {
-        self.sim.mark_price().is_some()
+        self.venue.mark_price().is_some()
     }
 
     /// A toolbar/panel market order using the form's quantity and offsets.
@@ -1531,15 +1800,13 @@ impl PaperTrading {
         let Some(quantity) = self.parse_quantity() else {
             return;
         };
-        let reference = self.sim.mark_price().unwrap_or_default();
+        let reference = self.venue.mark_price().unwrap_or_default();
         let Some(bracket) = self.parse_bracket(side, reference) else {
             return;
         };
-        let events = self.sim.apply(Command::PlaceMarket {
-            side,
-            quantity,
-            bracket,
-        });
+        let events = self
+            .venue
+            .submit(OrderIntent::market(side, quantity).with_bracket(bracket));
         self.handle_events(events);
     }
 
@@ -1549,9 +1816,9 @@ impl PaperTrading {
     /// while the simulator has never been touched.
     #[must_use]
     pub fn status_cell(&self) -> Option<(String, std::cmp::Ordering)> {
-        if let Some(position) = self.sim.position() {
+        if let Some(position) = self.venue.position() {
             let open = self
-                .sim
+                .venue
                 .mark_price()
                 .map(|mark| position.open_points(mark))
                 .unwrap_or_default();
@@ -1565,13 +1832,13 @@ impl PaperTrading {
                 open.cmp(&Decimal::ZERO),
             ));
         }
-        let untouched = self.sim.closed_trades().is_empty()
-            && self.sim.orders().is_empty()
-            && self.sim.queued().is_empty();
+        let untouched = self.venue.closed_trades().is_empty()
+            && self.venue.working_orders().is_empty()
+            && self.venue.in_flight() == 0;
         if untouched {
             return None;
         }
-        let realized = self.sim.realized_points();
+        let realized = self.venue.realized_points();
         Some((
             format!("SIM {} pts · flat", fmt_signed_points(realized)),
             realized.cmp(&Decimal::ZERO),
@@ -1582,25 +1849,28 @@ impl PaperTrading {
     /// the open profit at the current mark. `None` while flat.
     #[must_use]
     pub fn position_summary(&self) -> Option<PositionSummary> {
-        let position = self.sim.position()?;
+        let position = self.venue.position()?;
         Some(PositionSummary {
             side: position.side,
             quantity: position.quantity,
             avg_price: position.avg_price,
-            open_points: self.sim.mark_price().map(|mark| position.open_points(mark)),
+            open_points: self
+                .venue
+                .mark_price()
+                .map(|mark| position.open_points(mark)),
         })
     }
 
     /// Exit the open position at the next print — the toolbar's close
     /// button, the HUD's, and the Trading tab's all funnel here.
     pub fn close_position(&mut self) {
-        let events = self.sim.apply(Command::ClosePosition);
+        let events = self.venue.close(CloseAmount::All);
         self.handle_events(events);
     }
 
     /// Close the position and cancel every pending order.
     pub fn flatten(&mut self) {
-        let events = self.sim.apply(Command::Flatten);
+        let events = self.venue.flatten();
         self.handle_events(events);
     }
 
@@ -1609,22 +1879,21 @@ impl PaperTrading {
     /// form's protective offsets apply to the new entry, exactly as they do
     /// to any market order.
     pub fn reverse_position(&mut self) {
-        let Some(position) = self.sim.position().cloned() else {
+        let Some(position) = self.venue.position().cloned() else {
             return;
         };
         let side = match position.side {
             Side::Buy => Side::Sell,
             Side::Sell => Side::Buy,
         };
-        let reference = self.sim.mark_price().unwrap_or_default();
+        let reference = self.venue.mark_price().unwrap_or_default();
         let Some(bracket) = self.parse_bracket(side, reference) else {
             return;
         };
-        let events = self.sim.apply(Command::PlaceMarket {
-            side,
-            quantity: position.quantity.saturating_add(position.quantity),
-            bracket,
-        });
+        let events = self.venue.submit(
+            OrderIntent::market(side, position.quantity.saturating_add(position.quantity))
+                .with_bracket(bracket),
+        );
         self.handle_events(events);
     }
 
@@ -1650,7 +1919,7 @@ impl PaperTrading {
             return word.to_owned();
         };
         let qty_text = fmt_decimal(qty);
-        let Some(position) = self.sim.position() else {
+        let Some(position) = self.venue.position() else {
             return format!("{word} {qty_text}");
         };
         if position.side == side {
@@ -1716,7 +1985,7 @@ impl PaperTrading {
     /// label. `None` while flat, which is what removes the button.
     #[must_use]
     pub fn close_button_label(&self) -> Option<String> {
-        let position = self.sim.position()?;
+        let position = self.venue.position()?;
         Some(format!(
             "Close {} {}",
             fmt_decimal(position.quantity),
@@ -1763,7 +2032,7 @@ impl PaperTrading {
             pointer,
         };
 
-        for order in self.sim.orders() {
+        for order in self.venue.working_orders() {
             let Some(level) = order.price else { continue };
             let dragged = self.drag == PaperDrag::Order(order.id);
             let price = if dragged {
@@ -1773,7 +2042,16 @@ impl PaperTrading {
                 level.to_f64().unwrap_or_default()
             };
             let y = ctx.scale.y(price);
-            if !ctx.in_range(y) {
+            // The order's own line may be scrolled off while a leg of its
+            // bracket is still on screen, so the legs are painted before
+            // this gate rather than after it. `control_at` offers a leg's
+            // cross whenever that leg is visible; skipping the paint here
+            // left a cross that cleared a take profit on what looked like
+            // empty chart — the inversion of "an invisible control is not a
+            // control", and the more dangerous half of it.
+            let entry_visible = ctx.in_range(y);
+            if !entry_visible {
+                self.draw_bracket_of(&ctx, BracketTarget::Order(order.id), true, false);
                 continue;
             }
             // At rest the tag is a pill; it opens under the pointer. Read,
@@ -1819,9 +2097,30 @@ impl PaperTrading {
             // The ✕ is painted exactly when the press-side offers it —
             // one value, read twice, never two formulas.
             ctx.chip_tag(y, theme::ACCENT, &text, open.is_some_and(|tag| tag.cancel));
+
+            // The order's own protective legs, and the handles for the ones
+            // it does not have yet. Dashed, because they are a promise: they
+            // arm on the fill and not before. They paint here, beside the
+            // order, rather than after every order — an order's stop belongs
+            // in that order's z-order, not above a later order's line.
+            //
+            // Revealed by the same two things that open the tag: the line
+            // under the pointer, or the order's row hovered in the dock. An
+            // always-visible pair of buttons beside every resting order would
+            // bury the candles they sit on.
+            self.draw_bracket_of(
+                &ctx,
+                BracketTarget::Order(order.id),
+                true,
+                hovered || expanded,
+            );
         }
 
-        if let Some(position) = self.sim.position().cloned() {
+        // Whether the pointer is on the position's entry line or its tag —
+        // written inside the block below, read by the bracket paint after
+        // it, because the tag's rect is only known once it is drawn.
+        let mut position_reveal = false;
+        if let Some(position) = self.venue.position().cloned() {
             let color = theme::side_color(position.side);
             let entry_y = ctx.scale.y(position.avg_price.to_f64().unwrap_or_default());
             if ctx.in_range(entry_y) {
@@ -1833,7 +2132,7 @@ impl PaperTrading {
                     fmt_decimal(position.quantity),
                 );
                 let points = self
-                    .sim
+                    .venue
                     .mark_price()
                     .map(|mark| position.open_points(mark))
                     .map(|open| {
@@ -1844,79 +2143,18 @@ impl PaperTrading {
                     });
                 let line_hovered = ctx.hovers_line(entry_y);
                 let tag_rect = ctx.position_tag(entry_y, color, &side_text, points);
-
-                // Labelled handles for the missing bracket legs, revealed
-                // while the pointer is on the entry line, its tag, or the
-                // handles themselves — the affordance behind "drag from the
-                // position line to create". Their rects are the hit-test's
-                // own geometry, so a revealed handle is always pressable.
-                let entry_center =
-                    clamp_tag_center(entry_y, ctx.chart_rect.top(), ctx.chart_rect.bottom());
-                // Each handle sits on its leg's *price* side of the entry,
-                // mapped through the chart's orientation: upside down the TP
-                // handle keeps pointing at take-profit prices instead of
-                // trading places with the stop's — the same price-not-pixels
-                // rule `decide_pending_leg` follows.
-                let flip = ctx.scale.is_inverted();
-                let legs = [
-                    (
-                        position.stop_loss.is_none(),
-                        "SL",
-                        (position.side == Side::Sell) != flip,
-                        theme::SELL,
-                    ),
-                    (
-                        position.take_profit.is_none(),
-                        "TP",
-                        (position.side == Side::Buy) != flip,
-                        theme::BUY,
-                    ),
-                ];
+                // The handles are revealed by the entry line or its tag —
+                // the affordance behind "drag from the position line to
+                // create".
                 let over_tag = ctx
                     .pointer
                     .is_some_and(|pointer| tag_rect.expand(TAG_HOVER_SLACK_PX).contains(pointer));
-                let over_handle = ctx.pointer.is_some_and(|pointer| {
-                    legs.iter().any(|(absent, _, above, _)| {
-                        *absent
-                            && bracket_handle_rect(ctx.tag_right, entry_center, *above)
-                                .contains(pointer)
-                    })
-                });
-                if self.drag == PaperDrag::None && (line_hovered || over_tag || over_handle) {
-                    for (absent, label, above, leg_color) in legs {
-                        if !absent {
-                            continue;
-                        }
-                        let rect = bracket_handle_rect(ctx.tag_right, entry_center, above);
-                        ctx.bracket_handle(rect, label, leg_color);
-                    }
-                }
+                position_reveal = line_hovered || over_tag;
             }
 
-            self.draw_bracket_leg(
-                &ctx,
-                &LegPaint {
-                    position: &position,
-                    level: position.stop_loss,
-                    other_level: position.take_profit,
-                    word: "SL",
-                    color: theme::SELL,
-                    amend: PaperDrag::StopLoss,
-                    create: PaperDrag::CreateStopLoss,
-                },
-            );
-            self.draw_bracket_leg(
-                &ctx,
-                &LegPaint {
-                    position: &position,
-                    level: position.take_profit,
-                    other_level: position.stop_loss,
-                    word: "TP",
-                    color: theme::BUY,
-                    amend: PaperDrag::TakeProfit,
-                    create: PaperDrag::CreateTakeProfit,
-                },
-            );
+            // Live legs on an open position: solid, because they are exits
+            // that can fire on the next print.
+            self.draw_bracket_of(&ctx, BracketTarget::Position, false, position_reveal);
         }
 
         if let Some(armed) = self.armed {
@@ -2028,10 +2266,13 @@ impl PaperTrading {
     /// the dashed preview of where release would put it. The tag gains the
     /// live R:R read once both legs are known, which is what turns the drag
     /// into a decision.
-    fn draw_bracket_leg(&self, ctx: &PaintCtx<'_>, leg: &LegPaint<'_>) {
-        let amending = self.drag == leg.amend;
-        let creating = self.drag == leg.create && leg.level.is_none();
-        let resting = leg.level.map(|level| level.to_f64().unwrap_or_default());
+    fn draw_bracket_leg(&self, ctx: &PaintCtx<'_>, paint: &LegPaint) {
+        let identity = (paint.owner, paint.leg);
+        let amending =
+            matches!(self.drag, PaperDrag::Leg { owner, leg } if (owner, leg) == identity);
+        let creating = matches!(self.drag, PaperDrag::CreateLeg { owner, leg } if (owner, leg) == identity)
+            && paint.level.is_none();
+        let resting = paint.level.map(|level| level.to_f64().unwrap_or_default());
         let price = if amending || creating {
             self.drag_price.or(resting)
         } else {
@@ -2047,26 +2288,175 @@ impl PaperTrading {
         let shown = if dragging {
             self.snap(price)
         } else {
-            leg.level.unwrap_or_else(|| self.snap(price))
+            paint.level.unwrap_or_else(|| self.snap(price))
         };
-        // A leg being created previews dashed — it is not an order yet.
-        ctx.level_line(y, leg.color, creating, LINE_WIDTH_PX, hovered, dragging);
-        ctx.gutter_chip(y, leg.color, &fmt_decimal(shown));
-        let mut text = format!(
-            "{} {} {} pts",
-            leg.word,
-            fmt_decimal(shown),
-            fmt_signed_points(leg.position.open_points(shown)),
+        let color = paint.leg.color();
+        // Dashed while it is being created (it is not placed yet) and while
+        // it rides an unfilled order (it is a promise that arms on the
+        // fill). Solid only once it is a live exit on an open position.
+        ctx.level_line(
+            y,
+            color,
+            creating || paint.pending,
+            LINE_WIDTH_PX,
+            hovered,
+            dragging,
         );
-        if dragging && let Some(ratio) = rr_ratio(leg, shown) {
+        ctx.gutter_chip(y, color, &fmt_decimal(shown));
+        // A leg riding an unfilled order names the order it belongs to and
+        // says it is not protecting anything yet.
+        //
+        // Both halves are honesty, not decoration. Without the id, two
+        // resting orders put two identical `SL` tags on the chart and no
+        // way to tell which is whose. Without `on fill`, `SL 90.0 -5.0
+        // pts` reads exactly like a live position's stop — a trader would
+        // read protection they do not have, which is the same class of
+        // mistake as reading a simulated fill as a real one. Dashing the
+        // line says it too, but a dash is not a sentence, and this is the
+        // number the eye lands on.
+        let owner = match paint.owner {
+            BracketTarget::Order(id) => format!("#{} ", id.0),
+            BracketTarget::Position => String::new(),
+        };
+        let mut text = format!(
+            "{}{} {} {} pts",
+            owner,
+            paint.leg.word(),
+            fmt_decimal(shown),
+            fmt_signed_points(signed_points(
+                paint.side,
+                paint.reference,
+                shown,
+                paint.quantity
+            )),
+        );
+        if paint.pending {
+            text.push_str(" · on fill");
+        }
+        if dragging && let Some(ratio) = rr_ratio(paint, shown) {
             text.push_str(&format!(" · R:R {ratio}"));
         }
-        ctx.chip_tag(y, leg.color, &text, !dragging);
+        ctx.chip_tag(y, color, &text, !dragging);
+    }
+
+    /// Both legs of one bracket owner, plus the labelled handles for the
+    /// legs it does not have yet.
+    ///
+    /// One function for the position and for every working order: the
+    /// grammar a trader learns on a position is the grammar that then works
+    /// on an order, because it is the same code. `reveal` is whether the
+    /// owner's own line or tag is under the pointer — the handles appear
+    /// with it, since an always-visible pair of buttons beside every
+    /// resting order would bury the candles they sit on.
+    fn draw_bracket_of(
+        &self,
+        ctx: &PaintCtx<'_>,
+        owner: BracketTarget,
+        pending: bool,
+        reveal: bool,
+    ) {
+        let Some((side, reference, bracket, quantity)) = self.bracket_owner(owner) else {
+            return;
+        };
+        for leg in [Leg::StopLoss, Leg::TakeProfit] {
+            self.draw_bracket_leg(
+                ctx,
+                &LegPaint {
+                    owner,
+                    leg,
+                    side,
+                    reference,
+                    quantity,
+                    level: leg.level(bracket),
+                    other_level: leg.other(bracket),
+                    pending,
+                },
+            );
+        }
+        if self.drag != PaperDrag::None {
+            return;
+        }
+        let reference_y = ctx.scale.y(reference.to_f64().unwrap_or_default());
+        if !ctx.in_range(reference_y) {
+            return;
+        }
+        let center = clamp_tag_center(reference_y, ctx.chart_rect.top(), ctx.chart_rect.bottom());
+        // Each handle sits on its leg's *price* side of the reference,
+        // mapped through the chart's orientation: upside down the TP handle
+        // keeps pointing at take-profit prices instead of trading places
+        // with the stop's — the same price-not-pixels rule
+        // `decide_pending_leg` follows.
+        let flip = ctx.scale.is_inverted();
+        let missing = [Leg::StopLoss, Leg::TakeProfit]
+            .into_iter()
+            .filter(|leg| leg.level(bracket).is_none());
+        let over_handle = ctx.pointer.is_some_and(|pointer| {
+            missing.clone().any(|leg| {
+                bracket_handle_rect(ctx.tag_right, center, leg.sits_above_entry(side) != flip)
+                    .contains(pointer)
+            })
+        });
+        if !handles_visible(ctx.pointer, reveal, over_handle) {
+            return;
+        }
+        for leg in missing {
+            let rect =
+                bracket_handle_rect(ctx.tag_right, center, leg.sits_above_entry(side) != flip);
+            ctx.bracket_handle(rect, leg.word(), leg.color());
+        }
     }
 
     /// Route pointer input to the simulated lines. Returns true when paper
     /// trading owns the gesture this frame — the chart must not pan and the
     /// drawings must not select under it.
+    /// Where `QUANTICK_PAPER_ORDER_HOVER` parks the hand a capture run does
+    /// not have — on the first working order's line, in the tag column.
+    ///
+    /// The hook forces the *tag* open, but the bracket handles are drawn
+    /// only where a pointer actually is, so that a pane the hand is not on
+    /// never offers a press it will not take. Without a parked pointer the
+    /// handles would be unreachable from a scripted run — the ParkedHand
+    /// problem the aim's own `CmdPreviewForce` already solves this way.
+    ///
+    /// Only the pane feeding paper input asks, so parking one hand cannot
+    /// put handles on two charts. It paints and never places: this is read
+    /// by the draw, and the press side reads the real pointer alone.
+    #[must_use]
+    pub fn forced_hover_pointer(
+        &self,
+        chart: egui::Rect,
+        tag_right: f32,
+        scale: &PriceScale,
+    ) -> Option<egui::Pos2> {
+        if !self.order_hover_force {
+            return None;
+        }
+        // The first order whose line this pane can actually show. Not
+        // simply the first order: panes hold different price ranges, and a
+        // hand parked on a line that is off-range here would be a hand on
+        // nothing — the handles would stay unreachable on exactly the pane
+        // the capture was pointed at.
+        self.venue
+            .working_orders()
+            .iter()
+            .filter_map(|order| order.price)
+            .map(|level| scale.y(level.to_f64().unwrap_or_default()))
+            .find(|y| *y >= chart.top() && *y <= chart.bottom())
+            .map(|y| egui::pos2(tag_right - TAG_GAP_PX - TAG_BUTTON_PX / 2.0, y))
+    }
+
+    /// Whether a chart gesture this module owns is in flight — a line being
+    /// dragged, a bracket leg being pulled into existence.
+    ///
+    /// The tab asks so it can keep the gesture with the pane that started
+    /// it: the price under a grabbed line is read against one pane's scale,
+    /// and letting the pointer wander into a neighbour mid-drag would
+    /// reprice the order to whatever that pane's scale says.
+    #[must_use]
+    pub fn gesture_active(&self) -> bool {
+        self.drag != PaperDrag::None
+    }
+
     /// Cancel the transient chart interaction — an armed placement or a
     /// grabbed line (dropped without submitting). Called from the app's
     /// escape stack; returns true when there was something to cancel, so
@@ -2091,14 +2481,14 @@ impl PaperTrading {
     /// paints marks for.
     #[must_use]
     pub fn session_trades(&self) -> &[ClosedTrade] {
-        self.sim.closed_trades()
+        self.venue.closed_trades()
     }
 
     /// The resting entry orders, in placement order — the simulator's own
     /// view, read-only.
     #[must_use]
     pub fn working_orders(&self) -> &[quantick_sim::Order] {
-        self.sim.orders()
+        self.venue.working_orders()
     }
 
     /// Index (into [`Self::session_trades`]) of the ledger's selected
@@ -2106,7 +2496,17 @@ impl PaperTrading {
     #[must_use]
     pub fn selected_trade_index(&self) -> Option<usize> {
         self.selected_trade
-            .filter(|index| *index < self.sim.closed_trades().len())
+            .filter(|index| *index < self.venue.closed_trades().len())
+    }
+
+    /// Hand one [`Command`] to the attached venue.
+    ///
+    /// The chart's own gestures build [`OrderIntent`]s and call the port
+    /// directly; this exists for the callers that already speak `Command`
+    /// — the strategy kernel, the scripted demo, and the tests that drive
+    /// this host the way the kernel does.
+    fn dispatch(&mut self, command: Command) -> Vec<VenueEvent> {
+        command.dispatch(self.venue.as_mut())
     }
 
     pub fn handle_chart_input(&mut self, input: &ChartInput<'_>) -> bool {
@@ -2142,18 +2542,13 @@ impl PaperTrading {
         {
             match control {
                 PaperControl::ClosePosition => self.close_position(),
-                PaperControl::ClearStopLoss => self.clear_bracket_leg(true),
-                PaperControl::ClearTakeProfit => self.clear_bracket_leg(false),
+                PaperControl::ClearLeg { owner, leg } => self.amend_leg(owner, leg, None),
                 PaperControl::CancelOrder(id) => {
-                    let events = self.sim.apply(Command::CancelOrder { id });
+                    let events = self.venue.cancel(id);
                     self.handle_events(events);
                 }
-                PaperControl::HandleStopLoss => {
-                    self.drag = PaperDrag::CreateStopLoss;
-                    self.drag_price = Some(scale.price_at(pointer.y));
-                }
-                PaperControl::HandleTakeProfit => {
-                    self.drag = PaperDrag::CreateTakeProfit;
+                PaperControl::Handle { owner, leg } => {
+                    self.drag = PaperDrag::CreateLeg { owner, leg };
                     self.drag_price = Some(scale.price_at(pointer.y));
                 }
             }
@@ -2227,25 +2622,15 @@ impl PaperTrading {
             let drag = std::mem::take(&mut self.drag);
             if let Some(price) = self.drag_price.take() {
                 let price = self.snap(price);
-                let command = match drag {
-                    PaperDrag::StopLoss | PaperDrag::CreateStopLoss => {
-                        self.sim.position().map(|position| Command::SetBracket {
-                            stop_loss: Some(price),
-                            take_profit: position.take_profit,
-                        })
+                match drag {
+                    PaperDrag::Leg { owner, leg } | PaperDrag::CreateLeg { owner, leg } => {
+                        self.amend_leg(owner, leg, Some(price));
                     }
-                    PaperDrag::TakeProfit | PaperDrag::CreateTakeProfit => {
-                        self.sim.position().map(|position| Command::SetBracket {
-                            stop_loss: position.stop_loss,
-                            take_profit: Some(price),
-                        })
+                    PaperDrag::Order(id) => {
+                        let events = self.venue.amend_price(id, price);
+                        self.handle_events(events);
                     }
-                    PaperDrag::Order(id) => Some(Command::ModifyOrder { id, price }),
-                    PaperDrag::None | PaperDrag::Blocked | PaperDrag::CreatePending => None,
-                };
-                if let Some(command) = command {
-                    let events = self.sim.apply(command);
-                    self.handle_events(events);
+                    PaperDrag::None | PaperDrag::Blocked | PaperDrag::CreatePending => {}
                 }
             }
             return true;
@@ -2254,23 +2639,49 @@ impl PaperTrading {
         self.drag != PaperDrag::None
     }
 
-    /// Remove one protective leg, keeping the other — the tag ✕'s command.
-    fn clear_bracket_leg(&mut self, stop: bool) {
-        let Some(position) = self.sim.position() else {
+    /// What a bracket owner looks like to every gesture in this module:
+    /// the side it trades, the price its legs are judged against, the
+    /// bracket it carries today, and the size that turns a level into
+    /// points.
+    ///
+    /// The position's reference is its average entry; a working order's is
+    /// its own resting price. That is the same reference the venue
+    /// validates against, so a leg the chart lets you drop is a leg the
+    /// venue accepts — the two never disagree about which side of the
+    /// entry is protective.
+    fn bracket_owner(&self, owner: BracketTarget) -> Option<(Side, Decimal, Bracket, Decimal)> {
+        match owner {
+            BracketTarget::Position => self.venue.position().map(|position| {
+                (
+                    position.side,
+                    position.avg_price,
+                    Bracket {
+                        stop_loss: position.stop_loss,
+                        take_profit: position.take_profit,
+                    },
+                    position.quantity,
+                )
+            }),
+            BracketTarget::Order(id) => self
+                .venue
+                .working_orders()
+                .iter()
+                .find(|order| order.id == id)
+                .and_then(|order| {
+                    order
+                        .price
+                        .map(|price| (order.side, price, order.bracket, order.quantity))
+                }),
+        }
+    }
+
+    /// Set or clear one protective leg, keeping the other — the tag cross's
+    /// command and the drop of a leg drag, which are the same amendment.
+    fn amend_leg(&mut self, owner: BracketTarget, leg: Leg, level: Option<Decimal>) {
+        let Some((.., bracket, _)) = self.bracket_owner(owner) else {
             return;
         };
-        let command = if stop {
-            Command::SetBracket {
-                stop_loss: None,
-                take_profit: position.take_profit,
-            }
-        } else {
-            Command::SetBracket {
-                stop_loss: position.stop_loss,
-                take_profit: None,
-            }
-        };
-        let events = self.sim.apply(command);
+        let events = self.venue.amend_bracket(owner, leg.applied(bracket, level));
         self.handle_events(events);
     }
 
@@ -2294,7 +2705,7 @@ impl PaperTrading {
             (y >= chart.top() && y <= chart.bottom())
                 .then(|| clamp_tag_center(y, chart.top(), chart.bottom()))
         };
-        for order in self.sim.orders().iter().rev() {
+        for order in self.venue.working_orders().iter().rev() {
             // A tag that paints no ✕ offers none: the press reads the very
             // value the paint read, rather than recomputing a predicate
             // from a different pointer and a different rect.
@@ -2306,47 +2717,84 @@ impl PaperTrading {
                 return Some(PaperControl::CancelOrder(order.id));
             }
         }
-        let position = self.sim.position()?;
-        if let Some(target) = position.take_profit
-            && let Some(center_y) = visible_center(target)
-            && close_button_rect(tag_right, center_y).contains(pointer)
-        {
-            return Some(PaperControl::ClearTakeProfit);
+        // Legs and handles, for every owner that has them. Working orders
+        // first and newest-first, matching the draw stack above; the
+        // position last, because its legs are the ones a trader reaches for
+        // least often while an entry is still resting on top of them.
+        for owner in self.bracket_owners() {
+            let Some((side, reference, bracket, _)) = self.bracket_owner(owner) else {
+                continue;
+            };
+            let reference_center = visible_center(reference);
+            for leg in [Leg::TakeProfit, Leg::StopLoss] {
+                match leg.level(bracket) {
+                    // A leg that exists offers its cross.
+                    Some(level) => {
+                        if let Some(center_y) = visible_center(level)
+                            && close_button_rect(tag_right, center_y).contains(pointer)
+                        {
+                            return Some(PaperControl::ClearLeg { owner, leg });
+                        }
+                    }
+                    // A leg that does not offers its handle. Same
+                    // orientation mapping as the paint: the hit-test and the
+                    // pixels must name the same handle, or a press acts on
+                    // the leg the trader was not looking at.
+                    None => {
+                        if let Some(center_y) = reference_center
+                            && bracket_handle_rect(
+                                tag_right,
+                                center_y,
+                                leg.sits_above_entry(side) != scale.is_inverted(),
+                            )
+                            .contains(pointer)
+                        {
+                            return Some(PaperControl::Handle { owner, leg });
+                        }
+                    }
+                }
+            }
         }
-        if let Some(stop) = position.stop_loss
-            && let Some(center_y) = visible_center(stop)
-            && close_button_rect(tag_right, center_y).contains(pointer)
-        {
-            return Some(PaperControl::ClearStopLoss);
-        }
+        let position = self.venue.position()?;
         let entry_center = visible_center(position.avg_price)?;
         if close_button_rect(tag_right, entry_center).contains(pointer) {
             return Some(PaperControl::ClosePosition);
         }
-        // Same orientation mapping as the paint's `legs`: the hit-test and
-        // the pixels must name the same handle or a press acts on the leg
-        // the trader was not looking at.
-        if position.take_profit.is_none()
-            && bracket_handle_rect(
-                tag_right,
-                entry_center,
-                (position.side == Side::Buy) != scale.is_inverted(),
-            )
-            .contains(pointer)
-        {
-            return Some(PaperControl::HandleTakeProfit);
-        }
-        if position.stop_loss.is_none()
-            && bracket_handle_rect(
-                tag_right,
-                entry_center,
-                (position.side == Side::Sell) != scale.is_inverted(),
-            )
-            .contains(pointer)
-        {
-            return Some(PaperControl::HandleStopLoss);
-        }
         None
+    }
+
+    /// Everything that can carry a bracket right now, in the order a press
+    /// should consider it — which is **the reverse of the paint**, topmost
+    /// first.
+    ///
+    /// `draw_layer` paints the working orders and then the position, so the
+    /// position's lines and tag sit on top of them. A press has to resolve
+    /// the same way or the two disagree wherever they overlap: a position
+    /// stopped at 90 and a resting entry whose own stop is also 90 show the
+    /// position's solid leg, and a hit-test that reached the order first
+    /// would clear the entry's protection while the trader was looking at
+    /// the position's.
+    ///
+    /// An iterator and not a `Vec`, because both callers run **per frame**,
+    /// not per press: `hover_cursor` asks `control_at` and `line_at` what is
+    /// under the pointer on every frame the hand is over the chart, and
+    /// `compute_cmd_preview` asks both again. A vector here was four small
+    /// allocations a frame for a list that is usually empty. Everything it
+    /// borrows is borrowed immutably, so a caller can walk it while asking
+    /// `self` about each entry.
+    fn bracket_owners(&self) -> impl Iterator<Item = BracketTarget> + '_ {
+        self.venue
+            .position()
+            .is_some()
+            .then_some(BracketTarget::Position)
+            .into_iter()
+            .chain(
+                self.venue
+                    .working_orders()
+                    .iter()
+                    .rev()
+                    .map(|order| BracketTarget::Order(order.id)),
+            )
     }
 
     /// The preview the pointer and the held key describe this frame;
@@ -2423,17 +2871,13 @@ impl PaperTrading {
         {
             return None;
         }
-        let mark = self.sim.mark_price()?;
+        let mark = self.venue.mark_price()?;
         let raw_price = scale.price_at(pointer.y);
         let price = self.snap(raw_price);
-        // The context menu's own validity table: above the mark a buy
-        // stops in, below it a buy waits at a limit; a sell mirrors. On
-        // the mark exactly nothing can rest.
-        let kind = match (price > mark, price < mark, side) {
-            (true, _, Side::Buy) | (_, true, Side::Sell) => EntryKind::Stop,
-            (true, _, Side::Sell) | (_, true, Side::Buy) => EntryKind::Limit,
-            _ => return None,
-        };
+        // The context menu's own validity table, plus the trader's stated
+        // kind. `None` stands the aim down rather than substituting the
+        // other kind — see `resolve_cmd_kind`.
+        let kind = resolve_cmd_kind(self.cmd_trading.kind, side, price, mark)?;
         Some(CmdPreview {
             side,
             kind,
@@ -2472,7 +2916,7 @@ impl PaperTrading {
         let Some(scale) = input.scale else {
             return;
         };
-        for order in self.sim.orders() {
+        for order in self.venue.working_orders() {
             let Some(level) = order.price else { continue };
             let dragged = self.drag == PaperDrag::Order(order.id);
             let price = if dragged {
@@ -2505,7 +2949,7 @@ impl PaperTrading {
     /// Turn a pending entry-line press into the leg the pull chose, once it
     /// travelled far enough to mean it.
     fn decide_pending_leg(&mut self, pointer_y: f32, scale: &PriceScale) {
-        let Some(position) = self.sim.position() else {
+        let Some(position) = self.venue.position() else {
             self.drag = PaperDrag::Blocked;
             return;
         };
@@ -2523,14 +2967,22 @@ impl PaperTrading {
             Side::Buy => above_entry,
             Side::Sell => !above_entry,
         };
-        self.drag = if profit_side {
-            if position.take_profit.is_none() {
-                PaperDrag::CreateTakeProfit
-            } else {
-                PaperDrag::Blocked
+        let leg = if profit_side {
+            Leg::TakeProfit
+        } else {
+            Leg::StopLoss
+        };
+        let bracket = Bracket {
+            stop_loss: position.stop_loss,
+            take_profit: position.take_profit,
+        };
+        // A side whose leg already exists stays blocked: that leg's own
+        // line is its handle.
+        self.drag = if leg.level(bracket).is_none() {
+            PaperDrag::CreateLeg {
+                owner: BracketTarget::Position,
+                leg,
             }
-        } else if position.stop_loss.is_none() {
-            PaperDrag::CreateStopLoss
         } else {
             PaperDrag::Blocked
         };
@@ -2565,11 +3017,10 @@ impl PaperTrading {
         }
         match self.line_at(pointer, scale)? {
             PaperDrag::Blocked => Some(egui::CursorIcon::NotAllowed),
-            PaperDrag::StopLoss
-            | PaperDrag::TakeProfit
-            | PaperDrag::Order(_)
-            | PaperDrag::CreatePending => Some(egui::CursorIcon::ResizeVertical),
-            PaperDrag::None | PaperDrag::CreateStopLoss | PaperDrag::CreateTakeProfit => None,
+            PaperDrag::Leg { .. } | PaperDrag::Order(_) | PaperDrag::CreatePending => {
+                Some(egui::CursorIcon::ResizeVertical)
+            }
+            PaperDrag::None | PaperDrag::CreateLeg { .. } => None,
         }
     }
 
@@ -2582,24 +3033,26 @@ impl PaperTrading {
             let y = scale.y(price.to_f64().unwrap_or_default());
             (pointer.y - y).abs() <= LINE_GRAB_RADIUS_PX
         };
-        for order in self.sim.orders().iter().rev() {
+        for order in self.venue.working_orders().iter().rev() {
             if let Some(level) = order.price
                 && near(level)
             {
                 return Some(PaperDrag::Order(order.id));
             }
         }
-        let position = self.sim.position()?;
-        if let Some(target) = position.take_profit
-            && near(target)
-        {
-            return Some(PaperDrag::TakeProfit);
+        for owner in self.bracket_owners() {
+            let Some((.., bracket, _)) = self.bracket_owner(owner) else {
+                continue;
+            };
+            for leg in [Leg::TakeProfit, Leg::StopLoss] {
+                if let Some(level) = leg.level(bracket)
+                    && near(level)
+                {
+                    return Some(PaperDrag::Leg { owner, leg });
+                }
+            }
         }
-        if let Some(stop) = position.stop_loss
-            && near(stop)
-        {
-            return Some(PaperDrag::StopLoss);
-        }
+        let position = self.venue.position()?;
         if near(position.avg_price) {
             let creatable = position.stop_loss.is_none() || position.take_profit.is_none();
             return Some(if creatable {
@@ -2648,10 +3101,10 @@ impl PaperTrading {
             // Market never rests; the buttons fire it directly.
             EntryKind::Market => return false,
         };
-        let events = self.sim.apply(command);
+        let events = self.dispatch(command);
         let placed = events
             .iter()
-            .any(|event| matches!(event, SimEvent::Placed(_)));
+            .any(|event| matches!(event, VenueEvent::Placed(_)));
         self.handle_events(events);
         placed
     }
@@ -2667,7 +3120,7 @@ impl PaperTrading {
                 .size(11.0)
                 .color(theme::TEXT_MUTED),
         );
-        let Some(mark) = self.sim.mark_price() else {
+        let Some(mark) = self.venue.mark_price() else {
             ui.label(
                 egui::RichText::new("no print yet - there is no market to trade against")
                     .color(theme::TEXT_MUTED)
@@ -2722,7 +3175,7 @@ impl PaperTrading {
     /// instrument can actually print.
     fn snap(&self, price: f64) -> Decimal {
         let places = self
-            .sim
+            .venue
             .mark_price()
             .map_or(SNAP_FALLBACK_DECIMALS, |mark| mark.scale());
         Decimal::from_f64_retain(price)
@@ -2784,7 +3237,7 @@ impl PaperTrading {
     /// session's realized points), the full card while a position is open —
     /// identity, brackets with their P&L, the R:R read, and the actions.
     fn draw_position_card(&mut self, ui: &mut egui::Ui) {
-        let Some(position) = self.sim.position().cloned() else {
+        let Some(position) = self.venue.position().cloned() else {
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new("FLAT")
@@ -2792,7 +3245,7 @@ impl PaperTrading {
                         .color(theme::TEXT_MUTED),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let realized = self.sim.realized_points();
+                    let realized = self.venue.realized_points();
                     ui.label(
                         egui::RichText::new(format!("{} pts", fmt_signed_points(realized)))
                             .monospace()
@@ -2802,7 +3255,7 @@ impl PaperTrading {
                     .on_hover_text("this session's realized points");
                 });
             });
-            if !self.sim.orders().is_empty()
+            if !self.venue.working_orders().is_empty()
                 && ui
                     .button("Cancel all orders")
                     .on_hover_text("remove every working order without trading (Shift+X)")
@@ -2813,7 +3266,10 @@ impl PaperTrading {
             return;
         };
         let color = theme::side_color(position.side);
-        let open = self.sim.mark_price().map(|mark| position.open_points(mark));
+        let open = self
+            .venue
+            .mark_price()
+            .map(|mark| position.open_points(mark));
 
         // Identity: the HUD's own chip, so the two surfaces read as one.
         ui.horizontal(|ui| {
@@ -2962,7 +3418,7 @@ impl PaperTrading {
             }
         }
         if let Some(command) = bracket_change {
-            let events = self.sim.apply(command);
+            let events = self.dispatch(command);
             self.handle_events(events);
         }
 
@@ -3008,7 +3464,7 @@ impl PaperTrading {
                 )
                 .clicked()
             {
-                let events = self.sim.apply(Command::SetBracket {
+                let events = self.dispatch(Command::SetBracket {
                     stop_loss: Some(position.avg_price),
                     take_profit: position.take_profit,
                 });
@@ -3022,7 +3478,7 @@ impl PaperTrading {
                 )
                 .clicked()
             {
-                let events = self.sim.apply(Command::ClosePartial {
+                let events = self.dispatch(Command::ClosePartial {
                     quantity: (position.quantity / Decimal::TWO).normalize(),
                 });
                 self.handle_events(events);
@@ -3227,6 +3683,51 @@ impl PaperTrading {
                     });
             }
         });
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Place")
+                    .color(theme::TEXT_MUTED)
+                    .small(),
+            );
+            let current = self.cmd_trading.kind;
+            egui::ComboBox::from_id_salt("cmd_trading_entry_kind")
+                .width(64.0)
+                .selected_text(current.label())
+                .show_ui(ui, |ui| {
+                    for kind in CmdEntryKind::ALL {
+                        if ui.selectable_label(current == kind, kind.label()).clicked()
+                            && current != kind
+                        {
+                            self.cmd_trading.kind = kind;
+                            changed = true;
+                        }
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "which order the aim places - auto takes whichever kind can rest at \
+                     the price, limit and stop place only that one and show nothing where \
+                     it cannot rest",
+                );
+        });
+        if self.cmd_trading.enabled && self.cmd_trading.kind != CmdEntryKind::Auto {
+            // A stated kind is valid on one side of the market only, so the
+            // aim is silent on the other half of the chart. Said here, or a
+            // trader spends a minute wondering why the gesture died.
+            ui.label(
+                egui::RichText::new(format!(
+                    "the aim shows only where a {} can rest: {} the market",
+                    self.cmd_trading.kind.label(),
+                    if self.cmd_trading.kind == CmdEntryKind::Limit {
+                        "below it to buy, above it to sell"
+                    } else {
+                        "above it to buy, below it to sell"
+                    },
+                ))
+                .color(theme::TEXT_SUPPORT)
+                .small(),
+            );
+        }
         if self.cmd_trading.enabled && self.cmd_trading.buy == self.cmd_trading.sell {
             // A shared key is ambiguous, so the gesture shows nothing —
             // said here rather than discovered over the chart.
@@ -3273,25 +3774,27 @@ impl PaperTrading {
 
     /// Cancel every working order (resting and queued), trading nothing.
     pub fn cancel_all_orders(&mut self) {
-        let mut ids: Vec<OrderId> = self.sim.orders().iter().map(|order| order.id).collect();
-        ids.extend(self.sim.queued().iter().filter_map(|action| match action {
-            QueuedAction::Entry(order) => Some(order.id),
-            QueuedAction::Close | QueuedAction::ClosePartial { .. } => None,
-        }));
+        let mut ids: Vec<OrderId> = self
+            .venue
+            .working_orders()
+            .iter()
+            .map(|order| order.id)
+            .collect();
+        self.venue.in_flight_entries(&mut ids);
         for id in ids {
-            let events = self.sim.apply(Command::CancelOrder { id });
+            let events = self.venue.cancel(id);
             self.handle_events(events);
         }
     }
 
     fn draw_pending_orders(&mut self, ui: &mut egui::Ui) {
-        let queued_entries = self
-            .sim
-            .queued()
-            .iter()
-            .filter(|action| matches!(action, QueuedAction::Entry(_)))
-            .count();
-        let queued_closes = self.sim.queued().len() - queued_entries;
+        let mut in_flight = Vec::new();
+        self.venue.in_flight_entries(&mut in_flight);
+        let queued_entries = in_flight.len();
+        // Saturating, because the two reads cross a trait boundary and are
+        // documented independently: a venue whose `in_flight_entries` says
+        // more than its `in_flight` counts must not panic the render loop.
+        let queued_closes = self.venue.in_flight().saturating_sub(queued_entries);
         let orders: Vec<_> = self.working_orders().to_vec();
         ui.label(caption(&format!("WORKING ORDERS · {}", orders.len())));
         if queued_entries > 0 {
@@ -3363,7 +3866,7 @@ impl PaperTrading {
                         .on_hover_text("cancel this order")
                         .clicked()
                     {
-                        let events = self.sim.apply(Command::CancelOrder { id: order.id });
+                        let events = self.dispatch(Command::CancelOrder { id: order.id });
                         self.handle_events(events);
                     }
                 });
@@ -3378,7 +3881,7 @@ impl PaperTrading {
     fn draw_session_summary(&mut self, ui: &mut egui::Ui) -> Option<TradingTabAction> {
         let mut action = None;
         ui.horizontal(|ui| {
-            let realized = self.sim.realized_points();
+            let realized = self.venue.realized_points();
             ui.label(
                 egui::RichText::new(format!("{} pts", fmt_signed_points(realized)))
                     .monospace()
@@ -3388,7 +3891,7 @@ impl PaperTrading {
             ui.label(
                 egui::RichText::new(format!(
                     "realized · {} trades",
-                    self.sim.closed_trades().len()
+                    self.venue.closed_trades().len()
                 ))
                 .color(theme::TEXT_MUTED)
                 .small(),
@@ -3493,7 +3996,7 @@ impl PaperTrading {
             .iter()
             .flat_map(|cache| cache.rows.iter().map(|row| &row.trade));
         saved
-            .chain(self.sim.closed_trades().iter())
+            .chain(self.venue.closed_trades().iter())
             .map(|trade| CivilDate::from_ms(trade.closed_ms, tz).day_number())
             .collect()
     }
@@ -3605,16 +4108,21 @@ impl PaperTrading {
         if let Some(summary) = self.position_summary() {
             ui.label(caption("OPEN"));
             let held_ms = self
-                .sim
+                .venue
                 .mark_timestamp_ms()
-                .zip(self.sim.position().map(|position| position.opened_ms))
+                .zip(self.venue.position().map(|position| position.opened_ms))
                 .map(|(mark, opened)| mark.saturating_sub(opened));
             let symbol = (!self.symbol.is_empty()).then_some(self.symbol.as_str());
-            draw_open_row(ui, &summary, symbol, self.sim.mark_price(), held_ms);
+            draw_open_row(ui, &summary, symbol, self.venue.mark_price(), held_ms);
         }
 
-        let session: Vec<(usize, &ClosedTrade)> =
-            self.sim.closed_trades().iter().enumerate().rev().collect();
+        let session: Vec<(usize, &ClosedTrade)> = self
+            .venue
+            .closed_trades()
+            .iter()
+            .enumerate()
+            .rev()
+            .collect();
         let saved_len = self
             .history_cache
             .as_ref()
@@ -3706,7 +4214,7 @@ impl PaperTrading {
         // handful — are counted here.
         let totals = self
             .saved_totals
-            .plus(LedgerTotals::of(self.sim.closed_trades().iter()));
+            .plus(LedgerTotals::of(self.venue.closed_trades().iter()));
 
         let rows_listed = session.len() + earlier.len();
         let list_height = (ui.available_height() - TOTALS_STRIP_PX).max(LEDGER_ROW_HEIGHT_PX);
@@ -4573,7 +5081,7 @@ impl PaperTrading {
             rows.extend(cache.rows.iter().cloned());
         }
         rows.extend(
-            self.sim
+            self.venue
                 .closed_trades()
                 .iter()
                 .enumerate()
@@ -4665,17 +5173,17 @@ impl PaperTrading {
     /// instance sees its own acknowledgement twice — once directly, once
     /// via the buffer — which the state machine tolerates by design (every
     /// transition consumes its trigger, so a replayed event finds no match).
-    fn handle_events(&mut self, events: Vec<SimEvent>) {
+    fn handle_events(&mut self, events: Vec<VenueEvent>) {
         if self.bot_listening && !events.is_empty() {
             self.bot_events.extend(events.iter().cloned());
         }
         for event in events {
             match event {
-                SimEvent::Rejected(reason) => self.show_toast(format!("SIM: {reason}")),
-                SimEvent::BracketDropped { reason } => {
+                VenueEvent::Rejected(reason) => self.show_toast(format!("SIM: {reason}")),
+                VenueEvent::BracketDropped { reason } => {
                     self.show_toast(format!("SIM: dropped at the fill - {reason}"));
                 }
-                SimEvent::Filled(fill) => {
+                VenueEvent::Filled(fill) => {
                     if matches!(fill.role, quantick_sim::FillRole::Entry(_)) {
                         self.show_toast(format!(
                             "SIM fill: {} {} @ {}",
@@ -4685,7 +5193,7 @@ impl PaperTrading {
                         ));
                     }
                 }
-                SimEvent::Closed(trade) => {
+                VenueEvent::Closed(trade) => {
                     let saved = self.journal(&trade);
                     if self.report_open {
                         // The report reads from disk and the close just
@@ -4712,13 +5220,13 @@ impl PaperTrading {
                 // working-order chip vanishing with no narration reads as
                 // a glitch, so these toast like every other simulator act
                 // the trader did not click.
-                SimEvent::Cancelled {
+                VenueEvent::Cancelled {
                     order,
                     reason: quantick_sim::CancelReason::PriceTouched,
                 } => {
                     self.show_toast(format!("SIM cancelled {}: target traded first", order.id));
                 }
-                SimEvent::Cancelled {
+                VenueEvent::Cancelled {
                     order,
                     reason: quantick_sim::CancelReason::AccountOccupied,
                 } => {
@@ -5792,15 +6300,25 @@ struct PaintCtx<'a> {
 }
 
 /// One protective leg's paint inputs (see `draw_bracket_leg`).
-struct LegPaint<'a> {
-    position: &'a Position,
+struct LegPaint {
+    /// Whose leg this is. Also the drag identity: a leg being moved and a
+    /// leg being created differ only in whether it existed a frame ago.
+    owner: BracketTarget,
+    leg: Leg,
+    /// Side of the trade the leg protects.
+    side: Side,
+    /// The price the leg is measured against: the position's average entry,
+    /// or the order's own resting price.
+    reference: Decimal,
+    /// Size, so a level can be read as points rather than as a price.
+    quantity: Decimal,
+    /// This leg's level today, `None` while it does not exist yet.
     level: Option<Decimal>,
     /// The other leg's level, for the R:R read while dragging.
     other_level: Option<Decimal>,
-    word: &'static str,
-    color: egui::Color32,
-    amend: PaperDrag,
-    create: PaperDrag,
+    /// Whether the leg belongs to an order that has not filled: it is a
+    /// promise, not a live exit, and paints dashed to say so.
+    pending: bool,
 }
 
 impl PaintCtx<'_> {
@@ -6084,6 +6602,19 @@ pub(crate) fn close_button_rect(tag_right: f32, center_y: f32) -> egui::Rect {
     )
 }
 
+/// Whether a bracket owner's `SL`/`TP` handles paint this frame.
+///
+/// The pointer clause is the one that is easy to miss. A pane that is not
+/// feeding paper input has no pointer here, and `reveal` can still be true
+/// over there — an order's tag opens on *every* pane at once, by design, so
+/// one hover reads on both charts. Without the clause the other pane drew a
+/// pressable-looking handle beside an order whose presses it does not take:
+/// the exact inversion of the layer rule that an invisible control is not a
+/// control, and no better.
+fn handles_visible(pointer: Option<egui::Pos2>, reveal: bool, over_handle: bool) -> bool {
+    pointer.is_some() && (reveal || over_handle)
+}
+
 /// A bracket handle's rect: the ✕ column, one clear step above or below
 /// the entry line so it never overlaps the position tag between them.
 fn bracket_handle_rect(tag_right: f32, entry_y: f32, above: bool) -> egui::Rect {
@@ -6099,13 +6630,12 @@ fn bracket_handle_rect(tag_right: f32, entry_y: f32, above: bool) -> egui::Rect 
 /// Reward over risk at the dragged level, against the other leg — the read
 /// that turns a drag into a decision. `None` until both legs are known or
 /// while the risk is zero.
-fn rr_ratio(leg: &LegPaint<'_>, dragged: Decimal) -> Option<String> {
-    let other = leg.other_level?;
-    let entry = leg.position.avg_price;
-    let (stop, target) = if leg.word == "SL" {
-        (dragged, other)
-    } else {
-        (other, dragged)
+fn rr_ratio(paint: &LegPaint, dragged: Decimal) -> Option<String> {
+    let other = paint.other_level?;
+    let entry = paint.reference;
+    let (stop, target) = match paint.leg {
+        Leg::StopLoss => (dragged, other),
+        Leg::TakeProfit => (other, dragged),
     };
     let risk = entry.saturating_sub(stop).abs();
     let reward = target.saturating_sub(entry).abs();
@@ -7040,13 +7570,13 @@ mod tests {
         paper.seed(&print(0, 100));
         paper.market(Side::Buy);
         paper.on_trade(&print(1, 100));
-        let events = paper.sim.apply(Command::ClosePosition);
+        let events = paper.dispatch(Command::ClosePosition);
         paper.handle_events(events);
         paper.on_trade(&print(2, 105));
         // A second round trip appends to the same session file.
         paper.market(Side::Sell);
         paper.on_trade(&print(3, 105));
-        let events = paper.sim.apply(Command::ClosePosition);
+        let events = paper.dispatch(Command::ClosePosition);
         paper.handle_events(events);
         paper.on_trade(&print(4, 103));
 
@@ -7087,7 +7617,7 @@ mod tests {
         first.seed(&print(0, 100));
         first.market(Side::Buy);
         first.on_trade(&print(1, 100));
-        let events = first.sim.apply(Command::ClosePosition);
+        let events = first.dispatch(Command::ClosePosition);
         first.handle_events(events);
         first.on_trade(&print(2, 103));
         let folder = dir.join("ACCUM");
@@ -7106,7 +7636,7 @@ mod tests {
         second.seed(&print(10_000, 200));
         second.market(Side::Sell);
         second.on_trade(&print(10_001, 200));
-        let events = second.sim.apply(Command::ClosePosition);
+        let events = second.dispatch(Command::ClosePosition);
         second.handle_events(events);
         second.on_trade(&print(10_002, 190));
 
@@ -7143,7 +7673,7 @@ mod tests {
             kind: EntryKind::Limit,
         });
         paper.on_timeline_reset();
-        assert!(paper.sim.position().is_none());
+        assert!(paper.venue.position().is_none());
         assert!(
             paper.armed.is_none(),
             "an armed click dies with the timeline"
@@ -7179,7 +7709,7 @@ mod tests {
         paper.seed(&print(0, 100));
         paper.market(Side::Buy);
         paper.on_trade(&print(1, 100));
-        let events = paper.sim.apply(Command::ClosePosition);
+        let events = paper.dispatch(Command::ClosePosition);
         paper.handle_events(events);
         paper.on_trade(&print(2, 103));
         assert!(paper.journal_path.is_some(), "the close journaled under A");
@@ -7227,7 +7757,7 @@ mod tests {
         paper.seed(&print(0, 100));
         paper.market(Side::Buy);
         paper.on_trade(&print(1, 100));
-        let events = paper.sim.apply(Command::ClosePosition);
+        let events = paper.dispatch(Command::ClosePosition);
         paper.handle_events(events);
         paper.on_trade(&print(2, 105));
         assert!(paper.journal_path.is_some(), "the close journaled");
@@ -7280,7 +7810,7 @@ mod tests {
             paper.seed(&print(0, 100));
             paper.market(Side::Buy);
             paper.on_trade(&print(1, 100));
-            let events = paper.sim.apply(Command::ClosePosition);
+            let events = paper.dispatch(Command::ClosePosition);
             paper.handle_events(events);
             paper.on_trade(&print(2, 103));
         }
@@ -7321,10 +7851,10 @@ mod tests {
         paper.seed(&print(0, 100));
         paper.market(Side::Buy);
         paper.on_trade(&print(1, 100));
-        let events = paper.sim.apply(Command::ClosePosition);
+        let events = paper.dispatch(Command::ClosePosition);
         paper.handle_events(events);
         paper.on_trade(&print(2, 105));
-        assert_eq!(paper.sim.closed_trades().len(), 1);
+        assert_eq!(paper.venue.closed_trades().len(), 1);
 
         paper.set_session_source(history::SessionSource::Replay);
         paper.on_timeline_reset();
@@ -7348,7 +7878,7 @@ mod tests {
             paper.seed(&print(0, 100));
             paper.market(Side::Buy);
             paper.on_trade(&print(1, 100));
-            let events = paper.sim.apply(Command::ClosePosition);
+            let events = paper.dispatch(Command::ClosePosition);
             paper.handle_events(events);
             paper.on_trade(&print(2, 103));
             paper.on_timeline_reset();
@@ -7371,7 +7901,7 @@ mod tests {
         paper.seed(&print(0, 100));
         paper.market(Side::Buy);
         paper.on_trade(&print(1, 100));
-        let events = paper.sim.apply(Command::ClosePosition);
+        let events = paper.dispatch(Command::ClosePosition);
         paper.handle_events(events);
         paper.on_trade(&print(2, 105));
         paper.set_session_source(history::SessionSource::Replay);
@@ -8210,7 +8740,7 @@ mod tests {
             paper.seed(&print(id0, price));
             paper.market(Side::Buy);
             paper.on_trade(&print(id0 + 1, price));
-            let events = paper.sim.apply(Command::ClosePosition);
+            let events = paper.dispatch(Command::ClosePosition);
             paper.handle_events(events);
             paper.on_trade(&print(id0 + 2, price + 5));
         }
@@ -8247,7 +8777,7 @@ mod tests {
         paper.seed(&print(0, 100));
         paper.market(Side::Buy);
         paper.on_trade(&print(1, 100));
-        let events = paper.sim.apply(Command::ClosePosition);
+        let events = paper.dispatch(Command::ClosePosition);
         paper.handle_events(events);
         paper.on_trade(&print(2, 105));
 
@@ -8285,6 +8815,323 @@ mod tests {
         assert!(paper.toast.is_some(), "the refusal teaches, never silent");
     }
 
+    /// The headline gesture: a working order, hovered, offers labelled
+    /// SL/TP handles; pressing one and dragging sets that leg; the tape
+    /// then fills the order and the position opens already protected.
+    ///
+    /// This is the whole promise in one test — the handle the trader
+    /// presses, the venue call it produces, and the fill that arms it.
+    #[test]
+    fn dragging_a_working_orders_handle_arms_the_position_it_opens() {
+        let mut paper = PaperTrading::new();
+        paper.venue.seed(&print(0, 100));
+        // A buy limit at 95, below the market: the kind the tape can fill.
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
+        let id = paper.working_orders()[0].id;
+
+        // 80..120 over 400 px, price falling with y: 95 is y 250, 90 is y 300.
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let order_center = clamp_tag_center(250.0, chart.top(), chart.bottom());
+        // The SL handle sits on the losing side of a buy — below it.
+        let handle = bracket_handle_rect(chart.right(), order_center, false);
+        assert_eq!(
+            paper.control_at(handle.center(), chart, &scale),
+            Some(PaperControl::Handle {
+                owner: BracketTarget::Order(id),
+                leg: Leg::StopLoss,
+            }),
+            "a working order offers the same handles the position does"
+        );
+
+        // Press the handle, drag down to 90, release.
+        paper.handle_chart_input(&frame_at(chart, &scale, handle.center(), true, true, false));
+        assert_eq!(
+            paper.drag,
+            PaperDrag::CreateLeg {
+                owner: BracketTarget::Order(id),
+                leg: Leg::StopLoss,
+            },
+            "the press started a create-drag on the order, not the position"
+        );
+        paper.handle_chart_input(&frame(chart, &scale, 300.0, false, true, false));
+        paper.handle_chart_input(&frame(chart, &scale, 300.0, false, false, true));
+
+        assert_eq!(
+            paper.working_orders()[0].bracket.stop_loss,
+            Some(Decimal::from(90)),
+            "the drag set the order's own stop, before it ever filled"
+        );
+        assert!(
+            paper.venue.position().is_none(),
+            "and opened no position doing it"
+        );
+
+        // The tape reaches the limit: the position arrives protected.
+        paper.on_trade(&print(1, 95));
+        let position = paper.venue.position().expect("the limit filled");
+        assert_eq!(
+            position.stop_loss,
+            Some(Decimal::from(90)),
+            "the leg armed itself on the fill - no window without a stop"
+        );
+    }
+
+    /// A pane that is not feeding paper input paints the order and its
+    /// lines — an order is a fact about the account, true on whichever
+    /// chart you are looking at — but **not** its bracket handles.
+    ///
+    /// The tag opens on every pane at once by design (one hover, two
+    /// surfaces), so `reveal` is true over there too. Without the pointer
+    /// gate the other pane drew a pressable-looking `SL`/`TP` beside an
+    /// order whose presses it does not take.
+    #[test]
+    fn a_pane_without_the_pointer_paints_no_bracket_handles() {
+        let mut paper = PaperTrading::new();
+        paper.venue.seed(&print(0, 100));
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
+
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let order_center = clamp_tag_center(250.0, chart.top(), chart.bottom());
+        let handle = bracket_handle_rect(chart.right(), order_center, false);
+
+        // The pane with the pointer offers the handle...
+        assert!(
+            paper
+                .control_at(handle.center(), chart, &scale)
+                .is_some_and(|control| matches!(control, PaperControl::Handle { .. })),
+            "the input pane can be pressed there"
+        );
+
+        // ...and the paint asks one predicate whether to draw them, so the
+        // rule is readable in one place rather than inferred from a paint
+        // this test would have to reproduce to check.
+        assert!(
+            !handles_visible(None, true, false),
+            "revealed, but no hand on this pane: nothing is drawn"
+        );
+        assert!(
+            handles_visible(Some(handle.center()), true, false),
+            "with the hand here, a revealed owner shows its handles"
+        );
+        assert!(
+            handles_visible(Some(handle.center()), false, true),
+            "and reaching straight for a handle keeps it up"
+        );
+    }
+
+    /// A leg that exists is its own handle: its line is grabbable, and its
+    /// tag cross clears it without touching the other leg.
+    #[test]
+    fn a_working_orders_legs_are_draggable_and_clearable() {
+        let mut paper = PaperTrading::new();
+        paper.venue.seed(&print(0, 100));
+        paper.stop_offset_text = "5".to_owned();
+        paper.profit_offset_text = "15".to_owned();
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
+        let id = paper.working_orders()[0].id;
+        assert_eq!(
+            paper.working_orders()[0].bracket,
+            Bracket {
+                stop_loss: Some(Decimal::from(90)),
+                take_profit: Some(Decimal::from(110)),
+            },
+            "the ticket offsets rode along on the resting order"
+        );
+
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        // Price 90 is y 300: the order's stop line.
+        assert_eq!(
+            paper.line_at(egui::pos2(400.0, 300.0), &scale),
+            Some(PaperDrag::Leg {
+                owner: BracketTarget::Order(id),
+                leg: Leg::StopLoss,
+            }),
+            "the order's stop line is grabbable like the position's"
+        );
+
+        // Its tag cross clears that leg and leaves the target alone.
+        let stop_center = clamp_tag_center(300.0, chart.top(), chart.bottom());
+        let cross = close_button_rect(chart.right(), stop_center);
+        assert_eq!(
+            paper.control_at(cross.center(), chart, &scale),
+            Some(PaperControl::ClearLeg {
+                owner: BracketTarget::Order(id),
+                leg: Leg::StopLoss,
+            })
+        );
+        paper.amend_leg(BracketTarget::Order(id), Leg::StopLoss, None);
+        assert_eq!(
+            paper.working_orders()[0].bracket,
+            Bracket {
+                stop_loss: None,
+                take_profit: Some(Decimal::from(110)),
+            },
+            "clearing one leg never drops the other"
+        );
+    }
+
+    /// A leg the venue refuses snaps back and says why — the order's own
+    /// price is the reference, so a buy limit at 95 cannot take a stop at
+    /// 96 even though 96 is below the market at 100.
+    #[test]
+    fn a_working_orders_leg_is_judged_against_the_order_not_the_market() {
+        let mut paper = PaperTrading::new();
+        paper.venue.seed(&print(0, 100));
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
+        let id = paper.working_orders()[0].id;
+
+        paper.amend_leg(
+            BracketTarget::Order(id),
+            Leg::StopLoss,
+            Some(Decimal::from(96)),
+        );
+        assert_eq!(
+            paper.working_orders()[0].bracket.stop_loss,
+            None,
+            "the refusal left the order as it was"
+        );
+        let toast = paper.toast.as_ref().expect("the refusal teaches");
+        assert!(
+            toast.message.contains("stop loss"),
+            "and says which leg was wrong: {}",
+            toast.message
+        );
+    }
+
+    /// The stated kind wins where both are conceivable to a trader but only
+    /// one can rest — which is every price except the mark.
+    ///
+    /// The pairing to read here is the second and third assertion: at 95,
+    /// with the market at 100, `Auto` yields a limit. Ask for a stop at that
+    /// same price and the aim stands down instead of handing you the limit.
+    /// That is the whole feature: the click that lands is the order you came
+    /// to place, or no click at all.
+    #[test]
+    fn a_stated_entry_kind_is_honoured_or_the_aim_stands_down() {
+        let mark = Decimal::from(100);
+        let below = Decimal::from(95);
+        let above = Decimal::from(105);
+
+        // Auto reads the market, exactly as it always has.
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Auto, Side::Buy, below, mark),
+            Some(EntryKind::Limit),
+            "a buy below the market waits at a limit"
+        );
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Auto, Side::Buy, above, mark),
+            Some(EntryKind::Stop),
+            "and above it stops in"
+        );
+
+        // A stated kind takes the price where it is valid...
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Limit, Side::Buy, below, mark),
+            Some(EntryKind::Limit)
+        );
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Stop, Side::Buy, above, mark),
+            Some(EntryKind::Stop)
+        );
+
+        // ...and stands the aim down where it is not, rather than silently
+        // placing the other kind. A trader who came to buy a pullback must
+        // never be handed a breakout stop.
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Stop, Side::Buy, below, mark),
+            None,
+            "a buy stop cannot arm below the market, so nothing is offered"
+        );
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Limit, Side::Buy, above, mark),
+            None,
+            "and a buy limit above it would fill at once"
+        );
+
+        // A sell mirrors, on every choice.
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Limit, Side::Sell, above, mark),
+            Some(EntryKind::Limit)
+        );
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Stop, Side::Sell, below, mark),
+            Some(EntryKind::Stop)
+        );
+        assert_eq!(
+            resolve_cmd_kind(CmdEntryKind::Limit, Side::Sell, below, mark),
+            None
+        );
+
+        // On the mark nothing rests, whatever was asked for: a resting order
+        // there fills on the next print, which is a market order wearing the
+        // wrong name.
+        for choice in CmdEntryKind::ALL {
+            assert_eq!(
+                resolve_cmd_kind(choice, Side::Buy, mark, mark),
+                None,
+                "{choice:?} rests nothing on the mark"
+            );
+        }
+    }
+
+    /// The choice survives a restart, and an unknown token in a
+    /// hand-edited sidecar falls back rather than refusing to open.
+    #[test]
+    fn the_entry_kind_choice_is_remembered_and_unknown_tokens_fall_back() {
+        let state = crate::paper_state::PaperState {
+            cmd_entry_kind: Some("stop".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(
+            CmdTradingSettings::from_state(&state).kind,
+            CmdEntryKind::Stop
+        );
+
+        let state = crate::paper_state::PaperState {
+            cmd_entry_kind: Some("teleport".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(
+            CmdTradingSettings::from_state(&state).kind,
+            CmdEntryKind::Auto,
+            "a token this build does not know is the default, not a crash"
+        );
+    }
+
+    /// The aim itself obeys the choice: same pointer, same market, one
+    /// preview and one silence.
+    #[test]
+    fn the_aim_obeys_the_stated_kind() {
+        let mut paper = PaperTrading::new();
+        paper.venue.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        // y 250 is price 95 — below the market, where a buy limit rests.
+        let aim = egui::pos2(400.0, 250.0);
+
+        paper.cmd_trading.kind = CmdEntryKind::Auto;
+        paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, false));
+        assert_eq!(
+            paper.cmd_preview.map(|preview| preview.kind),
+            Some(EntryKind::Limit),
+            "auto offers the kind that can rest there"
+        );
+
+        paper.cmd_trading.kind = CmdEntryKind::Stop;
+        paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, false));
+        assert!(
+            paper.cmd_preview.is_none(),
+            "a trader who asked for a stop is shown no limit"
+        );
+
+        // And the press places nothing where the aim shows nothing.
+        assert!(!paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, true)));
+        assert!(paper.working_orders().is_empty());
+    }
+
     /// A 800×400 chart over the given price range, plus the input for one
     /// pointer frame at `(x, y)`.
     fn chart_and_scale(lo: f64, hi: f64) -> (egui::Rect, PriceScale) {
@@ -8292,6 +9139,7 @@ mod tests {
         (chart, PriceScale::from_range(lo, hi, 0.0, 400.0))
     }
 
+    /// One pointer frame mid-chart, where nothing right-anchored lives.
     fn frame<'a>(
         chart: egui::Rect,
         scale: &'a PriceScale,
@@ -8300,10 +9148,23 @@ mod tests {
         down: bool,
         released: bool,
     ) -> ChartInput<'a> {
+        frame_at(chart, scale, egui::pos2(400.0, y), pressed, down, released)
+    }
+
+    /// One pointer frame at an exact position — for the controls that live
+    /// against the plot's right edge, which `frame`'s mid-chart x misses.
+    fn frame_at<'a>(
+        chart: egui::Rect,
+        scale: &'a PriceScale,
+        pointer: egui::Pos2,
+        pressed: bool,
+        down: bool,
+        released: bool,
+    ) -> ChartInput<'a> {
         ChartInput {
             chart,
             scale: Some(scale),
-            pointer: Some(egui::pos2(400.0, y)),
+            pointer: Some(pointer),
             primary_pressed: pressed,
             primary_down: down,
             primary_released: released,
@@ -8358,7 +9219,7 @@ mod tests {
         assert!(paper.cancel_interaction(), "the grabbed line is released");
         assert!(!paper.handle_chart_input(&frame(chart, &scale, 250.0, false, false, true)));
         assert_eq!(
-            paper.sim.position().expect("still long").stop_loss,
+            paper.venue.position().expect("still long").stop_loss,
             Some(Decimal::from(90)),
             "a cancelled drag never moves the stop"
         );
@@ -8377,8 +9238,11 @@ mod tests {
         let consumed = paper.handle_chart_input(&frame(chart, &scale, 300.0, true, true, false));
         assert!(consumed, "the armed click never reaches the chart pan");
         assert!(paper.armed.is_none(), "a successful placement disarms");
-        assert_eq!(paper.sim.orders().len(), 1);
-        assert_eq!(paper.sim.orders()[0].price, Some(Decimal::from(95)));
+        assert_eq!(paper.venue.working_orders().len(), 1);
+        assert_eq!(
+            paper.venue.working_orders()[0].price,
+            Some(Decimal::from(95))
+        );
     }
 
     #[test]
@@ -8397,7 +9261,7 @@ mod tests {
             paper.armed.is_some(),
             "the user clicks again after the toast"
         );
-        assert!(paper.sim.orders().is_empty());
+        assert!(paper.venue.working_orders().is_empty());
         assert!(paper.toast.is_some(), "the refusal explains itself");
     }
 
@@ -9067,7 +9931,10 @@ mod tests {
         );
         assert_eq!(
             paper.drag,
-            PaperDrag::StopLoss,
+            PaperDrag::Leg {
+                owner: BracketTarget::Position,
+                leg: Leg::StopLoss,
+            },
             "it grabbed the stop instead of resting an order"
         );
         assert!(paper.working_orders().is_empty());
@@ -9198,6 +10065,37 @@ mod tests {
         );
         paper.on_trade(&print(2, 100_000));
         assert_eq!(paper.working_orders().len(), 4, "a second print adds none");
+    }
+
+    /// The bracket hook dresses those same rungs, so a working order's two
+    /// dashed legs are photographable without a hand to drag them into
+    /// being. Each leg lands on the correct side of the *order's own*
+    /// price, which is what the venue validates against — a hook that
+    /// placed one the venue refuses would photograph an empty chart.
+    #[test]
+    fn the_bracket_hook_dresses_every_rung_it_rests() {
+        let mut paper = PaperTrading::new();
+        paper.orders_demo = Some(1);
+        paper.order_bracket_demo = true;
+        paper.on_trade(&print(1, 100_000));
+
+        let orders = paper.working_orders();
+        assert_eq!(orders.len(), 2, "one rung, both sides");
+        for order in orders {
+            let price = order.price.expect("a limit has a price");
+            let stop = order.bracket.stop_loss.expect("a stop rides along");
+            let target = order.bracket.take_profit.expect("and a target");
+            match order.side {
+                Side::Buy => {
+                    assert!(stop < price, "a long's stop sits below its entry");
+                    assert!(target > price, "and its target above");
+                }
+                Side::Sell => {
+                    assert!(stop > price, "a short's stop sits above its entry");
+                    assert!(target < price, "and its target below");
+                }
+            }
+        }
     }
 
     /// A coarsely quoted mark rounds 6 bp to nothing: both legs would
@@ -9361,7 +10259,7 @@ mod tests {
         paper.market(Side::Buy);
         paper.on_trade(&print(1, 100));
         assert_eq!(
-            paper.sim.position().expect("long").stop_loss,
+            paper.venue.position().expect("long").stop_loss,
             Some(Decimal::from(90)),
         );
         let (chart, scale) = chart_and_scale(80.0, 120.0);
@@ -9370,7 +10268,7 @@ mod tests {
         assert!(paper.handle_chart_input(&frame(chart, &scale, 250.0, false, true, false)));
         assert!(paper.handle_chart_input(&frame(chart, &scale, 250.0, false, false, true)));
         assert_eq!(
-            paper.sim.position().expect("still long").stop_loss,
+            paper.venue.position().expect("still long").stop_loss,
             Some(Decimal::from(95)),
             "the drop resubmitted the bracket at the dragged price"
         );
@@ -9390,7 +10288,7 @@ mod tests {
         assert!(paper.handle_chart_input(&frame(chart, &scale, 200.0, true, true, false)));
         assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, true, false)));
         assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, false, true)));
-        let position = paper.sim.position().expect("still long");
+        let position = paper.venue.position().expect("still long");
         assert_eq!(
             position.take_profit,
             Some(Decimal::from(105)),
@@ -9405,7 +10303,7 @@ mod tests {
         assert!(paper.handle_chart_input(&frame(chart, &scale, 200.0, true, true, false)));
         assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, true, false)));
         assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, false, true)));
-        let position = paper.sim.position().expect("still long");
+        let position = paper.venue.position().expect("still long");
         assert_eq!(position.stop_loss, Some(Decimal::from(90)));
         assert_eq!(position.take_profit, Some(Decimal::from(105)), "untouched");
     }
@@ -9429,7 +10327,7 @@ mod tests {
         assert!(paper.handle_chart_input(&frame(chart, &scale, 200.0, true, true, false)));
         assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, true, false)));
         assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, false, true)));
-        let position = paper.sim.position().expect("long");
+        let position = paper.venue.position().expect("long");
         assert_eq!(position.avg_price, Decimal::from(100));
         assert_eq!(position.stop_loss, Some(Decimal::from(90)), "untouched");
         assert_eq!(position.take_profit, Some(Decimal::from(110)), "untouched");
@@ -9448,7 +10346,7 @@ mod tests {
     fn the_order_tags_close_is_geometric_and_beats_the_armed_click() {
         let mut paper = PaperTrading::new();
         paper.seed(&print(0, 100));
-        let events = paper.sim.apply(Command::PlaceLimit {
+        let events = paper.dispatch(Command::PlaceLimit {
             side: Side::Buy,
             quantity: Decimal::ONE,
             price: Decimal::from(95),
@@ -9480,7 +10378,7 @@ mod tests {
         };
         assert!(paper.handle_chart_input(&press), "the ✕ owns the press");
         assert!(
-            paper.sim.orders().is_empty(),
+            paper.venue.working_orders().is_empty(),
             "the order is gone and the armed click placed nothing"
         );
         assert!(
@@ -9521,7 +10419,7 @@ mod tests {
         assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, true, false)));
         assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, false, true)));
         assert_eq!(
-            paper.sim.position().expect("long").stop_loss,
+            paper.venue.position().expect("long").stop_loss,
             Some(Decimal::from(90)),
             "the handle drag placed the stop"
         );
@@ -9611,7 +10509,7 @@ mod tests {
         paper.stop_offset_text = "5".to_owned();
         paper.reverse_position();
         paper.on_trade(&print(2, 100));
-        let position = paper.sim.position().expect("reversed, not flat");
+        let position = paper.venue.position().expect("reversed, not flat");
         assert_eq!(position.side, Side::Sell);
         assert_eq!(position.quantity, Decimal::from(2));
         assert_eq!(

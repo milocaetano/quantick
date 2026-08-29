@@ -45,7 +45,7 @@
 //! A protective level attached to a market or stop entry is re-checked
 //! against the *actual* fill price: validation ran against the mark, but
 //! the fill lands on a later print, and when the tape outran the level in
-//! between it is dropped and reported ([`SimEvent::BracketDropped`]) —
+//! between it is dropped and reported ([`VenueEvent::BracketDropped`]) —
 //! kept, it would exit on the next print wearing a lying label.
 //!
 //! # Processing order within one print
@@ -72,16 +72,21 @@
 //! show. Simulated positions and pending orders do not survive a session;
 //! only [`ClosedTrade`] history is meant to be persisted (see [`history`]).
 
-mod events;
-mod order;
-mod position;
 mod simulator;
+mod venue;
 
 pub mod history;
 pub mod report;
 
-pub use events::{CancelReason, ExitReason, Fill, FillRole, RejectReason, SimEvent};
-pub use order::{Bracket, EntryKind, Order, OrderId};
-pub use position::Position;
+// The order vocabulary is not the simulator's: orders, brackets, positions
+// and round trips are facts about trading, and `quantick-trading` owns them
+// so a real venue can speak them too. They are re-exported here because a
+// consumer that already talks to the paper simulator should not have to
+// learn where each type happens to live.
+pub use quantick_trading::{
+    Bracket, BracketTarget, CancelReason, CloseAmount, ClosedTrade, EntryKind, ExitReason, Fill,
+    FillRole, Order, OrderId, OrderIntent, Position, RejectReason, TradingVenue, VenueEvent,
+    signed_points,
+};
 pub use report::{PerformanceReport, ReasonReport, SideReport};
-pub use simulator::{ClosedTrade, Command, QueuedAction, Simulator};
+pub use simulator::{Command, QueuedAction, Simulator};

@@ -32,6 +32,7 @@ use serde_json::{Value, json};
 
 use crate::app::QuantickApp;
 
+use super::trade::{TRADE_EFFECT_ID, TRADE_MODULE_ID, TRADE_PERMISSION_ID};
 use super::{
     actions::{
         ANNOTATE_ATTENTION_PERMISSION_ID, ANNOTATE_EFFECT_ID, ANNOTATE_PERMISSION_ID,
@@ -86,6 +87,21 @@ pub(crate) const RECOVER_EFFECT_ID: &str = "cockpit.recover";
 /// What a capability under [`RECOVER_EFFECT_ID`] declares it may cost: the
 /// chart's timeline, and with it the paper position and every armed strategy.
 pub(crate) const TIMELINE_REBUILT_RISK_FLAG: &str = "timeline_rebuilt";
+/// The ceiling the `trade.*` family sits under.
+///
+/// It exists because the registry requires every permission to name one, and
+/// because naming it is better than the alternatives: a trade cannot borrow
+/// the annotate tier (whose own description promises it never affects a
+/// position), and a permission with no ceiling at all is not representable.
+///
+/// **Nothing hands this profile out.** The access panel does not offer it,
+/// `default_grant` is `Denied`, and the handshake can only reach a profile
+/// the trader has granted — so today the only caller that gets past the
+/// gateway to a `trade.*` capability is the in-process operator: a hotkey,
+/// a harness hook, a deterministic test. Deciding that some connection may
+/// trade is a decision about a real account, and it is not this change's to
+/// make. The carve-out is here so that decision has somewhere to land.
+pub(crate) const TRADER_PROFILE_ID: &str = "trader";
 pub(crate) const DESCRIBE_CAPABILITY_ID: &str = "control.describe";
 pub(crate) const SNAPSHOT_CAPABILITY_ID: &str = "snapshot.read";
 pub(crate) const CHART_WINDOW_CAPABILITY_ID: &str = "chart.window.read";
@@ -630,6 +646,7 @@ impl ObserverContract {
         let observer = profile(OBSERVER_PROFILE_ID);
         let annotator = profile(ANNOTATOR_PROFILE_ID);
         let cockpit = profile(COCKPIT_PROFILE_ID);
+        let trader = profile(TRADER_PROFILE_ID);
         let mut permissions = vec![
             PermissionDescriptor {
                 id: permission(OBSERVE_PERMISSION_ID),
@@ -650,6 +667,25 @@ impl ObserverContract {
                 sensitive: false,
                 default_grant: DefaultGrant::Prompt,
                 profile_ceilings: BTreeSet::from([annotator.clone()]),
+            },
+            // The trade tier, ceilinged at the `trader` profile — which
+            // nothing hands out. A permission with no ceiling at all is not
+            // representable (`register_permission` refuses it), so the gate
+            // is not the ceiling: it is that `configured_profile` never
+            // returns `trader` and the access panel never offers the scope.
+            // Say that here rather than something tidier, because the next
+            // person hardening this tier will read this comment and go
+            // looking for the gate it names. `annotate` promises it never
+            // affects a position, so a trade cannot borrow it, and deciding
+            // which profile *may* trade is a decision about a real account
+            // rather than a detail of the change that carved this out.
+            PermissionDescriptor {
+                id: permission(TRADE_PERMISSION_ID),
+                label: "Trade".to_owned(),
+                description: "Place, bracket and cancel orders on the charted symbol. Fills are simulated today; the permission exists so that the day they are not, nothing has to be re-decided in a hurry.".to_owned(),
+                sensitive: true,
+                default_grant: DefaultGrant::Denied,
+                profile_ceilings: BTreeSet::from([trader.clone()]),
             },
             PermissionDescriptor {
                 id: permission(COCKPIT_PERMISSION_ID),
@@ -754,6 +790,17 @@ impl ObserverContract {
                 permissions: BTreeSet::new(),
             },
             ProfileDescriptor {
+                id: trader.clone(),
+                label: "Trader".to_owned(),
+                // Above the cockpit, so the chain stays a chain and any two
+                // profiles remain comparable — the property the handshake
+                // depends on. Inheriting is not granting: what a connection
+                // may call is its ceiling intersected with what the trader
+                // ticked, and nothing ticks this one.
+                inherits: BTreeSet::from([cockpit.clone()]),
+                permissions: BTreeSet::new(),
+            },
+            ProfileDescriptor {
                 id: cockpit.clone(),
                 label: "Cockpit".to_owned(),
                 // Inherits the annotator, and through it the observer's reads
@@ -795,6 +842,13 @@ impl ObserverContract {
             id: module("snapshot"),
             title: "Snapshot".to_owned(),
             description: "Coherent multi-module semantic captures.".to_owned(),
+        })?;
+        registry.register_module(ModuleDescriptor {
+            id: module(TRADE_MODULE_ID),
+            title: "Trade".to_owned(),
+            description:
+                "Placing, bracketing and cancelling orders on the charted symbol. Fills are simulated."
+                    .to_owned(),
         })?;
         registry.register_module(ModuleDescriptor {
             id: module(EVENTS_MODULE_ID),
@@ -929,6 +983,32 @@ impl ObserverContract {
                 durable_requires_reversible: false,
                 irreversible_transient_risk: None,
                 allows_risk_reducing: false,
+            },
+        })?;
+        registry.register_effect(EffectPolicy {
+            id: effect(TRADE_EFFECT_ID),
+            permission_floor: permission(TRADE_PERMISSION_ID),
+            profile_ceilings: BTreeSet::from([trader.clone()]),
+            confirmation_class: confirmation(NO_CONFIRMATION_ID),
+            // Cancelling is risk-reducing and crosses no extra gate: taking
+            // an order off the book is the direction a trader must never be
+            // slowed down in — the same reason flatten is instant.
+            risk_reducing_confirmation_class: Some(confirmation(NO_CONFIRMATION_ID)),
+            mcp_hint_floor: McpHintFloor {
+                read_only: false,
+                destructive: false,
+                // Placing the same order twice places two orders; there is
+                // no key that could make a retry safe.
+                idempotent: false,
+                open_world: false,
+            },
+            required_risk_flags: BTreeSet::new(),
+            constraints: EffectConstraints {
+                required_read_only: Some(false),
+                allows_destructive: false,
+                durable_requires_reversible: true,
+                irreversible_transient_risk: None,
+                allows_risk_reducing: true,
             },
         })?;
         registry.register_effect(super::notify::effect_policy(&annotator))?;
@@ -1641,6 +1721,67 @@ mod tests {
     use super::*;
     use quantick_control::handshake::ProfileAuthority as _;
     use quantick_control::{id::RequestId, wire::RequestEnvelope};
+
+    /// The access panel offers no way to grant the trade tier — and above
+    /// all not under "Read scopes for the next connection".
+    ///
+    /// This is the same mistake the cockpit section's own comment records
+    /// being fixed once: a permission that matches neither of the panel's
+    /// two special cases falls through into the *first* section, which is
+    /// the read one. A grant that places orders, rendered under a heading
+    /// that promises reading only, is the worst kind of consent surface —
+    /// and here it would have been worse than useless besides, since
+    /// nothing can currently act on the tick.
+    #[test]
+    fn the_access_panel_never_offers_the_trade_scope() {
+        let contract = contract();
+
+        let trade: Vec<_> = contract
+            .selectable_permissions()
+            .filter(|descriptor| super::super::gateway::is_trade_permission(&descriptor.id))
+            .collect();
+        assert!(
+            !trade.is_empty(),
+            "the tier exists, or this test is guarding nothing"
+        );
+        for descriptor in &trade {
+            assert!(
+                descriptor.sensitive,
+                "{}: a grant that touches a position is sensitive",
+                descriptor.id
+            );
+        }
+
+        // The read section's own filter, verbatim from `draw_panel_body`.
+        let read_section: Vec<_> = contract
+            .selectable_permissions()
+            .filter(|descriptor| {
+                !super::super::gateway::is_annotate_permission(&descriptor.id)
+                    && !super::super::gateway::is_cockpit_permission(&descriptor.id)
+                    && !super::super::gateway::is_trade_permission(&descriptor.id)
+            })
+            .collect();
+        assert!(
+            read_section
+                .iter()
+                .all(|descriptor| !super::super::gateway::is_trade_permission(&descriptor.id)),
+            "no trade scope reaches the read section"
+        );
+
+        // Nor does either write section claim it, so it is offered nowhere.
+        for other in [
+            super::super::gateway::is_annotate_permission as fn(&PermissionId) -> bool,
+            super::super::gateway::is_cockpit_permission as fn(&PermissionId) -> bool,
+        ] {
+            for descriptor in &trade {
+                assert!(
+                    !other(&descriptor.id),
+                    "{}: the trade tier borrows no other section",
+                    descriptor.id
+                );
+            }
+        }
+    }
 
     fn contract() -> ObserverContract {
         ObserverContract::new(

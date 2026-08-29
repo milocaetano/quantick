@@ -3081,6 +3081,7 @@ name = "quantick-sim"
 version = "0.1.0"
 dependencies = [
  "quantick-engine",
+ "quantick-trading",
  "rust_decimal",
 ]
 
@@ -3090,6 +3091,14 @@ version = "0.1.0"
 dependencies = [
  "quantick-engine",
  "quantick-sim",
+ "rust_decimal",
+]
+
+[[package]]
+name = "quantick-trading"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
  "rust_decimal",
 ]
 

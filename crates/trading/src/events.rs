@@ -1,10 +1,10 @@
-//! Everything the simulator reports back: fills, closures, refusals.
+//! Everything a venue reports back: fills, closures, refusals.
 
 use quantick_engine::Side;
 use rust_decimal::Decimal;
 
 use crate::order::{Order, OrderId};
-use crate::simulator::ClosedTrade;
+use crate::position::ClosedTrade;
 
 /// Why an exit fill happened. Persisted in the trade history, so each
 /// variant has a stable token (see [`ExitReason::as_str`]).
@@ -211,7 +211,7 @@ impl std::fmt::Display for RejectReason {
 /// The consumer journals fills and closures and surfaces rejections as
 /// guidance.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SimEvent {
+pub enum VenueEvent {
     /// An order was accepted and now rests (or awaits the next print).
     Placed(Order),
     /// A pending order's price was modified.

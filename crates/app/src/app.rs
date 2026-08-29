@@ -2498,6 +2498,7 @@ impl QuantickApp {
         let mut state = crate::paper_state::load(&path);
         state.cmd_trading_enabled = Some(settings.enabled);
         state.cmd_buy_modifier = Some(settings.buy.as_str().to_owned());
+        state.cmd_entry_kind = Some(settings.kind.as_str().to_owned());
         state.cmd_sell_modifier = Some(settings.sell.as_str().to_owned());
         crate::paper_state::save(&path, &state);
     }
@@ -2548,6 +2549,29 @@ impl QuantickApp {
     ) -> Option<(&mut Tab, &AppConfig)> {
         let Self { tabs, config, .. } = self;
         tabs.get_mut(index).map(|tab| (tab, &*config))
+    }
+
+    /// The trading host of the tab on screen — where the `trade.*` actions
+    /// land. The active tab and not an addressed one: an order belongs to
+    /// the symbol the trader is looking at, and a call that could quietly
+    /// trade a chart nobody has open is a call nobody should be able to
+    /// make.
+    pub(crate) fn control_active_paper_mut(
+        &mut self,
+    ) -> Option<&mut crate::paper_trading::PaperTrading> {
+        // Fallible, because the rest of the control code does not trust the
+        // invariant either: `annotate::resolve_target` guards an empty tab
+        // list and clamps the index, and two more sites clamp it. A
+        // `trade.*` call must answer "this window has no chart open" rather
+        // than panic the whole trading application, and it must resolve the
+        // *same* tab its own read-back resolves.
+        self.tabs.get_mut(self.active_tab).map(|tab| &mut tab.paper)
+    }
+
+    /// The read side of [`Self::control_active_paper_mut`], resolved the same
+    /// way so a call and its read-back can never name different tabs.
+    pub(crate) fn control_active_paper(&self) -> Option<&crate::paper_trading::PaperTrading> {
+        self.tabs.get(self.active_tab).map(|tab| &tab.paper)
     }
 
     pub(crate) fn control_tabs(&self) -> &[Tab] {
@@ -14284,7 +14308,8 @@ plot(close)
             feed_gaps: &[],
             symbol: &tab.symbol,
             paper: &mut tab.paper,
-            paper_owns_input: true,
+            paper_takes_input: true,
+            paper_hud_here: true,
             // One pane in hand and no tab around it: there is no other pane
             // whose shared marks could be under the pointer.
             shared_pick: None,
@@ -32471,6 +32496,238 @@ plot(close)
         std::fs::remove_dir_all(directory).ok();
     }
 
+    /// The second operator places an order, brackets it and reads it back —
+    /// the whole chart gesture, without a chart.
+    ///
+    /// `CLAUDE.md`'s *operable without a hand*: a capability a trader does
+    /// exists as a named call, not only inside a click handler. This is that
+    /// call for the one class of capability that had no registry entry at
+    /// all until now.
+    #[test]
+    fn the_trade_actions_place_bracket_and_read_back_an_order() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(40);
+        run_frame(&mut app, &ctx);
+
+        let mark = app
+            .active_tab()
+            .paper
+            .mark_price()
+            .expect("the history seeded a price");
+        // A buy limit a whole point below the market: below is where a buy
+        // limit can rest, whatever the fixture's absolute prices are.
+        let price = mark - rust_decimal::Decimal::ONE;
+
+        let placed = app
+            .control_action(
+                crate::control::trade::PLACE_CAPABILITY_ID,
+                crate::control::trade::CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "side": "buy",
+                    "kind": "limit",
+                    "quantity": "2",
+                    "price": price.to_string(),
+                }),
+            )
+            .expect("the action dispatches");
+        assert_eq!(placed["accepted"], true, "{placed}");
+        assert_eq!(placed["simulated"], true, "every result says so");
+        let order_id = placed["order_id"].as_u64().expect("the venue named it");
+        assert_eq!(
+            placed["working_orders"][0]["kind"], "limit",
+            "the kind was stated, not inferred from where a pointer was"
+        );
+
+        // Brackets on the working order, through the same door the chart's
+        // drag uses.
+        let stop = price - rust_decimal::Decimal::ONE;
+        let target = price + rust_decimal::Decimal::from(2);
+        let bracketed = app
+            .control_action(
+                crate::control::trade::BRACKET_CAPABILITY_ID,
+                crate::control::trade::CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "order_id": order_id,
+                    "stop_loss": stop.to_string(),
+                    "take_profit": target.to_string(),
+                }),
+            )
+            .expect("the action dispatches");
+        assert_eq!(bracketed["accepted"], true, "{bracketed}");
+        assert_eq!(
+            bracketed["working_orders"][0]["stop_loss"],
+            stop.to_string(),
+            "and the read-back carries the leg that will arm on the fill"
+        );
+        assert_eq!(
+            bracketed["working_orders"][0]["take_profit"],
+            target.to_string()
+        );
+
+        // A refusal comes back as an answer, in the venue's own words —
+        // never as a bare status a caller can forget to render. A stop on
+        // the profit side of the entry would exit the instant it filled.
+        let refused = app
+            .control_action(
+                crate::control::trade::BRACKET_CAPABILITY_ID,
+                crate::control::trade::CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "order_id": order_id,
+                    "stop_loss": (price + rust_decimal::Decimal::ONE).to_string(),
+                }),
+            )
+            .expect("the action dispatches");
+        assert_eq!(refused["accepted"], false);
+        assert!(
+            refused["rejected_because"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("stop loss")),
+            "the reason teaches: {refused}"
+        );
+        assert_eq!(
+            refused["working_orders"][0]["stop_loss"],
+            stop.to_string(),
+            "and a refusal changed nothing"
+        );
+
+        // And it can be taken away again.
+        let cancelled = app
+            .control_action(
+                crate::control::trade::CANCEL_CAPABILITY_ID,
+                crate::control::trade::CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({ "order_id": order_id }),
+            )
+            .expect("the action dispatches");
+        assert_eq!(cancelled["accepted"], true, "{cancelled}");
+        assert!(
+            cancelled["working_orders"]
+                .as_array()
+                .is_some_and(|orders| orders.is_empty()),
+            "nothing is working now"
+        );
+    }
+
+    /// Whatever acted is recorded. An order placed through the registry
+    /// carries its actor into the journal, so one an operator asked for is
+    /// never indistinguishable from one the trader placed by hand — the
+    /// authorship half of the data-honesty rule that labels an inferred
+    /// aggressor side, applied to who asked.
+    ///
+    /// A refusal records too: "it tried to buy here and was told no" is
+    /// exactly the line a trader reviewing a session wants to find.
+    #[test]
+    fn an_order_placed_through_the_registry_names_who_asked_for_it() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(40);
+        run_frame(&mut app, &ctx);
+        let mark = app
+            .active_tab()
+            .paper
+            .mark_price()
+            .expect("the history seeded a price");
+
+        let accepted = app
+            .control_action(
+                crate::control::trade::PLACE_CAPABILITY_ID,
+                crate::control::trade::CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "side": "buy",
+                    "kind": "limit",
+                    "quantity": "1",
+                    "price": (mark - rust_decimal::Decimal::ONE).to_string(),
+                }),
+            )
+            .expect("the action dispatches");
+        assert_eq!(accepted["accepted"], true, "{accepted}");
+
+        // And one the venue refuses: a buy limit above the market.
+        app.control_action(
+            crate::control::trade::PLACE_CAPABILITY_ID,
+            crate::control::trade::CAPABILITY_VERSION,
+            crate::control::ActionOrigin::Human,
+            serde_json::json!({
+                "side": "buy",
+                "kind": "limit",
+                "quantity": "1",
+                "price": (mark + rust_decimal::Decimal::ONE).to_string(),
+            }),
+        )
+        .expect("the action dispatches");
+
+        let events = app
+            .control_access
+            .as_ref()
+            .unwrap()
+            .journal()
+            .read(1, 64, 1 << 20)
+            .events;
+        let placed: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind.as_str() == "trade.order.placed")
+            .collect();
+        assert_eq!(placed.len(), 2, "both the acceptance and the refusal");
+
+        assert_eq!(placed[0].payload["accepted"], true);
+        assert!(
+            placed[0].payload["order_id"].is_u64(),
+            "the accepted one names the order it made"
+        );
+        assert_eq!(
+            placed[0].payload["simulated"], true,
+            "and says the fills are simulated, in the record as on every surface"
+        );
+        assert_eq!(
+            placed[0].actor.as_ref().expect("an actor is recorded").kind,
+            quantick_control::wire::ActorKind::HumanUi,
+            "the actor rides in the event, not beside it"
+        );
+
+        assert_eq!(placed[1].payload["accepted"], false);
+        assert!(
+            placed[1].payload["rejected_because"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("fill immediately")),
+            "the refusal keeps the venue's own words: {}",
+            placed[1].payload
+        );
+        assert_eq!(
+            placed[1].payload["asked"]["side"], "buy",
+            "and what was asked for, so the attempt is legible"
+        );
+    }
+
+    /// A market order takes no price, and saying otherwise is refused before
+    /// anything reaches the venue — the input is wrong, not the market.
+    #[test]
+    fn a_market_action_with_a_price_is_refused_as_a_bad_request() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(40);
+        run_frame(&mut app, &ctx);
+
+        let error = app
+            .control_action(
+                crate::control::trade::PLACE_CAPABILITY_ID,
+                crate::control::trade::CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "side": "buy",
+                    "kind": "market",
+                    "quantity": "1",
+                    "price": "100",
+                }),
+            )
+            .expect_err("a market order has no price of its own");
+        assert!(
+            format!("{error:?}").contains("market order has no price"),
+            "{error:?}"
+        );
+    }
+
     /// Criterion 7 and the gap #223 left: the trace records the *resolved*
     /// input, so a rerun marks the bar that was marked rather than wherever
     /// the pointer happens to be during the rerun.
@@ -34618,7 +34875,12 @@ plot(close)
                         // in the trader's words that it closes an open paper
                         // position and disarms every strategy, and which is
                         // marked sensitive so it is off until ticked.
-                        || capability["effect"] == "cockpit.recover",
+                        || capability["effect"] == "cockpit.recover"
+                        // The trade tier. Discoverable like the rest, and
+                        // reachable by nothing a trader can currently grant:
+                        // its permission's only ceiling is the `trader`
+                        // profile, which the access panel does not offer.
+                        || capability["effect"] == "trade",
                     "{} has an unexpected effect {}",
                     capability["id"],
                     capability["effect"]

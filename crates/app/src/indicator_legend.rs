@@ -89,7 +89,7 @@ pub(crate) enum LegendAction {
 /// stacks the order-flow key below the same corner with it. What it must be
 /// asked is "does the HUD paint here", not "is there a position" — the HUD
 /// rides the pane that owns order entry, which is the focused one
-/// (`tab.rs`: `paper_owns_input = side == focused`, and the HUD draws from
+/// (`tab.rs`: `paper_hud_here = side == focused`, and the HUD draws from
 /// `focused_pane().paper_hud_anchor()`). Ask the wrong question and a split
 /// with a position open moves the overlap to the other pane rather than
 /// removing it: chips that never dropped under a HUD that is right on top of

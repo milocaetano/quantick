@@ -30,6 +30,7 @@ mod script;
 mod session;
 mod system;
 mod trace;
+pub(crate) mod trade;
 mod types;
 mod workspace;
 
