@@ -1763,7 +1763,23 @@ impl QuantickApp {
             }
         }
         if let Ok(value) = std::env::var("QUANTICK_VENUE_LEAD_IN") {
-            app.venue_lead_in = value.trim() == "1";
+            // `1` and `0`, and nothing else understood. A typo must not decide
+            // a switch the trader set: read as a bare truthiness test, `true`
+            // or `on` would silently turn the lead-in *off* and overwrite what
+            // the workspace saved, and a capture run would photograph the off
+            // state while reporting it as on.
+            match value.trim() {
+                "1" => app.venue_lead_in = true,
+                "0" => app.venue_lead_in = false,
+                other => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "VENUE_LEAD_IN_HOOK_UNKNOWN",
+                    value = %other,
+                    action = "keep_current_setting",
+                    "QUANTICK_VENUE_LEAD_IN takes 1 or 0"
+                ),
+            }
         }
         if let Ok(value) = std::env::var("QUANTICK_PROGRESSIVE_HISTORY") {
             match value.trim() {
@@ -3423,7 +3439,10 @@ impl QuantickApp {
     /// rules are unchanged.
     fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
-            ToolbarAction::LoadOlder => self.active_tab_mut().request_older_history(),
+            ToolbarAction::LoadOlder => {
+                let (tab, config) = self.active_with_config();
+                tab.request_older_history(config);
+            }
             ToolbarAction::LoadOlderCandles => {
                 // Read before the tab is borrowed mutably — and the capability
                 // block rather than the whole config, because that is all the
@@ -6558,7 +6577,9 @@ impl QuantickApp {
                                  this session saw. Switch this on to put the venue's 1-minute \
                                  candles in front of them anyway — counted apart from built bars \
                                  on the status bar — so yesterday is on screen to compare \
-                                 against. They stay candles: a minute never becomes a tick bar.",
+                                 against. They stay candles: a minute never becomes a tick bar, \
+                                 and an indicator running across the seam is averaging both \
+                                 kinds.",
                             );
                         ui.separator();
                         ui.menu_button("Timezone", |ui| {
@@ -8911,7 +8932,8 @@ impl QuantickApp {
             // and answered empty, which is not what the hook is for.
             return;
         }
-        self.active_tab_mut().request_older_history();
+        let (tab, config) = self.active_with_config();
+        tab.request_older_history(config);
         self.pending_load_older = (pages > 1).then_some((pages - 1, budget));
     }
 
@@ -12215,6 +12237,7 @@ mod tests {
             }],
             metatrader: Default::default(),
             paper: Default::default(),
+            history: Default::default(),
         }
     }
 
@@ -12897,8 +12920,8 @@ plot(close)
             "backfill in flight at start"
         );
 
-        app.active_tab_mut().request_older_history();
-        app.active_tab_mut().request_older_history();
+        with_config(&mut app, |tab, config| tab.request_older_history(config));
+        with_config(&mut app, |tab, config| tab.request_older_history(config));
         assert_eq!(app.active_tab().loading.count(LoadingTask::History), 3);
 
         evt_tx.try_send(FeedEvent::Backfilled(Vec::new())).unwrap();
@@ -12936,7 +12959,7 @@ plot(close)
         // so no reply will ever come - the count must not grow.
         let (mut app, _evt_tx, cmd_rx, _book_tx) = test_app();
         drop(cmd_rx);
-        app.active_tab_mut().request_older_history();
+        with_config(&mut app, |tab, config| tab.request_older_history(config));
         assert_eq!(
             app.active_tab().loading.count(LoadingTask::History),
             1,
@@ -12949,8 +12972,8 @@ plot(close)
         // Loads queued before a reset will never be answered; the refill after
         // the reset is the one load left in flight.
         let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
-        app.active_tab_mut().request_older_history();
-        app.active_tab_mut().request_older_history();
+        with_config(&mut app, |tab, config| tab.request_older_history(config));
+        with_config(&mut app, |tab, config| tab.request_older_history(config));
         assert_eq!(app.active_tab().loading.count(LoadingTask::History), 3);
         app.active_tab_mut()
             .flow_pane
@@ -21784,6 +21807,7 @@ crosshair = false
             ],
             metatrader: Default::default(),
             paper: Default::default(),
+            history: Default::default(),
         };
         let mut app = QuantickApp::new(
             config,
@@ -26805,13 +26829,20 @@ crosshair = false
                 },
             )
         });
-        // The replay feed runs on its own thread; give it frames to answer in.
-        for _ in 0..200 {
+        // The replay feed runs on its own thread and, paused, drains its
+        // commands on a 33 ms timer — so this waits on a wall clock, not on a
+        // worker that answers as fast as it is fed. A deadline with a sleep in
+        // it, rather than a frame count: two hundred egui frames can finish
+        // inside one of those ticks on an idle machine, and the test would
+        // fail for having been fast.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
             run_frame(&mut app, &ctx);
             app.drain_tabs();
             if app.active_tab().venue_candles_held() > 0 {
                 break;
             }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert_eq!(
             app.active_tab().venue_candles_held(),
@@ -26997,6 +27028,83 @@ crosshair = false
             !app.active_tab().history_reach_running(),
             "and nothing is left waiting on a reply"
         );
+    }
+
+    /// A venue that answers empty without ever saying it has run out stops the
+    /// run in a handful of requests, not sixty-four.
+    ///
+    /// This is the case `can_page` cannot catch: only the MetaTrader bridge
+    /// withdraws `history_paging`, while Binance's is a compile-time `true`
+    /// that answers a rate-limited fetch with the same empty block it answers
+    /// "nothing older" with. Without the idle count, one press here would be
+    /// sixty-four back-to-back REST calls — how a 429 becomes an IP ban.
+    #[test]
+    fn a_venue_answering_empty_without_saying_so_stops_the_run_early() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_load_older(&mut commands);
+        app.history_reach = crate::history_reach::HistoryReach::PreviousSession;
+        app.drain_tabs();
+
+        app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+        let mut asked = drain_load_older(&mut commands).len();
+        assert_eq!(asked, 1, "the press");
+        // Answer every request with nothing, as a refusing venue does. The
+        // capability stays true throughout — that is the whole point.
+        for _ in 0..crate::history_reach::MAX_CAMPAIGN_PAGES {
+            if !app.active_tab().history_reach_running() {
+                break;
+            }
+            events
+                .try_send(FeedEvent::HistoryPrepended(Vec::new()))
+                .unwrap();
+            app.drain_tabs();
+            asked += drain_load_older(&mut commands).len();
+        }
+        assert!(
+            !app.active_tab().history_reach_running(),
+            "the run gave up rather than spending its whole budget"
+        );
+        assert!(
+            asked <= crate::history_reach::MAX_IDLE_PAGES as usize,
+            "one press cost {asked} requests; the idle budget is \
+             {}",
+            crate::history_reach::MAX_IDLE_PAGES
+        );
+        assert!(
+            !app.active_tab().loading.is_active(LoadingTask::History),
+            "and nothing is left waiting on a reply"
+        );
+    }
+
+    /// Putting the reach back to one page is the trader's way out of a run.
+    #[test]
+    fn withdrawing_the_reach_calls_off_a_run_in_flight() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_load_older(&mut commands);
+        app.history_reach = crate::history_reach::HistoryReach::PreviousSession;
+        app.drain_tabs();
+
+        app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+        assert_eq!(drain_load_older(&mut commands).len(), 1);
+        assert!(app.active_tab().history_reach_running());
+
+        // The trader changes their mind and picks "one page" again.
+        app.history_reach = crate::history_reach::HistoryReach::Page;
+        app.drain_tabs();
+        events
+            .try_send(FeedEvent::HistoryPrepended(
+                (-60..0).map(minute_trade_at).collect(),
+            ))
+            .unwrap();
+        app.drain_tabs();
+        assert!(
+            drain_load_older(&mut commands).is_empty(),
+            "the page in flight is the last one"
+        );
+        assert!(!app.active_tab().history_reach_running());
+        assert!(!app.active_tab().loading.is_active(LoadingTask::History));
     }
 
     /// A venue that reports its record exhausted is not asked once more.
@@ -27348,6 +27456,7 @@ crosshair = false
                 ..Default::default()
             },
             paper: Default::default(),
+            history: Default::default(),
         }
     }
 

@@ -216,28 +216,58 @@ fn merge_older_candles(base: &mut Vec<quantick_engine::Bar>, older: Vec<quantick
 /// With no engine bars yet the whole prefix stands — there is nothing to
 /// overlap.
 fn trim_to_seam(
-    folded: &[quantick_engine::Bar],
+    mut folded: Vec<quantick_engine::Bar>,
     first_engine_bar: Option<&quantick_engine::Bar>,
     partial: Option<&quantick_engine::Bar>,
     interval_ms: i64,
 ) -> Vec<quantick_engine::Bar> {
-    let Some(first) = first_engine_bar.or(partial) else {
-        return folded.to_vec();
+    let Some(seam) = seam_bucket_ms(first_engine_bar, partial, interval_ms) else {
+        return folded;
     };
-    // Buckets, not stamps. A venue candle's `open_time` is its bucket start; an
-    // engine bar's is its *first trade*, which sits strictly inside the bucket.
-    // Comparing the two raw would keep the venue candle covering the same
-    // window and put a later-closing bar in an earlier slot.
-    let seam = crate::resample::bucket_start(first.open_time, interval_ms);
-    // Copied out rather than retained in place, so the caller may hand over a
-    // borrowed base: the lead-in trims the venue's whole block for every pane
-    // that is not cut by time, and cloning a week of minutes first — to throw
-    // most of it away — is a copy per refold with nothing to show for it.
+    folded.retain(|bar| bar.open_time < seam);
     folded
-        .iter()
+}
+
+/// The same trim over a block the caller only has on loan.
+///
+/// Two functions rather than one taking a `Cow`, because they pay for
+/// different things and both paths are on the diet. The owning one above trims
+/// a vector `resample::fold` just built and is about to drop — a `retain` there
+/// copies nothing at all. This one is handed the venue's whole base, which the
+/// tab keeps, so it copies out only the bars that survive rather than cloning a
+/// week of minutes in order to throw most of them away.
+fn trim_borrowed_to_seam(
+    base: &[quantick_engine::Bar],
+    first_engine_bar: Option<&quantick_engine::Bar>,
+    partial: Option<&quantick_engine::Bar>,
+    interval_ms: i64,
+) -> Vec<quantick_engine::Bar> {
+    let Some(seam) = seam_bucket_ms(first_engine_bar, partial, interval_ms) else {
+        return base.to_vec();
+    };
+    base.iter()
         .filter(|bar| bar.open_time < seam)
         .cloned()
         .collect()
+}
+
+/// Where the venue's candles have to stop for the pane's own bars to begin, or
+/// `None` when there are no bars yet and the whole block stands.
+///
+/// Buckets, not stamps. A venue candle's `open_time` is its bucket start; an
+/// engine bar's is its *first trade*, which sits strictly inside the bucket.
+/// Comparing the two raw would keep the venue candle covering the same window
+/// and put a later-closing bar in an earlier slot.
+///
+/// One owner for the rule, so the two trims above cannot drift apart about
+/// where the seam is.
+fn seam_bucket_ms(
+    first_engine_bar: Option<&quantick_engine::Bar>,
+    partial: Option<&quantick_engine::Bar>,
+    interval_ms: i64,
+) -> Option<i64> {
+    let first = first_engine_bar.or(partial)?;
+    Some(crate::resample::bucket_start(first.open_time, interval_ms))
 }
 
 /// Whether the chart can reach further back for venue candles, and when it
@@ -398,6 +428,16 @@ pub struct Tab {
     /// counted apart from built bars on the status bar — which is the only way
     /// a chart cut by trades can show yesterday at all. A minute is not a tick
     /// bar and never becomes one; the two simply sit side by side, named.
+    ///
+    /// **What the trader is accepting by switching it on**, said here because
+    /// it is the honest cost and the View menu's hover says it too: the series
+    /// an indicator is computed over is the prefix plus the pane's own bars
+    /// (`ChartPane::closed_bars`). On a time pane the prefix is folded to that
+    /// pane's interval, so the series stays one population; here it does not,
+    /// and an average running across the seam averages minute candles with
+    /// bars cut by trades. The alternative — hiding the prefix from the
+    /// indicators of a chart cut by trades and not of one cut by time — would
+    /// make the same prefix mean two things, which is the worse dishonesty.
     pub venue_lead_in: bool,
     // Every wait currently in flight in this tab, drawn by one overlay (see
     // crate::loading) while the tab is on screen.
@@ -865,18 +905,20 @@ impl Tab {
     /// pane object it is. `bars → time` on the flow pane earns the same span
     /// the split's time pane gets.
     fn any_pane_wants_venue_history(&self) -> bool {
-        // The lead-in wants them on every chart, whatever it is cut by — that
-        // is the whole of what the switch buys, and a tab that never asked for
-        // candles could never install them.
-        self.venue_lead_in
-            || std::iter::once(&self.flow_pane)
-                .chain(self.time_pane())
-                .any(|pane| {
-                    pane.state
-                        .spec()
-                        .time_interval_ms()
-                        .is_some_and(crate::resample::is_foldable)
-                })
+        std::iter::once(&self.flow_pane)
+            .chain(self.time_pane())
+            .any(|pane| match pane.state.spec().time_interval_ms() {
+                // Cut by time: the venue's candles fold into this pane's own
+                // interval, which is what the prefix has always been. An
+                // interval no whole number of minutes fits into still folds to
+                // nothing, so it still wants none — the lead-in does not change
+                // that, because the pane would draw the answer and discard it.
+                Some(interval) => crate::resample::is_foldable(interval),
+                // Cut by trades: no fold exists, so candles are wanted only
+                // when the trader asked for the lead-in that installs them
+                // unfolded.
+                None => self.venue_lead_in,
+            })
     }
 
     /// Ask the venue for its candle history, if there is anything to ask.
@@ -1389,7 +1431,7 @@ impl Tab {
                 Some(interval) => {
                     let folded = crate::resample::fold(base, interval);
                     trim_to_seam(
-                        &folded,
+                        folded,
                         pane.state.bars().first(),
                         pane.state.partial(),
                         interval,
@@ -1402,7 +1444,7 @@ impl Tab {
                 // bar, the two sit side by side and each says what it is.
                 // Asked for, never assumed: without the switch the honest
                 // answer is still no prefix at all.
-                None if venue_lead_in => trim_to_seam(
+                None if venue_lead_in => trim_borrowed_to_seam(
                     base,
                     pane.state.bars().first(),
                     pane.state.partial(),
@@ -1939,7 +1981,7 @@ impl Tab {
     /// page this is the single request it always was, and with a longer reach
     /// it is the first of a run each reply continues
     /// ([`Self::advance_history_campaign`]).
-    pub fn request_older_history(&mut self) {
+    pub fn request_older_history(&mut self, config: &AppConfig) {
         if self.campaign.is_some() {
             // A run already has its one permitted request out, and the reply
             // is what sends the next. Pressing again would raise a second wait
@@ -1962,11 +2004,13 @@ impl Tab {
         if !self.send_load_older() {
             return;
         }
-        if self.history_reach == HistoryReach::PreviousSession {
+        if self.history_reach.runs_a_campaign() {
             // A chart holding no prints has nothing to page back *from*, so
             // the single request above is the whole of this press: the next
             // one, with a tape under it, starts the run.
-            self.campaign = anchor_ms.map(Campaign::new);
+            let held = self.flow_pane.state.trades().len();
+            let bounds = config.history.reach_bounds();
+            self.campaign = anchor_ms.map(|anchor| Campaign::new(anchor, held, bounds));
         }
     }
 
@@ -2020,6 +2064,26 @@ impl Tab {
         let Some(mut campaign) = self.campaign.take() else {
             return;
         };
+        // Putting the reach back to one page is how a run is called off. It is
+        // the only stop a trader has — pressing again mid-run is refused, so
+        // the button cannot be a cancel without a double-click becoming one —
+        // and it is where they would look, because it is the control that
+        // started this.
+        if !self.history_reach.runs_a_campaign() {
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HISTORY_REACH_SETTLED",
+                tab = self.id,
+                symbol = %self.symbol,
+                pages = campaign.pages_spent(),
+                anchor_ms = campaign.anchor_ms(),
+                reached_ms = self.oldest_retained_trade_ms().unwrap_or(0),
+                action = "reach_withdrawn",
+                "the reach was put back to one page; the run stops here"
+            );
+            return;
+        }
         // The feed's own answer, not the configured one: `history_paging` goes
         // false the moment a venue reports its record exhausted, and asking
         // again after that spins a run against a wall.
@@ -4077,6 +4141,7 @@ mod collapse_path_tests {
             feeds: vec![],
             metatrader: Default::default(),
             paper: Default::default(),
+            history: Default::default(),
         };
         let style = crate::style::ChartStyle::default();
         let mut ids = PaneIdAllocator::new();

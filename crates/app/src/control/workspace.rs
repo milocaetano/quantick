@@ -32,10 +32,24 @@ pub(crate) struct WorkspaceSnapshot {
     /// How far one press of *load older* reaches, as the reach registry's own
     /// token (`page`, `previous-session`) — the same string the harness hook
     /// takes, so what an operator sets is what it reads back.
+    ///
+    /// Additive within v1 (contract §4): defaulted rather than required, so a
+    /// client holding this schema still validates a summary from an instance
+    /// built before the field existed.
+    #[serde(default)]
     pub history_reach: String,
+    /// Whether a run of *load older* requests is in flight on the active tab.
+    ///
+    /// The setting above says what a press will do; this says whether one is
+    /// still doing it. Without it an operator that started a reach has no way
+    /// to tell a finished run from a running one except by polling bar counts
+    /// and guessing.
+    #[serde(default)]
+    pub history_reach_running: bool,
     /// Whether a chart cut by trades carries the venue's candles in front of
     /// its bars. Read with each pane's `venue_prefix_present`: this is what
     /// the trader asked for, that is what the pane actually holds.
+    #[serde(default)]
     pub venue_lead_in: bool,
     pub tabs: Vec<WorkspaceTab>,
     /// The layout strip: every layout, and which is active. Additive.
@@ -103,6 +117,9 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
     let (save_on_exit, performance_readings_visible, progressive_venue_history) =
         app.control_workspace_flags();
     let (history_reach, venue_lead_in) = app.control_history_settings();
+    let history_reach_running = tabs
+        .get(active_index)
+        .is_some_and(|tab| tab.history_reach_running());
     WorkspaceSnapshot {
         active_tab_index: wire_usize(active_index),
         active_tab_id: tabs
@@ -115,6 +132,7 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
         performance_readings_visible,
         progressive_venue_history,
         history_reach: history_reach.token().to_owned(),
+        history_reach_running,
         venue_lead_in,
         tabs: tabs
             .iter()

@@ -1356,6 +1356,7 @@ mod tests {
             }],
             metatrader: crate::config::MetaTraderSettings::default(),
             paper: crate::config::PaperSettings::default(),
+            history: crate::config::HistorySettings::default(),
         }
     }
 

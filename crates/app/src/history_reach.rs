@@ -47,18 +47,71 @@ pub const PREVIOUS_SESSION_LEAD_MS: i64 = 3 * 60 * 60 * 1_000;
 
 /// Pages one campaign may spend before it stops and lets the trader decide.
 ///
-/// A bound, not a target: a campaign that meets its reach in three pages
-/// spends three. This exists so a venue answering empty forever — a bridge
-/// walking a delisted symbol, a cursor that stops advancing — ends in a
-/// bounded number of round trips instead of asking until the app is closed.
+/// A bound on round trips, not a target: a campaign that meets its reach in
+/// three pages spends three. Stopping here is not a failure — the next press
+/// starts from where this one reached, because the anchor moves with it.
 pub const MAX_CAMPAIGN_PAGES: u32 = 64;
 
-/// Span one campaign may cover, whatever the tape says about sessions.
+/// Prints one campaign may pull before it stops and lets the trader decide.
+///
+/// The page budget bounds *round trips*; this bounds *work*. Every page is
+/// prepended through `ChartState::prepend_history`, which re-cuts every bar
+/// the chart holds — so the cost of a run is the tape it fetched, not the
+/// number of requests, and a trader who raised the page size to 50 000 would
+/// otherwise buy sixty-four of those rebuilds with one press. A quarter of a
+/// million prints is a heavy session's worth: enough that a reach lands in one
+/// press on any ordinary tape, bounded enough that the frame it costs is one
+/// frame.
+pub const MAX_CAMPAIGN_PRINTS: usize = 250_000;
+
+/// Replies that may bring nothing new before a campaign gives up.
+///
+/// An empty page is not by itself the end of the record, and stopping on the
+/// first one would break the case this feature exists for: a bridge crossing a
+/// weekend searches hours and maps no trades at all, and its own walk covers
+/// up to about four days per request. Three of those is a fortnight of dead
+/// air — past any holiday — while a venue that answers empty because it is
+/// rate-limiting or broken costs three requests instead of sixty-four. That
+/// second case is the one this number is really sized against: Binance never
+/// withdraws its paging capability, and a 429 answered as an empty block is
+/// indistinguishable here from a market that was closed.
+pub const MAX_IDLE_PAGES: u32 = 3;
+
+/// Span one campaign may cover *while the tape has shown no close at all*.
 ///
 /// The answer for a market that never closes: crypto has no overnight gap, so
-/// [`Campaign`] would otherwise page until its page budget ran out. Two days
-/// is past any "previous session" a continuous market has.
+/// [`Campaign`] would otherwise page until its budgets ran out. Two days is
+/// past any "previous session" a continuous market has.
+///
+/// Deliberately **not** applied once a close is in sight. The first session
+/// after a weekend sits further behind than any fixed span — Monday's open is
+/// some sixty-two hours after Friday's close plus this reach's lead — so a cap
+/// that outranked the reach would stop at the gap having pulled seconds of
+/// Friday, on exactly the mornings the feature is named for.
 pub const MAX_CAMPAIGN_SPAN_MS: i64 = 48 * 60 * 60 * 1_000;
+
+/// The two bounds a [`Campaign`] measures its reach against, as the trader's
+/// configuration set them.
+///
+/// Passed in rather than read from the constants above, because both are
+/// facts about a venue and not about quantick: `[history]` in the TOML owns
+/// them, and the constants are only what that section defaults to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReachBounds {
+    /// See [`SESSION_GAP_MS`].
+    pub session_gap_ms: i64,
+    /// See [`PREVIOUS_SESSION_LEAD_MS`].
+    pub previous_session_lead_ms: i64,
+}
+
+impl Default for ReachBounds {
+    fn default() -> Self {
+        Self {
+            session_gap_ms: SESSION_GAP_MS,
+            previous_session_lead_ms: PREVIOUS_SESSION_LEAD_MS,
+        }
+    }
+}
 
 /// How far one press of *load older* reaches.
 ///
@@ -120,6 +173,22 @@ impl HistoryReach {
         }
     }
 
+    /// Whether one press of this reach is a *run* of requests rather than a
+    /// single one.
+    ///
+    /// Asked rather than matched on, so a third reach that also pages is a
+    /// variant and its arms in this file and nothing in `tab.rs`. The tab
+    /// reads this in two places — starting a run, and deciding whether one
+    /// still has its trader's consent — and a `== PreviousSession` in either
+    /// would be the type switch that grows.
+    #[must_use]
+    pub const fn runs_a_campaign(self) -> bool {
+        match self {
+            Self::Page => false,
+            Self::PreviousSession => true,
+        }
+    }
+
     /// Read a reach back from its token. Unknown text is no reach at all
     /// rather than a silent default: the caller decides whether to keep what
     /// it had or say the value was not understood.
@@ -144,6 +213,12 @@ pub enum CampaignEnd {
     Exhausted,
     /// [`MAX_CAMPAIGN_PAGES`] spent. Pressing again continues from here.
     PagesSpent,
+    /// [`MAX_CAMPAIGN_PRINTS`] pulled. Pressing again continues from here.
+    PrintsPulled,
+    /// [`MAX_IDLE_PAGES`] replies in a row brought nothing new. Either the
+    /// venue has run out without saying so, or it is refusing — and neither is
+    /// worth another sixty requests.
+    NothingComingBack,
     /// [`MAX_CAMPAIGN_SPAN_MS`] covered without the tape ever showing a close
     /// — a market that does not shut. Pressing again continues from here.
     SpanCovered,
@@ -160,6 +235,8 @@ impl CampaignEnd {
             Self::ReachMet => "reach_met",
             Self::Exhausted => "venue_exhausted",
             Self::PagesSpent => "page_budget_spent",
+            Self::PrintsPulled => "print_budget_spent",
+            Self::NothingComingBack => "nothing_coming_back",
             Self::SpanCovered => "span_cap_covered",
             Self::NothingCharted => "nothing_charted",
         }
@@ -189,17 +266,36 @@ pub struct Campaign {
     anchor_ms: i64,
     /// Requests sent so far, this campaign's first press included.
     pages_spent: u32,
+    /// Prints the chart held when the trader pressed, so the run can bound
+    /// the *work* it causes and not only the round trips it makes.
+    prints_at_start: usize,
+    /// Prints the chart held when the previous reply was judged, so a page
+    /// that brought nothing is recognisable as one.
+    prints_seen: usize,
+    /// What this venue's session gap and lead are, from `[history]`.
+    bounds: ReachBounds,
+    /// Replies in a row that brought nothing new.
+    ///
+    /// Reset by any page that moves the oldest print. Counted rather than
+    /// latched because a single empty page is ordinary — a bridge crossing a
+    /// weekend finds no trades in hours of searching and is still advancing.
+    idle_pages: u32,
 }
 
 impl Campaign {
-    /// Start a campaign from the oldest print the chart holds.
+    /// Start a campaign from the oldest print the chart holds, and from how
+    /// many prints it holds.
     ///
     /// The first request is the trader's press, so the budget opens at one.
     #[must_use]
-    pub const fn new(anchor_ms: i64) -> Self {
+    pub const fn new(anchor_ms: i64, prints_at_start: usize, bounds: ReachBounds) -> Self {
         Self {
             anchor_ms,
             pages_spent: 1,
+            prints_at_start,
+            prints_seen: prints_at_start,
+            idle_pages: 0,
+            bounds,
         }
     }
 
@@ -223,8 +319,10 @@ impl Campaign {
     /// feed that has said so would spin against a wall.
     ///
     /// Rate: **rare** — once per history reply, never per trade or per frame.
-    /// The scan below stops at the anchor, so its cost is the page that just
-    /// arrived rather than the whole retained tape.
+    /// [`last_close_before`] walks back from the anchor and stops at the first
+    /// break, so the usual cost is the page that just arrived; only a tape
+    /// with no break in it at all is scanned whole, and that is the case the
+    /// span cap ends.
     pub fn advance(&mut self, trades: &[Trade], can_page: bool) -> CampaignStep {
         if !can_page {
             return CampaignStep::Stop(CampaignEnd::Exhausted);
@@ -232,13 +330,36 @@ impl Campaign {
         let Some(oldest) = trades.first().map(|trade| trade.timestamp_ms) else {
             return CampaignStep::Stop(CampaignEnd::NothingCharted);
         };
-        if let Some(close) = last_close_before(trades, self.anchor_ms)
-            && oldest <= close.saturating_sub(PREVIOUS_SESSION_LEAD_MS)
-        {
-            return CampaignStep::Stop(CampaignEnd::ReachMet);
+        match last_close_before(trades, self.anchor_ms, self.bounds.session_gap_ms) {
+            Some(close) => {
+                if oldest <= close.saturating_sub(self.bounds.previous_session_lead_ms) {
+                    return CampaignStep::Stop(CampaignEnd::ReachMet);
+                }
+                // A close is in sight and the lead is not covered yet. The span
+                // cap deliberately does not pre-empt this: see its own doc.
+            }
+            None if self.anchor_ms.saturating_sub(oldest) >= MAX_CAMPAIGN_SPAN_MS => {
+                return CampaignStep::Stop(CampaignEnd::SpanCovered);
+            }
+            None => {}
         }
-        if self.anchor_ms.saturating_sub(oldest) >= MAX_CAMPAIGN_SPAN_MS {
-            return CampaignStep::Stop(CampaignEnd::SpanCovered);
+        // Did that page bring anything? A venue with nothing left to give does
+        // not always say so — only the MetaTrader bridge withdraws its paging
+        // capability, while Binance's is a compile-time `true` that answers an
+        // empty block to a rate-limited request exactly as it does to a market
+        // that was closed. Without this the run would spend its whole page
+        // budget on back-to-back requests, which is how a 429 becomes a ban.
+        if trades.len() <= self.prints_seen {
+            self.idle_pages = self.idle_pages.saturating_add(1);
+            if self.idle_pages >= MAX_IDLE_PAGES {
+                return CampaignStep::Stop(CampaignEnd::NothingComingBack);
+            }
+        } else {
+            self.idle_pages = 0;
+        }
+        self.prints_seen = trades.len();
+        if trades.len().saturating_sub(self.prints_at_start) >= MAX_CAMPAIGN_PRINTS {
+            return CampaignStep::Stop(CampaignEnd::PrintsPulled);
         }
         if self.pages_spent >= MAX_CAMPAIGN_PAGES {
             return CampaignStep::Stop(CampaignEnd::PagesSpent);
@@ -249,29 +370,34 @@ impl Campaign {
 }
 
 /// The last print of the newest session that closed strictly before `anchor_ms`
-/// — the older side of the newest gap wider than [`SESSION_GAP_MS`] among the
+/// — the older side of the newest gap wider than `session_gap_ms` among the
 /// prints older than the anchor.
 ///
 /// `None` means the tape shows no such close: either nothing older than the
 /// anchor has arrived yet, or the market in question does not close.
 ///
-/// Scanned forward from the oldest print and stopped at the anchor rather than
-/// walked back from the newest, because everything older than the anchor is
-/// exactly what this campaign fetched — a retained tape of a million prints
-/// costs the same here as one of a thousand.
+/// Walked **backwards from the anchor**, so the first break found is the
+/// newest one and the search ends there. The anchor's own position is found by
+/// binary search — prints are ascending by stamp, which is what the chart's
+/// retained stream guarantees — so a tape of a million prints costs the same
+/// as one of a thousand, and the walk itself covers only what the campaign has
+/// fetched *since* the break. Scanning forward from the oldest print instead
+/// would grow by a page on every reply and make the run quadratic in pages:
+/// the same answer, arrived at the expensive way round.
 #[must_use]
-pub fn last_close_before(trades: &[Trade], anchor_ms: i64) -> Option<i64> {
-    let mut close = None;
-    for pair in trades.windows(2) {
-        let (earlier, later) = (pair[0].timestamp_ms, pair[1].timestamp_ms);
-        if earlier >= anchor_ms {
-            break;
-        }
-        if later.saturating_sub(earlier) > SESSION_GAP_MS {
-            close = Some(earlier);
-        }
-    }
-    close
+pub fn last_close_before(trades: &[Trade], anchor_ms: i64, session_gap_ms: i64) -> Option<i64> {
+    // Pairs are (i, i + 1), and only the older side has to sit before the
+    // anchor — the break between the previous session and the anchor's own is
+    // exactly the one whose newer side is the anchor.
+    let last_pair = trades.len().checked_sub(1)?;
+    let before_anchor = trades
+        .partition_point(|trade| trade.timestamp_ms < anchor_ms)
+        .min(last_pair);
+    (0..before_anchor).rev().find_map(|index| {
+        let earlier = trades[index].timestamp_ms;
+        let later = trades[index + 1].timestamp_ms;
+        (later.saturating_sub(earlier) > session_gap_ms).then_some(earlier)
+    })
 }
 
 #[cfg(test)]
@@ -306,7 +432,7 @@ mod tests {
     fn a_tape_with_no_break_in_it_shows_no_close() {
         let dense = run(0, MINUTE, 600);
         assert_eq!(
-            last_close_before(&dense, i64::MAX),
+            last_close_before(&dense, i64::MAX, SESSION_GAP_MS),
             None,
             "ten hours of minute prints is one session, however long it runs"
         );
@@ -318,7 +444,7 @@ mod tests {
         let close = tape.last().expect("the run is not empty").timestamp_ms;
         tape.extend(run(close + 14 * HOUR, MINUTE, 60));
         assert_eq!(
-            last_close_before(&tape, i64::MAX),
+            last_close_before(&tape, i64::MAX, SESSION_GAP_MS),
             Some(close),
             "the session ended at its last print, not at the next one's open"
         );
@@ -330,7 +456,7 @@ mod tests {
         let quiet = tape.last().unwrap().timestamp_ms + SESSION_GAP_MS;
         tape.extend(run(quiet, MINUTE, 10));
         assert_eq!(
-            last_close_before(&tape, i64::MAX),
+            last_close_before(&tape, i64::MAX, SESSION_GAP_MS),
             None,
             "an hour of silence is a thin market, not a closed one"
         );
@@ -346,24 +472,33 @@ mod tests {
         tape.extend(run(second_close + 14 * HOUR, MINUTE, 30));
 
         assert_eq!(
-            last_close_before(&tape, i64::MAX),
+            last_close_before(&tape, i64::MAX, SESSION_GAP_MS),
             Some(second_close),
             "with no anchor in the way, the newest close wins"
         );
         assert_eq!(
-            last_close_before(&tape, second_close),
+            last_close_before(&tape, second_close, SESSION_GAP_MS),
             Some(first_close),
             "an anchor at the newest close pushes the answer to the one before it"
         );
     }
 
+    /// A tape long enough to page over, `count` prints of it, ending just
+    /// before minute zero. The campaigns below start from its oldest print.
+    fn session(count: usize) -> Vec<Trade> {
+        run(-(count as i64) * MINUTE, MINUTE, count)
+    }
+
     #[test]
     fn a_campaign_keeps_asking_while_the_tape_is_still_inside_one_session() {
-        let tape = run(0, MINUTE, 120);
+        let mut tape = session(120);
         let anchor = tape.first().unwrap().timestamp_ms;
-        let mut campaign = Campaign::new(anchor);
+        let mut campaign = Campaign::new(anchor, tape.len(), ReachBounds::default());
+        // One page arrives, still inside the same session.
+        let mut older = run(anchor - 60 * MINUTE, MINUTE, 60);
+        older.append(&mut tape);
         assert_eq!(
-            campaign.advance(&tape, true),
+            campaign.advance(&older, true),
             CampaignStep::Ask,
             "no break has been reached, so there is more to fetch"
         );
@@ -375,7 +510,7 @@ mod tests {
         // Today's session, and the anchor at its first print.
         let today = run(20 * HOUR, MINUTE, 60);
         let anchor = today.first().unwrap().timestamp_ms;
-        let mut campaign = Campaign::new(anchor);
+        let mut campaign = Campaign::new(anchor, today.len(), ReachBounds::default());
 
         // Yesterday arrives, but only its last hour: short of the lead.
         let close = anchor - 14 * HOUR;
@@ -397,10 +532,48 @@ mod tests {
         );
     }
 
+    /// Monday. Friday's close is some sixty-two hours behind Monday's open, so
+    /// a span cap that outranked the reach would stop the run at the weekend
+    /// gap having brought back minutes of Friday — on exactly the mornings
+    /// this reach exists for.
+    #[test]
+    fn a_weekend_does_not_let_the_span_cap_pre_empt_the_reach() {
+        let monday_open = 100 * 24 * HOUR;
+        let today = run(monday_open, MINUTE, 30);
+        let anchor = today.first().unwrap().timestamp_ms;
+        let mut campaign = Campaign::new(anchor, today.len(), ReachBounds::default());
+
+        // Friday's last print, a weekend and a half-session behind.
+        let friday_close = anchor - 63 * HOUR;
+        let mut tape = run(friday_close - 30 * MINUTE, MINUTE, 31);
+        tape.extend_from_slice(&today);
+        assert!(
+            anchor - tape.first().unwrap().timestamp_ms > MAX_CAMPAIGN_SPAN_MS,
+            "the fixture has to be past the cap or it proves nothing"
+        );
+        assert_eq!(
+            campaign.advance(&tape, true),
+            CampaignStep::Ask,
+            "the close is in sight, so the run keeps going for its lead"
+        );
+
+        let mut tape = run(friday_close - PREVIOUS_SESSION_LEAD_MS, MINUTE, 181);
+        tape.extend_from_slice(&today);
+        assert_eq!(
+            campaign.advance(&tape, true),
+            CampaignStep::Stop(CampaignEnd::ReachMet),
+            "and Friday afternoon is on the chart"
+        );
+    }
+
     #[test]
     fn a_feed_that_has_run_out_stops_the_campaign_rather_than_being_asked_again() {
-        let tape = run(0, MINUTE, 10);
-        let mut campaign = Campaign::new(tape.first().unwrap().timestamp_ms);
+        let tape = session(10);
+        let mut campaign = Campaign::new(
+            tape.first().unwrap().timestamp_ms,
+            tape.len(),
+            ReachBounds::default(),
+        );
         assert_eq!(
             campaign.advance(&tape, false),
             CampaignStep::Stop(CampaignEnd::Exhausted),
@@ -414,7 +587,7 @@ mod tests {
         // ever appear, so the span is the only thing that can stop this.
         let anchor = MAX_CAMPAIGN_SPAN_MS + 10 * MINUTE;
         let tape = run(0, 10 * MINUTE, (anchor / (10 * MINUTE)) as usize + 1);
-        let mut campaign = Campaign::new(anchor);
+        let mut campaign = Campaign::new(anchor, 1, ReachBounds::default());
         assert_eq!(
             campaign.advance(&tape, true),
             CampaignStep::Stop(CampaignEnd::SpanCovered),
@@ -422,30 +595,111 @@ mod tests {
         );
     }
 
+    /// The stop that keeps one press from becoming sixty-four requests against
+    /// a venue that is refusing rather than empty.
+    ///
+    /// Only the MetaTrader bridge ever withdraws its paging capability.
+    /// Binance's is a compile-time `true` and answers a rate-limited fetch with
+    /// the same empty block it answers "nothing older" with, so `can_page`
+    /// cannot be what stops this — and sixty-four back-to-back REST calls is
+    /// how a 429 becomes an IP ban.
     #[test]
-    fn the_page_budget_ends_a_campaign_a_silent_venue_would_never_end() {
-        // A venue answering empty forever: the tape never grows, so neither
-        // the reach nor the span cap can ever be met.
-        let tape = run(0, MINUTE, 10);
-        let mut campaign = Campaign::new(tape.first().unwrap().timestamp_ms);
+    fn a_venue_that_keeps_answering_empty_is_not_asked_sixty_four_times() {
+        let tape = session(10);
+        let mut campaign = Campaign::new(
+            tape.first().unwrap().timestamp_ms,
+            tape.len(),
+            ReachBounds::default(),
+        );
+        for page in 1..MAX_IDLE_PAGES {
+            assert_eq!(
+                campaign.advance(&tape, true),
+                CampaignStep::Ask,
+                "empty page {page} could still be dead time being crossed"
+            );
+        }
+        assert_eq!(
+            campaign.advance(&tape, true),
+            CampaignStep::Stop(CampaignEnd::NothingComingBack),
+            "but a run of them is a venue with nothing coming back"
+        );
+        assert!(
+            campaign.pages_spent() < MAX_CAMPAIGN_PAGES,
+            "and it cost a handful of requests, not the whole budget"
+        );
+    }
+
+    /// The other half of the same rule: an empty page is *ordinary* while a
+    /// bridge crosses a weekend, and stopping on the first one would break the
+    /// case this reach is named for.
+    #[test]
+    fn a_single_empty_page_does_not_end_a_run_crossing_dead_time() {
+        let today = session(60);
+        let anchor = today.first().unwrap().timestamp_ms;
+        let mut campaign = Campaign::new(anchor, today.len(), ReachBounds::default());
+        assert_eq!(
+            campaign.advance(&today, true),
+            CampaignStep::Ask,
+            "the search moved hours and mapped no trades; that is a weekend"
+        );
+        // The next page lands the previous session, and the idle count clears.
+        let close = anchor - 14 * HOUR;
+        let mut tape = run(close - PREVIOUS_SESSION_LEAD_MS, MINUTE, 181);
+        tape.extend_from_slice(&today);
+        assert_eq!(
+            campaign.advance(&tape, true),
+            CampaignStep::Stop(CampaignEnd::ReachMet)
+        );
+    }
+
+    /// Every page is prepended through a full re-cut of the chart's bars, so
+    /// the run bounds the prints it pulls and not only the requests it makes.
+    #[test]
+    fn the_print_budget_bounds_the_work_one_press_causes() {
+        let today = session(10);
+        let anchor = today.first().unwrap().timestamp_ms;
+        let mut campaign = Campaign::new(anchor, today.len(), ReachBounds::default());
+        // One enormous page, inside a session that never breaks: nothing but
+        // this budget can stop it before the span cap, and the tape is far
+        // newer than that.
+        let mut tape = run(anchor - MAX_CAMPAIGN_PRINTS as i64, 1, MAX_CAMPAIGN_PRINTS);
+        tape.extend_from_slice(&today);
+        assert_eq!(
+            campaign.advance(&tape, true),
+            CampaignStep::Stop(CampaignEnd::PrintsPulled),
+            "a quarter of a million prints is one press's worth of re-cutting"
+        );
+    }
+
+    #[test]
+    fn the_page_budget_bounds_a_run_that_keeps_making_progress() {
+        let today = session(10);
+        let anchor = today.first().unwrap().timestamp_ms;
+        let mut campaign = Campaign::new(anchor, today.len(), ReachBounds::default());
+        // Every page brings one more print and never a break, so neither the
+        // idle count nor the reach can end this. The prints stay far inside
+        // both the span cap and the print budget.
+        let mut tape = today.clone();
         for page in 1..MAX_CAMPAIGN_PAGES {
+            tape.insert(0, trade(tape[0].timestamp_ms - MINUTE));
             assert_eq!(
                 campaign.advance(&tape, true),
                 CampaignStep::Ask,
                 "page {page} is inside the budget"
             );
         }
+        tape.insert(0, trade(tape[0].timestamp_ms - MINUTE));
         assert_eq!(
             campaign.advance(&tape, true),
             CampaignStep::Stop(CampaignEnd::PagesSpent),
-            "the budget is what stops a venue that answers nothing forever"
+            "sixty-four round trips is enough for one press"
         );
         assert_eq!(campaign.pages_spent(), MAX_CAMPAIGN_PAGES);
     }
 
     #[test]
     fn a_chart_emptied_under_a_running_campaign_stops_it() {
-        let mut campaign = Campaign::new(0);
+        let mut campaign = Campaign::new(0, 1, ReachBounds::default());
         assert_eq!(
             campaign.advance(&[], true),
             CampaignStep::Stop(CampaignEnd::NothingCharted),

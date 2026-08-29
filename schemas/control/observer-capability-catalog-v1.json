@@ -10741,8 +10741,14 @@
             "$ref": "#/$defs/WireU64"
           },
           "history_reach": {
-            "description": "How far one press of *load older* reaches, as the reach registry's own\ntoken (`page`, `previous-session`) — the same string the harness hook\ntakes, so what an operator sets is what it reads back.",
+            "default": "",
+            "description": "How far one press of *load older* reaches, as the reach registry's own\ntoken (`page`, `previous-session`) — the same string the harness hook\ntakes, so what an operator sets is what it reads back.\n\nAdditive within v1 (contract §4): defaulted rather than required, so a\nclient holding this schema still validates a summary from an instance\nbuilt before the field existed.",
             "type": "string"
+          },
+          "history_reach_running": {
+            "default": false,
+            "description": "Whether a run of *load older* requests is in flight on the active tab.\n\nThe setting above says what a press will do; this says whether one is\nstill doing it. Without it an operator that started a reach has no way\nto tell a finished run from a running one except by polling bar counts\nand guessing.",
+            "type": "boolean"
           },
           "layouts": {
             "default": [],
@@ -10775,6 +10781,7 @@
             "type": "integer"
           },
           "venue_lead_in": {
+            "default": false,
             "description": "Whether a chart cut by trades carries the venue's candles in front of\nits bars. Read with each pane's `venue_prefix_present`: this is what\nthe trader asked for, that is what the pane actually holds.",
             "type": "boolean"
           }
@@ -10787,8 +10794,6 @@
           "save_on_exit",
           "performance_readings_visible",
           "progressive_venue_history",
-          "history_reach",
-          "venue_lead_in",
           "tabs"
         ],
         "title": "WorkspaceSnapshot",

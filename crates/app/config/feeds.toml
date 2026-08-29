@@ -186,3 +186,30 @@ US30 = 9103
 #
 # [paper]
 # trades_dir = "paper-trades"
+
+# ---------------------------------------------------------------------------
+# How far a "load older" press reaches.
+#
+# The chart's `+ older` button has a reach beside its page size: one page of
+# trades, or the *previous session* — keep asking until the tape reaches back
+# past the market's last close, plus a lead into the session before it, so
+# yesterday is on screen to compare against.
+#
+# Neither value below is a fact about every venue, which is why they live here
+# rather than in the binary. The market's last close is read out of the tape
+# itself — a stretch with no prints at all longer than `session_gap_minutes` is
+# the market having been shut, not a quiet patch — so an instrument with a real
+# lunch break wants a longer gap before that pause reads as a close. And a
+# trader comparing an opening range against yesterday's may want more of it
+# than the three hours that ship.
+#
+# The defaults are sized against B3's index future: it runs 09:00-18:25 with no
+# break, so the overnight stretch is about fourteen hours and the quietest
+# in-session minute is nowhere near one. A market that never closes has no such
+# gap at all, and a press there reaches back two days and stops.
+#
+# The section is optional; absent, the defaults below apply.
+#
+# [history]
+# session_gap_minutes = 60
+# previous_session_lead_minutes = 180
