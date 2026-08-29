@@ -1066,9 +1066,17 @@ pub struct ChartPane {
     /// side are two readings of one market, and a CVD on one is not a CVD the
     /// other asked for.
     pub layout: Option<crate::layouts::LayoutId>,
-    /// The layout's name, as the pane's own header shows it. A copy the app
-    /// refreshes on a switch or a rename, so the header — drawn by the tab,
-    /// which has no book — never looks it up per frame.
+    /// The layout's name, for the pane to show beside its own controls. A
+    /// copy the app refreshes on a switch or a rename, so the header — drawn
+    /// by the tab, which has no book — never looks it up per frame.
+    ///
+    /// Drawn today only by a *context* pane, in the strip that carries its
+    /// timeframe chips ([`crate::time_header`]). The flow pane has no such
+    /// strip, so while a context pane holds the focus its layout is named
+    /// nowhere on screen — the footer strip lights the focused pane's. The
+    /// copy is kept on every pane rather than on the ones that draw it, so
+    /// the flow pane's own readout is a draw call and not a second
+    /// bookkeeping path.
     pub layout_label: String,
     /// Which market and pane address the drawings on this pane belong to,
     /// once the layout put them here. The app compares it with the tab's

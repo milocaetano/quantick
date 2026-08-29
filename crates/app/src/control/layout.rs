@@ -179,7 +179,18 @@ pub(crate) struct LayoutTabResult {
 pub(crate) fn layout_tabs(app: &QuantickApp) -> Vec<LayoutTabSnapshot> {
     // "Active" on the wire is what the strip lights: the focused pane's
     // layout. Every pane's own is in `workspace.summary`.
-    let active = app.focused_pane_layout();
+    layout_tabs_marking(app, app.focused_pane_layout())
+}
+
+/// The same reading with `active` on a layout the caller names.
+///
+/// A call that addressed *another* pane answers about that pane: reporting
+/// the focused pane's layout to a client that just switched a background one
+/// tells it its call did not land, when it did.
+fn layout_tabs_marking(
+    app: &QuantickApp,
+    active: crate::layouts::LayoutId,
+) -> Vec<LayoutTabSnapshot> {
     app.layouts()
         .layouts()
         .iter()
@@ -292,7 +303,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
         tab_descriptor(
             TAB_CREATE_ID,
             "Create layout tab",
-            "Adds an empty layout after the others and switches to it, the way the strip's + does.",
+            "Adds an empty layout after the others and puts it on one pane — the focused pane of the active tab, the way the strip's + does. The panes on other layouts are untouched.",
             generated_schema::<CreateLayoutTabInput>(),
         ),
         tab_create,
@@ -330,15 +341,23 @@ fn tab_descriptor(
     descriptor
 }
 
-fn tab_result(app: &QuantickApp, changed: bool) -> Result<Value, ControlError> {
+/// `subject` is the layout the call acted on, when it named a pane; `None`
+/// answers about the focused pane, which is what a rename or a delete moved
+/// nothing away from.
+fn tab_result(
+    app: &QuantickApp,
+    changed: bool,
+    subject: Option<crate::layouts::LayoutId>,
+) -> Result<Value, ControlError> {
+    let subject = subject.unwrap_or_else(|| app.focused_pane_layout());
     let active = app
         .layouts()
-        .get(app.focused_pane_layout())
+        .get(subject)
         .unwrap_or_else(|| app.layouts().active());
     let payload = LayoutTabResult {
         active_layout_id: WireU64::new(active.id.0),
         active_layout_name: active.name.clone(),
-        layouts: layout_tabs(app),
+        layouts: layout_tabs_marking(app, active.id),
         changed,
     };
     serde_json::to_value(payload).map_err(|error| {
@@ -423,7 +442,7 @@ fn tab_switch(
     let changed = app
         .switch_pane_layout(tab_id, side, id)
         .map_err(layout_error)?;
-    tab_result(app, changed)
+    tab_result(app, changed, Some(id))
 }
 
 fn tab_create(
@@ -434,9 +453,10 @@ fn tab_create(
 ) -> Result<Value, ControlError> {
     let input: CreateLayoutTabInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    app.create_layout(input.name.as_deref())
+    let id = app
+        .create_layout(input.name.as_deref())
         .map_err(layout_error)?;
-    tab_result(app, true)
+    tab_result(app, true, Some(id))
 }
 
 fn tab_rename(
@@ -451,7 +471,7 @@ fn tab_rename(
     let changed = app
         .rename_layout(id, &input.new_name)
         .map_err(layout_error)?;
-    tab_result(app, changed)
+    tab_result(app, changed, None)
 }
 
 fn layout_permissions() -> BTreeSet<PermissionId> {

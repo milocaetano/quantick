@@ -5572,7 +5572,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Adds an empty layout after the others and switches to it, the way the strip's + does.",
+      "description": "Adds an empty layout after the others and puts it on one pane — the focused pane of the active tab, the way the strip's + does. The panes on other layouts are untouched.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",

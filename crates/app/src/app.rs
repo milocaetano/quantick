@@ -4750,7 +4750,10 @@ impl QuantickApp {
                 context_layouts: tab
                     .time_panes
                     .iter()
-                    .map(|pane| pane.layout.map(|layout| layout.0))
+                    .map(|pane| {
+                        pane.layout
+                            .map_or(crate::ui_state::LAYOUT_UNRECORDED, |layout| layout.0)
+                    })
                     .collect(),
                 flow_legend_collapsed: tab.flow_pane.legend_collapsed,
                 // A tab with no time pane has no second legend, and `false`
@@ -25211,6 +25214,11 @@ crosshair = false
             1,
             "and the flow pane still shows layout 1's EMA"
         );
+        assert_eq!(
+            app.slot_kinds.len(),
+            1,
+            "the time pane's registration went with the layout it left, and              only the flow pane's is left"
+        );
 
         // An edit on the time pane reaches layout 2 only.
         app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
@@ -25234,6 +25242,11 @@ crosshair = false
             crate::indicators::state_file::SavedKind::NativeCvd
         );
         assert_eq!(app.layouts().get(first).unwrap().indicators.len(), 1);
+        assert_eq!(
+            app.slot_kinds.len(),
+            2,
+            "one registration per pane, and no leak from the switch"
+        );
 
         // A pane that opens takes the focused pane's layout.
         app.open_tab("binance".to_owned(), "ETHUSDT".to_owned(), None);
@@ -25266,6 +25279,110 @@ crosshair = false
             app.layouts().get(second).unwrap().indicators.len(),
             1,
             "layout 2 kept its own set while it was away"
+        );
+        // The registry, not just the views: a leaked slot changes no view
+        // count but shifts every later edit's layout index by one, so a
+        // mirrored remove would take the wrong indicator on the other panes.
+        assert_eq!(
+            app.slot_kinds
+                .iter()
+                .filter(|(owner, _)| owner.tab == app.active_tab().id
+                    && owner.side == PaneSide::Time(0))
+                .count(),
+            1,
+            "the time pane holds one registration after two switches, not two"
+        );
+    }
+
+    /// A twin pane is never left behind for holding a selection.
+    ///
+    /// Two tabs on one market show one set of drawings on the same pane
+    /// address. A twin the sync skips keeps a copy that is one object short,
+    /// and its own next edit writes that copy back over the key — taking the
+    /// level drawn on the other chart with it, off the screen and out of the
+    /// file, with nothing said. So the twin is refreshed like any other and
+    /// its selection is carried across by id.
+    #[test]
+    fn a_selection_on_a_twin_does_not_cost_the_other_chart_its_drawing() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+        let home = app.active_tab().id;
+        place_level(&mut app, PaneSide::Flow, 100.0);
+        run_frame(&mut app, &ctx);
+
+        // A second tab on the same market: one drawing key, two panes.
+        app.open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        let twin = app.active_tab().id;
+        assert_ne!(twin, home, "a second tab opened");
+        assert_eq!(
+            drawings_on(&app, PaneSide::Flow),
+            vec![100.0],
+            "the market's level came with the market"
+        );
+
+        // The trader selects it here.
+        app.active_tab_mut().flow_pane.drawings.select(Some(0));
+        let held = app.active_tab().flow_pane.drawings.items()[0].id;
+
+        // And draws a second level on the other tab.
+        app.cycle_tab(-1);
+        assert_eq!(app.active_tab().id, home);
+        place_level(&mut app, PaneSide::Flow, 200.0);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+
+        // The twin took the new level and kept pointing at the same object.
+        app.cycle_tab(1);
+        assert_eq!(app.active_tab().id, twin);
+        assert_eq!(
+            drawings_on(&app, PaneSide::Flow),
+            vec![100.0, 200.0],
+            "the twin was refreshed rather than left one object short"
+        );
+        let selected = app
+            .active_tab()
+            .flow_pane
+            .drawings
+            .selected()
+            .expect("the twin kept its selection across the refresh");
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items()[selected].id,
+            held,
+            "and it points at the object the trader picked, not at whatever              now sits at that index"
+        );
+
+        // The twin's own next edit must not write a stale set over the key.
+        // It moves the object it holds — the second tab was opened on a
+        // market whose bars it has not been served, so a new mark has nothing
+        // to anchor on, and a move is what a trader does to a selection
+        // anyway.
+        app.active_tab_mut().flow_pane.drawings.begin_gesture();
+        app.active_tab_mut()
+            .flow_pane
+            .drawings
+            .translate_selected(0.0, 5.0);
+        app.active_tab_mut().flow_pane.drawings.commit_gesture();
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            drawings_on(&app, PaneSide::Flow).len(),
+            2,
+            "the twin still holds both levels after an edit of its own"
+        );
+        app.cycle_tab(-1);
+        assert_eq!(app.active_tab().id, home);
+        let here = drawings_on(&app, PaneSide::Flow);
+        assert!(
+            here.contains(&200.0),
+            "the level drawn on this chart was not written away by the twin: {here:?}"
+        );
+        assert_eq!(
+            here.len(),
+            2,
+            "and both levels of the market are still on it: {here:?}"
         );
     }
 
@@ -25338,7 +25455,7 @@ crosshair = false
 
         let (tabs, _chrome) = app.capture_arrangement();
         assert_eq!(tabs[0].flow_layout, Some(first.0));
-        assert_eq!(tabs[0].context_layouts, vec![Some(second.0)]);
+        assert_eq!(tabs[0].context_layouts, vec![second.0]);
 
         let path = app.layouts_path.clone();
         let (mut again, _commands2) = split_app(&ctx, 200);
