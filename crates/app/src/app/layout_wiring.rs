@@ -1,35 +1,42 @@
-//! How the app keeps every pane equal to the active layout
-//! ([`crate::layouts`]): the indicator fan-out, the per-market drawing
-//! swap, and the layout operations the strip, the menu, the keyboard and
-//! the control plane all call.
+//! How the app keeps every pane equal to *its* layout ([`crate::layouts`]):
+//! the indicator fan-out, the per-market drawing swap, and the layout
+//! operations the strip, the menu, the keyboard and the control plane all
+//! call.
 //!
 //! A child of `app` rather than a sibling so it can reach the app's own
 //! fields: this *is* app logic, split off only so the file that holds it can
 //! be read in one sitting.
 //!
-//! **Indicators: the layout is edited, then mirrored.** An edit on one pane
-//! — add, remove, hide, retune, restyle — is written into the active
-//! layout's entry *from the edit itself* (the kind added, the index removed,
-//! the values the trader committed) and then applied to every other pane on
-//! the same frame, by *layout index*: the n-th indicator of a pane is the
-//! n-th of every pane, which is what makes "the same set everywhere" hold
-//! without a second identity scheme. Nothing here reads a view back to learn
-//! what the layout holds: a view is the worker's answer, which lands later
-//! and may be a preview the trader will discard, and a layout written from
-//! it drifted exactly then. The file follows, debounced.
+//! **A layout per pane.** The workspace holds one book of layouts, and each
+//! pane shows one of them ([`ChartPane::layout`]). Two panes side by side
+//! may show two — a CVD on the flow chart, a lone average on the context
+//! chart — or the same one, in which case they are two readings of one set
+//! and are kept equal. The strip and the number keys switch the *focused*
+//! pane; a pane that opens takes the focused pane's layout. The book's
+//! `active` is the trader's last pick, and the default for a pane that has
+//! none.
+//!
+//! **Indicators: the layout is edited, then mirrored to its panes.** An edit
+//! on one pane — add, remove, hide, retune, restyle — is written into that
+//! pane's layout entry *from the edit itself* (the kind added, the index
+//! removed, the values the trader committed) and then applied to every other
+//! pane showing the same layout, in every tab, by *layout index*: the n-th
+//! indicator of a pane is the n-th of every pane on that layout. Nothing here
+//! reads a view back to learn what the layout holds: a view is the worker's
+//! answer, which lands later and may be a preview the trader will discard.
 //!
 //! Operator-attached scripts (the annotate tier) stay on the pane they were
-//! attached to and out of the layout: they are an agent's overlay, removed
+//! attached to and out of every layout: they are an agent's overlay, removed
 //! by the agent, and were never part of what a trader keeps.
 //!
 //! **Drawings: put away and brought out.** Each pane holds the drawings of
-//! one [`DrawingKey`] at a time. When its tab moves to another market, or
-//! the window switches layout, what it holds is serialised under the old
-//! key and the new key's set is adopted — with the ids it had, so a strategy
-//! armed on a region and an annotation an agent placed still name their
-//! object, and anchored by market time, so a level comes back on the bar it
-//! was drawn on. A pane's revision counter is compared each frame; when it
-//! moved, the set is written into the layout and the debounced save follows.
+//! one [`DrawingKey`] under its own layout at a time. When its tab moves to
+//! another market, or the pane switches layout, what it holds is serialised
+//! under the old key and the new key's set is adopted — with the ids it had,
+//! so a strategy armed on a region and an annotation an agent placed still
+//! name their object, and anchored by market time. A pane's revision counter
+//! is compared each frame; when it moved, the set is written into its layout
+//! and the debounced save follows.
 //!
 //! Per-frame cost: one integer compare and two short string compares per
 //! pane, and a flag test per pane for seeding. Nothing here allocates on a
@@ -145,108 +152,213 @@ impl QuantickApp {
     }
 
     // ------------------------------------------------------------------
+    // Which pane shows which layout
+    // ------------------------------------------------------------------
+
+    /// The layout a pane shows: its own, or the book's default for a pane
+    /// that has not been given one yet.
+    pub(crate) fn pane_layout(&self, tab: u64, side: PaneSide) -> LayoutId {
+        self.pane_at(tab, side)
+            .and_then(|pane| pane.layout)
+            .filter(|id| self.layouts.get(*id).is_some())
+            .unwrap_or_else(|| self.layouts.active_id())
+    }
+
+    /// The layout the focused pane of the active tab shows — what the strip
+    /// lights and what `Alt+N` switches.
+    pub(crate) fn focused_pane_layout(&self) -> LayoutId {
+        let (tab, side) = self.focused_target();
+        self.pane_layout(tab, side)
+    }
+
+    /// The focused pane's address, for the calls that act on it.
+    fn focused_target(&self) -> (u64, PaneSide) {
+        let tab = self.active_tab();
+        (tab.id, tab.focused_side())
+    }
+
+    /// How many panes show `layout` — the same question [`Self::panes_on`]
+    /// answers, for the callers that want only the count and would otherwise
+    /// heap-allocate a list per frame to call `.len()` on it.
+    fn panes_on_count(&self, layout: LayoutId) -> usize {
+        self.tabs
+            .iter()
+            .flat_map(|tab| tab.panes())
+            .filter(|(pane, _)| pane.layout == Some(layout))
+            .count()
+    }
+
+    /// Every (tab, pane) showing `layout`, flow first per tab.
+    fn panes_on(&self, layout: LayoutId) -> Vec<(u64, PaneSide)> {
+        self.tabs
+            .iter()
+            .flat_map(|tab| {
+                tab.panes()
+                    .filter(move |(pane, _)| pane.layout == Some(layout))
+                    .map(move |(_, side)| (tab.id, side))
+            })
+            .collect()
+    }
+
+    /// Give a pane its layout's name for its header.
+    fn refresh_layout_label(&mut self, tab: u64, side: PaneSide) {
+        let name = self
+            .pane_at(tab, side)
+            .and_then(|pane| pane.layout)
+            .and_then(|id| self.layouts.get(id))
+            .map(|layout| layout.name.clone())
+            .unwrap_or_default();
+        if let Some(pane) = self.pane_mut_at(tab, side) {
+            pane.layout_label = name;
+        }
+    }
+
+    fn refresh_all_layout_labels(&mut self) {
+        for (tab, side) in self.layout_pane_targets() {
+            self.refresh_layout_label(tab, side);
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Layout operations
     // ------------------------------------------------------------------
 
-    /// Whether the panes can be swapped under the trader right now.
+    /// Whether a pane can be swapped under the trader right now.
     ///
     /// A strategy armed on a region names that drawing; putting the drawing
     /// away would orphan the instance and drop it with no reason given. A
     /// gesture in flight — a drag, a half-placed object — addresses the
     /// store by index, and a swap under it would land on another layout's
     /// object. Both are the trader's to finish first, and the refusal says so.
-    fn layout_swap_refusal(&self) -> Option<LayoutError> {
-        for tab in &self.tabs {
-            for (pane, _) in tab.panes() {
-                if !pane.strategies.is_empty() {
-                    return Some(LayoutError::StrategyArmed);
-                }
-                if pane.drawings.in_gesture()
-                    || pane.drawings.draft().is_some()
-                    || !matches!(pane.drawing_drag, DrawingDrag::None)
-                {
-                    return Some(LayoutError::GestureInFlight);
-                }
-            }
+    fn pane_swap_refusal(&self, tab: u64, side: PaneSide) -> Option<LayoutError> {
+        let pane = self.pane_at(tab, side)?;
+        if !pane.strategies.is_empty() {
+            return Some(LayoutError::StrategyArmed);
+        }
+        if pane.drawings.in_gesture()
+            || pane.drawings.draft().is_some()
+            || !matches!(pane.drawing_drag, DrawingDrag::None)
+        {
+            return Some(LayoutError::GestureInFlight);
         }
         None
     }
 
-    /// Make `id` the active layout on every pane of every tab.
-    pub(crate) fn switch_layout(&mut self, id: LayoutId) -> Result<bool, LayoutError> {
-        if self.layouts.get(id).is_none() {
+    /// Make `id` the layout one pane shows.
+    ///
+    /// The pane's drawings go to the layout going out, its layout slots are
+    /// taken off, the new layout's set is put on, and the new layout's
+    /// drawings for the pane's market come out. Panes on other layouts are
+    /// untouched; the book's default moves to `id`, so the next pane to open
+    /// takes what the trader last picked.
+    pub(crate) fn switch_pane_layout(
+        &mut self,
+        tab: u64,
+        side: PaneSide,
+        id: LayoutId,
+    ) -> Result<bool, LayoutError> {
+        if self.layouts.get(id).is_none() || !self.pane_is_real(tab, side) {
             return Err(LayoutError::Unknown);
         }
-        if self.layouts.active_id() == id {
+        let from = self.pane_layout(tab, side);
+        // What the pane *shows*, not what its field holds: a pane that has
+        // not been given a layout explicitly shows the book's default, and
+        // comparing the raw `Option` would tear that pane down and build it
+        // back identical — every script on it recompiled — to arrive where it
+        // already was, and then report the move as a change.
+        if from == id {
+            if let Some(pane) = self.pane_mut_at(tab, side) {
+                pane.layout = Some(id);
+            }
             return Ok(false);
         }
-        if let Some(refusal) = self.layout_swap_refusal() {
+        if let Some(refusal) = self.pane_swap_refusal(tab, side) {
             return Err(refusal);
         }
-        // Whatever was being typed into a note belongs to the layout going
-        // out, and is committed to it before the stores are swapped.
-        self.end_inline_text_edit();
-        self.inspector_edit_baseline = None;
-        // Everything the panes hold belongs to the layout going out.
+        // Whatever was being typed into a note on this pane belongs to the
+        // layout going out, and is committed to it before the store is
+        // swapped.
+        self.leave_pane_gestures(tab, side);
         self.persist_changed_drawings();
-        let targets = self.layout_pane_targets();
-        for (tab, side) in &targets {
-            self.put_away_drawings(*tab, *side);
-            self.remove_layout_indicators_at(*tab, *side);
+        self.put_away_drawings(tab, side);
+        self.remove_layout_indicators_at(tab, side);
+        if let Some(pane) = self.pane_mut_at(tab, side) {
+            pane.layout = Some(id);
+            // This *is* the seed. Every other place that materialises a set
+            // says so; leaving the flag off here lets `seed_new_panes` put
+            // the same set on a second time, and a pane holding two copies
+            // maps every later edit to the wrong layout entry.
+            pane.layout_seeded = true;
         }
-        let from = self.layouts.active_id();
-        self.layouts.switch(id)?;
-        let set = self.layouts.active().indicators.clone();
-        for (tab, side) in &targets {
-            self.materialize_indicators_at(*tab, *side, &set);
-            self.bring_out_drawings(*tab, *side);
-        }
+        let set = self
+            .layouts
+            .get(id)
+            .map(|layout| layout.indicators.clone())
+            .unwrap_or_default();
+        self.materialize_indicators_at(tab, side, &set);
+        self.bring_out_drawings(tab, side);
+        self.refresh_layout_label(tab, side);
+        // The trader's last pick is what a pane that opens next takes.
+        let _ = self.layouts.switch(id);
         self.mark_layouts_dirty();
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "LAYOUT_SWITCHED",
+            tab,
+            pane = side.index(),
             from = from.0,
             to = id.0,
-            name = %self.layouts.active().name,
-            panes = targets.len(),
-            action = "panes_rematerialized",
-            "the active layout changed"
+            name = %self.layouts.get(id).map_or("", |layout| layout.name.as_str()),
+            action = "pane_rematerialized",
+            "a pane changed layout"
         );
         Ok(true)
     }
 
-    /// Switch to the layout at strip position `index`.
+    /// Switch the focused pane of the active tab — what the strip, the View
+    /// menu and `Alt+N` do.
+    pub(crate) fn switch_layout(&mut self, id: LayoutId) -> Result<bool, LayoutError> {
+        let (tab, side) = self.focused_target();
+        self.switch_pane_layout(tab, side, id)
+    }
+
+    /// Switch the focused pane to the layout at strip position `index`.
     pub(crate) fn switch_layout_index(&mut self, index: usize) -> Result<bool, LayoutError> {
         let id = self.layouts.at(index).ok_or(LayoutError::Unknown)?.id;
         self.switch_layout(id)
     }
 
-    /// Add a layout and switch to it — a new tab opens where it was made,
-    /// which is what a `+` on a strip means everywhere else.
+    /// Add a layout and put it on the focused pane — a new tab opens where
+    /// it was made, which is what a `+` on a strip means everywhere else.
     ///
     /// The switch is checked before the layout is made, so a refusal leaves
     /// the strip as it was rather than with a tab nobody asked to keep.
     pub(crate) fn create_layout(&mut self, name: Option<&str>) -> Result<LayoutId, LayoutError> {
-        if let Some(refusal) = self.layout_swap_refusal() {
+        let (tab, side) = self.focused_target();
+        if !self.pane_is_real(tab, side) {
+            return Err(LayoutError::Unknown);
+        }
+        if let Some(refusal) = self.pane_swap_refusal(tab, side) {
             return Err(refusal);
         }
         let id = self.layouts.create(name)?;
         self.mark_layouts_dirty();
-        self.switch_layout(id)?;
+        self.switch_pane_layout(tab, side, id)?;
         Ok(id)
     }
 
     pub(crate) fn rename_layout(&mut self, id: LayoutId, name: &str) -> Result<bool, LayoutError> {
         let changed = self.layouts.rename(id, name)?;
         if changed {
+            self.refresh_all_layout_labels();
             self.mark_layouts_dirty();
         }
         Ok(changed)
     }
 
-    /// Delete a layout. Deleting the active one switches to its neighbour
-    /// first, so the panes never show a layout that no longer exists.
+    /// Delete a layout. Every pane showing it moves to its left neighbour
+    /// first, so no pane is ever left on a layout that no longer exists.
     pub(crate) fn delete_layout(&mut self, id: LayoutId) -> Result<(), LayoutError> {
         if self.layouts.get(id).is_none() {
             return Err(LayoutError::Unknown);
@@ -254,20 +366,135 @@ impl QuantickApp {
         if self.layouts.layouts().len() == 1 {
             return Err(LayoutError::Last);
         }
-        if self.layouts.active_id() == id {
-            let index = self.layouts.index_of(id).unwrap_or(0);
-            let neighbour = self
-                .layouts
-                .at(index.saturating_sub(1))
-                .filter(|layout| layout.id != id)
-                .or_else(|| self.layouts.at(index + 1))
-                .map(|layout| layout.id)
-                .ok_or(LayoutError::Last)?;
-            self.switch_layout(neighbour)?;
+        let index = self.layouts.index_of(id).unwrap_or(0);
+        let neighbour = self
+            .layouts
+            .at(index.saturating_sub(1))
+            .filter(|layout| layout.id != id)
+            .or_else(|| self.layouts.at(index + 1))
+            .map(|layout| layout.id)
+            .ok_or(LayoutError::Last)?;
+        let showing = self.panes_on(id);
+        // Every pane is checked before any is moved, so a refusal leaves the
+        // layout and every pane exactly as they were.
+        for (tab, side) in &showing {
+            if let Some(refusal) = self.pane_swap_refusal(*tab, *side) {
+                return Err(refusal);
+            }
+        }
+        for (tab, side) in showing {
+            self.switch_pane_layout(tab, side, neighbour)?;
         }
         self.layouts.delete(id)?;
         self.mark_layouts_dirty();
         Ok(())
+    }
+
+    /// The `QUANTICK_PANE_LAYOUTS` hook: one name per pane address of the
+    /// active tab, comma-separated. A name the book lacks is created empty;
+    /// an empty entry leaves that pane on what it has.
+    /// Whether `index` is an address a canvas can hold at all: `0` the flow
+    /// pane, then the context stack up to [`crate::canvas_layout::MAX_CONTEXT_PANES`].
+    /// Distinct from `pane_is_real`, which asks whether the pane is standing
+    /// *now* — a stack lands a frame after the layout that asked for it.
+    fn pane_address_exists(index: usize) -> bool {
+        index <= crate::canvas_layout::MAX_CONTEXT_PANES
+    }
+
+    pub(super) fn apply_pane_layouts_hook(&mut self, names: &str) {
+        let tab_id = self.active_tab().id;
+        for (index, name) in names.split(',').enumerate() {
+            let Some(name) = layouts::clean_name(name) else {
+                continue;
+            };
+            let side = PaneSide::from_index(index);
+            // Checked before anything is created: an entry past the last
+            // address a canvas can hold reaches no pane, and creating its
+            // layout first would leave the name behind in the trader's book
+            // — written by the debounce — for a pane that was never set.
+            if !Self::pane_address_exists(index) {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "PANE_LAYOUTS_HOOK_REFUSED",
+                    layout = %name,
+                    pane = index,
+                    action = "entry_ignored",
+                    "QUANTICK_PANE_LAYOUTS named a pane address no canvas has"
+                );
+                continue;
+            }
+            let id = match self.layouts.by_name(&name).map(|layout| layout.id) {
+                Some(id) => id,
+                None => match self.layouts.create(Some(&name)) {
+                    Ok(id) => {
+                        self.mark_layouts_dirty();
+                        id
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "PANE_LAYOUTS_HOOK_REFUSED",
+                            layout = %name,
+                            %error,
+                            action = "entry_ignored",
+                            "QUANTICK_PANE_LAYOUTS could not create the layout"
+                        );
+                        continue;
+                    }
+                },
+            };
+            // A context pane not built yet — the stack lands a frame later —
+            // is told what to open on; a built pane is switched now.
+            if !self.pane_is_real(tab_id, side) {
+                if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+                    tab.set_opening_layout(side, id);
+                }
+                continue;
+            }
+            if let Err(error) = self.switch_pane_layout(tab_id, side, id) {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "PANE_LAYOUTS_HOOK_REFUSED",
+                    layout = %name,
+                    pane = index,
+                    %error,
+                    action = "entry_ignored",
+                    "QUANTICK_PANE_LAYOUTS could not switch the pane"
+                );
+            }
+        }
+    }
+
+    /// Close whatever off-canvas edit addresses this pane's drawings by
+    /// index before its store is swapped: the inline text editor commits to
+    /// the set going out, and the inspector's undo baseline is dropped rather
+    /// than recorded against another set's object. Other panes' edits are
+    /// left alone.
+    fn leave_pane_gestures(&mut self, tab: u64, side: PaneSide) {
+        if self
+            .inline_text_edit
+            .as_ref()
+            .is_some_and(|edit| edit.tab == tab && edit.side == side)
+        {
+            self.end_inline_text_edit();
+        }
+        if self
+            .inspector_edit_baseline
+            .as_ref()
+            .is_some_and(|edit| edit.tab == tab && edit.side == side)
+        {
+            self.inspector_edit_baseline = None;
+        }
+    }
+
+    /// Whether `side` names a pane the tab has built — `Tab::pane` answers
+    /// with the flow pane for a context slot that does not exist yet, which
+    /// a caller about to switch a pane must not mistake for the flow pane.
+    fn pane_is_real(&self, tab: u64, side: PaneSide) -> bool {
+        self.pane_at(tab, side).is_some()
     }
 
     /// Move a context chart within a tab's stack, and move everything keyed
@@ -357,7 +584,7 @@ impl QuantickApp {
     // Indicators
     // ------------------------------------------------------------------
 
-    /// Every (tab, pane) that carries the layout, flow first per tab.
+    /// Every (tab, pane) there is, flow first per tab.
     fn layout_pane_targets(&self) -> Vec<(u64, PaneSide)> {
         self.tabs
             .iter()
@@ -365,18 +592,25 @@ impl QuantickApp {
             .collect()
     }
 
+    /// One pane by address, or `None` when the tab or the pane is not there.
+    ///
+    /// Through `Tab::pane_at`, never `Tab::pane`: the latter answers a
+    /// context slot the stack does not have with the *flow* pane, so a bad
+    /// address would silently retarget an indicator, a drawing set or a
+    /// layout onto the wrong chart instead of being refused.
     fn pane_mut_at(&mut self, tab: u64, side: PaneSide) -> Option<&mut ChartPane> {
         self.tabs
             .iter_mut()
             .find(|candidate| candidate.id == tab)
-            .map(|candidate| candidate.pane_mut(side))
+            .and_then(|candidate| candidate.pane_at_mut(side.index()))
     }
 
+    /// See [`Self::pane_mut_at`].
     fn pane_at(&self, tab: u64, side: PaneSide) -> Option<&ChartPane> {
         self.tabs
             .iter()
             .find(|candidate| candidate.id == tab)
-            .map(|candidate| candidate.pane(side))
+            .and_then(|candidate| candidate.pane_at(side.index()))
     }
 
     /// The layout's slots on one pane, in layout order: every slot the
@@ -391,8 +625,8 @@ impl QuantickApp {
             .collect()
     }
 
-    /// Where a slot sits in the layout, or `None` for a slot the layout does
-    /// not carry — an operator's, or one a validation hook added.
+    /// Where a slot sits in its pane's layout, or `None` for a slot the
+    /// layout does not carry — an operator's, or one a validation hook added.
     fn layout_index_of(&self, target: TabSlot) -> Option<usize> {
         self.layout_slots_at(target.tab, target.side)
             .iter()
@@ -419,19 +653,28 @@ impl QuantickApp {
                     .entries()
                     .iter()
                     .position(|candidate| candidate.name == *name);
-                let Some(index) = index else {
-                    tracing::warn!(
-                        target: "quantick::app",
-                        schema_version = 1_u8,
-                        event_code = "INDICATOR_STATE_SCRIPT_MISSING",
-                        script = %name,
-                        action = "entry_skipped",
-                        "the layout references a script the library no longer has"
-                    );
-                    return None;
+                // A script the library no longer has still takes a slot — an
+                // error slot saying so. The layout addresses its panes by
+                // entry index, and a pane with one slot fewer than its layout
+                // has entries would have every edit after the gap land one
+                // entry off; and a row that says "not in the library" is the
+                // honest picture of a set the trader cannot see whole.
+                let read = match index {
+                    Some(index) => self.script_library.read(index),
+                    None => {
+                        tracing::warn!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "INDICATOR_STATE_SCRIPT_MISSING",
+                            script = %name,
+                            action = "error_slot_shown",
+                            "the layout references a script the library no longer has"
+                        );
+                        Some(Err(format!("{name} is not in the script library")))
+                    }
                 };
-                let file_info = self.script_library.file_info(index);
-                let slot = match self.script_library.read(index) {
+                let file_info = index.and_then(|index| self.script_library.file_info(index));
+                let slot = match read {
                     Some(Ok(text)) => {
                         let pane = self.pane_mut_at(tab, side)?;
                         pane.add_indicator(IndicatorSource::Script {
@@ -440,15 +683,17 @@ impl QuantickApp {
                         })
                     }
                     Some(Err(message)) => {
-                        tracing::warn!(
-                            target: "quantick::app",
-                            schema_version = 1_u8,
-                            event_code = "INDICATOR_SCRIPT_UNREADABLE",
-                            script = %name,
-                            error = %message,
-                            action = "error_slot_shown",
-                            "cannot read an indicator script"
-                        );
+                        if index.is_some() {
+                            tracing::warn!(
+                                target: "quantick::app",
+                                schema_version = 1_u8,
+                                event_code = "INDICATOR_SCRIPT_UNREADABLE",
+                                script = %name,
+                                error = %message,
+                                action = "error_slot_shown",
+                                "cannot read an indicator script"
+                            );
+                        }
                         // The same error slot the menu's own add builds, so a
                         // script the trader fixes and reloads keeps its place.
                         let pane = self.pane_mut_at(tab, side)?;
@@ -482,7 +727,7 @@ impl QuantickApp {
                 };
                 let owner = TabSlot { tab, side, slot };
                 self.slot_kinds.push((owner, kind.clone()));
-                if let Some((_, mtime)) = file_info {
+                if let (Some(index), Some((_, mtime))) = (index, file_info) {
                     self.script_files.push((owner, index, mtime));
                 }
                 return Some(slot);
@@ -624,17 +869,33 @@ impl QuantickApp {
         }
     }
 
-    /// The active layout's entry at a layout index, for an edit to write.
-    fn layout_entry_mut(&mut self, index: usize) -> Option<&mut SavedIndicator> {
-        self.layouts.active_mut().indicators.get_mut(index)
+    /// The origin pane's layout and the index of the slot in it — the two
+    /// coordinates every mirror writes to.
+    fn edit_coordinates(&self, origin: TabSlot) -> Option<(LayoutId, usize)> {
+        let index = self.layout_index_of(origin)?;
+        Some((self.pane_layout(origin.tab, origin.side), index))
+    }
+
+    /// A layout's entry at a layout index, for an edit to write.
+    fn layout_entry_mut(&mut self, layout: LayoutId, index: usize) -> Option<&mut SavedIndicator> {
+        self.layouts.get_mut(layout)?.indicators.get_mut(index)
+    }
+
+    /// The other panes an edit on `origin` reaches: every pane on the same
+    /// layout, minus the origin.
+    fn mirror_targets(&self, origin: TabSlot, layout: LayoutId) -> Vec<(u64, PaneSide)> {
+        self.panes_on(layout)
+            .into_iter()
+            .filter(|target| *target != (origin.tab, origin.side))
+            .collect()
     }
 
     /// Mirror an add: the layout gains the entry, and the same kind goes on
-    /// every other pane, so the new indicator is on every chart the frame it
-    /// was asked for. Inputs start empty — "the declared defaults" — until
-    /// the trader commits some.
+    /// every other pane showing it, so the new indicator is on every such
+    /// chart the frame it was asked for. Inputs start empty — "the declared
+    /// defaults" — until the trader commits some.
     pub(super) fn mirror_add(&mut self, origin: TabSlot, kind: &SavedKind) {
-        let Some(index) = self.layout_index_of(origin) else {
+        let Some((layout, index)) = self.edit_coordinates(origin) else {
             return;
         };
         let entry = SavedIndicator {
@@ -643,35 +904,31 @@ impl QuantickApp {
             inputs: Vec::new(),
             plot_styles: Vec::new(),
         };
-        let entries = &mut self.layouts.active_mut().indicators;
-        if index <= entries.len() {
-            entries.insert(index, entry);
-        } else {
-            entries.push(entry);
-        }
-        for (tab, side) in self.layout_pane_targets() {
-            if (tab, side) == (origin.tab, origin.side) {
-                continue;
+        if let Some(target) = self.layouts.get_mut(layout) {
+            if index <= target.indicators.len() {
+                target.indicators.insert(index, entry);
+            } else {
+                target.indicators.push(entry);
             }
+        }
+        for (tab, side) in self.mirror_targets(origin, layout) {
             self.add_indicator_at(tab, side, kind);
         }
         self.mark_layouts_dirty();
     }
 
     /// Mirror a removal by layout index: the entry goes, and the slot at that
-    /// position on every other pane with it.
+    /// position on every other pane of the layout with it.
     pub(super) fn mirror_remove(&mut self, origin: TabSlot) {
-        let Some(index) = self.layout_index_of(origin) else {
+        let Some((layout, index)) = self.edit_coordinates(origin) else {
             return;
         };
-        let entries = &mut self.layouts.active_mut().indicators;
-        if index < entries.len() {
-            entries.remove(index);
+        if let Some(target) = self.layouts.get_mut(layout)
+            && index < target.indicators.len()
+        {
+            target.indicators.remove(index);
         }
-        for (tab, side) in self.layout_pane_targets() {
-            if (tab, side) == (origin.tab, origin.side) {
-                continue;
-            }
+        for (tab, side) in self.mirror_targets(origin, layout) {
             if let Some(slot) = self.layout_slots_at(tab, side).get(index).copied() {
                 self.remove_indicator_silently(TabSlot { tab, side, slot });
             }
@@ -680,9 +937,9 @@ impl QuantickApp {
     }
 
     /// Mirror an eye toggle: the entry records it, and the same position on
-    /// every other pane follows — now, or once its view is born.
+    /// every other pane of the layout follows — now, or once its view is born.
     pub(super) fn mirror_hidden(&mut self, origin: TabSlot) {
-        let Some(index) = self.layout_index_of(origin) else {
+        let Some((layout, index)) = self.edit_coordinates(origin) else {
             return;
         };
         let Some(hidden) = self
@@ -697,13 +954,10 @@ impl QuantickApp {
         else {
             return;
         };
-        if let Some(entry) = self.layout_entry_mut(index) {
+        if let Some(entry) = self.layout_entry_mut(layout, index) {
             entry.hidden = hidden;
         }
-        for (tab, side) in self.layout_pane_targets() {
-            if (tab, side) == (origin.tab, origin.side) {
-                continue;
-            }
+        for (tab, side) in self.mirror_targets(origin, layout) {
             let Some(slot) = self.layout_slots_at(tab, side).get(index).copied() else {
                 continue;
             };
@@ -735,7 +989,8 @@ impl QuantickApp {
     }
 
     /// Mirror committed inputs: the entry records the values the trader
-    /// applied, and the same position on every other pane is sent them.
+    /// applied, and the same position on every other pane of the layout is
+    /// sent them.
     ///
     /// Committed, never previewed: the settings dialog's live preview goes
     /// to the origin's worker alone and never reaches here, so a slider
@@ -745,16 +1000,13 @@ impl QuantickApp {
         origin: TabSlot,
         values: &[quantick_indicators::InputValue],
     ) {
-        let Some(index) = self.layout_index_of(origin) else {
+        let Some((layout, index)) = self.edit_coordinates(origin) else {
             return;
         };
-        if let Some(entry) = self.layout_entry_mut(index) {
+        if let Some(entry) = self.layout_entry_mut(layout, index) {
             entry.inputs = values.iter().map(SavedInput::from_value).collect();
         }
-        for (tab, side) in self.layout_pane_targets() {
-            if (tab, side) == (origin.tab, origin.side) {
-                continue;
-            }
+        for (tab, side) in self.mirror_targets(origin, layout) {
             if let Some(slot) = self.layout_slots_at(tab, side).get(index).copied()
                 && let Some(pane) = self.pane_mut_at(tab, side)
             {
@@ -768,9 +1020,9 @@ impl QuantickApp {
     }
 
     /// Mirror the origin's style layer: the entry records it, and the same
-    /// position everywhere wears it.
+    /// position on every other pane of the layout wears it.
     pub(super) fn mirror_style(&mut self, origin: TabSlot) {
-        let Some(index) = self.layout_index_of(origin) else {
+        let Some((layout, index)) = self.edit_coordinates(origin) else {
             return;
         };
         let Some(style) = self
@@ -785,7 +1037,7 @@ impl QuantickApp {
         else {
             return;
         };
-        if let Some(entry) = self.layout_entry_mut(index) {
+        if let Some(entry) = self.layout_entry_mut(layout, index) {
             entry.plot_styles = style
                 .plots()
                 .iter()
@@ -793,10 +1045,7 @@ impl QuantickApp {
                 .map(SavedPlotStyle::from_override)
                 .collect();
         }
-        for (tab, side) in self.layout_pane_targets() {
-            if (tab, side) == (origin.tab, origin.side) {
-                continue;
-            }
+        for (tab, side) in self.mirror_targets(origin, layout) {
             let Some(slot) = self.layout_slots_at(tab, side).get(index).copied() else {
                 continue;
             };
@@ -816,15 +1065,17 @@ impl QuantickApp {
         self.mark_layouts_dirty();
     }
 
-    /// An indicator edit happened on a pane the layout carries. The mirror
-    /// that made it has already written the layout; this starts the save
-    /// clock for edits that reach the layout by no other path.
+    /// An indicator edit happened on a pane. The mirror that made it has
+    /// already written the layout; this starts the save clock for edits
+    /// that reach the layout by no other path.
     pub(super) fn note_indicator_edit_at(&mut self, _tab: u64, _side: PaneSide) {
         self.mark_layouts_dirty();
     }
 
     /// Panes that appeared since last frame — a tab opened, a split built —
-    /// take the active layout: its indicators, and their market's drawings.
+    /// take a layout: the one a restored workspace named for them, else the
+    /// focused pane's, else the book's default. Its indicators go on, and
+    /// their market's drawings under it come out.
     pub(super) fn seed_new_panes(&mut self) {
         let unseeded: Vec<(u64, PaneSide)> = self
             .tabs
@@ -838,13 +1089,42 @@ impl QuantickApp {
         if unseeded.is_empty() {
             return;
         }
-        let set = self.layouts.active().indicators.clone();
+        let (focused_tab, focused_side) = self.focused_target();
         for (tab, side) in unseeded {
+            let named = self
+                .pane_at(tab, side)
+                .and_then(|pane| pane.layout)
+                .filter(|id| self.layouts.get(*id).is_some());
+            // Its own tab's flow chart first, the focused pane only after:
+            // a stack built in a *background* tab — a control-plane preset
+            // lands on one by id — belongs beside the chart it opened next
+            // to, not beside whatever market the trader happens to be
+            // looking at somewhere else.
+            let layout = named.unwrap_or_else(|| {
+                self.pane_at(tab, PaneSide::Flow)
+                    .filter(|pane| pane.layout_seeded)
+                    .and_then(|pane| pane.layout)
+                    .filter(|id| self.layouts.get(*id).is_some())
+                    .or_else(|| {
+                        self.pane_at(focused_tab, focused_side)
+                            .filter(|pane| pane.layout_seeded)
+                            .and_then(|pane| pane.layout)
+                            .filter(|id| self.layouts.get(*id).is_some())
+                    })
+                    .unwrap_or_else(|| self.layouts.active_id())
+            });
             if let Some(pane) = self.pane_mut_at(tab, side) {
                 pane.layout_seeded = true;
+                pane.layout = Some(layout);
             }
+            let set = self
+                .layouts
+                .get(layout)
+                .map(|layout| layout.indicators.clone())
+                .unwrap_or_default();
             self.materialize_indicators_at(tab, side, &set);
             self.bring_out_drawings(tab, side);
+            self.refresh_layout_label(tab, side);
         }
     }
 
@@ -874,9 +1154,10 @@ impl QuantickApp {
         })
     }
 
-    /// Serialise what a pane holds into the active layout under the key the
-    /// pane says it holds, and empty the pane.
+    /// Serialise what a pane holds into its layout under the key the pane
+    /// says it holds, and empty the pane.
     fn put_away_drawings(&mut self, tab: u64, side: PaneSide) {
+        let layout = self.pane_layout(tab, side);
         let Some(pane) = self.pane_mut_at(tab, side) else {
             return;
         };
@@ -893,15 +1174,22 @@ impl QuantickApp {
             .map(SavedDrawing::from_drawing)
             .collect();
         pane.drawings_saved_revision = pane.drawings.revision();
-        self.layouts.active_mut().set_drawings(&key, items);
+        if let Some(target) = self.layouts.get_mut(layout) {
+            target.set_drawings(&key, items);
+        }
     }
 
-    /// Adopt the active layout's drawings for the pane's current market.
+    /// Adopt the pane's layout's drawings for the pane's current market.
     fn bring_out_drawings(&mut self, tab: u64, side: PaneSide) {
         let Some(key) = self.drawing_key(tab, side) else {
             return;
         };
-        let saved = self.layouts.active().drawings(&key).unwrap_or(&[]);
+        let layout = self.pane_layout(tab, side);
+        let saved = self
+            .layouts
+            .get(layout)
+            .and_then(|layout| layout.drawings(&key))
+            .unwrap_or(&[]);
         let mut items: Vec<crate::drawings::Drawing> = Vec::with_capacity(saved.len());
         for entry in saved {
             match entry.to_drawing(crate::drawings::DrawingId(entry.id.unwrap_or(0))) {
@@ -957,6 +1245,7 @@ impl QuantickApp {
             })
             .collect();
         for (tab, side) in moved {
+            self.leave_pane_gestures(tab, side);
             self.put_away_drawings(tab, side);
             self.bring_out_drawings(tab, side);
             self.mark_layouts_dirty();
@@ -964,7 +1253,7 @@ impl QuantickApp {
     }
 
     /// Any pane whose drawings changed since they were last written has its
-    /// set copied into the active layout.
+    /// set copied into its layout.
     pub(super) fn persist_changed_drawings(&mut self) {
         let changed: Vec<(u64, PaneSide)> = self
             .tabs
@@ -980,6 +1269,7 @@ impl QuantickApp {
             })
             .collect();
         for (tab, side) in changed {
+            let layout = self.pane_layout(tab, side);
             let Some(pane) = self.pane_mut_at(tab, side) else {
                 continue;
             };
@@ -993,14 +1283,24 @@ impl QuantickApp {
                 .map(SavedDrawing::from_drawing)
                 .collect();
             pane.drawings_saved_revision = pane.drawings.revision();
-            self.layouts.active_mut().set_drawings(&key, items);
+            if let Some(target) = self.layouts.get_mut(layout) {
+                target.set_drawings(&key, items);
+            }
             self.mark_layouts_dirty();
-            // Two tabs on one market show one set of drawings: the other
-            // pane holding this key is brought to what was just written,
-            // rather than keeping a copy that drifts until a switch. Ids
-            // travel, so a strategy or an annotation on the twin still
-            // names its object. A twin mid-gesture is left alone: its own
-            // change is written on the frame the gesture ends.
+            // Two panes on one market and one layout show one set of
+            // drawings: the other pane holding this key under this layout
+            // is brought to what was just written, rather than keeping a
+            // copy that drifts until a switch. Ids travel, so a strategy or
+            // an annotation on the twin still names its object.
+            //
+            // A twin is never *skipped* for having a selection, however
+            // tempting: a twin left behind is a twin whose own next edit
+            // writes its stale set over this key and takes the drawing just
+            // made here with it. The selection is carried across the rebuild
+            // by id instead, which is the thing the trader can see. Only a
+            // gesture in flight still holds a twin back — that addresses the
+            // store by index and a swap under it would land on another
+            // object.
             let twins: Vec<(u64, PaneSide)> = self
                 .tabs
                 .iter()
@@ -1008,17 +1308,36 @@ impl QuantickApp {
                     other
                         .panes()
                         .filter(|(pane, _)| {
-                            pane.drawings_key.as_ref() == Some(&key) && !pane.drawings.in_gesture()
+                            pane.drawings_key.as_ref() == Some(&key)
+                                && pane.layout == Some(layout)
+                                && !pane.drawings.in_gesture()
                         })
                         .map(move |(_, other_side)| (other.id, other_side))
                 })
                 .filter(|target| *target != (tab, side))
                 .collect();
             for (twin_tab, twin_side) in twins {
+                let selected_id = self.pane_at(twin_tab, twin_side).and_then(|twin| {
+                    let index = twin.drawings.selected()?;
+                    Some(twin.drawings.items().get(index)?.id)
+                });
                 if let Some(twin) = self.pane_mut_at(twin_tab, twin_side) {
                     twin.drawings.take_all();
                 }
                 self.bring_out_drawings(twin_tab, twin_side);
+                // By id, not by index: the set that came back may hold one
+                // more object than the one that went away, and the index the
+                // trader selected now points at a different mark.
+                if let Some(id) = selected_id
+                    && let Some(twin) = self.pane_mut_at(twin_tab, twin_side)
+                {
+                    let index = twin
+                        .drawings
+                        .items()
+                        .iter()
+                        .position(|drawing| drawing.id == id);
+                    twin.drawings.select(index);
+                }
             }
         }
     }
@@ -1030,7 +1349,9 @@ impl QuantickApp {
     // ------------------------------------------------------------------
 
     /// Read the layouts file again and put it on every pane — after a
-    /// workspace import replaced the file under the running app.
+    /// workspace import replaced the file under the running app. Every pane
+    /// reopens on the layout the imported workspace named for it, else the
+    /// book's default.
     ///
     /// `imported` names the stores the import wrote. A bundle from before
     /// layouts existed carries an `indicators` section and no `layouts`
@@ -1068,6 +1389,15 @@ impl QuantickApp {
         self.layouts_save_blocked = blocked;
         self.layout_rename = None;
         self.layout_delete_confirm = None;
+        // A pane whose named layout is not in the new book opens on the
+        // default, exactly as a pane with no name would.
+        for tab in &mut self.tabs {
+            for pane in tab.panes_mut() {
+                if pane.layout.is_some_and(|id| self.layouts.get(id).is_none()) {
+                    pane.layout = None;
+                }
+            }
+        }
         self.seed_new_panes();
         // The screen is now the file's; nothing changed since — unless the
         // book was made from an imported indicator set, which the file does
@@ -1088,6 +1418,8 @@ impl QuantickApp {
         let actions = {
             let can_add = self.layouts.layouts().len() < layouts::MAX_LAYOUTS;
             let can_delete = self.layouts.layouts().len() > 1;
+            let active = self.focused_pane_layout();
+            let owner = self.active_tab().focused_side().title();
             let Self {
                 layouts,
                 layout_rename,
@@ -1097,7 +1429,8 @@ impl QuantickApp {
                 ctx,
                 crate::layout_strip::StripModel {
                     layouts: layouts.layouts(),
-                    active: layouts.active_id(),
+                    active,
+                    owner: &owner,
                     rename: layout_rename,
                     can_add,
                     can_delete,
@@ -1162,6 +1495,9 @@ impl QuantickApp {
         };
         let name = layout.name.clone();
         let drawings: usize = layout.drawing_count();
+        // Counted, not collected: the window repaints continuously and only
+        // the number is read.
+        let showing = self.panes_on_count(id);
         let mut decision: Option<bool> = None;
         egui::Window::new("Delete layout")
             .id(egui::Id::new("layout_delete_confirm"))
@@ -1170,16 +1506,22 @@ impl QuantickApp {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.label(format!("Delete \"{name}\"?"));
+                let mut what = if drawings == 0 {
+                    "Its indicator set goes with it. Nothing is drawn under it.".to_owned()
+                } else {
+                    format!(
+                        "Its indicator set and the {drawings} drawing(s) kept under it go with it. This cannot be undone."
+                    )
+                };
+                if showing > 0 {
+                    what.push_str(&format!(
+                        " {showing} chart(s) showing it move to the layout beside it."
+                    ));
+                }
                 ui.label(
-                    egui::RichText::new(if drawings == 0 {
-                        "Its indicator set goes with it. Nothing is drawn under it.".to_owned()
-                    } else {
-                        format!(
-                            "Its indicator set and the {drawings} drawing(s) kept under it go with it. This cannot be undone."
-                        )
-                    })
-                    .small()
-                    .color(crate::theme::TEXT_SUPPORT),
+                    egui::RichText::new(what)
+                        .small()
+                        .color(crate::theme::TEXT_SUPPORT),
                 );
                 ui.horizontal(|ui| {
                     if ui.button("Delete").clicked() {

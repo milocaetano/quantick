@@ -48,6 +48,15 @@ pub(crate) const UI_STATE_FILE: &str = "ui-state.toml";
 /// Bumped on breaking format changes; unknown versions are ignored.
 const FORMAT_VERSION: u32 = 1;
 
+/// The [`SavedTab::context_layouts`] entry for a pane whose layout the file
+/// does not state.
+///
+/// Zero is a value no layout can hold: ids are handed out from `1`
+/// ([`crate::layouts::LayoutBook::starter`]) and only ever grow, so a
+/// hand-edited file claiming `0` names no layout and the pane opens on the
+/// book's active one — where an absent entry sends it too.
+pub const LAYOUT_UNRECORDED: u64 = 0;
+
 /// The keys in this file that describe *this installation* rather than the
 /// arrangement, and so never travel in a workspace bundle.
 ///
@@ -230,6 +239,22 @@ pub struct SavedTab {
     /// fall back to `time_bars` for the top chart and the default below it.
     #[serde(default)]
     pub context_bars: Vec<String>,
+    /// The layout the flow pane showed, by id in the layouts file. Absent in
+    /// files written before a pane had a layout of its own: such a pane
+    /// opens on the book's active layout, which is what every pane showed.
+    #[serde(default)]
+    pub flow_layout: Option<u64>,
+    /// Each context chart's layout, top to bottom, by id in the layouts file.
+    ///
+    /// [`LAYOUT_UNRECORDED`] where the file does not say — a pane the session
+    /// had not seeded yet when the workspace was written. A sentinel rather
+    /// than a `None` because TOML has no null *inside an array*: `toml` skips
+    /// a `None` struct field (which is why [`Self::flow_layout`] may be one),
+    /// but answers a `None` element with `UnsupportedNone`, and [`save`]
+    /// answers a failed serialize by writing nothing at all — so a single
+    /// unseeded pane would have cost the trader every tab in the file.
+    #[serde(default)]
+    pub context_layouts: Vec<u64>,
     /// Whether the flow pane's on-chart indicator legend was folded to its
     /// count puck.
     ///
@@ -992,6 +1017,8 @@ mod tests {
                     focus: Some(SavedFocus::Flow),
                     focus_slot: 0,
                     context_bars: vec![],
+                    flow_layout: None,
+                    context_layouts: vec![],
                     flow_bars: "tick:50".to_owned(),
                     time_bars: Some("time:1m".to_owned()),
                     flow_legend_collapsed: false,
@@ -1006,6 +1033,8 @@ mod tests {
                     focus: None,
                     focus_slot: 0,
                     context_bars: vec![],
+                    flow_layout: None,
+                    context_layouts: vec![],
                     flow_bars: "dollar:500000".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -1037,6 +1066,66 @@ mod tests {
         let path = temp_path("round-trip");
         assert!(save(&path, &sample()));
         assert_eq!(load(&path), sample());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Why [`LAYOUT_UNRECORDED`] is a sentinel and not a `None`, pinned so
+    /// nobody tidies the field back into a `Vec<Option<u64>>`.
+    ///
+    /// TOML has no null. The crate skips a `None` struct *field* — which is
+    /// why [`SavedTab::flow_layout`] may be one — but has nowhere to put a
+    /// hole inside an *array*, and answers with an error that costs the whole
+    /// file. The repo's own pattern for a rule the compiler cannot see:
+    /// `source_encoding_guard.rs`, `fmath_guard.rs`, this.
+    #[test]
+    fn toml_cannot_write_a_hole_inside_an_array() {
+        #[derive(Serialize)]
+        struct Field {
+            slot: Option<u64>,
+        }
+        #[derive(Serialize)]
+        struct Array {
+            slots: Vec<Option<u64>>,
+        }
+        assert!(
+            toml::to_string_pretty(&Field { slot: None }).is_ok(),
+            "a None field is skipped, which is what flow_layout relies on"
+        );
+        assert!(
+            toml::to_string_pretty(&Array {
+                slots: vec![Some(1), None],
+            })
+            .is_err(),
+            "if this ever passes, context_layouts may go back to Vec<Option<u64>>"
+        );
+    }
+
+    /// A pane whose layout the session has not settled yet must not cost the
+    /// trader the file.
+    ///
+    /// `save` answers a serialize error by writing *nothing* — every tab,
+    /// every bookmark, the lot — and TOML has no null inside an array, so a
+    /// hole in the per-pane layouts used to be exactly that error. The hole
+    /// travels as [`LAYOUT_UNRECORDED`] and reads back as one.
+    #[test]
+    fn a_context_pane_with_no_layout_yet_still_saves_the_workspace() {
+        let path = temp_path("unseeded-pane-layout");
+        let mut workspace = sample();
+        workspace.tabs[0].context_layouts = vec![LAYOUT_UNRECORDED, 7, LAYOUT_UNRECORDED];
+        assert!(
+            save(&path, &workspace),
+            "a hole in the per-pane layouts must not stop the whole workspace reaching disk"
+        );
+        let back = load(&path);
+        assert_eq!(
+            back.tabs[0].context_layouts,
+            vec![LAYOUT_UNRECORDED, 7, LAYOUT_UNRECORDED],
+            "and the holes come back where they were, so slot 1 is still slot 1"
+        );
+        assert_eq!(
+            back.tabs[0].flow_bars, workspace.tabs[0].flow_bars,
+            "the rest of the tab reached disk too"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -1372,6 +1461,8 @@ mod tests {
             focus: None,
             focus_slot: 0,
             context_bars: vec![],
+            flow_layout: None,
+            context_layouts: vec![],
             flow_bars: "tick:50".to_owned(),
             time_bars: None,
             flow_legend_collapsed: false,
@@ -1386,6 +1477,8 @@ mod tests {
             focus: None,
             focus_slot: 0,
             context_bars: vec![],
+            flow_layout: None,
+            context_layouts: vec![],
             flow_bars: "tick:50".to_owned(),
             time_bars: None,
             flow_legend_collapsed: false,
@@ -1521,6 +1614,8 @@ mod tests {
                     focus: None,
                     focus_slot: 0,
                     context_bars: vec![],
+                    flow_layout: None,
+                    context_layouts: vec![],
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -1535,6 +1630,8 @@ mod tests {
                     focus: None,
                     focus_slot: 0,
                     context_bars: vec![],
+                    flow_layout: None,
+                    context_layouts: vec![],
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -1568,6 +1665,8 @@ mod tests {
                 focus: None,
                 focus_slot: 0,
                 context_bars: vec![],
+                flow_layout: None,
+                context_layouts: vec![],
                 flow_bars: "tick:50".to_owned(),
                 time_bars: None,
                 flow_legend_collapsed: false,
@@ -1748,6 +1847,8 @@ time_bars = "time:60000"
                 focus: None,
                 focus_slot: 0,
                 context_bars: vec![],
+                flow_layout: None,
+                context_layouts: vec![],
                 flow_bars: "tick:50".to_owned(),
                 time_bars: None,
                 flow_legend_collapsed: false,

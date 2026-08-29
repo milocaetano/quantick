@@ -36,6 +36,17 @@ pub const PRESETS: [(&str, i64); 4] = [
 /// timeframe a flow trader glances at for context.
 pub const DEFAULT_INTERVAL_MS: i64 = 60_000;
 
+/// The narrowest strip that still gets the layout's name.
+///
+/// The name is right-aligned at the far end of a row whose left half is the
+/// timeframe controls, and those come first: a name given the space they did
+/// not use is a name that fits, while one given the whole strip is painted
+/// across the chips. Below this the room left is an ellipsis and a letter,
+/// which says less than the layout strip along the bottom of the window
+/// already says, so the header drops the name instead of crowding the
+/// controls a hand has to hit.
+const MIN_LAYOUT_NAME_PX: f32 = 40.0;
+
 /// What the header laid out this frame.
 pub struct HeaderLayout {
     /// Whether the interval changed — a chip click or a drag on the interval.
@@ -44,6 +55,16 @@ pub struct HeaderLayout {
     /// [`Self::chips`].
     #[cfg(test)]
     chips: [egui::Rect; PRESETS.len()],
+    /// Where the interval control landed, and where the layout's name landed
+    /// if it was drawn at all — the pair
+    /// [`tests::a_long_layout_name_never_lands_on_the_interval_controls`]
+    /// compares. Recorded for the same reason the chips are: the geometry a
+    /// test asserts on has to be the geometry egui produced, not one derived
+    /// from font metrics this code does not own.
+    #[cfg(test)]
+    interval: egui::Rect,
+    #[cfg(test)]
+    name: Option<egui::Rect>,
 }
 
 impl HeaderLayout {
@@ -55,6 +76,19 @@ impl HeaderLayout {
     #[cfg(test)]
     pub(crate) fn chips(&self) -> [egui::Rect; PRESETS.len()] {
         self.chips
+    }
+
+    /// Where the interval control landed.
+    #[cfg(test)]
+    fn interval(&self) -> egui::Rect {
+        self.interval
+    }
+
+    /// Where the layout's name landed, or `None` when the strip had no room
+    /// for it.
+    #[cfg(test)]
+    fn name(&self) -> Option<egui::Rect> {
+        self.name
     }
 }
 
@@ -71,11 +105,15 @@ impl HeaderLayout {
 /// of the lower pane would drive the upper one's interval. The pane's own id
 /// is what makes them distinct, the same rule `ChartPane::interaction_id`
 /// follows.
+///
+/// `layout_name` is the layout this pane shows, drawn at the strip's far end
+/// so a glance at a split says which chart carries which set.
 pub fn draw(
     ui: &mut egui::Ui,
     strip: egui::Rect,
     interval_ms: &mut i64,
     salt: u64,
+    layout_name: &str,
 ) -> HeaderLayout {
     let mut changed = false;
     #[cfg(test)]
@@ -108,7 +146,7 @@ pub fn draw(
             changed = true;
         }
     }
-    changed |= content
+    let interval = content
         .add(
             egui::DragValue::new(interval_ms)
                 .range(
@@ -118,12 +156,45 @@ pub fn draw(
                 .speed(crate::state::TIME_INTERVAL_DRAG_SPEED)
                 .suffix(" ms"),
         )
-        .on_hover_text("custom interval for this pane")
-        .changed();
+        .on_hover_text("custom interval for this pane");
+    changed |= interval.changed();
+    let interval_rect = interval.rect;
+    #[cfg(not(test))]
+    let _ = interval_rect;
+    // The name takes the room the interval controls left and never more:
+    // right-aligned in a `left_to_right` row, a label wider than what remains
+    // is drawn back over the chips beside it, so it is bounded and elided
+    // here rather than clipped by luck.
+    let name_rect = (!layout_name.is_empty()
+        && content.available_width() >= MIN_LAYOUT_NAME_PX)
+        .then(|| {
+            content
+                .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(layout_name)
+                                .small()
+                                .color(theme::TEXT_FAINT),
+                        )
+                        .truncate(),
+                    )
+                    .on_hover_text(
+                        "the layout this chart shows — click the chart, then pick another on the strip",
+                    )
+                    .rect
+                })
+                .inner
+        });
+    #[cfg(not(test))]
+    let _ = name_rect;
     HeaderLayout {
         changed,
         #[cfg(test)]
         chips,
+        #[cfg(test)]
+        interval: interval_rect,
+        #[cfg(test)]
+        name: name_rect,
     }
 }
 
@@ -136,6 +207,56 @@ mod tests {
     #[test]
     fn the_default_interval_is_one_of_the_named_presets() {
         assert!(PRESETS.iter().any(|(_, ms)| *ms == DEFAULT_INTERVAL_MS));
+    }
+
+    /// Draw one frame of the header into a strip `width` wide, and report
+    /// where the interval control and the layout name landed.
+    fn header_in(width: f32, layout_name: &str) -> (egui::Rect, Option<egui::Rect>) {
+        let ctx = egui::Context::default();
+        let mut interval_ms = DEFAULT_INTERVAL_MS;
+        let mut seen = None;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(width + 200.0, 200.0),
+            )),
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let strip =
+                    egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(width, HEIGHT_PX));
+                let header = draw(ui, strip, &mut interval_ms, 0, layout_name);
+                seen = Some((header.interval(), header.name()));
+            });
+        });
+        seen.expect("the header drew")
+    }
+
+    /// The layout's name is drawn where the interval controls are not, and is
+    /// dropped rather than crowded when nothing is left.
+    ///
+    /// It is right-aligned inside a row that fills from the left, so a name
+    /// wider than the room the chips left is painted *back over* them — which
+    /// is what a 24-character name on a narrow pane did: the interval read
+    /// `60000 ms` with the name's head on top of it.
+    #[test]
+    fn a_long_layout_name_never_lands_on_the_interval_controls() {
+        let name = "opening range levels A24";
+        assert_eq!(name.len(), crate::layouts::MAX_LAYOUT_NAME);
+
+        let (interval, drawn) = header_in(600.0, name);
+        let drawn = drawn.expect("a 600 px strip has room for a name");
+        assert!(
+            drawn.left() >= interval.right(),
+            "the name at {drawn:?} was drawn back over the interval control at {interval:?}"
+        );
+
+        let (_, crowded) = header_in(200.0, name);
+        assert!(
+            crowded.is_none(),
+            "a strip with no room left keeps its controls whole and drops the name, got {crowded:?}"
+        );
     }
 
     /// Every preset has to be reachable by *both* time-bar controls: the two
