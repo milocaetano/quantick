@@ -71,11 +71,15 @@ impl HeaderLayout {
 /// of the lower pane would drive the upper one's interval. The pane's own id
 /// is what makes them distinct, the same rule `ChartPane::interaction_id`
 /// follows.
+///
+/// `layout_name` is the layout this pane shows, drawn at the strip's far end
+/// so a glance at a split says which chart carries which set.
 pub fn draw(
     ui: &mut egui::Ui,
     strip: egui::Rect,
     interval_ms: &mut i64,
     salt: u64,
+    layout_name: &str,
 ) -> HeaderLayout {
     let mut changed = false;
     #[cfg(test)]
@@ -120,6 +124,18 @@ pub fn draw(
         )
         .on_hover_text("custom interval for this pane")
         .changed();
+    if !layout_name.is_empty() {
+        content.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                egui::RichText::new(layout_name)
+                    .small()
+                    .color(theme::TEXT_FAINT),
+            )
+            .on_hover_text(
+                "the layout this chart shows — click the chart, then pick another on the strip",
+            );
+        });
+    }
     HeaderLayout {
         changed,
         #[cfg(test)]

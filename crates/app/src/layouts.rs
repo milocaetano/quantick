@@ -1,5 +1,6 @@
-//! Layout tabs: named sets of indicators and drawings the window switches
-//! between — the strip along the bottom of the canvas.
+//! Layout tabs: named sets of indicators and drawings a chart pane switches
+//! between — the strip along the bottom of the canvas, acting on the focused
+//! pane. Two panes may show two layouts side by side.
 //!
 //! A trader keeps more than one way of reading a market. One layout holds
 //! the moving averages and the session profile; another holds nothing but
@@ -467,6 +468,7 @@ impl LayoutBook {
     }
 
     /// See [`Self::active`].
+    #[cfg(test)]
     pub fn active_mut(&mut self) -> &mut ChartLayout {
         let index = self.active_index();
         &mut self.layouts[index]
@@ -476,6 +478,11 @@ impl LayoutBook {
     #[must_use]
     pub fn get(&self, id: LayoutId) -> Option<&ChartLayout> {
         self.layouts.iter().find(|layout| layout.id == id)
+    }
+
+    /// See [`Self::get`].
+    pub fn get_mut(&mut self, id: LayoutId) -> Option<&mut ChartLayout> {
+        self.layouts.iter_mut().find(|layout| layout.id == id)
     }
 
     /// Where `id` sits in the strip.

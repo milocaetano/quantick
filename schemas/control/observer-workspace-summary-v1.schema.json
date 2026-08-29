@@ -54,6 +54,10 @@
         "focused": {
           "type": "boolean"
         },
+        "layout_id": {
+          "$ref": "#/$defs/WireU64",
+          "description": "The layout this pane shows, by id in the strip."
+        },
         "pane_id": {
           "$ref": "#/$defs/WireU64"
         },
@@ -72,6 +76,7 @@
         "pane_id",
         "side",
         "pane_index",
+        "layout_id",
         "visible",
         "focused"
       ],

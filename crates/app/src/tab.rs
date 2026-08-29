@@ -570,6 +570,10 @@ pub struct Tab {
     /// opens on `time_pane_opening_interval_ms`, which is what every tab did
     /// while the stack held one chart.
     context_opening_intervals_ms: SmallVec<[i64; MAX_CONTEXT_PANES]>,
+    /// The layout each context pane opens on, by slot, from a restored
+    /// workspace. A slot past the end takes what a fresh pane takes: the
+    /// focused pane's layout.
+    context_opening_layouts: SmallVec<[Option<u64>; MAX_CONTEXT_PANES]>,
     /// Whether the time pane opens with its indicator legend folded, for the
     /// same reason the interval above is stashed: a restored workspace names
     /// the fold a frame before the pane it belongs to exists.
@@ -777,6 +781,7 @@ impl Tab {
             time_panes: SmallVec::new(),
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
             context_opening_intervals_ms: SmallVec::new(),
+            context_opening_layouts: SmallVec::new(),
             time_pane_opening_legend_collapsed: false,
             pending_context_panes: 0,
             layout: CanvasLayout::Single,
@@ -1858,6 +1863,12 @@ impl Tab {
             .unwrap_or(self.time_pane_opening_interval_ms);
         let mut pane = ChartPane::time(ids.alloc(), interval_ms);
         pane.legend_collapsed = self.time_pane_opening_legend_collapsed;
+        pane.layout = self
+            .context_opening_layouts
+            .get(self.time_panes.len())
+            .copied()
+            .flatten()
+            .map(crate::layouts::LayoutId);
         pane.seed_from(
             self.flow_pane.state.trades(),
             self.flow_pane.state.backfill_trade_count(),
@@ -2456,6 +2467,40 @@ impl Tab {
         } else {
             PaneSide::Time(0)
         };
+    }
+
+    /// The layout each pane opens on, from a saved workspace: the flow pane's
+    /// now, each context pane's when it is built.
+    pub fn set_opening_layouts(&mut self, flow: Option<u64>, context: &[Option<u64>]) {
+        self.flow_pane.layout = flow.map(crate::layouts::LayoutId);
+        self.context_opening_layouts = context.iter().copied().take(MAX_CONTEXT_PANES).collect();
+        // A context pane already built takes its name now: an import lands on
+        // a tab whose stack is standing, and the stash alone would only reach
+        // the panes still to come.
+        for (slot, pane) in self.time_panes.iter_mut().enumerate() {
+            if let Some(Some(id)) = context.get(slot) {
+                pane.layout = Some(crate::layouts::LayoutId(*id));
+            }
+        }
+    }
+
+    /// Name the layout one pane opens on — the flow pane now, a context slot
+    /// when it is built (or now, when it already is).
+    pub fn set_opening_layout(&mut self, side: PaneSide, id: crate::layouts::LayoutId) {
+        match side {
+            PaneSide::Flow => self.flow_pane.layout = Some(id),
+            PaneSide::Time(slot) => {
+                if let Some(pane) = self.time_panes.get_mut(slot) {
+                    pane.layout = Some(id);
+                }
+                if slot < MAX_CONTEXT_PANES {
+                    if self.context_opening_layouts.len() <= slot {
+                        self.context_opening_layouts.resize(slot + 1, None);
+                    }
+                    self.context_opening_layouts[slot] = Some(id.0);
+                }
+            }
+        }
     }
 
     /// Put this tab's canvas back the way a saved workspace recorded it: the
@@ -3300,6 +3345,7 @@ impl Tab {
                     areas.header,
                     &mut interval_ms,
                     self.time_panes[slot].id,
+                    &self.time_panes[slot].layout_label,
                 );
                 #[cfg(test)]
                 if slot == 0 {

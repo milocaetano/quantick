@@ -5812,7 +5812,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Makes one of the workspace's layouts active on every pane of every tab: its indicators replace what every chart shows, and each market's drawings under it come out. The same call the strip's click and Alt+1..9 make.",
+      "description": "Puts one of the workspace's layouts on one pane — the focused pane of the active tab unless `tab_id`/`pane` name another: its indicators replace what that chart shows, and the market's drawings under it come out. Panes on other layouts are untouched. The same call the strip's click and Alt+1..9 make.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -5831,7 +5831,7 @@
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "Which layout tab a call is about: by id, by name, or — omitted — the\nactive one. An id and a name that disagree are refused rather than\nresolved, because a caller that gave both meant both.",
+        "description": "Put a layout on one pane.",
         "properties": {
           "layout_id": {
             "anyOf": [
@@ -5850,9 +5850,31 @@
               "string",
               "null"
             ]
+          },
+          "pane": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The pane's address (`0` the flow pane, `1..` the context stack).\nOmitted: the focused pane — the pane the strip's own click switches."
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which tab's pane changes layout. Omitted: the active tab."
           }
         },
-        "title": "LayoutTabTarget",
+        "title": "SwitchLayoutTabInput",
         "type": "object"
       },
       "module": "layout",
@@ -10658,6 +10680,10 @@
               "focused": {
                 "type": "boolean"
               },
+              "layout_id": {
+                "$ref": "#/$defs/WireU64",
+                "description": "The layout this pane shows, by id in the strip."
+              },
               "pane_id": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -10676,6 +10702,7 @@
               "pane_id",
               "side",
               "pane_index",
+              "layout_id",
               "visible",
               "focused"
             ],

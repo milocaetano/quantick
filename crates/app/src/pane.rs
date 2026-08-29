@@ -1059,6 +1059,17 @@ pub struct ChartPane {
     /// the first frame that sees the pane, so a pane opened by any path (a
     /// new tab, a split, a restore) is seeded exactly once.
     pub layout_seeded: bool,
+    /// Which of the workspace's layouts this pane shows — its indicator set
+    /// and the drawings it keeps. `None` until the app seeds the pane, when
+    /// it takes the focused pane's layout (or the book's default); a restored
+    /// workspace sets it before seeding. Per pane, because two charts side by
+    /// side are two readings of one market, and a CVD on one is not a CVD the
+    /// other asked for.
+    pub layout: Option<crate::layouts::LayoutId>,
+    /// The layout's name, as the pane's own header shows it. A copy the app
+    /// refreshes on a switch or a rename, so the header — drawn by the tab,
+    /// which has no book — never looks it up per frame.
+    pub layout_label: String,
     /// Which market and pane address the drawings on this pane belong to,
     /// once the layout put them here. The app compares it with the tab's
     /// market every frame and swaps the set when they part.
@@ -1392,6 +1403,8 @@ impl ChartPane {
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
             layout_seeded: false,
+            layout: None,
+            layout_label: String::new(),
             drawings_key: None,
             drawings_saved_revision: 0,
             legend_collapsed: false,
