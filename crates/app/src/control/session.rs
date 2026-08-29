@@ -381,6 +381,7 @@ fn no_day_before_prints() -> WireU64 {
 fn replay_session_snapshot(link: &crate::feed::replay::ReplayLink) -> ReplaySessionSnapshot {
     let status = &link.status;
     let joined = link.session.day_before_prints();
+    let (day_played, day_total) = link.day_prints();
     ReplaySessionSnapshot {
         symbol: link.session.symbol.clone(),
         date: link
@@ -394,10 +395,10 @@ fn replay_session_snapshot(link: &crate::feed::replay::ReplayLink) -> ReplaySess
         start_unix_ms: status.start_ms(),
         end_unix_ms: status.end_ms(),
         elapsed_ms: status.elapsed_ms(),
-        // Both counted over the session's own day, exactly as the transport
-        // bar draws them. See the field docs.
-        played_trades: wire_usize(status.played().saturating_sub(joined)),
-        total_trades: wire_usize(status.total().saturating_sub(joined)),
+        // Both counted over the session's own day, from the same function
+        // the transport bar draws them with. See the field docs.
+        played_trades: wire_usize(day_played),
+        total_trades: wire_usize(day_total),
         day_before_prints: wire_usize(joined),
         day_before: link.session.day_before_label(),
         day_before_problem: link

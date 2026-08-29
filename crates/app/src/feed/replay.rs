@@ -269,6 +269,25 @@ impl ReplayLink {
     pub fn symbol(&self) -> &str {
         &self.session.symbol
     }
+
+    /// Prints of the session's *own day* released so far, and how many it
+    /// holds.
+    ///
+    /// The pair the transport bar draws and the control plane publishes, from
+    /// one function because they are one answer. A day joined in front of the
+    /// recording is context the chart was handed, not part of the session
+    /// being rehearsed, so it is counted out of both — and a screen that says
+    /// `0 / 1 446 989` beside a snapshot that says `1 504 020 / 2 951 009` is
+    /// two surfaces disagreeing about the same session, which is a bug of its
+    /// own class here rather than a rounding difference.
+    #[must_use]
+    pub fn day_prints(&self) -> (usize, usize) {
+        let joined = self.session.day_before_prints();
+        (
+            self.status.played().saturating_sub(joined),
+            self.status.total().saturating_sub(joined),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -1019,6 +1038,12 @@ mod tests {
             "and the default is to wait for the trader"
         );
         assert_eq!(link.status.played(), 12, "parked past what is on the chart");
+        assert_eq!(
+            link.day_prints(),
+            (0, 28),
+            "and the session's own day has not started — the one pair the \
+             transport bar and the control plane both read"
+        );
         assert_eq!(
             link.status.start_ms(),
             expected_open,

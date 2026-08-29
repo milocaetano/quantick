@@ -1078,13 +1078,15 @@ impl ReplayView {
                         // Counted over the session being rehearsed, like the
                         // seek track beside it: a joined day is context the
                         // chart was handed, and counting its prints here would
-                        // open a fresh replay at "half played".
-                        let joined = link.session.day_before_prints();
+                        // open a fresh replay at "half played". Asked of the
+                        // link rather than worked out here, so the control
+                        // plane cannot answer the same question differently.
+                        let (played, total) = link.day_prints();
                         ui.label(
                             egui::RichText::new(format!(
                                 "{} / {} prints",
-                                thousands(status.played().saturating_sub(joined)),
-                                thousands(status.total().saturating_sub(joined))
+                                thousands(played),
+                                thousands(total)
                             ))
                             .color(TEXT_MUTED)
                             .small(),
