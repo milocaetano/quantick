@@ -230,6 +230,15 @@ pub struct SavedTab {
     /// fall back to `time_bars` for the top chart and the default below it.
     #[serde(default)]
     pub context_bars: Vec<String>,
+    /// The layout the flow pane showed, by id in the layouts file. Absent in
+    /// files written before a pane had a layout of its own: such a pane
+    /// opens on the book's active layout, which is what every pane showed.
+    #[serde(default)]
+    pub flow_layout: Option<u64>,
+    /// Each context chart's layout, top to bottom, `None` where the file did
+    /// not say.
+    #[serde(default)]
+    pub context_layouts: Vec<Option<u64>>,
     /// Whether the flow pane's on-chart indicator legend was folded to its
     /// count puck.
     ///
@@ -973,6 +982,8 @@ mod tests {
                     focus: Some(SavedFocus::Flow),
                     focus_slot: 0,
                     context_bars: vec![],
+                    flow_layout: None,
+                    context_layouts: vec![],
                     flow_bars: "tick:50".to_owned(),
                     time_bars: Some("time:1m".to_owned()),
                     flow_legend_collapsed: false,
@@ -987,6 +998,8 @@ mod tests {
                     focus: None,
                     focus_slot: 0,
                     context_bars: vec![],
+                    flow_layout: None,
+                    context_layouts: vec![],
                     flow_bars: "dollar:500000".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -1314,6 +1327,8 @@ mod tests {
             focus: None,
             focus_slot: 0,
             context_bars: vec![],
+            flow_layout: None,
+            context_layouts: vec![],
             flow_bars: "tick:50".to_owned(),
             time_bars: None,
             flow_legend_collapsed: false,
@@ -1328,6 +1343,8 @@ mod tests {
             focus: None,
             focus_slot: 0,
             context_bars: vec![],
+            flow_layout: None,
+            context_layouts: vec![],
             flow_bars: "tick:50".to_owned(),
             time_bars: None,
             flow_legend_collapsed: false,
@@ -1463,6 +1480,8 @@ mod tests {
                     focus: None,
                     focus_slot: 0,
                     context_bars: vec![],
+                    flow_layout: None,
+                    context_layouts: vec![],
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -1477,6 +1496,8 @@ mod tests {
                     focus: None,
                     focus_slot: 0,
                     context_bars: vec![],
+                    flow_layout: None,
+                    context_layouts: vec![],
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -1510,6 +1531,8 @@ mod tests {
                 focus: None,
                 focus_slot: 0,
                 context_bars: vec![],
+                flow_layout: None,
+                context_layouts: vec![],
                 flow_bars: "tick:50".to_owned(),
                 time_bars: None,
                 flow_legend_collapsed: false,
@@ -1690,6 +1713,8 @@ time_bars = "time:60000"
                 focus: None,
                 focus_slot: 0,
                 context_bars: vec![],
+                flow_layout: None,
+                context_layouts: vec![],
                 flow_bars: "tick:50".to_owned(),
                 time_bars: None,
                 flow_legend_collapsed: false,

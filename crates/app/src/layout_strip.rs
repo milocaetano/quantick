@@ -49,7 +49,11 @@ const RULE_INSET_X_PX: f32 = 2.0;
 /// What the app hands the strip each frame.
 pub struct StripModel<'a> {
     pub layouts: &'a [ChartLayout],
+    /// The layout the focused pane shows — the one the strip lights.
     pub active: LayoutId,
+    /// What the chrome calls the focused pane ("Flow", "Timeframe 2"): the
+    /// strip switches *that* pane, and says so in front of the tabs.
+    pub owner: &'a str,
     /// The layout under rename and its draft, owned by the app so a rename
     /// begun from the keyboard or a hook opens the same box.
     pub rename: &'a mut Option<(LayoutId, String)>,
@@ -83,6 +87,14 @@ pub fn draw(ctx: &egui::Context, model: StripModel<'_>) -> Vec<StripAction> {
         .show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = TAB_GAP_PX;
+                ui.label(
+                    egui::RichText::new(format!("{} ·", model.owner))
+                        .size(LABEL_SIZE_PX)
+                        .color(theme::TEXT_FAINT),
+                )
+                .on_hover_text(
+                    "the chart the strip switches — click another chart to switch that one",
+                );
                 for layout in model.layouts {
                     let renaming = model
                         .rename

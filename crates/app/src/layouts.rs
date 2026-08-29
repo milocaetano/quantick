@@ -467,6 +467,7 @@ impl LayoutBook {
     }
 
     /// See [`Self::active`].
+    #[cfg(test)]
     pub fn active_mut(&mut self) -> &mut ChartLayout {
         let index = self.active_index();
         &mut self.layouts[index]
@@ -476,6 +477,11 @@ impl LayoutBook {
     #[must_use]
     pub fn get(&self, id: LayoutId) -> Option<&ChartLayout> {
         self.layouts.iter().find(|layout| layout.id == id)
+    }
+
+    /// See [`Self::get`].
+    pub fn get_mut(&mut self, id: LayoutId) -> Option<&mut ChartLayout> {
+        self.layouts.iter_mut().find(|layout| layout.id == id)
     }
 
     /// Where `id` sits in the strip.

@@ -120,6 +120,14 @@ pub(crate) struct LayoutTabTarget {
     /// The layout's name, as the strip shows it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// For a switch: which tab's pane changes layout. Omitted: the active tab.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<WireU64>,
+    /// For a switch: the pane's address (`0` the flow pane, `1..` the context
+    /// stack). Omitted: the focused pane — the pane the strip's own click
+    /// switches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<WireU64>,
 }
 
 /// Add a layout tab and switch to it.
@@ -267,7 +275,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
         tab_descriptor(
             TAB_SWITCH_ID,
             "Switch layout tab",
-            "Makes one of the workspace's layouts active on every pane of every tab: its indicators replace what every chart shows, and each market's drawings under it come out. The same call the strip's click and Alt+1..9 make.",
+            "Puts one of the workspace's layouts on one pane — the focused pane of the active tab unless `tab_id`/`pane` name another: its indicators replace what that chart shows, and the market's drawings under it come out. Panes on other layouts are untouched. The same call the strip's click and Alt+1..9 make.",
             generated_schema::<LayoutTabTarget>(),
         ),
         tab_switch,
@@ -377,7 +385,31 @@ fn tab_switch(
     let input: LayoutTabTarget = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let id = resolve_layout_tab(app, &input)?;
-    let changed = app.switch_layout(id).map_err(layout_error)?;
+    let index = tab_index(
+        app,
+        TabTarget {
+            tab_id: input.tab_id,
+        },
+    )?;
+    let tab = app
+        .control_tab_at(index)
+        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
+    let side = match input.pane {
+        Some(pane) => {
+            let pane = pane.get() as usize;
+            if tab.pane_at(pane).is_none() {
+                return Err(ControlError::invalid_request(format!(
+                    "this tab has no pane at address {pane}"
+                )));
+            }
+            crate::pane::PaneSide::from_index(pane)
+        }
+        None => tab.focused_side(),
+    };
+    let tab_id = tab.id;
+    let changed = app
+        .switch_pane_layout(tab_id, side, id)
+        .map_err(layout_error)?;
     tab_result(app, changed)
 }
 
