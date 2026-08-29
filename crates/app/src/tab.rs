@@ -2209,16 +2209,38 @@ impl Tab {
         };
     }
 
-    /// The layouts the context panes still to be built will open on.
-    pub fn context_opening_layouts(&self) -> &[Option<u64>] {
-        &self.context_opening_layouts
-    }
-
     /// The layout each pane opens on, from a saved workspace: the flow pane's
     /// now, each context pane's when it is built.
     pub fn set_opening_layouts(&mut self, flow: Option<u64>, context: &[Option<u64>]) {
         self.flow_pane.layout = flow.map(crate::layouts::LayoutId);
         self.context_opening_layouts = context.iter().copied().take(MAX_CONTEXT_PANES).collect();
+        // A context pane already built takes its name now: an import lands on
+        // a tab whose stack is standing, and the stash alone would only reach
+        // the panes still to come.
+        for (slot, pane) in self.time_panes.iter_mut().enumerate() {
+            if let Some(Some(id)) = context.get(slot) {
+                pane.layout = Some(crate::layouts::LayoutId(*id));
+            }
+        }
+    }
+
+    /// Name the layout one pane opens on — the flow pane now, a context slot
+    /// when it is built (or now, when it already is).
+    pub fn set_opening_layout(&mut self, side: PaneSide, id: crate::layouts::LayoutId) {
+        match side {
+            PaneSide::Flow => self.flow_pane.layout = Some(id),
+            PaneSide::Time(slot) => {
+                if let Some(pane) = self.time_panes.get_mut(slot) {
+                    pane.layout = Some(id);
+                }
+                if slot < MAX_CONTEXT_PANES {
+                    if self.context_opening_layouts.len() <= slot {
+                        self.context_opening_layouts.resize(slot + 1, None);
+                    }
+                    self.context_opening_layouts[slot] = Some(id.0);
+                }
+            }
+        }
     }
 
     /// Put this tab's canvas back the way a saved workspace recorded it: the

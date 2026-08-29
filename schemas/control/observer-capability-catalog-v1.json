@@ -5722,28 +5722,6 @@
           "new_name": {
             "description": "The new name.",
             "type": "string"
-          },
-          "pane": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/WireU64"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "For a switch: the pane's address (`0` the flow pane, `1..` the context\nstack). Omitted: the focused pane — the pane the strip's own click\nswitches."
-          },
-          "tab_id": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/WireU64"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "For a switch: which tab's pane changes layout. Omitted: the active tab."
           }
         },
         "required": [
@@ -5853,7 +5831,7 @@
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "Which layout tab a call is about: by id, by name, or — omitted — the\nactive one. An id and a name that disagree are refused rather than\nresolved, because a caller that gave both meant both.",
+        "description": "Put a layout on one pane.",
         "properties": {
           "layout_id": {
             "anyOf": [
@@ -5882,7 +5860,7 @@
                 "type": "null"
               }
             ],
-            "description": "For a switch: the pane's address (`0` the flow pane, `1..` the context\nstack). Omitted: the focused pane — the pane the strip's own click\nswitches."
+            "description": "The pane's address (`0` the flow pane, `1..` the context stack).\nOmitted: the focused pane — the pane the strip's own click switches."
           },
           "tab_id": {
             "anyOf": [
@@ -5893,10 +5871,10 @@
                 "type": "null"
               }
             ],
-            "description": "For a switch: which tab's pane changes layout. Omitted: the active tab."
+            "description": "Which tab's pane changes layout. Omitted: the active tab."
           }
         },
-        "title": "LayoutTabTarget",
+        "title": "SwitchLayoutTabInput",
         "type": "object"
       },
       "module": "layout",

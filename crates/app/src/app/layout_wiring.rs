@@ -262,14 +262,7 @@ impl QuantickApp {
         // Whatever was being typed into a note on this pane belongs to the
         // layout going out, and is committed to it before the store is
         // swapped.
-        if self
-            .inline_text_edit
-            .as_ref()
-            .is_some_and(|edit| edit.tab == tab && edit.side == side)
-        {
-            self.end_inline_text_edit();
-        }
-        self.inspector_edit_baseline = None;
+        self.leave_pane_gestures(tab, side);
         self.persist_changed_drawings();
         self.put_away_drawings(tab, side);
         self.remove_layout_indicators_at(tab, side);
@@ -322,6 +315,9 @@ impl QuantickApp {
     /// the strip as it was rather than with a tab nobody asked to keep.
     pub(crate) fn create_layout(&mut self, name: Option<&str>) -> Result<LayoutId, LayoutError> {
         let (tab, side) = self.focused_target();
+        if !self.pane_is_real(tab, side) {
+            return Err(LayoutError::Unknown);
+        }
         if let Some(refusal) = self.pane_swap_refusal(tab, side) {
             return Err(refusal);
         }
@@ -407,16 +403,8 @@ impl QuantickApp {
             // A context pane not built yet — the stack lands a frame later —
             // is told what to open on; a built pane is switched now.
             if !self.pane_is_real(tab_id, side) {
-                if let (PaneSide::Time(slot), Some(tab)) =
-                    (side, self.tabs.iter_mut().find(|tab| tab.id == tab_id))
-                {
-                    let mut context: Vec<Option<u64>> = tab.context_opening_layouts().to_vec();
-                    if context.len() <= slot {
-                        context.resize(slot + 1, None);
-                    }
-                    context[slot] = Some(id.0);
-                    let flow = tab.flow_pane.layout.map(|layout| layout.0);
-                    tab.set_opening_layouts(flow, &context);
+                if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+                    tab.set_opening_layout(side, id);
                 }
                 continue;
             }
@@ -432,6 +420,28 @@ impl QuantickApp {
                     "QUANTICK_PANE_LAYOUTS could not switch the pane"
                 );
             }
+        }
+    }
+
+    /// Close whatever off-canvas edit addresses this pane's drawings by
+    /// index before its store is swapped: the inline text editor commits to
+    /// the set going out, and the inspector's undo baseline is dropped rather
+    /// than recorded against another set's object. Other panes' edits are
+    /// left alone.
+    fn leave_pane_gestures(&mut self, tab: u64, side: PaneSide) {
+        if self
+            .inline_text_edit
+            .as_ref()
+            .is_some_and(|edit| edit.tab == tab && edit.side == side)
+        {
+            self.end_inline_text_edit();
+        }
+        if self
+            .inspector_edit_baseline
+            .as_ref()
+            .is_some_and(|edit| edit.tab == tab && edit.side == side)
+        {
+            self.inspector_edit_baseline = None;
         }
     }
 
@@ -594,19 +604,28 @@ impl QuantickApp {
                     .entries()
                     .iter()
                     .position(|candidate| candidate.name == *name);
-                let Some(index) = index else {
-                    tracing::warn!(
-                        target: "quantick::app",
-                        schema_version = 1_u8,
-                        event_code = "INDICATOR_STATE_SCRIPT_MISSING",
-                        script = %name,
-                        action = "entry_skipped",
-                        "the layout references a script the library no longer has"
-                    );
-                    return None;
+                // A script the library no longer has still takes a slot — an
+                // error slot saying so. The layout addresses its panes by
+                // entry index, and a pane with one slot fewer than its layout
+                // has entries would have every edit after the gap land one
+                // entry off; and a row that says "not in the library" is the
+                // honest picture of a set the trader cannot see whole.
+                let read = match index {
+                    Some(index) => self.script_library.read(index),
+                    None => {
+                        tracing::warn!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "INDICATOR_STATE_SCRIPT_MISSING",
+                            script = %name,
+                            action = "error_slot_shown",
+                            "the layout references a script the library no longer has"
+                        );
+                        Some(Err(format!("{name} is not in the script library")))
+                    }
                 };
-                let file_info = self.script_library.file_info(index);
-                let slot = match self.script_library.read(index) {
+                let file_info = index.and_then(|index| self.script_library.file_info(index));
+                let slot = match read {
                     Some(Ok(text)) => {
                         let pane = self.pane_mut_at(tab, side)?;
                         pane.add_indicator(IndicatorSource::Script {
@@ -615,15 +634,17 @@ impl QuantickApp {
                         })
                     }
                     Some(Err(message)) => {
-                        tracing::warn!(
-                            target: "quantick::app",
-                            schema_version = 1_u8,
-                            event_code = "INDICATOR_SCRIPT_UNREADABLE",
-                            script = %name,
-                            error = %message,
-                            action = "error_slot_shown",
-                            "cannot read an indicator script"
-                        );
+                        if index.is_some() {
+                            tracing::warn!(
+                                target: "quantick::app",
+                                schema_version = 1_u8,
+                                event_code = "INDICATOR_SCRIPT_UNREADABLE",
+                                script = %name,
+                                error = %message,
+                                action = "error_slot_shown",
+                                "cannot read an indicator script"
+                            );
+                        }
                         // The same error slot the menu's own add builds, so a
                         // script the trader fixes and reloads keeps its place.
                         let pane = self.pane_mut_at(tab, side)?;
@@ -657,7 +678,7 @@ impl QuantickApp {
                 };
                 let owner = TabSlot { tab, side, slot };
                 self.slot_kinds.push((owner, kind.clone()));
-                if let Some((_, mtime)) = file_info {
+                if let (Some(index), Some((_, mtime))) = (index, file_info) {
                     self.script_files.push((owner, index, mtime));
                 }
                 return Some(slot);
@@ -1164,6 +1185,7 @@ impl QuantickApp {
             })
             .collect();
         for (tab, side) in moved {
+            self.leave_pane_gestures(tab, side);
             self.put_away_drawings(tab, side);
             self.bring_out_drawings(tab, side);
             self.mark_layouts_dirty();
@@ -1209,9 +1231,10 @@ impl QuantickApp {
             // drawings: the other pane holding this key under this layout
             // is brought to what was just written, rather than keeping a
             // copy that drifts until a switch. Ids travel, so a strategy or
-            // an annotation on the twin still names its object. A twin
-            // mid-gesture is left alone: its own change is written on the
-            // frame the gesture ends.
+            // an annotation on the twin still names its object. A twin the
+            // trader is working on — a gesture in flight, an object selected
+            // — is left alone: the rebuild would drop its selection and its
+            // undo history, and its own change is written when it settles.
             let twins: Vec<(u64, PaneSide)> = self
                 .tabs
                 .iter()
@@ -1222,6 +1245,7 @@ impl QuantickApp {
                             pane.drawings_key.as_ref() == Some(&key)
                                 && pane.layout == Some(layout)
                                 && !pane.drawings.in_gesture()
+                                && pane.drawings.selected().is_none()
                         })
                         .map(move |(_, other_side)| (other.id, other_side))
                 })

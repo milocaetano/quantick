@@ -2037,11 +2037,11 @@ impl QuantickApp {
             app.apply_pane_layouts_hook(&names);
         }
         if std::env::var("QUANTICK_LAYOUT_RENAME").is_ok_and(|value| value == "1") {
-            let active = app.layouts().active_id();
+            let active = app.focused_pane_layout();
             app.begin_layout_rename(active);
         }
         if std::env::var("QUANTICK_LAYOUT_DELETE").is_ok_and(|value| value == "1") {
-            let active = app.layouts().active_id();
+            let active = app.focused_pane_layout();
             app.apply_strip_action(crate::layout_strip::StripAction::Delete(active));
         }
         // The settings dialog, reachable without a pointer: the index of the
@@ -3066,9 +3066,13 @@ impl QuantickApp {
             .active_tab()
             .time_pane()
             .map_or(flow_inverted, |pane| pane.price_view.is_inverted());
+        // The layout the trader is looking at is the one the new chart
+        // opens on — read before the new tab takes the focus.
+        let inherited_layout = (!self.tabs.is_empty()).then(|| self.focused_pane_layout());
         let flow_pane_id = self.pane_ids.alloc();
         let mut tab = Tab::new(id, flow_pane_id, feed_id, symbol, spec, feed, trades_dir);
         tab.paper.set_cmd_trading(cmd_trading);
+        tab.flow_pane.layout = inherited_layout;
         self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
         let config = self.config.clone();
@@ -4912,6 +4916,9 @@ impl QuantickApp {
     /// back into the running app, because a cockpit that only changed on disk
     /// would be overwritten by this session's own save on exit.
     fn import_workspace_from(&mut self, path: &std::path::Path) {
+        // What the debounce still holds is written first, or a bundle with no
+        // layouts section would reload a file a second behind the screen.
+        self.flush_layouts();
         let outcome = crate::workspace_bundle::read(path).and_then(|bundle| {
             crate::workspace_bundle::apply(
                 &bundle,
@@ -12513,8 +12520,8 @@ plot(close)
         );
         assert_eq!(
             app.slot_kinds.len(),
-            2,
-            "a script the library lacks adds nothing, not a phantom slot"
+            3,
+            "a script the library lacks takes an error slot saying so, keeping the layout's positions aligned"
         );
         assert_eq!(app.slot_kinds[0].1, SavedKind::NativeEma);
         assert_eq!(app.slot_kinds[1].1, SavedKind::NativeCvd);
@@ -12543,8 +12550,8 @@ plot(close)
         );
         assert_eq!(
             app.slot_kinds.len(),
-            2,
-            "while only the two the library can build are on the chart"
+            3,
+            "and every entry has its slot on the chart"
         );
         assert!(
             !app.layouts_dirty,
@@ -30481,7 +30488,16 @@ plot(close)
         let (mut app, _commands) = app_with_history(4);
         run_frame(&mut app, &ctx);
 
-        // The trader's own, on the tab that is already open.
+        // A second chart on a layout of its own, so the trader's script —
+        // a layout edit, mirrored onto every pane of its layout — does not
+        // take that chart's slot 0 before the operator gets there.
+        app.open_tab("binance".to_owned(), "ETHUSDT".to_owned(), None);
+        run_frame(&mut app, &ctx);
+        app.create_layout(Some("agent"))
+            .expect("a layout for the second chart");
+        app.cycle_tab(-1);
+
+        // The trader's own, on the first tab.
         let (traders_tab, _, traders_slot) =
             app.attach_script_indicator("the trader's".to_owned(), SCRIPT.to_owned(), false);
         for _ in 0..200 {
@@ -30491,8 +30507,8 @@ plot(close)
             }
         }
 
-        // A second chart, whose slot numbering starts over from zero.
-        app.open_tab("binance".to_owned(), "ETHUSDT".to_owned(), None);
+        // The second chart, whose slot numbering starts over from zero.
+        app.cycle_tab(1);
         run_frame(&mut app, &ctx);
         let (operators_tab, _, operators_slot) =
             app.attach_script_indicator("an assistant's".to_owned(), SCRIPT.to_owned(), true);

@@ -1,5 +1,6 @@
-//! Layout tabs: named sets of indicators and drawings the window switches
-//! between — the strip along the bottom of the canvas.
+//! Layout tabs: named sets of indicators and drawings a chart pane switches
+//! between — the strip along the bottom of the canvas, acting on the focused
+//! pane. Two panes may show two layouts side by side.
 //!
 //! A trader keeps more than one way of reading a market. One layout holds
 //! the moving averages and the session profile; another holds nothing but
