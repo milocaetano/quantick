@@ -2222,16 +2222,36 @@ impl QuantickApp {
         // preference into the trader's workspace — the same rule the replay
         // folder follows.
         if let Ok(value) = std::env::var("QUANTICK_REPLAY_DAY_BEFORE") {
-            let enabled = matches!(value.trim(), "1" | "true" | "on");
-            app.replay_view.stage_day_before(enabled);
-            tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "REPLAY_DAY_BEFORE_STAGED",
-                enabled,
-                requested = value.trim(),
-                "the day before was staged for this run"
-            );
+            // Refused rather than guessed, like the autostart hook below it: a
+            // typo that quietly meant "off" would photograph a single-day
+            // chart under a run that believed it had staged a join, which is
+            // the one state this hook exists to reach.
+            let staged = match value.trim() {
+                "1" | "true" | "on" => Some(true),
+                "0" | "false" | "off" => Some(false),
+                _ => None,
+            };
+            match staged {
+                Some(enabled) => {
+                    app.replay_view.stage_day_before(enabled);
+                    tracing::info!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "REPLAY_DAY_BEFORE_STAGED",
+                        enabled,
+                        requested = value.trim(),
+                        "the day before was staged for this run"
+                    );
+                }
+                None => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "REPLAY_DAY_BEFORE_UNREADABLE",
+                    requested = value.trim(),
+                    action = "left_as_the_workspace_has_it",
+                    "the day-before hook takes 0 or 1; this run keeps the trader's own setting"
+                ),
+            }
         }
         // Same convenience for Market Replay: scan the folder in force — the
         // hook, else the stored pick, else the documents home — and play its

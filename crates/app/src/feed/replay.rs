@@ -567,10 +567,31 @@ fn play(
         }
         if !drained.is_empty() {
             let (immediate, position) = coalesce(&drained);
+            // `Playhead::play` on a finished session parks the cursor back on
+            // the open, so pressing play at the end *is* a restart — and every
+            // restart is a position change. `coalesce` is pure and cannot ask
+            // the playhead whether it is finished, so it is recognised here,
+            // before the controls are applied and the answer changes. Without
+            // it the session is released a second time onto a chart that
+            // already holds it — every bar of the day drawn twice — and a
+            // control-trace walk never sees that the playhead moved back.
+            let play_restarts = playhead.is_finished()
+                && immediate.iter().any(|control| {
+                    matches!(control, ReplayControl::Play | ReplayControl::TogglePlay)
+                });
             for control in immediate {
                 if !apply(control, &mut playhead, trades, &tx, &session) {
                     return; // UI gone
                 }
+            }
+            // Unless an explicit seek or restart came in the same batch: that
+            // one rebuilds below, from the position that actually wins.
+            if play_restarts && position.is_none() {
+                if !rebuild_from_cursor(&playhead, trades, &tx, &session, "play_at_end") {
+                    return; // UI gone
+                }
+                status.publish(&playhead);
+                status.note_rewind(playhead.position_ms());
             }
             if let Some(control) = position {
                 if !apply(control, &mut playhead, trades, &tx, &session) {

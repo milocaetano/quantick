@@ -70,8 +70,37 @@ pub(crate) struct ReplaySessionSnapshot {
     /// travelled through the recording, which is `position_unix_ms`.
     #[schemars(extend("x-unit" = "milliseconds"))]
     pub elapsed_ms: i64,
+    /// Prints of *this session's own day* released so far, and how many it
+    /// holds — the two numbers the transport bar draws.
+    ///
+    /// A day joined in front of the recording is context the chart was handed,
+    /// not part of the session being rehearsed, so it is counted out of both.
+    /// Publishing the raw cursor here instead would have an operator read
+    /// `played_trades = 1_504_020` beside `progress = 0` on a replay that has
+    /// not started, and disagree with the screen about the same session.
     pub played_trades: WireU64,
     pub total_trades: WireU64,
+    /// How many prints in front of this session came from the day joined
+    /// before it — `0` when none was, and what turns the two counts above back
+    /// into the whole stream.
+    ///
+    /// Additive within v1 (contract §4).
+    #[serde(default = "no_day_before_prints")]
+    pub day_before_prints: WireU64,
+    /// The session day joined in front of this one, `YYYY-MM-DD`, when one was.
+    ///
+    /// Two days on one chart is never left to be inferred from bar counts: an
+    /// operator asked to read the open needs to know whose order flow sits
+    /// behind it. Additive within v1.
+    #[serde(default)]
+    pub day_before: Option<String>,
+    /// Why no day was joined, when there was a file for one and it could not
+    /// be used. `None` covers both "none was asked for" and "it joined".
+    ///
+    /// The same reason the interface shows beside the transport, so the two
+    /// surfaces cannot disagree about why yesterday is missing. Additive.
+    #[serde(default)]
+    pub day_before_problem: Option<String>,
     #[schemars(extend("x-unit" = "ratio"))]
     pub progress: Option<CanonicalDecimal>,
     #[schemars(extend("x-unit" = "playback_multiple"))]
@@ -340,8 +369,18 @@ fn replay_snapshot(app: &QuantickApp) -> ReplaySnapshot {
     }
 }
 
+/// What `day_before_prints` reads as in a summary written before the field
+/// existed: no day was joined, which is what every such instance did.
+///
+/// A named function rather than `#[serde(default)]`, because the wire integer
+/// has no `Default` on purpose — a zero has to be *chosen* and said out loud.
+fn no_day_before_prints() -> WireU64 {
+    WireU64::new(0)
+}
+
 fn replay_session_snapshot(link: &crate::feed::replay::ReplayLink) -> ReplaySessionSnapshot {
     let status = &link.status;
+    let joined = link.session.day_before_prints();
     ReplaySessionSnapshot {
         symbol: link.session.symbol.clone(),
         date: link
@@ -355,8 +394,17 @@ fn replay_session_snapshot(link: &crate::feed::replay::ReplayLink) -> ReplaySess
         start_unix_ms: status.start_ms(),
         end_unix_ms: status.end_ms(),
         elapsed_ms: status.elapsed_ms(),
-        played_trades: wire_usize(status.played()),
-        total_trades: wire_usize(status.total()),
+        // Both counted over the session's own day, exactly as the transport
+        // bar draws them. See the field docs.
+        played_trades: wire_usize(status.played().saturating_sub(joined)),
+        total_trades: wire_usize(status.total().saturating_sub(joined)),
+        day_before_prints: wire_usize(joined),
+        day_before: link.session.day_before_label(),
+        day_before_problem: link
+            .session
+            .day_before_problem
+            .as_ref()
+            .map(|problem| format!("{} {}", problem.detail, problem.advice)),
         progress: canonical_f32(status.progress(), RATIO_DECIMAL_PLACES),
         speed: canonical_f32(status.speed(), RATIO_DECIMAL_PLACES),
         rewinds: WireU64::new(status.rewinds()),

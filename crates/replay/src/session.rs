@@ -278,6 +278,23 @@ impl Session {
     /// backwards, and two days that overlap are not the day before and the
     /// day, whatever their file names say.
     fn join_day_before(&mut self, path: &Path, before: Self) {
+        // Checked here as well as when the file was picked: the symbol in the
+        // metadata block outranks the one in the file name, so a file named
+        // for this contract can still hold another's prints. Two prices two
+        // orders of magnitude apart drawn as one series is the worst thing
+        // this feature could do.
+        if before.symbol != self.symbol {
+            self.day_before_problem = Some(DayBeforeProblem {
+                detail: format!(
+                    "{} holds {} prints, not {}",
+                    file_label(path),
+                    before.symbol,
+                    self.symbol
+                ),
+                advice: "Keep one folder per instrument, or name the files for the contract they hold.",
+            });
+            return;
+        }
         let Some(last) = before.trades.last() else {
             self.day_before_problem = Some(DayBeforeProblem {
                 detail: format!("{} holds no prints", file_label(path)),
@@ -457,15 +474,24 @@ pub fn symbol_from_path(path: &Path) -> Option<String> {
 /// folder's own contents are the calendar, which is the only calendar that can
 /// be right for every venue.
 ///
-/// `None` when `path` has no day in its name, when nothing earlier is there,
-/// or when the nearest one is further back than [`MAX_DAY_BEFORE_GAP_DAYS`].
-/// A folder that cannot be listed answers `None` too: the day the trader asked
-/// for still plays, which is the policy the run-up beside it already follows.
+/// Only the same instrument. The flat layout the library also accepts —
+/// `SYMBOL-YYYYMMDD.csv`, all contracts in one folder — puts WDO's Friday
+/// beside WIN's Monday, and joining that would open the chart on another
+/// contract's order flow with a badge asserting it belongs. The instrument is
+/// read from the file the same way the session's own is, so the two answers
+/// cannot disagree.
+///
+/// `None` when `path` has no day in its name, when nothing earlier is there
+/// for this instrument, or when the nearest one is further back than
+/// [`MAX_DAY_BEFORE_GAP_DAYS`]. A folder that cannot be listed answers `None`
+/// too: the day the trader asked for still plays, which is the policy the
+/// run-up beside it already follows.
 ///
 /// Rare path: one directory listing per session opened.
 #[must_use]
 pub fn day_before_path(path: &Path) -> Option<PathBuf> {
     let day = date_from_path(path)?;
+    let symbol = symbol_from_path(path);
     let folder = path.parent()?;
     let mut best: Option<(SessionDate, PathBuf)> = None;
     for entry in std::fs::read_dir(folder).ok()?.flatten() {
@@ -486,7 +512,19 @@ pub fn day_before_path(path: &Path) -> Option<PathBuf> {
         if date >= day {
             continue;
         }
-        if best.as_ref().is_none_or(|(newest, _)| date > *newest) {
+        if symbol_from_path(&candidate) != symbol {
+            continue;
+        }
+        // Newer wins; a tie is broken by path so the answer is the same on
+        // every machine. `read_dir` yields in filesystem order, and a folder
+        // holding both spellings of one day would otherwise join whichever
+        // copy happened to be listed first — iteration order reaching the
+        // output, which this crate does not do.
+        let better = match best.as_ref() {
+            None => true,
+            Some((newest, path)) => date > *newest || (date == *newest && candidate < *path),
+        };
+        if better {
             best = Some((date, candidate));
         }
     }
@@ -568,6 +606,16 @@ Date,Time,Open,High,Low,Close,Volume
         assert!(!problem.advice().is_empty());
     }
 
+    /// A tape carrying the `Bid`/`Ask` columns, for the quote-alignment rule.
+    const QUOTED: &str = "\
+# quantick-replay 1
+# symbol=WINJ26
+# timezone=-03:00
+Date,Time,Price,Bid,Ask,Volume,Side
+2026-03-16,10:00:00.000,182035,182030,182040,12,B
+2026-03-16,10:00:02.500,182040,182035,182045,3,B
+";
+
     const SAMPLE: &str = "\
 # quantick-replay 1
 # symbol=WINJ26
@@ -648,7 +696,12 @@ Date,Time,Price,Volume,Side
 
     /// A two-print tape for `date`, an ISO day, on a B3 clock.
     fn tape(date: &str, price: u32) -> String {
-        let mut text = String::from("# quantick-replay 1\n# symbol=WINJ26\n# timezone=-03:00\n");
+        named_tape("WINJ26", date, price)
+    }
+
+    /// The same, for a stated instrument.
+    fn named_tape(symbol: &str, date: &str, price: u32) -> String {
+        let mut text = format!("# quantick-replay 1\n# symbol={symbol}\n# timezone=-03:00\n");
         text.push_str("Date,Time,Price,Volume,Side\n");
         text.push_str(&format!("{date},09:00:00.000,{price},1,B\n"));
         text.push_str(&format!("{date},17:00:00.000,{price},2,S\n"));
@@ -666,6 +719,107 @@ Date,Time,Price,Volume,Side
 
         let picked = day_before_path(&monday).expect("Friday is the session before Monday");
         assert_eq!(picked.file_name().unwrap(), "20260313.csv");
+    }
+
+    /// The flat layout the library also accepts puts every contract in one
+    /// folder. Joining the newest earlier file there would open a WIN chart on
+    /// WDO's order flow — two prices two orders of magnitude apart drawn as one
+    /// series, with a badge saying it belongs.
+    #[test]
+    fn only_the_same_instrument_is_the_day_before() {
+        let scratch = Scratch::new("day-before-symbol");
+        scratch.write(
+            "WDOV26-20260313.csv",
+            &named_tape("WDOV26", "2026-03-13", 5_700),
+        );
+        scratch.write(
+            "WINV26-20260312.csv",
+            &named_tape("WINV26", "2026-03-12", 181_000),
+        );
+        let monday = scratch.write(
+            "WINV26-20260316.csv",
+            &named_tape("WINV26", "2026-03-16", 182_000),
+        );
+
+        let picked = day_before_path(&monday).expect("WIN's own Thursday");
+        assert_eq!(
+            picked.file_name().unwrap(),
+            "WINV26-20260312.csv",
+            "the nearer file is another contract's"
+        );
+    }
+
+    /// The metadata block outranks the file name, so a file named for this
+    /// contract can still hold another's prints. The join is the last place
+    /// that can catch it.
+    #[test]
+    fn a_tape_that_holds_another_contract_is_refused_at_the_join() {
+        let scratch = Scratch::new("day-before-symbol-lies");
+        scratch.write(
+            "WINV26/20260313.csv",
+            &named_tape("WDOV26", "2026-03-13", 5_700),
+        );
+        let monday = scratch.write(
+            "WINV26/20260316.csv",
+            &named_tape("WINV26", "2026-03-16", 182_000),
+        );
+
+        let session = Session::load_with_day_before(&monday, ParseOptions::default()).unwrap();
+        assert!(session.day_before.is_none(), "not this instrument's day");
+        assert_eq!(session.trades.len(), 2, "and Monday still plays");
+        let problem = session.day_before_problem.expect("and it says so");
+        assert!(problem.detail.contains("WDOV26"), "{problem:?}");
+    }
+
+    /// `read_dir` yields in filesystem order. A folder holding both spellings
+    /// of one day must still join the same file on every machine.
+    #[test]
+    fn a_tie_between_two_spellings_of_a_day_is_broken_the_same_way_everywhere() {
+        let scratch = Scratch::new("day-before-tie");
+        scratch.write(
+            "WINJ26/20260313.csv",
+            &named_tape("WINJ26", "2026-03-13", 181_000),
+        );
+        scratch.write(
+            "WINJ26/WINJ26-20260313.csv",
+            &named_tape("WINJ26", "2026-03-13", 181_000),
+        );
+        let monday = scratch.write(
+            "WINJ26/20260316.csv",
+            &named_tape("WINJ26", "2026-03-16", 182_000),
+        );
+
+        let first = day_before_path(&monday).expect("one of the two");
+        for _ in 0..5 {
+            assert_eq!(
+                day_before_path(&monday).as_ref(),
+                Some(&first),
+                "the same file every time, whatever order the folder lists in"
+            );
+        }
+    }
+
+    /// Quotes are parallel to trades or they are nothing. Documented at the
+    /// join, and pinned here so it stays a decision rather than an accident.
+    #[test]
+    fn a_joined_day_without_quotes_leaves_the_session_without_them() {
+        let scratch = Scratch::new("day-before-quotes");
+        scratch.write(
+            "WINJ26/20260313.csv",
+            &named_tape("WINJ26", "2026-03-13", 181_000),
+        );
+        let monday = scratch.write("WINJ26/20260316.csv", QUOTED);
+
+        let options = ParseOptions { keep_quotes: true };
+        let alone = Session::load(&monday, options).unwrap();
+        assert_eq!(alone.quotes.len(), alone.trades.len(), "the day has quotes");
+
+        let joined = Session::load_with_day_before(&monday, options).unwrap();
+        assert_eq!(joined.day_before_prints(), 2, "the day before joined");
+        assert!(
+            joined.quotes.is_empty(),
+            "a half-aligned column would put yesterday's bid beside today's print"
+        );
     }
 
     #[test]

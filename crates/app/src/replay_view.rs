@@ -218,10 +218,15 @@ impl ReplayView {
         self.day_before
     }
 
-    /// Make that choice — the one call behind the checkbox in either row, the
-    /// control plane and anything else that acts for the trader.
+    /// Make that choice — the one call behind the checkbox in either row, and
+    /// the one any future caller acting for the trader goes through.
     ///
     /// A choice, so it is written down: see [`Self::take_day_before_change`].
+    /// The launch-time hook deliberately does *not* come here; it stages the
+    /// setting for one run through [`Self::stage_day_before`]. No registered
+    /// control-plane action reaches this yet — the state is readable in the
+    /// workspace summary and this is the call an action would make, but the
+    /// capability descriptor is its own change.
     pub fn set_day_before(&mut self, enabled: bool) {
         if self.day_before == enabled && self.day_before_stored == Some(enabled) {
             return;
@@ -260,7 +265,12 @@ impl ReplayView {
             return None;
         }
         self.day_before_dirty = false;
-        Some(self.day_before)
+        // The *stored* choice, never the live one: only `set_day_before`
+        // raises the flag and it writes both, so the two agree here today.
+        // Reading the live field would make that an accident of call order —
+        // one staging path that ran after a click would write a QA run's
+        // setting into the trader's workspace.
+        self.day_before_stored
     }
 
     /// Whose instruments the download half can actually fetch.
@@ -368,16 +378,21 @@ impl ReplayView {
         self.speed = speed;
         self.autoplay = play;
         self.rescan();
-        // A named day, or the first the scan found. Naming one matters as soon
-        // as a folder holds more than one recording: the scan lists them
-        // oldest first, so the day *with* a day before it — the only one that
-        // can show a join — is never the one a bare autostart picks.
+        // A named day, or the first the scan found. Naming one matters as
+        // soon as a folder holds more than one recording: the scan sorts by
+        // instrument and then by day, so a bare autostart takes the first
+        // instrument's *oldest* day — the one recording that can have nothing
+        // joined in front of it.
         if let Some(day) = day
             && !self.select_day(day)
         {
             // A day the folder does not hold is a typo, and photographing a
             // different session instead would be a capture of the wrong thing.
-            // The browser opens on the list, where what is there is spelled out.
+            // The browser opens on the list, where what is there is spelled
+            // out — with nothing selected, because `rescan` picks the first
+            // session and leaving that armed puts a different recording one
+            // click from playing under a run that asked for another.
+            self.selected = None;
             self.browser_open = true;
             return false;
         }
@@ -394,6 +409,11 @@ impl ReplayView {
     ///
     /// By name rather than by index: a scripted run asks for *a day*, and the
     /// index of a day moves every time the folder gains a recording.
+    ///
+    /// A bare day names the first instrument holding it, in the scan's own
+    /// order — instrument, then day. A folder carrying two contracts for one
+    /// date is named precisely by the file stem instead (`WINV26-20260828`),
+    /// which is why both spellings are accepted.
     pub fn select_day(&mut self, wanted: &str) -> bool {
         let wanted = wanted.trim();
         let Some(library) = self.library.as_ref() else {
@@ -648,19 +668,19 @@ impl ReplayView {
                         let folder = self.folder.clone();
                         let offered = self.offered_symbols(market);
                         let day_before = self.day_before;
-                        match self.get_data.draw(
+                        if let Some(GetDataAction::Downloaded(tape)) = self.get_data.draw(
                             ui,
                             &folder,
                             self.library.as_ref(),
                             &offered,
                             day_before,
                         ) {
-                            Some(GetDataAction::Downloaded(tape)) => downloaded = Some(tape),
-                            Some(GetDataAction::DayBefore(enabled)) => {
-                                day_before_change = Some(enabled);
-                            }
-                            None => {}
+                            downloaded = Some(tape);
                         }
+                        // Drained apart from the action, so a tick and a
+                        // landed tape in the same frame do not compete for the
+                        // one slot an action has.
+                        day_before_change = self.get_data.take_day_before_change();
                     }
                 }
             });
