@@ -31,7 +31,7 @@
 use std::collections::BTreeSet;
 
 use quantick_control::{
-    error::ControlError,
+    error::{ControlError, codes},
     id::{CapabilityId, CostClassId, EventKind, ModuleId, RiskFlagId},
     registry::{
         Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
@@ -47,12 +47,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{app::QuantickApp, metrics};
+use crate::{app::QuantickApp, metrics, paper_trading::PaperTrading};
 
 use super::{
     actions::{ActionRegistry, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
     gateway::ControlAccess,
     journal::{EventActor, NewEvent},
+    types::known_error,
 };
 
 pub(crate) const TRADE_MODULE_ID: &str = "trade";
@@ -238,12 +239,12 @@ fn answer(app: &QuantickApp, events: &[VenueEvent]) -> TradeResult {
         rejected_because,
         order_id,
         mark_price: app
-            .control_tab_at(app.control_active_tab_index())
-            .and_then(|tab| tab.paper.mark_price())
+            .control_active_paper()
+            .and_then(PaperTrading::mark_price)
             .map(|price| price.to_string()),
         working_orders: app
-            .control_tab_at(app.control_active_tab_index())
-            .map(|tab| tab.paper.working_orders())
+            .control_active_paper()
+            .map(PaperTrading::working_orders)
             .unwrap_or_default()
             .iter()
             .map(|order| WorkingOrderView {
@@ -299,6 +300,19 @@ fn journal(
     );
 }
 
+/// The refusal every action gives when there is no chart to trade on.
+///
+/// A window with no tab is not a state this application reaches, and the
+/// point of answering rather than indexing is that the control plane must
+/// not be the thing that discovers otherwise by taking a live session down.
+fn no_chart_open() -> ControlError {
+    known_error(
+        codes::CAPABILITY_UNAVAILABLE,
+        "this window has no chart open",
+        true,
+    )
+}
+
 fn to_value(result: TradeResult) -> Result<Value, ControlError> {
     serde_json::to_value(result)
         .map_err(|error| ControlError::invalid_request(format!("trade result: {error}")))
@@ -350,6 +364,7 @@ fn place_order(
     };
     let events = app
         .control_active_paper_mut()
+        .ok_or_else(no_chart_open)?
         .place_intent(intent.with_bracket(bracket));
     let result = answer(app, &events);
     journal(access, actor, PLACE_EVENT_KIND, &result, asked);
@@ -379,6 +394,7 @@ fn bracket_order(
     };
     let events = app
         .control_active_paper_mut()
+        .ok_or_else(no_chart_open)?
         .set_order_bracket(OrderId(input.order_id), bracket);
     let result = answer(app, &events);
     journal(access, actor, BRACKET_EVENT_KIND, &result, asked);
@@ -396,6 +412,7 @@ fn cancel_order(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let events = app
         .control_active_paper_mut()
+        .ok_or_else(no_chart_open)?
         .cancel_order(OrderId(input.order_id));
     let result = answer(app, &events);
     journal(access, actor, CANCEL_EVENT_KIND, &result, asked);

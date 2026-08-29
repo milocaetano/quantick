@@ -2550,8 +2550,22 @@ impl QuantickApp {
     /// the symbol the trader is looking at, and a call that could quietly
     /// trade a chart nobody has open is a call nobody should be able to
     /// make.
-    pub(crate) fn control_active_paper_mut(&mut self) -> &mut crate::paper_trading::PaperTrading {
-        &mut self.tabs[self.active_tab].paper
+    pub(crate) fn control_active_paper_mut(
+        &mut self,
+    ) -> Option<&mut crate::paper_trading::PaperTrading> {
+        // Fallible, because the rest of the control code does not trust the
+        // invariant either: `annotate::resolve_target` guards an empty tab
+        // list and clamps the index, and two more sites clamp it. A
+        // `trade.*` call must answer "this window has no chart open" rather
+        // than panic the whole trading application, and it must resolve the
+        // *same* tab its own read-back resolves.
+        self.tabs.get_mut(self.active_tab).map(|tab| &mut tab.paper)
+    }
+
+    /// The read side of [`Self::control_active_paper_mut`], resolved the same
+    /// way so a call and its read-back can never name different tabs.
+    pub(crate) fn control_active_paper(&self) -> Option<&crate::paper_trading::PaperTrading> {
+        self.tabs.get(self.active_tab).map(|tab| &tab.paper)
     }
 
     pub(crate) fn control_tabs(&self) -> &[Tab] {
