@@ -126,15 +126,6 @@ pub enum DisarmReason {
     /// happened, and a one-shot instance stops and says so rather than
     /// pretending an operation ran.
     TargetBeforeRetest,
-    /// The drawn span no longer reaches the next bar to close. The region
-    /// is a rectangle a human keeps moving, and one dragged back over
-    /// history — or simply left behind as the tape walked past its right
-    /// edge — can never cover another bar. The consumer that owns the
-    /// drawing is the only thing that can see this, so it says so here
-    /// rather than leaving an instance reading "armed" over a region the
-    /// gate refuses forever. Extending the region right and re-arming is
-    /// the way back.
-    RegionEnded,
     /// The retest limit stood down at its own fill moment because a
     /// position was open — a human traded while the order rested, and a
     /// bot never trades against an open manual position. No fill, no
@@ -170,7 +161,6 @@ impl DisarmReason {
             Self::EntryCancelled => "entry cancelled",
             Self::ProtectionDropped => "protection dropped — closed",
             Self::TargetBeforeRetest => "target hit before retest",
-            Self::RegionEnded => "region ended",
             Self::AccountOccupied => "stood down — account busy",
         }
     }
@@ -389,16 +379,20 @@ impl ArmedStrategy {
     /// Feed one closed bar. `region_active` is the caller's answer to "does
     /// the drawing still cover this bar in time?".
     ///
-    /// `account_flat` reports whether the account shows **no open
-    /// position**, and it decides exactly one thing: whether a live
-    /// operation has finished, so the instance can complete or re-arm. It
-    /// is deliberately *not* an entry gate. A region owns its one order,
-    /// and what the rest of the account is doing — another region's
-    /// position, a hand-placed trade — is not this region's business; a
-    /// flag about the whole account used to hold every armed region on the
-    /// chart at once. The consequence is real and accepted: two regions can
-    /// hold positions together, and the simulator nets them into the one
-    /// position it models.
+    /// `account_flat` must reflect the whole account, not just this
+    /// instance's operation — a bot never trades against an open manual
+    /// position, and it decides two things: whether a signal becomes an
+    /// order, and whether a live operation has finished.
+    ///
+    /// It reads as a cross-region coupling, and one region's parked order
+    /// muting another region's setup is a real complaint. It cannot be
+    /// lifted here: `quantick-sim` models **one** netted position carrying
+    /// **one** bracket, and a second entry on the same side overwrites
+    /// `position.stop_loss` with its own, emitting nothing — the first
+    /// instance keeps a badge reading "in position" over a position whose
+    /// protection it no longer owns. Giving each region its own account is
+    /// a simulator change, and until it lands this flag is what keeps a
+    /// stop attached to the operation that projected it.
     ///
     /// The trigger is fed **unconditionally** so its running averages stay
     /// warm across disarmed stretches; the gates only decide whether a
@@ -449,11 +443,12 @@ impl ArmedStrategy {
             self.hold(reason);
             return Vec::new();
         }
-        // The geometry runs before the projection: a bar whose body never
-        // came near the region could not have traded under any multiplier,
-        // and blaming an unpriceable leg there sends the trader tuning
-        // something that was never the reason. The badge names the gate
-        // that actually decided.
+        // The geometry runs before the account and before the projection: a
+        // bar whose body never came near the region could not have traded
+        // under any multiplier or any account state, and blaming an
+        // unpriceable leg — or a busy account — there sends the trader
+        // tuning something that was never the reason. The badge names the
+        // gate that actually decided.
         let opportunity = match entry_geometry(&self.params, region, bar) {
             Ok(opportunity) => opportunity,
             Err(reason) => {
@@ -467,7 +462,16 @@ impl ArmedStrategy {
         // and not spent: it keeps watching, which is the whole reason a
         // trader arms one.
         if self.params.execution == Execution::AlarmOnly {
+            // Something *was* judged and it qualified, so the standing
+            // refusal is spent: a badge reading "last held: opposite side"
+            // over a bar that just rang the alarm is the misinformation
+            // `last_hold` exists to end.
+            self.last_hold = None;
             self.note = Some(Note::Aside("alarm only — no order placed"));
+            return Vec::new();
+        }
+        if !account_flat {
+            self.hold("account not flat");
             return Vec::new();
         }
         let edge = match opportunity {
@@ -743,6 +747,24 @@ impl ArmedStrategy {
         self.last_hold = Some(reason);
     }
 
+    /// The refusal standing over this instance, as the reason alone.
+    ///
+    /// The bar just judged first, the last refusal behind it. Handed out
+    /// unframed so every surface can phrase it for itself — the badge in
+    /// three words at the region's corner, the menu in a sentence, and an
+    /// operator that is not looking at either as a value it can compare.
+    /// `status_line` is a rendering of this, not the only way to reach it:
+    /// a reason a script can only obtain by parsing English is a reason it
+    /// cannot act on.
+    #[must_use]
+    pub fn hold_reason(&self) -> Option<&'static str> {
+        match self.note {
+            Some(Note::Held(reason)) => Some(reason),
+            Some(Note::Aside(_)) => None,
+            None => self.last_hold,
+        }
+    }
+
     /// One line for the on-chart badge.
     #[must_use]
     pub fn status_line(&self) -> String {
@@ -985,6 +1007,17 @@ mod tests {
         assert!(
             instance
                 .on_closed_bar(&bar("102", "106"), &region, false, true)
+                .is_empty()
+        );
+
+        // Account not flat — the gate the simulator's single netted
+        // position still requires.
+        let mut instance = force_instance(Side::Buy);
+        instance.on_closed_bar(&bar("100", "101"), &region, true, true);
+        instance.on_closed_bar(&bar("101", "102"), &region, true, true);
+        assert!(
+            instance
+                .on_closed_bar(&bar("102", "106"), &region, true, false)
                 .is_empty()
         );
 
@@ -1776,39 +1809,40 @@ mod tests {
         );
     }
 
-    /// A region whose drawn span no longer reaches the next bar is a
-    /// structurally finished instance, and it says so by name. The tape is
-    /// not rebuilt by it — only the human's rectangle moved — so re-arming
-    /// after one must not reset the ruler and spend another warmup.
+    /// The account gate, restored after a branch that removed it: an
+    /// instance holds while the account carries a position, and the badge
+    /// names that gate like any other.
+    ///
+    /// It reads as a cross-region coupling and the trader asked for it
+    /// gone. It cannot go while `quantick-sim` models **one** netted
+    /// position with **one** bracket: a second entry on the same side
+    /// overwrites `position.stop_loss` with its own with no event emitted
+    /// (`simulator.rs`), so the first instance keeps a badge reading "in
+    /// position" over a position whose stop it no longer owns. Removing
+    /// this gate is a simulator change — per-region accounts — not a
+    /// kernel one.
     #[test]
-    fn a_region_that_ended_disarms_by_name_without_resetting_the_ruler() {
-        assert_eq!(DisarmReason::RegionEnded.label(), "region ended");
-        assert!(
-            !DisarmReason::RegionEnded.resets_series(),
-            "the rectangle moved, the tape did not"
-        );
+    fn a_busy_account_holds_the_order_and_still_reports_the_opportunity() {
+        let region = Region::new(dec("100"), dec("110"));
+        let mut instance = force_instance(Side::Buy);
+        instance.on_closed_bar(&bar("100", "101"), &region, true, false);
+        instance.on_closed_bar(&bar("101", "102"), &region, true, false);
+        let commands = instance.on_closed_bar(&bar("102", "106"), &region, true, false);
 
-        let region = Region::new(dec("105"), dec("115"));
-        let mut instance = retest_instance(Side::Sell);
-        // Nothing pending, so nothing to sweep: the disarm is a statement,
-        // not a cancellation.
-        let commands = instance.disarm(DisarmReason::RegionEnded);
-        assert!(commands.is_empty(), "no order was resting: {commands:?}");
+        assert!(commands.is_empty(), "a busy account places nothing");
         assert_eq!(
-            instance.state(),
-            &ArmedState::Disarmed {
-                reason: DisarmReason::RegionEnded
-            }
+            instance.status_line(),
+            "armed · trigger held: account not flat"
         );
-        assert_eq!(instance.status_line(), "region ended");
-        // And it stays stopped: a bar that would have fired does nothing.
-        assert!(
-            warm_then_sell_cut(&mut instance, &region).is_empty(),
-            "a disarmed instance places nothing"
+        assert_eq!(instance.hold_reason(), Some("account not flat"));
+        assert_eq!(
+            instance.last_close_opportunity(),
+            Some(Opportunity::Market),
+            "the setup happened, whoever was holding the account"
         );
     }
 
-    /// A projected leg that does not clear the entry edge would be dropped
+    /// A projected leg that does not clear the entry edge would be dropped    /// A projected leg that does not clear the entry edge would be dropped
     /// at fill time — so it holds fire instead, and says why.
     #[test]
     fn a_bracket_leg_that_does_not_clear_the_edge_holds_fire() {
@@ -1906,29 +1940,6 @@ mod tests {
                 min_body: Decimal::ZERO,
             })),
         )
-    }
-
-    /// The sentence the whole alarm was built for: a busy account silences
-    /// the *order* and says so, and the opportunity is reported anyway. A
-    /// trader executing on another platform does not care that this
-    /// simulator is occupied — the setup is the thing they armed to hear.
-    #[test]
-    fn a_busy_account_no_longer_holds_a_regions_own_order() {
-        let region = Region::new(dec("100"), dec("110"));
-        let mut instance = force_instance(Side::Buy);
-        instance.on_closed_bar(&bar("100", "101"), &region, true, false);
-        instance.on_closed_bar(&bar("101", "102"), &region, true, false);
-        let commands = instance.on_closed_bar(&bar("102", "106"), &region, true, false);
-
-        assert!(
-            matches!(commands.as_slice(), [Command::PlaceMarket { .. }]),
-            "a region owns its one order; what the rest of the account is              doing is not its gate: {commands:?}"
-        );
-        assert_eq!(
-            instance.last_close_opportunity(),
-            Some(Opportunity::Market),
-            "the setup happened, whoever was holding the account"
-        );
     }
 
     /// A spent one-shot instance has stopped trading, not stopped watching.

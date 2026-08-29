@@ -2176,6 +2176,63 @@ impl ChartPane {
         let _ = delete;
     }
 
+    /// What the badge over `drawing` says, as a value.
+    ///
+    /// The instance's own half ([`crate::strategy_anchors::badge_text`])
+    /// plus the two things it cannot know, because they are facts about the
+    /// *drawing* rather than about the strategy: a region nobody can
+    /// honestly test ([`region_pause`]), and a drawn span that no longer
+    /// reaches the next bar. Both shut the order and the alarm together, so
+    /// both owe the trader a word — a badge reading a bare "armed" over a
+    /// bot that has been held for an hour is the chart lying about the one
+    /// thing this badge exists to say.
+    ///
+    /// Neither is a disarm. The trader moves the rectangle all session; a
+    /// band dragged back over the future starts firing again on the next
+    /// bar, with no button to press, and the alarm never went quiet.
+    ///
+    /// A `String` rather than paint, so the sentence a trader reads is the
+    /// sentence a test asserts and a reader that is not looking at the
+    /// screen can obtain. The painter below is one consumer of it.
+    #[must_use]
+    pub(crate) fn badge_text_for(
+        &self,
+        instance: &crate::strategy_anchors::AnchoredInstance,
+        drawing: &drawings::Drawing,
+    ) -> String {
+        let mut text = crate::strategy_anchors::badge_text(instance);
+        if let Some(pause) = region_pause(drawing, self.drawings.all_hidden()) {
+            text.push_str(" · ");
+            text.push_str(pause);
+        } else if matches!(instance.armed.state(), quantick_strategy::ArmedState::Armed)
+            && !self.strategy_region_can_fire(drawing.id)
+        {
+            text.push_str(" · region ended — stretch it right");
+        }
+        text
+    }
+
+    /// The badge over the drawing with this id — the lookup half of
+    /// [`Self::badge_text_for`], which the painter reaches directly because
+    /// it already holds both.
+    ///
+    /// Test-only, and gated so it cannot drift into the shipped binary: the
+    /// sentence the trader reads is worth asserting, and the id is what a
+    /// test has in hand. The production path a reader that is not looking
+    /// at the screen would need is the control plane's scene, which does
+    /// not carry armed instances yet — filed rather than widened here.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn strategy_badge_text(&self, id: drawings::DrawingId) -> String {
+        let Some(instance) = self.strategies.for_drawing(id) else {
+            return String::new();
+        };
+        let Some(index) = self.drawings.index_of(id) else {
+            return String::new();
+        };
+        self.badge_text_for(instance, &self.drawings.items()[index])
+    }
+
     /// The armed instance's badge, pinned to its drawing's top-left corner:
     /// state at a glance, in the state's colour. Per frame this is one
     /// bounding-box fold and one text draw per *armed* drawing — a handful
@@ -2211,17 +2268,7 @@ impl ChartPane {
         const BADGE_CORNER_PX: f32 = 3.0;
         /// Ground opacity: readable over candles, still a whisper.
         const BADGE_GROUND_ALPHA: f32 = 0.85;
-        let mut text = crate::strategy_anchors::badge_text(instance);
-        // The states the instance itself cannot know, because they are facts
-        // about the *drawing* rather than about the strategy. Each one makes
-        // `strategy_region` refuse the region, which shuts the order and the
-        // alarm together — so each one owes the trader a word here. A badge
-        // reading a bare "armed" over a bot that has been paused for an hour
-        // is the chart lying about the only thing this badge exists to say.
-        if let Some(pause) = region_pause(drawing, self.drawings.all_hidden()) {
-            text.push_str(" · ");
-            text.push_str(pause);
-        }
+        let text = self.badge_text_for(instance, drawing);
         let position = anchor + egui::vec2(BADGE_PAD_X_PX - 1.0, -BADGE_LIFT_PX);
         // A whisper of ground behind the label so it stays readable over
         // candles; galley first, box after, text last.
@@ -2397,48 +2444,6 @@ impl ChartPane {
         #[allow(clippy::cast_precision_loss)]
         let next_slot = self.closed_slots() as f32;
         a.bar.max(b.bar) >= next_slot
-    }
-
-    /// Retire instances whose drawn span can no longer cover a bar that has
-    /// yet to close.
-    ///
-    /// Arming refuses such a region and so does re-arming — one predicate,
-    /// [`Self::strategy_region_can_fire`], guards both. Nothing re-asked it
-    /// once the instance was running, and the region is a rectangle the
-    /// trader moves all session: dragged back over history, or simply left
-    /// behind as the tape walked past its right edge, it stops covering
-    /// every future bar while the badge still reads a bare "armed". That is
-    /// the silent halt the named disarms exist to prevent, arriving through
-    /// the one door nobody was watching.
-    ///
-    /// Only an `Armed` instance retires. One with a live operation — a
-    /// resting retest limit, an open position — placed that order from a
-    /// bar the region did cover, and the human's later edit to the drawing
-    /// is not a reason to cancel it out from under them.
-    ///
-    /// Rate: once per ingestion sweep that closed a bar, over the handful
-    /// of instances on the pane. Never per trade on a chart with no
-    /// instances, and never per frame.
-    pub(crate) fn retire_ended_strategy_regions(&mut self) -> Vec<quantick_sim::Command> {
-        use quantick_strategy::{ArmedState, DisarmReason};
-        if self.strategies.is_empty() {
-            return Vec::new();
-        }
-        let ended: Vec<drawings::DrawingId> = self
-            .strategies
-            .instances
-            .iter()
-            .filter(|instance| matches!(instance.armed.state(), ArmedState::Armed))
-            .map(|instance| instance.drawing)
-            .filter(|id| !self.strategy_region_can_fire(*id))
-            .collect();
-        let mut cleanup = Vec::new();
-        for id in ended {
-            if let Some(instance) = self.strategies.for_drawing_mut(id) {
-                cleanup.extend(instance.armed.disarm(DisarmReason::RegionEnded));
-            }
-        }
-        cleanup
     }
 
     /// Sweep instances whose drawing no longer exists — for the deletion

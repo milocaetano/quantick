@@ -681,11 +681,13 @@ enum StrategyDemoMode {
     /// run has a hand for, so the scene asks egui to open it on the frame
     /// the dialog appears.
     AlarmSounds,
-    /// An instance **retired** because its region can no longer cover a
-    /// bar: the badge that says "region ended". A live tape reaches it only
-    /// by walking past a hand-drawn right edge, which is minutes of market
-    /// no capture can wait for.
-    RetiredBadge,
+    /// An armed instance whose region's drawn span no longer reaches the
+    /// next bar — the badge clause telling the trader to stretch it right.
+    /// A live tape reaches it only by walking past a hand-drawn right edge,
+    /// which is minutes of market no capture can wait for. The instance
+    /// stays armed and its alarm stays live: the region holds, it is not
+    /// disarmed, so dragging the band forward resumes it with no button.
+    EndedBadge,
     /// An instance whose region lost its footing on the series — the badge
     /// clause that says the bot is paused and why. Reached on a real chart
     /// only by a re-cut that strands an anchor, which a scripted run has no
@@ -1831,7 +1833,7 @@ impl QuantickApp {
                     "alarm" => Some(StrategyDemoMode::AlarmPopup),
                     "alarm-sounds" => Some(StrategyDemoMode::AlarmSounds),
                     "alarm-badge" => Some(StrategyDemoMode::AlarmBadge),
-                    "retired-badge" => Some(StrategyDemoMode::RetiredBadge),
+                    "ended-badge" => Some(StrategyDemoMode::EndedBadge),
                     "paused-badge" => Some(StrategyDemoMode::PausedBadge),
                     _ => None,
                 });
@@ -9658,17 +9660,24 @@ impl QuantickApp {
     /// the stored form the source kept: one construction path, so a copy
     /// cannot quietly differ from what the dialog would have built.
     ///
-    /// **State does not travel.** The copy starts `Armed`, with a fresh
-    /// ruler warmed on this pane's own bars, a fresh alarm (no inherited
-    /// cooldown, no inherited preview mark) and no order id. Cloning a
-    /// `Fired` instance would hang a second badge on one order, and cloning
-    /// a spent one-shot would produce a copy that is finished before the
-    /// trader has looked at it.
+    /// **Only a watching instance travels.** A source that is `Done`, or
+    /// disarmed for any reason, was stopped — by the trader's own hand, by
+    /// a rejected entry, by a spent one shot — and a copy that springs back
+    /// to life places orders the trader last said no to. The copy lands
+    /// offset to the *right*, the direction that makes a dead span live
+    /// again, so Ctrl+D would otherwise be the one gesture that silently
+    /// revives what was deliberately stopped.
     ///
-    /// Silent on refusal by design: the copy lands offset from the original
-    /// ([`DUPLICATE_OFFSET_BARS`]), and an offset that pushes it past the
-    /// tape means the region cannot fire — the drawing is still duplicated,
-    /// it simply carries no bot, which the absent badge already says.
+    /// **State does not travel either.** The copy starts `Armed`, with a
+    /// fresh ruler warmed on this pane's own bars, a fresh alarm (no
+    /// inherited cooldown, no inherited preview mark) and no order id.
+    /// Cloning a `Fired` instance would hang a second badge on one order.
+    ///
+    /// A refusal is reported rather than swallowed: `duplicate_selected`
+    /// clones `hidden`, `off_series` and `foreign_market` verbatim — only
+    /// `locked` is reset — and arming refuses all three. A trader who
+    /// pressed hide-all and then Ctrl+D would otherwise unhide to two
+    /// identical bands wearing one badge and believe both were watching.
     ///
     /// Rate: rare — one keystroke.
     fn carry_strategy_to_duplicate(
@@ -9676,16 +9685,25 @@ impl QuantickApp {
         side: pane::PaneSide,
         duplicated: drawings::Duplicated,
     ) {
+        use quantick_strategy::ArmedState;
         let Some((spec, label)) = self
             .active_tab()
             .pane(side)
             .strategies
             .for_drawing(duplicated.source)
+            .filter(|instance| {
+                matches!(
+                    instance.armed.state(),
+                    ArmedState::Armed | ArmedState::Fired { .. } | ArmedState::InPosition
+                )
+            })
             .map(|instance| (instance.spec.clone(), instance.preset.clone()))
         else {
             return;
         };
-        let _ = self.arm_strategy_instance(side, duplicated.copy, &spec, label);
+        if let Err(reason) = self.arm_strategy_instance(side, duplicated.copy, &spec, label) {
+            self.note_workspace(format!("the copy carries no strategy: {reason}"));
+        }
     }
 
     fn arm_strategy_instance(
@@ -9707,12 +9725,6 @@ impl QuantickApp {
             force,
             alarm,
         } = compiled;
-        // The sink opens its device now, at arm time, so the first signal
-        // does not pay for it on the tape's path. Silent by design: the
-        // cue that needs the device reports its refusal.
-        if let Some(setup) = alarm {
-            self.alerts.warm_up(setup.cue);
-        }
         let tab = self.active_tab_mut();
         let replaced_cleanup = {
             let pane = tab.pane_mut(side);
@@ -9783,6 +9795,17 @@ impl QuantickApp {
             let _ = tab.paper.apply_strategy_command(command);
         }
         tab.paper.set_bot_listening(true);
+        // Only now, past every gate: the sink opens its device at arm time
+        // so the first signal does not pay for it on the tape's path, but a
+        // *refused* arm must open nothing. Ctrl+D over a band the copy
+        // cannot be armed on discards the `Err` by design — the absent
+        // badge is the message — and warming above the gates turned that
+        // silence into an audio stack enumerated once per keypress, against
+        // the sink's own promise that a chart which never arms an alarm
+        // never touches a device.
+        if let Some(setup) = alarm {
+            self.alerts.warm_up(setup.cue);
+        }
         Ok(())
     }
 
@@ -10180,7 +10203,7 @@ impl QuantickApp {
                 // selection so the badge is the thing on screen.
                 pane.drawings.select(None);
             }
-            StrategyDemoMode::RetiredBadge | StrategyDemoMode::PausedBadge => {
+            StrategyDemoMode::EndedBadge | StrategyDemoMode::PausedBadge => {
                 let _ = self.arm_strategy_instance(
                     pane::PaneSide::Flow,
                     drawing_id,
@@ -10188,14 +10211,22 @@ impl QuantickApp {
                     "demo BF".to_owned(),
                 );
                 let pane = self.active_tab_mut().pane_mut(pane::PaneSide::Flow);
-                if mode == StrategyDemoMode::RetiredBadge {
-                    // The retirement itself, staged: the sweep reaches it
-                    // when the tape walks past the drawn right edge, and a
-                    // capture cannot wait out that many bars.
-                    if let Some(instance) = pane.strategies.for_drawing_mut(drawing_id) {
-                        let _ = instance
-                            .armed
-                            .disarm(quantick_strategy::DisarmReason::RegionEnded);
+                if mode == StrategyDemoMode::EndedBadge {
+                    // End the span the way the trader does — by moving the
+                    // rectangle — rather than by stamping a state on. The
+                    // shared demo band reaches `DEMO_STRATEGY_AHEAD_BARS`
+                    // past the newest bar, which is why arming accepted it;
+                    // pulling both anchors behind the tape is the drag that
+                    // ends a region. Faking the state instead would
+                    // photograph the words over a band that can still fire,
+                    // and a reviewer would sign off on a scene the
+                    // application cannot produce.
+                    if let Some(index) = pane.drawings.index_of(drawing_id) {
+                        #[allow(clippy::cast_precision_loss)]
+                        let behind = closed.saturating_sub(2) as f32;
+                        for point in &mut pane.drawings.items_mut()[index].points {
+                            point.bar = point.bar.min(behind);
+                        }
                     }
                 } else if let Some(index) = pane.drawings.index_of(drawing_id) {
                     // A re-cut stranding an anchor is what sets this on a
@@ -14597,12 +14628,13 @@ crosshair = false
                 .expect("instance");
             assert_eq!(
                 instance.armed.state(),
-                &quantick_strategy::ArmedState::Disarmed {
-                    reason: quantick_strategy::DisarmReason::RegionEnded
-                },
-                "past the right anchor the region can never cover another                  bar, and the instance says so instead of reading armed"
+                &quantick_strategy::ArmedState::Armed,
+                "past the right anchor the region is inactive — a hold, not                  a disarm, so dragging the band forward resumes it"
             );
-            assert_eq!(instance.armed.status_line(), "region ended");
+            assert_eq!(
+                instance.armed.status_line(),
+                "armed · trigger held: region not active on this bar"
+            );
         }
 
         // Turn on extend right — the drawn band now runs to the chart's
@@ -14617,13 +14649,10 @@ crosshair = false
                 .expect("a rectangle carries a rectangle payload")
                 .extend_right = true;
         }
-        // The band runs to the chart's edge again, so the region can cover
-        // a future bar — but a retired instance is not resurrected behind
-        // the trader's back. They say so, through the menu's Re-arm, which
-        // this is the seam of.
-        app.active_tab_mut()
-            .flow_pane
-            .rearm_strategy_for_drawing(drawing);
+        // No re-arm: the instance never left `Armed`. A region is a
+        // rectangle the trader moves all session, so its span expiring is a
+        // per-bar hold that heals itself the moment the band covers the
+        // future again — never a latch that needs a button.
         // Three quiet bars drain the held force bar's body out of the
         // window (back to an average of 1), then a fresh buy force bar
         // closes at 110 — inside the price band, far past the drawn end.
@@ -14918,15 +14947,14 @@ crosshair = false
     /// armed while its drawn span still covered the future, and a tape that
     /// then walked past the span's right edge. Every later bar is judged
     /// against a band that can no longer cover it, so nothing fires and
-    /// nothing alarms — while the badge still reads a bare "armed" over a
-    /// bot that is structurally finished.
+    /// nothing alarms — while the badge read a bare "armed" over a bot the
+    /// gate was refusing on every bar.
     ///
-    /// Arming already refuses a region whose span has ended
-    /// (`Pane::strategy_region_can_fire`, and the same predicate guards
-    /// re-arm). Nothing re-asks the question once the instance is running,
-    /// and the trader moves the region all session.
+    /// The fix is a badge that says so, not a disarm: the trader moves the
+    /// region all session, the alarm must keep listening, and a band
+    /// dragged back over the future has to resume with no button pressed.
     #[test]
-    fn a_region_the_tape_walked_past_disarms_instead_of_lying_about_being_armed() {
+    fn a_region_the_tape_walked_past_says_so_on_the_badge_and_keeps_listening() {
         fn print(app: &mut QuantickApp, id: &mut u64, price: &str) {
             *id += 1;
             let trade = quantick_engine::Trade {
@@ -14952,7 +14980,7 @@ crosshair = false
             .find(|tool| tool.id() == "rectangle")
             .expect("the rectangle tool is registered");
         // A band drawn over the bars in front of the trader, ending at slot
-        // 4 — well past the (empty) tape at arm time, so arming accepts it.
+        // 4 — past the (empty) tape at arm time, so arming accepts it.
         {
             let pane = &mut app.active_tab_mut().flow_pane;
             pane.drawings
@@ -14965,6 +14993,7 @@ crosshair = false
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell);
         form.window = 3;
         form.min_body = "0".to_owned();
+        form.alarm = true;
         app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF sell".to_owned())
             .expect("the form compiles and the span still covers the future");
 
@@ -14980,31 +15009,36 @@ crosshair = false
         // = 3.33 is 2.4x — inside the shipped 1.5x..2.5x band.
         bar(&mut app, &mut id, "118", "110");
 
-        let tab = app.active_tab();
-        let instance = tab
-            .flow_pane
-            .strategies
-            .for_drawing(drawing)
-            .expect("instance");
+        let badge = {
+            let tab = app.active_tab();
+            let instance = tab
+                .flow_pane
+                .strategies
+                .for_drawing(drawing)
+                .expect("instance");
+            assert!(
+                tab.paper.is_flat() && tab.paper.working_orders().is_empty(),
+                "the region cannot cover this bar, so no order is right",
+            );
+            assert!(
+                instance.alarm.is_some()
+                    && instance.armed.state() == &quantick_strategy::ArmedState::Armed,
+                "it is still armed and still listening — the alarm is the                  half a trader executing elsewhere depends on",
+            );
+            assert_eq!(
+                instance.armed.hold_reason(),
+                Some("region not active on this bar"),
+                "the reason is readable as a value, not only as a sentence",
+            );
+            tab.flow_pane.strategy_badge_text(drawing)
+        };
         assert!(
-            tab.paper.is_flat() && tab.paper.working_orders().is_empty(),
-            "the region cannot cover this bar, so no order is the right answer",
-        );
-        assert_eq!(
-            instance.armed.state(),
-            &quantick_strategy::ArmedState::Disarmed {
-                reason: quantick_strategy::DisarmReason::RegionEnded
-            },
-            "a region that can never fire again stops claiming to be armed",
-        );
-        assert!(
-            crate::strategy_anchors::badge_text(instance).contains("region ended"),
-            "and the chart says so on the badge, not only in a menu: {}",
-            crate::strategy_anchors::badge_text(instance),
+            badge.contains("region ended — stretch it right"),
+            "and the chart says it where the trader is looking, with the              way out: {badge}",
         );
     }
 
-    /// The user's retest flow end to end in the app: a sell preset with the
+    /// The user's retest flow end to end in the app:    /// The user's retest flow end to end in the app: a sell preset with the
     /// retest option armed on a region, a force bar cutting below it, the
     /// limit resting at the cut edge — then the tape reaching the target
     /// first, the order removing itself, and the badge saying so.
@@ -15200,7 +15234,7 @@ crosshair = false
     /// second holds fire — "at most one live operation per chart" is a
     /// property of the gate, not of luck.
     #[test]
-    fn co_triggered_instances_each_place_their_own_order() {
+    fn co_triggered_instances_do_not_stack_orders() {
         fn print(app: &mut QuantickApp, id: &mut u64, price: &str) {
             *id += 1;
             let trade = quantick_engine::Trade {
@@ -15268,8 +15302,8 @@ crosshair = false
             })
             .count();
         assert_eq!(
-            fired, 2,
-            "a region owns its one order, and what another region is doing              is not its gate — the trader's rule"
+            fired, 1,
+            "the queued entry blocks the second instance: the simulator              models one netted position with one bracket, so a second fill              would overwrite the first's stop with no event"
         );
     }
 

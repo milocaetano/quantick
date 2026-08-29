@@ -5,7 +5,7 @@ covers — and say so on the chart when it cannot — and duplicating the band m
 carry its armed strategy with it.
 
 The investigation that produced this mission is kept in
-`.claude/GOAL-investigation-notes.md`: the trader's 2026-08-28 WINV26 session
+the *Investigation record* below: the trader's 2026-08-28 WINV26 session
 replayed tick for tick, proving the bar at ~16:02:50 (O 177885 / C 177775, body
 110) was `FORCE Sell` on both rulers and `ClosedInside` the band — a valid
 `Opportunity::Market` that produced neither an order nor an alarm, with the
@@ -17,11 +17,20 @@ account flat and the instance armed before the bar closed.
    real chart path (the `pane` + `tab` sweep, not the kernel alone) arms an
    instance on a band, closes a qualifying bar, and asserts no command comes
    out — failing before the fix, passing after.
-2. **A region never expires in silence.** Whatever the span rule ends up being,
-   a bar the band cannot judge is named on the **badge**, in words, on the
-   chart — not only in `status_line()` behind the drawing's context menu.
-   `off_series` gets the clause `hidden` already has; today it pauses the bot
-   mute.
+2. **A region never expires in silence.** A bar the band cannot judge is named
+   on the **badge**, in words, on the chart — not only in `status_line()`
+   behind the drawing's context menu. `off_series` and `foreign_market` get
+   the clause `hidden` already had, and a span that no longer reaches the next
+   bar gets one with the way out (`region ended — stretch it right`).
+
+   **It is a hold, never a disarm.** The first attempt retired such an
+   instance by name (`DisarmReason::RegionEnded`). `code-review` killed it,
+   correctly: `listening()` is false for every `Disarmed`, so the automatic
+   retirement would have silenced the *alarm* for the rest of the session —
+   the half a trader executing on another platform depends on, and the half
+   the trader ruled untouchable. It also latched on a transient mid-drag
+   geometry and never fired at all on an idle tape. A hold heals itself: drag
+   the band back over the future and the next bar fires.
 3. **The held-fire reason outlives the next quiet bar.** `note` is currently
    cleared by every closed bar carrying no signal, so the reason for the bar
    that mattered is gone one bar later. The last *decided* reason stays until
