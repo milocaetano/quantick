@@ -2352,7 +2352,7 @@ impl PaperTrading {
                     .contains(pointer)
             })
         });
-        if !reveal && !over_handle {
+        if !handles_visible(ctx.pointer, reveal, over_handle) {
             return;
         }
         for leg in missing {
@@ -6511,6 +6511,19 @@ pub(crate) fn close_button_rect(tag_right: f32, center_y: f32) -> egui::Rect {
     )
 }
 
+/// Whether a bracket owner's `SL`/`TP` handles paint this frame.
+///
+/// The pointer clause is the one that is easy to miss. A pane that is not
+/// feeding paper input has no pointer here, and `reveal` can still be true
+/// over there — an order's tag opens on *every* pane at once, by design, so
+/// one hover reads on both charts. Without the clause the other pane drew a
+/// pressable-looking handle beside an order whose presses it does not take:
+/// the exact inversion of the layer rule that an invisible control is not a
+/// control, and no better.
+fn handles_visible(pointer: Option<egui::Pos2>, reveal: bool, over_handle: bool) -> bool {
+    pointer.is_some() && (reveal || over_handle)
+}
+
 /// A bracket handle's rect: the ✕ column, one clear step above or below
 /// the entry line so it never overlaps the position tag between them.
 fn bracket_handle_rect(tag_right: f32, entry_y: f32, above: bool) -> egui::Rect {
@@ -8769,6 +8782,49 @@ mod tests {
             position.stop_loss,
             Some(Decimal::from(90)),
             "the leg armed itself on the fill - no window without a stop"
+        );
+    }
+
+    /// A pane that is not feeding paper input paints the order and its
+    /// lines — an order is a fact about the account, true on whichever
+    /// chart you are looking at — but **not** its bracket handles.
+    ///
+    /// The tag opens on every pane at once by design (one hover, two
+    /// surfaces), so `reveal` is true over there too. Without the pointer
+    /// gate the other pane drew a pressable-looking `SL`/`TP` beside an
+    /// order whose presses it does not take.
+    #[test]
+    fn a_pane_without_the_pointer_paints_no_bracket_handles() {
+        let mut paper = PaperTrading::new();
+        paper.venue.seed(&print(0, 100));
+        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
+
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let order_center = clamp_tag_center(250.0, chart.top(), chart.bottom());
+        let handle = bracket_handle_rect(chart.right(), order_center, false);
+
+        // The pane with the pointer offers the handle...
+        assert!(
+            paper
+                .control_at(handle.center(), chart, &scale)
+                .is_some_and(|control| matches!(control, PaperControl::Handle { .. })),
+            "the input pane can be pressed there"
+        );
+
+        // ...and the paint asks one predicate whether to draw them, so the
+        // rule is readable in one place rather than inferred from a paint
+        // this test would have to reproduce to check.
+        assert!(
+            !handles_visible(None, true, false),
+            "revealed, but no hand on this pane: nothing is drawn"
+        );
+        assert!(
+            handles_visible(Some(handle.center()), true, false),
+            "with the hand here, a revealed owner shows its handles"
+        );
+        assert!(
+            handles_visible(Some(handle.center()), false, true),
+            "and reaching straight for a handle keeps it up"
         );
     }
 
