@@ -1,11 +1,10 @@
 [package]
-name = "quantick-sim"
-description = "Deterministic paper-trading simulator: trades in, simulated fills out"
+name = "quantick-trading"
+description = "Venue-neutral order vocabulary and the TradingVenue port every execution backend implements"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 quantick-engine = { path = "../engine" }
-quantick-trading = { path = "../trading" }
 rust_decimal = "1"

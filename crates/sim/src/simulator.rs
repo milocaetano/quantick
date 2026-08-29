@@ -3,48 +3,10 @@
 use quantick_engine::{Side, Trade};
 use rust_decimal::Decimal;
 
-use crate::events::{CancelReason, ExitReason, Fill, FillRole, RejectReason, SimEvent};
-use crate::order::{Bracket, EntryKind, Order, OrderId};
-use crate::position::{Position, signed_points};
-
-/// One completed round trip: an exit fill closing quantity against the
-/// position's average entry at that moment. The unit persisted as history
-/// and consumed by the performance report.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClosedTrade {
-    /// Side of the position that closed: `Buy` was a long, `Sell` a short.
-    pub side: Side,
-    pub quantity: Decimal,
-    /// Average entry price at the moment of the exit.
-    pub entry_price: Decimal,
-    pub exit_price: Decimal,
-    /// Venue time of the print that opened the position.
-    pub opened_ms: i64,
-    /// Venue time of the print that closed it.
-    pub closed_ms: i64,
-    /// Profit in points (price units × quantity), signed. Points, not
-    /// currency: the workspace knows no per-instrument tick value, and a
-    /// number the simulator cannot compute honestly is not shown.
-    pub pnl_points: Decimal,
-    pub exit_reason: ExitReason,
-    /// Aggregate id of the print that opened the position — the audit trail
-    /// back to the tape. `None` only on rows loaded from a version-1 history
-    /// file, which did not record it; the simulator always fills it.
-    pub entry_agg_id: Option<u64>,
-    /// Aggregate id of the print that closed this quantity (see
-    /// `entry_agg_id` for why it is optional).
-    pub exit_agg_id: Option<u64>,
-    /// Maximum adverse excursion in points (≥ 0): the worst the position ran
-    /// against its average entry over every price it was exposed to — entry
-    /// fills, marks while open, the exit fill — scaled by this trade's
-    /// closed quantity. Measured against the average entry at close time,
-    /// so a position that averaged in reports its excursion against the
-    /// final average. `None` only for version-1 history rows: unknown is
-    /// not zero.
-    pub mae_points: Option<Decimal>,
-    /// Maximum favorable excursion in points (≥ 0); see `mae_points`.
-    pub mfe_points: Option<Decimal>,
-}
+use quantick_trading::{
+    Bracket, CancelReason, ClosedTrade, EntryKind, ExitReason, Fill, FillRole, Order, OrderId,
+    Position, RejectReason, VenueEvent, signed_points,
+};
 
 /// A user command, applied between prints. Commands and prints interleave
 /// deterministically: same tape + same commands at the same points → same
@@ -87,6 +49,27 @@ pub enum Command {
     },
     /// Move a resting order to a new price (same validation as placing it).
     ModifyOrder { id: OrderId, price: Decimal },
+    /// Replace a *working* order's protective prices wholesale — `None`
+    /// clears that side.
+    ///
+    /// The levels are validated against the order's **own resting price**,
+    /// not the mark: the bracket protects a fill that has not happened yet,
+    /// and the price it will happen at is the order's. That is the same
+    /// reference [`Command::PlaceLimit`] and [`Command::PlaceStop`] already
+    /// validate their brackets against, so an order amended here obeys
+    /// exactly the rules it was placed under.
+    ///
+    /// Unlike [`Command::SetBracket`] this touches no position. The legs
+    /// ride the order and arm the moment it fills — and are re-checked
+    /// against the *actual* fill price then, so a level the tape outran
+    /// while the order rested is dropped and reported
+    /// ([`crate::VenueEvent::BracketDropped`]) rather than kept wearing a
+    /// lying label.
+    SetOrderBracket {
+        id: OrderId,
+        stop_loss: Option<Decimal>,
+        take_profit: Option<Decimal>,
+    },
     /// Remove a pending order without filling it.
     CancelOrder { id: OrderId },
     /// Replace the open position's protective prices wholesale — `None`
@@ -207,11 +190,11 @@ impl Simulator {
     }
 
     /// Apply a user command. Refusals come back as a single
-    /// [`SimEvent::Rejected`] whose reason says what to do instead.
-    pub fn apply(&mut self, command: Command) -> Vec<SimEvent> {
+    /// [`VenueEvent::Rejected`] whose reason says what to do instead.
+    pub fn apply(&mut self, command: Command) -> Vec<VenueEvent> {
         match self.dispatch(command) {
             Ok(events) => events,
-            Err(reason) => vec![SimEvent::Rejected(reason)],
+            Err(reason) => vec![VenueEvent::Rejected(reason)],
         }
     }
 
@@ -219,7 +202,7 @@ impl Simulator {
     /// the crate doc: brackets, then queued market actions, then resting
     /// orders; the mark updates last, so entries filled by this print arm
     /// their brackets from the next one.
-    pub fn on_trade(&mut self, trade: &Trade) -> Vec<SimEvent> {
+    pub fn on_trade(&mut self, trade: &Trade) -> Vec<VenueEvent> {
         let mut events = Vec::new();
         let price = trade.price;
 
@@ -299,7 +282,7 @@ impl Simulator {
                     Side::Sell => price <= cancel,
                 });
             if price_cancelled {
-                events.push(SimEvent::Cancelled {
+                events.push(VenueEvent::Cancelled {
                     order,
                     reason: CancelReason::PriceTouched,
                 });
@@ -318,7 +301,7 @@ impl Simulator {
                 // (the position may close first), never after (filling
                 // would trade against a position its owner never saw).
                 Some(_) if order.flat_only && self.position.is_some() => {
-                    events.push(SimEvent::Cancelled {
+                    events.push(VenueEvent::Cancelled {
                         order,
                         reason: CancelReason::AccountOccupied,
                     });
@@ -346,18 +329,18 @@ impl Simulator {
     /// source rebuilds its timeline (a replay seek): closed bars cannot be
     /// un-closed, and a position cannot honestly survive into a rewritten
     /// past. Completed trades and realized points are kept — they happened.
-    pub fn reset(&mut self) -> Vec<SimEvent> {
+    pub fn reset(&mut self) -> Vec<VenueEvent> {
         let mut events = Vec::new();
         for action in std::mem::take(&mut self.queue) {
             if let QueuedAction::Entry(order) = action {
-                events.push(SimEvent::Cancelled {
+                events.push(VenueEvent::Cancelled {
                     order,
                     reason: CancelReason::Reset,
                 });
             }
         }
         for order in std::mem::take(&mut self.resting) {
-            events.push(SimEvent::Cancelled {
+            events.push(VenueEvent::Cancelled {
                 order,
                 reason: CancelReason::Reset,
             });
@@ -365,7 +348,7 @@ impl Simulator {
         // A position can only exist after a print, so the mark is present
         // whenever the position is.
         if let (Some(position), Some(mark)) = (self.position.take(), self.mark) {
-            events.push(SimEvent::Filled(Fill {
+            events.push(VenueEvent::Filled(Fill {
                 timestamp_ms: mark.timestamp_ms,
                 agg_id: mark.agg_id,
                 side: opposite(position.side),
@@ -387,7 +370,7 @@ impl Simulator {
         events
     }
 
-    fn dispatch(&mut self, command: Command) -> Result<Vec<SimEvent>, RejectReason> {
+    fn dispatch(&mut self, command: Command) -> Result<Vec<VenueEvent>, RejectReason> {
         match command {
             Command::PlaceMarket {
                 side,
@@ -407,7 +390,7 @@ impl Simulator {
                     false,
                     mark.timestamp_ms,
                 );
-                let placed = SimEvent::Placed(order.clone());
+                let placed = VenueEvent::Placed(order.clone());
                 self.queue.push(QueuedAction::Entry(order));
                 Ok(vec![placed])
             }
@@ -438,7 +421,7 @@ impl Simulator {
                     flat_only,
                     mark.timestamp_ms,
                 );
-                let placed = SimEvent::Placed(order.clone());
+                let placed = VenueEvent::Placed(order.clone());
                 self.resting.push(order);
                 Ok(vec![placed])
             }
@@ -463,7 +446,7 @@ impl Simulator {
                     false,
                     mark.timestamp_ms,
                 );
-                let placed = SimEvent::Placed(order.clone());
+                let placed = VenueEvent::Placed(order.clone());
                 self.resting.push(order);
                 Ok(vec![placed])
             }
@@ -481,12 +464,36 @@ impl Simulator {
                 }
                 validate_bracket(order.side, price, order.bracket)?;
                 order.price = Some(price);
-                Ok(vec![SimEvent::Updated(order.clone())])
+                Ok(vec![VenueEvent::Updated(order.clone())])
+            }
+            Command::SetOrderBracket {
+                id,
+                stop_loss,
+                take_profit,
+            } => {
+                let Some(order) = self.resting.iter_mut().find(|order| order.id == id) else {
+                    return Err(RejectReason::UnknownOrder(id));
+                };
+                // A resting order always carries a price — only a market
+                // order is priceless, and a market order never rests. The
+                // `else` is the unreachable arm written out rather than
+                // unwrapped, so an impossible state refuses instead of
+                // panicking a live session.
+                let Some(reference) = order.price else {
+                    return Err(RejectReason::UnknownOrder(id));
+                };
+                let bracket = Bracket {
+                    stop_loss,
+                    take_profit,
+                };
+                validate_bracket(order.side, reference, bracket)?;
+                order.bracket = bracket;
+                Ok(vec![VenueEvent::Updated(order.clone())])
             }
             Command::CancelOrder { id } => {
                 if let Some(index) = self.resting.iter().position(|order| order.id == id) {
                     let order = self.resting.remove(index);
-                    return Ok(vec![SimEvent::Cancelled {
+                    return Ok(vec![VenueEvent::Cancelled {
                         order,
                         reason: CancelReason::User,
                     }]);
@@ -497,7 +504,7 @@ impl Simulator {
                 if let Some(index) = queued
                     && let QueuedAction::Entry(order) = self.queue.remove(index)
                 {
-                    return Ok(vec![SimEvent::Cancelled {
+                    return Ok(vec![VenueEvent::Cancelled {
                         order,
                         reason: CancelReason::User,
                     }]);
@@ -522,7 +529,7 @@ impl Simulator {
                 )?;
                 position.stop_loss = stop_loss;
                 position.take_profit = take_profit;
-                Ok(vec![SimEvent::BracketSet {
+                Ok(vec![VenueEvent::BracketSet {
                     stop_loss,
                     take_profit,
                 }])
@@ -546,14 +553,14 @@ impl Simulator {
                 let mut events = Vec::new();
                 for action in std::mem::take(&mut self.queue) {
                     if let QueuedAction::Entry(order) = action {
-                        events.push(SimEvent::Cancelled {
+                        events.push(VenueEvent::Cancelled {
                             order,
                             reason: CancelReason::Flatten,
                         });
                     }
                 }
                 for order in std::mem::take(&mut self.resting) {
-                    events.push(SimEvent::Cancelled {
+                    events.push(VenueEvent::Cancelled {
                         order,
                         reason: CancelReason::Flatten,
                     });
@@ -607,7 +614,7 @@ impl Simulator {
         side: Side,
         at: Decimal,
         bracket: Bracket,
-        events: &mut Vec<SimEvent>,
+        events: &mut Vec<VenueEvent>,
     ) -> Bracket {
         let mut kept = bracket;
         if let Some(level) = kept.stop_loss {
@@ -616,7 +623,7 @@ impl Simulator {
                 Side::Sell => level < at,
             };
             if lying {
-                events.push(SimEvent::BracketDropped {
+                events.push(VenueEvent::BracketDropped {
                     reason: RejectReason::StopLossOnWrongSide(side),
                 });
                 kept.stop_loss = None;
@@ -628,7 +635,7 @@ impl Simulator {
                 Side::Sell => level > at,
             };
             if lying {
-                events.push(SimEvent::BracketDropped {
+                events.push(VenueEvent::BracketDropped {
                     reason: RejectReason::TakeProfitOnWrongSide(side),
                 });
                 kept.take_profit = None;
@@ -644,9 +651,9 @@ impl Simulator {
         order: &Order,
         at: Decimal,
         print: &Trade,
-        events: &mut Vec<SimEvent>,
+        events: &mut Vec<VenueEvent>,
     ) {
-        events.push(SimEvent::Filled(Fill {
+        events.push(VenueEvent::Filled(Fill {
             timestamp_ms: print.timestamp_ms,
             agg_id: print.agg_id,
             side: order.side,
@@ -725,12 +732,12 @@ impl Simulator {
         print: &Trade,
         reason: ExitReason,
         role: FillRole,
-        events: &mut Vec<SimEvent>,
+        events: &mut Vec<VenueEvent>,
     ) {
         let Some(position) = self.position.take() else {
             return;
         };
-        events.push(SimEvent::Filled(Fill {
+        events.push(VenueEvent::Filled(Fill {
             timestamp_ms: print.timestamp_ms,
             agg_id: print.agg_id,
             side: opposite(position.side),
@@ -757,13 +764,13 @@ impl Simulator {
         quantity: Decimal,
         at: Decimal,
         print: &Trade,
-        events: &mut Vec<SimEvent>,
+        events: &mut Vec<VenueEvent>,
     ) {
         let Some(mut position) = self.position.take() else {
             return;
         };
         let close_quantity = position.quantity.min(quantity);
-        events.push(SimEvent::Filled(Fill {
+        events.push(VenueEvent::Filled(Fill {
             timestamp_ms: print.timestamp_ms,
             agg_id: print.agg_id,
             side: opposite(position.side),
@@ -803,7 +810,7 @@ impl Simulator {
         closed_ms: i64,
         exit_agg_id: u64,
         reason: ExitReason,
-        events: &mut Vec<SimEvent>,
+        events: &mut Vec<VenueEvent>,
     ) {
         let (adverse, favorable) = position.excursions(at);
         let closed = ClosedTrade {
@@ -821,7 +828,7 @@ impl Simulator {
             mfe_points: Some(favorable.saturating_mul(close_quantity)),
         };
         self.realized_points = self.realized_points.saturating_add(closed.pnl_points);
-        events.push(SimEvent::Closed(closed.clone()));
+        events.push(VenueEvent::Closed(closed.clone()));
         self.closed.push(closed);
     }
 }
@@ -965,11 +972,11 @@ mod tests {
         sim
     }
 
-    fn fills(events: &[SimEvent]) -> Vec<Fill> {
+    fn fills(events: &[VenueEvent]) -> Vec<Fill> {
         events
             .iter()
             .filter_map(|event| match event {
-                SimEvent::Filled(fill) => Some(*fill),
+                VenueEvent::Filled(fill) => Some(*fill),
                 _ => None,
             })
             .collect()
@@ -983,7 +990,7 @@ mod tests {
             quantity: dec(2),
             bracket: Bracket::none(),
         });
-        assert!(matches!(events.as_slice(), [SimEvent::Placed(_)]));
+        assert!(matches!(events.as_slice(), [VenueEvent::Placed(_)]));
         assert_eq!(sim.queued().len(), 1);
 
         let events = sim.on_trade(&print(1, 103));
@@ -1011,7 +1018,7 @@ mod tests {
         });
         assert_eq!(
             events,
-            vec![SimEvent::Rejected(RejectReason::NoMarketPrice)]
+            vec![VenueEvent::Rejected(RejectReason::NoMarketPrice)]
         );
     }
 
@@ -1067,7 +1074,7 @@ mod tests {
         });
         assert_eq!(
             events,
-            vec![SimEvent::Rejected(RejectReason::LimitOnWrongSide(
+            vec![VenueEvent::Rejected(RejectReason::LimitOnWrongSide(
                 Side::Buy
             ))]
         );
@@ -1099,7 +1106,7 @@ mod tests {
         assert!(
             matches!(
                 events.as_slice(),
-                [SimEvent::Cancelled {
+                [VenueEvent::Cancelled {
                     reason: CancelReason::PriceTouched,
                     ..
                 }]
@@ -1157,7 +1164,7 @@ mod tests {
         assert!(
             matches!(
                 events.as_slice(),
-                [SimEvent::Cancelled {
+                [VenueEvent::Cancelled {
                     reason: CancelReason::PriceTouched,
                     ..
                 }]
@@ -1210,7 +1217,7 @@ mod tests {
         assert!(
             matches!(
                 events.as_slice(),
-                [SimEvent::Cancelled {
+                [VenueEvent::Cancelled {
                     reason: CancelReason::AccountOccupied,
                     ..
                 }]
@@ -1268,7 +1275,7 @@ mod tests {
         });
         assert_eq!(
             events,
-            vec![SimEvent::Rejected(RejectReason::CancelAtOnWrongSide(
+            vec![VenueEvent::Rejected(RejectReason::CancelAtOnWrongSide(
                 Side::Sell
             ))],
             "a sell's cancel-at above the market is refused"
@@ -1285,7 +1292,7 @@ mod tests {
         });
         assert_eq!(
             events,
-            vec![SimEvent::Rejected(RejectReason::PriceNotPositive)],
+            vec![VenueEvent::Rejected(RejectReason::PriceNotPositive)],
             "a non-positive cancel-at is refused"
         );
     }
@@ -1318,7 +1325,9 @@ mod tests {
         });
         assert_eq!(
             events,
-            vec![SimEvent::Rejected(RejectReason::StopOnWrongSide(Side::Buy))]
+            vec![VenueEvent::Rejected(RejectReason::StopOnWrongSide(
+                Side::Buy
+            ))]
         );
     }
 
@@ -1367,7 +1376,7 @@ mod tests {
         assert!(
             events.iter().any(|event| matches!(
                 event,
-                SimEvent::BracketDropped {
+                VenueEvent::BracketDropped {
                     reason: RejectReason::TakeProfitOnWrongSide(Side::Buy)
                 }
             )),
@@ -1582,7 +1591,7 @@ mod tests {
         assert!(
             matches!(
                 events.as_slice(),
-                [SimEvent::Cancelled {
+                [VenueEvent::Cancelled {
                     reason: CancelReason::Flatten,
                     ..
                 }]
@@ -1610,7 +1619,7 @@ mod tests {
         });
         assert_eq!(
             events,
-            vec![SimEvent::Rejected(RejectReason::StopLossOnWrongSide(
+            vec![VenueEvent::Rejected(RejectReason::StopLossOnWrongSide(
                 Side::Buy
             ))]
         );
@@ -1621,7 +1630,7 @@ mod tests {
         });
         assert_eq!(
             events,
-            vec![SimEvent::BracketSet {
+            vec![VenueEvent::BracketSet {
                 stop_loss: Some(dec(96)),
                 take_profit: Some(dec(107))
             }]
@@ -1646,7 +1655,7 @@ mod tests {
             stop_loss: Some(dec(103)),
             take_profit: None,
         });
-        assert!(matches!(events.as_slice(), [SimEvent::BracketSet { .. }]));
+        assert!(matches!(events.as_slice(), [VenueEvent::BracketSet { .. }]));
         let events = sim.on_trade(&print(3, 103));
         assert_eq!(
             sim.closed_trades().last().expect("stopped").pnl_points,
@@ -1669,13 +1678,13 @@ mod tests {
         let id = sim.orders()[0].id;
         let events = sim.apply(Command::ModifyOrder { id, price: dec(93) });
         assert!(
-            matches!(events.as_slice(), [SimEvent::Updated(order)] if order.price == Some(dec(93)))
+            matches!(events.as_slice(), [VenueEvent::Updated(order)] if order.price == Some(dec(93)))
         );
 
         let events = sim.apply(Command::CancelOrder { id });
         assert!(matches!(
             events.as_slice(),
-            [SimEvent::Cancelled {
+            [VenueEvent::Cancelled {
                 reason: CancelReason::User,
                 ..
             }]
@@ -1685,7 +1694,130 @@ mod tests {
         let events = sim.apply(Command::CancelOrder { id });
         assert_eq!(
             events,
-            vec![SimEvent::Rejected(RejectReason::UnknownOrder(id))]
+            vec![VenueEvent::Rejected(RejectReason::UnknownOrder(id))]
+        );
+    }
+
+    /// The whole point of a bracket on a *working* order: the trader draws
+    /// the stop and the target while the entry is still waiting, and the
+    /// position opens already protected — no window between the fill and
+    /// the hand that would have placed them.
+    #[test]
+    fn a_bracket_set_on_a_resting_limit_arms_the_position_on_fill() {
+        let mut sim = seeded(100);
+        sim.apply(Command::PlaceLimit {
+            side: Side::Buy,
+            quantity: dec(1),
+            price: dec(95),
+            bracket: Bracket::none(),
+            cancel_at: None,
+            flat_only: false,
+        });
+        let id = sim.orders()[0].id;
+
+        let events = sim.apply(Command::SetOrderBracket {
+            id,
+            stop_loss: Some(dec(90)),
+            take_profit: Some(dec(110)),
+        });
+        assert!(matches!(
+            events.as_slice(),
+            [VenueEvent::Updated(order)]
+                if order.bracket
+                    == Bracket {
+                        stop_loss: Some(dec(90)),
+                        take_profit: Some(dec(110)),
+                    }
+        ));
+
+        // The tape reaches the limit; the position it opens wears both legs.
+        sim.on_trade(&print(1, 95));
+        let position = sim.position().expect("the limit filled");
+        assert_eq!(position.stop_loss, Some(dec(90)));
+        assert_eq!(position.take_profit, Some(dec(110)));
+
+        // And they are live, not decorative.
+        let events = sim.on_trade(&print(2, 110));
+        assert_eq!(fills(&events)[0].role, FillRole::TakeProfit);
+    }
+
+    /// The reference is the order's own resting price, never the mark. At
+    /// mark 100 a stop of 96 is below the market and would pass a
+    /// mark-based check; against the buy limit resting at 95 it sits on the
+    /// *profit* side and is refused.
+    #[test]
+    fn a_working_order_bracket_is_judged_against_the_orders_own_price() {
+        let mut sim = seeded(100);
+        sim.apply(Command::PlaceLimit {
+            side: Side::Buy,
+            quantity: dec(1),
+            price: dec(95),
+            bracket: Bracket::none(),
+            cancel_at: None,
+            flat_only: false,
+        });
+        let id = sim.orders()[0].id;
+
+        let events = sim.apply(Command::SetOrderBracket {
+            id,
+            stop_loss: Some(dec(96)),
+            take_profit: None,
+        });
+        assert_eq!(
+            events,
+            vec![VenueEvent::Rejected(RejectReason::StopLossOnWrongSide(
+                Side::Buy
+            ))]
+        );
+        // Refused means unchanged, not partially applied.
+        assert_eq!(sim.orders()[0].bracket, Bracket::none());
+    }
+
+    /// `None` clears a leg, and the order keeps the other one — the same
+    /// wholesale replacement `SetBracket` performs on a position.
+    #[test]
+    fn setting_a_working_order_bracket_replaces_both_legs_wholesale() {
+        let mut sim = seeded(100);
+        sim.apply(Command::PlaceStop {
+            side: Side::Sell,
+            quantity: dec(1),
+            trigger: dec(95),
+            bracket: Bracket {
+                stop_loss: Some(dec(99)),
+                take_profit: Some(dec(90)),
+            },
+        });
+        let id = sim.orders()[0].id;
+
+        sim.apply(Command::SetOrderBracket {
+            id,
+            stop_loss: None,
+            take_profit: Some(dec(88)),
+        });
+        assert_eq!(
+            sim.orders()[0].bracket,
+            Bracket {
+                stop_loss: None,
+                take_profit: Some(dec(88)),
+            }
+        );
+    }
+
+    /// An id that never rested — a filled, cancelled or market order — is
+    /// reported, never silently ignored.
+    #[test]
+    fn bracketing_an_unknown_order_is_rejected() {
+        let mut sim = seeded(100);
+        let events = sim.apply(Command::SetOrderBracket {
+            id: OrderId(42),
+            stop_loss: Some(dec(90)),
+            take_profit: None,
+        });
+        assert_eq!(
+            events,
+            vec![VenueEvent::Rejected(RejectReason::UnknownOrder(OrderId(
+                42
+            )))]
         );
     }
 
@@ -1707,7 +1839,7 @@ mod tests {
         });
         assert_eq!(
             events,
-            vec![SimEvent::Rejected(RejectReason::LimitOnWrongSide(
+            vec![VenueEvent::Rejected(RejectReason::LimitOnWrongSide(
                 Side::Buy
             ))]
         );
@@ -1741,7 +1873,7 @@ mod tests {
         assert!(
             matches!(
                 events.first(),
-                Some(SimEvent::Cancelled {
+                Some(VenueEvent::Cancelled {
                     reason: CancelReason::Reset,
                     ..
                 })
@@ -1770,7 +1902,7 @@ mod tests {
         });
         assert_eq!(
             events,
-            vec![SimEvent::Rejected(RejectReason::QuantityNotPositive)]
+            vec![VenueEvent::Rejected(RejectReason::QuantityNotPositive)]
         );
         let events = sim.apply(Command::PlaceLimit {
             side: Side::Sell,
@@ -1782,7 +1914,7 @@ mod tests {
         });
         assert_eq!(
             events,
-            vec![SimEvent::Rejected(RejectReason::PriceNotPositive)]
+            vec![VenueEvent::Rejected(RejectReason::PriceNotPositive)]
         );
     }
 
@@ -1867,7 +1999,7 @@ mod tests {
     fn close_partial_needs_a_position_and_a_positive_quantity() {
         let mut sim = seeded(100);
         let events = sim.apply(Command::ClosePartial { quantity: dec(1) });
-        assert_eq!(events, vec![SimEvent::Rejected(RejectReason::NoPosition)]);
+        assert_eq!(events, vec![VenueEvent::Rejected(RejectReason::NoPosition)]);
 
         sim.apply(Command::PlaceMarket {
             side: Side::Buy,
@@ -1880,7 +2012,7 @@ mod tests {
         });
         assert_eq!(
             events,
-            vec![SimEvent::Rejected(RejectReason::QuantityNotPositive)]
+            vec![VenueEvent::Rejected(RejectReason::QuantityNotPositive)]
         );
     }
 

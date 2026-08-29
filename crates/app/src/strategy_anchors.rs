@@ -388,7 +388,7 @@ mod tests {
     /// with no bot is the one thing removal must not orphan.
     #[test]
     fn removal_sweeps_the_pending_entry() {
-        use quantick_sim::{Bracket, Command, EntryKind, Order, OrderId, SimEvent};
+        use quantick_sim::{Bracket, Command, EntryKind, Order, OrderId, VenueEvent};
 
         fn bar(open: i64, close: i64) -> quantick_engine::Bar {
             quantick_engine::Bar {
@@ -441,7 +441,7 @@ mod tests {
             .armed
             .on_closed_bar(&bar(102, 106), &region, true, true);
         assert_eq!(commands.len(), 1, "the fixture fires: {commands:?}");
-        let _ = riding.armed.on_sim_events(&[SimEvent::Placed(Order {
+        let _ = riding.armed.on_sim_events(&[VenueEvent::Placed(Order {
             id: OrderId(11),
             side: Side::Buy,
             kind: EntryKind::Market,
@@ -469,7 +469,7 @@ mod tests {
     /// by replacing its bot.
     #[test]
     fn arming_over_a_pending_entry_sweeps_it() {
-        use quantick_sim::{Bracket, Command, EntryKind, Order, OrderId, SimEvent};
+        use quantick_sim::{Bracket, Command, EntryKind, Order, OrderId, VenueEvent};
 
         fn bar(open: i64, close: i64) -> quantick_engine::Bar {
             quantick_engine::Bar {
@@ -520,7 +520,7 @@ mod tests {
         let _ = riding
             .armed
             .on_closed_bar(&bar(102, 106), &region, true, true);
-        let _ = riding.armed.on_sim_events(&[SimEvent::Placed(Order {
+        let _ = riding.armed.on_sim_events(&[VenueEvent::Placed(Order {
             id: OrderId(21),
             side: Side::Buy,
             kind: EntryKind::Market,

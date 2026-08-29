@@ -18,7 +18,7 @@
 
 use quantick_engine::Bar;
 use quantick_indicators::{Indicator, IndicatorHost, InstanceId, PlotId};
-use quantick_sim::{Command, Order, Position, SimEvent};
+use quantick_sim::{Command, Order, Position, VenueEvent};
 use rust_decimal::Decimal;
 
 /// A trading rule the harness can run.
@@ -63,7 +63,7 @@ pub trait Strategy {
     /// command emits no events of its own, so one echo settles it. The
     /// default returns nothing, which is exactly right for the stateless
     /// signal-followers.
-    fn on_events(&mut self, events: &[SimEvent]) -> Vec<Command> {
+    fn on_events(&mut self, events: &[VenueEvent]) -> Vec<Command> {
         let _ = events;
         Vec::new()
     }

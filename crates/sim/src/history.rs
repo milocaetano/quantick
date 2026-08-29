@@ -35,8 +35,7 @@
 use quantick_engine::Side;
 use rust_decimal::Decimal;
 
-use crate::events::ExitReason;
-use crate::simulator::ClosedTrade;
+use quantick_trading::{ClosedTrade, ExitReason};
 
 /// Magic token on the first line, naming the format.
 pub const FORMAT_NAME: &str = "quantick-trades";

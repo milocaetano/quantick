@@ -338,7 +338,7 @@ impl Strategy for ForceRegion {
             .on_closed_bar(view.bar, &self.region, true, flat)
     }
 
-    fn on_events(&mut self, events: &[quantick_sim::SimEvent]) -> Vec<Command> {
+    fn on_events(&mut self, events: &[quantick_sim::VenueEvent]) -> Vec<Command> {
         self.instance.on_sim_events(events)
     }
 

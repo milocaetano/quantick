@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use quantick_engine::Side;
 use quantick_indicators::{IndicatorHost, InstanceId};
 use quantick_replay::Session;
-use quantick_sim::{ClosedTrade, PerformanceReport, RejectReason, SimEvent, Simulator};
+use quantick_sim::{ClosedTrade, PerformanceReport, RejectReason, Simulator, VenueEvent};
 use rust_decimal::Decimal;
 
 use crate::bars::BarSpec;
@@ -82,18 +82,18 @@ impl Anomalies {
         }
     }
 
-    fn observe(&mut self, event: &SimEvent) {
+    fn observe(&mut self, event: &VenueEvent) {
         match event {
-            SimEvent::Rejected(reason) => {
+            VenueEvent::Rejected(reason) => {
                 *self.rejected.entry(reject_code(reason)).or_default() += 1;
             }
-            SimEvent::BracketDropped { reason } => {
+            VenueEvent::BracketDropped { reason } => {
                 *self
                     .brackets_dropped
                     .entry(reject_code(reason))
                     .or_default() += 1;
             }
-            SimEvent::Cancelled { reason, .. } => {
+            VenueEvent::Cancelled { reason, .. } => {
                 *self.cancels.entry(cancel_code(reason)).or_default() += 1;
             }
             _ => {}
@@ -406,9 +406,9 @@ mod tests {
     #[test]
     fn anomaly_counts_add_up_across_sessions() {
         let mut a = Anomalies::default();
-        a.observe(&SimEvent::Rejected(RejectReason::NoMarketPrice));
-        a.observe(&SimEvent::Rejected(RejectReason::NoMarketPrice));
-        a.observe(&SimEvent::BracketDropped {
+        a.observe(&VenueEvent::Rejected(RejectReason::NoMarketPrice));
+        a.observe(&VenueEvent::Rejected(RejectReason::NoMarketPrice));
+        a.observe(&VenueEvent::BracketDropped {
             reason: RejectReason::StopLossOnWrongSide(quantick_engine::Side::Buy),
         });
         assert_eq!(a.rejections(), 2);

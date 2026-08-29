@@ -10,6 +10,7 @@ members = [
     "crates/pine",
     "crates/replay",
     "crates/sim",
+    "crates/trading",
     "crates/strategy",
     "crates/feed-binance",
     "crates/feed-hyperliquid",
