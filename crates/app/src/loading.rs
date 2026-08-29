@@ -11,7 +11,7 @@
 
 use eframe::egui;
 
-use crate::theme::{AMBER, TEXT_PRIMARY};
+use crate::theme::{AMBER, TEXT_MUTED, TEXT_PRIMARY};
 
 /// Spinner diameter, in pixels — shared by the overlay and the inline row so
 /// loading looks the same everywhere it appears.
@@ -213,6 +213,14 @@ pub fn inline(ui: &mut egui::Ui, label: &str) {
 /// nothing to wait for. A scope with nothing active draws nothing at all — no
 /// backdrop, no reserved space — which is what keeps a quiet pane quiet.
 ///
+/// `note` is what a wait that has *finished* left behind — the outcome of a
+/// "load older" press that reached nothing, drawn in the row the spinner just
+/// vacated. It belongs here rather than in a surface of its own because this
+/// is where the trader was already looking: they watched "loading history…"
+/// appear when they pressed, and the answer to that press has no business
+/// arriving anywhere else. The caller decides when it has had its time
+/// ([`crate::tab::HISTORY_NOTE_LINGER`]); this draws whatever it is handed.
+///
 /// It draws in a layer of its own, above the chart's floating chrome. Painted
 /// straight onto the canvas it sat *underneath* anything the panes put in an
 /// `egui::Area` — the indicator legend is one, and on a split canvas the
@@ -225,10 +233,18 @@ pub fn overlay_scoped(
     area: egui::Rect,
     tracker: &LoadingTracker,
     scope: LoadingScope,
+    note: Option<&str>,
 ) {
+    // The note belongs to the surface that showed the spinner it is the answer
+    // to, so it is scoped by the task it is about rather than pinned to a
+    // scope by name: move `History` to another surface and its verdict follows
+    // it, instead of the two drifting to opposite ends of the canvas.
+    let note = note.filter(|_| scope == LoadingTask::History.scope());
     // Cheap first: most frames have nothing in flight at all, and this is now
     // called once per surface rather than once per frame.
-    if !tracker.any_active() || !tracker.active().any(|task| task.scope() == scope) {
+    if note.is_none()
+        && (!tracker.any_active() || !tracker.active().any(|task| task.scope() == scope))
+    {
         return;
     }
     // A layer rather than an `egui::Area`: an area is laid out from the
@@ -239,21 +255,39 @@ pub fn overlay_scoped(
     let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("loading_overlay"));
     ui.with_layer_id(layer, |ui| {
         ui.set_clip_rect(area);
-        draw_rows(ui, area, tracker, scope);
+        draw_rows(ui, area, tracker, scope, note);
     });
 }
 
 /// The overlay's rows, in whatever layer the caller put them in.
-fn draw_rows(ui: &mut egui::Ui, area: egui::Rect, tracker: &LoadingTracker, scope: LoadingScope) {
+///
+/// A row is a spinner and a label while its task is in flight, and the note is
+/// the same row without the spinner: nothing is turning any more, and a
+/// stopped spinner beside a finished sentence would say the opposite. It keeps
+/// the spinner's column so the two never jump sideways past each other, and it
+/// is drawn in [`TEXT_MUTED`] because it is a remark rather than a heading.
+fn draw_rows(
+    ui: &mut egui::Ui,
+    area: egui::Rect,
+    tracker: &LoadingTracker,
+    scope: LoadingScope,
+    note: Option<&str>,
+) {
     let font = egui::FontId::proportional(LABEL_FONT_SIZE);
     let painter = ui.painter().clone();
-    let galleys: Vec<_> = tracker
+    let mut galleys: Vec<_> = tracker
         .active()
         .filter(|task| task.scope() == scope)
         .map(|task| {
             painter.layout_no_wrap(format!("{}…", task.label()), font.clone(), TEXT_PRIMARY)
         })
         .collect();
+    // Last, under whatever is still running: a verdict on the press belongs
+    // below the work it is a verdict on, not above it.
+    let spinners = galleys.len();
+    if let Some(note) = note {
+        galleys.push(painter.layout_no_wrap(note.to_owned(), font.clone(), TEXT_MUTED));
+    }
 
     let widest = galleys
         .iter()
@@ -272,15 +306,17 @@ fn draw_rows(ui: &mut egui::Ui, area: egui::Rect, tracker: &LoadingTracker, scop
     );
 
     let mut y = backdrop.top() + PAD / 2.0;
-    for galley in galleys {
+    for (row, galley) in galleys.into_iter().enumerate() {
         let spinner = egui::Rect::from_min_size(
             egui::pos2(backdrop.left() + PAD, y + (ROW_HEIGHT - SPINNER_SIZE) / 2.0),
             egui::vec2(SPINNER_SIZE, SPINNER_SIZE),
         );
-        ui.put(
-            spinner,
-            egui::Spinner::new().size(SPINNER_SIZE).color(AMBER),
-        );
+        if row < spinners {
+            ui.put(
+                spinner,
+                egui::Spinner::new().size(SPINNER_SIZE).color(AMBER),
+            );
+        }
         let text_pos = egui::pos2(
             spinner.right() + GAP,
             y + (ROW_HEIGHT - galley.size().y) / 2.0,

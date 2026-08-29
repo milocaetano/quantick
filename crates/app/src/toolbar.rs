@@ -688,7 +688,10 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
         // whole session and one that fetches two thousand prints are different
         // acts, and the trader chose which.
         .on_hover_text(history_button_hover(model))
-        .on_disabled_hover_text(history_disabled_hover(model.history_reach_running));
+        .on_disabled_hover_text(history_disabled_hover(
+            model.history_reach_running,
+            model.capabilities.ohlcv_history,
+        ));
     if load.clicked() {
         actions.push(ToolbarAction::LoadOlder);
     }
@@ -723,11 +726,21 @@ fn history_button_enabled(feed_can_page: bool, run_in_flight: bool) -> bool {
 }
 
 /// Why the load button is greyed out — the run it is waiting on, or the feed
-/// that has nothing to give. Two reasons, and the trader is told which.
-fn history_disabled_hover(run_in_flight: bool) -> &'static str {
+/// that has nothing to give. Three reasons, and the trader is told which.
+///
+/// The third exists because "no older trades" is true and useless on a source
+/// that holds the past in the *other* record: a market replay has no venue to
+/// page prints from, and its run-up is a candle file one menu entry away. A
+/// trader presses this button because they want yesterday on the chart, and a
+/// refusal that stops at "no" sends them looking for a bug. So when the source
+/// serves candles, the refusal names them.
+fn history_disabled_hover(run_in_flight: bool, offers_candles: bool) -> &'static str {
     if run_in_flight {
         "paging — each answer asks for the next until the reach is met; pick \
          \"one page\" above to stop"
+    } else if offers_candles {
+        "no older trades to fetch here — this source's past is venue candles: \
+         open the menu beside this button and use \"+ older candles\""
     } else {
         "no older trades to fetch: this feed only streams forward, or its \
          history is already all here"
@@ -1192,7 +1205,10 @@ fn draw_overflow(
                     egui::Button::new(format!("{} Load older", icons::PLUS)),
                 )
                 .on_hover_text(history_button_hover(model))
-                .on_disabled_hover_text(history_disabled_hover(model.history_reach_running));
+                .on_disabled_hover_text(history_disabled_hover(
+                    model.history_reach_running,
+                    model.capabilities.ohlcv_history,
+                ));
             if load.clicked() {
                 actions.push(ToolbarAction::LoadOlder);
                 ui.close_menu();
@@ -1766,13 +1782,37 @@ mod tests {
             "and a feed that only streams forward never took one"
         );
         assert!(
-            history_disabled_hover(true).contains("one page"),
+            history_disabled_hover(true, false).contains("one page"),
             "the run's reason has to name the way out: {}",
-            history_disabled_hover(true)
+            history_disabled_hover(true, false)
+        );
+        assert_eq!(
+            history_disabled_hover(true, true),
+            history_disabled_hover(true, false),
+            "a run in flight is why the button is off; the candle record it              could also serve is not the answer to that"
         );
         assert!(
-            history_disabled_hover(false).contains("only streams forward"),
+            history_disabled_hover(false, false).contains("only streams forward"),
             "and a feed that cannot page gets the other reason, not the run's"
+        );
+    }
+
+    /// A source with no older trades but a run-up on disk — a market replay is
+    /// exactly this — must point at the record it *can* serve.
+    ///
+    /// "No older trades" alone is true and useless: the trader pressed because
+    /// they want the past, and on this source the past is candles, one menu
+    /// entry away. The refusal names it.
+    #[test]
+    fn a_source_with_candles_but_no_tape_to_page_points_at_the_candle_reach() {
+        let refusal = history_disabled_hover(false, true);
+        assert!(
+            refusal.contains("older candles"),
+            "the way forward has to be named: {refusal}"
+        );
+        assert!(
+            !history_disabled_hover(false, false).contains("older candles"),
+            "and a source without candles must not send the trader to a menu              entry that is not there"
         );
     }
 }

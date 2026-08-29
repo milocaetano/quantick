@@ -90,6 +90,22 @@ pub const MAX_IDLE_PAGES: u32 = 3;
 /// Friday, on exactly the mornings the feature is named for.
 pub const MAX_CAMPAIGN_SPAN_MS: i64 = 48 * 60 * 60 * 1_000;
 
+/// What one press of [`HistoryReach::Page`] is told when its single reply
+/// brought no prints back.
+///
+/// Separate from [`CampaignEnd::NothingComingBack`], which is a *run* giving
+/// up after several such replies in a row: one empty answer is not evidence
+/// that a record is spent, so this sentence claims less than that one does.
+pub const EMPTY_PAGE_NOTICE: &str =
+    "no older trades came back from that request; press again to retry";
+
+/// What a press is told when its request could not even be queued.
+///
+/// A closed command channel is a feed that has gone; a full one is a frame so
+/// busy that pressing again is the honest recovery. Neither will ever be
+/// answered, so neither may be left looking like a request in flight.
+pub const REQUEST_REFUSED_NOTICE: &str = "could not ask for older trades just now; press again";
+
 /// The two bounds a [`Campaign`] measures its reach against, as the trader's
 /// configuration set them.
 ///
@@ -239,6 +255,67 @@ impl CampaignEnd {
             Self::NothingComingBack => "nothing_coming_back",
             Self::SpanCovered => "span_cap_covered",
             Self::NothingCharted => "nothing_charted",
+        }
+    }
+
+    /// Every ending, in declaration order — the list a caller resolves a
+    /// name against, so an ending that exists is reachable by name and a
+    /// new one is reachable the day it is added.
+    pub const ALL: [Self; 7] = [
+        Self::ReachMet,
+        Self::Exhausted,
+        Self::PagesSpent,
+        Self::PrintsPulled,
+        Self::NothingComingBack,
+        Self::SpanCovered,
+        Self::NothingCharted,
+    ];
+
+    /// Read an ending back from its [`action`](Self::action) token.
+    ///
+    /// Unknown text is no ending at all rather than a silent default, for the
+    /// reason every other `from_*` in this crate gives: a typo in a validation
+    /// script must not photograph the wrong state and call it a pass.
+    #[must_use]
+    pub fn from_action(action: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|end| end.action() == action.trim())
+    }
+
+    /// What the trader is told when a run ends this way, or [`None`] when the
+    /// chart has already said it better.
+    ///
+    /// Only [`ReachMet`](Self::ReachMet) is silent: the session before this
+    /// one is on screen, and a sentence announcing that would be noise a
+    /// trader learns to stop reading. Every other ending means the press left
+    /// the chart where it was, or stopped short of the reach it promised —
+    /// and an outcome nobody can see is how this feature came to look like a
+    /// facade with no tape behind it.
+    ///
+    /// The sentences carry the one distinction a trader acts on: whether
+    /// pressing again continues from here, or whether the record is spent and
+    /// another press would ask a venue for something it has already refused.
+    /// Neither names a budget's size — [`MAX_CAMPAIGN_PAGES`] and its
+    /// siblings are configuration-adjacent numbers, and a sentence carrying
+    /// its own copy of one starts lying the day it moves.
+    #[must_use]
+    pub const fn notice(self) -> Option<&'static str> {
+        match self {
+            Self::ReachMet => None,
+            Self::Exhausted => Some("no older trades: this source has given everything it has"),
+            Self::NothingComingBack => Some(
+                "nothing older came back — the venue has run out or is \
+                 refusing; press again to retry",
+            ),
+            Self::NothingCharted => Some("no bars on the chart to page back from yet"),
+            Self::PagesSpent | Self::PrintsPulled => {
+                Some("stopped on this run's budget — press again to keep reaching back")
+            }
+            Self::SpanCovered => Some(
+                "this market never closed over the stretch fetched — press \
+                 again to keep reaching back",
+            ),
         }
     }
 }
@@ -727,5 +804,73 @@ mod tests {
     #[test]
     fn the_default_reach_is_the_press_this_button_has_always_had() {
         assert_eq!(HistoryReach::default(), HistoryReach::Page);
+    }
+
+    /// The ending a trader never has to be told about is the one that worked.
+    /// Every other ending left the chart where it was or stopped short of what
+    /// the press promised, and a press whose outcome is invisible is exactly
+    /// how this feature shipped looking like a facade.
+    /// An ending that exists is reachable by its own name, both ways.
+    #[test]
+    fn every_ending_survives_a_round_trip_through_its_token() {
+        for end in CampaignEnd::ALL {
+            assert_eq!(
+                CampaignEnd::from_action(end.action()),
+                Some(end),
+                "{} must be reachable by the name its log line uses",
+                end.action()
+            );
+        }
+        assert_eq!(
+            CampaignEnd::from_action("an ending from a later release"),
+            None,
+            "unknown text is no ending at all, never a silent default"
+        );
+    }
+
+    #[test]
+    fn every_ending_but_the_one_that_worked_has_something_to_say() {
+        assert_eq!(
+            CampaignEnd::ReachMet.notice(),
+            None,
+            "the session before this one is on the chart; the chart says it better"
+        );
+        for end in CampaignEnd::ALL
+            .into_iter()
+            .filter(|end| *end != CampaignEnd::ReachMet)
+        {
+            let notice = end
+                .notice()
+                .unwrap_or_else(|| panic!("{} stops the run in silence", end.action()));
+            assert!(
+                !notice.is_empty(),
+                "{} has an empty sentence, which is silence with extra steps",
+                end.action()
+            );
+        }
+    }
+
+    /// Two endings mean *the record is spent* and two mean *press again*. A
+    /// trader acts on that difference, so the sentence has to carry it.
+    #[test]
+    fn an_ending_that_continues_invites_another_press() {
+        for end in [
+            CampaignEnd::PagesSpent,
+            CampaignEnd::PrintsPulled,
+            CampaignEnd::SpanCovered,
+        ] {
+            assert!(
+                end.notice().expect("a sentence").contains("press again"),
+                "{} continues from here and must say so",
+                end.action()
+            );
+        }
+        assert!(
+            !CampaignEnd::Exhausted
+                .notice()
+                .expect("a sentence")
+                .contains("press again"),
+            "a spent record must not invite a press that cannot be served"
+        );
     }
 }

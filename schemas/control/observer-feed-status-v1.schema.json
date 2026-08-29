@@ -119,6 +119,17 @@
         "feed_display_name": {
           "type": "string"
         },
+        "history_reach_note": {
+          "description": "What the last *load older* press had to say, while it is still on\nscreen — the exact sentence the trader reads in the loading lane.\n\n`null` is the ordinary state: no press yet, a press that landed what it\npromised, or one whose remark has had its time. Here because the\noutcome of a reach is the whole point of making one, and an operator\ndriving the button through `QUANTICK_LOAD_OLDER` or `quantick_invoke`\nmust be able to learn it from the same words rather than by diffing\nbar counts.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "history_reach_running": {
+          "description": "Whether a run of *load older* requests is in flight right now.",
+          "type": "boolean"
+        },
         "history_trade_count": {
           "$ref": "#/$defs/WireU64"
         },
@@ -199,6 +210,7 @@
         "capabilities",
         "provenance",
         "history_trade_count",
+        "history_reach_running",
         "live_trade_count"
       ],
       "type": "object"

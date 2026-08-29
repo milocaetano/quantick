@@ -38,6 +38,18 @@ pub(crate) struct FeedTabSnapshot {
     pub capabilities: FeedCapabilitiesSnapshot,
     pub provenance: MarketDataProvenance,
     pub history_trade_count: WireU64,
+    /// Whether a run of *load older* requests is in flight right now.
+    pub history_reach_running: bool,
+    /// What the last *load older* press had to say, while it is still on
+    /// screen — the exact sentence the trader reads in the loading lane.
+    ///
+    /// `null` is the ordinary state: no press yet, a press that landed what it
+    /// promised, or one whose remark has had its time. Here because the
+    /// outcome of a reach is the whole point of making one, and an operator
+    /// driving the button through `QUANTICK_LOAD_OLDER` or `quantick_invoke`
+    /// must be able to learn it from the same words rather than by diffing
+    /// bar counts.
+    pub history_reach_note: Option<String>,
     pub live_trade_count: WireU64,
     #[schemars(extend("x-unit" = "unix_milliseconds"))]
     pub latest_trade_unix_ms: Option<i64>,
@@ -219,6 +231,8 @@ fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
                     history_trade_count: WireU64::new(
                         u64::try_from(tab.history_trades).unwrap_or(u64::MAX),
                     ),
+                    history_reach_running: tab.history_reach_running(),
+                    history_reach_note: tab.history_note().map(str::to_owned),
                     live_trade_count: WireU64::new(tab.live_trades),
                     latest_trade_unix_ms: tab.latest_trade_ms,
                     latest_arrival_latency_ms: tab.trade_arrival_ms(),

@@ -27,7 +27,9 @@ use crate::feed::{
     self, FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedHandle, FeedLatency,
     FeedNotice, MAX_REMEMBERED_GAPS, MIN_MARKED_GAP_MS, ReplayLink, past_resume_floor,
 };
-use crate::history_reach::{Campaign, CampaignStep, HistoryReach};
+use crate::history_reach::{
+    Campaign, CampaignStep, EMPTY_PAGE_NOTICE, HistoryReach, REQUEST_REFUSED_NOTICE,
+};
 use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
 use crate::orderflow_view::OrderflowView;
@@ -352,6 +354,30 @@ pub struct LegendFold {
     pub time: bool,
 }
 
+/// How long the outcome of a *load older* press stays on screen.
+///
+/// Long enough to read one short line without hunting for it, short enough
+/// that it is gone before the trader's next decision. It leaves on its own
+/// because it is a remark and not a fault: nothing here needs acknowledging,
+/// and a card waiting to be dismissed over a live chart interrupts more than
+/// the silence it replaced.
+pub const HISTORY_NOTE_LINGER: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// What the last *load older* press had to say, and when it said it.
+///
+/// Raised only when the press left the chart where it was, or stopped short of
+/// the reach it promised. A press that landed what it promised raises nothing:
+/// the bars are the acknowledgement, and a sentence after every success is
+/// noise a trader learns to stop reading.
+#[derive(Debug, Clone, Copy)]
+struct HistoryNote {
+    /// Borrowed, never owned: every sentence is a fixed one belonging to
+    /// [`crate::history_reach`], so the outcome and the run that produced it
+    /// cannot drift into two different accounts of the same press.
+    text: &'static str,
+    raised_at: std::time::Instant,
+}
+
 pub struct Tab {
     /// Stable for as long as the tab is open, and never reused. The indicator
     /// state file names one of these (see `QuantickApp::persisted_tab`), and
@@ -465,6 +491,9 @@ pub struct Tab {
     /// reply is what sends the next request, so this is a state machine and
     /// never a loop. See [`crate::history_reach`].
     campaign: Option<Campaign>,
+    /// What the last *load older* press had to say, while it is still on
+    /// screen. See [`HistoryNote`].
+    history_note: Option<HistoryNote>,
     /// Whether a pane that is *not* cut by time may carry the venue's own
     /// candles in front of its bars.
     ///
@@ -866,6 +895,7 @@ impl Tab {
             history_trades: 0,
             history_reach: HistoryReach::default(),
             campaign: None,
+            history_note: None,
             venue_lead_in: false,
             loading,
             book_capture_epoch: 0,
@@ -970,8 +1000,10 @@ impl Tab {
         // handle, so nothing survives to be dropped as stale.
         self.ohlcv_stale = false;
         // The run belonged to the old session's tape; its reply is on a channel
-        // about to be dropped.
+        // about to be dropped, and whatever it had to say was about a record
+        // this tab no longer shows.
         self.campaign = None;
+        self.history_note = None;
         self.loading.set_active(LoadingTask::VenueHistory, false);
         self.events = handle.events;
         self.book_events = handle.book_events;
@@ -2141,7 +2173,7 @@ impl Tab {
     /// reaches exactly what a click reaches. Non-blocking: with a reach of one
     /// page this is the single request it always was, and with a longer reach
     /// it is the first of a run each reply continues
-    /// ([`Self::advance_history_campaign`]).
+    /// ([`Self::settle_history_page`]).
     pub fn request_older_history(&mut self, config: &AppConfig) {
         if self.campaign.is_some() {
             // A run already has its one permitted request out, and the reply
@@ -2157,12 +2189,20 @@ impl Tab {
             );
             return;
         }
+        // Whatever the last press had to say is spent the moment this one is
+        // made: the outcome on screen must be the outcome of the press the
+        // trader is waiting on, never the one before it.
+        self.history_note = None;
         // Read before the request goes out: the anchor is where the chart
         // reached *before* this run, and everything older arrived because of
         // it. That is what makes a second press fetch the session before the
         // one the first press brought in, rather than finding its work done.
         let anchor_ms = self.oldest_retained_trade_ms();
         if !self.send_load_older() {
+            // Nothing was even asked, so nothing will answer. Said on screen
+            // rather than only in the log: to the trader this is a press that
+            // did nothing, which is the whole bug.
+            self.raise_history_note(REQUEST_REFUSED_NOTICE);
             return;
         }
         if self.history_reach.runs_a_campaign() {
@@ -2216,13 +2256,21 @@ impl Tab {
             .map(|trade| trade.timestamp_ms)
     }
 
-    /// Decide what a page that just landed means for the reach that asked.
+    /// Decide what a page that just landed means for the reach that asked —
+    /// and leave the trader something to read when it means nothing arrived.
     ///
     /// Rate: **rare** — once per history reply. The scan inside
     /// [`Campaign::advance`] stops at the anchor, so its cost is the page that
     /// arrived rather than the whole retained tape.
-    fn advance_history_campaign(&mut self) {
+    fn settle_history_page(&mut self, page_len: usize) {
         let Some(mut campaign) = self.campaign.take() else {
+            // No run behind this page, so this reply is the whole of the
+            // press: the one-page reach, or a longer one that had no tape to
+            // page back from. An empty answer to it is the end of the matter,
+            // and before this it was as silent as a button that does nothing.
+            if page_len == 0 {
+                self.raise_history_note(EMPTY_PAGE_NOTICE);
+            }
             return;
         };
         // Putting the reach back to one page is how a run is called off. It is
@@ -2268,20 +2316,64 @@ impl Tab {
                         action = "stop_and_wait_for_another_press",
                         "a load-older reach could not queue its next page"
                     );
+                    self.raise_history_note(REQUEST_REFUSED_NOTICE);
                 }
             }
-            CampaignStep::Stop(end) => tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "HISTORY_REACH_SETTLED",
-                tab = self.id,
-                symbol = %self.symbol,
-                pages = campaign.pages_spent(),
-                anchor_ms = campaign.anchor_ms(),
-                reached_ms = self.oldest_retained_trade_ms().unwrap_or(0),
-                action = end.action(),
-                "a load-older reach finished"
-            ),
+            CampaignStep::Stop(end) => {
+                tracing::info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "HISTORY_REACH_SETTLED",
+                    tab = self.id,
+                    symbol = %self.symbol,
+                    pages = campaign.pages_spent(),
+                    anchor_ms = campaign.anchor_ms(),
+                    reached_ms = self.oldest_retained_trade_ms().unwrap_or(0),
+                    action = end.action(),
+                    "a load-older reach finished"
+                );
+                // The same verdict the log just took, in the trader's words.
+                // `ReachMet` has none: yesterday is on the chart, and the
+                // chart says it better than a sentence about the chart.
+                if let Some(notice) = end.notice() {
+                    self.raise_history_note(notice);
+                }
+            }
+        }
+    }
+
+    /// Put one sentence about the last press where the trader is looking.
+    ///
+    /// `pub(crate)` for the `QUANTICK_HISTORY_NOTE` hook, which photographs
+    /// this surface by raising a real ending's real sentence through this very
+    /// call — the state is otherwise reachable only by pressing the button
+    /// against a venue that happens to be refusing.
+    pub(crate) fn raise_history_note(&mut self, text: &'static str) {
+        self.history_note = Some(HistoryNote {
+            text,
+            raised_at: std::time::Instant::now(),
+        });
+    }
+
+    /// What the last *load older* press had to say, while it is still on
+    /// screen. `None` is the ordinary state: no press yet, a press that landed
+    /// what it promised, or one whose remark has had its time.
+    #[must_use]
+    pub fn history_note(&self) -> Option<&'static str> {
+        self.history_note.map(|note| note.text)
+    }
+
+    /// Drop the note once it has had its [`HISTORY_NOTE_LINGER`].
+    ///
+    /// Rate: **per-frame**, and deliberately trivial — a `Copy` `Option` and
+    /// one duration comparison, both skipped entirely while there is no note.
+    /// Told the time rather than reading a clock, the way `replay` is, so a
+    /// test can walk past the linger without sleeping through it.
+    pub fn expire_history_note(&mut self, now: std::time::Instant) {
+        if self.history_note.is_some_and(|note| {
+            now.saturating_duration_since(note.raised_at) >= HISTORY_NOTE_LINGER
+        }) {
+            self.history_note = None;
         }
     }
 
@@ -2905,9 +2997,10 @@ impl Tab {
                     // venue candle now covering a re-cut minute has to go.
                     self.refold_history_prefix();
                     // And the reach that asked for this page decides whether
-                    // to ask for another. After the prepend, so it judges the
-                    // tape the trader can actually see.
-                    self.advance_history_campaign();
+                    // to ask for another, and what to tell the trader if it
+                    // will not. After the prepend, so it judges the tape the
+                    // trader can actually see.
+                    self.settle_history_page(trades.len());
                 }
                 Ok(FeedEvent::Live(trade)) => {
                     if self.resume_floor_ms.is_some() {
@@ -3308,8 +3401,9 @@ impl Tab {
         self.history_trades = 0;
         // A run anchored to a tape that no longer exists cannot continue, and
         // `restart` below drops the waits its outstanding request would have
-        // resolved.
+        // resolved. Its verdict goes with it.
         self.campaign = None;
+        self.history_note = None;
         self.latest_trade_latency_ms = None;
         self.latest_trade_ms = None;
         // The refill arrives as one backfill batch; keep the loading indicator
