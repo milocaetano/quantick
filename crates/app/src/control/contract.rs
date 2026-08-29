@@ -1722,6 +1722,67 @@ mod tests {
     use quantick_control::handshake::ProfileAuthority as _;
     use quantick_control::{id::RequestId, wire::RequestEnvelope};
 
+    /// The access panel offers no way to grant the trade tier — and above
+    /// all not under "Read scopes for the next connection".
+    ///
+    /// This is the same mistake the cockpit section's own comment records
+    /// being fixed once: a permission that matches neither of the panel's
+    /// two special cases falls through into the *first* section, which is
+    /// the read one. A grant that places orders, rendered under a heading
+    /// that promises reading only, is the worst kind of consent surface —
+    /// and here it would have been worse than useless besides, since
+    /// nothing can currently act on the tick.
+    #[test]
+    fn the_access_panel_never_offers_the_trade_scope() {
+        let contract = contract();
+
+        let trade: Vec<_> = contract
+            .selectable_permissions()
+            .filter(|descriptor| super::super::gateway::is_trade_permission(&descriptor.id))
+            .collect();
+        assert!(
+            !trade.is_empty(),
+            "the tier exists, or this test is guarding nothing"
+        );
+        for descriptor in &trade {
+            assert!(
+                descriptor.sensitive,
+                "{}: a grant that touches a position is sensitive",
+                descriptor.id
+            );
+        }
+
+        // The read section's own filter, verbatim from `draw_panel_body`.
+        let read_section: Vec<_> = contract
+            .selectable_permissions()
+            .filter(|descriptor| {
+                !super::super::gateway::is_annotate_permission(&descriptor.id)
+                    && !super::super::gateway::is_cockpit_permission(&descriptor.id)
+                    && !super::super::gateway::is_trade_permission(&descriptor.id)
+            })
+            .collect();
+        assert!(
+            read_section
+                .iter()
+                .all(|descriptor| !super::super::gateway::is_trade_permission(&descriptor.id)),
+            "no trade scope reaches the read section"
+        );
+
+        // Nor does either write section claim it, so it is offered nowhere.
+        for other in [
+            super::super::gateway::is_annotate_permission as fn(&PermissionId) -> bool,
+            super::super::gateway::is_cockpit_permission as fn(&PermissionId) -> bool,
+        ] {
+            for descriptor in &trade {
+                assert!(
+                    !other(&descriptor.id),
+                    "{}: the trade tier borrows no other section",
+                    descriptor.id
+                );
+            }
+        }
+    }
+
     fn contract() -> ObserverContract {
         ObserverContract::new(
             &super::super::standard_registry().unwrap(),
