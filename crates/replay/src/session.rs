@@ -81,7 +81,11 @@ pub struct JoinedDay {
     /// Its session day, when the file name followed the convention.
     pub date: Option<SessionDate>,
     /// How many prints at the head of [`Session::trades`] are its.
-    pub trades: usize,
+    ///
+    /// A count, and named for what the interface calls them, because
+    /// `trades` next to [`Session::trades`] would be a `Vec` to every reader
+    /// who met it second.
+    pub prints: usize,
 }
 
 /// Why the day before was not joined, when there was a file to join.
@@ -314,7 +318,7 @@ impl Session {
         self.day_before = Some(JoinedDay {
             path: path.to_path_buf(),
             date,
-            trades: joined,
+            prints: joined,
         });
     }
 
@@ -385,8 +389,8 @@ impl Session {
     /// How many prints at the head of [`trades`](Self::trades) came from the
     /// day joined in front of this session. Zero when none was.
     #[must_use]
-    pub fn day_before_trades(&self) -> usize {
-        self.day_before.as_ref().map_or(0, |joined| joined.trades)
+    pub fn day_before_prints(&self) -> usize {
+        self.day_before.as_ref().map_or(0, |joined| joined.prints)
     }
 
     /// Timestamp of the first print of the session's *own* day: where playback
@@ -395,7 +399,7 @@ impl Session {
     #[must_use]
     pub fn day_start_ms(&self) -> i64 {
         self.trades
-            .get(self.day_before_trades())
+            .get(self.day_before_prints())
             .or_else(|| self.trades.last())
             .map_or(0, |t| t.timestamp_ms)
     }
@@ -684,15 +688,15 @@ Date,Time,Price,Volume,Side
 
         let session = Session::load_with_day_before(&monday, ParseOptions::default()).unwrap();
         let joined = session.day_before.as_ref().expect("Friday was joined");
-        assert_eq!(joined.trades, 2);
+        assert_eq!(joined.prints, 2);
         assert_eq!(joined.date.unwrap().label(), "2026-03-13");
         assert_eq!(session.trades.len(), 4);
-        assert_eq!(session.day_before_trades(), 2);
+        assert_eq!(session.day_before_prints(), 2);
         // The session is still about Monday: its path, its day, its own open.
         assert_eq!(session.date.unwrap().label(), "2026-03-16");
         assert_eq!(session.path, monday);
         assert_eq!(
-            session.trades[session.day_before_trades()].timestamp_ms,
+            session.trades[session.day_before_prints()].timestamp_ms,
             session.day_start_ms()
         );
         // The stream runs strictly forward, numbered once through, so nothing
@@ -717,7 +721,7 @@ Date,Time,Price,Volume,Side
         let plain = Session::load(&tape, ParseOptions::default()).unwrap();
         assert!(joined.day_before.is_none());
         assert!(joined.day_before_problem.is_none());
-        assert_eq!(joined.day_before_trades(), 0);
+        assert_eq!(joined.day_before_prints(), 0);
         assert_eq!(joined.trades, plain.trades);
         assert_eq!(joined.day_start_ms(), plain.start_ms());
     }

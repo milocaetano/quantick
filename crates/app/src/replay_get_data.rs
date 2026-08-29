@@ -31,8 +31,8 @@ use quantick_replay::format::{CivilTime, UtcOffset};
 
 use crate::config::ProviderKind;
 use crate::replay_download::{
-    DEFAULT_CONTEXT_SESSIONS, DownloadEvent, DownloadJob, DownloadRequest, Mt5SessionSource,
-    SessionSource,
+    DEFAULT_CONTEXT_SESSIONS, DEFAULT_JOIN_DAY_BEFORE, DownloadEvent, DownloadJob, DownloadRequest,
+    Mt5SessionSource, SessionSource,
 };
 use crate::theme::{AMBER, TEXT_MUTED, TEXT_PRIMARY, WARN};
 
@@ -218,7 +218,9 @@ impl GetDataPanel {
             phase: Phase::Idle,
             declared_clock: None,
             clock_needed: false,
-            day_before: true,
+            // Overwritten by the browser on every draw; this is only what the
+            // panel believes before it has been drawn once.
+            day_before: DEFAULT_JOIN_DAY_BEFORE,
             day_before_stage: None,
             pending_tape: None,
             chain_day: None,

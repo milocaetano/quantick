@@ -45,6 +45,18 @@ const EXPORT_SCRIPT: &str = "tools/mt5/export_session.py";
 /// megabyte against tens for the tape.
 pub const DEFAULT_CONTEXT_SESSIONS: u32 = 5;
 
+/// Whether a trader who has never said otherwise gets the day before.
+///
+/// On. The run-up above it is broker candles, and the panel says in as many
+/// words that they carry no order flow — so a rehearsed open had nothing to
+/// read behind it, which is the report this exists to answer. A trader who
+/// wants one day unticks it once and the workspace remembers.
+///
+/// A `const` rather than a line in a TOML, following the run-up default above
+/// it: the trader's own answer lives in their workspace file the moment they
+/// give one, and this is only what is true before they have.
+pub const DEFAULT_JOIN_DAY_BEFORE: bool = true;
+
 /// What one download is for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DownloadRequest {

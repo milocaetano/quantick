@@ -307,12 +307,12 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
     };
     // Opening past the day joined in front of the recording, when there is
     // one: those prints are context the chart is handed as history, not part
-    // of the session being rehearsed. `day_before_trades` is 0 without a join,
+    // of the session being rehearsed. `day_before_prints` is 0 without a join,
     // which is exactly the playhead that was always built here.
     let mut playhead = Playhead::opening_at(
         &request.session.trades,
         config,
-        request.session.day_before_trades(),
+        request.session.day_before_prints(),
     );
     if request.options.autoplay {
         playhead.play();
@@ -484,7 +484,7 @@ fn play(
         speed = playhead.speed(),
         playing = playhead.is_playing(),
         day_before = session.day_before_label().unwrap_or_default().as_str(),
-        day_before_trades = session.day_before_trades(),
+        day_before_prints = session.day_before_prints(),
         "replaying a recorded session"
     );
 
@@ -952,7 +952,7 @@ mod tests {
         session.day_before = Some(quantick_replay::JoinedDay {
             path: PathBuf::from("replay/TEST/20260313.csv"),
             date: quantick_replay::SessionDate::parse("20260313"),
-            trades: joined,
+            prints: joined,
         });
         Arc::new(session)
     }

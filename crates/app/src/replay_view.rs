@@ -201,7 +201,7 @@ impl ReplayView {
             // Paused: a recording opens on its first print and waits. See
             // `feed::replay::ReplayOptions::autoplay`.
             autoplay: false,
-            day_before: day_before.unwrap_or(true),
+            day_before: day_before.unwrap_or(crate::replay_download::DEFAULT_JOIN_DAY_BEFORE),
             day_before_dirty: false,
             day_before_stored: day_before,
             scrub: None,
@@ -1059,7 +1059,7 @@ impl ReplayView {
                         // seek track beside it: a joined day is context the
                         // chart was handed, and counting its prints here would
                         // open a fresh replay at "half played".
-                        let joined = link.session.day_before_trades();
+                        let joined = link.session.day_before_prints();
                         ui.label(
                             egui::RichText::new(format!(
                                 "{} / {} prints",
@@ -1239,6 +1239,69 @@ mod tests {
         );
         assert!(view.library.is_none());
         assert!(!view.is_loading(), "nothing is being parsed yet");
+    }
+
+    /// The scan lists sessions oldest first and the browser selects the first,
+    /// so on a folder holding a day and the day before it a bare autostart
+    /// always picks the older one — the single day that can have nothing
+    /// joined in front of it. Naming the day is what makes the other reachable.
+    #[test]
+    fn naming_a_day_selects_it_over_the_one_the_scan_lists_first() {
+        let folder = std::env::temp_dir().join(format!(
+            "quantick-replay-view-select-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let instrument = folder.join("WINJ26");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&instrument).expect("scratch folder");
+        for (name, day) in [
+            ("20260313.csv", "2026-03-13"),
+            ("20260316.csv", "2026-03-16"),
+        ] {
+            std::fs::write(
+                instrument.join(name),
+                format!(
+                    "# quantick-replay 1\n# symbol=WINJ26\n# timezone=-03:00\n\
+                     Date,Time,Price,Volume,Side\n\
+                     {day},10:00:00.000,182035,12,B\n"
+                ),
+            )
+            .expect("write a session");
+        }
+
+        let mut view = ReplayView::new(None, None);
+        view.folder = folder.display().to_string();
+        view.rescan();
+        assert_eq!(
+            view.selected_entry()
+                .and_then(|e| e.date)
+                .map(|d| d.label()),
+            Some("2026-03-13".to_string()),
+            "the scan hands back the oldest, which is the one with no day before it"
+        );
+
+        assert!(view.select_day("2026-03-16"), "the folder holds that day");
+        assert_eq!(
+            view.selected_entry()
+                .and_then(|e| e.date)
+                .map(|d| d.label()),
+            Some("2026-03-16".to_string())
+        );
+
+        assert!(
+            !view.select_day("2026-03-14"),
+            "a day the folder does not hold selects nothing"
+        );
+        assert_eq!(
+            view.selected_entry()
+                .and_then(|e| e.date)
+                .map(|d| d.label()),
+            Some("2026-03-16".to_string()),
+            "and leaves the pick that was already made alone"
+        );
+
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]

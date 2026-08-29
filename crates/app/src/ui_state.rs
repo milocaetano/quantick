@@ -1080,7 +1080,12 @@ mod tests {
     fn the_replay_folder_survives_a_round_trip() {
         let path = temp_path("replay-folder");
         assert!(save(&path, &sample()));
-        assert_eq!(load(&path).replay_folder.as_deref(), Some("D:/tape"));
+        let loaded = load(&path);
+        assert_eq!(loaded.replay_folder.as_deref(), Some("D:/tape"));
+        // The other standing choice about how a recording opens. A serde field
+        // that never round-trips is a setting the trader re-makes every launch,
+        // and it fails silently — nothing reads back what was never written.
+        assert_eq!(loaded.replay_day_before, Some(false));
         let _ = std::fs::remove_file(&path);
     }
 
