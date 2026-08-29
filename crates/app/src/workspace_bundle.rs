@@ -423,6 +423,10 @@ mod tests {
         let files = [
             ("ui-state.toml", "version = 1\nactive_tab = 0\ntabs = []\n"),
             ("indicators-state.toml", "version = 1\nindicators = []\n"),
+            (
+                "layouts.toml",
+                "version = 1\nactive = 1\nnext_id = 2\n\n[[layouts]]\nid = 1\nname = \"Layout 1\"\n",
+            ),
             ("indicator-presets.toml", "version = 1\npresets = []\n"),
             (
                 "chart-layers.toml",

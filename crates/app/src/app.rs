@@ -18,7 +18,9 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 
 use crate::candle_view::draw_style_window;
-use crate::canvas_layout::PaneIdAllocator;
+use crate::canvas_layout::{MAX_CANVAS_PANES, PaneIdAllocator};
+
+mod layout_wiring;
 use crate::chart_layers::{self, ChartLayer};
 use crate::config::AppConfig;
 use crate::dock::{Dock, DockEnv, DockTab};
@@ -33,7 +35,7 @@ use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorSource,
 use crate::indicators::IndicatorView;
 use crate::indicators::library::ScriptLibrary;
 use crate::indicators::preset_file;
-use crate::indicators::state_file::{self, SavedIndicator, SavedInput, SavedKind, SavedPlotStyle};
+use crate::indicators::state_file::{self, SavedInput, SavedKind};
 use crate::loading::{self, LoadingTask};
 use crate::metrics::{self, FrameStats};
 use crate::notice_card;
@@ -53,6 +55,7 @@ use crate::toolrail::{Tool, ToolRail, ToolboxDock};
 use crate::ui_state;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
 use crate::window_scale;
+use smallvec::SmallVec;
 
 /// Width of the right-hand price-axis gutter, in pixels (§5 zone 9).
 const AXIS_GUTTER: f32 = 64.0;
@@ -828,12 +831,6 @@ pub struct QuantickApp {
     /// interaction state across the whole window rather than within a tab, so
     /// this may not be per-tab state: two panes sharing an id share a drag.
     pane_ids: PaneIdAllocator,
-    /// The tab the indicator state file describes — the one opened from the
-    /// config defaults at startup, which is the workspace the file was written
-    /// for. Cleared when that tab closes: the set it recorded is gone, and
-    /// silently retargeting the file at another market would be a lie. Per-tab
-    /// persistence is §14's `ui-state.toml` question and lands with the layout.
-    persisted_tab: Option<u64>,
     /// The `+` dialog, while it is open.
     source_picker: Option<SourcePicker>,
     /// The instruments the user added from the picker, already folded into
@@ -869,25 +866,37 @@ pub struct QuantickApp {
     /// panes with the slots themselves: one file records what the window had
     /// open, so one list records what is in it.
     slot_kinds: Vec<(TabSlot, SavedKind)>,
-    /// Slots restored as hidden, applied when their Rebuilt lands. The
-    /// persisted tab's flow pane only, because restoring is (see
-    /// [`Self::maintain_indicator_state`]).
-    pending_hidden: Vec<SlotId>,
-    /// Per-plot style layers restored from disk, applied when their Rebuilt
-    /// lands — the same deferral [`Self::pending_hidden`] performs, on the
-    /// same pane, for the same reason.
-    pending_styles: Vec<(SlotId, crate::indicator_style::StyleOverride)>,
+    /// Slots placed hidden by a layout, applied when their Rebuilt lands —
+    /// the view a hide acts on is born from the worker's first answer.
+    pending_hidden: Vec<TabSlot>,
+    /// Per-plot style layers placed by a layout, applied when their Rebuilt
+    /// lands — the same deferral [`Self::pending_hidden`] performs, for the
+    /// same reason.
+    pending_styles: Vec<(TabSlot, crate::indicator_style::StyleOverride)>,
     /// `QUANTICK_INDICATOR_SETTINGS`: which indicator to open the dialog on,
     /// and on which tab, once its view exists. Cleared by the first open, so a
     /// dialog the run then closes stays closed.
     settings_autostart: Option<(usize, indicator_panel::SettingsTab)>,
-    /// Where the indicator set persists.
-    indicator_state_path: std::path::PathBuf,
-    /// Set by any add/remove/hide/inputs change; drained by the debounced
-    /// save.
-    indicator_state_dirty: bool,
-    /// When the last indicator change happened (the debounce clock).
-    last_indicator_change: Option<Instant>,
+    /// The workspace's layouts: the strip's tabs, their indicator sets and
+    /// their per-market drawings. See [`crate::layouts`].
+    layouts: crate::layouts::LayoutBook,
+    /// Where the layouts persist.
+    layouts_path: std::path::PathBuf,
+    /// Set by any layout edit — a switch, a rename, a drawing, a settled
+    /// indicator change; drained by the debounced save.
+    layouts_dirty: bool,
+    /// When the last layout change happened (the debounce clock).
+    last_layout_change: Option<Instant>,
+    /// Whether the layouts file may be written this session. `true` only
+    /// when the file was there at launch, could not be read, and could not
+    /// be set aside — the trader's only copy, which this session's empty
+    /// book must never replace.
+    layouts_save_blocked: bool,
+    /// The layout being renamed in the strip, with the draft name.
+    layout_rename: Option<(crate::layouts::LayoutId, String)>,
+    /// The layout a delete is waiting on: deleting takes its drawings with
+    /// it, on disk too, so it is the one strip action behind a confirmation.
+    layout_delete_confirm: Option<crate::layouts::LayoutId>,
     /// Last hot-reload poll instant (the poll runs about once a second;
     /// file metadata every frame would be waste).
     last_script_poll: Instant,
@@ -1360,6 +1369,8 @@ impl QuantickApp {
             &state_path,
         );
         let mut pane_ids = PaneIdAllocator::new();
+        let loaded_layouts =
+            Self::load_layouts(&crate::layouts::default_path(), &state_file::default_path());
         let mut tab = Tab::new(
             FIRST_TAB_ID,
             pane_ids.alloc(),
@@ -1384,7 +1395,6 @@ impl QuantickApp {
             layout_picker_autostart: std::env::var("QUANTICK_LAYOUT_PICKER")
                 .is_ok_and(|value| value == "1"),
             pane_ids,
-            persisted_tab: Some(FIRST_TAB_ID),
             source_picker: None,
             added_symbols: symbols_file::load(&symbols_file::default_path()),
             symbols_path: symbols_file::default_path(),
@@ -1402,9 +1412,13 @@ impl QuantickApp {
             pending_hidden: Vec::new(),
             pending_styles: Vec::new(),
             settings_autostart: None,
-            indicator_state_path: state_file::default_path(),
-            indicator_state_dirty: false,
-            last_indicator_change: None,
+            layouts: loaded_layouts.0,
+            layouts_path: crate::layouts::default_path(),
+            layouts_dirty: false,
+            last_layout_change: None,
+            layouts_save_blocked: loaded_layouts.1,
+            layout_rename: None,
+            layout_delete_confirm: None,
             last_script_poll: Instant::now(),
             replay_view: ReplayView::new(workspace.replay_folder.as_deref()),
             dock: Dock::new(),
@@ -1792,9 +1806,8 @@ impl QuantickApp {
         // silently audit the time pane the right way up.
         if std::env::var("QUANTICK_INVERTED").is_ok_and(|value| value.trim() == "1") {
             let tab = app.active_tab_mut();
-            tab.flow_pane.price_view.set_inverted(true);
-            if let Some(time_pane) = tab.time_pane_mut() {
-                time_pane.price_view.set_inverted(true);
+            for pane in tab.panes_mut() {
+                pane.price_view.set_inverted(true);
             }
         }
         // The right-click itself, on the pane it names. The two panes open
@@ -1991,9 +2004,40 @@ impl QuantickApp {
         if std::env::var("QUANTICK_LEGEND_COLLAPSED").is_ok_and(|value| value == "1") {
             app.set_focused_legend_collapsed(true);
         }
-        // Restore the persisted indicator set before any autostart hook:
-        // the file is what the user actually had open.
-        app.restore_indicator_state();
+        // Put the active layout on the first tab's panes before any autostart
+        // hook: the file is what the user actually had open.
+        app.seed_new_panes();
+        // The layout strip's hooks (`ui-harness`): open on a named layout,
+        // creating it when the file has none by that name, and open the
+        // rename box on the active one.
+        if let Ok(name) = std::env::var("QUANTICK_LAYOUT_TAB")
+            && let Some(name) = crate::layouts::clean_name(&name)
+        {
+            let wanted = app.layouts().by_name(&name).map(|layout| layout.id);
+            let outcome = match wanted {
+                Some(id) => app.switch_layout(id).map(|_| id),
+                None => app.create_layout(Some(&name)),
+            };
+            if let Err(error) = outcome {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "LAYOUT_TAB_HOOK_REFUSED",
+                    layout = %name,
+                    %error,
+                    action = "hook_ignored",
+                    "QUANTICK_LAYOUT_TAB could not open the layout"
+                );
+            }
+        }
+        if std::env::var("QUANTICK_LAYOUT_RENAME").is_ok_and(|value| value == "1") {
+            let active = app.layouts().active_id();
+            app.begin_layout_rename(active);
+        }
+        if std::env::var("QUANTICK_LAYOUT_DELETE").is_ok_and(|value| value == "1") {
+            let active = app.layouts().active_id();
+            app.apply_strip_action(crate::layout_strip::StripAction::Delete(active));
+        }
         // The settings dialog, reachable without a pointer: the index of the
         // indicator to open it on, among the focused pane's views in add
         // order, and optionally the tab (`0` or `inputs`, `1` or `style`).
@@ -2013,14 +2057,25 @@ impl QuantickApp {
                     .iter()
                     .position(|entry| entry.name == name)
                 {
-                    Some(index) => {
-                        app.add_script_indicator(index);
-                        // An env var is not a user edit. Without this, a
-                        // scripted validation run appended its own scripts to
-                        // the saved set and they opened by themselves on the
-                        // next plain launch — config presence activating
+                    Some(_) => {
+                        // Straight onto the focused pane, with no mirror: an
+                        // env var is not a user edit. Without this, a scripted
+                        // validation run appended its own scripts to the
+                        // layout and they opened by themselves on the next
+                        // plain launch — config presence activating
                         // something, which the rules forbid. The natives hook
                         // above never registers a kind, so it is already inert.
+                        let (tab, side) = {
+                            let tab = app.active_tab();
+                            (tab.id, tab.focused_side())
+                        };
+                        app.add_indicator_at(
+                            tab,
+                            side,
+                            &SavedKind::Script {
+                                name: name.to_owned(),
+                            },
+                        );
                         app.forget_last_indicator_state_change();
                     }
                     None => tracing::warn!(
@@ -2418,13 +2473,19 @@ impl QuantickApp {
                 text,
             });
         let owner = self.target_slot(slot);
-        self.slot_kinds.push((owner, SavedKind::Script { name }));
+        let kind = SavedKind::Script { name };
+        self.slot_kinds.push((owner, kind.clone()));
         // Whose slot this is decides who may take it away again: the annotate
-        // tier removes what it attached, never what the trader put there.
+        // tier removes what it attached, never what the trader put there. An
+        // operator's overlay stays on the one pane it was attached to and
+        // out of the layout; the trader's script is a layout edit and goes
+        // onto every pane.
         if by_operator {
             self.operator_slots.insert(owner);
+        } else {
+            self.mirror_add(owner, &kind);
         }
-        self.mark_indicator_state_dirty();
+        self.note_indicator_edit_at(owner.tab, owner.side);
         (owner.tab, owner.side.into(), slot)
     }
 
@@ -3028,7 +3089,7 @@ impl QuantickApp {
         // new tab has a time pane to orient at all.
         let tab = self.active_tab_mut();
         tab.flow_pane.price_view.set_inverted(flow_inverted);
-        if let Some(time_pane) = tab.time_pane_mut() {
+        for time_pane in tab.time_panes.iter_mut() {
             time_pane.price_view.set_inverted(time_inverted);
         }
     }
@@ -3068,21 +3129,9 @@ impl QuantickApp {
         self.operator_slots.retain(|owner| owner.tab != closed.id);
         self.script_files
             .retain(|(owner, ..)| owner.tab != closed.id);
-        if self.persisted_tab == Some(closed.id) {
-            // The set the file describes no longer exists. Silently writing
-            // some other tab's indicators over it would be a lie about what
-            // the workspace was.
-            self.persisted_tab = None;
-            self.indicator_state_dirty = false;
-            tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "INDICATOR_STATE_UNTRACKED",
-                tab = closed.id,
-                action = "stop_saving_until_restart",
-                "the tab the indicator state file describes was closed"
-            );
-        }
+        self.pending_hidden.retain(|owner| owner.tab != closed.id);
+        self.pending_styles
+            .retain(|(owner, _)| owner.tab != closed.id);
         self.active_tab = self.active_tab.min(self.tabs.len() - 1);
         drop(closed);
     }
@@ -3229,7 +3278,7 @@ impl QuantickApp {
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
         let pane = match focused {
-            PaneSide::Time => tab.time_panes.first_mut().unwrap_or(&mut tab.flow_pane),
+            PaneSide::Time(slot) => tab.time_panes.get_mut(slot).unwrap_or(&mut tab.flow_pane),
             PaneSide::Flow => &mut tab.flow_pane,
         };
         let mut model = toolbar::ToolbarModel {
@@ -3458,16 +3507,15 @@ impl QuantickApp {
                 }
             }
         }
-        for side in [PaneSide::Flow, PaneSide::Time] {
-            let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
-                return;
-            };
-            let requested = match (side, tab.time_pane_mut()) {
-                (PaneSide::Flow, _) => tab.flow_pane.take_settings_request(),
-                (PaneSide::Time, Some(pane)) => pane.take_settings_request(),
-                (PaneSide::Time, None) => None,
-            };
-            if let Some(slot) = requested {
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+            return;
+        };
+        let requests: SmallVec<[(PaneSide, SlotId); MAX_CANVAS_PANES]> = tab
+            .panes_with_sides_mut()
+            .filter_map(|(pane, side)| pane.take_settings_request().map(|slot| (side, slot)))
+            .collect();
+        for (side, slot) in requests {
+            {
                 self.open_indicator_settings_at(TabSlot {
                     tab: tab_id,
                     side,
@@ -3515,13 +3563,20 @@ impl QuantickApp {
         tab.pane_mut(target.side)
             .indicators
             .toggle_hidden(target.slot);
-        self.mark_indicator_state_dirty();
+        self.mirror_hidden(target);
+        self.note_indicator_edit_at(target.tab, target.side);
     }
 
     /// Remove a slot, wherever it lives. UI first (the entry vanishes this
     /// frame), worker second; events already in flight for the slot are
     /// dropped on apply.
     fn remove_indicator_at(&mut self, target: TabSlot) {
+        if !self.tabs.iter().any(|tab| tab.id == target.tab) {
+            return;
+        }
+        // The mirrors first, while the slot's layout position can still be
+        // read off the bookkeeping.
+        self.mirror_remove(target);
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) else {
             return;
         };
@@ -3532,7 +3587,9 @@ impl QuantickApp {
         self.slot_kinds.retain(|(owner, _)| *owner != target);
         self.operator_slots.remove(&target);
         self.script_files.retain(|(owner, ..)| *owner != target);
-        self.mark_indicator_state_dirty();
+        self.pending_hidden.retain(|owner| *owner != target);
+        self.pending_styles.retain(|(owner, _)| *owner != target);
+        self.note_indicator_edit_at(target.tab, target.side);
     }
 
     /// Open the settings dialog for a slot, wherever it lives.
@@ -3578,8 +3635,14 @@ impl QuantickApp {
         // against a stale rect while the column was put away.
         let split = self.active_tab().shows_context_charts();
         let mut pending: Vec<(PaneSide, indicator_legend::LegendAction)> = Vec::new();
-        for side in [PaneSide::Flow, PaneSide::Time] {
-            if side == PaneSide::Time && !split {
+        let shown = self.active_tab().context_panes_shown();
+        let sides: SmallVec<[PaneSide; MAX_CANVAS_PANES]> = self.active_tab().sides().collect();
+        for side in sides {
+            // Only a context chart on screen draws a legend: the stack may
+            // hold a pane the layout no longer shows.
+            if let PaneSide::Time(slot) = side
+                && (!split || slot >= shown)
+            {
                 continue;
             }
             let pane = self.active_tab().pane(side);
@@ -3738,7 +3801,11 @@ impl QuantickApp {
             // Deliberately unlike an input edit — it takes no rebuild and no
             // replay, and it follows the legend's eye, which is also instant
             // and also persisted without an Apply.
-            SettingsOutcome::StyleChanged => self.mark_indicator_state_dirty(),
+            SettingsOutcome::StyleChanged => {
+                let target = self.indicator_settings_target;
+                self.mirror_style(target);
+                self.note_indicator_edit_at(target.tab, target.side);
+            }
         }
         self.draw_indicator_preview_watermark(ctx);
     }
@@ -3920,9 +3987,13 @@ impl QuantickApp {
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) {
             tab.pane_mut(target.side)
                 .indicator_worker
-                .send(IndicatorCommand::SetInputs { slot, values });
+                .send(IndicatorCommand::SetInputs {
+                    slot,
+                    values: values.clone(),
+                });
         }
-        self.mark_indicator_state_dirty();
+        self.mirror_inputs(target, &values);
+        self.note_indicator_edit_at(target.tab, target.side);
     }
 
     /// Show the draft on the chart without committing it: same worker path
@@ -4154,14 +4225,22 @@ impl QuantickApp {
         };
         let slot = self.focused_pane_mut().add_indicator(source);
         let owner = self.target_slot(slot);
-        self.slot_kinds.push((owner, kind));
-        self.mark_indicator_state_dirty();
+        self.slot_kinds.push((owner, kind.clone()));
+        // Every other pane of every tab gets the same indicator now; the
+        // settled reconciliation binds the layout's copy of it.
+        self.mirror_add(owner, &kind);
+        self.note_indicator_edit_at(owner.tab, owner.side);
         slot
     }
 
+    /// An indicator edit happened on the focused pane. Edits that know their
+    /// pane call [`Self::note_indicator_edit_at`] directly.
     fn mark_indicator_state_dirty(&mut self) {
-        self.indicator_state_dirty = true;
-        self.last_indicator_change = Some(Instant::now());
+        let (tab, side) = {
+            let tab = self.active_tab();
+            (tab.id, tab.focused_side())
+        };
+        self.note_indicator_edit_at(tab, side);
     }
 
     /// Undo the dirty mark an add just set — for indicators an env var asked
@@ -4169,220 +4248,14 @@ impl QuantickApp {
     /// simply does not enter the persisted set.
     fn forget_last_indicator_state_change(&mut self) {
         self.slot_kinds.pop();
-        self.indicator_state_dirty = false;
-        self.last_indicator_change = None;
     }
 
-    /// Rebuild the persisted set at startup, through the same commands the
-    /// menu sends (add, then bind saved inputs, then hide once the view
-    /// lands). A script the library no longer has is skipped with a log
-    /// line, never a phantom entry.
+    /// Apply layout-placed hide flags and styles once their views exist.
     ///
-    /// The flow pane only, and the file holds only its slots — see
-    /// [`Self::maintain_indicator_state`] for why.
-    fn restore_indicator_state(&mut self) {
-        let saved = state_file::load(&self.indicator_state_path);
-        for entry in saved {
-            let slot = match &entry.kind {
-                SavedKind::NativeEma => Some(self.add_native_indicator(SavedKind::NativeEma)),
-                SavedKind::NativeCvd => Some(self.add_native_indicator(SavedKind::NativeCvd)),
-                SavedKind::Script { name } => {
-                    match self
-                        .script_library
-                        .entries()
-                        .iter()
-                        .position(|candidate| candidate.name == *name)
-                    {
-                        // The returned slot, not `slot_kinds.last()`: that
-                        // assumed the add always pushes an entry as its last
-                        // act, and it does not when the file no longer reads
-                        // — the saved inputs would then bind to whatever
-                        // indicator happened to be added before this one.
-                        Some(index) => self.add_script_indicator(index),
-                        None => {
-                            tracing::warn!(
-                                target: "quantick::app",
-                                schema_version = 1_u8,
-                                event_code = "INDICATOR_STATE_SCRIPT_MISSING",
-                                script = %name,
-                                action = "entry_skipped",
-                                "the saved state references a script the library no longer has"
-                            );
-                            None
-                        }
-                    }
-                }
-            };
-            let Some(slot) = slot else { continue };
-            let values: Vec<_> = entry
-                .inputs
-                .iter()
-                .filter_map(SavedInput::to_value)
-                .collect();
-            if !values.is_empty() && values.len() == entry.inputs.len() {
-                self.active_tab_mut()
-                    .flow_pane
-                    .indicator_worker
-                    .send(IndicatorCommand::SetInputs { slot, values });
-            } else if !entry.inputs.is_empty() {
-                // One unreadable cell dropped every input of the entry, in
-                // silence — a hand-edited or stale file lost the whole
-                // parameter set without a word.
-                tracing::warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "INDICATOR_STATE_INPUTS_DROPPED",
-                    kind = ?entry.kind,
-                    saved = entry.inputs.len(),
-                    readable = values.len(),
-                    action = "declared_defaults_used",
-                    "saved indicator inputs could not be read; using the declared defaults"
-                );
-            }
-            if entry.hidden {
-                self.pending_hidden.push(slot);
-            }
-            if !entry.plot_styles.is_empty() {
-                // Same deferral as `hidden`, and for the same reason: the view
-                // is born from the worker's first `Rebuilt`, which has not
-                // arrived yet, so the layer waits with it.
-                self.pending_styles.push((
-                    slot,
-                    crate::indicator_style::StyleOverride::from_plots(
-                        entry
-                            .plot_styles
-                            .iter()
-                            .copied()
-                            .map(SavedPlotStyle::to_override)
-                            .collect(),
-                    ),
-                ));
-            }
-        }
-        // Restoring is not a change; only user edits dirty the file.
-        self.indicator_state_dirty = false;
-        self.last_indicator_change = None;
-    }
-
-    /// Apply restored-hidden flags once their views exist, then write the
-    /// state file when a change has settled (debounced off the frame path).
-    ///
-    /// The file records the flow pane of the *first* tab — the one the window
-    /// opens with, whether its market came from the config defaults or from
-    /// the saved workspace ([`crate::ui_state`]). Slots on a time pane, or on
-    /// a tab opened after it, stay in-session: a restored entry for either
-    /// would have nowhere to land, and would then be quietly dropped by the
-    /// next save.
-    ///
-    /// The tab strip now persists, which was the precondition this comment
-    /// used to name — but the indicators of tabs 2..n did not follow it in the
-    /// same change. That is the honest state: a restored workspace brings back
-    /// every tab's *market and canvas*, and every tab but the first opens with
-    /// no indicators. Extending the state file to key its entries by
-    /// (tab, pane) is the increment that closes it.
+    /// The layout itself is written by the edit that changed it — see
+    /// `layout_wiring` — so nothing here reads a view back.
     fn maintain_indicator_state(&mut self) {
-        if !self.pending_hidden.is_empty()
-            && let Some(index) = self
-                .persisted_tab
-                .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
-        {
-            let pane = &mut self.tabs[index].flow_pane;
-            let existing: Vec<SlotId> = self
-                .pending_hidden
-                .iter()
-                .copied()
-                .filter(|slot| pane.indicators.all().iter().any(|v| v.slot == *slot))
-                .collect();
-            for slot in &existing {
-                pane.indicators.toggle_hidden(*slot);
-            }
-            self.pending_hidden.retain(|slot| !existing.contains(slot));
-        }
-        if !self.pending_styles.is_empty()
-            && let Some(index) = self
-                .persisted_tab
-                .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
-        {
-            let pane = &mut self.tabs[index].flow_pane;
-            self.pending_styles.retain(|(slot, style)| {
-                let Some(view) = pane.indicators.view_mut(*slot) else {
-                    return true;
-                };
-                view.style = style.clone();
-                false
-            });
-        }
-        let settled = self
-            .last_indicator_change
-            .is_some_and(|changed| changed.elapsed() >= INDICATOR_STATE_SAVE_DEBOUNCE);
-        let Some(persisted) = self
-            .persisted_tab
-            .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
-        else {
-            // Nothing to describe: the tab the file was written for is gone.
-            return;
-        };
-        if self.indicator_state_dirty && settled {
-            self.indicator_state_dirty = false;
-            // The change has been written; the clock starts again with the
-            // next edit rather than ticking on every frame from here on.
-            self.last_indicator_change = None;
-            // What is on disk today, so a slot that failed to build does not
-            // overwrite its own saved parameters with an empty list.
-            let previous = state_file::load(&self.indicator_state_path);
-            let tab_id = self.tabs[persisted].id;
-            let saved: Vec<SavedIndicator> = self.tabs[persisted]
-                .flow_pane
-                .indicators
-                .all()
-                .iter()
-                .filter_map(|view| {
-                    let owner = TabSlot {
-                        tab: tab_id,
-                        side: PaneSide::Flow,
-                        slot: view.slot,
-                    };
-                    let kind_ref = self
-                        .slot_kinds
-                        .iter()
-                        .find(|(candidate, _)| *candidate == owner)
-                        .map(|(_, kind)| kind)?;
-                    let kind = kind_ref.clone();
-                    // A slot whose build failed has an empty view: the
-                    // worker's error path sends `Rebuilt { inputs: [] }`.
-                    // Rewriting its entry from that would erase the user's
-                    // saved parameters before they had a chance to fix the
-                    // script, so a broken slot keeps what is already on disk.
-                    let inputs = if view.error.is_some() {
-                        previous
-                            .iter()
-                            .find(|entry| entry.kind == *kind_ref)
-                            .map_or_else(Vec::new, |entry| entry.inputs.clone())
-                    } else {
-                        view.input_values
-                            .iter()
-                            .map(SavedInput::from_value)
-                            .collect()
-                    };
-                    Some(SavedIndicator {
-                        kind,
-                        hidden: view.hidden,
-                        inputs,
-                        // Unlike the inputs, a broken slot's style is still
-                        // the trader's: styling survives in the view across
-                        // the error, so there is nothing to rescue from disk.
-                        plot_styles: view
-                            .style
-                            .plots()
-                            .iter()
-                            .copied()
-                            .map(SavedPlotStyle::from_override)
-                            .collect(),
-                    })
-                })
-                .collect();
-            state_file::save(&self.indicator_state_path, &saved);
-        }
+        self.apply_pending_indicator_state();
     }
 
     /// What a pane's layer menu could not switch itself.
@@ -4439,10 +4312,7 @@ impl QuantickApp {
                 presets: &mut self.footprint_presets,
                 presets_path: &self.footprint_presets_path,
                 name_draft: &mut self.footprint_preset_draft,
-                target: match side {
-                    PaneSide::Flow => "flow chart",
-                    PaneSide::Time => "time chart",
-                },
+                target: &format!("{} chart", side.title().to_lowercase()),
                 customized,
             },
         );
@@ -4684,7 +4554,8 @@ impl QuantickApp {
                 layout: tab.layout.into(),
                 split_fraction: Some(tab.split_fraction),
                 context_collapsed: tab.context_collapsed,
-                focus: Some(tab.focused_side().into()),
+                focus: Some(ui_state::SavedFocus::from_side(tab.focused_side()).0),
+                focus_slot: ui_state::SavedFocus::from_side(tab.focused_side()).1,
                 flow_bars: tab.flow_pane.state.spec().to_config_string(),
                 // Only a pane that exists has an interval worth recording; a
                 // tab that never showed the split restores on the default,
@@ -4692,6 +4563,11 @@ impl QuantickApp {
                 time_bars: tab
                     .time_pane()
                     .map(|pane| pane.state.spec().to_config_string()),
+                context_bars: tab
+                    .time_panes
+                    .iter()
+                    .map(|pane| pane.state.spec().to_config_string())
+                    .collect(),
                 flow_legend_collapsed: tab.flow_pane.legend_collapsed,
                 // A tab with no time pane has no second legend, and `false`
                 // is what it will restore into when one is opened: a pane
@@ -4781,12 +4657,10 @@ impl QuantickApp {
         // strip holding one market with another's name. Then every tab is
         // opened outright and the ones that were there are closed after, so
         // the strip is *replaced* rather than grown.
-        let adopt_first =
-            self.tabs.first().is_some_and(|tab| {
-                tab.id == FIRST_TAB_ID && self.persisted_tab == Some(FIRST_TAB_ID)
-            }) && self.tabs.len() == 1
-                && self.tabs[0].feed_id == workspace.tabs[0].feed
-                && self.tabs[0].symbol == workspace.tabs[0].symbol;
+        let adopt_first = self.tabs.first().is_some_and(|tab| tab.id == FIRST_TAB_ID)
+            && self.tabs.len() == 1
+            && self.tabs[0].feed_id == workspace.tabs[0].feed
+            && self.tabs[0].symbol == workspace.tabs[0].symbol;
         let stale: Vec<u64> = if adopt_first {
             Vec::new()
         } else {
@@ -4807,15 +4681,9 @@ impl QuantickApp {
             } else {
                 self.open_tab(saved.feed.clone(), saved.symbol.clone(), flow);
             }
-            let time_interval =
-                saved
-                    .time_bars
-                    .as_deref()
-                    .and_then(|text| match BarSpec::parse(text) {
-                        Ok(BarSpec::Time(ms)) => Some(ms),
-                        _ => None,
-                    });
-            let focus = saved.focus.map(Into::into);
+            let context_intervals =
+                saved_context_intervals(&saved.context_bars, saved.time_bars.as_deref());
+            let focus = saved.focus.map(|focus| focus.to_side(saved.focus_slot));
             // `open_tab` activates what it opened, so the tab just arranged is
             // always the last one — index zero on the first pass.
             let target = if index == 0 && adopt_first {
@@ -4828,7 +4696,7 @@ impl QuantickApp {
                 saved.split_fraction,
                 saved.context_collapsed,
                 focus,
-                time_interval,
+                &context_intervals,
                 LegendFold {
                     flow: saved.flow_legend_collapsed,
                     time: saved.time_legend_collapsed,
@@ -4966,13 +4834,10 @@ impl QuantickApp {
     /// Write every store that is still only in memory, so a bundle captured
     /// next describes the screen rather than the last flush.
     fn flush_cockpit_stores(&mut self) {
-        if self.indicator_state_dirty {
-            // The indicator file is written debounced, off the frame path.
-            // An export is the one moment worth paying it immediately, so
-            // the debounce is declared elapsed rather than waited out.
-            self.last_indicator_change = Instant::now().checked_sub(INDICATOR_STATE_SAVE_DEBOUNCE);
-            self.maintain_indicator_state();
-        }
+        // The layouts file is written debounced, off the frame path. An
+        // export is the one moment worth paying it immediately, or the
+        // bundle would carry the layouts as they stood a second ago.
+        self.flush_layouts();
         self.maintain_chart_layers();
     }
 
@@ -5040,11 +4905,11 @@ impl QuantickApp {
                 crate::store_home::COCKPIT_STORES,
                 &crate::workspace_bundle::live_paths,
             )
-            .map(|written| written.len())
         });
         match outcome {
-            Ok(stores) => {
-                self.reload_cockpit_stores();
+            Ok(written) => {
+                let stores = written.len();
+                self.reload_cockpit_stores(&written);
                 crate::workspace_bundle::remember_recent(&mut self.recent_workspaces, path);
                 self.refresh_recent_workspaces();
                 // The recent list lives in the workspace file the import just
@@ -5086,7 +4951,7 @@ impl QuantickApp {
     /// it already had, so an imported cockpit is restored by exactly the code
     /// that restores one at startup — a second, import-only restore path is
     /// how the two would drift.
-    fn reload_cockpit_stores(&mut self) {
+    fn reload_cockpit_stores(&mut self, imported: &[&str]) {
         self.added_symbols = symbols_file::load(&self.symbols_path);
         self.drawing_presets = drawings::presets::PresetStore::load_from(
             drawings::presets::PresetStore::default_path(),
@@ -5106,41 +4971,9 @@ impl QuantickApp {
         self.restore_workspace(workspace);
         self.restore_chart_layers();
 
-        // Indicators are *added* by the restore, so the live ones have to go
-        // first or the imported set would land on top of them.
-        self.clear_indicators();
-        self.focus_persisted_flow_pane();
-        self.restore_indicator_state();
-        // The set on screen is now the file's; nothing changed since.
-        self.indicator_state_dirty = false;
-    }
-
-    /// Put the focus where [`Self::restore_indicator_state`] expects it, and
-    /// make sure some tab still answers for the indicator file.
-    ///
-    /// The restore adds through the *focused* pane, which at startup is
-    /// always tab zero's flow pane — the only pane the indicator file
-    /// describes. Mid-session it is wherever the trader was looking, so an
-    /// import has to put it back or the restored indicators land on a time
-    /// pane, with their inputs sent to a different worker.
-    ///
-    /// And an import replaces the tab strip, so the tab the file was written
-    /// for is closed on the way — which clears `persisted_tab` and, with it,
-    /// every future save of the indicator set. That is right when a trader
-    /// closes the tab themselves (the set the file describes is genuinely
-    /// gone), and wrong here: the imported set is about to be restored onto
-    /// the new tab, and it is that tab which now answers for the file.
-    fn focus_persisted_flow_pane(&mut self) {
-        let Some(index) = self
-            .persisted_tab
-            .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
-            .or(if self.tabs.is_empty() { None } else { Some(0) })
-        else {
-            return;
-        };
-        self.active_tab = index;
-        self.tabs[index].focus = PaneSide::Flow;
-        self.persisted_tab = Some(self.tabs[index].id);
+        // The layouts come last, once the tabs are the imported ones: every
+        // pane is stripped and re-seeded from the imported file.
+        self.reload_layouts(imported);
     }
 
     /// Work out which remembered workspace files are still there.
@@ -5585,21 +5418,15 @@ impl QuantickApp {
                 saved.symbol.clone(),
                 BarSpec::parse(&saved.flow_bars).ok(),
             );
-            let time_interval =
-                saved
-                    .time_bars
-                    .as_deref()
-                    .and_then(|text| match BarSpec::parse(text) {
-                        Ok(BarSpec::Time(ms)) => Some(ms),
-                        _ => None,
-                    });
+            let context_intervals =
+                saved_context_intervals(&saved.context_bars, saved.time_bars.as_deref());
             let opened = self.tabs.len() - 1;
             self.tabs[opened].restore_canvas(
                 CanvasLayout::from(saved.layout),
                 saved.split_fraction,
                 saved.context_collapsed,
-                saved.focus.map(Into::into),
-                time_interval,
+                saved.focus.map(|focus| focus.to_side(saved.focus_slot)),
+                &context_intervals,
                 LegendFold {
                     flow: saved.flow_legend_collapsed,
                     time: saved.time_legend_collapsed,
@@ -5952,21 +5779,22 @@ impl QuantickApp {
             native_scale = native_scale,
             zoom_factor = zoom,
             time_pane_spec = self.active_tab().time_pane().map(|pane| pane.state.spec().summary()),
+            time_pane_count = self.active_tab().time_panes.len(),
             // Drawings are a per-frame, O(objects) paint cost, and the shared
             // ones are additionally reprojected on every other pane of the
             // tab. Counting them here is what lets a frame-cost reading be
             // attributed instead of guessed — and it is the only way a
             // headless run can prove the drawing overlay is populated at all.
-            drawings = self.active_tab().flow_pane.drawings.items().len()
-                + self
-                    .active_tab()
-                    .time_pane()
-                    .map_or(0, |pane| pane.drawings.items().len()),
-            shared_drawings = self.active_tab().flow_pane.drawings.shared_count()
-                + self
-                    .active_tab()
-                    .time_pane()
-                    .map_or(0, |pane| pane.drawings.shared_count()),
+            drawings = self
+                .active_tab()
+                .panes()
+                .map(|(pane, _)| pane.drawings.items().len())
+                .sum::<usize>(),
+            shared_drawings = self
+                .active_tab()
+                .panes()
+                .map(|(pane, _)| pane.drawings.shared_count())
+                .sum::<usize>(),
             book_enabled = book.enabled,
             book_status = book.status,
             book_generation = book.generation,
@@ -6196,6 +6024,14 @@ fn layout_preset_shortcut(index: usize) -> Option<egui::KeyboardShortcut> {
         .map(|key| egui::KeyboardShortcut::new(egui::Modifiers::CTRL, *key))
 }
 
+/// The shortcut that reaches the layout tab at strip position `index`, if a
+/// number key still reaches that far.
+fn layout_tab_shortcut(index: usize) -> Option<egui::KeyboardShortcut> {
+    LAYOUT_PRESET_KEYS
+        .get(index)
+        .map(|key| egui::KeyboardShortcut::new(egui::Modifiers::ALT, *key))
+}
+
 /// `Ctrl+0` puts the context charts away, or brings them back.
 ///
 /// The number row's own zero, beside `Ctrl+1..9` for the presets: nine keys
@@ -6293,6 +6129,22 @@ impl QuantickApp {
             };
             if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
                 self.apply_layout_preset(preset);
+            }
+        }
+        // Layout tabs by number: `Alt+1..9`, beside `Ctrl+1..9` for the
+        // presets — one row of keys, two things a trader switches by number.
+        // Not while a text field has the keyboard — a rename box, a note,
+        // the ticket — where Alt+1 is text, not a switch.
+        let typing = ctx.memory(|memory| memory.focused().is_some());
+        for index in 0..LAYOUT_PRESET_KEYS.len() {
+            let Some(shortcut) = layout_tab_shortcut(index) else {
+                break;
+            };
+            if !typing
+                && ctx.input_mut(|i| i.consume_shortcut(&shortcut))
+                && let Err(error) = self.switch_layout_index(index)
+            {
+                self.note_workspace(error.to_string());
             }
         }
         if ctx.input_mut(|i| i.consume_shortcut(&LEGEND_SHORTCUT)) {
@@ -6393,6 +6245,47 @@ impl QuantickApp {
                         // switch lives here rather than under File, and each
                         // entry names the charts it shows — "Timeframe", not
                         // layout jargon (audit §3).
+                        ui.menu_button("Layouts", |ui| {
+                            // The strip's tabs, from the book: switch by name,
+                            // and the three edits the strip's own menu holds.
+                            let active = self.layouts().active_id();
+                            let names: Vec<(crate::layouts::LayoutId, String)> = self
+                                .layouts()
+                                .layouts()
+                                .iter()
+                                .map(|layout| (layout.id, layout.name.clone()))
+                                .collect();
+                            for (index, (id, name)) in names.iter().enumerate() {
+                                let mut button = egui::Button::new(name.as_str());
+                                if let Some(shortcut) = layout_tab_shortcut(index) {
+                                    button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut));
+                                }
+                                if ui.add(button.selected(*id == active)).clicked() {
+                                    self.apply_strip_action(crate::layout_strip::StripAction::Switch(*id));
+                                    ui.close_menu();
+                                }
+                            }
+                            ui.separator();
+                            let can_add = names.len() < crate::layouts::MAX_LAYOUTS;
+                            if ui
+                                .add_enabled(can_add, egui::Button::new("New layout"))
+                                .clicked()
+                            {
+                                self.apply_strip_action(crate::layout_strip::StripAction::Create);
+                                ui.close_menu();
+                            }
+                            if ui.button("Rename layout…").clicked() {
+                                self.apply_strip_action(crate::layout_strip::StripAction::BeginRename(active));
+                                ui.close_menu();
+                            }
+                            if ui
+                                .add_enabled(names.len() > 1, egui::Button::new("Delete layout"))
+                                .clicked()
+                            {
+                                self.apply_strip_action(crate::layout_strip::StripAction::Delete(active));
+                                ui.close_menu();
+                            }
+                        });
                         ui.menu_button("Layout", |ui| {
                             // Read from the registry, like the picker: a menu
                             // holding its own list of layouts is the second
@@ -6460,7 +6353,8 @@ impl QuantickApp {
                                         )))
                                         .on_disabled_hover_text("already the top chart");
                                     if up.clicked() {
-                                        self.active_tab_mut().move_context_pane(slot, slot - 1);
+                                        let tab_id = self.active_tab().id;
+                                        self.move_context_pane_at(tab_id, slot, slot - 1);
                                         ui.close_menu();
                                     }
                                     let down = ui
@@ -6470,7 +6364,8 @@ impl QuantickApp {
                                         )
                                         .on_disabled_hover_text("already the bottom chart");
                                     if down.clicked() {
-                                        self.active_tab_mut().move_context_pane(slot, slot + 1);
+                                        let tab_id = self.active_tab().id;
+                                        self.move_context_pane_at(tab_id, slot, slot + 1);
                                         ui.close_menu();
                                     }
                                 }
@@ -6503,10 +6398,7 @@ impl QuantickApp {
                         // over two charts has no way to know which corner is
                         // about to change.
                         let split = self.active_tab().shows_context_charts();
-                        let pane_name = match self.active_tab().focused_side() {
-                            PaneSide::Flow => "Flow",
-                            PaneSide::Time => "Timeframe",
-                        };
+                        let pane_name = self.active_tab().focused_side().title();
                         let legend_label = match (collapsed, split) {
                             (true, false) => "Show indicator legend".to_owned(),
                             (false, false) => "Collapse indicator legend".to_owned(),
@@ -8788,6 +8680,9 @@ impl eframe::App for QuantickApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Whatever the debounce was still holding: a level drawn a moment
+        // before closing is a level the trader expects back.
+        self.flush_layouts();
         if let Some(access) = self.control_access.as_mut() {
             access.shutdown_for_exit();
         }
@@ -9719,7 +9614,9 @@ impl QuantickApp {
     /// The arming dialog. Drains the panes' menu requests first, so the
     /// click that chose "Add strategy…" opens the form on this same frame.
     fn draw_strategy_popup(&mut self, ctx: &egui::Context) {
-        for side in [pane::PaneSide::Flow, pane::PaneSide::Time] {
+        let sides: SmallVec<[pane::PaneSide; MAX_CANVAS_PANES]> =
+            self.active_tab().sides().collect();
+        for side in sides {
             let request = self
                 .active_tab_mut()
                 .pane_mut(side)
@@ -10158,7 +10055,7 @@ impl QuantickApp {
         // trader drops a session profile on. Every other scene stays on the
         // flow pane, where the tape and the map are.
         let side = if stress {
-            pane::PaneSide::Time
+            pane::PaneSide::Time(0)
         } else {
             pane::PaneSide::Flow
         };
@@ -10544,6 +10441,9 @@ impl QuantickApp {
         if status_response.open_trading_tab {
             self.dock.open_tab(DockTab::Trading);
         }
+        // Above the status bar, below the canvas: the layout tabs.
+        self.draw_layout_strip(ctx);
+        self.draw_layout_delete_confirm(ctx);
         // The browser window and, while the *active* tab plays a session, its
         // transport bar. A background tab's recording keeps advancing on its
         // own feed thread; what it does not get is the strip, which speaks for
@@ -10722,6 +10622,10 @@ impl QuantickApp {
         for tab in tabs.iter_mut() {
             tab.apply_pending_layout(config, style, pane_ids);
         }
+        // Right after panes appear and markets switch, so a pane built this
+        // frame is seeded this frame and a tab that changed symbol swaps its
+        // drawings before anything paints them.
+        self.maintain_layouts();
         self.active_tab_mut().apply_spec_changes();
         self.draw_style_panel(ctx, now);
         self.draw_footprint_settings(ctx);
@@ -11029,6 +10933,31 @@ impl QuantickApp {
             TabAction::New => self.source_picker = Some(SourcePicker::new(&self.config)),
         }
     }
+}
+
+/// The interval a saved bar rule names, when it is a time rule at all — a
+/// workspace that recorded `tick:50` for a context chart is a file written by
+/// hand, and the chart opens on the default rather than on a guess.
+fn saved_time_interval(text: Option<&str>) -> Option<i64> {
+    text.and_then(|text| match BarSpec::parse(text) {
+        Ok(BarSpec::Time(ms)) => Some(ms),
+        _ => None,
+    })
+}
+
+/// Every context chart's opening interval, top to bottom, from the rules a
+/// workspace saved. A rule that is not a time rule keeps the default for its
+/// slot so the slots after it still line up with their charts. A file written
+/// before the stack existed carries only `time_bars`, which is the top chart's.
+fn saved_context_intervals(bars: &[String], time_bars: Option<&str>) -> Vec<i64> {
+    if bars.is_empty() {
+        return saved_time_interval(time_bars).into_iter().collect();
+    }
+    bars.iter()
+        .map(|text| {
+            saved_time_interval(Some(text)).unwrap_or(crate::time_header::DEFAULT_INTERVAL_MS)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -12356,6 +12285,8 @@ mod tests {
                     split_fraction: None,
                     context_collapsed: false,
                     focus: None,
+                    focus_slot: 0,
+                    context_bars: vec![],
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -12400,10 +12331,15 @@ mod tests {
         app.open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
         app.import_workspace_from(&file);
 
-        let persisted = app.persisted_tab.expect("a tab still answers for the file");
         assert!(
-            app.tabs.iter().any(|tab| tab.id == persisted),
-            "and it is one of the tabs actually open"
+            app.tabs
+                .iter()
+                .all(|tab| tab.panes().all(|(pane, _)| pane.layout_seeded)),
+            "every pane of the imported strip carries the imported layout"
+        );
+        assert!(
+            !app.layouts_dirty,
+            "what is on screen is the file's; nothing to write back yet"
         );
         let _ = std::fs::remove_file(&file);
     }
@@ -12509,19 +12445,20 @@ plot(close)
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The PR's headline behaviour had no test: everything sat on the serde
-    /// layer, and the wiring is where the defects were.
+    /// A cockpit from before layouts existed keeps its indicator set: the
+    /// old file becomes Layout 1, restores through the same commands the
+    /// menu sends, and the layouts file — not the old one — is what a settled
+    /// edit writes back.
     #[test]
     fn the_indicator_set_restores_from_disk_and_saves_back() {
         use crate::indicators::state_file::{SavedIndicator, SavedInput, SavedKind};
 
         let (mut app, _events, _commands, _book) = test_app();
-        let path = std::env::temp_dir().join(format!(
-            "quantick-indicator-state-app-{}.toml",
-            std::process::id()
-        ));
+        let path = crate::indicators::state_file::default_path();
+        let layouts_path = crate::layouts::default_path();
         let _ = std::fs::remove_file(&path);
-        app.indicator_state_path = path.clone();
+        let _ = std::fs::remove_file(&layouts_path);
+        app.layouts_path = layouts_path.clone();
 
         // A saved set: one native with bound inputs, one hidden native, and
         // a script the library does not have.
@@ -12551,7 +12488,12 @@ plot(close)
             ],
         );
 
-        app.restore_indicator_state();
+        app.reload_layouts(&[]);
+        assert_eq!(
+            app.layouts().active().name,
+            "Layout 1",
+            "the old set migrated into the first layout"
+        );
         assert_eq!(
             app.slot_kinds.len(),
             2,
@@ -12561,43 +12503,38 @@ plot(close)
         assert_eq!(app.slot_kinds[1].1, SavedKind::NativeCvd);
         assert_eq!(app.pending_hidden.len(), 1, "the hidden flag survived");
         assert!(
-            !app.indicator_state_dirty,
+            !app.layouts_dirty,
             "restoring is not a user edit and must not rewrite the file"
         );
 
         // A user edit, settled: the file must match the live set.
         app.mark_indicator_state_dirty();
-        app.last_indicator_change =
-            Some(Instant::now() - INDICATOR_STATE_SAVE_DEBOUNCE - Duration::from_millis(10));
-        for event in app
-            .active_tab_mut()
-            .flow_pane
-            .indicator_worker
-            .drain_events()
-        {
-            app.active_tab_mut().flow_pane.indicators.apply(event);
-        }
+        // Let the worker answer the adds, so the views the snapshot reads
+        // exist — a settled edit reads what is on screen.
+        app.active_tab_mut().flow_pane.indicator_worker.flush();
+        app.active_tab_mut().flow_pane.apply_indicator_events();
         app.maintain_indicator_state();
-        let written = crate::indicators::state_file::load(&path);
+        app.flush_layouts();
+        let crate::layouts::Loaded::Book(book) = crate::layouts::load(&layouts_path) else {
+            panic!("the layouts file was written");
+        };
+        let written = &book.active().indicators;
         assert_eq!(
             written.len(),
-            {
-                let kinds = app.slot_kinds.clone();
-                app.active_tab()
-                    .flow_pane
-                    .indicators
-                    .all()
-                    .iter()
-                    .filter(|view| kinds.iter().any(|(owner, _)| owner.slot == view.slot))
-                    .count()
-            },
-            "every slot with a known kind is written, and only those"
+            3,
+            "the whole migrated set is written — the script the library lacks stays in the layout, waiting for its file"
+        );
+        assert_eq!(
+            app.slot_kinds.len(),
+            2,
+            "while only the two the library can build are on the chart"
         );
         assert!(
-            !app.indicator_state_dirty,
+            !app.layouts_dirty,
             "the debounce fired, so the change is written"
         );
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&layouts_path);
     }
 
     fn test_app_with_notices() -> (
@@ -20236,16 +20173,23 @@ crosshair = false
             None,
             "the editor does not follow the trader to another tab"
         );
-        assert!(
-            app.tabs
-                .iter()
-                .find(|tab| tab.id != home)
-                .expect("the new tab")
-                .flow_pane
-                .drawings
-                .items()
-                .is_empty(),
-            "and nothing of it is recorded against the new tab"
+        // The new tab is on the same market, so the layout puts the same note
+        // on it — a drawing belongs to a market on a pane, not to a tab. The
+        // words were committed when the editor closed, and the mirror follows
+        // a commit on the next frame.
+        run_frame(&mut app, &ctx);
+        let mirrored = app
+            .tabs
+            .iter()
+            .find(|tab| tab.id != home)
+            .expect("the new tab")
+            .flow_pane
+            .drawings
+            .items();
+        assert_eq!(mirrored.len(), 1, "the market's note came with the market");
+        assert_eq!(
+            mirrored[0].tool.inline_text(mirrored[0].payload.as_ref()),
+            Some("mine")
         );
 
         let owner = app
@@ -22337,7 +22281,7 @@ crosshair = false
         let entry = rust_decimal::prelude::ToPrimitive::to_f64(&fill.price)
             .expect("the fill price is finite");
 
-        for side in [PaneSide::Time, PaneSide::Flow] {
+        for side in [PaneSide::Time(0), PaneSide::Flow] {
             app.active_tab_mut().pane_mut(side).price_view.reset();
             let chart = app
                 .active_tab()
@@ -22469,7 +22413,7 @@ crosshair = false
             replay: None,
         });
         let batch: Vec<_> = (700..710).map(trade).collect();
-        let before: Vec<usize> = [PaneSide::Flow, PaneSide::Time]
+        let before: Vec<usize> = [PaneSide::Flow, PaneSide::Time(0)]
             .into_iter()
             .map(|side| {
                 app.active_tab()
@@ -22482,7 +22426,7 @@ crosshair = false
 
         app.active_tab_mut().drain_feed();
 
-        for (side, before) in [PaneSide::Flow, PaneSide::Time].into_iter().zip(before) {
+        for (side, before) in [PaneSide::Flow, PaneSide::Time(0)].into_iter().zip(before) {
             let sent = app
                 .active_tab()
                 .pane(side)
@@ -22582,7 +22526,7 @@ crosshair = false
         let (mut app, _commands) = split_app(&ctx, 200);
         let flow_spec = app.active_tab().flow_pane.state.spec().clone();
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).state.spec(),
+            app.active_tab().pane(PaneSide::Time(0)).state.spec(),
             &BarSpec::Time(time_header::DEFAULT_INTERVAL_MS),
             "the time pane opens on M1, not on the flow selector's interval"
         );
@@ -22597,7 +22541,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
 
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).state.spec(),
+            app.active_tab().pane(PaneSide::Time(0)).state.spec(),
             &BarSpec::Time(expected_ms),
             "clicking {label} must re-cut the time pane"
         );
@@ -22629,7 +22573,7 @@ crosshair = false
         );
         assert_eq!(
             tab.focused_side(),
-            PaneSide::Time,
+            PaneSide::Time(0),
             "the chrome speaks for the one visible chart"
         );
         assert!(
@@ -22710,6 +22654,8 @@ crosshair = false
                 split_fraction: Some(0.4),
                 context_collapsed: false,
                 focus: Some(ui_state::SavedFocus::Flow),
+                focus_slot: 0,
+                context_bars: vec![],
                 flow_bars: "dollar:250000".to_owned(),
                 time_bars: Some("time:5m".to_owned()),
                 flow_legend_collapsed: false,
@@ -22800,6 +22746,8 @@ crosshair = false
                 split_fraction: Some(0.5),
                 context_collapsed: false,
                 focus: Some(ui_state::SavedFocus::Flow),
+                focus_slot: 0,
+                context_bars: vec![],
                 flow_bars: "tick:50".to_owned(),
                 time_bars: Some("time:1m".to_owned()),
                 flow_legend_collapsed: true,
@@ -22846,6 +22794,8 @@ crosshair = false
                 split_fraction: None,
                 context_collapsed: false,
                 focus: None,
+                focus_slot: 0,
+                context_bars: vec![],
                 flow_bars: "tick:377".to_owned(),
                 time_bars: None,
                 flow_legend_collapsed: false,
@@ -22990,7 +22940,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
 
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
     }
 
     /// Naming an arrangement keeps it without touching what the app opens on.
@@ -23606,7 +23556,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
         assert_eq!(
             app.active_tab().focused_side(),
-            PaneSide::Time,
+            PaneSide::Time(0),
             "coming from Single, the split reveals the time pane"
         );
 
@@ -23614,7 +23564,7 @@ crosshair = false
         assert_eq!(app.active_tab().focused_side(), PaneSide::Flow);
 
         app.active_tab_mut().set_layout(CanvasLayout::Time);
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
 
         app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
         assert_eq!(
@@ -23715,7 +23665,7 @@ crosshair = false
             &BarSpec::Time(300_000),
             "the timeframe pane opens on the declared interval too"
         );
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
         assert_eq!(
             drain_ohlcv_requests(&mut cmd_rx),
             1,
@@ -23767,57 +23717,64 @@ crosshair = false
         );
     }
 
-    /// (d) `Insert → Indicator` targets the focused pane (§11): the slot lands
-    /// on the pane the user is working in, and only there.
+    /// (d) `Insert → Indicator` is a layout edit: the slot lands on the pane
+    /// the user is working in *and* on every other pane, on the same frame —
+    /// a layout's indicators are shared by every chart that shows it.
     #[test]
-    fn an_indicator_lands_on_the_focused_pane_only() {
+    fn an_indicator_added_on_one_pane_appears_on_every_pane() {
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 200);
         let flow_before = app.active_tab().flow_pane.indicators.all().len();
 
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
 
         click_chart(&mut app, &ctx, point);
         assert_eq!(
             app.active_tab().focused_side(),
-            PaneSide::Time,
+            PaneSide::Time(0),
             "clicking a pane focuses it"
         );
 
         app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
         settle_indicators(&mut app);
 
-        let time = app.active_tab().time_pane().expect("time pane");
-        assert_eq!(
-            time.indicators.all().len(),
-            1,
-            "the EMA belongs to the pane that had focus"
-        );
-        assert!(
-            time.indicators
-                .all()
-                .iter()
-                .any(|view| view.label().contains("EMA")),
-            "and it really built: {:?}",
-            time.indicators
+        for side in [PaneSide::Time(0), PaneSide::Flow] {
+            let pane = app.active_tab().pane(side);
+            let labels: Vec<String> = pane
+                .indicators
                 .all()
                 .iter()
                 .map(|view| view.label().to_owned())
-                .collect::<Vec<_>>()
-        );
+                .collect();
+            assert!(
+                labels.iter().any(|label| label.contains("EMA")),
+                "the EMA is on {side:?}, and it really built: {labels:?}"
+            );
+        }
         assert_eq!(
             app.active_tab().flow_pane.indicators.all().len(),
-            flow_before,
-            "the pane beside it gains nothing"
+            flow_before + 1,
+            "the pane beside the focused one gained the same indicator"
         );
-        // The persisted set is the flow pane's; a time-pane slot must not
-        // enter it (see maintain_indicator_state).
-        assert_eq!(app.slot_kinds.len(), 1, "exactly one slot was registered");
-        assert!(
+        assert_eq!(
+            app.slot_kinds.len(),
+            2,
+            "one registration per pane, each on its own slot"
+        );
+        assert_eq!(
             app.slot_kinds
                 .iter()
-                .all(|(owner, _)| owner.side == PaneSide::Time),
-            "and it is the time pane's"
+                .filter(|(owner, _)| owner.side == PaneSide::Time(0))
+                .count(),
+            1
+        );
+
+        // Settled, the edited pane's set is the layout's.
+        app.maintain_indicator_state();
+        assert_eq!(app.layouts().active().indicators.len(), 1);
+        assert_eq!(
+            app.layouts().active().indicators[0].kind,
+            crate::indicators::state_file::SavedKind::NativeEma
         );
     }
 
@@ -23920,6 +23877,7 @@ crosshair = false
             );
 
         // What the save path would write, and what a fresh launch reads back.
+        use crate::indicators::state_file::SavedPlotStyle;
         let saved: Vec<_> = app.active_tab().flow_pane.indicators.all()[0]
             .style
             .plots()
@@ -23959,14 +23917,16 @@ crosshair = false
         click_chart(&mut app, &ctx, point);
         app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
         settle_indicators(&mut app);
-        let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
+        // ...mirrored onto the time pane by the layout; the hook's index names
+        // the same indicator on whichever pane has focus.
+        let slot = app.active_tab().pane(PaneSide::Time(0)).indicators.all()[0].slot;
 
         // ...and the focus on the other one, which is how a split tab can open.
-        let time_point = pane_point(&app, PaneSide::Time);
+        let time_point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, time_point);
         assert_eq!(
             app.active_tab().focused_side(),
-            PaneSide::Time,
+            PaneSide::Time(0),
             "the fixture has to actually focus the pane without indicators"
         );
 
@@ -23980,8 +23940,8 @@ crosshair = false
         assert_eq!(dialog.slot, slot);
         assert_eq!(
             app.indicator_settings_target.side,
-            PaneSide::Flow,
-            "and addressed it on the pane it really lives on"
+            PaneSide::Time(0),
+            "and addressed it on the focused pane, which carries the layout too"
         );
         assert_eq!(dialog.tab, crate::indicator_panel::SettingsTab::Style);
         assert!(
@@ -24023,7 +23983,7 @@ crosshair = false
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 200);
         // An EMA on the time pane...
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
         app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
         settle_indicators(&mut app);
@@ -24041,7 +24001,7 @@ crosshair = false
 
         let target = TabSlot {
             tab: app.active_tab().id,
-            side: PaneSide::Time,
+            side: PaneSide::Time(0),
             slot,
         };
         app.toggle_indicator_hidden_at(target);
@@ -24058,49 +24018,62 @@ crosshair = false
         assert!(app.indicator_settings.is_some());
         assert_eq!(
             app.indicator_settings_target.side,
-            PaneSide::Time,
+            PaneSide::Time(0),
             "the dialog's Apply will land on the legend's pane"
         );
     }
 
-    /// Slot ids are per pane, so the same number means different indicators on
-    /// the two of them. Removing one must not unregister the other.
+    /// Slot ids are per pane, so the same number means different indicators
+    /// on the two of them. A removal is mirrored by *layout position*, never
+    /// by number: with two indicators on every pane, removing the second on
+    /// the time pane removes the second on the flow pane — whatever numbers
+    /// either pane gave them.
     #[test]
-    fn removing_a_slot_on_one_pane_leaves_the_same_number_on_the_other() {
+    fn removing_a_slot_on_one_pane_removes_its_layout_position_everywhere() {
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 200);
 
         let point = pane_point(&app, PaneSide::Flow);
-
         click_chart(&mut app, &ctx, point);
-        app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
-        let point = pane_point(&app, PaneSide::Time);
-        click_chart(&mut app, &ctx, point);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
         app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
         settle_indicators(&mut app);
-        assert_eq!(app.slot_kinds.len(), 2);
-        let time_slot = app
+        assert_eq!(
+            app.slot_kinds.len(),
+            4,
+            "two indicators, mirrored onto two panes"
+        );
+
+        let point = pane_point(&app, PaneSide::Time(0));
+        click_chart(&mut app, &ctx, point);
+        let time_cvd = app
             .active_tab()
             .time_pane()
             .expect("time pane")
             .indicators
-            .all()[0]
+            .all()[1]
             .slot;
 
-        // Focused on the time pane: remove its slot.
-        app.apply_toolbar_action(ToolbarAction::RemoveIndicator(time_slot.0));
+        // Focused on the time pane: remove its second slot.
+        app.apply_toolbar_action(ToolbarAction::RemoveIndicator(time_cvd.0));
 
         assert_eq!(
             app.slot_kinds.len(),
-            1,
-            "exactly one registration went with it"
+            2,
+            "one registration per pane went with it"
         );
-        assert_eq!(
-            app.slot_kinds[0].0.side,
-            PaneSide::Flow,
-            "and the survivor is the flow pane's"
-        );
-        assert_eq!(app.active_tab().flow_pane.indicators.all().len(), 1);
+        for side in [PaneSide::Flow, PaneSide::Time(0)] {
+            let pane = app.active_tab().pane(side);
+            assert_eq!(
+                pane.indicators.all().len(),
+                1,
+                "one indicator left on {side:?}"
+            );
+            assert!(
+                pane.indicators.all()[0].label().contains("EMA"),
+                "and it is the first one, not the removed one, on {side:?}"
+            );
+        }
     }
 
     /// §11: flow layers stay on the flow pane. A time pane must not run a book
@@ -24315,7 +24288,7 @@ crosshair = false
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 200);
 
-        for side in [PaneSide::Flow, PaneSide::Time] {
+        for side in [PaneSide::Flow, PaneSide::Time(0)] {
             app.toolrail
                 .arm(Tool::Drawing(drawing_tool("horizontal-line")));
             let point = pane_point(&app, side);
@@ -24323,12 +24296,16 @@ crosshair = false
         }
         assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .items()
+                .len(),
             1
         );
         assert_eq!(
             app.active_tab().focused_side(),
-            PaneSide::Time,
+            PaneSide::Time(0),
             "the last click was on the time pane"
         );
 
@@ -24336,7 +24313,7 @@ crosshair = false
 
         assert!(
             app.active_tab()
-                .pane(PaneSide::Time)
+                .pane(PaneSide::Time(0))
                 .drawings
                 .items()
                 .is_empty(),
@@ -24360,7 +24337,7 @@ crosshair = false
 
         click_chart(&mut app, &ctx, point);
         let flow_status = app.status_model();
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
         let time_status = app.status_model();
 
@@ -24370,7 +24347,11 @@ crosshair = false
         );
         assert_eq!(
             time_status.spec_summary,
-            app.active_tab().pane(PaneSide::Time).state.spec().summary()
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .state
+                .spec()
+                .summary()
         );
         assert_ne!(
             flow_status.spec_summary, time_status.spec_summary,
@@ -24379,6 +24360,485 @@ crosshair = false
         // Provenance is the market's and never moves with focus.
         assert_eq!(flow_status.symbol, time_status.symbol);
         assert_eq!(flow_status.venue, time_status.venue);
+    }
+
+    /// The three-pane canvas shipped with a dead bottom chart: focus was a
+    /// two-arm enum, so every reader mapped "time" to the *top* context pane.
+    /// Clicking the bottom one has to focus it — and the status bar, the
+    /// BARS group, the indicator command and the saved workspace have to
+    /// follow that focus, not the top chart's.
+    #[test]
+    fn the_second_context_pane_takes_focus_bars_and_indicators() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+        app.active_tab_mut()
+            .set_layout(CanvasLayout::TimeTimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.active_tab().time_panes.len(),
+            2,
+            "the layout built both context panes"
+        );
+        let flow_before = app.active_tab().flow_pane.indicators.all().len();
+
+        let point = pane_point(&app, PaneSide::Time(1));
+        click_chart(&mut app, &ctx, point);
+        assert_eq!(
+            app.active_tab().focused_side(),
+            PaneSide::Time(1),
+            "clicking the bottom context chart focuses it"
+        );
+        assert_eq!(
+            app.status_model().spec_summary,
+            app.active_tab()
+                .pane(PaneSide::Time(1))
+                .state
+                .spec()
+                .summary(),
+            "the status bar speaks for it"
+        );
+
+        // The BARS group borrows the focused pane's selector fields.
+        let top_spec = app
+            .active_tab()
+            .pane(PaneSide::Time(0))
+            .state
+            .spec()
+            .clone();
+        let pane = app.active_tab_mut().focused_pane_mut();
+        pane.kind = crate::state::BarKind::Time;
+        pane.time_interval_ms = 900_000;
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time(1)).state.spec(),
+            &BarSpec::Time(900_000),
+            "the bar rule changed on the bottom chart"
+        );
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Time(0)).state.spec(),
+            &top_spec,
+            "and the top chart kept its own"
+        );
+
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        assert_eq!(
+            app.active_tab()
+                .pane(PaneSide::Time(1))
+                .indicators
+                .all()
+                .len(),
+            1,
+            "the EMA landed on the bottom chart"
+        );
+        // The command targeted the bottom chart; the layout put the same
+        // indicator on the other two.
+        assert_eq!(
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .indicators
+                .all()
+                .len(),
+            1,
+            "and on the top one, through the layout"
+        );
+        assert_eq!(
+            app.active_tab().flow_pane.indicators.all().len(),
+            flow_before + 1,
+            "and on the flow pane, through the layout"
+        );
+        assert!(
+            app.slot_kinds
+                .iter()
+                .any(|(owner, _)| owner.side == PaneSide::Time(1)),
+            "the bottom chart's own registration is the one the command made"
+        );
+
+        // The workspace remembers which of the two it was.
+        let (tabs, _chrome) = app.capture_arrangement();
+        assert_eq!(tabs[0].focus, Some(ui_state::SavedFocus::Time));
+        assert_eq!(tabs[0].focus_slot, 1, "the slot travels with the word");
+    }
+
+    /// A level for the layout tests: one anchor, in market time, on the pane.
+    fn place_level(app: &mut QuantickApp, side: PaneSide, price: f64) {
+        let tool = crate::drawings::DrawingTool::by_id("horizontal-line").expect("the tool");
+        let time = app
+            .active_tab()
+            .pane(side)
+            .slot_open_time(0)
+            .expect("bars to anchor on");
+        let placed = app.active_tab_mut().pane_mut(side).drawings.place(
+            tool,
+            crate::drawings::ChartPoint {
+                bar: 0.5,
+                price,
+                time_ms: Some(time),
+            },
+        );
+        assert!(placed, "a horizontal line places on one anchor");
+    }
+
+    fn drawings_on(app: &QuantickApp, side: PaneSide) -> Vec<f64> {
+        app.active_tab()
+            .pane(side)
+            .drawings
+            .items()
+            .iter()
+            .map(|drawing| drawing.points[0].price)
+            .collect()
+    }
+
+    /// Switching layout swaps the whole indicator set on every pane: the
+    /// EMA of layout 1 goes, the empty set of layout 2 shows, and switching
+    /// back brings the EMA back on both panes — with its inputs.
+    #[test]
+    fn switching_layouts_swaps_the_indicator_set_on_every_pane() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        app.maintain_indicator_state();
+        let first = app.layouts().active_id();
+        assert_eq!(app.layouts().active().indicators.len(), 1);
+
+        let second = app.create_layout(Some("levels")).expect("a second layout");
+        assert_eq!(app.layouts().active_id(), second, "creating switches to it");
+        for side in [PaneSide::Flow, PaneSide::Time(0)] {
+            assert!(
+                app.active_tab().pane(side).indicators.all().is_empty(),
+                "the new layout is empty on {side:?}"
+            );
+        }
+        assert!(
+            app.slot_kinds.is_empty(),
+            "nothing of layout 1 is registered"
+        );
+
+        app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
+        settle_indicators(&mut app);
+        app.maintain_indicator_state();
+        assert_eq!(
+            app.layouts().active().indicators[0].kind,
+            crate::indicators::state_file::SavedKind::NativeCvd
+        );
+
+        assert_eq!(app.switch_layout(first), Ok(true));
+        settle_indicators(&mut app);
+        for side in [PaneSide::Flow, PaneSide::Time(0)] {
+            let labels: Vec<String> = app
+                .active_tab()
+                .pane(side)
+                .indicators
+                .all()
+                .iter()
+                .map(|view| view.label().to_owned())
+                .collect();
+            assert_eq!(labels.len(), 1, "layout 1 is back on {side:?}: {labels:?}");
+            assert!(labels[0].contains("EMA"), "and it is the EMA: {labels:?}");
+        }
+        assert_eq!(app.slot_kinds.len(), 2);
+        assert_eq!(
+            app.layouts().get(second).expect("kept").indicators.len(),
+            1,
+            "layout 2 kept its own set while it was away"
+        );
+    }
+
+    /// A drawing belongs to the layout, the market and the pane it was drawn
+    /// on: it is put away when the layout changes and comes back when the
+    /// layout does; it never appears on the pane beside it.
+    #[test]
+    fn drawings_are_kept_per_layout_and_pane() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        place_level(&mut app, PaneSide::Time(0), 100.0);
+        assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0]);
+        assert!(
+            drawings_on(&app, PaneSide::Flow).is_empty(),
+            "not on the flow pane"
+        );
+        run_frame(&mut app, &ctx);
+
+        let first = app.layouts().active_id();
+        let second = app.create_layout(None).expect("a second layout");
+        assert!(
+            drawings_on(&app, PaneSide::Time(0)).is_empty(),
+            "layout 2 has no level on this market yet"
+        );
+        place_level(&mut app, PaneSide::Time(0), 200.0);
+        run_frame(&mut app, &ctx);
+
+        app.switch_layout(first).expect("back");
+        assert_eq!(
+            drawings_on(&app, PaneSide::Time(0)),
+            vec![100.0],
+            "layout 1's level is back, and layout 2's is not on it"
+        );
+        app.switch_layout(second).expect("forth");
+        assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![200.0]);
+        let key = crate::layouts::DrawingKey {
+            feed: "binance".to_owned(),
+            symbol: "TESTUSDT".to_owned(),
+            pane: 1,
+        };
+        assert_eq!(
+            app.layouts()
+                .get(first)
+                .expect("kept")
+                .drawings(&key)
+                .map(<[_]>::len),
+            Some(1),
+            "the book holds layout 1's level under its market and pane"
+        );
+    }
+
+    /// A drawing belongs to the market it was drawn on: when the tab moves to
+    /// another symbol the level is put away, and it is back — on its bar —
+    /// when the tab returns. The other market starts clean.
+    #[test]
+    fn drawings_follow_the_market_the_tab_shows() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        place_level(&mut app, PaneSide::Flow, 100.0);
+        run_frame(&mut app, &ctx);
+
+        app.active_tab_mut().symbol = "ETHUSDT".to_owned();
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.active_tab().active.1,
+            "ETHUSDT",
+            "the tab switched market"
+        );
+        assert!(
+            drawings_on(&app, PaneSide::Flow).is_empty(),
+            "a level on TESTUSDT is not a level on ETHUSDT"
+        );
+        run_frame(&mut app, &ctx);
+
+        app.active_tab_mut().symbol = "TESTUSDT".to_owned();
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            drawings_on(&app, PaneSide::Flow),
+            vec![100.0],
+            "back on TESTUSDT, its own level is back"
+        );
+        assert!(
+            !app.active_tab().flow_pane.drawings.items()[0].foreign_market,
+            "and it is at home, not marked as another market's"
+        );
+    }
+
+    /// "Show on all charts" is stored once, under the pane it was drawn on,
+    /// and comes back shared — so the other pane mirrors it again after a
+    /// layout round trip.
+    #[test]
+    fn a_shared_drawing_comes_back_shared() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        place_level(&mut app, PaneSide::Time(0), 100.0);
+        {
+            let pane = app.active_tab_mut().pane_mut(PaneSide::Time(0));
+            pane.drawings.select(Some(0));
+            pane.drawings.selected_mut().expect("selected").scope =
+                crate::drawings::DrawingScope::AllCharts;
+        }
+        run_frame(&mut app, &ctx);
+        let first = app.layouts().active_id();
+        let second = app.create_layout(None).expect("second");
+        app.switch_layout(second).ok();
+        app.switch_layout(first).expect("back");
+        let items = app.active_tab().pane(PaneSide::Time(0)).drawings.items();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].scope, crate::drawings::DrawingScope::AllCharts);
+        assert_eq!(
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .shared_count(),
+            1,
+            "the flow pane mirrors it again"
+        );
+    }
+
+    /// The whole book survives a restart: layouts, the active one, each
+    /// layout's indicators and each market's drawings. A fresh app on the
+    /// same cockpit home opens on it.
+    #[test]
+    fn layouts_come_back_after_a_restart() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        app.maintain_indicator_state();
+        place_level(&mut app, PaneSide::Time(0), 100.0);
+        run_frame(&mut app, &ctx);
+        let second = app.create_layout(Some("levels")).expect("second");
+        app.rename_layout(second, "open").expect("renamed");
+        app.flush_layouts();
+
+        let path = app.layouts_path.clone();
+        let crate::layouts::Loaded::Book(book) = crate::layouts::load(&path) else {
+            panic!("the book was written");
+        };
+        assert_eq!(book.layouts().len(), 2);
+        assert_eq!(book.active().name, "open");
+        assert_eq!(book.layouts()[0].indicators.len(), 1);
+        let key = crate::layouts::DrawingKey {
+            feed: "binance".to_owned(),
+            symbol: "TESTUSDT".to_owned(),
+            pane: 1,
+        };
+        assert_eq!(book.layouts()[0].drawings(&key).map(<[_]>::len), Some(1));
+
+        // A second app on the same home — the same file — opens on the book.
+        let (mut again, _commands2) = split_app(&ctx, 200);
+        again.layouts_path = path.clone();
+        again.reload_layouts(&[]);
+        assert_eq!(again.layouts().active().name, "open");
+        again.switch_layout(book.layouts()[0].id).expect("layout 1");
+        settle_indicators(&mut again);
+        assert_eq!(
+            again
+                .active_tab()
+                .pane(PaneSide::Time(0))
+                .indicators
+                .all()
+                .len(),
+            1,
+            "the EMA is back on the restored layout"
+        );
+        assert_eq!(drawings_on(&again, PaneSide::Time(0)), vec![100.0]);
+    }
+
+    /// A drawing keeps its id across a put-away and a bring-out, so whatever
+    /// named it — a strategy armed on it, an agent's annotation — still does.
+    #[test]
+    fn a_drawing_keeps_its_id_across_a_layout_round_trip() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        place_level(&mut app, PaneSide::Time(0), 100.0);
+        let id = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0].id;
+        run_frame(&mut app, &ctx);
+        let first = app.layouts().active_id();
+        let second = app.create_layout(None).expect("second");
+        assert_eq!(app.layouts().active_id(), second);
+        app.switch_layout(first).expect("back");
+        let items = app.active_tab().pane(PaneSide::Time(0)).drawings.items();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, id, "the level came back under its own id");
+    }
+
+    /// Moving a context chart moves its drawings' key and its slot
+    /// bookkeeping with it, so the charts do not swap sets on the next
+    /// switch and the layout keeps addressing the right pane.
+    #[test]
+    fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+        app.active_tab_mut()
+            .set_layout(CanvasLayout::TimeTimeAndFlow);
+        run_frame(&mut app, &ctx);
+        run_frame(&mut app, &ctx);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        place_level(&mut app, PaneSide::Time(0), 100.0);
+        run_frame(&mut app, &ctx);
+        let top_id = app.active_tab().pane(PaneSide::Time(0)).id;
+
+        let tab_id = app.active_tab().id;
+        assert!(
+            app.move_context_pane_at(tab_id, 1, 2),
+            "the top chart moved down"
+        );
+        assert_eq!(app.active_tab().pane(PaneSide::Time(1)).id, top_id);
+        assert_eq!(
+            app.active_tab()
+                .pane(PaneSide::Time(1))
+                .drawings_key
+                .as_ref()
+                .map(|key| key.pane),
+            Some(2),
+            "its drawing key names its new address"
+        );
+        assert_eq!(drawings_on(&app, PaneSide::Time(1)), vec![100.0]);
+        assert!(
+            app.slot_kinds
+                .iter()
+                .filter(|(owner, _)| owner.tab == tab_id && owner.side == PaneSide::Time(1))
+                .count()
+                == 1,
+            "and its indicator registration followed it"
+        );
+
+        // A switch away and back finds the level on the same chart.
+        let first = app.layouts().active_id();
+        let second = app.create_layout(None).expect("second");
+        assert_eq!(app.layouts().active_id(), second);
+        app.switch_layout(first).expect("back");
+        assert_eq!(drawings_on(&app, PaneSide::Time(1)), vec![100.0]);
+        assert!(drawings_on(&app, PaneSide::Time(0)).is_empty());
+    }
+
+    /// A settings preview reaches the origin's worker and nothing else: the
+    /// layout keeps the last committed inputs, so Discard leaves no trace on
+    /// another chart or in the file.
+    #[test]
+    fn a_previewed_input_never_reaches_the_layout() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+        settle_indicators(&mut app);
+        let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
+        let target = TabSlot {
+            tab: app.active_tab().id,
+            side: PaneSide::Flow,
+            slot,
+        };
+        app.open_indicator_settings_at(target);
+        app.indicator_settings.as_mut().expect("dialog").draft = vec![
+            quantick_indicators::InputValue::Int(50),
+            quantick_indicators::InputValue::Source(quantick_indicators::SourceId::Close),
+        ];
+        app.preview_indicator_settings_draft();
+        assert!(
+            app.layouts().active().indicators[0].inputs.is_empty(),
+            "a preview is not a commit"
+        );
+        app.apply_indicator_settings_draft();
+        assert_eq!(
+            app.layouts().active().indicators[0].inputs[0],
+            crate::indicators::state_file::SavedInput::Int(50),
+            "Apply is"
+        );
+    }
+
+    /// Deleting a layout destroys its drawings, so the strip's Delete asks
+    /// first; the confirmed half is what removes it, and cancelling keeps it.
+    #[test]
+    fn deleting_a_layout_waits_for_the_confirmation() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 200);
+        let second = app.create_layout(Some("levels")).expect("second");
+        app.apply_strip_action(crate::layout_strip::StripAction::Delete(second));
+        assert_eq!(app.layouts().layouts().len(), 2, "nothing is deleted yet");
+        assert_eq!(app.layout_delete_confirm, Some(second));
+        app.layout_delete_confirm = None;
+        assert_eq!(app.layouts().layouts().len(), 2, "cancelling keeps it");
+
+        app.apply_strip_action(crate::layout_strip::StripAction::Delete(second));
+        app.confirm_layout_delete();
+        assert_eq!(app.layouts().layouts().len(), 1, "confirming deletes it");
+        assert_ne!(
+            app.layouts().active_id(),
+            second,
+            "and the neighbour is active"
+        );
+        assert!(app.layout_delete_confirm.is_none());
     }
 
     /// Drawings are per pane, and the tool rail is one: an object lands on the
@@ -24390,11 +24850,15 @@ crosshair = false
 
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
 
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .items()
+                .len(),
             1,
             "the click landed on the time pane"
         );
@@ -24409,7 +24873,11 @@ crosshair = false
         click_chart(&mut app, &ctx, point);
         assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .items()
+                .len(),
             1,
             "placing on one pane must not add to the other"
         );
@@ -24423,10 +24891,14 @@ crosshair = false
         let (mut app, _commands) = split_app(&ctx, 200);
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .items()
+                .len(),
             1
         );
 
@@ -24438,19 +24910,32 @@ crosshair = false
             "a single canvas is the flow pane, whatever had focus"
         );
 
-        let before = app.active_tab().pane(PaneSide::Time).state.trades().len();
+        let before = app
+            .active_tab()
+            .pane(PaneSide::Time(0))
+            .state
+            .trades()
+            .len();
         let trade = trade(700);
         app.active_tab_mut()
             .ingest_live_trade_at(&trade, trade.timestamp_ms);
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).state.trades().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .state
+                .trades()
+                .len(),
             before + 1,
             "a hidden pane keeps draining, so showing it again never catches up"
         );
 
         app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .items()
+                .len(),
             1,
             "and its drawings survived the round trip"
         );
@@ -24561,30 +25046,34 @@ crosshair = false
         let (mut app, _commands) = split_app(&ctx, 200);
 
         // A mark on each pane, so an index means something on both.
-        for side in [PaneSide::Time, PaneSide::Flow] {
+        for side in [PaneSide::Time(0), PaneSide::Flow] {
             app.toolrail
                 .arm(Tool::Drawing(drawing_tool("horizontal-line")));
             let point = pane_point(&app, side);
             click_chart(&mut app, &ctx, point);
         }
-        let time_depth = app.active_tab().pane(PaneSide::Time).drawings.undo_depth();
+        let time_depth = app
+            .active_tab()
+            .pane(PaneSide::Time(0))
+            .drawings
+            .undo_depth();
         let flow_depth = app.active_tab().flow_pane.drawings.undo_depth();
 
         // An edit begun on the time pane: the baseline, then a real change to
         // the object (the store records an entry only if something moved).
-        let before = app.active_tab().pane(PaneSide::Time).drawings.items()[0].clone();
+        let before = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0].clone();
         app.inspector_edit_baseline = Some(InspectorEdit {
             tab: app.active_tab().id,
-            side: PaneSide::Time,
+            side: PaneSide::Time(0),
             index: 0,
             before,
         });
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .drawings
             .select(Some(0));
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .drawings
             .selected_mut()
             .expect("the time pane's mark")
@@ -24597,7 +25086,10 @@ crosshair = false
         app.commit_inspector_gesture();
 
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.undo_depth(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .undo_depth(),
             time_depth + 1,
             "the entry lands on the pane the edit started on"
         );
@@ -24625,18 +25117,22 @@ crosshair = false
         // Undo that acts on whatever pane has focus.
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .items()
+                .len(),
             1
         );
 
         run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
         assert!(
             app.active_tab()
-                .pane(PaneSide::Time)
+                .pane(PaneSide::Time(0))
                 .drawings
                 .items()
                 .is_empty()
@@ -24658,11 +25154,15 @@ crosshair = false
 
         assert_eq!(
             app.active_tab().focused_side(),
-            PaneSide::Time,
+            PaneSide::Time(0),
             "a press routed to the toast is not a click on the pane behind it"
         );
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).drawings.items().len(),
+            app.active_tab()
+                .pane(PaneSide::Time(0))
+                .drawings
+                .items()
+                .len(),
             1,
             "so Undo puts back the mark it was offered for"
         );
@@ -24858,7 +25358,7 @@ crosshair = false
             1,
             "the pane asks exactly once when it is built"
         );
-        let slots_before = app.active_tab().pane(PaneSide::Time).slots();
+        let slots_before = app.active_tab().pane(PaneSide::Time(0)).slots();
         assert!(
             app.active_tab()
                 .loading
@@ -24875,7 +25375,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
 
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         assert_eq!(
             pane.seam_slot(),
             120,
@@ -24931,7 +25431,7 @@ crosshair = false
             "now there is"
         );
 
-        let slots_before = app.active_tab().pane(PaneSide::Time).slots();
+        let slots_before = app.active_tab().pane(PaneSide::Time(0)).slots();
         app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
         assert_eq!(
             drain_ohlcv_before_requests(&mut commands),
@@ -24960,7 +25460,7 @@ crosshair = false
             "the older span went in front of what was already held"
         );
         assert!(
-            app.active_tab().pane(PaneSide::Time).slots() > slots_before,
+            app.active_tab().pane(PaneSide::Time(0)).slots() > slots_before,
             "and the chart grew leftwards by it"
         );
         assert!(
@@ -24997,7 +25497,7 @@ crosshair = false
 
         // The state the defect lived in: the layer off on both panes, and a
         // range profile on the time pane wanting the ladders anyway.
-        for side in [PaneSide::Time, PaneSide::Flow] {
+        for side in [PaneSide::Time(0), PaneSide::Flow] {
             app.active_tab_mut().pane_mut(side).set_layer_visible(
                 ChartLayer::Footprint,
                 false,
@@ -25009,7 +25509,7 @@ crosshair = false
             .find(|tool| tool.id() == crate::frvp::TOOL_ID)
             .expect("frvp is registered");
         {
-            let time = app.active_tab_mut().pane_mut(PaneSide::Time);
+            let time = app.active_tab_mut().pane_mut(PaneSide::Time(0));
             assert!(
                 !time
                     .drawings
@@ -25027,7 +25527,7 @@ crosshair = false
         }
         assert_ne!(
             app.active_tab()
-                .pane(PaneSide::Time)
+                .pane(PaneSide::Time(0))
                 .state
                 .footprint_group(),
             market_bucket,
@@ -25039,7 +25539,7 @@ crosshair = false
 
         let time_group = app
             .active_tab()
-            .pane(PaneSide::Time)
+            .pane(PaneSide::Time(0))
             .state
             .footprint_group();
         let flow_group = app
@@ -25335,7 +25835,7 @@ crosshair = false
         // following pane is immune by construction — its right edge *is* the
         // newest bar — so this is where the guarantee has to be proven.
         {
-            let pane = app.active_tab_mut().pane_mut(PaneSide::Time);
+            let pane = app.active_tab_mut().pane_mut(PaneSide::Time(0));
             let total = pane.slots();
             pane.viewport.pan_pixels(200.0, total);
             assert!(
@@ -25344,7 +25844,7 @@ crosshair = false
             );
         }
         let anchored_bar = {
-            let pane = app.active_tab().pane(PaneSide::Time);
+            let pane = app.active_tab().pane(PaneSide::Time(0));
             pane.viewport.right_edge_bar(pane.slots())
         };
 
@@ -25365,7 +25865,7 @@ crosshair = false
                 .unwrap();
             app.drain_tabs();
             assert_eq!(
-                app.active_tab().pane(PaneSide::Time).seam_slot(),
+                app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
                 *expected_seam,
                 "the prefix grew by the slice that just landed"
             );
@@ -25381,7 +25881,7 @@ crosshair = false
             // And the bar the trader was looking at is still under the same
             // edge: the right edge moved by exactly the bars that appeared to
             // its left, so nothing shifted on screen.
-            let pane = app.active_tab().pane(PaneSide::Time);
+            let pane = app.active_tab().pane(PaneSide::Time(0));
             let expected = anchored_bar + *expected_seam as f32;
             assert!(
                 (pane.viewport.right_edge_bar(pane.slots()) - expected).abs() < 0.001,
@@ -25400,7 +25900,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             *expected_seam,
             "the closing slice is merged in front, not written over the rest"
         );
@@ -25418,7 +25918,7 @@ crosshair = false
 
         // The composed series is still searchable: `open_time` never decreases
         // across the merge, which is what the seam contract rests on.
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         let opens: Vec<i64> = pane
             .history_prefix
             .iter()
@@ -25447,7 +25947,7 @@ crosshair = false
             })
             .unwrap();
         app.drain_tabs();
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 20);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 20);
 
         // The feed stored a fresh block: the base being built is abandoned.
         // What is already drawn stays drawn — blanking the chart while a
@@ -25473,7 +25973,7 @@ crosshair = false
             app.drain_tabs();
         }
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             20,
             "the leftovers extended nothing"
         );
@@ -25499,7 +25999,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             45,
             "the fresh answer is the whole prefix, not an addition to the old"
         );
@@ -25541,7 +26041,7 @@ crosshair = false
             })
             .unwrap();
         app.drain_tabs();
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         assert_eq!(pane.seam_slot(), 120, "the whole prefix stands at once");
         assert!(
             !app.active_tab()
@@ -25657,24 +26157,24 @@ crosshair = false
             })
             .unwrap();
         app.drain_tabs();
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 120);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 120);
 
         // Something anchored to a bar index, and a view off the live edge, so
         // the shift has something to preserve.
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
-        let slots = app.active_tab().pane(PaneSide::Time).slots();
+        let slots = app.active_tab().pane(PaneSide::Time(0)).slots();
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .viewport
             .pan_pixels(40.0, slots);
-        let edge_before = app.active_tab().pane(PaneSide::Time).right_edge_time();
-        let mark_before = app.active_tab().pane(PaneSide::Time).drawings.items()[0].points[0];
+        let edge_before = app.active_tab().pane(PaneSide::Time(0)).right_edge_time();
+        let mark_before = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0].points[0];
         let mark_time_before = app
             .active_tab()
-            .pane(PaneSide::Time)
+            .pane(PaneSide::Time(0))
             .slot_open_time(mark_before.bar as usize);
         assert!(edge_before.is_some(), "the view is off the live edge");
 
@@ -25683,7 +26183,7 @@ crosshair = false
         events.try_send(FeedEvent::HistoryPrepended(older)).unwrap();
         app.drain_tabs();
 
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         let first_engine = pane
             .state
             .bars()
@@ -25738,17 +26238,17 @@ crosshair = false
             })
             .unwrap();
         app.drain_tabs();
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 120);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 120);
 
         // 1m → 5m: the same history, folded five ways.
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .time_interval_ms = 5 * crate::feed::OHLCV_BASE_INTERVAL_MS;
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
 
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             24,
             "120 minutes are 24 five-minute bars"
         );
@@ -25774,18 +26274,18 @@ crosshair = false
             })
             .unwrap();
         app.drain_tabs();
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 120);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 120);
 
         // 90 seconds: a minute and a half, which no whole number of venue
         // candles adds up to.
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .time_interval_ms = 90_000;
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
 
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             0,
             "no prefix rather than buckets built from fractions of a candle"
         );
@@ -25797,11 +26297,11 @@ crosshair = false
 
         // Back to a foldable one, and the history returns from the same base.
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .time_interval_ms = 5 * crate::feed::OHLCV_BASE_INTERVAL_MS;
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 24);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 24);
     }
 
     /// A feed switch is a different market: the candles that described the old
@@ -25819,7 +26319,7 @@ crosshair = false
             })
             .unwrap();
         app.drain_tabs();
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 120);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 120);
 
         // A fresh feed arrives, as a symbol switch installs one.
         let (_evt_tx, evt_rx) = mpsc::channel(8);
@@ -25836,7 +26336,7 @@ crosshair = false
         });
 
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             0,
             "the old market's candles do not describe the new one"
         );
@@ -25868,7 +26368,7 @@ crosshair = false
         app.drain_tabs();
 
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             0,
             "bars at an unknown base are not folded as if they were minutes"
         );
@@ -25888,7 +26388,7 @@ crosshair = false
     fn the_indicator_rebuild_covers_the_venue_prefix() {
         let ctx = egui::Context::default();
         let (mut app, events, _commands) = history_app(&ctx);
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
         app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
         settle_indicators(&mut app);
@@ -25903,7 +26403,7 @@ crosshair = false
         app.drain_tabs();
         settle_indicators(&mut app);
 
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         let view = pane
             .indicators
             .all()
@@ -25932,15 +26432,15 @@ crosshair = false
         let ctx = egui::Context::default();
         let (mut app, events, _commands) = history_app(&ctx);
         // Pan off the live edge, so there is a position to preserve.
-        let slots = app.active_tab().pane(PaneSide::Time).slots();
+        let slots = app.active_tab().pane(PaneSide::Time(0)).slots();
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .viewport
             .pan_pixels(40.0, slots);
-        let edge_time = app.active_tab().pane(PaneSide::Time).right_edge_time();
+        let edge_time = app.active_tab().pane(PaneSide::Time(0)).right_edge_time();
         let edge_bar = app
             .active_tab()
-            .pane(PaneSide::Time)
+            .pane(PaneSide::Time(0))
             .viewport
             .right_edge_bar(slots);
         assert!(edge_time.is_some(), "the view is off the live edge");
@@ -25954,7 +26454,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
 
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         assert_eq!(
             pane.viewport.right_edge_bar(pane.slots()),
             edge_bar + 120.0,
@@ -26037,7 +26537,7 @@ crosshair = false
             "an empty reply is a complete answer, and ends the wait"
         );
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             0,
             "with no prefix rather than a fabricated one"
         );
@@ -26168,7 +26668,7 @@ crosshair = false
     fn the_status_bar_counts_venue_bars_separately() {
         let ctx = egui::Context::default();
         let (mut app, events, _commands) = history_app(&ctx);
-        let point = pane_point(&app, PaneSide::Time);
+        let point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, point);
         assert_eq!(
             app.status_model().venue_bars,
@@ -26206,14 +26706,14 @@ crosshair = false
         let (mut app, events, _commands) = history_app(&ctx);
         let first_engine_open = app
             .active_tab()
-            .pane(PaneSide::Time)
+            .pane(PaneSide::Time(0))
             .state
             .bars()
             .first()
             .map(|bar| bar.open_time)
             .or_else(|| {
                 app.active_tab()
-                    .pane(PaneSide::Time)
+                    .pane(PaneSide::Time(0))
                     .state
                     .partial()
                     .map(|bar| bar.open_time)
@@ -26235,7 +26735,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
 
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         assert_eq!(
             pane.seam_slot(),
             2,
@@ -26298,7 +26798,7 @@ crosshair = false
         }
         run_frame(&mut app, &ctx);
 
-        let pane = app.active_tab().pane(PaneSide::Time);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
         let seam = pane.seam_slot();
         let backfill = pane
             .state
@@ -26313,7 +26813,7 @@ crosshair = false
         // `ChartPane::new`) and this test is about where it lands, so switch
         // it on first — on both panes, since either one's mark answers the
         // assertion below.
-        for side in [PaneSide::Time, PaneSide::Flow] {
+        for side in [PaneSide::Time(0), PaneSide::Flow] {
             app.active_tab_mut().pane_mut(side).set_layer_visible(
                 ChartLayer::BackfillDivider,
                 true,
@@ -26323,15 +26823,15 @@ crosshair = false
         // The view follows the live edge, and the venue history is far behind
         // it, so bring the seam on screen the way a user scrolling back
         // would.
-        let slots = app.active_tab().pane(PaneSide::Time).slots();
+        let slots = app.active_tab().pane(PaneSide::Time(0)).slots();
         let width = app
             .active_tab()
-            .pane(PaneSide::Time)
+            .pane(PaneSide::Time(0))
             .last_chart_area
             .expect("the time pane was laid out")
             .width();
         app.active_tab_mut()
-            .pane_mut(PaneSide::Time)
+            .pane_mut(PaneSide::Time(0))
             .viewport
             .center_on_bar(seam as f32, width, slots);
         let texts = painted_text(&run_frame(&mut app, &ctx));
@@ -26588,7 +27088,7 @@ crosshair = false
             })
             .unwrap();
         app.drain_tabs();
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 0);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 0);
         assert_eq!(
             drain_ohlcv_requests(&mut cmd_rx),
             0,
@@ -26613,7 +27113,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             30,
             "and the block it carried is installed through the usual path"
         );
@@ -26642,7 +27142,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
         drain_ohlcv_requests(&mut commands);
-        assert_eq!(app.active_tab().pane(PaneSide::Time).seam_slot(), 30);
+        assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 30);
 
         // The feed's capabilities are fixed in this fixture, so move the tab's
         // own record of what it has acted on — the same thing a bumped
@@ -26664,7 +27164,7 @@ crosshair = false
             .unwrap();
         app.drain_tabs();
         assert_eq!(
-            app.active_tab().pane(PaneSide::Time).seam_slot(),
+            app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
             90,
             "and the longer block replaces the shorter one"
         );
@@ -26910,12 +27410,12 @@ crosshair = false
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         let point = app
             .active_tab()
-            .pane(PaneSide::Time)
+            .pane(PaneSide::Time(0))
             .last_chart_area
             .expect("the time pane was laid out")
             .center();
         click_chart(&mut app, &ctx, point);
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
         let slots = app.active_tab().flow_pane.slots();
         app.active_tab_mut()
             .flow_pane
@@ -26946,7 +27446,7 @@ crosshair = false
             "the viewport came back where it was left"
         );
         assert_eq!(app.active_tab().layout, CanvasLayout::TimeAndFlow);
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
         assert_eq!(
             app.active_tab().focused_pane().drawings.items().len(),
             first_drawings,
@@ -27978,9 +28478,9 @@ crosshair = false
     fn observer_new_scopes_preserve_two_pane_focus_and_provenance() {
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 80);
-        let time_point = pane_point(&app, PaneSide::Time);
+        let time_point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, time_point);
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
 
         let mut registry = crate::control::standard_registry().unwrap();
         let scopes = [
@@ -27998,7 +28498,7 @@ crosshair = false
         // The three pane-addressed scopes see both panes, and tell them apart
         // by id and by side rather than by position.
         let flow_id = app.active_tab().pane(PaneSide::Flow).id.to_string();
-        let time_id = app.active_tab().pane(PaneSide::Time).id.to_string();
+        let time_id = app.active_tab().pane(PaneSide::Time(0)).id.to_string();
         for scope in [&scopes[0], &scopes[1], &scopes[2]] {
             let panes = capture.scopes[scope].value["tabs"][0]["panes"]
                 .as_array()
@@ -30314,8 +30814,8 @@ plot(close)
         run_frame(&mut app, &ctx);
         let before = app.active_tab().focused_side();
         let other = match before {
-            PaneSide::Time => PaneSide::Flow,
-            PaneSide::Flow => PaneSide::Time,
+            PaneSide::Time(_) => PaneSide::Flow,
+            PaneSide::Flow => PaneSide::Time(0),
         };
         let other_point = pane_point(&app, other);
         click_chart(&mut app, &ctx, other_point);
@@ -30635,9 +31135,9 @@ plot(close)
     fn observer_preserves_split_pane_focus_and_market_provenance() {
         let ctx = egui::Context::default();
         let (mut app, _commands) = split_app(&ctx, 80);
-        let time_point = pane_point(&app, PaneSide::Time);
+        let time_point = pane_point(&app, PaneSide::Time(0));
         click_chart(&mut app, &ctx, time_point);
-        assert_eq!(app.active_tab().focused_side(), PaneSide::Time);
+        assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
 
         let mut registry = crate::control::standard_registry().unwrap();
         let scopes = [
@@ -31155,10 +31655,13 @@ plot(close)
 
         let time_chart = app
             .active_tab()
-            .pane(PaneSide::Time)
+            .pane(PaneSide::Time(0))
             .last_chart_area
             .expect("time pane reported its rect");
-        let position = egui::pos2(time_chart.center().x, price_y(&app, PaneSide::Time, price));
+        let position = egui::pos2(
+            time_chart.center().x,
+            price_y(&app, PaneSide::Time(0), price),
+        );
         run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(position)]);
 
         let mut registry = crate::control::standard_registry().unwrap();

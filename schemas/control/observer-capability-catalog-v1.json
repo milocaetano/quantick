@@ -52,6 +52,17 @@
                 ],
                 "description": "The pane within that tab. Omitted: the pane drawings go to."
               },
+              "pane_slot": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Which context chart `pane_side = \"time\"` means, top to bottom from\n`0`. Omitted: the top one. Ignored for the flow pane, which has no\nstack to pick from."
+              },
               "tab_id": {
                 "anyOf": [
                   {
@@ -296,6 +307,17 @@
                   }
                 ],
                 "description": "The pane within that tab. Omitted: the pane drawings go to."
+              },
+              "pane_slot": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Which context chart `pane_side = \"time\"` means, top to bottom from\n`0`. Omitted: the top one. Ignored for the flow pane, which has no\nstack to pick from."
               },
               "tab_id": {
                 "anyOf": [
@@ -625,6 +647,17 @@
                   }
                 ],
                 "description": "The pane within that tab. Omitted: the pane drawings go to."
+              },
+              "pane_slot": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Which context chart `pane_side = \"time\"` means, top to bottom from\n`0`. Omitted: the top one. Ignored for the flow pane, which has no\nstack to pick from."
               },
               "tab_id": {
                 "anyOf": [
@@ -5539,6 +5572,371 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Adds an empty layout after the others and switches to it, the way the strip's + does.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.tab.create",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Add a layout tab and switch to it.",
+        "properties": {
+          "name": {
+            "description": "What to call it. Omitted: the first free `Layout N`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "CreateLayoutTabInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "LayoutTabSnapshot": {
+            "description": "One layout tab, as the strip lists it.",
+            "properties": {
+              "active": {
+                "type": "boolean"
+              },
+              "indicator_count": {
+                "$ref": "#/$defs/WireU64",
+                "description": "How many indicators the layout holds."
+              },
+              "layout_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "layout_id",
+              "name",
+              "active",
+              "indicator_count"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every layout-tab call answers with: the strip as it now stands.",
+        "properties": {
+          "active_layout_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "active_layout_name": {
+            "type": "string"
+          },
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer:\nswitching to the layout already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "layouts": {
+            "items": {
+              "$ref": "#/$defs/LayoutTabSnapshot"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "active_layout_id",
+          "active_layout_name",
+          "layouts",
+          "changed"
+        ],
+        "title": "LayoutTabResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Switching, creating or renaming a layout removes no work: every layout keeps its indicators and drawings while another is showing. A stale caller can only show the wrong layout, which the result it gets back names.",
+      "title": "Create layout tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Renames one layout. Names are unique within the workspace and bounded to what a tab can show.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.tab.rename",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Rename a layout tab.",
+        "properties": {
+          "layout_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The layout's id, as `observe.workspace` reports it."
+          },
+          "name": {
+            "description": "The layout's name, as the strip shows it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "new_name": {
+            "description": "The new name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "new_name"
+        ],
+        "title": "RenameLayoutTabInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "LayoutTabSnapshot": {
+            "description": "One layout tab, as the strip lists it.",
+            "properties": {
+              "active": {
+                "type": "boolean"
+              },
+              "indicator_count": {
+                "$ref": "#/$defs/WireU64",
+                "description": "How many indicators the layout holds."
+              },
+              "layout_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "layout_id",
+              "name",
+              "active",
+              "indicator_count"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every layout-tab call answers with: the strip as it now stands.",
+        "properties": {
+          "active_layout_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "active_layout_name": {
+            "type": "string"
+          },
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer:\nswitching to the layout already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "layouts": {
+            "items": {
+              "$ref": "#/$defs/LayoutTabSnapshot"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "active_layout_id",
+          "active_layout_name",
+          "layouts",
+          "changed"
+        ],
+        "title": "LayoutTabResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Switching, creating or renaming a layout removes no work: every layout keeps its indicators and drawings while another is showing. A stale caller can only show the wrong layout, which the result it gets back names.",
+      "title": "Rename layout tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Makes one of the workspace's layouts active on every pane of every tab: its indicators replace what every chart shows, and each market's drawings under it come out. The same call the strip's click and Alt+1..9 make.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.tab.switch",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Which layout tab a call is about: by id, by name, or — omitted — the\nactive one. An id and a name that disagree are refused rather than\nresolved, because a caller that gave both meant both.",
+        "properties": {
+          "layout_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The layout's id, as `observe.workspace` reports it."
+          },
+          "name": {
+            "description": "The layout's name, as the strip shows it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "LayoutTabTarget",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "LayoutTabSnapshot": {
+            "description": "One layout tab, as the strip lists it.",
+            "properties": {
+              "active": {
+                "type": "boolean"
+              },
+              "indicator_count": {
+                "$ref": "#/$defs/WireU64",
+                "description": "How many indicators the layout holds."
+              },
+              "layout_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "layout_id",
+              "name",
+              "active",
+              "indicator_count"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every layout-tab call answers with: the strip as it now stands.",
+        "properties": {
+          "active_layout_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "active_layout_name": {
+            "type": "string"
+          },
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer:\nswitching to the layout already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "layouts": {
+            "items": {
+              "$ref": "#/$defs/LayoutTabSnapshot"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "active_layout_id",
+          "active_layout_name",
+          "layouts",
+          "changed"
+        ],
+        "title": "LayoutTabResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Switching, creating or renaming a layout removes no work: every layout keeps its indicators and drawings while another is showing. A stale caller can only show the wrong layout, which the result it gets back names.",
+      "title": "Switch layout tab",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Opens a small window over the chart carrying one message, attributed to whoever asked for it, dismissed by the trader.",
       "destructive": false,
       "dry_run_supported": false,
@@ -7141,6 +7539,10 @@
               "pane_id": {
                 "$ref": "#/$defs/WireU64"
               },
+              "pane_index": {
+                "$ref": "#/$defs/WireU64",
+                "description": "The pane's address within its tab — `0` the flow pane, `1..` the\ncontext stack top to bottom — the number `layout.focus` takes."
+              },
               "side": {
                 "$ref": "#/$defs/PaneSideDto"
               },
@@ -7167,6 +7569,7 @@
               "tab_id",
               "pane_id",
               "side",
+              "pane_index",
               "feed_id",
               "symbol",
               "visible",
@@ -10214,6 +10617,31 @@
             ],
             "type": "string"
           },
+          "LayoutTabSnapshot": {
+            "description": "One layout tab, as the strip lists it.",
+            "properties": {
+              "active": {
+                "type": "boolean"
+              },
+              "indicator_count": {
+                "$ref": "#/$defs/WireU64",
+                "description": "How many indicators the layout holds."
+              },
+              "layout_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "layout_id",
+              "name",
+              "active",
+              "indicator_count"
+            ],
+            "type": "object"
+          },
           "PaneSideDto": {
             "enum": [
               "flow",
@@ -10233,6 +10661,10 @@
               "pane_id": {
                 "$ref": "#/$defs/WireU64"
               },
+              "pane_index": {
+                "$ref": "#/$defs/WireU64",
+                "description": "The pane's address within its tab — the number `layout.focus` takes."
+              },
               "side": {
                 "$ref": "#/$defs/PaneSideDto"
               },
@@ -10243,6 +10675,7 @@
             "required": [
               "pane_id",
               "side",
+              "pane_index",
               "visible",
               "focused"
             ],
@@ -10306,6 +10739,14 @@
           },
           "active_tab_index": {
             "$ref": "#/$defs/WireU64"
+          },
+          "layouts": {
+            "default": [],
+            "description": "The layout strip: every layout, and which is active. Additive.",
+            "items": {
+              "$ref": "#/$defs/LayoutTabSnapshot"
+            },
+            "type": "array"
           },
           "performance_readings_visible": {
             "type": "boolean"

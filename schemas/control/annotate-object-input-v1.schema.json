@@ -34,6 +34,17 @@
           ],
           "description": "The pane within that tab. Omitted: the pane drawings go to."
         },
+        "pane_slot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Which context chart `pane_side = \"time\"` means, top to bottom from\n`0`. Omitted: the top one. Ignored for the flow pane, which has no\nstack to pick from."
+        },
         "tab_id": {
           "anyOf": [
             {

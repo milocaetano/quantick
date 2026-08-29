@@ -84,20 +84,27 @@ pub enum SavedFocus {
 // `DeclaredLayout` → `CanvasLayout` already set (`tab.rs`), and it is what
 // keeps adding a variant a one-file edit: the compiler then names every arm
 // that has to grow, in the module that owns the names.
-impl From<crate::pane::PaneSide> for SavedFocus {
-    fn from(side: crate::pane::PaneSide) -> Self {
+impl SavedFocus {
+    /// The file's two words plus the slot, from the side the tab holds.
+    ///
+    /// Split into a word and a number rather than a third word per slot:
+    /// `focus = "time"` is what every workspace written so far says, and a
+    /// file that says it still opens on the top context chart — which is the
+    /// only one those files could have meant.
+    #[must_use]
+    pub fn from_side(side: crate::pane::PaneSide) -> (Self, usize) {
         match side {
-            crate::pane::PaneSide::Flow => Self::Flow,
-            crate::pane::PaneSide::Time => Self::Time,
+            crate::pane::PaneSide::Flow => (Self::Flow, 0),
+            crate::pane::PaneSide::Time(slot) => (Self::Time, slot),
         }
     }
-}
 
-impl From<SavedFocus> for crate::pane::PaneSide {
-    fn from(focus: SavedFocus) -> Self {
-        match focus {
-            SavedFocus::Flow => Self::Flow,
-            SavedFocus::Time => Self::Time,
+    /// The side a saved word and slot name. See [`Self::from_side`].
+    #[must_use]
+    pub fn to_side(self, slot: usize) -> crate::pane::PaneSide {
+        match self {
+            Self::Flow => crate::pane::PaneSide::Flow,
+            Self::Time => crate::pane::PaneSide::Time(slot),
         }
     }
 }
@@ -204,11 +211,25 @@ pub struct SavedTab {
     /// The pane the chrome spoke for.
     #[serde(default)]
     pub focus: Option<SavedFocus>,
+    /// Which context chart `focus = "time"` names, top to bottom from `0`.
+    ///
+    /// Absent — every file written while the split had one context chart —
+    /// means the top one, which is the chart those files meant.
+    #[serde(default)]
+    pub focus_slot: usize,
     /// The flow pane's bar rule.
     pub flow_bars: String,
     /// The time pane's interval, when the tab had one.
+    ///
+    /// The *top* context chart's, kept under its old name so every workspace
+    /// written so far still restores; `context_bars` carries the whole stack.
     #[serde(default)]
     pub time_bars: Option<String>,
+    /// Every context chart's bar rule, top to bottom, when the tab had a
+    /// stack. Empty in files written before the stack existed, which then
+    /// fall back to `time_bars` for the top chart and the default below it.
+    #[serde(default)]
+    pub context_bars: Vec<String>,
     /// Whether the flow pane's on-chart indicator legend was folded to its
     /// count puck.
     ///
@@ -950,6 +971,8 @@ mod tests {
                     split_fraction: Some(0.5),
                     context_collapsed: false,
                     focus: Some(SavedFocus::Flow),
+                    focus_slot: 0,
+                    context_bars: vec![],
                     flow_bars: "tick:50".to_owned(),
                     time_bars: Some("time:1m".to_owned()),
                     flow_legend_collapsed: false,
@@ -962,6 +985,8 @@ mod tests {
                     split_fraction: None,
                     context_collapsed: false,
                     focus: None,
+                    focus_slot: 0,
+                    context_bars: vec![],
                     flow_bars: "dollar:500000".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -1287,6 +1312,8 @@ mod tests {
             split_fraction: None,
             context_collapsed: false,
             focus: None,
+            focus_slot: 0,
+            context_bars: vec![],
             flow_bars: "tick:50".to_owned(),
             time_bars: None,
             flow_legend_collapsed: false,
@@ -1299,6 +1326,8 @@ mod tests {
             split_fraction: None,
             context_collapsed: false,
             focus: None,
+            focus_slot: 0,
+            context_bars: vec![],
             flow_bars: "tick:50".to_owned(),
             time_bars: None,
             flow_legend_collapsed: false,
@@ -1432,6 +1461,8 @@ mod tests {
                     split_fraction: None,
                     context_collapsed: false,
                     focus: None,
+                    focus_slot: 0,
+                    context_bars: vec![],
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -1444,6 +1475,8 @@ mod tests {
                     split_fraction: None,
                     context_collapsed: false,
                     focus: None,
+                    focus_slot: 0,
+                    context_bars: vec![],
                     flow_bars: "tick:50".to_owned(),
                     time_bars: None,
                     flow_legend_collapsed: false,
@@ -1475,6 +1508,8 @@ mod tests {
                 split_fraction: None,
                 context_collapsed: false,
                 focus: None,
+                focus_slot: 0,
+                context_bars: vec![],
                 flow_bars: "tick:50".to_owned(),
                 time_bars: None,
                 flow_legend_collapsed: false,
@@ -1653,6 +1688,8 @@ time_bars = "time:60000"
                 split_fraction: Some(0.35),
                 context_collapsed: false,
                 focus: None,
+                focus_slot: 0,
+                context_bars: vec![],
                 flow_bars: "tick:50".to_owned(),
                 time_bars: None,
                 flow_legend_collapsed: false,

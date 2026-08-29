@@ -490,6 +490,11 @@ pub struct Tab {
     /// time-showing `default_layout`); once the pane exists, its own header
     /// owns the interval and this is never read again.
     time_pane_opening_interval_ms: i64,
+    /// The interval each context pane opens on, by slot, when a restored
+    /// workspace recorded more than one. A slot past the end of this list
+    /// opens on `time_pane_opening_interval_ms`, which is what every tab did
+    /// while the stack held one chart.
+    context_opening_intervals_ms: SmallVec<[i64; MAX_CONTEXT_PANES]>,
     /// Whether the time pane opens with its indicator legend folded, for the
     /// same reason the interval above is stashed: a restored workspace names
     /// the fold a frame before the pane it belongs to exists.
@@ -579,7 +584,7 @@ impl Tab {
         // Focus follows the pane the trader just moved, so the next command
         // lands on the chart they were working with rather than on whichever
         // one slid into its place.
-        self.focus = PaneSide::Time;
+        self.focus = PaneSide::Time(to_slot);
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -693,6 +698,7 @@ impl Tab {
             ohlcv_capable: false,
             time_panes: SmallVec::new(),
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
+            context_opening_intervals_ms: SmallVec::new(),
             time_pane_opening_legend_collapsed: false,
             pending_context_panes: 0,
             layout: CanvasLayout::Single,
@@ -1389,19 +1395,36 @@ impl Tab {
             // or `Ctrl+0` on the Timeframe layout sent focus to a pane nobody
             // draws — order entry, the ladder and the trade HUD all dead on
             // the one chart on screen, with no rail to click to undo it.
-            return PaneSide::Time;
+            return PaneSide::Time(0);
         }
         if self.context_collapsed {
             return PaneSide::Flow;
         }
-        self.focus
+        // A slot the stack no longer shows — the focused pane was the bottom
+        // of a three-pane layout and the trader switched to two — falls back
+        // to the top context chart, never to a pane that is not drawn.
+        match self.focus {
+            PaneSide::Time(slot) if slot >= self.context_panes_shown() => PaneSide::Time(0),
+            focus => focus,
+        }
+    }
+
+    /// How many context panes the layout draws — bounded by how many exist,
+    /// for the frame between asking for a layout and its panes being built.
+    pub fn context_panes_shown(&self) -> usize {
+        self.layout
+            .kinds()
+            .iter()
+            .filter(|kind| **kind == PaneKind::Time)
+            .count()
+            .min(self.time_panes.len())
     }
 
     /// The pane on `side`, falling back to the flow pane when the time pane
     /// has never been opened.
     pub fn pane(&self, side: PaneSide) -> &ChartPane {
         match side {
-            PaneSide::Time => self.time_pane().unwrap_or(&self.flow_pane),
+            PaneSide::Time(slot) => self.time_panes.get(slot).unwrap_or(&self.flow_pane),
             PaneSide::Flow => &self.flow_pane,
         }
     }
@@ -1484,18 +1507,26 @@ impl Tab {
         self.flow_pane.content_editing = target
             .filter(|(side, _)| *side == PaneSide::Flow)
             .map(|(_, index)| index);
-        if let Some(time) = self.time_pane_mut() {
+        for (slot, time) in self.time_panes.iter_mut().enumerate() {
             time.content_editing = target
-                .filter(|(side, _)| *side == PaneSide::Time)
+                .filter(|(side, _)| *side == PaneSide::Time(slot))
                 .map(|(_, index)| index);
         }
     }
 
     pub fn pane_mut(&mut self, side: PaneSide) -> &mut ChartPane {
         match side {
-            PaneSide::Time => self.time_panes.first_mut().unwrap_or(&mut self.flow_pane),
+            PaneSide::Time(slot) => self.time_panes.get_mut(slot).unwrap_or(&mut self.flow_pane),
             PaneSide::Flow => &mut self.flow_pane,
         }
+    }
+
+    /// Every side this tab can address, flow first — the order
+    /// [`Self::panes`] walks. The one place "which panes exist" is spelled
+    /// out for the chrome, so a surface that asks each pane a question walks
+    /// the stack rather than the two sides the split used to have.
+    pub fn sides(&self) -> impl Iterator<Item = PaneSide> + '_ {
+        (0..self.pane_count()).map(PaneSide::from_index)
     }
 
     /// The pane every chrome surface reads from — see [`Self::focused_side`].
@@ -1525,11 +1556,9 @@ impl Tab {
         if self.pane(focused).drawings.selected().is_some() || self.time_panes.is_empty() {
             return focused;
         }
-        let other = focused.other();
-        if self.pane(other).drawings.selected().is_some() {
-            return other;
-        }
-        focused
+        self.sides()
+            .find(|side| *side != focused && self.pane(*side).drawings.selected().is_some())
+            .unwrap_or(focused)
     }
 
     /// The pane every drawing surface reads from — see [`Self::drawing_side`].
@@ -1550,12 +1579,31 @@ impl Tab {
     /// plane's journal comparison, which must not touch the allocator on a
     /// quiet frame.
     pub fn panes(&self) -> impl Iterator<Item = (&ChartPane, PaneSide)> {
-        std::iter::once((&self.flow_pane, PaneSide::Flow))
-            .chain(self.time_panes.iter().map(|time| (time, PaneSide::Time)))
+        std::iter::once((&self.flow_pane, PaneSide::Flow)).chain(
+            self.time_panes
+                .iter()
+                .enumerate()
+                .map(|(slot, time)| (time, PaneSide::Time(slot))),
+        )
     }
 
     /// Every pane holding this market's bars, on screen or not. One tape, and
     /// however many charts the layout has ever shown read off it.
+    pub fn panes_with_sides_mut(&mut self) -> impl Iterator<Item = (&mut ChartPane, PaneSide)> {
+        let Self {
+            flow_pane,
+            time_panes,
+            ..
+        } = self;
+        std::iter::once((flow_pane, PaneSide::Flow)).chain(
+            time_panes
+                .iter_mut()
+                .enumerate()
+                .map(|(slot, pane)| (pane, PaneSide::Time(slot))),
+        )
+    }
+
+    /// See [`Self::panes_with_sides_mut`], without the addresses.
     pub fn panes_mut(&mut self) -> impl Iterator<Item = &mut ChartPane> {
         // Destructured rather than borrowed field by field: the flow pane and
         // the context stack are two disjoint parts of `self`, and the compiler
@@ -1635,12 +1683,12 @@ impl Tab {
         }
         self.focus = match layout {
             CanvasLayout::Single => PaneSide::Flow,
-            CanvasLayout::Time => PaneSide::Time,
+            CanvasLayout::Time => PaneSide::Time(0),
             // The split reveals whichever pane the previous layout was not
             // showing: the time pane coming from Single, the flow pane coming
             // from Time.
             CanvasLayout::TimeAndFlow | CanvasLayout::TimeTimeAndFlow => match previous {
-                CanvasLayout::Single => PaneSide::Time,
+                CanvasLayout::Single => PaneSide::Time(0),
                 CanvasLayout::Time => PaneSide::Flow,
                 CanvasLayout::TimeAndFlow | CanvasLayout::TimeTimeAndFlow => self.focus,
             },
@@ -1678,7 +1726,13 @@ impl Tab {
             return;
         }
         self.pending_context_panes -= 1;
-        let mut pane = ChartPane::time(ids.alloc(), self.time_pane_opening_interval_ms);
+        // The slot this pane will take is the next free one in the stack.
+        let interval_ms = self
+            .context_opening_intervals_ms
+            .get(self.time_panes.len())
+            .copied()
+            .unwrap_or(self.time_pane_opening_interval_ms);
+        let mut pane = ChartPane::time(ids.alloc(), interval_ms);
         pane.legend_collapsed = self.time_pane_opening_legend_collapsed;
         pane.seed_from(
             self.flow_pane.state.trades(),
@@ -2140,7 +2194,7 @@ impl Tab {
         self.focus = if layout.shows_flow() {
             PaneSide::Flow
         } else {
-            PaneSide::Time
+            PaneSide::Time(0)
         };
     }
 
@@ -2164,12 +2218,19 @@ impl Tab {
         split_fraction: Option<f32>,
         context_collapsed: bool,
         focus: Option<PaneSide>,
-        time_interval_ms: Option<i64>,
+        context_intervals_ms: &[i64],
         legends: LegendFold,
     ) {
-        if let Some(ms) = time_interval_ms {
-            self.time_pane_opening_interval_ms = ms;
+        // The top chart's interval is also the one every slot past the list
+        // opens on, which is what a one-chart file has always meant.
+        if let Some(ms) = context_intervals_ms.first() {
+            self.time_pane_opening_interval_ms = *ms;
         }
+        self.context_opening_intervals_ms = context_intervals_ms
+            .iter()
+            .copied()
+            .take(MAX_CONTEXT_PANES)
+            .collect();
         self.set_layout(layout);
         // *After* `set_layout`, for the reason the focus below is: a switch
         // opens the column it just revealed, which is right for a menu click
@@ -2954,12 +3015,12 @@ impl Tab {
             // Focus before input, so the click that focuses a pane is also the
             // click that pane goes on to handle. Only a split has focus to
             // move: a single visible pane is the focused one by definition.
-            if split {
-                self.focus_from_pointer(ui, column, flow_area);
-            }
             let heights: SmallVec<[canvas_layout::PaneWidth; MAX_CONTEXT_PANES]> =
                 SmallVec::from_elem(canvas_layout::PaneWidth::Auto, context_shown);
             let bands = canvas_layout::split_column(column, &heights);
+            if split {
+                self.focus_from_pointer(ui, &bands.panes[..context_shown], flow_area);
+            }
             for (slot, band) in bands.panes.iter().enumerate().take(context_shown) {
                 let areas = split_time_pane(*band);
                 // Each context chart carries its own timeframe selector (§11):
@@ -2995,10 +3056,7 @@ impl Tab {
         {
             // Focus as an address, so the loop below compares like with
             // like however many panes it walks.
-            let focused = match self.focused_side() {
-                PaneSide::Flow => 0,
-                PaneSide::Time => 1,
-            };
+            let focused = self.focused_side().index();
             let Self {
                 flow_pane,
                 time_panes,
@@ -3106,7 +3164,7 @@ impl Tab {
         // §11: a 1 px accent under the focused pane's top edge — no border
         // boxes around market data.
         let focused = match self.focused_side() {
-            PaneSide::Time => time_area,
+            PaneSide::Time(slot) => context_charts.get(slot).copied().unwrap_or(time_area),
             PaneSide::Flow => flow_area,
         };
         ui.painter().line_segment(
@@ -3248,7 +3306,12 @@ impl Tab {
     /// Clicking a pane focuses it (§11). Read from the raw pointer press
     /// rather than a widget response, so the press that starts a pan or picks
     /// up a drawing focuses the pane it landed in on that same frame.
-    fn focus_from_pointer(&mut self, ui: &egui::Ui, time_area: egui::Rect, flow_area: egui::Rect) {
+    fn focus_from_pointer(
+        &mut self,
+        ui: &egui::Ui,
+        context_bands: &[egui::Rect],
+        flow_area: egui::Rect,
+    ) {
         let pressed = ui.input(|input| {
             input
                 .pointer
@@ -3265,8 +3328,15 @@ impl Tab {
         if ui.ctx().layer_id_at(position) != Some(ui.layer_id()) {
             return;
         }
-        if time_area.contains(position) {
-            self.focus = PaneSide::Time;
+        // Each band of the context column is its own pane (§11): the press
+        // names the chart it landed in, not the column. Before this the whole
+        // column was one target, which is how a third pane could never take
+        // focus.
+        if let Some(slot) = context_bands
+            .iter()
+            .position(|band| band.contains(position))
+        {
+            self.focus = PaneSide::Time(slot);
         } else if flow_area.contains(position) {
             self.focus = PaneSide::Flow;
         }
@@ -3784,6 +3854,45 @@ mod collapse_path_tests {
     /// the column it reveals, which is right for a menu click and wrong for a
     /// restore. Assigned before that call, the flag was overwritten every
     /// time — and the next `capture_arrangement` wrote the wrong answer back
+    /// A three-pane workspace records one bar rule per context chart, and
+    /// each chart opens on its own. Before `context_bars` existed the file
+    /// kept one interval and both charts opened on it — the bottom chart lost
+    /// its timeframe on every restart.
+    #[test]
+    fn a_restored_stack_opens_each_context_chart_on_its_own_interval() {
+        let mut tab = tab();
+        tab.restore_canvas(
+            CanvasLayout::TimeTimeAndFlow,
+            None,
+            false,
+            Some(PaneSide::Time(1)),
+            &[60_000, 900_000],
+            LegendFold::default(),
+        );
+        let config = crate::config::AppConfig {
+            default_feed: "binance".to_owned(),
+            default_symbol: "BTCUSDT".to_owned(),
+            feeds: vec![],
+            metatrader: Default::default(),
+            paper: Default::default(),
+        };
+        let style = crate::style::ChartStyle::default();
+        let mut ids = PaneIdAllocator::new();
+        tab.apply_pending_layout(&config, &style, &mut ids);
+        tab.apply_pending_layout(&config, &style, &mut ids);
+        assert_eq!(tab.time_panes.len(), 2, "both charts were built");
+        assert_eq!(tab.time_panes[0].time_interval_ms, 60_000);
+        assert_eq!(
+            tab.time_panes[1].time_interval_ms, 900_000,
+            "the bottom chart opened on the interval the file kept for it"
+        );
+        assert_eq!(
+            tab.focused_side(),
+            PaneSide::Time(1),
+            "and the saved focus names the bottom chart"
+        );
+    }
+
     /// over the trader's file.
     #[test]
     fn a_restored_workspace_keeps_its_collapsed_column() {
@@ -3793,7 +3902,7 @@ mod collapse_path_tests {
             Some(0.42),
             true,
             Some(PaneSide::Flow),
-            None,
+            &[],
             LegendFold {
                 flow: false,
                 time: false,
@@ -3846,7 +3955,7 @@ mod collapse_path_tests {
 
         assert_eq!(
             tab.focused_side(),
-            PaneSide::Time,
+            PaneSide::Time(0),
             "the only chart drawn has to be the one the chrome speaks for"
         );
     }

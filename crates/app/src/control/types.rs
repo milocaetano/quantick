@@ -23,7 +23,7 @@ impl From<PaneSide> for PaneSideDto {
     fn from(side: PaneSide) -> Self {
         match side {
             PaneSide::Flow => Self::Flow,
-            PaneSide::Time => Self::Time,
+            PaneSide::Time(_) => Self::Time,
         }
     }
 }
@@ -134,20 +134,22 @@ pub(crate) fn unavailable(reason: &str) -> AvailabilitySnapshot {
 /// cursor can resolve against is a pane the scene lists, because both ask
 /// here.
 pub(crate) fn visible_panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {
-    let mut panes = Vec::with_capacity(MAX_PANES_PER_TAB);
-    if tab.layout.shows_time()
-        && let Some(time) = tab.time_pane()
-    {
-        panes.push((time, PaneSide::Time));
+    let mut panes = Vec::with_capacity(crate::canvas_layout::MAX_CANVAS_PANES);
+    if tab.layout.shows_time() {
+        let shown = tab.context_panes_shown();
+        panes.extend(
+            tab.time_panes
+                .iter()
+                .take(shown)
+                .enumerate()
+                .map(|(slot, time)| (time, PaneSide::Time(slot))),
+        );
     }
     if tab.layout.shows_flow() {
         panes.push((&tab.flow_pane, PaneSide::Flow));
     }
     panes
 }
-
-/// A tab shows at most a time pane and a flow pane.
-const MAX_PANES_PER_TAB: usize = 2;
 
 /// Decimal places every screen coordinate on the wire is rounded to.
 ///

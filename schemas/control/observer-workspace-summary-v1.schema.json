@@ -13,6 +13,31 @@
       ],
       "type": "string"
     },
+    "LayoutTabSnapshot": {
+      "description": "One layout tab, as the strip lists it.",
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "indicator_count": {
+          "$ref": "#/$defs/WireU64",
+          "description": "How many indicators the layout holds."
+        },
+        "layout_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "layout_id",
+        "name",
+        "active",
+        "indicator_count"
+      ],
+      "type": "object"
+    },
     "PaneSideDto": {
       "enum": [
         "flow",
@@ -32,6 +57,10 @@
         "pane_id": {
           "$ref": "#/$defs/WireU64"
         },
+        "pane_index": {
+          "$ref": "#/$defs/WireU64",
+          "description": "The pane's address within its tab — the number `layout.focus` takes."
+        },
         "side": {
           "$ref": "#/$defs/PaneSideDto"
         },
@@ -42,6 +71,7 @@
       "required": [
         "pane_id",
         "side",
+        "pane_index",
         "visible",
         "focused"
       ],
@@ -105,6 +135,14 @@
     },
     "active_tab_index": {
       "$ref": "#/$defs/WireU64"
+    },
+    "layouts": {
+      "default": [],
+      "description": "The layout strip: every layout, and which is active. Additive.",
+      "items": {
+        "$ref": "#/$defs/LayoutTabSnapshot"
+      },
+      "type": "array"
     },
     "performance_readings_visible": {
       "type": "boolean"

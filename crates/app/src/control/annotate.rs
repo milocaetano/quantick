@@ -87,6 +87,11 @@ pub(crate) struct AnnotationTarget {
     /// The pane within that tab. Omitted: the pane drawings go to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pane_side: Option<PaneSideDto>,
+    /// Which context chart `pane_side = "time"` means, top to bottom from
+    /// `0`. Omitted: the top one. Ignored for the flow pane, which has no
+    /// stack to pick from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_slot: Option<WireU64>,
 }
 
 /// One anchor, in the coordinates the cursor and the chart window report:
@@ -523,11 +528,8 @@ fn remove_annotation(
 /// Every (tab, pane) an annotation could be sitting on.
 fn annotated_panes(app: &QuantickApp) -> Vec<(usize, crate::pane::PaneSide)> {
     let mut panes = Vec::new();
-    for index in 0..app.control_tabs().len() {
-        panes.push((index, crate::pane::PaneSide::Flow));
-        if app.control_tabs()[index].has_time_pane() {
-            panes.push((index, crate::pane::PaneSide::Time));
-        }
+    for (index, tab) in app.control_tabs().iter().enumerate() {
+        panes.extend(tab.sides().map(|side| (index, side)));
     }
     panes
 }
@@ -581,10 +583,16 @@ fn resolve_target(
         None => tab.drawing_side(),
         Some(PaneSideDto::Flow) => crate::pane::PaneSide::Flow,
         Some(PaneSideDto::Time) => {
-            if tab.time_panes.is_empty() {
-                return Err(capability_unavailable("that tab has no time pane open"));
+            let slot = target
+                .and_then(|target| target.pane_slot)
+                .map_or(0, |slot| slot.get() as usize);
+            if slot >= tab.time_panes.len() {
+                return Err(capability_unavailable(format!(
+                    "that tab has no time pane at slot {slot} ({} open)",
+                    tab.time_panes.len()
+                )));
             }
-            crate::pane::PaneSide::Time
+            crate::pane::PaneSide::Time(slot)
         }
     };
     Ok((tab.id, side))

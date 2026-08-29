@@ -286,15 +286,16 @@ impl IndicatorViews {
                     // while the pre-edit code was still what ran.
                     view.stale = stale;
                 } else {
-                    // A view born without a parked kind cannot be given the
-                    // empty string: two of them would share a key and adopt
-                    // each other's drawings. No production path reaches this
-                    // — the add path always parks a kind — and the fallback
-                    // is unique rather than silently colliding.
-                    let kind: Arc<str> = self
-                        .pending_kinds
-                        .remove(&slot)
-                        .unwrap_or_else(|| Arc::from(format!("unknown.{}", slot.0).as_str()));
+                    // A first answer for a slot nobody parked a kind for is
+                    // an add the UI already removed — a layout switch takes
+                    // a slot away before its worker has built it — and the
+                    // remove always wins: a view born here would be a ghost
+                    // with no registration behind it, on a chart the layout
+                    // says is empty. The parked kind is what keeps two views
+                    // from sharing a key and adopting each other's drawings.
+                    let Some(kind) = self.pending_kinds.remove(&slot) else {
+                        return;
+                    };
                     let ordinal = self.free_ordinal(&kind);
                     self.views.push(IndicatorView {
                         slot,
@@ -930,6 +931,25 @@ mod tests {
         views.remove(slot);
         views.apply(IndicatorEvent::appended(slot, vec![1.0]));
         assert!(views.all().is_empty(), "the remove always wins the race");
+    }
+
+    /// A slot removed before its first build answered: the answer must not
+    /// resurrect it. The layout switch is the production path that races
+    /// this way — the add's `Rebuilt` was still on the channel.
+    #[test]
+    fn a_first_build_for_a_removed_slot_is_dropped_too() {
+        let mut views = IndicatorViews::new();
+        let slot = views.allocate_slot("test.indicator");
+        views.remove(slot);
+        views.apply(IndicatorEvent::rebuilt(
+            slot,
+            descriptor(true, 1),
+            vec![vec![]],
+        ));
+        assert!(
+            views.all().is_empty(),
+            "no ghost view for a slot the remove took"
+        );
     }
 
     #[test]

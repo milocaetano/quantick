@@ -111,6 +111,15 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
         local_keys: &[],
     },
     CockpitStore {
+        key: "layouts",
+        env: crate::layouts::LAYOUTS_ENV,
+        file: crate::layouts::LAYOUTS_FILE,
+        validate: crate::layouts::validate,
+        path: crate::layouts::default_path,
+        in_bundle: true,
+        local_keys: &[],
+    },
+    CockpitStore {
         key: "indicator_presets",
         env: crate::indicators::preset_file::PRESETS_ENV,
         file: crate::indicators::preset_file::PRESETS_FILE,

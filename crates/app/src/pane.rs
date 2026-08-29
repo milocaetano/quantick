@@ -158,23 +158,56 @@ fn draw_dashed_vertical(
 
 /// Which of the canvas's panes something belongs to.
 ///
-/// Named for where they sit in the split, because that is how the user picks
-/// one: the time pane is on the left, the flow pane on the right.
+/// The flow pane, or one of the context panes by its slot in the stack —
+/// `Time(0)` is the top context chart, `Time(1)` the one under it. A two-arm
+/// enum lived here before the stack existed, and it is how the three-pane
+/// canvas shipped with a dead second chart: every reader mapped `Time` to the
+/// *first* context pane, so clicking the second focused the first, the BARS
+/// group changed the first, and "add indicator" landed on the first. A side
+/// that cannot name a pane cannot address it.
+///
+/// Slots are positions in [`crate::tab::Tab::time_panes`], and moving a pane
+/// within the stack moves what a slot names — which is right for focus (it
+/// follows the chart the trader is looking at) and irrelevant for everything
+/// else, which addresses panes through [`PaneIndex`] and lives one frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum PaneSide {
     #[default]
     Flow,
-    Time,
+    Time(usize),
 }
 
 impl PaneSide {
-    /// The other pane of the tab — the one that mirrors this one's shared
-    /// marks, and the one an edit made here has to be handed to.
+    /// This side as a [`PaneIndex`] address: `0` is the flow pane, `1..` the
+    /// context stack — the order [`crate::tab::Tab::pane_at`] uses.
     #[must_use]
-    pub const fn other(self) -> Self {
+    pub const fn index(self) -> PaneIndex {
         match self {
-            Self::Flow => Self::Time,
-            Self::Time => Self::Flow,
+            Self::Flow => 0,
+            Self::Time(slot) => slot + 1,
+        }
+    }
+
+    /// The side a [`PaneIndex`] address names. The inverse of [`Self::index`].
+    #[must_use]
+    pub const fn from_index(index: PaneIndex) -> Self {
+        match index {
+            0 => Self::Flow,
+            slot => Self::Time(slot - 1),
+        }
+    }
+
+    /// What the chrome calls this pane: "Flow", "Timeframe", "Timeframe 2".
+    ///
+    /// The top context chart keeps the bare name every menu and status line
+    /// showed while it was the only one; the number appears only where there
+    /// is a second chart to tell it from.
+    #[must_use]
+    pub fn title(self) -> String {
+        match self {
+            Self::Flow => "Flow".to_owned(),
+            Self::Time(0) => "Timeframe".to_owned(),
+            Self::Time(slot) => format!("Timeframe {}", slot + 1),
         }
     }
 }
@@ -940,6 +973,18 @@ pub struct ChartPane {
     /// The UI's copy of every indicator's plot columns (see
     /// [`crate::indicators`]).
     pub indicators: IndicatorViews,
+    /// Whether the app has put the active layout on this pane — its
+    /// indicators and its market's drawings. `false` from construction until
+    /// the first frame that sees the pane, so a pane opened by any path (a
+    /// new tab, a split, a restore) is seeded exactly once.
+    pub layout_seeded: bool,
+    /// Which market and pane address the drawings on this pane belong to,
+    /// once the layout put them here. The app compares it with the tab's
+    /// market every frame and swaps the set when they part.
+    pub drawings_key: Option<crate::layouts::DrawingKey>,
+    /// The drawings revision last copied into the layout; a different
+    /// reading means the layout is behind this pane.
+    pub drawings_saved_revision: u64,
     /// Whether this pane's on-chart indicator legend is folded to its count
     /// puck. Per pane, not per window: a split is two readings of the same
     /// market, and the corner pressure that makes a trader fold the flow
@@ -1255,6 +1300,9 @@ impl ChartPane {
             orderflow,
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
+            layout_seeded: false,
+            drawings_key: None,
+            drawings_saved_revision: 0,
             legend_collapsed: false,
             live_strip_visible: false,
             footprint_visible: false,
@@ -2815,6 +2863,13 @@ impl ChartPane {
     #[cfg(test)]
     pub fn request_settings(&mut self, slot: SlotId) {
         self.pending_settings = Some(slot);
+    }
+
+    /// Ask for a re-anchor once there are bars, for drawings adopted onto an
+    /// empty series — the layout seeding a pane before its first print.
+    /// Asking now would mark every anchor off a series that does not exist.
+    pub fn defer_reanchor(&mut self) {
+        self.pending_reanchor.get_or_insert(0);
     }
 
     pub fn settle_pending_reanchor(&mut self) {

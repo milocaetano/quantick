@@ -30,6 +30,9 @@ pub(crate) struct WorkspaceSnapshot {
     pub performance_readings_visible: bool,
     pub progressive_venue_history: bool,
     pub tabs: Vec<WorkspaceTab>,
+    /// The layout strip: every layout, and which is active. Additive.
+    #[serde(default)]
+    pub layouts: Vec<super::layout::LayoutTabSnapshot>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -50,6 +53,8 @@ pub(crate) struct WorkspaceTab {
 pub(crate) struct WorkspacePane {
     pub pane_id: WireU64,
     pub side: PaneSideDto,
+    /// The pane's address within its tab — the number `layout.focus` takes.
+    pub pane_index: WireU64,
     pub visible: bool,
     pub focused: bool,
 }
@@ -96,6 +101,7 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
             .map_or_else(|| WireU64::new(0), |tab| WireU64::new(tab.id)),
         timezone_offset_minutes: timezone.minutes(),
         timezone_label: timezone.label(),
+        layouts: super::layout::layout_tabs(app),
         save_on_exit,
         performance_readings_visible,
         progressive_venue_history,
@@ -105,20 +111,23 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
             .map(|(index, tab)| {
                 let active = index == active_index;
                 let focused = tab.focused_side();
-                let mut panes = vec![WorkspacePane {
-                    pane_id: WireU64::new(tab.flow_pane.id),
-                    side: PaneSideDto::Flow,
-                    visible: active && tab.layout.shows_flow(),
-                    focused: active && focused == PaneSide::Flow,
-                }];
-                if let Some(time) = tab.time_pane() {
-                    panes.push(WorkspacePane {
-                        pane_id: WireU64::new(time.id),
-                        side: PaneSideDto::Time,
-                        visible: active && tab.layout.shows_time(),
-                        focused: active && focused == PaneSide::Time,
-                    });
-                }
+                let shown = tab.context_panes_shown();
+                let panes: Vec<WorkspacePane> = tab
+                    .panes()
+                    .map(|(pane, side)| {
+                        let visible = match side {
+                            PaneSide::Flow => tab.layout.shows_flow(),
+                            PaneSide::Time(slot) => tab.layout.shows_time() && slot < shown,
+                        };
+                        WorkspacePane {
+                            pane_id: WireU64::new(pane.id),
+                            side: side.into(),
+                            pane_index: wire_usize(side.index()),
+                            visible: active && visible,
+                            focused: active && focused == side,
+                        }
+                    })
+                    .collect();
                 WorkspaceTab {
                     index: wire_usize(index),
                     tab_id: WireU64::new(tab.id),
