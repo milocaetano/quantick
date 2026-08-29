@@ -48,6 +48,19 @@ const PAPER_DEMO_ENV: &str = "QUANTICK_PAPER_DEMO";
 /// a sell limit above**: a move in either direction can fill only one side
 /// of it, so a resting tag always survives on screen.
 const PAPER_ORDERS_ENV: &str = "QUANTICK_PAPER_ORDERS";
+/// `=1` gives every order `QUANTICK_PAPER_ORDERS` rests a protective stop
+/// and target, so the working-order bracket — its two dashed leg lines,
+/// their gutter chips and their tags — can be photographed without a hand
+/// to drag them into being. Pairs with `QUANTICK_PAPER_ORDER_HOVER`, which
+/// opens one order's tag and with it the labelled `SL`/`TP` handles for the
+/// legs it does *not* have; set both and one capture holds every state the
+/// bracket has.
+const PAPER_ORDER_BRACKET_ENV: &str = "QUANTICK_PAPER_ORDER_BRACKET";
+/// How far a hooked bracket's legs sit from the order, as a fraction of the
+/// mark. Wider than the rung step so the legs never land on a neighbouring
+/// order's line, and wide enough apart that stop and target read as two
+/// levels rather than one thick one.
+const PAPER_ORDER_BRACKET_FRACTION: Decimal = Decimal::from_parts(15, 0, 0, false, 4);
 /// How far the first rung sits from the mark, as a fraction of it. Small
 /// on purpose: a line outside the chart's autoscaled price range paints no
 /// tag, so an order that cannot be reached also cannot be seen.
@@ -1156,6 +1169,9 @@ pub struct PaperTrading {
     /// only venue constructed here is the deterministic paper simulator,
     /// and every surface still says `SIM`.
     venue: Box<dyn TradingVenue>,
+    /// Whether `QUANTICK_PAPER_ORDER_BRACKET` asked the capture hook's
+    /// resting orders to carry protective legs.
+    order_bracket_demo: bool,
     /// Reusable buffer for [`TradingVenue::in_flight_entries`] — see
     /// `draw_pending_orders`, which asks every frame.
     in_flight_scratch: Vec<OrderId>,
@@ -1332,6 +1348,8 @@ impl PaperTrading {
         Self {
             venue: Box::new(Simulator::new()),
             in_flight_scratch: Vec::new(),
+            order_bracket_demo: std::env::var(PAPER_ORDER_BRACKET_ENV)
+                .is_ok_and(|value| value == "1"),
             symbol: String::new(),
             dir,
             journal_path: None,
@@ -1559,9 +1577,27 @@ impl PaperTrading {
                 (Side::Buy, mark.saturating_sub(step)),
                 (Side::Sell, mark.saturating_add(step)),
             ] {
+                // The legs go on the correct side of the *order's own*
+                // price, which is what the venue validates against — the
+                // hook cannot place one the venue would refuse.
+                let bracket = if self.order_bracket_demo {
+                    let reach = (mark * PAPER_ORDER_BRACKET_FRACTION).round_dp(mark.scale());
+                    match side {
+                        Side::Buy => Bracket {
+                            stop_loss: Some(price.saturating_sub(reach)),
+                            take_profit: Some(price.saturating_add(reach)),
+                        },
+                        Side::Sell => Bracket {
+                            stop_loss: Some(price.saturating_add(reach)),
+                            take_profit: Some(price.saturating_sub(reach)),
+                        },
+                    }
+                } else {
+                    Bracket::none()
+                };
                 let events = self
                     .venue
-                    .submit(OrderIntent::limit(side, Decimal::ONE, price));
+                    .submit(OrderIntent::limit(side, Decimal::ONE, price).with_bracket(bracket));
                 self.handle_events(events);
             }
         }
@@ -9882,6 +9918,37 @@ mod tests {
         );
         paper.on_trade(&print(2, 100_000));
         assert_eq!(paper.working_orders().len(), 4, "a second print adds none");
+    }
+
+    /// The bracket hook dresses those same rungs, so a working order's two
+    /// dashed legs are photographable without a hand to drag them into
+    /// being. Each leg lands on the correct side of the *order's own*
+    /// price, which is what the venue validates against — a hook that
+    /// placed one the venue refuses would photograph an empty chart.
+    #[test]
+    fn the_bracket_hook_dresses_every_rung_it_rests() {
+        let mut paper = PaperTrading::new();
+        paper.orders_demo = Some(1);
+        paper.order_bracket_demo = true;
+        paper.on_trade(&print(1, 100_000));
+
+        let orders = paper.working_orders();
+        assert_eq!(orders.len(), 2, "one rung, both sides");
+        for order in orders {
+            let price = order.price.expect("a limit has a price");
+            let stop = order.bracket.stop_loss.expect("a stop rides along");
+            let target = order.bracket.take_profit.expect("and a target");
+            match order.side {
+                Side::Buy => {
+                    assert!(stop < price, "a long's stop sits below its entry");
+                    assert!(target > price, "and its target above");
+                }
+                Side::Sell => {
+                    assert!(stop > price, "a short's stop sits above its entry");
+                    assert!(target < price, "and its target below");
+                }
+            }
+        }
     }
 
     /// A coarsely quoted mark rounds 6 bp to nothing: both legs would

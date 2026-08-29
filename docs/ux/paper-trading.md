@@ -117,6 +117,25 @@ wears a card (`INSET` fill, hairline border, a side-colour rail).
 | Stop loss | solid 1 px, `SELL` | chip: `SL 97.0 −12.4 pts`, hover `×` clears |
 | Take profit | solid 1 px, `BUY` | chip: `TP 110.0 +13.6 pts`, hover `×` clears |
 | Pending order | dashed 1 px, `ACCENT` | pill: `BUY LMT 2`; open on hover: `#3 BUY LMT 2 @ 95.0`, `×` cancels |
+| A pending order's stop | dashed 1 px, `SELL` | chip: `SL 90.0 −5.0 pts`, hover `×` clears |
+| A pending order's target | dashed 1 px, `BUY` | chip: `TP 110.0 +15.0 pts`, hover `×` clears |
+
+**A working order carries its own bracket.** The legs are *dashed* where
+the position's are solid, and the difference is the whole meaning: a
+position's stop is an exit that can fire on the next print, while an
+order's is a promise that arms the moment the entry fills and never before.
+They are measured against the **order's own price**, not the market — the
+same reference the simulator validates a bracket against — so `SL 90.0
+−5.0 pts` reads "if this fills at 95 and stops at 90, that costs five
+points". A leg the chart lets you drop is a leg the venue accepts; the two
+cannot disagree about which side of the entry is the protective one.
+
+The grammar is the position's, reused rather than re-invented: hovering the
+order's line or its tag reveals the labelled `SL`/`TP` handles for the legs
+it does not have yet, pressing one starts a create-drag, and the leg's own
+line is its handle once it exists. One function paints both owners
+(`draw_bracket_of`), so what a trader learns on a position works on an
+order because it is the same code.
 
 **A pending order's tag rests small.** It sits at the right edge of the
 plot — over the newest candles, the ones the trader is reading — and stayed
@@ -159,6 +178,27 @@ drawings' halo):
   change or history rebuild clears annotations, but simulated orders belong
   to the session, not to the bar series.
 
+### Every visible pane is a trading surface
+
+Order entry follows the **pointer**, not focus. Hold the buy modifier over
+any pane on screen — the flow chart, a context chart, one of four in a
+split — and the aim paints there and the click places there, with no
+focusing click first. A price level is as true on a one-minute context
+chart as on the flow chart, and a trader who has just read a level on one
+of them should be able to act on it where they read it.
+
+Two things stay where they were. The **position HUD** follows focus, since
+there is one card and it must not flicker between panes as the hand crosses
+them. And a **drag in flight** stays with the pane it started in: the
+grabbed line is read against that pane's price scale, so handing the
+gesture to a neighbour mid-drag would reprice the order to whatever that
+pane's scale says — a stop that jumps because the hand strayed across a
+divider. (`Tab::trading_pane`, a pure function for exactly that reason.)
+
+Every pane already *painted* the orders and the position; only the input
+was gated. Nothing about the unsplit case changes: one pane is always the
+answer.
+
 ### Cmd trading: the aim rides the pointer
 
 Hold the buy modifier (Shift by default; Ctrl sells, both configurable in
@@ -169,6 +209,21 @@ a fixed gap to its left, flipping to the right near the left edge, never
 under the crosshair it belongs to. Whether the entry rests as a stop or a
 limit follows the same validity table the right-click menu uses: above the
 mark a buy stops in, below it a buy waits at a limit; a sell mirrors.
+
+**Which kind, when you mean a particular one.** The Trading tab's `Place`
+selector is `auto` (the shipped default), `limit` or `stop`. This is not a
+way to place a stop where a limit belongs: the fill model leaves exactly
+one resting kind valid at any price — a buy limit at or above the market
+would fill at once, a buy stop at or below it would trigger at once — so
+`auto` is right almost always. It is a way to say **which order you came to
+place**. The mark moves: a level a hand's breadth above the last price is a
+buy stop now and a buy limit two ticks later, and under `auto` the same
+click at the same level places a different order depending on when it
+lands. Under a stated kind the aim simply **stands down** where that kind
+cannot rest — no line, no label, no place — rather than quietly handing you
+the other one. A trader who came to buy a pullback is never given a
+breakout stop. The tab says which half of the chart is live while a kind is
+stated, so the silence is explained before it is met.
 
 **The click places it, anywhere in the plot.** A label that follows the
 pointer can never be landed on — move toward it and it moves with you — so
@@ -344,6 +399,45 @@ p` below it, `Buy stop @ p` above it, mirrored for sells. The invalid two
 stay visible but disabled, wearing the sim core's own rejection text
 (disabled ≠ hidden; the curriculum again).
 
+## 9b. The same three things, without a hand
+
+`CLAUDE.md`'s *operable without a hand* rule, for the one class of
+capability that had no registry entry at all: `trade.order.place`,
+`trade.order.bracket` and `trade.order.cancel`. Each is a named call with
+an actor in its signature, answering with the venue's own refusal text and
+with every working order read back, plus the mark the call landed against
+— every refusal here is a statement about a price relative to the market,
+so the market comes with it.
+
+`place` states its kind rather than inferring one. The chart's aim can
+infer because it has a pointer and a market under it; an action has
+neither, and an action whose meaning depends on where the market is at the
+instant it lands is one nobody can replay.
+
+They sit behind their own effect and their own permission, whose only
+ceiling is a `trader` profile **nothing hands out**. `annotate`'s own
+description promises it never affects a position, so a trade cannot borrow
+it, and deciding which connection may trade is a decision about a real
+account rather than a detail of the change that carved the tier out. Today
+the gateway refuses them before dispatch and the in-process operator — a
+hotkey, a harness hook, a test — reaches them normally.
+
+## 9c. Where the orders actually go
+
+Since the venue port (`quantick-trading`), this host holds a
+`Box<dyn TradingVenue>` rather than a `Simulator`. Orders, brackets,
+positions, fills and round trips are facts about trading, not about
+simulation, so they live in that crate and the deterministic paper
+simulator is *one implementation* of the port. The chart's gestures build
+`OrderIntent`s; `Command::dispatch` is the one door for callers that
+already speak `sim::Command` (the strategy kernel, the backtest harness).
+
+Nothing about the honesty contract moves: every venue constructed here is
+still the simulator, every surface still says `SIM`, and P&L is still in
+points. What the port buys is that the day a broker implements it, none of
+the surfaces above learn a second vocabulary — and the permission that
+would guard it is already carved out (§9b).
+
 ## 10. Out of scope (recorded decisions)
 
 - Real order routing of any kind.
@@ -358,6 +452,13 @@ stay visible but disabled, wearing the sim core's own rejection text
   v2: an honest restore would need the same feed and symbol back, a
   `restored — not proven by the current tape` label until the first print,
   and a flatten offer at startup — designed, recorded here, not built.
+- Granting any connection the `trade` permission. The tier exists and the
+  gateway enforces it; which profile may hold it is a decision about a real
+  account, deliberately left for the change that brings one.
+- A market order from the aim. On the mark exactly nothing can rest, and
+  that thin band is where a trader's pointer naturally sits — firing a
+  market entry from it would turn a hover into a fill. Market stays on the
+  buttons and the hotkeys, which are unambiguous.
 - Shaded risk bands between entry and SL/TP: considered and rejected —
   the line-and-tag grammar carries the same information without painting
   over the candles.
