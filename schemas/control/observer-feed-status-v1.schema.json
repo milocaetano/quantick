@@ -82,12 +82,8 @@
     "FeedStallSnapshot": {
       "description": "A feed the chart has decided is stalled.\n\nCarries no free text, for the same reason [`FeedNoticeSnapshot`] carries\nnone: the words name the venue and the terminal behind it, and the observe\ntier does not publish them. What it does carry is the part a client can act\non — which of the two recovery capabilities the application is offering\nfirst, and how long the feed has been like this.",
       "properties": {
-        "headline_present": {
-          "description": "Whether the trader is being shown words about it on this frame.",
-          "type": "boolean"
-        },
-        "next_step_present": {
-          "description": "Whether those words carry a next step.",
+        "needs_attention": {
+          "description": "Whether this is unambiguously wrong (a transport that never landed or\ndropped) or merely observed silence, which is also what a closed market\nlooks like. The interface colours the two differently and so should a\nclient deciding whether to say anything to the trader.",
           "type": "boolean"
         },
         "primary_recovery": {
@@ -95,14 +91,13 @@
           "type": "string"
         },
         "text_availability": {
-          "description": "Why the text is not in this payload.",
+          "description": "Why the words are not in this payload.",
           "type": "string"
         }
       },
       "required": [
         "primary_recovery",
-        "headline_present",
-        "next_step_present",
+        "needs_attention",
         "text_availability"
       ],
       "type": "object"

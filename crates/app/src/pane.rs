@@ -128,6 +128,15 @@ const EMPTY_VIEW_FONT_SIZE: f32 = 16.0;
 const SEAM_DASH_PX: f32 = 5.0;
 /// See [`SEAM_DASH_PX`].
 const SEAM_GAP_PX: f32 = 4.0;
+/// Font size of the caption beside a dashed vertical mark, in points.
+///
+/// Shared by the venue seam and the tape-gap mark rather than written at each:
+/// they are the same kind of caption answering the same question about the bars
+/// either side of a line, and two copies would drift the first time one moved.
+const SEAM_LABEL_PT: f32 = 11.0;
+/// Gap between a dashed vertical mark and its caption, in pixels — and the
+/// caption's drop from the top of the pane.
+const SEAM_LABEL_INSET_PX: f32 = 4.0;
 
 /// A dashed vertical rule down `rect` at `x`.
 ///
@@ -7479,10 +7488,10 @@ impl ChartPane {
             theme::SEAM_LINE,
         );
         painter.text(
-            egui::pos2(x - 4.0, pane.top() + 4.0),
+            egui::pos2(x - SEAM_LABEL_INSET_PX, pane.top() + SEAM_LABEL_INSET_PX),
             egui::Align2::RIGHT_TOP,
             "venue",
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(SEAM_LABEL_PT),
             theme::SEAM_LABEL,
         );
     }
@@ -7531,11 +7540,14 @@ impl ChartPane {
                 continue; // off-screen
             }
             draw_dashed_vertical(painter, x, pane, SEAM_DASH_PX, SEAM_GAP_PX, theme::GAP_LINE);
+            // On the right of its line, where the venue seam's caption is on
+            // the left: the two can land on the same bar, and a trader has to
+            // be able to tell which line each word belongs to.
             painter.text(
-                egui::pos2(x + 4.0, pane.top() + 4.0),
+                egui::pos2(x + SEAM_LABEL_INSET_PX, pane.top() + SEAM_LABEL_INSET_PX),
                 egui::Align2::LEFT_TOP,
                 format!("{} gap", crate::feed::stall::spoken_ms(gap.duration_ms())),
-                egui::FontId::proportional(11.0),
+                egui::FontId::proportional(SEAM_LABEL_PT),
                 theme::GAP_LABEL,
             );
         }

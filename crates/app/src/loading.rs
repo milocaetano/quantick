@@ -97,6 +97,13 @@ impl LoadingTask {
     /// `ChartPane::ingest_backfill`, and a bar rebuild re-cuts every pane's
     /// series, so pinning either to a single pane would be a placement that
     /// lies about which chart is waiting.
+    ///
+    /// A scope is where a wait *prefers* to be drawn, never where it may only
+    /// be drawn. Both surfaces below can be absent — the flow pane is not
+    /// painted in the Time layout, and a flow-only layout has no time pane at
+    /// all — and a wait with nowhere to go falls back to the whole canvas
+    /// rather than disappearing. A multi-second fetch with no spinner reads as
+    /// a frozen application, which is worse than a spinner in the wrong place.
     #[must_use]
     pub fn scope(self) -> LoadingScope {
         match self {

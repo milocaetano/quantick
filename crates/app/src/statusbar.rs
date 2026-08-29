@@ -33,6 +33,21 @@ use crate::timezone::TzOffset;
 pub const STATUS_BAR_HEIGHT: f32 = 28.0;
 /// Diameter of the provenance state dot, in pixels.
 const STATE_DOT_DIAMETER_PX: f32 = 8.0;
+/// Width reserved for the recovery pair, in pixels — held whether or not the
+/// feed is stalled.
+///
+/// Reserved rather than grown into, because this line's one invariant is that
+/// it never moves: a pair of buttons appearing mid-session would push the bar
+/// spec, the bar counts and every honesty label sideways at the exact moment
+/// the trader is reading them. It also buys the better half of the trade —
+/// the controls are always in the same place, so a trader who has used them
+/// once finds them without looking.
+const RECOVERY_SLOT_WIDTH_PX: f32 = 132.0;
+/// Height of a recovery button, in pixels. Inside the 28 px line with its
+/// 4 px margins.
+const RECOVERY_BUTTON_HEIGHT_PX: f32 = 18.0;
+/// Gap between the two recovery buttons, in pixels.
+const RECOVERY_BUTTON_GAP_PX: f32 = 6.0;
 /// Gap between neighbouring cells on the line, in pixels.
 const CELL_SPACING_PX: f32 = 8.0;
 
@@ -431,28 +446,54 @@ fn draw_provenance(
     .on_hover_ui(|ui| {
         ui.label(tape_tooltip(model.feed_arrival_ms, model.feed_latency));
     });
-    stall.and_then(|stall| draw_recovery(ui, stall))
+    draw_recovery(ui, stall)
 }
 
-/// The recovery pair: the control that fixes *this* stall first, filled, and
-/// the other one beside it.
+/// The recovery slot: always the same width, empty until there is a stall,
+/// then the control that fixes *this* one first with the other beside it.
 ///
 /// Both carry the reason on hover rather than in the bar, because the bar is
 /// 28 px of fixed layout and a sentence would move every cell to its right —
-/// the one thing a status line must never do.
-fn draw_recovery(ui: &mut egui::Ui, stall: &Stall) -> Option<Recovery> {
+/// the one thing a status line must never do. The slot is claimed even when
+/// `stall` is `None` for the same reason.
+///
+/// The primary is filled only when the stall is unambiguous. A quiet tape is
+/// also what a closed exchange looks like, and this line would otherwise carry
+/// a filled amber control every night until the trader stopped seeing it; the
+/// tape cell beside it already turns [`theme::WARN`] past ten seconds and goes
+/// on carrying that warning.
+fn draw_recovery(ui: &mut egui::Ui, stall: Option<&Stall>) -> Option<Recovery> {
+    let height = RECOVERY_BUTTON_HEIGHT_PX;
+    let (slot, _) = ui.allocate_exact_size(
+        egui::vec2(RECOVERY_SLOT_WIDTH_PX, height),
+        egui::Sense::hover(),
+    );
+    let stall = stall?;
+    let width = (RECOVERY_SLOT_WIDTH_PX - RECOVERY_BUTTON_GAP_PX) / 2.0;
+    let button = |index: f32| {
+        egui::Rect::from_min_size(
+            egui::pos2(
+                slot.left() + index * (width + RECOVERY_BUTTON_GAP_PX),
+                slot.top(),
+            ),
+            egui::vec2(width, height),
+        )
+    };
+
     let mut pressed = None;
     let primary = stall.primary;
-    if ui
-        .add(
-            egui::Button::new(
-                egui::RichText::new(primary.label())
-                    .small()
-                    .color(theme::CHIP_INK),
-            )
-            .fill(theme::AMBER)
-            .small(),
+    let primary_face = if stall.needs_attention {
+        egui::Button::new(
+            egui::RichText::new(primary.label())
+                .small()
+                .color(theme::CHIP_INK),
         )
+        .fill(theme::AMBER)
+    } else {
+        egui::Button::new(egui::RichText::new(primary.label()).small()).fill(theme::CONTROL)
+    };
+    if ui
+        .put(button(0.0), primary_face)
         .on_hover_ui(|ui| {
             ui.label(&stall.headline);
             ui.label(egui::RichText::new(&stall.next_step).color(theme::TEXT_MUTED));
@@ -463,13 +504,13 @@ fn draw_recovery(ui: &mut egui::Ui, stall: &Stall) -> Option<Recovery> {
     }
     let secondary = primary.other();
     if ui
-        .add(
+        .put(
+            button(1.0),
             egui::Button::new(
                 egui::RichText::new(secondary.label())
                     .small()
                     .color(theme::TEXT_MUTED),
-            )
-            .small(),
+            ),
         )
         .on_hover_ui(|ui| {
             ui.label(&stall.headline);

@@ -7,11 +7,12 @@
 //! happened to the timeline they are both looking at.
 //!
 //! The pair is deliberately two capabilities rather than one with a flag,
-//! because they differ in the field a client is most likely to read before
-//! calling: `reload` is `destructive` and `reconnect` is not. A single call
-//! whose destructiveness depended on its input could not answer that question
-//! in its descriptor, and the answer is the whole reason the trader is offered
-//! a choice at all.
+//! because they differ in what a client has to read before calling: `reload`
+//! is irreversible, carries the `timeline_rebuilt` risk flag, and needs a
+//! permission of its own that is off until the trader ticks it. A single call
+//! whose cost depended on its input could not answer that question in its
+//! descriptor, and the answer is the whole reason the trader is offered a
+//! choice at all.
 
 use std::collections::BTreeSet;
 
@@ -126,17 +127,17 @@ fn recover(
     let (tab, config) = app
         .control_tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    // A recorded session owns the chart while it plays. Reported rather than
-    // refused: "there was nothing to recover" is a true and useful answer, and
-    // an error would read as "the call is broken".
-    let respawned = tab.replay.is_none();
-    if respawned {
-        if keep_timeline {
-            tab.reconnect_feed(config);
-        } else {
-            tab.reload_feed(config);
-        }
-    }
+    // Asked of the tab rather than inferred from one of its fields: a
+    // recorded session owns the chart while it plays, and a tab whose feed id
+    // has left the feed table has nothing to spawn either. Reported rather
+    // than refused — "there was nothing to recover" is a true and useful
+    // answer, and an error would read as "the call is broken" — but reported
+    // from what actually happened, never from what was asked for.
+    let respawned = if keep_timeline {
+        tab.reconnect_feed(config)
+    } else {
+        tab.reload_feed(config)
+    };
     let result = RecoveryResult {
         tab_id: WireU64::new(tab.id),
         symbol: tab.symbol.clone(),
@@ -204,17 +205,11 @@ fn descriptor(
         // chart both times — which is why this is `Optional` rather than a
         // claim that the second call did nothing.
         idempotency: IdempotencyPolicy::Optional,
-        // A destructive call must name the feed state it believes it is acting
-        // on, so a client that has not looked since the trader recovered by
-        // hand cannot rebuild a chart that had already come back.
-        revision_policy: if destructive {
-            RevisionPolicy::Required
+        revision_policy: RevisionPolicy::OptionalForAdditive,
+        stale_input_safety: Some(if destructive {
+            "A stale caller can only rebuild a chart that had already come back, which costs it the history refetch and any open paper position — journaled, with its reason. The call names the tab and the market it acted on and says whether it really respawned, so a caller that guessed wrong can see it did.".to_owned()
         } else {
-            RevisionPolicy::OptionalForAdditive
-        },
-        stale_input_safety: (!destructive).then(|| {
-            "A stale caller can only reconnect a transport that had already reconnected, which costs it the overlap window it would otherwise have dropped. The call names the tab and the market it acted on, so a caller that guessed wrong can see it did."
-                .to_owned()
+            "A stale caller can only reconnect a transport that had already reconnected, which costs it the overlap window it would otherwise have dropped. The call names the tab and the market it acted on, so a caller that guessed wrong can see it did.".to_owned()
         }),
         dry_run_supported: false,
         persistence: EffectPersistence::Durable,
@@ -223,7 +218,20 @@ fn descriptor(
         // reopens it either, and a client reading this field before calling is
         // exactly who needs to know that.
         reversible: !destructive,
-        destructive,
+        // Deliberately `false` even for the rebuild, and the reason is a
+        // contract one rather than a claim about the act. `registry.rs` forces
+        // a `destructive` capability to `RevisionPolicy::Required`, while this
+        // host's `ObserverContract::prepare` refuses any envelope carrying
+        // `expected_revisions` at all — so a capability marked destructive here
+        // is one no conforming client can invoke, and the staleness guarantee
+        // the flag advertises is one this host cannot honour. Claiming it would
+        // be the worse lie. What is enforced carries the truth instead: the
+        // `timeline_rebuilt` risk flag, `reversible: false`, a
+        // `cockpit.recover` permission of its own that is marked sensitive and
+        // off until the trader ticks it, and a description naming what it
+        // closes. Lifting this needs the revision check the reference host in
+        // `control::fake` already models and this one has never implemented.
+        destructive: false,
         risk_reducing: false,
         required_permissions: permissions
             .into_iter()

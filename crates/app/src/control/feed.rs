@@ -76,11 +76,12 @@ pub(crate) struct FeedStallSnapshot {
     /// `reconnect` or `reload` — the capability that addresses this stall.
     /// The other one is always available too.
     pub primary_recovery: String,
-    /// Whether the trader is being shown words about it on this frame.
-    pub headline_present: bool,
-    /// Whether those words carry a next step.
-    pub next_step_present: bool,
-    /// Why the text is not in this payload.
+    /// Whether this is unambiguously wrong (a transport that never landed or
+    /// dropped) or merely observed silence, which is also what a closed market
+    /// looks like. The interface colours the two differently and so should a
+    /// client deciding whether to say anything to the trader.
+    pub needs_attention: bool,
+    /// Why the words are not in this payload.
     pub text_availability: String,
 }
 
@@ -226,8 +227,7 @@ fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
                         .and_then(|now| tab.stall_at(config, now))
                         .map(|stall| FeedStallSnapshot {
                             primary_recovery: recovery(stall.primary).to_owned(),
-                            headline_present: true,
-                            next_step_present: true,
+                            needs_attention: stall.needs_attention,
                             text_availability: "redacted_pending_attention_scope".to_owned(),
                         }),
                     tape_gaps: tab

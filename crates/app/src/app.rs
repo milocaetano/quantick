@@ -10806,11 +10806,11 @@ impl QuantickApp {
             None => {}
             Some(crate::feed::stall::Recovery::Reconnect) => {
                 let (tab, config) = self.active_with_config();
-                tab.reconnect_feed(config);
+                let _ = tab.reconnect_feed(config);
             }
             Some(crate::feed::stall::Recovery::Reload) => {
                 let (tab, config) = self.active_with_config();
-                tab.reload_feed(config);
+                let _ = tab.reload_feed(config);
             }
         }
         // Above the status bar, below the canvas: the layout tabs.
@@ -11059,13 +11059,27 @@ impl QuantickApp {
                 // their rects on the draw just above, so these are this
                 // frame's geometry rather than the previous one's.
                 loading::overlay_scoped(ui, area, &tab.loading, LoadingScope::Whole);
-                if let Some(flow) = tab.flow_pane.last_area {
-                    loading::overlay_scoped(ui, flow, &tab.loading, LoadingScope::Flow);
-                }
-                for (pane, side) in tab.panes() {
-                    if matches!(side, PaneSide::Time(_))
-                        && let Some(rect) = pane.last_area
-                    {
+                // A scope whose surface is not on screen falls back to the
+                // canvas rather than dropping its wait: the flow pane is not
+                // painted in the Time layout, and a flow-only layout has no
+                // time pane, and in both cases the wait is still running. A
+                // spinner in the wrong place is a placement complaint; a
+                // missing one reads as a frozen application.
+                loading::overlay_scoped(
+                    ui,
+                    tab.flow_pane.last_area.unwrap_or(area),
+                    &tab.loading,
+                    LoadingScope::Flow,
+                );
+                let time_panes: Vec<egui::Rect> = tab
+                    .panes()
+                    .filter(|(_, side)| matches!(side, PaneSide::Time(_)))
+                    .filter_map(|(pane, _)| pane.last_area)
+                    .collect();
+                if time_panes.is_empty() {
+                    loading::overlay_scoped(ui, area, &tab.loading, LoadingScope::TimePanes);
+                } else {
+                    for rect in time_panes {
                         loading::overlay_scoped(ui, rect, &tab.loading, LoadingScope::TimePanes);
                     }
                 }
@@ -11108,11 +11122,11 @@ impl QuantickApp {
             notice_card::NoticeAction::None => {}
             notice_card::NoticeAction::Reconnect => {
                 let (tab, config) = self.active_with_config();
-                tab.reconnect_feed(config);
+                let _ = tab.reconnect_feed(config);
             }
             notice_card::NoticeAction::Reload => {
                 let (tab, config) = self.active_with_config();
-                tab.reload_feed(config);
+                let _ = tab.reload_feed(config);
             }
         }
         // Live feed: keep polling the channel ~60×/s without busy-spinning.
@@ -13598,6 +13612,154 @@ plot(close)
                 to_ms: resumed.timestamp_ms,
             }],
             "four minutes nobody was listening is marked, not stitched over"
+        );
+    }
+
+    /// A print the market made while nobody was listening is history, not a
+    /// live arrival. Run through the live path it would fill a resting order
+    /// at a price the trader could never have been filled at, and report the
+    /// length of the outage as this feed's delay.
+    #[test]
+    fn a_recovered_print_seeds_the_mark_and_fills_nothing() {
+        let (mut app, _notices, (events, _book)) = test_app_with_notices();
+        events
+            .blocking_send(FeedEvent::LiveBatch(vec![trade(1)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+        let floor = app.active_tab().latest_trade_ms.expect("a print landed");
+        let live_before = app.active_tab().live_trades;
+        let lag_before = app.active_tab().latest_trade_latency_ms;
+
+        app.active_tab_mut().resume_floor_ms = Some(floor);
+        let recovered = quantick_engine::Trade {
+            agg_id: 2,
+            timestamp_ms: floor + 4 * 60_000,
+            ..trade(2)
+        };
+        events
+            .blocking_send(FeedEvent::LiveBatch(vec![trade(1), recovered.clone()]))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+
+        let tab = app.active_tab();
+        assert_eq!(
+            tab.live_trades, live_before,
+            "a recovered print is history; it is not a live arrival"
+        );
+        assert_eq!(
+            tab.latest_trade_latency_ms, lag_before,
+            "the age of the outage is not this feed's delay"
+        );
+        assert_eq!(
+            tab.latest_trade_ms,
+            Some(recovered.timestamp_ms),
+            "the chart still moved forward to it"
+        );
+    }
+
+    /// The floor lives for one event. Left standing it swallowed the next
+    /// *load older* answer whole, because every older print is below it.
+    #[test]
+    fn a_resume_floor_never_outlives_the_event_it_filtered() {
+        let (mut app, _notices, (events, _book)) = test_app_with_notices();
+        events
+            .blocking_send(FeedEvent::LiveBatch(vec![trade(5)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+        let floor = app.active_tab().latest_trade_ms.expect("a print landed");
+        app.active_tab_mut().resume_floor_ms = Some(floor);
+
+        // A session that replays a window containing nothing new — a venue
+        // that replays nothing at all sends exactly this.
+        events
+            .blocking_send(FeedEvent::Backfilled(Vec::new()))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+        assert_eq!(
+            app.active_tab().resume_floor_ms,
+            None,
+            "the window is replayed once, at the start"
+        );
+        assert!(
+            app.active_tab().feed_gaps.is_empty(),
+            "nothing was missed, so nothing is marked"
+        );
+
+        // And the page that follows is prepended rather than dropped.
+        let older = vec![
+            quantick_engine::Trade {
+                agg_id: 1,
+                timestamp_ms: floor - 10_000,
+                ..trade(1)
+            },
+            quantick_engine::Trade {
+                agg_id: 2,
+                timestamp_ms: floor - 5_000,
+                ..trade(2)
+            },
+        ];
+        let held = app.active_tab().flow_pane.state.trades().len();
+        events
+            .blocking_send(FeedEvent::HistoryPrepended(older))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+        assert_eq!(
+            app.active_tab().flow_pane.state.trades().len(),
+            held + 2,
+            "load older must not be swallowed by a floor from a past reconnect"
+        );
+    }
+
+    /// A floor and a seam both belong to the timeline that made them. Carried
+    /// into another market they filter its prints against the old clock and
+    /// paint a gap on a chart that never reconnected.
+    #[test]
+    fn a_market_switch_leaves_no_floor_and_no_seam_behind() {
+        let (mut app, _notices, (events, _book)) = test_app_with_notices();
+        events
+            .blocking_send(FeedEvent::LiveBatch(vec![trade(1)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+        app.active_tab_mut().resume_floor_ms = app.active_tab().latest_trade_ms;
+        app.active_tab_mut().feed_gaps.push(crate::feed::FeedGap {
+            from_ms: 1,
+            to_ms: 1_000_000,
+        });
+
+        app.active_tab_mut().reset_market_state();
+        assert_eq!(app.active_tab().resume_floor_ms, None);
+        assert!(app.active_tab().feed_gaps.is_empty());
+    }
+
+    /// The budget is measured from the transport's own transition, so a
+    /// supervisor alternating two lines cannot keep resetting it — the failure
+    /// the escalation exists to end.
+    #[test]
+    fn an_alternating_supervisor_cannot_hold_the_reconnect_budget_open() {
+        use crate::feed::stall::RECONNECT_BUDGET_MS;
+        let (mut app, notices, _feed_ends) = test_app_with_notices();
+        notices
+            .blocking_send(FeedNotice::reconnecting("bridge lost — reconnecting"))
+            .unwrap();
+        app.active_tab_mut().drain_notices_at(0);
+
+        // Two lines, alternating, while the transport stays exactly as broken.
+        for step in 1..=8 {
+            let notice = if step % 2 == 0 {
+                FeedNotice::reconnecting("bridge lost — reconnecting")
+            } else {
+                FeedNotice::working("waiting for the bridge")
+            };
+            notices.blocking_send(notice).unwrap();
+            app.active_tab_mut().drain_notices_at(step * 3_000);
+        }
+
+        let config = app.control_config().clone();
+        assert!(
+            app.active_tab()
+                .stall_at(&config, RECONNECT_BUDGET_MS)
+                .is_some(),
+            "the budget runs from the transition, not from the newest sentence"
         );
     }
 

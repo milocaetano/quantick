@@ -104,6 +104,17 @@ pub struct Stall {
     pub next_step: String,
     /// The control that addresses this stall; the other stays available.
     pub primary: Recovery,
+    /// Whether this is unambiguously wrong, or merely observed.
+    ///
+    /// A transport that never landed or dropped is broken however you read it,
+    /// and the interface says so in amber. Silence is different: it is equally
+    /// what a closed market looks like, and an exchange shuts every night. A
+    /// permanently amber control is one the trader learns to stop seeing, so
+    /// the quiet case offers the same two controls in the interface's ordinary
+    /// colours and lets the tape cell — which already turns
+    /// [`crate::theme::WARN`] past ten seconds — carry the warning it has
+    /// always carried.
+    pub needs_attention: bool,
 }
 
 /// Everything the judgement needs, gathered by the caller so the decision
@@ -112,8 +123,8 @@ pub struct Stall {
 pub struct StallInput<'a> {
     /// The feed's own current notice.
     pub notice: &'a FeedNotice,
-    /// Wall clock when the current notice was first seen.
-    pub notice_since_ms: i64,
+    /// Wall clock when the transport last changed state.
+    pub connection_since_ms: i64,
     /// The provider-neutral transport state.
     pub connection: FeedConnectionState,
     /// Age of the newest event on the tape, or `None` when nothing has arrived.
@@ -155,7 +166,7 @@ pub fn assess(input: &StallInput<'_>, now_ms: i64) -> Option<Stall> {
             (waited >= FIRST_CONNECT_BUDGET_MS).then(|| never_connected(provider, name, waited))
         }
         FeedConnectionState::Reconnecting => {
-            let waited = now_ms.saturating_sub(input.notice_since_ms);
+            let waited = now_ms.saturating_sub(input.connection_since_ms);
             (waited >= RECONNECT_BUDGET_MS).then(|| never_came_back(provider, name, waited))
         }
         // Connected and quiet. Reconnecting a socket that is already open
@@ -175,6 +186,7 @@ fn never_connected(provider: ProviderKind, name: &str, waited_ms: i64) -> Stall 
         headline: format!("{name} has not connected in {}", spoken_ms(waited_ms)),
         next_step: provider.recovery_hint().to_owned(),
         primary: Recovery::Reconnect,
+        needs_attention: true,
     }
 }
 
@@ -188,6 +200,7 @@ fn never_came_back(provider: ProviderKind, name: &str, waited_ms: i64) -> Stall 
         ),
         next_step: provider.recovery_hint().to_owned(),
         primary: Recovery::Reconnect,
+        needs_attention: true,
     }
 }
 
@@ -201,6 +214,10 @@ fn gone_quiet(provider: ProviderKind, name: &str, silent_ms: i64) -> Stall {
             lower_first(provider.recovery_hint())
         ),
         primary: Recovery::Reload,
+        // Silence alone is not a verdict: the exchange closes every night and
+        // this branch fires two minutes later. The controls appear; the alarm
+        // does not.
+        needs_attention: false,
     }
 }
 
@@ -250,6 +267,13 @@ impl ForcedStall {
     }
 }
 
+/// Where a duration stops being read in seconds, in seconds.
+///
+/// Ninety rather than sixty so the reading does not flick to "1 min" the
+/// instant it passes a minute, which reads as less precise than the seconds it
+/// replaced.
+const MINUTES_ABOVE_S: i64 = 90;
+
 /// A duration in the words a status line uses: seconds while seconds still
 /// mean something, minutes after that.
 ///
@@ -257,13 +281,11 @@ impl ForcedStall {
 /// called the same thing by the card that offers to fix it and by the seam
 /// that records it.
 ///
-/// The threshold is 90 s rather than 60 s so the reading does not flick to
-/// "1 min" the instant it passes a minute, which reads as less precise than the
-/// seconds it replaced.
+/// See [`MINUTES_ABOVE_S`] for where the two readings meet.
 #[must_use]
 pub(crate) fn spoken_ms(ms: i64) -> String {
     let seconds = ms.max(0) / 1_000;
-    if seconds < 90 {
+    if seconds < MINUTES_ABOVE_S {
         format!("{seconds} s")
     } else {
         format!("{} min", seconds / 60)
@@ -294,7 +316,7 @@ mod tests {
     fn healthy(notice: &FeedNotice) -> StallInput<'_> {
         StallInput {
             notice,
-            notice_since_ms: 0,
+            connection_since_ms: 0,
             connection: FeedConnectionState::Connected,
             tape_age_ms: Some(50),
             attached_ms: 0,
@@ -341,7 +363,7 @@ mod tests {
         let notice = FeedNotice::reconnecting("MetaTrader 5 disconnected — reconnecting");
         let input = StallInput {
             connection: FeedConnectionState::Reconnecting,
-            notice_since_ms: 1_000,
+            connection_since_ms: 1_000,
             ..healthy(&notice)
         };
         assert_eq!(assess(&input, 1_000 + RECONNECT_BUDGET_MS - 1), None);
@@ -395,6 +417,30 @@ mod tests {
         );
     }
 
+    /// The two stalls are not the same news. A broken transport is broken
+    /// however you read it; a quiet tape is also a closed exchange, and an
+    /// alarm every night is an alarm nobody sees.
+    #[test]
+    fn silence_offers_the_controls_without_the_alarm() {
+        let notice = FeedNotice::Clear;
+        let silent = StallInput {
+            tape_age_ms: Some(SILENT_BUDGET_MS),
+            ..healthy(&notice)
+        };
+        assert!(!assess(&silent, 0).expect("a stall").needs_attention);
+
+        let connecting = StallInput {
+            connection: FeedConnectionState::Connecting,
+            tape_age_ms: None,
+            ..healthy(&notice)
+        };
+        assert!(
+            assess(&connecting, FIRST_CONNECT_BUDGET_MS)
+                .expect("a stall")
+                .needs_attention
+        );
+    }
+
     #[test]
     fn a_provider_that_named_its_own_reason_is_never_overridden() {
         let notice = FeedNotice::attention(
@@ -444,8 +490,8 @@ mod tests {
     fn durations_read_as_a_status_line_writes_them() {
         assert_eq!(spoken_ms(0), "0 s");
         assert_eq!(spoken_ms(45_000), "45 s");
-        assert_eq!(spoken_ms(89_999), "89 s");
-        assert_eq!(spoken_ms(90_000), "1 min");
+        assert_eq!(spoken_ms(MINUTES_ABOVE_S * 1_000 - 1), "89 s");
+        assert_eq!(spoken_ms(MINUTES_ABOVE_S * 1_000), "1 min");
         assert_eq!(spoken_ms(600_000), "10 min");
         assert_eq!(
             spoken_ms(-5),

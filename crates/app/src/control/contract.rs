@@ -897,7 +897,13 @@ impl ObserverContract {
             risk_reducing_confirmation_class: None,
             mcp_hint_floor: McpHintFloor {
                 read_only: false,
-                destructive: true,
+                // Follows the capabilities under it, which cannot claim
+                // `destructive` while this host refuses the expected-revision
+                // check the registry couples to it — see the note on the
+                // descriptor in `super::recovery`. The irreversibility is
+                // declared through the required risk flag below and through
+                // each capability's `reversible: false`.
+                destructive: false,
                 // Rebuilding twice rebuilds twice. Each call really does throw
                 // a timeline away, so a client must not be told a retry is
                 // free.
@@ -1725,11 +1731,12 @@ mod tests {
                 "{}: only read-only capabilities sit inside the observer ceiling",
                 capability.id
             );
-            // This contract has one destructive capability now — `feed.reload`
-            // rebuilds a stalled chart and closes the position it held — and
-            // the property worth asserting is not that none exists but that
-            // none is reachable from here. A client that connected as an
-            // observer must not be able to end a trade.
+            // No capability in this contract is destructive, and the reason
+            // is documented on `super::recovery`'s descriptor: the flag is
+            // coupled to an expected-revision check this host refuses, so
+            // claiming it would advertise a guarantee nothing delivers. The
+            // assertion that matters either way is that nothing which could
+            // end a trade is reachable from the observer ceiling.
             assert!(
                 !(capability.destructive && reachable),
                 "{}: a destructive capability is inside the observer ceiling",

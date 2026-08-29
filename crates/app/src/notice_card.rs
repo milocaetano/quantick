@@ -161,7 +161,11 @@ pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Re
         return Some(Report {
             headline: &stall.headline,
             next_step: Some(&stall.next_step),
-            needs_user: true,
+            // Amber for a transport that is broken however you read it, muted
+            // for a tape that has merely gone quiet — which is also what a
+            // closed market looks like, and this card would otherwise wear an
+            // alarm every night on a chart with nothing wrong with it.
+            needs_user: stall.needs_attention,
             may_cover_bars: false,
             primary: stall.primary,
         });
@@ -236,8 +240,19 @@ fn geometry(painter: &egui::Painter, area: egui::Rect, report: &Report<'_>) -> G
     // Two buttons share the text column. On a chart too narrow for both at
     // their preferred width they shrink together rather than one of them
     // leaving the card.
-    let button_width =
-        ((text_width - BUTTON_SPACING_PX) / 2.0).clamp(MIN_BUTTON_WIDTH_PX, BUTTON_SIZE_PX.x);
+    //
+    // The floor yields to the column rather than overriding it. Clamped up to
+    // 44 px unconditionally, each button kept its width while the column
+    // shrank, and on a pane under ~140 px the second one was drawn past the
+    // card's right edge, over the chart with no chrome behind it. Below that
+    // width the labels are unreadable either way, and a control whose edges
+    // the trader cannot see is worse than a cramped one.
+    let half_column = ((text_width - BUTTON_SPACING_PX) / 2.0).max(1.0);
+    let button_width = if half_column < MIN_BUTTON_WIDTH_PX {
+        half_column
+    } else {
+        half_column.min(BUTTON_SIZE_PX.x)
+    };
     let button_size = egui::vec2(button_width, BUTTON_SIZE_PX.y);
 
     let mut height = 2.0 * PAD_PX + headline.size().y;
@@ -386,6 +401,7 @@ mod tests {
             headline: "MetaTrader 5 — B3 has sent nothing for 4 min".to_owned(),
             next_step: "If the market is open, check the terminal.".to_owned(),
             primary: Recovery::Reload,
+            needs_attention: false,
         }
     }
 
@@ -429,7 +445,10 @@ mod tests {
         let notice = FeedNotice::Clear;
         let stall = silent_stall();
         let report = report(&notice, Some(&stall)).expect("a stall is worth saying");
-        assert!(report.needs_user, "amber, not muted");
+        assert!(
+            !report.needs_user,
+            "a quiet tape is also a closed market: controls, not an alarm"
+        );
         assert!(should_draw(&report, 0));
         assert!(
             !should_draw(&report, 1),
@@ -447,6 +466,7 @@ mod tests {
             headline: "MetaTrader 5 — B3 has not connected in 30 s".to_owned(),
             next_step: "Check that MetaTrader 5 is running.".to_owned(),
             primary: Recovery::Reconnect,
+            needs_attention: true,
         };
         let report = report(&notice, Some(&stall)).expect("a stall is worth saying");
         assert_eq!(report.headline, stall.headline);
@@ -622,7 +642,10 @@ mod tests {
              (front-month contracts look like WINQ26).",
         );
         let report = report(&notice, None).expect("a card");
-        for chart_width in [900.0_f32, 420.0, 300.0, 180.0] {
+        // 120 px is the width the old per-button floor overflowed at: two
+        // 44 px buttons plus their gap did not fit the text column, and the
+        // second one was drawn over the chart outside the card.
+        for chart_width in [900.0_f32, 420.0, 300.0, 180.0, 120.0, 90.0] {
             let _ = ctx.run(egui::RawInput::default(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let area = egui::Rect::from_min_max(
