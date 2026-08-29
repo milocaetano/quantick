@@ -1274,6 +1274,20 @@ pub enum DrawingBand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DrawingId(pub u64);
 
+/// What [`Drawings::duplicate_selected`] made: the object it copied, and the
+/// copy.
+///
+/// The pair is returned rather than acted on because everything that rides a
+/// drawing without living in it — an armed strategy today, whatever docks
+/// next — is owned a layer up. `Drawings` stays a store of marks and learns
+/// nothing about strategies; the pane that owns both reads this and carries
+/// the passengers across.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Duplicated {
+    pub source: DrawingId,
+    pub copy: DrawingId,
+}
+
 /// Who placed an object, when it was not the trader's own hand.
 ///
 /// Data honesty, at the level the eye works: an object an assistant put on
@@ -1730,10 +1744,8 @@ impl Drawings {
 
     /// Duplicate the selected object as one undo entry: the copy lands
     /// `offset_bars` to the right, unlocked, and becomes the selection.
-    pub fn duplicate_selected(&mut self, offset_bars: f32) {
-        let Some(index) = self.selected.filter(|&index| index < self.items.len()) else {
-            return;
-        };
+    pub fn duplicate_selected(&mut self, offset_bars: f32) -> Option<Duplicated> {
+        let index = self.selected.filter(|&index| index < self.items.len())?;
         let before = self.snapshot();
         let mut copy = self.items[index].clone();
         // A copy is a new object: its own identity, and never the
@@ -1745,9 +1757,14 @@ impl Drawings {
             point.bar += offset_bars;
         }
         copy.locked = false;
+        let duplicated = Duplicated {
+            source: self.items[index].id,
+            copy: copy.id,
+        };
         self.items.push(copy);
         self.selected = Some(self.items.len() - 1);
         self.record(before);
+        Some(duplicated)
     }
 
     /// Re-express every anchor against a series that was cut again — a

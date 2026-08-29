@@ -126,6 +126,15 @@ pub enum DisarmReason {
     /// happened, and a one-shot instance stops and says so rather than
     /// pretending an operation ran.
     TargetBeforeRetest,
+    /// The drawn span no longer reaches the next bar to close. The region
+    /// is a rectangle a human keeps moving, and one dragged back over
+    /// history — or simply left behind as the tape walked past its right
+    /// edge — can never cover another bar. The consumer that owns the
+    /// drawing is the only thing that can see this, so it says so here
+    /// rather than leaving an instance reading "armed" over a region the
+    /// gate refuses forever. Extending the region right and re-arming is
+    /// the way back.
+    RegionEnded,
     /// The retest limit stood down at its own fill moment because a
     /// position was open — a human traded while the order rested, and a
     /// bot never trades against an open manual position. No fill, no
@@ -161,6 +170,7 @@ impl DisarmReason {
             Self::EntryCancelled => "entry cancelled",
             Self::ProtectionDropped => "protection dropped — closed",
             Self::TargetBeforeRetest => "target hit before retest",
+            Self::RegionEnded => "region ended",
             Self::AccountOccupied => "stood down — account busy",
         }
     }
@@ -206,10 +216,10 @@ fn signal_is_ours(
     signal: &Signal,
 ) -> Result<(), &'static str> {
     if signal.side != params.side {
-        return Err("trigger held: opposite side");
+        return Err("opposite side");
     }
     if !region_active {
-        return Err("trigger held: region not active on this bar");
+        return Err("region not active on this bar");
     }
     Ok(())
 }
@@ -240,14 +250,41 @@ fn entry_geometry(
         // blaming a bar that did its part.
         BodyCut::CutThrough { edge } => match params.on_break {
             BreakPolicy::RetestLimit => Ok(Opportunity::Retest { edge }),
-            BreakPolicy::Ignore => Err("trigger held: cut the region, retest option off"),
+            BreakPolicy::Ignore => Err("cut the region, retest option off"),
         },
         // The bar closed past the edge but opened past it too: it travelled
         // beyond a region it never crossed into. Resting a limit on that
         // edge would put an order in a band this bar has no claim on. True
         // whatever the policy says, so the geometry is the honest reason.
-        BodyCut::NoCut => Err("trigger held: the body never cut the region"),
-        BodyCut::ClosedAway => Err("trigger held: closed outside region"),
+        BodyCut::NoCut => Err("the body never cut the region"),
+        BodyCut::ClosedAway => Err("closed outside region"),
+    }
+}
+
+/// What the last judged bar left standing on an instance.
+///
+/// Two shapes, because they are two different sentences. A [`Note::Held`] is
+/// a gate refusing a signal — the badge frames it as "trigger held" and, once
+/// the bar has passed, keeps it as *the last thing that was refused*. A
+/// [`Note::Aside`] is a remark about the instance itself, true for as long as
+/// it is armed and not worth remembering across bars.
+///
+/// The distinction earns its keep because a single quiet bar used to erase
+/// the reason the last setup was declined, and the trader reads the badge
+/// *after* the move, never during it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Note {
+    Held(&'static str),
+    Aside(&'static str),
+}
+
+impl Note {
+    /// The line as the badge shows it on the bar it happened.
+    fn line(self) -> String {
+        match self {
+            Self::Held(reason) => format!("trigger held: {reason}"),
+            Self::Aside(remark) => remark.to_owned(),
+        }
     }
 }
 
@@ -256,9 +293,18 @@ pub struct ArmedStrategy {
     params: StrategyParams,
     trigger: Box<dyn Trigger>,
     state: ArmedState,
-    /// One-line note about the last non-fire (an invalid projection), for
-    /// status honesty.
-    note: Option<&'static str>,
+    /// What the bar just judged left standing, cleared by the next bar the
+    /// trigger had nothing to say about.
+    note: Option<Note>,
+    /// The most recent gate that refused a signal, kept **across** the quiet
+    /// bars that follow it.
+    ///
+    /// `note` alone was the whole story, and it was erased by the first bar
+    /// carrying no signal — so the badge forgot why the setup the trader was
+    /// watching had been declined, usually within seconds of them looking
+    /// away. A refusal is cleared by something happening, not by nothing
+    /// happening: an order going out, a re-arm, a re-warm.
+    last_hold: Option<&'static str>,
     /// Whether the bar most recently fed to [`ArmedStrategy::on_closed_bar`]
     /// presented this instance's setup — judged with the account and the
     /// state machine deliberately left out. The alarm's closed-bar reading;
@@ -284,6 +330,7 @@ impl ArmedStrategy {
             trigger,
             state: ArmedState::Armed,
             note: None,
+            last_hold: None,
             last_close_opportunity: None,
         }
     }
@@ -383,13 +430,14 @@ impl ArmedStrategy {
         // Every gate that holds a seen trigger names itself in the note, so
         // the badge never shows a bare "armed" over a force bar that did
         // nothing — the mystery that reads as a broken bot. A bar with no
-        // signal clears the note and lets the trigger's own status narrate.
+        // signal clears the note and lets the trigger's own status narrate;
+        // `last_hold` is what carries the refusal past it.
         let Some(signal) = signal else {
             self.note = None;
             return Vec::new();
         };
-        if let Err(note) = signal_is_ours(&self.params, region_active, &signal) {
-            self.note = Some(note);
+        if let Err(reason) = signal_is_ours(&self.params, region_active, &signal) {
+            self.hold(reason);
             return Vec::new();
         }
         // The geometry runs before the account and before the projection: a
@@ -400,8 +448,8 @@ impl ArmedStrategy {
         // gate that actually decided.
         let opportunity = match entry_geometry(&self.params, region, bar) {
             Ok(opportunity) => opportunity,
-            Err(note) => {
-                self.note = Some(note);
+            Err(reason) => {
+                self.hold(reason);
                 return Vec::new();
             }
         };
@@ -411,11 +459,7 @@ impl ArmedStrategy {
         // and not spent: it keeps watching, which is the whole reason a
         // trader arms one.
         if self.params.execution == Execution::AlarmOnly {
-            self.note = Some("alarm only — no order placed");
-            return Vec::new();
-        }
-        if !account_flat {
-            self.note = Some("trigger held: account not flat");
+            self.note = Some(Note::Aside("alarm only — no order placed"));
             return Vec::new();
         }
         let edge = match opportunity {
@@ -423,7 +467,7 @@ impl ArmedStrategy {
                 let Some(bracket) = self.project(&signal) else {
                     return Vec::new();
                 };
-                self.note = None;
+                self.clear_notes();
                 self.state = ArmedState::Fired {
                     order_id: None,
                     retest: false,
@@ -454,10 +498,10 @@ impl ArmedStrategy {
             }
         };
         if !legs_clear_edge {
-            self.note = Some("retest bracket does not clear the edge — held fire");
+            self.hold("the retest bracket does not clear the edge");
             return Vec::new();
         }
-        self.note = None;
+        self.clear_notes();
         self.state = ArmedState::Fired {
             order_id: None,
             retest: true,
@@ -494,7 +538,7 @@ impl ArmedStrategy {
             self.params.sl_mult,
         );
         if bracket.is_none() {
-            self.note = Some("projection invalid — held fire");
+            self.hold("the projection is not priceable");
         }
         bracket
     }
@@ -651,11 +695,11 @@ impl ArmedStrategy {
         match &self.state {
             ArmedState::Disarmed { reason } if reason.resets_series() => {
                 self.trigger.reset();
-                self.note = None;
+                self.clear_notes();
                 self.state = ArmedState::Armed;
             }
             ArmedState::Done | ArmedState::Disarmed { .. } => {
-                self.note = None;
+                self.clear_notes();
                 self.state = ArmedState::Armed;
             }
             ArmedState::Armed | ArmedState::Fired { .. } | ArmedState::InPosition => {}
@@ -671,16 +715,40 @@ impl ArmedStrategy {
         for bar in bars {
             let _ = self.trigger.on_closed_bar(bar);
         }
+        self.clear_notes();
+    }
+
+    /// Forget both the bar's note and the standing refusal — used where
+    /// something actually happened: an order went out, or the instance was
+    /// re-warmed onto a series it has not judged yet.
+    fn clear_notes(&mut self) {
         self.note = None;
+        self.last_hold = None;
+    }
+
+    /// Record a gate's refusal: the badge shows it on this bar, and keeps
+    /// it as the last refusal after the bar has passed. One door, so a new
+    /// gate cannot be added that names itself on the badge today and is
+    /// forgotten by the next quiet bar.
+    fn hold(&mut self, reason: &'static str) {
+        self.note = Some(Note::Held(reason));
+        self.last_hold = Some(reason);
     }
 
     /// One line for the on-chart badge.
     #[must_use]
     pub fn status_line(&self) -> String {
         match &self.state {
-            ArmedState::Armed => match self.note {
-                Some(note) => format!("armed · {note}"),
-                None => format!("armed · {}", self.trigger.status()),
+            // Fresh first: the bar just judged is the most useful sentence
+            // there is. Once it has passed, the ruler's live reading leads
+            // and the last refusal rides behind it — the trader reads this
+            // badge after the move, not during it.
+            ArmedState::Armed => match (self.note, self.last_hold) {
+                (Some(note), _) => format!("armed · {}", note.line()),
+                (None, Some(held)) => {
+                    format!("armed · {} · last held: {held}", self.trigger.status())
+                }
+                (None, None) => format!("armed · {}", self.trigger.status()),
             },
             ArmedState::Fired { retest: false, .. } => "fired · waiting for fill".to_owned(),
             // Only promise the self-cancel when the order actually carries
@@ -909,16 +977,6 @@ mod tests {
         assert!(
             instance
                 .on_closed_bar(&bar("102", "106"), &region, false, true)
-                .is_empty()
-        );
-
-        // Account not flat.
-        let mut instance = force_instance(Side::Buy);
-        instance.on_closed_bar(&bar("100", "101"), &region, true, true);
-        instance.on_closed_bar(&bar("101", "102"), &region, true, true);
-        assert!(
-            instance
-                .on_closed_bar(&bar("102", "106"), &region, true, false)
                 .is_empty()
         );
 
@@ -1710,6 +1768,38 @@ mod tests {
         );
     }
 
+    /// A region whose drawn span no longer reaches the next bar is a
+    /// structurally finished instance, and it says so by name. The tape is
+    /// not rebuilt by it — only the human's rectangle moved — so re-arming
+    /// after one must not reset the ruler and spend another warmup.
+    #[test]
+    fn a_region_that_ended_disarms_by_name_without_resetting_the_ruler() {
+        assert_eq!(DisarmReason::RegionEnded.label(), "region ended");
+        assert!(
+            !DisarmReason::RegionEnded.resets_series(),
+            "the rectangle moved, the tape did not"
+        );
+
+        let region = Region::new(dec("105"), dec("115"));
+        let mut instance = retest_instance(Side::Sell);
+        // Nothing pending, so nothing to sweep: the disarm is a statement,
+        // not a cancellation.
+        let commands = instance.disarm(DisarmReason::RegionEnded);
+        assert!(commands.is_empty(), "no order was resting: {commands:?}");
+        assert_eq!(
+            instance.state(),
+            &ArmedState::Disarmed {
+                reason: DisarmReason::RegionEnded
+            }
+        );
+        assert_eq!(instance.status_line(), "region ended");
+        // And it stays stopped: a bar that would have fired does nothing.
+        assert!(
+            warm_then_sell_cut(&mut instance, &region).is_empty(),
+            "a disarmed instance places nothing"
+        );
+    }
+
     /// A projected leg that does not clear the entry edge would be dropped
     /// at fill time — so it holds fire instead, and says why.
     #[test]
@@ -1734,7 +1824,7 @@ mod tests {
         assert_eq!(instance.state(), &ArmedState::Armed);
         assert_eq!(
             instance.status_line(),
-            "armed · retest bracket does not clear the edge — held fire"
+            "armed · trigger held: the retest bracket does not clear the edge"
         );
     }
 
@@ -1762,21 +1852,27 @@ mod tests {
             "armed · trigger held: region not active on this bar"
         );
 
-        // Account not flat.
-        let mut instance = force_instance(Side::Buy);
-        instance.on_closed_bar(&bar("100", "101"), &region, true, true);
-        instance.on_closed_bar(&bar("101", "102"), &region, true, true);
-        instance.on_closed_bar(&bar("102", "106"), &region, true, false);
-        assert_eq!(
-            instance.status_line(),
-            "armed · trigger held: account not flat"
+        // The next quiet bar hands the badge back to the ruler — and keeps
+        // the refusal behind it. A trader reads this badge after the move,
+        // and a single quiet bar used to erase the only sentence explaining
+        // why the setup they watched go by was declined.
+        instance.on_closed_bar(&bar("106", "107"), &region, true, true);
+        let line = instance.status_line();
+        assert!(
+            line.starts_with("armed · quiet"),
+            "the ruler speaks again: {line}"
+        );
+        assert!(
+            line.ends_with("· last held: region not active on this bar"),
+            "and the refusal is still readable: {line}"
         );
 
-        // The next quiet bar clears the note: the ruler speaks again.
-        instance.on_closed_bar(&bar("106", "107"), &region, true, true);
+        // Something *happening* is what clears it: an order going out.
+        let mut instance = force_instance(Side::Buy);
+        warm_then_force(&mut instance, &region);
         assert!(
-            instance.status_line().starts_with("armed · quiet"),
-            "a signal-less bar hands the badge back to the ruler: {}",
+            !instance.status_line().contains("last held"),
+            "a fired instance carries no standing refusal: {}",
             instance.status_line()
         );
     }
@@ -1809,17 +1905,16 @@ mod tests {
     /// trader executing on another platform does not care that this
     /// simulator is occupied — the setup is the thing they armed to hear.
     #[test]
-    fn a_busy_account_holds_the_order_and_still_reports_the_opportunity() {
+    fn a_busy_account_no_longer_holds_a_regions_own_order() {
         let region = Region::new(dec("100"), dec("110"));
         let mut instance = force_instance(Side::Buy);
         instance.on_closed_bar(&bar("100", "101"), &region, true, false);
         instance.on_closed_bar(&bar("101", "102"), &region, true, false);
         let commands = instance.on_closed_bar(&bar("102", "106"), &region, true, false);
 
-        assert!(commands.is_empty(), "a busy account places nothing");
-        assert_eq!(
-            instance.status_line(),
-            "armed · trigger held: account not flat"
+        assert!(
+            matches!(commands.as_slice(), [Command::PlaceMarket { .. }]),
+            "a region owns its one order; what the rest of the account is              doing is not its gate: {commands:?}"
         );
         assert_eq!(
             instance.last_close_opportunity(),

@@ -2559,6 +2559,20 @@ impl Tab {
                     }
                 }
             }
+            // The tape has moved; ask again whether each region can still
+            // cover a bar that has yet to close. Arming and re-arming both
+            // refuse a span that has ended, and until now nothing re-asked
+            // once the instance was running — so a rectangle the trader
+            // dragged back over history, or simply left behind, went on
+            // reading "armed" while every bar was refused. After the batch,
+            // not before: the bars just judged had already closed inside the
+            // span, and a question about the *next* bar must not retire the
+            // instance that was still entitled to judge them.
+            if !bars.is_empty() {
+                for command in pane.retire_ended_strategy_regions() {
+                    let _ = paper.apply_strategy_command(command);
+                }
+            }
             // The bar still forming, judged for the alarm only. Nothing
             // here can place an order or move a state machine: the kernel's
             // preview path is `&self` all the way down, and this is the one
