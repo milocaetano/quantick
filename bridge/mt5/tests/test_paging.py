@@ -16,6 +16,7 @@ exactly this file so the four checks cover it.
 from __future__ import annotations
 
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -126,9 +127,17 @@ def load_bridge(terminal: FakeTerminal):
 
 
 class FakeArgs:
-    def __init__(self, rates_max_bars=200_000, rates_months=3):
+    def __init__(
+        self,
+        rates_max_bars=200_000,
+        rates_months=3,
+        backfill_minutes=720,
+        backfill_max_ticks=1_000_000,
+    ):
         self.rates_max_bars = rates_max_bars
         self.rates_months = rates_months
+        self.backfill_minutes = backfill_minutes
+        self.backfill_max_ticks = backfill_max_ticks
 
 
 def session_for(bridge, terminal, **args):
@@ -153,6 +162,24 @@ def session_for(bridge, terminal, **args):
     session.sent_at_cursor = 0
     session.maybe_heartbeat = lambda: None
     return session
+
+
+def session_at(bridge, terminal, now_s: int, **args):
+    """A session whose server clock reads exactly `now_s`.
+
+    `backfill` asks the wall clock and adds the broker's offset, so the offset
+    is what a test can set. Deterministic despite the real clock: the fraction
+    of a second `time.time()` carries is exactly what `int()` drops on the way
+    in and cannot survive the addition.
+    """
+    session = session_for(bridge, terminal, **args)
+    session.offset_s = now_s - int(time.time())
+    return session
+
+
+def block_ticks(session) -> list[dict]:
+    """The tick lines of the backfill block a session just sent."""
+    return [msg for msg in session.sent if msg["type"] == "tick"]
 
 
 def tick_at(time_msc: int, last: float = 100.0, is_trade: bool = True) -> dict:
@@ -717,6 +744,229 @@ def test_the_live_pump_asks_only_for_prints():
         "and gets every tick",
         len(quoting.sent) == len(term.ticks),
         len(quoting.sent),
+    )
+
+
+# --- the opening backfill's anchor ----------------------------------------
+#
+# Seeing no data at all is worse than not being connected. These drive the
+# case the trader hit: a chart opened outside the session, on a terminal that
+# holds that session on disk and was never asked for it.
+
+#: A session's worth of prints, one every two seconds for twenty minutes.
+CLOSED_SESSION_TICKS = 600
+CLOSED_SESSION_STEP_MS = 2_000
+
+
+def session_ending_at(last_s: int) -> list[dict]:
+    """Prints ending at `last_s`, ascending, as the terminal would hold them."""
+    last_ms = last_s * 1000
+    return [
+        tick_at(last_ms - (CLOSED_SESSION_TICKS - 1 - i) * CLOSED_SESSION_STEP_MS)
+        for i in range(CLOSED_SESSION_TICKS)
+    ]
+
+
+def test_a_closed_market_opens_on_the_last_session():
+    """B3 shut fourteen hours ago; the clock's window covers twelve of them."""
+    now_s = NOW
+    close_s = now_s - 14 * 3600
+    term = FakeTerminal(0, now_s)
+    term.ticks = session_ending_at(close_s)
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.backfill()
+
+    sent = block_ticks(session)
+    check(
+        "a closed market still opens on a session",
+        len(sent) == CLOSED_SESSION_TICKS,
+        len(sent),
+    )
+    check(
+        "and the block is the session that actually happened",
+        bool(sent) and sent[-1]["time_ms"] == close_s * 1000,
+        sent[-1]["time_ms"] if sent else None,
+    )
+    check(
+        "the block announces what it carries",
+        session.sent[0]
+        == {"type": "backfill_start", "count_hint": CLOSED_SESSION_TICKS},
+        session.sent[0],
+    )
+    check(
+        "and closes itself",
+        session.sent[-1] == {"type": "backfill_end"},
+        session.sent[-1],
+    )
+    check(
+        "the live cursor follows the tape, not the clock",
+        session.cursor_msc == close_s * 1000,
+        session.cursor_msc,
+    )
+
+
+def test_the_reanchored_window_keeps_the_width_it_was_asked_for():
+    """`--backfill-minutes` still means what it says; only its end moves."""
+    now_s = NOW
+    close_s = now_s - 14 * 3600
+    term = FakeTerminal(0, now_s)
+    term.ticks = session_ending_at(close_s)
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.backfill()
+
+    served = term.tick_calls[-1]
+    check(
+        "the re-anchored window ends on the last print",
+        served[1] == close_s,
+        (served, close_s),
+    )
+    check(
+        "and is exactly as wide as it was asked to be",
+        served[1] - served[0] == 720 * 60,
+        served,
+    )
+    check(
+        "the clock's own window was asked for first",
+        term.tick_calls[0] == (now_s - 720 * 60, now_s, COPY_TICKS_TRADE),
+        term.tick_calls[0],
+    )
+
+
+def test_a_trading_market_is_never_re_anchored():
+    """The reach costs nothing on the path that was always fine."""
+    now_s = NOW
+    term = FakeTerminal(0, now_s)
+    term.ticks = session_ending_at(now_s - 5)
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.backfill()
+
+    check(
+        "a window with prints in it asks once and stops",
+        len(term.tick_calls) == 1,
+        term.tick_calls,
+    )
+    check(
+        "and sends what it found",
+        len(block_ticks(session)) == CLOSED_SESSION_TICKS,
+        len(block_ticks(session)),
+    )
+
+
+def test_the_reach_crosses_a_weekend():
+    """Monday morning: the last print is Friday's close, sixty-two hours back."""
+    now_s = NOW
+    close_s = now_s - 62 * 3600
+    term = FakeTerminal(0, now_s)
+    term.ticks = session_ending_at(close_s)
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.backfill()
+
+    check(
+        "a weekend is dead time to cross, not history to search",
+        len(block_ticks(session)) == CLOSED_SESSION_TICKS,
+        len(block_ticks(session)),
+    )
+    check(
+        "and crossing it costs a handful of calls, not a budget",
+        len(term.tick_calls) <= bridge.LOAD_OLDER_MAX_PAGES,
+        len(term.tick_calls),
+    )
+
+
+def test_a_symbol_the_terminal_has_never_held_sends_an_empty_block():
+    """Nothing is invented, and the loader is still released."""
+    now_s = NOW
+    term = FakeTerminal(0, now_s)
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.backfill()
+
+    check("an empty symbol sends no ticks", block_ticks(session) == [], session.sent)
+    check(
+        "but both markers still go out",
+        [msg["type"] for msg in session.sent] == ["backfill_start", "backfill_end"],
+        session.sent,
+    )
+    check(
+        "and the cursor falls back to the clock",
+        session.cursor_msc == now_s * 1000,
+        session.cursor_msc,
+    )
+
+
+def test_the_reach_gives_up_rather_than_walking_forever():
+    """One ancient print, and nothing between it and now.
+
+    The floor is known, so the walk could in principle march back a year five
+    minutes at a time. It is the page budget that stops it — the same one
+    `load_older` is bounded by.
+    """
+    now_s = NOW
+    term = FakeTerminal(0, now_s)
+    term.ticks = [tick_at((now_s - 400 * 86_400) * 1000)]
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.backfill()
+
+    check(
+        "the reach is bounded by the page budget",
+        len(term.tick_calls) <= bridge.LOAD_OLDER_MAX_PAGES + 1,
+        len(term.tick_calls),
+    )
+    check(
+        "and answers with an empty block rather than hanging",
+        [msg["type"] for msg in session.sent] == ["backfill_start", "backfill_end"],
+        session.sent,
+    )
+
+
+def test_a_reanchored_block_is_still_capped():
+    """The cap is about the wire, which does not care why a block is big."""
+    now_s = NOW
+    close_s = now_s - 14 * 3600
+    term = FakeTerminal(0, now_s)
+    term.ticks = session_ending_at(close_s)
+    bridge = load_bridge(term)
+    session = session_at(
+        bridge, term, now_s, backfill_minutes=720, backfill_max_ticks=100
+    )
+    session.backfill()
+
+    sent = block_ticks(session)
+    check("a re-anchored block obeys the cap", len(sent) == 100, len(sent))
+    check(
+        "and the newest ticks are the ones that survive",
+        bool(sent) and sent[-1]["time_ms"] == close_s * 1000,
+        sent[-1]["time_ms"] if sent else None,
+    )
+
+
+def test_the_reach_says_nothing_on_the_socket_while_it_searches():
+    """PROTOCOL.md has no heartbeat between `hello` and `backfill_start`."""
+    now_s = NOW
+    close_s = now_s - 14 * 3600
+    term = FakeTerminal(0, now_s)
+    term.ticks = session_ending_at(close_s)
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    # A heartbeat that fires every time it is offered, which is the worst case
+    # the reach can put the socket in.
+    session.maybe_heartbeat = lambda: session.sent.append({"type": "heartbeat"})
+    session.backfill()
+
+    check(
+        "the block opens the session's stream, as the protocol says",
+        session.sent[0]["type"] == "backfill_start",
+        session.sent[0],
+    )
+    check(
+        "no heartbeat slipped into the block",
+        not any(msg["type"] == "heartbeat" for msg in session.sent),
+        [msg["type"] for msg in session.sent[:3]],
     )
 
 
