@@ -87,12 +87,26 @@ The process lesson, recorded rather than excused: a long session must re-fetch
   in the PR body.
 - **PR opened.** Merging is the trader's call.
 
+### Reviewed
+
+- **`arch-review` step 0** ran the bundled `code-review` at `xhigh` and
+  returned **15 findings**, three of them proven with probe tests the
+  reviewer ran and deleted. Every one is addressed in `7271112`; the three
+  proven domain holes (a reversal leaving the dead position's legs armed over
+  the new one, averaging in leaving part of the position unstopped, and
+  `SetBracket` leaving a ladder armed beside a new pair) now have regression
+  tests of their own in `crates/sim/tests/exit_ladder.rs`.
+- **A visual pass** was run on the editor, the one genuinely new window. It
+  found three defects no test could — the editor never appeared under its own
+  launch hook, opened onto an empty pane, and opened beneath the indicator
+  legend — all fixed in `309f691`, with the fixed surface captured at fps 60 /
+  frame_avg 16.7 ms under a live tape.
+
 ### Not done, and named as such
 
-- `visual-qa` and `trader-ux-review` were **not run**. The session had already
-  rebuilt the branch once onto a moved foundation, and the remaining effort
-  went to correctness rather than to screenshots. The surfaces this adds — the
-  ticket's strategy row, the editor window, the projected ladder, the ruler
-  chips — are unphotographed and unreviewed by a trader's eye. That is a real
-  gap in this mission's own gate list; it is stated in the pull request body
-  rather than hidden here, and it is the first thing to close before merge.
+- **`trader-ux-review` was not run**, and the visual pass covered only the
+  editor. The chart-side surfaces this adds — a laddered order's rungs, the
+  projected ladder under a held modifier, the ruler's chips — are
+  unphotographed, and no trader's eye has been over the flow as a whole. That
+  is the remaining gap in this mission's gate list and the first thing to
+  close before merge.
