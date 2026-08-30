@@ -189,6 +189,20 @@
     },
     "TabPaperSnapshot": {
       "properties": {
+        "armed_strategy": {
+          "description": "The named exit ladder the ticket is armed with, if any.\n\nWhat the *next* order will carry, which the order rows below cannot\nsay: they are what already exists. An operator asked \"why is nothing\nprojecting\" has to be able to read this, and until it was here the\nanswer lived only in pixels.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "armed_strategy_refusal": {
+          "description": "Why the armed ladder cannot be used, when it cannot. Absent when it\nis usable, and absent when nothing is armed — a strategy that draws\nnothing and says nothing is the bug this field exists to prevent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "closed_trade_count": {
           "$ref": "#/$defs/WireU64"
         },
@@ -224,6 +238,12 @@
           "description": "Where these rows come from, named rather than implied.",
           "type": "string"
         },
+        "ruler_ticks": {
+          "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use. Sticky across aims, so a reader needs it to explain\nwhat the next order would carry.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "selected_trade_row": {
           "anyOf": [
             {
@@ -240,6 +260,10 @@
         },
         "tab_id": {
           "$ref": "#/$defs/WireU64"
+        },
+        "tick_size": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "One tick of this tab's instrument, so `ruler_ticks` can be read as a\nprice rather than a count."
         },
         "working_order_count": {
           "$ref": "#/$defs/WireU64"
@@ -261,6 +285,8 @@
         "symbol",
         "provenance",
         "flat",
+        "ruler_ticks",
+        "tick_size",
         "working_orders",
         "working_order_count",
         "working_orders_truncated",

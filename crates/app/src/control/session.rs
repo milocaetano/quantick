@@ -144,6 +144,26 @@ pub(crate) struct TabPaperSnapshot {
     /// Where these rows come from, named rather than implied.
     pub provenance: String,
     pub flat: bool,
+    /// The named exit ladder the ticket is armed with, if any.
+    ///
+    /// What the *next* order will carry, which the order rows below cannot
+    /// say: they are what already exists. An operator asked "why is nothing
+    /// projecting" has to be able to read this, and until it was here the
+    /// answer lived only in pixels.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub armed_strategy: Option<String>,
+    /// Why the armed ladder cannot be used, when it cannot. Absent when it
+    /// is usable, and absent when nothing is armed — a strategy that draws
+    /// nothing and says nothing is the bug this field exists to prevent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub armed_strategy_refusal: Option<String>,
+    /// How far the aim's ruler stands from an entry, in ticks; zero when it
+    /// is not in use. Sticky across aims, so a reader needs it to explain
+    /// what the next order would carry.
+    pub ruler_ticks: u32,
+    /// One tick of this tab's instrument, so `ruler_ticks` can be read as a
+    /// price rather than a count.
+    pub tick_size: CanonicalDecimal,
     pub position: Option<PaperPositionSnapshot>,
     #[schemars(length(max = CONTROL_SNAPSHOT_MAX_WORKING_ORDERS))]
     pub working_orders: Vec<PaperOrderSnapshot>,
@@ -435,6 +455,17 @@ fn tab_paper_snapshot(tab: &Tab) -> TabPaperSnapshot {
         symbol: tab.symbol.clone(),
         provenance: PAPER_PROVENANCE.to_owned(),
         flat: tab.paper.is_flat(),
+        armed_strategy: tab
+            .paper
+            .selected_order_strategy()
+            .map(|strategy| strategy.name.clone()),
+        armed_strategy_refusal: tab
+            .paper
+            .selected_order_strategy()
+            .and_then(|strategy| strategy.validate().err())
+            .map(|error| error.advice().to_owned()),
+        ruler_ticks: tab.paper.ruler_ticks(),
+        tick_size: canonical_decimal(tab.paper.tick_size()),
         position: tab.paper.position_summary().map(position_snapshot),
         working_orders: orders
             .iter()

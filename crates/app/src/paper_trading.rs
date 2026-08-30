@@ -83,12 +83,15 @@ const TOAST_LIFT_PX: f32 = 96.0;
 /// instrument's own (two decimals, the crypto-major default).
 const SNAP_FALLBACK_DECIMALS: u32 = 2;
 
-/// How much wheel travel walks the ruler one tick.
+/// The smallest wheel travel that can still count as a notch.
 ///
-/// egui reports roughly 50 px for one notch of a mouse wheel, so a notch is
-/// a tick and the gesture reads as "one click, one tick". A trackpad's finer
-/// scroll accumulates in `ruler_travel_px` until it has earned one.
-const RULER_NOTCH_PX: f32 = 50.0;
+/// A floor, not the notch itself: how many pixels a mouse reports per notch
+/// is the mouse's business, not ours. This build guessed 50 and met a mouse
+/// that reports 40 — under which every roll computed zero ticks and the
+/// ruler silently refused to move. The notch is *learned* from the smallest
+/// travel actually seen (`ruler_notch_px`), and this floor only keeps a
+/// trackpad's near-zero jitter from being mistaken for one.
+const RULER_MIN_NOTCH_PX: f32 = 1.0;
 
 /// The distance a freshly added rung starts at, in ticks.
 ///
@@ -1338,6 +1341,15 @@ pub struct PaperTrading {
     /// Sub-notch wheel travel not yet worth a tick (a trackpad's scroll
     /// arrives in fractions of a notch).
     ruler_travel_px: f32,
+    /// How much travel this pointing device reports for one notch, learned
+    /// from the smallest roll seen rather than assumed.
+    ///
+    /// A mouse reports a fixed step per detent — 40 px here, 50 on the
+    /// machine this was written on, something else on the next one — and a
+    /// trackpad reports a continuous stream. Taking the smallest non-zero
+    /// travel as the notch makes "one notch, one tick" true on all of them,
+    /// and makes the first roll count instead of being swallowed.
+    ruler_notch_px: f32,
     /// Whether the ruler spent this frame's wheel travel, so the chart's
     /// zoom can leave it alone.
     scroll_consumed: bool,
@@ -1529,6 +1541,7 @@ impl PaperTrading {
                 .and_then(|value| value.trim().parse::<u32>().ok())
                 .map_or(0, |ticks| ticks.min(RULER_MAX_TICKS)),
             ruler_travel_px: 0.0,
+            ruler_notch_px: f32::INFINITY,
             scroll_consumed: false,
             drag: PaperDrag::None,
             drag_price: None,
@@ -2750,6 +2763,9 @@ impl PaperTrading {
     /// escape stack; returns true when there was something to cancel, so
     /// the stack spends exactly one layer on it.
     pub fn cancel_interaction(&mut self) -> bool {
+        if self.clear_ruler() {
+            return true;
+        }
         if self.armed.take().is_some() {
             return true;
         }
@@ -2817,7 +2833,6 @@ impl PaperTrading {
         // and hands the wheel back to the chart.
         self.scroll_consumed = false;
         if input.scroll_y.abs() > f32::EPSILON
-            && self.selected_strategy.is_none()
             && self.cmd_preview.is_some_and(|preview| !preview.forced)
         {
             self.step_ruler(input.scroll_y);
@@ -3142,6 +3157,11 @@ impl PaperTrading {
     /// One tick of the instrument: the smallest price move its own prints
     /// can express. Read from the mark the same way [`Self::snap`] reads it,
     /// so the ruler steps in exactly the units a drag would land on.
+    #[must_use]
+    pub(crate) fn tick_size(&self) -> Decimal {
+        self.tick()
+    }
+
     fn tick(&self) -> Decimal {
         let places = if self.venue.mark_price().is_some() {
             self.tick_scale
@@ -3156,12 +3176,24 @@ impl PaperTrading {
     /// Rolling up widens the bracket, rolling down narrows it; at zero the
     /// ruler is off and the order rests as bare as it always did.
     fn step_ruler(&mut self, scroll_y: f32) {
+        // Learn this device's notch from the smallest roll it has produced,
+        // so the very first roll moves a tick instead of vanishing into an
+        // assumption about how a wheel is built.
+        let travel = scroll_y.abs();
+        if travel >= RULER_MIN_NOTCH_PX && travel < self.ruler_notch_px {
+            self.ruler_notch_px = travel;
+        }
+        let notch = if self.ruler_notch_px.is_finite() {
+            self.ruler_notch_px
+        } else {
+            return;
+        };
         self.ruler_travel_px += scroll_y;
-        let notches = (self.ruler_travel_px / RULER_NOTCH_PX).trunc();
+        let notches = (self.ruler_travel_px / notch).trunc();
         if notches == 0.0 {
             return;
         }
-        self.ruler_travel_px -= notches * RULER_NOTCH_PX;
+        self.ruler_travel_px -= notches * notch;
         let stepped = i64::from(self.ruler_ticks) + notches as i64;
         self.ruler_ticks = stepped.clamp(0, i64::from(RULER_MAX_TICKS)) as u32;
     }
@@ -3176,6 +3208,18 @@ impl PaperTrading {
         self.ruler_ticks = ticks.min(RULER_MAX_TICKS);
         self.ruler_travel_px = 0.0;
         self.ruler_ticks
+    }
+
+    /// Clear the ruler, so the next aim starts from the entry again.
+    ///
+    /// A distance chosen for one setup silently arming the next order was
+    /// the review's own finding; `Esc` is where a trader already asks for
+    /// "never mind".
+    pub(crate) fn clear_ruler(&mut self) -> bool {
+        let stood = self.ruler_ticks > 0;
+        self.ruler_ticks = 0;
+        self.ruler_travel_px = 0.0;
+        stood
     }
 
     /// How far the ruler stands from the aim, in ticks; zero when it is off.
@@ -3195,11 +3239,17 @@ impl PaperTrading {
     ///
     /// The same distance either side, always: what the trader reads is the
     /// trade at 1:1, and the question it answers is "is that distance worth
-    /// it?" - asked before the order exists rather than after. `None` while
-    /// the ruler is at zero, while a strategy owns the distances, and for a
-    /// stop that would fall through zero on a cheap instrument.
+    /// it?" - asked before the order exists rather than after.
+    ///
+    /// It answers whatever the ticket is armed with, a strategy included:
+    /// the ruler is a *compass*, and a trader deciding whether a setup is
+    /// worth taking needs it most when they already have a ladder in mind.
+    /// Standing it down under a strategy was a rule this module invented
+    /// and the trader never asked for. `None` only while the ruler is at
+    /// zero, and for a stop that would fall through zero on a cheap
+    /// instrument.
     fn ruler_levels(&self, side: Side, price: Decimal) -> (Option<Decimal>, Option<Decimal>) {
-        if self.ruler_ticks == 0 || self.selected_strategy.is_some() {
+        if self.ruler_ticks == 0 {
             return (None, None);
         }
         let distance = self.tick().saturating_mul(Decimal::from(self.ruler_ticks));
@@ -3390,16 +3440,20 @@ impl PaperTrading {
         quantity: Decimal,
         ticket: Bracket,
     ) -> Bracket {
+        // The ruler first, because rolling it is the most recent thing the
+        // trader did and it is the answer they are looking at. Rolling back
+        // to zero puts the armed ladder in front again, so neither gesture
+        // costs the other.
+        if let (Some(stop), Some(target)) = self.ruler_levels(side, price) {
+            return Bracket::whole(Some(stop), Some(target));
+        }
         if let Some(strategy) = self.selected_order_strategy() {
             // A strategy edited into an invalid state falls through to the
-            // plainer sources rather than blocking the trade; the editor is
-            // where it says what is wrong with it.
+            // plainer sources rather than blocking the trade; the ticket
+            // names the reason beside the selector.
             if let Ok(bracket) = strategy.resolve(side, price, quantity, self.tick()) {
                 return bracket;
             }
-        }
-        if let (Some(stop), Some(target)) = self.ruler_levels(side, price) {
-            return Bracket::whole(Some(stop), Some(target));
         }
         ticket
     }
@@ -3484,11 +3538,7 @@ impl PaperTrading {
             pointer,
             forced,
             bracket: self.aim_bracket(side, price, quantity, ticket),
-            ruler_ticks: if self.selected_strategy.is_some() {
-                0
-            } else {
-                self.ruler_ticks
-            },
+            ruler_ticks: self.ruler_ticks,
         })
     }
 
@@ -4451,6 +4501,18 @@ impl PaperTrading {
                     .color(theme::TEXT_SUPPORT)
                     .small(),
             );
+            // An armed ladder that cannot resolve draws nothing on the
+            // chart, and a trader holding the modifier over a silent chart
+            // has no way to know why. The reason belongs here, beside the
+            // thing that is armed, in the colour the rest of this surface
+            // uses for "this will not do what you think".
+            if let Err(error) = strategy.validate() {
+                ui.label(
+                    egui::RichText::new(format!("not armed - {}", error.advice()))
+                        .color(theme::AMBER)
+                        .small(),
+                );
+            }
         }
         // The editor itself is drawn from the app's own frame, not from
         // here: it is a window, and a window that lives inside a dock tab
@@ -4635,8 +4697,26 @@ impl PaperTrading {
                 .on_hover_text("split the exit one more time")
                 .clicked()
         {
+            // A row added at zero makes the whole strategy invalid the
+            // instant it appears - the shares no longer describe a whole
+            // position - and the chart then silently stops projecting a
+            // ladder the ticket still says is armed. The new row takes what
+            // is left of 100%, and when nothing is left it halves the last
+            // row rather than arriving broken.
+            let assigned: Decimal = strategy.rows.iter().map(|row| row.share_percent).sum();
+            let share = if assigned < Decimal::ONE_HUNDRED {
+                Decimal::ONE_HUNDRED - assigned
+            } else {
+                let last = strategy
+                    .rows
+                    .last_mut()
+                    .expect("a strategy always has a row to split");
+                let half = (last.share_percent / Decimal::TWO).round_dp(2);
+                last.share_percent -= half;
+                half
+            };
             strategy.rows.push(crate::order_strategies::StrategyRow {
-                share_percent: Decimal::ZERO,
+                share_percent: share,
                 gain_ticks: Some(NEW_RUNG_TICKS),
                 loss_ticks: Some(NEW_RUNG_TICKS),
             });
@@ -10199,11 +10279,15 @@ mod tests {
         );
     }
 
-    /// With a strategy selected the wheel is the chart's again: the strategy
-    /// owns the distances, and two rulers on one aim would be two answers to
-    /// the same question.
+    /// The ruler is a compass, and a trader wants it most when they already
+    /// have a ladder in mind: rolling the wheel works with a strategy armed,
+    /// and rolling back to zero hands the ladder its projection again.
+    ///
+    /// This module used to stand the ruler down under a strategy. That was a
+    /// rule it invented and the trader never asked for, and it made the
+    /// wheel look broken in the configuration they actually use.
     #[test]
-    fn a_selected_strategy_stands_the_ruler_down() {
+    fn the_ruler_works_with_a_strategy_armed_and_yields_when_it_is_put_away() {
         let mut paper = PaperTrading::new();
         paper.seed(&print(0, 100));
         paper.set_order_strategies(vec![halves()], Some("halves"));
@@ -10211,17 +10295,38 @@ mod tests {
         let (chart, scale) = chart_and_scale(80.0, 120.0);
         let aim = egui::pos2(400.0, 250.0);
 
-        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 250.0));
-        assert!(
-            !paper.consumed_scroll(),
-            "the wheel was left to the chart's zoom"
-        );
-        assert_eq!(paper.ruler_ticks, 0, "and walked nothing");
-        let preview = paper.cmd_preview.expect("the aim is up");
+        // With the ruler at zero the armed ladder is what the aim projects.
+        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
         assert_eq!(
-            preview.bracket.parts().count(),
+            paper.cmd_preview.expect("aim up").bracket.parts().count(),
             2,
-            "the strategy is what the aim projects"
+            "the ladder projects while the ruler is put away"
+        );
+
+        // Three notches: the wheel is the ruler's, strategy or no strategy.
+        for _ in 0..3 {
+            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
+        }
+        assert!(paper.consumed_scroll(), "the wheel belonged to the ruler");
+        assert_eq!(paper.ruler_ticks, 3);
+        let preview = paper.cmd_preview.expect("aim up");
+        assert_eq!(
+            preview.bracket.stop_loss(),
+            Some(Decimal::from(92)),
+            "and the ruler's symmetric pair is what it now shows"
+        );
+        assert_eq!(preview.bracket.take_profit(), Some(Decimal::from(98)));
+
+        // Roll it back to zero and the ladder returns; neither gesture costs
+        // the other.
+        for _ in 0..3 {
+            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, -40.0));
+        }
+        assert_eq!(paper.ruler_ticks, 0);
+        assert_eq!(
+            paper.cmd_preview.expect("aim up").bracket.parts().count(),
+            2,
+            "the armed ladder is back"
         );
     }
 
@@ -10247,7 +10352,9 @@ mod tests {
         by_wheel.seed(&print(0, 100));
         let (chart, scale) = chart_and_scale(80.0, 120.0);
         let aim = egui::pos2(400.0, 250.0);
-        by_wheel.handle_chart_input(&ruler_frame(chart, &scale, aim, 150.0));
+        for _ in 0..3 {
+            by_wheel.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
+        }
 
         assert_eq!(by_name.ruler_ticks, by_wheel.ruler_ticks);
         // And the bound is the same bound: a caller cannot reach past what
@@ -10421,6 +10528,133 @@ mod tests {
         assert_eq!(strategy.rows[0].gain_ticks, Some(8));
     }
 
+    /// The state the editor's own `+ Row` used to create: a third rung at
+    /// 0%, which fails `ShareNotPositive` and silently stopped the chart
+    /// projecting a ladder the ticket still said was armed.
+    ///
+    /// The trader hit `+ Row`, held the modifier and saw nothing, with no
+    /// word anywhere saying why. A row that arrives broken is the bug.
+    #[test]
+    fn adding_a_row_never_breaks_the_strategy_that_was_working() {
+        use crate::order_strategies::StrategyRow;
+
+        let mut strategy = halves();
+        assert!(strategy.validate().is_ok(), "50/50 is usable");
+
+        // What `+ Row` does, as the button does it.
+        let assigned: Decimal = strategy.rows.iter().map(|row| row.share_percent).sum();
+        assert_eq!(assigned, Decimal::ONE_HUNDRED, "nothing is left over");
+        let last = strategy.rows.last_mut().expect("has rows");
+        let half = (last.share_percent / Decimal::TWO).round_dp(2);
+        last.share_percent -= half;
+        strategy.rows.push(StrategyRow {
+            share_percent: half,
+            gain_ticks: Some(NEW_RUNG_TICKS),
+            loss_ticks: Some(NEW_RUNG_TICKS),
+        });
+
+        assert_eq!(strategy.rows.len(), 3);
+        assert!(
+            strategy.validate().is_ok(),
+            "the third rung splits the last one instead of arriving at zero: {:?}",
+            strategy.rows
+        );
+        let shares: Decimal = strategy.rows.iter().map(|row| row.share_percent).sum();
+        assert_eq!(shares, Decimal::ONE_HUNDRED, "and they still add up");
+    }
+
+    /// An armed ladder that cannot resolve must say so where it is armed.
+    #[test]
+    fn an_unusable_strategy_is_named_in_the_ticket_not_left_silent() {
+        use crate::order_strategies::StrategyRow;
+
+        let mut broken = halves();
+        broken.rows.push(StrategyRow {
+            share_percent: Decimal::ZERO,
+            gain_ticks: Some(20),
+            loss_ticks: Some(20),
+        });
+        let error = broken.validate().expect_err("a zero share is not a share");
+        assert!(
+            !error.advice().is_empty(),
+            "and the reason is a sentence the ticket can print"
+        );
+
+        // The chart is silent by design in this state - that is exactly why
+        // the ticket has to speak.
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        paper.set_order_strategies(vec![broken], Some("halves"));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        paper.handle_chart_input(&ruler_frame(chart, &scale, egui::pos2(400.0, 250.0), 0.0));
+        let preview = paper.cmd_preview.expect("the aim is still up");
+        assert!(
+            preview.bracket.is_empty(),
+            "an unusable ladder projects nothing - which is why it must be named"
+        );
+    }
+
+    /// Reproduction: the ticket at its default quantity of one, with a
+    /// two-rung 50/50 ladder armed. This is what the trader actually had.
+    #[test]
+    fn repro_the_aim_projects_a_ladder_at_quantity_one() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        paper.set_order_strategies(vec![halves()], Some("halves"));
+        // qty_text is left at its default.
+        assert_eq!(paper.qty_text, "1");
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let aim = egui::pos2(400.0, 250.0);
+        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
+
+        let preview = paper.cmd_preview.expect("the aim is up");
+        let parts: Vec<_> = preview.bracket.parts().copied().collect();
+        println!("quantity one -> parts: {parts:?}");
+        assert!(
+            !preview.bracket.is_empty(),
+            "the aim must project the armed ladder, not nothing"
+        );
+    }
+
+    /// A wheel that reports 40 px a notch must move the ruler, and so must
+    /// one that reports 50, or 120, or 13.
+    ///
+    /// This build assumed 50 and met a mouse that reports 40: every roll
+    /// computed zero ticks and the ruler silently refused to move, which is
+    /// indistinguishable from the feature not existing. The notch is the
+    /// device's to declare, not ours to assume.
+    #[test]
+    fn the_first_roll_moves_the_ruler_whatever_the_wheel_reports() {
+        for notch in [13.0_f32, 40.0, 50.0, 120.0] {
+            let mut paper = PaperTrading::new();
+            paper.seed(&print(0, 100));
+            let (chart, scale) = chart_and_scale(80.0, 120.0);
+            let aim = egui::pos2(400.0, 250.0);
+
+            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, notch));
+            assert_eq!(paper.ruler_ticks, 1, "one notch of {notch} px is one tick");
+
+            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, notch * 3.0));
+            assert_eq!(paper.ruler_ticks, 4, "three more notches at {notch} px");
+
+            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, -notch * 2.0));
+            assert_eq!(paper.ruler_ticks, 2, "and it walks back");
+        }
+    }
+
+    /// Esc puts the ruler away, so a distance chosen for one setup does not
+    /// silently arm the next order.
+    #[test]
+    fn escape_clears_the_ruler() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        paper.handle_chart_input(&ruler_frame(chart, &scale, egui::pos2(400.0, 250.0), 200.0));
+        assert!(paper.ruler_ticks > 0, "the ruler is standing");
+        assert!(paper.cancel_interaction(), "escape had something to cancel");
+        assert_eq!(paper.ruler_ticks, 0, "and it put the ruler away");
+    }
+
     /// A frame with the aim's modifier held and wheel travel to spend.
     fn ruler_frame<'a>(
         chart: egui::Rect,
@@ -10461,8 +10695,10 @@ mod tests {
         assert_eq!(preview.ruler_ticks, 0, "the ruler starts off");
         assert_eq!(preview.bracket.stop_loss(), None, "and projects nothing");
 
-        // Three notches up.
-        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 150.0));
+        // Three notches up, one roll each - which is what a wheel does.
+        for _ in 0..3 {
+            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 50.0));
+        }
         assert!(paper.consumed_scroll(), "the wheel belonged to the ruler");
         assert_eq!(paper.ruler_ticks, 3);
         let preview = paper.cmd_preview.expect("the aim is still up");
@@ -10494,13 +10730,16 @@ mod tests {
         let (chart, scale) = chart_and_scale(80.0, 120.0);
         // y = 250 is 95: below the mark, so a sell arms as a stop there.
         let aim = egui::pos2(400.0, 250.0);
-        let mut frame = ruler_frame(chart, &scale, aim, 200.0);
+        let mut frame = ruler_frame(chart, &scale, aim, 50.0);
         frame.modifiers = egui::Modifiers {
             ctrl: true,
             command: true,
             ..Default::default()
         };
-        paper.handle_chart_input(&frame);
+        // Four notches, one roll each.
+        for _ in 0..4 {
+            paper.handle_chart_input(&frame);
+        }
 
         let preview = paper.cmd_preview.expect("the sell aim is up");
         assert_eq!(preview.side, Side::Sell);
@@ -10537,7 +10776,9 @@ mod tests {
         paper.seed(&print(0, 100));
         let (chart, scale) = chart_and_scale(80.0, 120.0);
         let aim = egui::pos2(400.0, 250.0);
-        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 250.0));
+        for _ in 0..5 {
+            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 50.0));
+        }
         assert_eq!(paper.ruler_ticks, 5);
 
         let mut press = ruler_frame(chart, &scale, aim, 0.0);
