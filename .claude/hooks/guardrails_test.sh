@@ -240,6 +240,35 @@ run "a leading cd sends the reminder to the worktree branch" \
 run "a cd to a path that does not exist falls back to the session cwd" \
     commit-reminder "$(json_bash "$root/mainco" "cd $root/nowhere && git commit -m x")" silent
 
+# --- the gate and the instructions must name the same markers ---------------
+#
+# The marker names cross a boundary nothing in the repo type-checks:
+# guardrails.sh reads those files, and the prose tells an agent to write them.
+# Rename one side only and the gate denies a branch whose review actually ran,
+# handing back a recording line that does not fix it. The repo's rule for a
+# value that cannot be imported is a test pinning the two sides together, so
+# the names come out of the script itself rather than being repeated here — a
+# third copy in the test would be the same bug wearing a different hat.
+
+repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
+markers=$(sed -n 's/^[A-Z_]*MARKER_NAME="\([^"]*\)".*/\1/p' "$GUARDRAILS")
+
+if [ -z "$markers" ]; then
+    printf 'FAIL no MARKER_NAME constants found in guardrails.sh\n'
+    failed=$((failed + 1))
+fi
+
+for marker in $markers; do
+    for doc in .claude/hooks/README.md .claude/skills/mission/SKILL.md .claude/skills/ship/SKILL.md; do
+        if grep -q -- "$marker" "$repo_root/$doc"; then
+            passed=$((passed + 1))
+        else
+            printf 'FAIL %s never names %s, which the gate requires\n' "$doc" "$marker"
+            failed=$((failed + 1))
+        fi
+    done
+done
+
 # --- report -----------------------------------------------------------------
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"

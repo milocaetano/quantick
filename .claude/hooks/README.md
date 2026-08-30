@@ -103,13 +103,22 @@ sh .claude/hooks/guardrails_test.sh
 
 Builds throwaway git repos under a temp dir, exercises all three modes
 including the fail-open paths, and cleans up after itself. CI runs it as its
-own step. Neutering `guardrails.sh` to `exit 0` fails 11 of the 24 cases, which
+own step. Neutering `guardrails.sh` to `exit 0` fails 12 of the 30 cases, which
 is the check that they test the behaviour and not the harness.
 
 The `pr-gate` cases move one marker at a time — arch-review satisfied and
 delivery-review absent, and the reverse — because the failure worth catching is
 one gate silently carrying the branch through for the other. Those cases assert
 the text of the denial too, not only that it denied.
+
+The last block leaves the fixture repos alone and checks this repo instead:
+that every `*_MARKER_NAME` in `guardrails.sh` is also named by this file, by
+`mission` and by `ship`. A marker name is a value the script and the prose must
+agree on across a boundary nothing type-checks, and renaming one side alone
+would deny a branch whose review actually ran while handing back a recording
+line that does not fix it. The names are read out of the script rather than
+repeated in the test, so the test follows a rename instead of pinning the old
+spelling.
 
 ## If a hook does not fire
 

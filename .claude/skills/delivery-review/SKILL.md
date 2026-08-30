@@ -94,8 +94,28 @@ for the grade table and verdict below.
 
 ## Step 3 — Grade every line
 
-Two passes. The ledger pass catches asks that never became criteria; the
-criteria pass catches criteria that never became code.
+Three passes, and they run in this order because each one catches what the
+next one structurally cannot. The completeness pass catches asks that never
+reached the ledger; the ledger pass catches asks that never became criteria;
+the criteria pass catches criteria that never became code.
+
+**Completeness pass** — the ledger against the request that produced it.
+
+`mission` writes the trader's request into `GOAL.md` verbatim, as its last
+section, precisely so this pass is possible. Read that request yourself and
+derive the atomic asks from it — the same way `mission` was supposed to —
+before looking at the ledger. Then compare.
+
+An ask you found in the request that no `R` line carries is **UNLEDGERED**,
+and it is the most serious grade in this skill. Every other finding is about
+work that fell short of a written promise; this one is about a promise that was
+never written, and it is the only failure the rest of the pipeline is blind to
+by construction. Report it with the trader's own words beside it.
+
+If `GOAL.md` has no verbatim request section, say so and grade this pass
+**NOT POSSIBLE**. Do not quietly skip it: a review that cannot run its own
+first pass is worth less than the reader will assume, and the fix is one
+paste.
 
 **Ledger pass** — one grade per `R`:
 
@@ -151,18 +171,21 @@ on the subagent and go into its prompt.
 
 ## Step 4 — Verdict
 
-**PASS** only when all of: every `R` `COVERED`; every `A` and `G` `DELIVERED`;
-nothing `UNPROVEN`, `MISSING` or `PARTIAL` — except a line carrying an approved
-deferral (below).
+**PASS** only when all of: nothing `UNLEDGERED`; every `R` `COVERED`; every `A`
+and `G` `DELIVERED`; nothing `UNPROVEN`, `MISSING` or `PARTIAL` — except a line
+carrying an approved deferral (below).
 
 **FAIL** otherwise, with the failing lines listed first, each naming the
 smallest concrete thing that would change the grade.
 
-Close with the checklist source used, the counts, and the answer to rule 9.
+Close with the checklist source used, whether the completeness pass could run,
+the counts, and the answer to rule 9.
 
 ## Step 5 — The bounded fix loop
 
-The trader is not the one who closes these gaps. The session is.
+This loop belongs to the session that called the skill, not to the subagent —
+the reviewer grades and returns; it never edits the branch it is judging. The
+trader is not the one who closes these gaps either. The session is.
 
 - **Fix everything the review reported, then re-run** — a fresh dossier and a
   fresh subagent, because a reviewer that has already seen the branch is no

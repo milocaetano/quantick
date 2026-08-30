@@ -122,12 +122,22 @@ else, and `delivery-review` is that someone else.
 
 5. **Persist it**: write the mission to `.claude/GOAL.md`, in English, so it
    survives context compaction. Overwrite any previous one. The file keeps its
-   name: fifty-four archives already use it, and renaming the record would buy
+   name: dozens of archives already use it, and renaming the record would buy
    nothing.
 
    `GOAL.md` carries, in this order: the objective and why it matters; the
    request ledger; the trader's decisions `D1`…`Dn`; the assumptions
-   `S1`…`Sn`; the acceptance criteria; and what is not applicable and why.
+   `S1`…`Sn`; the acceptance criteria; what is not applicable and why; and
+   last, **the request as received, quoted in full and verbatim**.
+
+   That last section is not decoration and it is not optional. `delivery-review`
+   reads `GOAL.md` and nothing else — it never sees this conversation. Without
+   the original request in the file, the ledger becomes its own source of
+   truth, and an ask this step dropped while *writing* the ledger is an ask no
+   reviewer can ever find. With it, the reviewer re-derives the asks from the
+   trader's own words and reports what the ledger failed to carry. The verbatim
+   request is what makes the gate something other than the mission grading its
+   own summary.
 
    ### The checklist format
 

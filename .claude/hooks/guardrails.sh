@@ -122,16 +122,16 @@ require_marker() {
     require_rule=$4
     require_how=$5
 
-    marker=$(marker_path "$require_dir" "$require_name")
-    record="git rev-parse HEAD > \\\"\$(git rev-parse --absolute-git-dir)/$require_name\\\""
+    require_marker_file=$(marker_path "$require_dir" "$require_name")
+    require_record="git rev-parse HEAD > \\\"\$(git rev-parse --absolute-git-dir)/$require_name\\\""
 
-    if [ ! -f "$marker" ]; then
-        deny "\"CLAUDE.md: $require_rule. \`$require_name\` has not been recorded for this branch. $require_how, then record it:\n\n  $record\""
+    if [ ! -f "$require_marker_file" ]; then
+        deny "\"CLAUDE.md: $require_rule. \`$require_name\` has not been recorded for this branch. $require_how, then record it:\n\n  $require_record\""
     fi
 
-    reviewed=$(cat "$marker" 2>/dev/null)
-    if [ "$reviewed" != "$require_head" ]; then
-        deny "\"CLAUDE.md: $require_rule. \`$require_name\` was recorded for $reviewed but HEAD is now $require_head, so the newest commits are ungraded. Run it again over the final branch and record it again:\n\n  $record\""
+    require_reviewed=$(cat "$require_marker_file" 2>/dev/null)
+    if [ "$require_reviewed" != "$require_head" ]; then
+        deny "\"CLAUDE.md: $require_rule. \`$require_name\` was recorded for $require_reviewed but HEAD is now $require_head, so the newest commits are ungraded. Run it again over the final branch and record it again:\n\n  $require_record\""
     fi
 }
 
