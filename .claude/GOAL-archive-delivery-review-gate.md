@@ -129,10 +129,17 @@ claim in the session transcript is **UNPROVEN**, not met.
       *Evidence:* the workflow bullet and the ship step.
       → `CLAUDE.md`, `.claude/skills/ship/SKILL.md`. *(R2)*
 - [ ] **A9** — This mission dogfoods its own mechanism: this file is written in
-      the new format, and `delivery-review` grades this branch before its PR
-      opens.
-      *Evidence:* this file, plus the reviewer's verdict pasted into the PR
-      body. → `.claude/GOAL-archive-delivery-review-gate.md`, PR body. *(R8)*
+      the new format that `mission` now documents — request ledger, decisions,
+      assumptions, criteria, closing steps, verbatim request.
+      *Evidence:* this file, read against the format spec in the skill.
+      → `.claude/GOAL-archive-delivery-review-gate.md`. *(R8)*
+
+      The other half of the dogfood — `delivery-review` actually grading this
+      branch, and its verdict reaching the PR body — is `C1`/`C4` below, not a
+      criterion. It cannot be observed at the moment the reviewer writes its
+      verdict, which is precisely the rule this branch adds at
+      `mission/SKILL.md`'s *Closing steps are not criteria*. Written as an `A`
+      it would have failed every time, including this one.
 
 - [ ] **A10** — `GOAL.md` carries the trader's request quoted in full and
       verbatim, as its last section, so `delivery-review` can re-derive the asks
@@ -146,12 +153,18 @@ claim in the session transcript is **UNPROVEN**, not met.
 
 ### Standard gates
 
-- [ ] **G1** — English throughout, per `CLAUDE.md`. Both `.claude/skills` and
-      `.claude/hooks` are inside `language_guard`'s scanned directories, so
-      this gate has a mechanical half here. The verbatim fragments in the
-      request ledger are marked, attributed quotations, and
-      `GOAL-archive-*.md` is out of the guard's scope by design.
-      *Evidence:* `cargo test --workspace` output including `language_guard`.
+- [ ] **G1** — English throughout, per `CLAUDE.md`. `language_guard` scans
+      `.claude/skills` and `.claude/hooks`, but only the extensions in its
+      `SCANNED_EXTS` — `rs`, `pine`, `md`, `html`, `toml`. **`.sh` is not among
+      them**, so this branch's only executable file, `guardrails.sh`, has no
+      mechanical cover at all and its prose is read by eye. Say both halves
+      rather than one: a guard that runs is not a guard that looked. The
+      verbatim fragments in the request ledger are marked, attributed
+      quotations, and `GOAL-archive-*.md` is outside the guard's scope by
+      design.
+      *Evidence:* `language_guard` output at the shipped HEAD, plus a stated
+      reading of the shell script and the branch/commit prose the guard cannot
+      see.
 - [ ] **G2** — `cargo fmt --all -- --check`, `cargo clippy --workspace
       --all-targets -- -D warnings`, `cargo build --workspace`, `cargo test
       --workspace`, each run separately, all green on a branch rebased on
@@ -185,6 +198,8 @@ the gate shipped, so they live here instead.
       either review runs, so both markers record the branch the reviews saw.
 - [ ] **C3** — PR opened with the evidence in its body. Merging is the trader's
       call and is not part of this mission.
+- [ ] **C4** — `delivery-review`'s verdict pasted into the PR body, so the next
+      reader sees what it graded and what it refused.
 
 ### Not applicable, and why
 
@@ -193,9 +208,12 @@ the gate shipped, so they live here instead.
 - Engine / determinism — untouched; no crate under `crates/` changes
   behaviour.
 - `new-extension` — the new capability is a skill and a hook mode, not a port
-  in the product. The registries it docks into are the skills directory and
-  the hook's `case` statement, both of which take registration-only edits
-  already.
+  in the product, so the skill genuinely does not apply. Note what this
+  exclusion does *not* claim: the change to `guardrails.sh` is a rewrite of the
+  gate's command parsing across five functions, not a registration-only edit to
+  its `case` statement. Adding a *mode* would be registration-only; this branch
+  did more than that, and saying otherwise would be the kind of tidy
+  justification `delivery-review` exists to catch.
 
 ## Known limitation, stated up front
 
@@ -204,6 +222,29 @@ main checkout — so this branch's edit to `guardrails.sh` does not arm the new
 gate for this branch's own PR. The gate arms for every session started after
 the merge. This branch therefore proves the behaviour with
 `guardrails_test.sh` and runs `delivery-review` voluntarily, which is A9.
+
+## Deferred — awaiting the trader's approval
+
+One gap, recorded here rather than quietly counted as met. `delivery-review`
+found it and this session cannot grant it: only the trader can.
+
+- **G2, the fourth check.** `cargo fmt`, `cargo clippy` and `cargo build` exit
+  0 on a branch now rebased on `origin/main`. `cargo test --workspace` exits
+  101 on one test, `quantick-feed-mt5 :: the_bridge_paging_tests_pass`, which
+  shells out to `python3` — on this machine the Microsoft Store alias, not an
+  interpreter. The suite it wraps passes under the real one (*all checks passed
+  across 31 tests*, exit 0), this branch changes no Python and no Rust, and CI
+  has a real `python3`. So the criterion's *intent* is met and its *letter* is
+  not, on this machine, for a reason outside the branch.
+
+  Stated rather than smoothed over, because "all four green" was the promise
+  and 101 is not 0. The confirming evidence is the PR's own CI run, which does
+  not exist while this is being written — the same ordering problem that put
+  `delivery-review` and the PR itself among the closing steps.
+
+  **The trader's call**: accept this as environmental and let CI be the
+  authority, or treat the criterion as unmet until a machine with a real
+  `python3` runs it.
 
 ## The request as received
 

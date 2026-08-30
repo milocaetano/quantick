@@ -265,9 +265,20 @@ trader is not the one who closes these gaps either. The session is.
 - **Fix everything the review reported, then re-run** — a fresh dossier and a
   fresh subagent, because a reviewer that has already seen the branch is no
   longer a stranger to it.
-- **At most three rounds.** After the third, stop: report the surviving gaps,
-  what was tried on each, and hand it to the trader. Three is a bound in this
-  file so a stuck loop ends, and one edit to change if it proves wrong.
+- **Three rounds, then tell the trader** — report the surviving gaps and what
+  was tried on each, and let them decide whether to keep going. The bound
+  exists so a stuck loop ends, not so a productive one does, and the
+  difference between those two is a judgement the trader should get to make
+  with the findings in front of them.
+
+  Say which it looks like. A round whose findings are smaller and fewer than
+  the last is converging; a round still returning Blockers, especially in code
+  the previous round's fix introduced, is a sign the approach is wrong rather
+  than incomplete — and that is worth naming, because more rounds will not fix
+  a design. The branch that introduced this skill took **four** rounds of
+  `arch-review` with the count flat at 15 and the severity climbing into newly
+  written code, which is exactly the shape that should have prompted the
+  conversation instead of a fifth round.
 - **Escalate immediately, without spending a round**, when closing the gap
   would change the mission's scope, contradict a recorded `D` decision, or
   require a call that belongs to the trader. Those are step-3 questions in
