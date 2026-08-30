@@ -294,6 +294,12 @@ editing it is a commit, which stales both markers by design — so both reviews
 run again over the new head before either is re-recorded. Re-stamping instead
 is the cheap exit this whole mechanism is built to make unattractive.
 
+**`## Deferred` means granted.** A gap still waiting on an answer goes under a
+heading that says so — `## Deferral requested — NOT granted` reads correctly at
+a glance. Otherwise a later reader, or a later reviewer keying on the heading,
+takes an approval nobody gave; a subtitle correcting the heading is not enough,
+because the heading is the part that gets skimmed.
+
 A deferral the session grants itself is not a deferral; it is the failure this
 skill was built to stop.
 

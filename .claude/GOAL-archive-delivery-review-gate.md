@@ -164,27 +164,31 @@ claim in the session transcript is **UNPROVEN**, not met.
       design.
       *Evidence:* `language_guard` output at the shipped HEAD, plus a stated
       reading of the shell script and the branch/commit prose the guard cannot
-      see.
+      see. → `scratchpad/delivery-review/cargo-test.log`, `scratchpad/delivery-review/checks.md`.
 - [ ] **G2** — `cargo fmt --all -- --check`, `cargo clippy --workspace
       --all-targets -- -D warnings`, `cargo build --workspace`, `cargo test
       --workspace`, each run separately, all green on a branch rebased on
       latest `main`.
-      *Evidence:* the four exit codes, pasted in the PR body.
+      *Evidence:* the four exit codes, each naming the HEAD they were run
+      against. → `scratchpad/delivery-review/checks.md`, `scratchpad/delivery-review/cargo-test.log`.
 - [ ] **G3** — `sh .claude/hooks/guardrails_test.sh` green. Cargo cannot see
       it; CI runs it as its own step, so it is run locally too.
-      *Evidence:* the test script's own summary line.
+      *Evidence:* the test script's own summary line, plus the by-hand gate
+      probe. → `scratchpad/delivery-review/guardrails_test.log`, `scratchpad/delivery-review/gate-probe.log`.
 - [ ] **G4** — Performance impact declared: **rare** rate class. The hook adds
       one string test per `Bash` call and one extra file read on `gh pr create`
       only; everything else is session-time prose that never runs in the
       product. No numbers required, and this line is the reason why.
-      *Evidence:* this statement, repeated in the PR body.
+      *Evidence:* the rate class stated with the reason no numbers are
+      required. → `scratchpad/delivery-review/checks.md`.
 - [ ] **G5** — `arch-review` run over `git diff origin/main...HEAD` (the remote
       ref, per the rule this branch adds to CLAUDE.md), every Blocker and
       Should-fix resolved or deferred in the PR body. Shape dimensions 1–7 are
       waived for the prose-only skill files and **not** for `guardrails.sh`
       (S2). Step 0 and dimension 8 are never waived.
-      *Evidence:* the review's six-line verdict and its step 0 header line, in
-      the PR body.
+      *Evidence:* the review's six-line verdict and its step 0 header line,
+      naming the sha it graded and post-dating that commit.
+      → `scratchpad/delivery-review/arch-review-verdict.md`.
 
 ### Closing steps — not graded, and deliberately so
 
@@ -223,10 +227,15 @@ gate for this branch's own PR. The gate arms for every session started after
 the merge. This branch therefore proves the behaviour with
 `guardrails_test.sh` and runs `delivery-review` voluntarily, which is A9.
 
-## Deferred — awaiting the trader's approval
+## Deferral requested — NOT granted
 
 One gap, recorded here rather than quietly counted as met. `delivery-review`
 found it and this session cannot grant it: only the trader can.
+
+The heading deliberately does not read `## Deferred`. That token is reserved,
+in `delivery-review`'s own text, for a deferral the trader **has** approved —
+so using it here would let a later reader, or a later reviewer keying on the
+heading, read an approval that was never given.
 
 - **G2, the fourth check.** `cargo fmt`, `cargo clippy` and `cargo build` exit
   0 on a branch now rebased on `origin/main`. `cargo test --workspace` exits

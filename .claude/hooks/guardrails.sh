@@ -172,15 +172,6 @@ effective_dir() {
     printf '%s' "$2"
 }
 
-# The line that records marker `$2`, run from worktree `$1`.
-#
-# The `cd` is not decoration. Both `git` calls resolve against the shell's cwd,
-# which for an agent session is the main checkout and not the worktree being
-# shipped, so without the prefix the pasted line writes the main checkout's git
-# dir with main's HEAD and the next `gh pr create` denies identically.
-record_line() {
-    printf 'cd \\"%s\\" && git rev-parse HEAD > \\"$(git rev-parse --absolute-git-dir)/%s\\"' "$1" "$2"
-}
 
 marker_path() {
     printf '%s/%s' "$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null)" "$2"
