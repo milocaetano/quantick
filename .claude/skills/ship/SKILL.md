@@ -26,7 +26,10 @@ description: Deliver the current branch - run the full verification loop, commit
 
    ```sh
    SLUG=my-mission-slug
-   git mv .claude/GOAL.md ".claude/GOAL-archive-$SLUG.md"
+   # `mv`, not `git mv`: `.claude/GOAL.md` is gitignored and therefore
+   # never tracked, so `git mv` aborts. Only the archive is tracked.
+   mv .claude/GOAL.md ".claude/GOAL-archive-$SLUG.md"
+   git add ".claude/GOAL-archive-$SLUG.md"
    git commit -m "docs: archive the $SLUG mission"
    ```
 

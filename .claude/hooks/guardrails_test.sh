@@ -55,7 +55,10 @@ run() {
     payload=$3
     expect=$4
 
-    out=$(printf '%s' "$payload" | sh "$GUARDRAILS" "$mode" 2>&1)
+    # stdout only: this text is shape-checked below, and folding stderr in
+    # lets a stray git warning fail a correct deny as "spans multiple
+    # lines" — an intermittent red on a required CI step.
+    out=$(printf '%s' "$payload" | sh "$GUARDRAILS" "$mode" 2>/dev/null)
     status=$?
 
     actual=silent

@@ -177,8 +177,11 @@ claim in the session transcript is **UNPROVEN**, not met.
       it; CI runs it as its own step, so it is run locally too.
       *Evidence:* the test script's own summary line, plus the by-hand gate
       probe. → `scratchpad/delivery-review/guardrails_test.log`, `scratchpad/delivery-review/gate-probe.log`.
-- [x] **G4** — Performance impact declared: **rare**, and unchanged from
-      `main`. `pr-gate` runs on every `Bash` and `PowerShell` call but returns
+- [x] **G4** — Performance impact declared: **rare**. Same work per call as
+      `main`, on more calls: both matchers now name `Bash|PowerShell`, and
+      PowerShell is this machine's primary shell, so the hook spawns on a
+      tool class that previously did not reach it. Saying "unchanged from
+      `main`" would be wrong for the shell this repo actually uses. `pr-gate` runs on every `Bash` and `PowerShell` call but returns
       through `runs_command` — one `sed`, one `grep` — before touching git
       unless the command's first statement is the gated one. Past that the
       branch adds one `git rev-parse --absolute-git-dir` and one `head` read

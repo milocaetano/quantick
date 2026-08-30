@@ -141,17 +141,37 @@ require_marker() {
     require_how=$5
 
     require_file=$(marker_path "$require_dir" "$require_name")
-    require_record="git -C . rev-parse HEAD > \\\"\$(git rev-parse --absolute-git-dir)/$require_name\\\""
+    # `git -C "$require_dir"`, never `git -C .`. The remedy is pasted into a
+    # shell whose cwd is the session's — the main checkout — not the worktree
+    # being shipped. With `.` the marker lands in the *shared* git dir holding
+    # main's HEAD, where a later command resolving to the main checkout would
+    # match it, so one paste of the gate's own instruction could switch it off.
+    # Every doc on this branch spells the command with the `cd`; the message
+    # must not be the one place that drops it.
+    require_record="git -C \\\"$require_dir\\\" rev-parse HEAD > \\\"$require_file\\\""
 
     if [ ! -f "$require_file" ]; then
         deny "\"CLAUDE.md: $require_rule. \`$require_name\` has not been recorded for this branch. $require_how, then record it:\n\n  $require_record\""
     fi
 
-    require_reviewed=$(head -n 1 "$require_file" 2>/dev/null | tr -cd '0-9a-fA-F' | tr 'A-F' 'a-f')
-    [ ${#require_reviewed} -eq 40 ] || require_reviewed="(not a commit id)"
+    # Trim only what a file legitimately picks up — a trailing CR, a BOM,
+    # surrounding blanks — then require the remainder to be exactly a sha.
+    # Stripping every non-hex byte instead would silently accept `<sha> ok`
+    # or a sha with a comment beside it, which a verbatim compare rejects.
+    require_reviewed=$(head -n 1 "$require_file" 2>/dev/null |
+        tr -d '\r' |
+        sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    case "$require_reviewed" in
+        '' | *[!0-9a-fA-F]*) require_reviewed="(not a commit id)" ;;
+        *)
+            [ ${#require_reviewed} -eq ${#require_head} ] ||
+                require_reviewed="(not a commit id)"
+            ;;
+    esac
+    require_reviewed=$(printf '%s' "$require_reviewed" | tr 'A-F' 'a-f')
 
     if [ "$require_reviewed" != "$require_head" ]; then
-        deny "\"CLAUDE.md: $require_rule. \`$require_name\` was recorded for $require_reviewed but HEAD is now $require_head, so the newest commits are ungraded. Run it again over the final branch and record it again:\n\n  $require_record\""
+        deny "\"CLAUDE.md: $require_rule. \`$require_name\` was recorded for $require_reviewed but HEAD is now $require_head, so the newest commits are ungraded. $require_how, then record it again:\n\n  $require_record\""
     fi
 }
 

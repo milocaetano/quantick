@@ -152,8 +152,15 @@ cd "$WT" && git rev-parse HEAD && git status --porcelain
 
 Once before dispatch, once after the verdict returns. Any difference — a new
 commit, a dirty file — invalidates the verdict: discard it, record no marker,
-and say what changed. A review that edited what it was grading is not a review,
-and this is the one check that can tell.
+and say what changed. A review that edited what it was grading is not a
+review.
+
+Know what that check cannot see. The markers live in the worktree's **git
+dir**, outside both `HEAD` and the working tree, so a subagent that wrote
+`delivery-review-ok` itself would leave both readings unchanged. So the
+calling session records the marker — after reading the verdict, on PASS
+only — and treats a marker that already exists when the verdict returns as
+the review having written it: discard the verdict and say so.
 
 Hand it the checklist and the dossier paths in the prompt, tell it to read the
 repo itself for anything else, and ask for the grade table and verdict below.

@@ -257,7 +257,12 @@ else, and `delivery-review` is that someone else.
 
       ```sh
       SLUG=my-mission-slug
-      git mv .claude/GOAL.md ".claude/GOAL-archive-$SLUG.md"
+      # `mv`, not `git mv`: `.gitignore` lists `.claude/GOAL.md`, so the
+      # live file is never tracked and `git mv` aborts with "not under
+      # version control". Only the archive it becomes is tracked — which
+      # is why goal files strand when this is got wrong.
+      mv .claude/GOAL.md ".claude/GOAL-archive-$SLUG.md"
+      git add ".claude/GOAL-archive-$SLUG.md"
       git commit -m "docs: archive the $SLUG mission"
       ```
 
