@@ -74,6 +74,16 @@ When the findings land:
 `mission` waives the shape pass — run this skill anyway and report step 0's
 findings through it. The bug pass is not the waived part.
 
+## What this skill does not review
+
+Whether the change is *what was asked for*. Every dimension below takes the
+diff as given and grades how well it is made; none of them opens the request
+and checks that all of it arrived. That question belongs to `delivery-review`,
+which runs after this skill, over the branch as shipped, and whose marker
+`pr-gate` wants alongside this one. A conformance gap noticed here — an
+acceptance criterion with no code behind it — is worth a sentence in passing,
+but it is graded there, not given a severity here.
+
 ## Priority order
 
 When two findings pull in opposite directions, this order decides the call.

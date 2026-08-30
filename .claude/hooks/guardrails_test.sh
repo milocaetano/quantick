@@ -72,6 +72,48 @@ run() {
     passed=$((passed + 1))
 }
 
+# run_deny_naming <name> <mode> <stdin-json> <substring the denial must carry>
+#
+# `run` above sees three states and cannot tell a denial for the right reason
+# from a denial for the other one. With two markers gating the PR, that
+# difference is the whole value of the message: an agent told "a review is
+# missing" has to guess which, and guessing wrong costs a full review.
+run_deny_naming() {
+    dn_name=$1
+    dn_out=$(printf '%s' "$3" | sh "$GUARDRAILS" "$2" 2>&1)
+    dn_status=$?
+
+    if [ "$dn_status" -ne 0 ]; then
+        printf 'FAIL %s: exited %s (guard-rails must always exit 0)\n' "$dn_name" "$dn_status"
+        failed=$((failed + 1))
+        return
+    fi
+    case "$dn_out" in
+        *'"permissionDecision":"deny"'*) ;;
+        *)
+            printf 'FAIL %s: expected deny\n  output: %s\n' "$dn_name" "$dn_out"
+            failed=$((failed + 1))
+            return
+            ;;
+    esac
+    case "$dn_out" in
+        *"$4"*) passed=$((passed + 1)) ;;
+        *)
+            printf 'FAIL %s: denial did not name "%s"\n  output: %s\n' "$dn_name" "$4" "$dn_out"
+            failed=$((failed + 1))
+            ;;
+    esac
+}
+
+# set_marker <marker-name> <sha, or empty to remove it>
+set_marker() {
+    if [ -z "$2" ]; then
+        rm -f "$wt_git_dir/$1"
+    else
+        printf '%s\n' "$2" > "$wt_git_dir/$1"
+    fi
+}
+
 json_path() { printf '{"tool_name":"Write","tool_input":{"file_path":"%s"}}' "$1"; }
 json_bash() { printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"%s"}}' "$1" "$2"; }
 
@@ -110,8 +152,16 @@ run "the main checkout on another branch is allowed" \
 git -C "$root/mainco" checkout -q main
 
 # --- pr-gate ----------------------------------------------------------------
+#
+# Two markers gate the PR and both must record the exact commit being shipped:
+# arch-review (is it well built) and delivery-review (is it what was asked
+# for). The cases below move one marker at a time, so a regression says which
+# half broke instead of only that the gate stopped working.
 
-rm -f "$wt_git_dir/arch-review-ok"
+stale_sha="0000000000000000000000000000000000000000"
+
+set_marker arch-review-ok ""
+set_marker delivery-review-ok ""
 
 run "a bash command that is not gh pr create is ignored" \
     pr-gate "$(json_bash "$root/wt" "cargo test --workspace")" silent
@@ -119,12 +169,30 @@ run "a bash command that is not gh pr create is ignored" \
 run "gh pr create without a recorded review is denied" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny
 
-echo "0000000000000000000000000000000000000000" > "$wt_git_dir/arch-review-ok"
+set_marker arch-review-ok "$stale_sha"
 run "a review recorded for an older commit is denied" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny
 
-echo "$head_sha" > "$wt_git_dir/arch-review-ok"
-run "a review recorded for the exact HEAD is allowed" \
+# The delivery gate, one marker at a time. Each case pins that the *other*
+# marker being satisfied does not carry the branch through.
+
+set_marker arch-review-ok "$head_sha"
+set_marker delivery-review-ok ""
+run_deny_naming "arch-review alone does not open the PR" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "delivery-review-ok"
+
+set_marker delivery-review-ok "$stale_sha"
+run_deny_naming "a delivery review recorded for an older commit is denied" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "delivery-review-ok"
+
+set_marker arch-review-ok ""
+set_marker delivery-review-ok "$head_sha"
+run_deny_naming "delivery-review alone does not open the PR" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "arch-review-ok"
+
+set_marker arch-review-ok "$head_sha"
+set_marker delivery-review-ok "$head_sha"
+run "both reviews recorded for the exact HEAD is allowed" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
 
 # --- commit-reminder --------------------------------------------------------
@@ -143,7 +211,8 @@ run "a commit on a branch ahead of origin/main reminds" \
 # Both cases below blocked or misjudged real work the first time these hooks
 # ran for real, which is why they are pinned here.
 
-rm -f "$wt_git_dir/arch-review-ok"
+set_marker arch-review-ok ""
+set_marker delivery-review-ok ""
 
 run "a commit message that merely names the gated command is ignored" \
     pr-gate "$(json_bash "$root/wt" "git commit -m 'records the marker the gate checks before gh pr create'")" silent
@@ -160,8 +229,9 @@ run "a commit message naming the gated command still reminds, not blocks" \
 run "a leading cd sends the gate to the worktree, not the session cwd" \
     pr-gate "$(json_bash "$root/mainco" "cd $root/wt && gh pr create --fill")" deny
 
-echo "$head_sha" > "$wt_git_dir/arch-review-ok"
-run "a leading cd finds the review recorded in that worktree" \
+set_marker arch-review-ok "$head_sha"
+set_marker delivery-review-ok "$head_sha"
+run "a leading cd finds the reviews recorded in that worktree" \
     pr-gate "$(json_bash "$root/mainco" "cd $root/wt && gh pr create --fill")" silent
 
 run "a leading cd sends the reminder to the worktree branch" \

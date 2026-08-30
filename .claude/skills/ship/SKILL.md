@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Deliver the current branch - run the full verification loop, commit, push, open a PR with Closes #N, and watch CI until green. Use when the user types /ship or asks to finish or deliver the current task.
+description: Deliver the current branch - run the full verification loop, commit, pass both pre-PR reviews (arch-review for shape and bugs, delivery-review for conformance to what was asked), push, open a PR with Closes #N, and watch CI until green. Use when the user types /ship or asks to finish or deliver the current task.
 ---
 
 # Ship the current branch
@@ -26,10 +26,16 @@ description: Deliver the current branch - run the full verification loop, commit
 
 3. **Arch-review** (mandatory, see `CLAUDE.md`): run the `arch-review` skill over `git diff origin/main...HEAD`. Its step 0 dispatches the bundled `code-review` in the background, so this step is not done when the skill returns — it is done when those findings have landed and been handled. Fix every Blocker and Should-fix finding, re-running step 1 on whatever changed. A finding deliberately deferred is noted in the PR body. Never push or open a PR ahead of this step.
 
-4. **Push**: `git push -u origin <branch>`.
+4. **Delivery-review** (mandatory, see `CLAUDE.md`): run the `delivery-review` skill. It grades the branch against what was asked for — every ask in `.claude/GOAL.md`'s request ledger and every acceptance criterion — from a fresh-context subagent, and passes only when nothing is MISSING, PARTIAL or UNPROVEN. It runs *after* step 3, because it grades the branch as shipped, including whatever arch-review made you change. A branch started from `/new-task` rather than `/mission` has no `GOAL.md`; the skill grades it against the linked issue's `## Acceptance criteria` and says so in the verdict. Fix what it reports and re-run, up to three rounds, then take the rest to the user. Record the marker only on PASS:
 
-5. **Open the PR** following the repo template (`.github/PULL_REQUEST_TEMPLATE.md`): summary of what and why, `Closes #<N>`, the four verification-loop boxes checked (they just ran), notes for the reviewer. Use `gh pr create --body-file -` with a heredoc. Title and body are English, like the branch name and the commits — `CLAUDE.md`'s language rule covers them, and they are the one part of it no test can see: `language_guard` reads files, and a PR body is not a file.
+   ```sh
+   git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
+   ```
 
-6. **Watch CI**: `gh pr checks <pr> --watch`. If checks have not registered yet, find the run with `gh run list --branch <branch>` and use `gh run watch <id> --exit-status`. Red → read the failing log, fix, push, repeat.
+5. **Push**: `git push -u origin <branch>`.
 
-7. **Report** the PR URL and CI status. Do **not** merge unless the user asks. When they do: `gh pr merge <pr> --merge --delete-branch` — the `Closes #N` closes the issue and the board card moves to Done automatically. If the branch lives in a worktree, `--delete-branch` cannot delete a checked-out branch: from the main checkout run `git worktree remove ../quantick-worktrees/<dir>` first, then `git branch -d <branch>`.
+6. **Open the PR** following the repo template (`.github/PULL_REQUEST_TEMPLATE.md`): summary of what and why, `Closes #<N>`, the four verification-loop boxes checked (they just ran), notes for the reviewer. Use `gh pr create --body-file -` with a heredoc. Title and body are English, like the branch name and the commits — `CLAUDE.md`'s language rule covers them, and they are the one part of it no test can see: `language_guard` reads files, and a PR body is not a file.
+
+7. **Watch CI**: `gh pr checks <pr> --watch`. If checks have not registered yet, find the run with `gh run list --branch <branch>` and use `gh run watch <id> --exit-status`. Red → read the failing log, fix, push, repeat.
+
+8. **Report** the PR URL and CI status. Do **not** merge unless the user asks. When they do: `gh pr merge <pr> --merge --delete-branch` — the `Closes #N` closes the issue and the board card moves to Done automatically. If the branch lives in a worktree, `--delete-branch` cannot delete a checked-out branch: from the main checkout run `git worktree remove ../quantick-worktrees/<dir>` first, then `git branch -d <branch>`.
