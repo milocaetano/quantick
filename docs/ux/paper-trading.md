@@ -119,6 +119,8 @@ wears a card (`INSET` fill, hairline border, a side-colour rail).
 | Pending order | dashed 1 px, `ACCENT` | pill: `BUY LMT 2`; open on hover: `#3 BUY LMT 2 @ 95.0`, `×` cancels |
 | A pending order's stop | dashed 1 px, `SELL` | chip: `SL 90.0 −5.0 pts`, hover `×` clears |
 | A pending order's target | dashed 1 px, `BUY` | chip: `TP 110.0 +15.0 pts`, hover `×` clears |
+| A ladder's working leg | dashed 1 px, `SELL`/`BUY` by role | pill: `SL 1` / `TP 1`; open on hover: `#7 SL 1 @ 97.0`, `×` cancels that leg |
+| The aim's projected bracket | dashed 1 px, `SELL`/`BUY` by role | chip: `SL 97.0 · 3 pts · 3 ticks · 1:1`, or `SL 97.0 · 1` per rung under a strategy |
 
 **A working order carries its own bracket.** The legs are *dashed* where
 the position's are solid, and the difference is the whole meaning: a
@@ -262,6 +264,74 @@ Sweeping across a drawn line or an order line blinks the aim off for its
 grab band, and that band's own cursor comes up instead; nudge clear and the
 aim is back.
 
+### A bracket may be a ladder
+
+A bracket used to be one stop and one target. It is now an ordered list of
+**parts** — at most four, a bound rather than a preference, because the list
+is walked on a per-trade path and its cost should be visible rather than
+configured. Each part carries its own stop, its own target and its share of
+the entry.
+
+A plain bracket is the degenerate case: one part covering the whole fill.
+It arms the position's own pair exactly as it always did, which is what the
+port reports and what every venue models — so nothing about the single-pair
+trader's chart changed.
+
+A **ladder** is what is new. On the fill each part becomes a
+one-cancels-the-other pair of working orders on the reducing side:
+whichever leg fills closes that part and cancels its sibling, and the parts
+the print did not reach carry on untouched. Because the legs are ordinary
+working orders they inherit everything orders already have — they show in
+the dock's list, they are dragged to reprice, and the `×` cancels one
+without touching the other. They take their role's colour rather than
+`ACCENT` and say what they do (`SL 1`) rather than which way they trade,
+because a leg reading as another entry waiting to fire is the misreading
+this surface cannot afford.
+
+Under a ladder the position's own `stop_loss`/`take_profit` answer
+**nothing**: there are several stops and no single one of them is true, so
+the legs carry the truth and the position declines to pick a rung to stand
+for them all.
+
+### Named exit strategies
+
+A ticket row picks a **named exit ladder** — rows of (share of quantity,
+gain in ticks, loss in ticks) — and the aim then projects that ladder, every
+rung of it, before the click. `<None>` rests a bare order the trader
+brackets by hand, which is exactly what the ticket did before this existed.
+
+Ticks only, deliberately: a currency or percentage row needs a tick value
+this workspace does not have, and a number the app cannot compute honestly
+is one it does not show. The shares must add up to 100%; the editor says so
+beside the fields rather than normalising behind the trader's back, and the
+last rung takes any rounding so no sliver of a position is left naked.
+
+The editor is a window (`Edit…` beside the selector, or
+`QUANTICK_PAPER_STRATEGY_EDITOR=1` on launch) — building a ladder is a job a
+trader finishes and closes rather than part of reading the chart. Strategies
+and the selection are app-wide and survive a restart in the paper-state
+sidecar; a selection naming a strategy the file no longer carries selects
+nothing rather than quietly arming its neighbour.
+
+### The ruler: how far, decided before the click
+
+Holding the cmd modifier aims an entry. Rolling the wheel while it is up
+walks a projected stop and target out from the pointer, **one tick per
+notch, the same distance on both sides**. Equal by construction, so what is
+on screen before the click is the trade at 1:1, and the chip states the
+distance in points and in ticks.
+
+The question this answers is not "where does the stop go" but "is that
+distance worth taking" — asked while the order still costs nothing to
+abandon. The distance sticks across aims, and the click places exactly what
+the ruler was showing.
+
+One wheel, one meaning at a time: while the ruler spends a frame's travel
+the chart's zoom is told to leave it alone, so the same roll never both
+widens a bracket and rescales the plot. With a strategy selected the wheel
+goes back to the chart — the strategy owns the distances, and two rulers on
+one aim would be two answers to one question.
+
 ### Closed-trade marks
 
 Every round trip closed *this session* paints on the chart, under the live
@@ -403,7 +473,12 @@ stay visible but disabled, wearing the sim core's own rejection text
 
 `CLAUDE.md`'s *operable without a hand* rule, for the one class of
 capability that had no registry entry at all: `trade.order.place`,
-`trade.order.bracket` and `trade.order.cancel`. Each is a named call with
+`trade.order.bracket` and `trade.order.cancel`, joined by
+`trade.strategy.select` and `trade.ruler.set` — the two that shape what the
+*next* order will carry rather than changing one that exists. Every result
+in the family reports which ladder is armed and where the ruler stands, so
+a caller that placed an order knows which protection it just bought. Each
+is a named call with
 an actor in its signature, answering with the venue's own refusal text and
 with every working order read back, plus the mark the call landed against
 — every refusal here is a statement about a price relative to the market,
@@ -459,6 +534,17 @@ would guard it is already carved out (§9b).
   that thin band is where a trader's pointer naturally sits — firing a
   market entry from it would turn a hover into a fill. Market stays on the
   buttons and the hotkeys, which are unambiguous.
+- **Currency and percentage rows in a strategy.** Other platforms offer
+  them; this one does not, because the workspace has no per-instrument tick
+  value and a converted number would be a guess wearing a currency sign.
+  Ticks are what the chart can prove.
+- **A per-rung stop offset, and a nested trailing-stop strategy.** Recorded,
+  not built: neither is expressible in a ladder that arms a fixed level per
+  part.
+- **Editing one rung of a ladder by dragging it.** A laddered entry's legs
+  are drawn but the numbers belong to the strategy that shaped them; a drag
+  that silently forked a named ladder would leave two things called the same
+  name meaning different trades.
 - Shaded risk bands between entry and SL/TP: considered and rejected —
   the line-and-tag grammar carries the same information without painting
   over the candles.
