@@ -247,8 +247,15 @@ on the subagent and go into its prompt.
 
 **PASS** only when all of: the checklist source was 1 or 2 and the completeness
 pass actually ran; nothing `UNLEDGERED`; every `R` `COVERED`; every `A` and `G`
-`DELIVERED`; nothing `UNPROVEN`, `MISSING` or `PARTIAL` — except a line
-carrying an approved deferral (below).
+`DELIVERED`; nothing `UNPROVEN`, `MISSING` or `PARTIAL`.
+
+**An approved deferral is exempt from every one of those clauses, the ledger
+included.** A deferred `A` line does not grade `DELIVERED`, so every `R` it
+discharges would grade `DROPPED` — and "every `R` `COVERED`" would then make
+PASS unreachable for the one route by which a gap is *allowed* to ship. Read a
+deferred line as satisfied for the purpose of the verdict, and say in the
+verdict that it was deferred and by whom, so the exemption is visible rather
+than silent.
 
 That first clause is not a formality. Every clause after it quantifies over a
 set, and an empty set satisfies all of them: no request means nothing can be

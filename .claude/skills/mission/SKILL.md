@@ -46,13 +46,13 @@ else, and `delivery-review` is that someone else.
      the one that judges the others. Ledger it.
    - Keep the trader's own words as a **verbatim fragment** wherever the
      wording carries the ambiguity, or where restating it would put words in
-     their mouth. Keep it to the fragment that carries the ambiguity, not the
-     whole request: `CLAUDE.md` exempts *a marked, attributed quotation*, and a
-     standing block of untranslated prose in every goal file is a wider reading
-     than that bullet grants — it owns the rule's scope, and this one does not
-     widen it. The operative statement on each line is English, and
-     `GOAL-archive-*.md` sits outside `language_guard`'s scan by design, which
-     is a reason to be careful here rather than a licence.
+     their mouth. Keep each *fragment* to the words that carry the ambiguity —
+     a ledger line quoting three sentences where three words would do is not
+     the exemption `CLAUDE.md` grants. The operative statement on each line is
+     English. This is about the fragments in the table; the request quoted in
+     full at the foot of the file is step 5's, and is required — see there for
+     why it is one marked, attributed quotation rather than a licence to leave
+     prose untranslated.
    - Map every `R` to at least one **`A` criterion**, and cite at least one `R`
      from every `A`. **An `R` with no criterion is a hole. An `A` with no `R`
      is scope you invented** — take it to the trader or drop it.
@@ -154,8 +154,17 @@ else, and `delivery-review` is that someone else.
 
    Present the merged checklist to the user before starting work.
 
-5. **Persist it**: write the mission to `.claude/GOAL.md`, in English, so it
-   survives context compaction. Overwrite any previous one. The file keeps its
+5. **Persist it — in the worktree, which means step 6 happens first.** Cut the
+   branch and the worktree before writing anything, then write the mission to
+   `<worktree>/.claude/GOAL.md`, in English, so it survives context compaction.
+   Overwrite any previous one.
+
+   The order matters and used to be the other way round. A `GOAL.md` written
+   into the main checkout is not on the branch, so step 8's `git mv` has no
+   source to rename there and stages a commit onto `main` if run from the main
+   checkout — and `delivery-review`, which looks for the checklist *on the
+   branch*, returns NOT GRADEABLE. The stranded `GOAL-archive-*.md` files
+   sitting untracked in the main checkout are what that ordering leaves behind. The file keeps its
    name: dozens of archives already use it, and renaming the record would buy
    nothing.
 
@@ -171,7 +180,16 @@ else, and `delivery-review` is that someone else.
    reviewer can ever find. With it, the reviewer re-derives the asks from the
    trader's own words and reports what the ledger failed to carry. The verbatim
    request is what makes the gate something other than the mission grading its
-   own summary.
+   own summary, which is why `delivery-review` refuses to grade a goal file
+   that lacks it.
+
+   On the language rule: this is **one marked, attributed quotation** — the
+   request as received, in a headed section that names its source and date —
+   which is the shape `CLAUDE.md`'s exemption describes. It is not a licence to
+   leave prose untranslated elsewhere in the file: every other line, including
+   the operative statement on each ledger row, is English. Say in the section's
+   own preamble why the words are not translated, so the exemption is claimed
+   openly rather than assumed.
 
    ### The checklist format
 
@@ -206,10 +224,13 @@ else, and `delivery-review` is that someone else.
    assumption that turned out to drive the design is a question that should
    have been asked in step 3.
 
-6. **Set up the ground**: fresh worktree from updated `main` under
-   `../quantick-worktrees/` per CLAUDE.md — never work in the main checkout,
-   and check the worktree for a live writer before the first write. The
-   `worktree-guard` hook denies the write if this step is skipped.
+6. **Set up the ground — before step 5 writes anything.** Fresh worktree from
+   updated `main` under `../quantick-worktrees/` per CLAUDE.md; never work in
+   the main checkout, and check the worktree for a live writer before the first
+   write. The `worktree-guard` hook denies the write if this step is skipped.
+   It is numbered after step 5 because the checklist is *derived* first — but
+   it is *performed* first, so the goal file lands on the branch that will
+   carry it.
 
 7. **Stay on track**: refuse scope creep. A necessary detour is stated
    explicitly and tied back to the mission (or taken to the user). Keep the

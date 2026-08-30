@@ -87,9 +87,15 @@ the behaviour is covered by tests.
 
 `runs_command` splits a command on `&&`, `||` and `;` and anchors the match to
 the start of a segment. Spellings that put the gated command somewhere else are
-not detected: a pipe (`cat body.md | gh pr create --body-file -`, which is what
-`ship` step 6 recommends), a newline, an `env`/`time`/`sudo` wrapper, a
-`VAR=value` prefix, `bash -c '…'`, a brace group, an absolute path.
+not detected: a pipe (`cat body.md | gh pr create --body-file -`), a newline,
+an `env`/`time`/`sudo` wrapper, a `VAR=value` prefix, `bash -c '…'`, a brace
+group, an absolute path.
+
+`ship` step 6 is *not* one of them, and the distinction matters: it says to use
+`gh pr create --body-file -` **with a heredoc**, and that spelling begins the
+segment, so it does reach the gate. Both were measured rather than assumed — an
+earlier draft of this paragraph named `ship` as the pipe example, which would
+have told an auditor that the repo's own standard flow evades the gate.
 
 That is a real gap and it is deliberately left as it was rather than deepened
 here. Closing it by parsing harder was tried, over five review rounds, and did
@@ -124,30 +130,24 @@ written down in CLAUDE.md.
 
 - `QUANTICK_ALLOW_MAIN_WRITES=1` in the environment before launching disables
   `worktree-guard`, for the rare deliberate edit on the main checkout.
-- A file named `skip-pr-gate` beside the markers, in the worktree's own git
-  dir, disables `pr-gate` for that worktree. It exists because the gate has a
-  real false positive: `runs_command` matches the gated command at the start of
-  **any** `&&`/`||`/`;` segment, so a shell command that merely *quotes* the
-  workflow is denied along with the real thing — `git commit -m 'run cd wt &&
-  gh pr create last'` is denied, and so is a heredoc PR body describing this
-  gate. Only a mention with no separator in front of it gets through.
+- `pr-gate` has **no override**, and that is a real cost rather than a design
+  boast. `runs_command` matches the gated command at the start of *any*
+  `&&`/`||`/`;` segment, so a command that merely quotes the workflow is denied
+  too. Measured: a `git commit -m` whose message describes the flow after a
+  separator is denied, and so is an `echo … >> notes.md` that does the same.
+  Only a mention with no separator in front of it gets through.
 
-  It is a file rather than an environment variable so the session that hits the
-  denial can create it: the hook inherits the environment of whatever launched
-  Claude, so an inline `VAR=1 <command>` never reaches it and a `settings.json`
-  entry needs a restart. The denial names the exact path. It is checked *after*
-  the main-checkout refusal, so a skip file in the shared git dir cannot switch
-  the gate off for every branch at once.
-- Paths under `.claude/` are allowed even on the main checkout: the goal file,
-  its archives and the skills live there by design, and blocking them would
-  break the workflow the guard exists to protect.
+  The workaround is to keep the phrase out of the *command*: `git commit -F
+  <file>` with the message in a file, or write prose through the file tools
+  rather than a shell redirect. Several commits on the branch that added this
+  paragraph had to be made exactly that way, including the one adding it.
 
-  **`.claude/hooks/` is the exception to that exception.** `settings.json` arms
-  every session from `${CLAUDE_PROJECT_DIR}/.claude/hooks/`, so an edit there
-  while the main checkout sits on `main` disarms both gates for every session
-  and every branch at once — no record, no override, nothing to review. That is
-  a code change like any other and belongs on a branch, where this guard allows
-  it and the reviews can see it.
+  A skip file was tried and reverted. It worked, but the denial that printed
+  its creation command was the same denial an agent sees when it simply has
+  not run the reviews — which hands the kill switch to precisely the caller
+  with a motive to use it, permanently and for the whole branch. An override
+  scoped to the command that tripped it, rather than to the branch, is the
+  shape worth building. It is not built here.
 
 ## Tests
 
@@ -170,37 +170,29 @@ iterate them have nothing to iterate and their cases vanish, while the "no
 `MARKER_NAME` constants found" case appears in their place. Count failures,
 not the denominator.
 
-Mutations run against the suite, each measured and reverted rather than
-recalled:
+Mutations run against the suite as it was built, each of which it catches:
+neutering the arch-review staleness branch alone; swapping the order in which
+the denial names the two reviews; renaming a marker constant in the script
+without touching the prose; renaming it in the prose without touching the
+script; swapping the two review skills' recording commands; and deleting the
+delivery marker's check outright.
 
-| Mutation | Suite result |
-| --- | --- |
-| intact | 49 passed, 0 failed |
-| `guardrails.sh` replaced by `exit 0` | about half the hook cases fail |
-| the delivery marker's check deleted | the cases asserting it fail |
-| the two marker checks swapped in order | the ordering case fails |
-| the remedy changed back to `git -C .` | its case fails |
-| the main-checkout refusal removed | two cases fail |
-| a marker renamed in the script only | fails, naming each instruction file |
-| a marker renamed in `mission/SKILL.md` only | fails in both directions |
-| the two skills' recording commands swapped | both pairing cases fail |
-| a literal newline put back into a denial payload | the payload-shape check fails |
+The ordering case asserts that the denial with neither review recorded names
+`arch-review-ok` — the review that runs first, since a delivery review of a
+branch the shape review is about to change is wasted work. Swap the two
+`require_marker` calls and that case goes red.
 
 The `pr-gate` cases move one marker at a time — arch-review satisfied and
-delivery-review absent, and the reverse — because the failure worth catching is
-one gate silently carrying the branch through for the other. They assert the
-text of the denial, not only that it denied, and `run` checks that every
-payload is a single-line JSON object: a raw newline in a reason makes the
-payload unparseable, the decision is discarded, and the gate stops denying
-while every case still reports green. That happened, which is why the check
-exists.
+delivery-review absent, and the reverse — because the failure worth catching
+is one gate silently carrying the branch through for the other. Those cases
+assert the text of the denial, not only that it denied.
 
-Two cases pin the failure that would matter most. A command resolving to the
-main checkout must deny **and name no recording path**, and the remedy must
-name the worktree rather than `.` — because it is pasted into a shell whose cwd
-is the session's. Together those were a bypass: follow the denial's own
-instruction from the session cwd, then run the command with no leading `cd`,
-and the gate is off for every later branch.
+What they deliberately do **not** cover is the set of command spellings the
+matcher cannot see. There is no case pinning that a pipe or a newline reaches
+the gate, because neither does — see the gap section above. A test asserting
+otherwise existed briefly, against a parser that was reverted, and a claim in
+this file outlived it by a commit; that is the failure mode this paragraph is
+here to prevent, since a documented coverage claim is read as coverage.
 
 ### What the last block actually proves
 
