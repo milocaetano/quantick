@@ -398,10 +398,10 @@ impl ArmedStrategy {
     /// It reads as a cross-region coupling, and one region's parked order
     /// muting another region's setup is a real complaint. It cannot be
     /// lifted here: `quantick-sim` models **one** netted position carrying
-    /// **one** bracket, and a second entry on the same side overwrites
-    /// `position.stop_loss` with its own, emitting nothing — the first
-    /// instance keeps a badge reading "in position" over a position whose
-    /// protection it no longer owns. Giving each region its own account is
+    /// **one** exit ladder, and a bracketed second entry on the same side
+    /// replaces that ladder wholesale (the old legs are cancelled as
+    /// `BracketReplaced`) — the first instance keeps a badge reading "in
+    /// position" over a position whose protection it no longer owns. Giving each region its own account is
     /// a simulator change, and until it lands this flag is what keeps a
     /// stop attached to the operation that projected it.
     ///
@@ -512,12 +512,12 @@ impl ArmedStrategy {
         // unprotected" makes that a reason to hold, not to fire bare.
         let legs_clear_edge = match self.params.side {
             Side::Sell => {
-                bracket.stop_loss.is_none_or(|level| level > edge)
-                    && bracket.take_profit.is_none_or(|level| level < edge)
+                bracket.stop_loss().is_none_or(|level| level > edge)
+                    && bracket.take_profit().is_none_or(|level| level < edge)
             }
             Side::Buy => {
-                bracket.stop_loss.is_none_or(|level| level < edge)
-                    && bracket.take_profit.is_none_or(|level| level > edge)
+                bracket.stop_loss().is_none_or(|level| level < edge)
+                    && bracket.take_profit().is_none_or(|level| level > edge)
             }
         };
         if !legs_clear_edge {
@@ -536,7 +536,7 @@ impl ArmedStrategy {
             bracket,
             // The projected target doubles as the order's expiry: the move
             // completing without the retest removes the reason to enter.
-            cancel_at: bracket.take_profit,
+            cancel_at: bracket.take_profit(),
             // The flat gate held at fire time, but this order can rest for
             // hours: if a human opens a position while it waits, filling
             // would trade against that position — so the simulator stands
@@ -855,10 +855,7 @@ fn project_bracket(
     {
         return None;
     }
-    Some(Bracket {
-        stop_loss,
-        take_profit,
-    })
+    Some(Bracket::whole(stop_loss, take_profit))
 }
 
 #[cfg(test)]
@@ -956,10 +953,7 @@ mod tests {
             vec![Command::PlaceMarket {
                 side: Side::Buy,
                 quantity: Decimal::ONE,
-                bracket: Bracket {
-                    stop_loss: Some(dec("100")),
-                    take_profit: Some(dec("112")),
-                },
+                bracket: Bracket::whole(Some(dec("100")), Some(dec("112"))),
             }]
         );
         assert_eq!(
@@ -984,10 +978,7 @@ mod tests {
             vec![Command::PlaceMarket {
                 side: Side::Sell,
                 quantity: Decimal::ONE,
-                bracket: Bracket {
-                    stop_loss: Some(dec("100")),
-                    take_profit: Some(dec("88")),
-                },
+                bracket: Bracket::whole(Some(dec("100")), Some(dec("88"))),
             }]
         );
     }
@@ -1073,6 +1064,9 @@ mod tests {
             cancel_at: None,
             flat_only: false,
             placed_ms: 0,
+            role: quantick_sim::OrderRole::Entry,
+            oco: None,
+            reduce_only: false,
         };
         let _ = instance.on_sim_events(&[VenueEvent::Placed(order.clone())]);
         assert_eq!(
@@ -1135,6 +1129,9 @@ mod tests {
             cancel_at: None,
             flat_only: false,
             placed_ms: 0,
+            role: quantick_sim::OrderRole::Entry,
+            oco: None,
+            reduce_only: false,
         })]);
         let _ = instance.on_sim_events(&[VenueEvent::Filled(quantick_sim::Fill {
             timestamp_ms: 1,
@@ -1182,6 +1179,9 @@ mod tests {
             cancel_at: None,
             flat_only: false,
             placed_ms: 0,
+            role: quantick_sim::OrderRole::Entry,
+            oco: None,
+            reduce_only: false,
         };
         let _ = instance.on_sim_events(&[VenueEvent::Placed(order.clone())]);
         let _ = instance.on_sim_events(&[VenueEvent::Cancelled {
@@ -1259,10 +1259,7 @@ mod tests {
             vec![Command::PlaceMarket {
                 side: Side::Buy,
                 quantity: Decimal::ONE,
-                bracket: Bracket {
-                    stop_loss: Some(dec("104")),
-                    take_profit: Some(dec("106")),
-                },
+                bracket: Bracket::whole(Some(dec("104")), Some(dec("106"))),
             }]
         );
         assert!(instance.status_line().starts_with("fired"));
@@ -1327,6 +1324,9 @@ mod tests {
             cancel_at: None,
             flat_only: false,
             placed_ms: 0,
+            role: quantick_sim::OrderRole::Entry,
+            oco: None,
+            reduce_only: false,
         };
         let _ = instance.on_sim_events(&[VenueEvent::Placed(order)]);
 
@@ -1369,6 +1369,9 @@ mod tests {
             cancel_at: None,
             flat_only: false,
             placed_ms: 0,
+            role: quantick_sim::OrderRole::Entry,
+            oco: None,
+            reduce_only: false,
         })]);
         let commands = bystander.on_sim_events(&[VenueEvent::BracketDropped {
             reason: RejectReason::TakeProfitOnWrongSide(Side::Buy),
@@ -1452,10 +1455,7 @@ mod tests {
                 side: Side::Sell,
                 quantity: Decimal::ONE,
                 price: dec("105"),
-                bracket: Bracket {
-                    stop_loss: Some(dec("110")),
-                    take_profit: Some(dec("98")),
-                },
+                bracket: Bracket::whole(Some(dec("110")), Some(dec("98"))),
                 cancel_at: Some(dec("98")),
                 flat_only: true,
             }],
@@ -1486,10 +1486,7 @@ mod tests {
                 side: Side::Buy,
                 quantity: Decimal::ONE,
                 price: dec("100"),
-                bracket: Bracket {
-                    stop_loss: Some(dec("95")),
-                    take_profit: Some(dec("107")),
-                },
+                bracket: Bracket::whole(Some(dec("95")), Some(dec("107"))),
                 cancel_at: Some(dec("107")),
                 flat_only: true,
             }]
@@ -1663,13 +1660,13 @@ mod tests {
             kind: quantick_sim::EntryKind::Limit,
             price: Some(dec("105")),
             quantity: Decimal::ONE,
-            bracket: Bracket {
-                stop_loss: Some(dec("110")),
-                take_profit: Some(dec("98")),
-            },
+            bracket: Bracket::whole(Some(dec("110")), Some(dec("98"))),
             cancel_at: Some(dec("98")),
             flat_only: true,
             placed_ms: 0,
+            role: quantick_sim::OrderRole::Entry,
+            oco: None,
+            reduce_only: false,
         }
     }
 
@@ -1837,10 +1834,10 @@ mod tests {
     ///
     /// It reads as a cross-region coupling and the trader asked for it
     /// gone. It cannot go while `quantick-sim` models **one** netted
-    /// position with **one** bracket: a second entry on the same side
-    /// overwrites `position.stop_loss` with its own with no event emitted
-    /// (`simulator.rs`), so the first instance keeps a badge reading "in
-    /// position" over a position whose stop it no longer owns. Removing
+    /// position with **one** exit ladder: a bracketed second entry on the
+    /// same side replaces that ladder wholesale (`simulator.rs`), so the
+    /// first instance keeps a badge reading "in position" over a position
+    /// whose stop it no longer owns. Removing
     /// this gate is a simulator change — per-region accounts — not a
     /// kernel one.
     #[test]
@@ -2046,6 +2043,9 @@ mod tests {
             cancel_at: None,
             flat_only: false,
             placed_ms: 0,
+            role: quantick_sim::OrderRole::Entry,
+            oco: None,
+            reduce_only: false,
         };
         let _ = instance.on_sim_events(&[VenueEvent::Placed(order)]);
         let _ = instance.on_sim_events(&[VenueEvent::Filled(quantick_sim::Fill {

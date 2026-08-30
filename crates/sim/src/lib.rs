@@ -84,9 +84,9 @@ pub mod report;
 // consumer that already talks to the paper simulator should not have to
 // learn where each type happens to live.
 pub use quantick_trading::{
-    Bracket, BracketTarget, CancelReason, CloseAmount, ClosedTrade, EntryKind, ExitReason, Fill,
-    FillRole, Order, OrderId, OrderIntent, Position, RejectReason, TradingVenue, VenueEvent,
-    signed_points,
+    Bracket, BracketTarget, CancelReason, CloseAmount, ClosedTrade, EntryKind, ExitPart,
+    ExitReason, Fill, FillRole, LadderError, MAX_EXIT_PARTS, OcoId, Order, OrderId, OrderIntent,
+    OrderRole, Position, RejectReason, TradingVenue, VenueEvent, signed_points,
 };
 pub use report::{PerformanceReport, ReasonReport, SideReport};
 pub use simulator::{Command, QueuedAction, Simulator};

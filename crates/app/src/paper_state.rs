@@ -45,6 +45,29 @@ pub(crate) struct PaperState {
     /// See [`Self::cmd_buy_modifier`]; the sell side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cmd_sell_modifier: Option<String>,
+    /// Which named exit strategy the ticket is set to. A name this build no
+    /// longer knows selects nothing, which is the honest reading of "the
+    /// strategy you chose is gone".
+    ///
+    /// Declared before `order_strategies` on purpose: TOML wants a table's
+    /// scalars before its tables, and an array of tables emitted first would
+    /// make every scalar after it unserialisable. Keep new scalar fields
+    /// above this line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_order_strategy: Option<String>,
+    /// How far one wheel notch walks the aim's ruler, in points, per
+    /// instrument.
+    ///
+    /// Keyed by the bare symbol: the step describes the instrument's price
+    /// geometry, not who streams it, so a recorded session must not make a
+    /// trader relearn their wheel. A `BTreeMap` because the order it writes
+    /// in has to be the same every time — a sidecar that reshuffles itself
+    /// on every save is a diff nobody can read.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub ruler_steps: std::collections::BTreeMap<String, String>,
+    /// The named exit strategies the trader built, in their own order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order_strategies: Option<Vec<crate::order_strategies::OrderStrategy>>,
     /// Which entry kind the aim places (`auto`/`limit`/`stop`); an unknown
     /// token falls back to the default at read time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -199,6 +222,18 @@ mod tests {
             cmd_trading_enabled: Some(false),
             cmd_buy_modifier: Some("alt".to_owned()),
             cmd_sell_modifier: Some("ctrl".to_owned()),
+            ruler_steps: [("WIN$N".to_owned(), "10".to_owned())]
+                .into_iter()
+                .collect(),
+            order_strategies: Some(vec![crate::order_strategies::OrderStrategy {
+                name: "halves".to_owned(),
+                rows: vec![crate::order_strategies::StrategyRow {
+                    share_percent: rust_decimal::Decimal::ONE_HUNDRED,
+                    gain_ticks: Some(80),
+                    loss_ticks: Some(40),
+                }],
+            }]),
+            selected_order_strategy: Some("halves".to_owned()),
             cmd_entry_kind: Some("limit".to_owned()),
         };
         save(&path, &state);

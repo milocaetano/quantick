@@ -45,6 +45,7 @@ mod layouts;
 mod live_strip;
 mod loading;
 mod metrics;
+mod order_strategies;
 mod orderflow;
 mod orderflow_engine;
 mod orderflow_render;

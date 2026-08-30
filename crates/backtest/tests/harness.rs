@@ -448,10 +448,7 @@ fn a_dropped_bracket_is_counted() {
         Command::PlaceMarket {
             side: Side::Buy,
             quantity: Decimal::ONE,
-            bracket: quantick_sim::Bracket {
-                stop_loss: None,
-                take_profit: Some(Decimal::new(1_195, 1)),
-            },
+            bracket: quantick_sim::Bracket::whole(None, Some(Decimal::new(1_195, 1))),
         },
     )]);
 

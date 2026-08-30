@@ -6885,6 +6885,19 @@
               "null"
             ]
           },
+          "ruler_ticks": {
+            "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "selected_strategy": {
+            "description": "The named exit ladder the ticket is set to, if any. Every call in\nthis family reports it, because it is what the *next* order will\ncarry and a caller that placed one needs to know which ladder it\njust armed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "simulated": {
             "description": "A reminder in every result: these fills are simulated.",
             "type": "boolean"
@@ -6900,6 +6913,7 @@
         "required": [
           "accepted",
           "working_orders",
+          "ruler_ticks",
           "simulated"
         ],
         "title": "TradeResult",
@@ -7032,6 +7046,19 @@
               "null"
             ]
           },
+          "ruler_ticks": {
+            "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "selected_strategy": {
+            "description": "The named exit ladder the ticket is set to, if any. Every call in\nthis family reports it, because it is what the *next* order will\ncarry and a caller that placed one needs to know which ladder it\njust armed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "simulated": {
             "description": "A reminder in every result: these fills are simulated.",
             "type": "boolean"
@@ -7047,6 +7074,7 @@
         "required": [
           "accepted",
           "working_orders",
+          "ruler_ticks",
           "simulated"
         ],
         "title": "TradeResult",
@@ -7237,6 +7265,19 @@
               "null"
             ]
           },
+          "ruler_ticks": {
+            "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "selected_strategy": {
+            "description": "The named exit ladder the ticket is set to, if any. Every call in\nthis family reports it, because it is what the *next* order will\ncarry and a caller that placed one needs to know which ladder it\njust armed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "simulated": {
             "description": "A reminder in every result: these fills are simulated.",
             "type": "boolean"
@@ -7252,6 +7293,7 @@
         "required": [
           "accepted",
           "working_orders",
+          "ruler_ticks",
           "simulated"
         ],
         "title": "TradeResult",
@@ -7269,6 +7311,330 @@
       "risk_reducing": false,
       "stale_input_safety": "Every price is judged against the market at the moment the order lands, not at the moment it was written: a limit that would fill at once, or a stop that would trigger at once, is refused with the reason. A caller working from a stale chart can therefore place an order at a level that has gone stale, but never one the venue would not have accepted from a caller reading the live tape.",
       "title": "Place a simulated order",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Walks the projected stop and target out from an aimed entry, the same distance on both sides, in ticks of the instrument. Zero puts the ruler away. Shapes what the next order would carry rather than changing one that exists - the read a trader takes before committing.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "trade",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "trade.ruler.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "How far the ruler walks the projected bracket from an aimed entry.",
+        "properties": {
+          "ticks": {
+            "description": "Distance in ticks, the same on both sides. Zero puts the ruler away\nand leaves the next order bare.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ticks"
+        ],
+        "title": "SetRulerInput",
+        "type": "object"
+      },
+      "module": "trade",
+      "output_schema": {
+        "$defs": {
+          "WorkingOrderView": {
+            "description": "One working order, as a caller reads it back.",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "order_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "price": {
+                "description": "Resting price, absent only for an order that has none.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "quantity": {
+                "type": "string"
+              },
+              "side": {
+                "type": "string"
+              },
+              "stop_loss": {
+                "description": "The protective stop riding this order, armed on its fill.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "take_profit": {
+                "description": "The protective target riding this order; see `stop_loss`.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "order_id",
+              "side",
+              "kind",
+              "quantity"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every `trade.*` action answers with.\n\n`accepted` is the one field a caller must read. A refusal is not an\nerror return here for the same reason it is not one in the venue port:\nthe venue's messages are written to teach, and a result that carried\nonly a status code would throw away the sentence that says what to do\ninstead.",
+        "properties": {
+          "accepted": {
+            "description": "Whether the venue took the request.",
+            "type": "boolean"
+          },
+          "mark_price": {
+            "description": "The last price the venue had been shown when this call landed.\n\nEvery refusal in this family is a statement about a price relative to\nthe market, so a caller that got one needs the market to understand\nit — and a caller that got an acceptance needs it to know what its\norder is resting away from. Absent before the first print, which is\nalso when nothing can be placed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "order_id": {
+            "description": "The order this call is about, once the venue has named it.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rejected_because": {
+            "description": "The venue's own words when it did not. Absent when it did.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ruler_ticks": {
+            "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "selected_strategy": {
+            "description": "The named exit ladder the ticket is set to, if any. Every call in\nthis family reports it, because it is what the *next* order will\ncarry and a caller that placed one needs to know which ladder it\njust armed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "simulated": {
+            "description": "A reminder in every result: these fills are simulated.",
+            "type": "boolean"
+          },
+          "working_orders": {
+            "description": "Every order working after the call, so a caller never has to guess\nwhat the account looks like now.",
+            "items": {
+              "$ref": "#/$defs/WorkingOrderView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "accepted",
+          "working_orders",
+          "ruler_ticks",
+          "simulated"
+        ],
+        "title": "TradeResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "trade"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call answers with where the ruler actually landed, clamped to what the wheel itself can reach, so a caller that asked for more can see what it got. It changes nothing that is already working.",
+      "title": "Set the aim's ruler distance",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Sets which named exit strategy the next order rests with, or none for a bare order. Changes no order that already exists and never touches an open position; the same call the ticket's own selector makes.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "trade",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "trade.strategy.select",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Which named exit ladder the ticket arms next.",
+        "properties": {
+          "name": {
+            "description": "The strategy's name, exactly as `observe.session.paper` reports it.\nOmitted or null selects none, which is the bare order the trader\nbrackets by hand.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "SelectStrategyInput",
+        "type": "object"
+      },
+      "module": "trade",
+      "output_schema": {
+        "$defs": {
+          "WorkingOrderView": {
+            "description": "One working order, as a caller reads it back.",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "order_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "price": {
+                "description": "Resting price, absent only for an order that has none.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "quantity": {
+                "type": "string"
+              },
+              "side": {
+                "type": "string"
+              },
+              "stop_loss": {
+                "description": "The protective stop riding this order, armed on its fill.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "take_profit": {
+                "description": "The protective target riding this order; see `stop_loss`.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "order_id",
+              "side",
+              "kind",
+              "quantity"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every `trade.*` action answers with.\n\n`accepted` is the one field a caller must read. A refusal is not an\nerror return here for the same reason it is not one in the venue port:\nthe venue's messages are written to teach, and a result that carried\nonly a status code would throw away the sentence that says what to do\ninstead.",
+        "properties": {
+          "accepted": {
+            "description": "Whether the venue took the request.",
+            "type": "boolean"
+          },
+          "mark_price": {
+            "description": "The last price the venue had been shown when this call landed.\n\nEvery refusal in this family is a statement about a price relative to\nthe market, so a caller that got one needs the market to understand\nit — and a caller that got an acceptance needs it to know what its\norder is resting away from. Absent before the first print, which is\nalso when nothing can be placed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "order_id": {
+            "description": "The order this call is about, once the venue has named it.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rejected_because": {
+            "description": "The venue's own words when it did not. Absent when it did.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ruler_ticks": {
+            "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "selected_strategy": {
+            "description": "The named exit ladder the ticket is set to, if any. Every call in\nthis family reports it, because it is what the *next* order will\ncarry and a caller that placed one needs to know which ladder it\njust armed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "simulated": {
+            "description": "A reminder in every result: these fills are simulated.",
+            "type": "boolean"
+          },
+          "working_orders": {
+            "description": "Every order working after the call, so a caller never has to guess\nwhat the account looks like now.",
+            "items": {
+              "$ref": "#/$defs/WorkingOrderView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "accepted",
+          "working_orders",
+          "ruler_ticks",
+          "simulated"
+        ],
+        "title": "TradeResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "trade"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the strategy it selected and answers with the one that is now set, so a caller working from a stale read can see that it chose something else. It changes nothing that is already working.",
+      "title": "Choose the ticket's exit ladder",
       "version": 1
     }
   ],
@@ -11072,6 +11438,20 @@
           },
           "TabPaperSnapshot": {
             "properties": {
+              "armed_strategy": {
+                "description": "The named exit ladder the ticket is armed with, if any.\n\nWhat the *next* order will carry, which the order rows below cannot\nsay: they are what already exists. An operator asked \"why is nothing\nprojecting\" has to be able to read this, and until it was here the\nanswer lived only in pixels.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "armed_strategy_refusal": {
+                "description": "Why the armed ladder cannot be used, when it cannot. Absent when it\nis usable, and absent when nothing is armed — a strategy that draws\nnothing and says nothing is the bug this field exists to prevent.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "closed_trade_count": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -11107,6 +11487,12 @@
                 "description": "Where these rows come from, named rather than implied.",
                 "type": "string"
               },
+              "ruler_ticks": {
+                "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use. Sticky across aims, so a reader needs it to explain\nwhat the next order would carry.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
               "selected_trade_row": {
                 "anyOf": [
                   {
@@ -11123,6 +11509,10 @@
               },
               "tab_id": {
                 "$ref": "#/$defs/WireU64"
+              },
+              "tick_size": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "One tick of this tab's instrument, so `ruler_ticks` can be read as a\nprice rather than a count."
               },
               "working_order_count": {
                 "$ref": "#/$defs/WireU64"
@@ -11144,6 +11534,8 @@
               "symbol",
               "provenance",
               "flat",
+              "ruler_ticks",
+              "tick_size",
               "working_orders",
               "working_order_count",
               "working_orders_truncated",

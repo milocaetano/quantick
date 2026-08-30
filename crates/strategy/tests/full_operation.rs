@@ -115,8 +115,8 @@ fn one_operation_walks_the_whole_pipeline() {
     };
     assert_eq!(side, Side::Buy);
     assert_eq!(quantity, Decimal::ONE);
-    assert_eq!(bracket.take_profit, Some(dec("111")));
-    assert_eq!(bracket.stop_loss, Some(dec("103")));
+    assert_eq!(bracket.take_profit(), Some(dec("111")));
+    assert_eq!(bracket.stop_loss(), Some(dec("103")));
 
     assert_eq!(outcome.closed.len(), 1, "the operation round-tripped");
     let trade = &outcome.closed[0];
@@ -214,10 +214,7 @@ fn the_retest_fills_at_the_edge_and_rides_to_the_target() {
             side: Side::Sell,
             quantity: Decimal::ONE,
             price: dec("105"),
-            bracket: quantick_sim::Bracket {
-                stop_loss: Some(dec("108")),
-                take_profit: Some(dec("100")),
-            },
+            bracket: quantick_sim::Bracket::whole(Some(dec("108")), Some(dec("100"))),
             cancel_at: Some(dec("100")),
             flat_only: true,
         }]

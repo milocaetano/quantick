@@ -55,17 +55,11 @@ fn the_working_order_lifecycle_runs_on_any_venue() {
 
         venue.amend_bracket(
             BracketTarget::Order(id),
-            Bracket {
-                stop_loss: Some(dec(90)),
-                take_profit: Some(dec(110)),
-            },
+            Bracket::whole(Some(dec(90)), Some(dec(110))),
         );
         assert_eq!(
             venue.working_order(id).map(|order| order.bracket),
-            Some(Bracket {
-                stop_loss: Some(dec(90)),
-                take_profit: Some(dec(110)),
-            }),
+            Some(Bracket::whole(Some(dec(90)), Some(dec(110)))),
             "{name}: the order carries its legs"
         );
 
@@ -107,10 +101,7 @@ fn drive_bracketed_entry(venue: &mut dyn TradingVenue) -> quantick_trading::Orde
     let id = venue.working_orders()[0].id;
     venue.amend_bracket(
         BracketTarget::Order(id),
-        Bracket {
-            stop_loss: Some(dec(90)),
-            take_profit: Some(dec(110)),
-        },
+        Bracket::whole(Some(dec(90)), Some(dec(110))),
     );
     id
 }

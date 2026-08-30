@@ -56,10 +56,10 @@ impl Protection {
                 self.target_points.map(|d| mark - d),
             ),
         };
-        Bracket {
-            stop_loss: stop.filter(|price| *price > Decimal::ZERO),
-            take_profit: target.filter(|price| *price > Decimal::ZERO),
-        }
+        Bracket::whole(
+            stop.filter(|price| *price > Decimal::ZERO),
+            target.filter(|price| *price > Decimal::ZERO),
+        )
     }
 }
 
@@ -442,12 +442,12 @@ mod tests {
             target_points: Some(Decimal::from(20)),
         };
         let long_bracket = protection.bracket(Side::Buy, Some(Decimal::from(100)));
-        assert_eq!(long_bracket.stop_loss, Some(Decimal::from(90)));
-        assert_eq!(long_bracket.take_profit, Some(Decimal::from(120)));
+        assert_eq!(long_bracket.stop_loss(), Some(Decimal::from(90)));
+        assert_eq!(long_bracket.take_profit(), Some(Decimal::from(120)));
 
         let short_bracket = protection.bracket(Side::Sell, Some(Decimal::from(100)));
-        assert_eq!(short_bracket.stop_loss, Some(Decimal::from(110)));
-        assert_eq!(short_bracket.take_profit, Some(Decimal::from(80)));
+        assert_eq!(short_bracket.stop_loss(), Some(Decimal::from(110)));
+        assert_eq!(short_bracket.take_profit(), Some(Decimal::from(80)));
 
         assert!(
             protection.bracket(Side::Buy, None).is_empty(),

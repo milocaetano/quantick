@@ -4446,6 +4446,26 @@ impl ChartPane {
                             }))
             });
         let paper_layer_visible = self.layer_visible(ChartLayer::PaperTrading, chrome.style);
+        // The wheel over the plot, offered to the paper layer first: with an
+        // aim up it belongs to the ruler, and the chart's zoom is told below
+        // to leave that frame's travel alone.
+        let paper_scroll = pointer_position
+            .filter(|position| drawing_area.contains(*position))
+            .map_or(0.0, |_| {
+                ui.input(|input| {
+                    let delta = input.raw_scroll_delta;
+                    // Windows turns a vertical wheel into *horizontal* scroll
+                    // while a modifier is held, so the value the ruler needs
+                    // arrives on `x` for exactly the gesture the ruler is
+                    // made of. Reading only `y` meant the ruler saw nothing
+                    // whenever the trader was actually holding the key.
+                    if delta.y.abs() > f32::EPSILON {
+                        delta.y
+                    } else {
+                        delta.x
+                    }
+                })
+            });
         let paper_gesture = if chrome.paper_takes_input && !tool_armed {
             chrome.paper.handle_chart_input(&ChartInput {
                 chart: drawing_area,
@@ -4456,6 +4476,9 @@ impl ChartPane {
                 primary_released,
                 modifiers,
                 canvas_claimed,
+                scroll_y: paper_scroll,
+                middle_pressed: ui
+                    .input(|input| input.pointer.button_pressed(egui::PointerButton::Middle)),
                 layer_visible: paper_layer_visible,
             })
         } else {
@@ -4844,7 +4867,12 @@ impl ChartPane {
                 }
             }
         }
-        if chart.hovered() {
+        // One wheel, one meaning at a time. While an aim is up the ruler has
+        // already spent this frame's travel walking a bracket out, and the
+        // same roll must not also rescale the plot under it. The guard is
+        // here as well as on the stacked panes' accumulated gesture, because
+        // this is the canvas the aim actually lives on.
+        if chart.hovered() && !chrome.paper.consumed_scroll() {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if scroll.abs() > 0.0 {
                 // Scroll up (positive) zooms in — the candles, wherever on the
@@ -5144,7 +5172,9 @@ impl ChartPane {
         if total > 0 && pane_time_gesture.pan_x != 0.0 {
             self.viewport.pan_pixels(pane_time_gesture.pan_x, total);
         }
-        if pane_time_gesture.scroll_y.abs() > 0.0 {
+        // One wheel, one meaning at a time: while the ruler is walking a
+        // bracket out from an aim, the same travel must not also zoom.
+        if pane_time_gesture.scroll_y.abs() > 0.0 && !chrome.paper.consumed_scroll() {
             self.viewport
                 .zoom(2.0_f32.powf(pane_time_gesture.scroll_y / SCROLL_ZOOM_PX));
         }
@@ -7455,7 +7485,11 @@ impl ChartPane {
         // on through `unhide_layer_for_armed_tool`, so a second conjunct
         // asking whether the layer is visible could never be false and would
         // read as a condition that can be met.
-        let crosshair_owns_the_price = chrome.toolrail.tool() == Tool::Crosshair;
+        // The paper aim writes a price on this axis for the very pixel the
+        // pointer is on, and while it is up it owns that chip for the same
+        // reason the crosshair does.
+        let crosshair_owns_the_price =
+            chrome.toolrail.tool() == Tool::Crosshair || chrome.paper.aiming();
         Some(PointerCompass {
             price: price_on && !crosshair_owns_the_price,
             time: time_on && readout.bar.is_some(),
