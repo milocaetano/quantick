@@ -39,7 +39,7 @@ before it. Step 7 hands over the line to paste.
    | Adds a capability (feed, bar type, indicator, layer, panel, crate) | follow `new-extension`: port named, registration-only edits, defaults preserve today's behaviour, fake second implementation tested, blast radius (added vs. edited files) stated in the PR body |
    | Adds something a trader *does* (an action, a tool, a trade, a lock) | drivable without a mouse — read `arch-review`'s *The second operator* and take its act/read/discover criteria from there, rather than from a summary that drifts. Where the capability class has no registry yet (there is none today for actions like a trade or a platform lock), carving one is part of the work, per `new-extension`'s carve-the-port rule — name it in the plan or state why the capability stays local |
    | Engine / determinism territory | test-first: fixture + expected output written before the code; golden test guards determinism |
-   | Docs/skills only | four checks still run (they are cheap when nothing compiled changed); `arch-review`'s shape dimensions 1–7 waived — **dimension 8 (English) is not**, since docs are exactly where a foreign-language line hides, and neither is its step 0 bug pass; `pr-gate` still wants the marker, so the skill runs and reports what step 0 and dimension 8 found |
+   | Docs/skills only | four checks still run (they are cheap when nothing compiled changed); `arch-review`'s shape dimensions 1–7 and 9 waived — **dimension 8 (English) is not**, since docs are exactly where a foreign-language line hides, and neither is its step 0 bug pass; `pr-gate` still wants the marker, so the skill runs and reports what step 0 and dimension 8 found |
 
    Present the merged checklist to the user before starting work.
 

@@ -71,6 +71,7 @@ mod store_home;
 mod strategy_anchors;
 mod strategy_presets;
 mod style;
+mod surfaces;
 mod symbols_file;
 mod tab;
 mod tabstrip;
