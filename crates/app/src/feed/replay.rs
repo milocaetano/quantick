@@ -363,14 +363,23 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
         // measuring volume still works.
         capabilities: super::fixed_capabilities(FeedCapabilities {
             book_capture: false,
-            // A recording pages *candles*, never trades: the tape in the file
-            // is the whole day, and there is no venue behind it to ask for
-            // more prints. The gesture is offered only when there is context
-            // on disk to pick up, and the reply is candles — which the chart
-            // marks as broker candles wherever it draws them, so the trader
-            // reads what they actually got.
-            history_paging: request.session.context.is_some(),
+            // A recording pages *candles*, never trades: the tape in the
+            // file is the whole day, and there is no venue behind it to ask
+            // for more prints. So this is flatly false, and the trade half of
+            // the history control goes with it.
+            //
+            // It was once `context.is_some()` — a fact about a *candle* file
+            // answering the *trade* capability — and the cost was the bug this
+            // line is the fix for: a recording offered the "previous session"
+            // reach, the trader pressed it, every request was answered with an
+            // empty block, and the run gave up in silence. A capability is a
+            // promise about what a request will return, and this source
+            // returns no older print under any reach.
+            history_paging: false,
             traded_volume: true,
+            // The candles are the record it *can* page, and only when one was
+            // downloaded beside it — which the chart marks as broker candles
+            // wherever it draws them, so the trader reads what they got.
             ohlcv_history: request.session.context.is_some(),
             ohlcv_generation: 0,
         }),
@@ -381,6 +390,32 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
         latency: super::unsplit_latency(),
         replay: Some(link),
     }
+}
+
+/// Re-parse the context file only when it is not the one already in hand.
+///
+/// `seen` carries the modified time of the copy `context` was built from —
+/// `None` before any read, which is also the state a session opened with a
+/// context file already parsed is in, so the first request pays one parse and
+/// no later one does unless the file really moved. A file the platform will
+/// not stat is read: a missing timestamp is not evidence that nothing changed,
+/// and the honest cost of not knowing is the parse.
+///
+/// Only replaced on success, like the reload it wraps: a download that
+/// produced a malformed file must not blank out context already being read.
+fn reload_changed_context(
+    session: &Session,
+    seen: &mut Option<std::time::SystemTime>,
+) -> Option<quantick_replay::ContextSeries> {
+    let stamp = std::fs::metadata(quantick_replay::context_path(&session.path))
+        .and_then(|meta| meta.modified())
+        .ok();
+    if stamp.is_some() && stamp == *seen {
+        return None;
+    }
+    let fresh = reload_context(session)?;
+    *seen = stamp;
+    Some(fresh)
 }
 
 /// The candles to answer one `FetchOhlcv` with, from the session's context.
@@ -520,6 +555,10 @@ fn play(
     // Held apart from the session so "load older" can replace it without
     // touching the playhead or the trades being released.
     let mut context = session.context.clone();
+    // When the context file this copy came from was last written, so a request
+    // that finds it unchanged skips the parse. `None` until the first request
+    // asks — see `reload_changed_context`.
+    let mut context_seen: Option<std::time::SystemTime> = None;
     let mut last = Instant::now();
     let mut reported_finished = false;
 
@@ -536,6 +575,28 @@ fn play(
                 Ok(FeedCommand::FetchOhlcv {
                     span_ms, before_ms, ..
                 }) => {
+                    // Pick up a context file that has *changed* since it was
+                    // parsed — the trader downloads more of the run-up from
+                    // inside the replay, and the copy taken when the session
+                    // opened predates it. Re-read rather than reopened, so the
+                    // playhead never moves: asking for more history mid-replay
+                    // must not cost the trader their place.
+                    //
+                    // Gated on the file's own timestamp, not done every time.
+                    // A quarter of 1-minute candles is well over a hundred
+                    // thousand rows, and this runs on the playback thread,
+                    // whose next step measures the wall time that passed — so
+                    // an unconditional parse on the *opening* request would be
+                    // charged to the playhead and released as a burst of
+                    // market. A `metadata` call is not.
+                    //
+                    // This lived on `LoadOlder` until the capability above
+                    // stopped claiming a recording could page trades. It is
+                    // the same act, now on the request that actually answers
+                    // with candles.
+                    if let Some(fresh) = reload_changed_context(&session, &mut context_seen) {
+                        context = Some(fresh);
+                    }
                     let reply =
                         context_reply(context.as_ref(), session.start_ms(), span_ms, before_ms);
                     if tx.blocking_send(reply).is_err() {
@@ -543,34 +604,17 @@ fn play(
                     }
                 }
                 // "Load older" on a recording cannot page a venue — there is
-                // none. What it *can* do is pick up context that was
-                // downloaded since this session opened, which is exactly what
-                // a trader means by it: show me more of the run-up.
-                //
-                // Re-read from disk rather than reopen the session, so the
-                // playhead never moves. A trader who asks for more history
-                // mid-replay does not expect to lose their place.
+                // none — and since `history_paging` says so the UI no longer
+                // offers the gesture. Still answered, and answered empty: a
+                // request queued before a source switch, or sent by an
+                // operator through the `QUANTICK_LOAD_OLDER` hook, has raised
+                // a wait that only a reply can lower, and a spinner left
+                // turning over a record that will never grow is the same lie
+                // in a smaller place. The run-up lives on `FetchOhlcv` above.
                 Ok(FeedCommand::LoadOlder { .. }) => {
-                    // Only replaced on success: a download that produced a
-                    // malformed file must not blank out context the trader is
-                    // already reading.
-                    if let Some(fresh) = reload_context(&session) {
-                        context = Some(fresh);
-                    }
-                    let reply = context_reply(
-                        context.as_ref(),
-                        session.start_ms(),
-                        crate::feed::TIME_HISTORY_SPAN_MS,
-                        None,
-                    );
-                    // Both replies, in this order: the candles, then the empty
-                    // trade batch that resolves the loading indicator. A
-                    // recording has no older *trades* — the tape is the whole
-                    // day — and leaving the spinner turning would be a lie.
-                    if tx.blocking_send(reply).is_err()
-                        || tx
-                            .blocking_send(FeedEvent::HistoryPrepended(Vec::new()))
-                            .is_err()
+                    if tx
+                        .blocking_send(FeedEvent::HistoryPrepended(Vec::new()))
+                        .is_err()
                     {
                         return; // UI gone
                     }
@@ -840,6 +884,151 @@ mod tests {
         }
     }
 
+    /// A recording must not claim it can page *trades*.
+    ///
+    /// The tape in the file is the whole of it and there is no venue behind it
+    /// to ask for more prints — the comment above `spawn`'s capability block
+    /// has always said so. Declaring `history_paging` from the presence of a
+    /// *candle* file put the trade reach, the page-size box and a live
+    /// "+ older" button in front of the trader over a source that answers
+    /// every one of them with an empty block. That is the facade this test
+    /// exists to keep shut.
+    #[test]
+    fn a_recording_never_claims_to_page_trades() {
+        // Every shape a recording comes in, the joined day included: that one
+        // hands the trader the day before through the *opening backfill*, once,
+        // and never through a request — so it is more tape behind the chart and
+        // still nothing this source could page if asked.
+        for session in [
+            session(4),
+            session_with_context(4, 90),
+            session_with_day_before(4, 2),
+        ] {
+            let handle = spawn(ReplayRequest {
+                session: Arc::clone(&session),
+                options: ReplayOptions {
+                    speed: 1.0,
+                    autoplay: false,
+                    ..ReplayOptions::default()
+                },
+            });
+            let capabilities = *handle.capabilities.borrow();
+            assert!(
+                !capabilities.history_paging,
+                "a recording has no older trades to serve — not with a context                  file beside it, and not with the day before joined in front"
+            );
+            assert_eq!(
+                capabilities.ohlcv_history,
+                session.context.is_some(),
+                "candles are the record a recording *can* page, and only when \
+                 one was downloaded beside it"
+            );
+        }
+    }
+
+    /// The behaviour that used to ride on `LoadOlder`, on the request that
+    /// actually answers with candles.
+    ///
+    /// The reachable half of it, which is narrower than it first looks.
+    /// `ohlcv_history` is fixed at spawn from `session.context.is_some()` and
+    /// the channel is never updated, so a recording opened with *no* context
+    /// file has no candle capability for the rest of the session and the app
+    /// will not send this request at all — the old `LoadOlder` path could not
+    /// reach that case either, since `history_paging` was the same expression.
+    /// What both could always do, and what this proves, is pick up a file that
+    /// **grew**: the trader downloads more of the run-up from inside the
+    /// replay, and the copy parsed when the session opened is short.
+    #[test]
+    fn the_candle_reach_picks_up_a_run_up_that_grew_since_the_session_opened() {
+        let dir = scratch_dir("grew");
+        let path = dir.join("20260316.csv");
+        let mut tape = String::from("# symbol=TEST\nDate,Time,Price,Volume,Side\n");
+        for i in 0..4_i64 {
+            tape.push_str(&format!("2026-03-16,10:00:0{i}.000,{},1,B\n", 100 + i));
+        }
+        std::fs::write(&path, &tape).expect("tape on disk");
+        let context_path = quantick_replay::context_path(&path);
+
+        // Opened with a short run-up: two candles, so the capability is on.
+        std::fs::write(&context_path, context_text(&path, &tape, 2)).expect("short context");
+        // `load`, not `from_text`: the sidecar is attached by the loader that
+        // touches the disk, which is the path the session browser takes.
+        let session = Arc::new(Session::load(&path, ParseOptions::default()).expect("session"));
+        let short = session
+            .context
+            .as_ref()
+            .expect("the file beside the tape was parsed at open");
+        assert_eq!(short.bars.len(), 2, "what the session opened holding");
+
+        let mut handle = spawn(ReplayRequest {
+            session: Arc::clone(&session),
+            options: ReplayOptions {
+                speed: 1.0,
+                autoplay: false,
+                ..ReplayOptions::default()
+            },
+        });
+        assert!(
+            handle.capabilities.borrow().ohlcv_history,
+            "a recording with a run-up beside it serves candles"
+        );
+
+        // The trader downloads more of it while the replay is open.
+        std::fs::write(&context_path, context_text(&path, &tape, 5)).expect("grown context");
+
+        handle
+            .commands
+            .blocking_send(FeedCommand::FetchOhlcv {
+                span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+                before_ms: None,
+                slice_ms: None,
+            })
+            .expect("worker alive");
+
+        let (interval_ms, bars, _complete) = next_candles(&mut handle);
+        assert_eq!(interval_ms, crate::feed::OHLCV_BASE_INTERVAL_MS);
+        assert_eq!(
+            bars.len(),
+            5,
+            "the run-up as it stands on disk now, not the copy taken at open"
+        );
+    }
+
+    /// A scratch directory of this test's own, emptied before it is used.
+    ///
+    /// Cleared up front rather than only at the end: an assertion that fails
+    /// leaves the old one behind, Windows recycles pids freely, and a later
+    /// run inheriting a populated directory is the stale-temp-dir flake this
+    /// repo has already been bitten by elsewhere.
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "quantick-replay-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    /// `minutes` of broker candles in the hour before a tape starts — where a
+    /// real context file sits: the market's past, never overlapping the
+    /// recording.
+    fn context_text(path: &std::path::Path, tape: &str, minutes: i64) -> String {
+        let first = Session::from_text(path, tape, ParseOptions::default())
+            .expect("session")
+            .start_ms();
+        let mut text = String::from("# interval_ms=60000\nDate,Time,Open,High,Low,Close,Volume\n");
+        for i in 0..minutes {
+            let (date, time) = quantick_replay::format::format_datetime(
+                first - (minutes - i) * 60_000,
+                quantick_replay::format::UtcOffset::UTC,
+            );
+            text.push_str(&format!("{date},{time},100,110,90,105,7\n"));
+        }
+        text
+    }
+
     #[test]
     fn a_downloaded_context_answers_the_candle_request() {
         let mut handle = spawn(ReplayRequest {
@@ -882,8 +1071,14 @@ mod tests {
         assert!(bars.iter().all(|b| b.delta() == Decimal::ZERO));
     }
 
+    /// Asking for the run-up mid-replay must not cost the trader their place.
+    ///
+    /// This test used to drive `LoadOlder`, because a recording used to claim
+    /// it could page trades. It cannot, and never could — the tape in the file
+    /// is the whole of it. The invariant it was really about is the playhead,
+    /// and that belongs on the request a recording actually serves.
     #[test]
-    fn load_older_picks_up_context_without_moving_the_playhead() {
+    fn the_candle_reach_never_moves_the_playhead() {
         let session = session_with_context(400, 90);
         let mut handle = spawn(ReplayRequest {
             session: Arc::clone(&session),
@@ -895,8 +1090,8 @@ mod tests {
         });
         let link = handle.replay.clone().expect("replay link");
         assert!(
-            handle.capabilities.borrow().history_paging,
-            "there is context on disk to pick up, so the gesture is offered"
+            handle.capabilities.borrow().ohlcv_history,
+            "there is context on disk to pick up, so the candle reach is offered"
         );
 
         // Let playback get under way, then ask for more history mid-replay.
@@ -909,7 +1104,11 @@ mod tests {
 
         handle
             .commands
-            .blocking_send(FeedCommand::LoadOlder { count: 1 })
+            .blocking_send(FeedCommand::FetchOhlcv {
+                span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+                before_ms: None,
+                slice_ms: None,
+            })
             .expect("the worker is listening");
 
         let (_, bars, _) = next_candles(&mut handle);
@@ -922,6 +1121,50 @@ mod tests {
             link.status.played() >= before,
             "and never rewinds it: the trader keeps their place"
         );
+    }
+
+    /// A `LoadOlder` that reaches a recording anyway — queued before a source
+    /// switch, or sent by an operator through `QUANTICK_LOAD_OLDER` — is still
+    /// answered, and answered empty.
+    ///
+    /// The UI raises a wait on every one of these and only a reply lowers it.
+    /// A spinner left turning over a record that will never grow is the same
+    /// dishonesty as the button that used to offer the gesture, in a smaller
+    /// place.
+    #[test]
+    fn a_load_older_that_arrives_anyway_is_answered_rather_than_dropped() {
+        let mut handle = spawn(ReplayRequest {
+            session: session_with_context(4, 90),
+            options: ReplayOptions {
+                speed: 1.0,
+                autoplay: false,
+                skip_idle_over_ms: None,
+            },
+        });
+        handle
+            .commands
+            .blocking_send(FeedCommand::LoadOlder { count: 2_000 })
+            .expect("the worker is listening");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(
+                Instant::now() < deadline,
+                "no reply: the loading indicator would turn forever"
+            );
+            match handle.events.try_recv() {
+                Ok(FeedEvent::HistoryPrepended(trades)) => {
+                    assert!(
+                        trades.is_empty(),
+                        "a recording has no older print to hand back"
+                    );
+                    break;
+                }
+                Ok(_) => {}
+                Err(mpsc::error::TryRecvError::Empty) => std::thread::sleep(TICK_PAUSED),
+                Err(mpsc::error::TryRecvError::Disconnected) => panic!("worker gone"),
+            }
+        }
     }
 
     #[test]

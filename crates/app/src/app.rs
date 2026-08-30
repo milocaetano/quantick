@@ -125,6 +125,19 @@ const ARM_DIALOG_MIN_BODY_PT: f32 = 200.0;
 /// hello and shorter than a person's patience with a frozen window.
 const LOAD_OLDER_HOOK_FRAMES: u32 = 600;
 
+/// Frames the `QUANTICK_HISTORY_NOTE` hook holds its sentence on screen for.
+///
+/// A *hold*, not a wait — which is why it is not
+/// [`LOAD_OLDER_HOOK_FRAMES`]: that one is sized against how long a bridge
+/// takes to say hello, and retuning it for bridge latency must not silently
+/// retune how long a capture has to photograph a note.
+///
+/// Comfortably past `tab::HISTORY_NOTE_LINGER`, so a run that waits out a
+/// slow source still finds the sentence up; the note keeps its ordinary
+/// linger from the last raise once the hold ends, so even a hooked run
+/// photographs a note that expires.
+const HISTORY_NOTE_HOOK_FRAMES: u32 = 900;
+
 /// Frames the `QUANTICK_LOAD_OLDER_CANDLES` hook has for the *whole* run.
 ///
 /// Much larger than the trade twin's, and for a reason the trade twin does
@@ -1028,6 +1041,16 @@ pub struct QuantickApp {
     /// Pages of older history the `QUANTICK_LOAD_OLDER` hook still owes, and
     /// the frame budget it has left to wait for a chart to ask from.
     pending_load_older: Option<(usize, u32)>,
+    /// The ending whose sentence the `QUANTICK_HISTORY_NOTE` hook asks the
+    /// loading lane to carry, and the frame budget it has left to wait for a
+    /// chart to carry it over. Consumed once.
+    ///
+    /// A settled reach speaks only when a real venue really refuses, which is
+    /// a market condition and not a setting: on the feeds a validation run can
+    /// arrange, the reach either lands its session or the source declares it
+    /// cannot page at all and the button never takes a press. Without this the
+    /// whole surface is invisible to anything but a bad afternoon.
+    pending_history_note: Option<(crate::history_reach::CampaignEnd, u32)>,
     /// Spans of older *candles* the `QUANTICK_LOAD_OLDER_CANDLES` hook still
     /// owes, and the frame budget it has left to wait for a first reply to
     /// reach back from. The trade twin of this is `pending_load_older`; they
@@ -1514,6 +1537,7 @@ impl QuantickApp {
             pending_drawing_demo: false,
             pending_load_older: None,
             pending_load_older_candles: None,
+            pending_history_note: None,
             pending_frvp_demo: false,
             pending_avwap_demo: false,
             pending_replay_restart: None,
@@ -1777,6 +1801,44 @@ impl QuantickApp {
             .and_then(|value| value.trim().parse::<usize>().ok())
             .filter(|spans| *spans > 0)
             .map(|spans| (spans, LOAD_OLDER_CANDLES_HOOK_FRAMES));
+        // And the *outcome* of a press, which is the half of this button a
+        // trader actually acts on. Named by the ending's own log token
+        // (`nothing_coming_back`, `venue_exhausted`, `page_budget_spent`, …)
+        // and resolved through `CampaignEnd::from_action`, so an ending that
+        // exists is photographable by name and one that does not yields no
+        // note rather than the wrong one. It raises the real sentence through
+        // `Tab::raise_history_note` — the same call a settled run makes — so
+        // the picture is the picture a refusing venue gives.
+        if let Ok(token) = std::env::var("QUANTICK_HISTORY_NOTE") {
+            // Refused out loud, exactly as `QUANTICK_HISTORY_REACH` above
+            // refuses an unknown reach: a capture run that silently got no
+            // note reads the surface as broken, which is the conclusion this
+            // whole branch exists to make impossible.
+            match crate::history_reach::CampaignEnd::from_action(&token) {
+                Some(end) if end.notice().is_some() => {
+                    app.pending_history_note = Some((end, HISTORY_NOTE_HOOK_FRAMES));
+                }
+                Some(end) => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "HISTORY_NOTE_HOOK_SILENT_ENDING",
+                    ending = end.action(),
+                    action = "no_note_raised",
+                    "QUANTICK_HISTORY_NOTE named the one ending that says nothing"
+                ),
+                None => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "HISTORY_NOTE_HOOK_UNKNOWN",
+                    token = %token,
+                    accepted = %crate::history_reach::CampaignEnd::ALL
+                        .map(crate::history_reach::CampaignEnd::action)
+                        .join(", "),
+                    action = "no_note_raised",
+                    "QUANTICK_HISTORY_NOTE names no ending this build has"
+                ),
+            }
+        }
         // How many anchors of the armed tool are already down when the run
         // opens — the half-placed state a screenshot cannot otherwise reach,
         // because it lives between two clicks. See `apply_drawing_draft`.
@@ -9213,6 +9275,63 @@ impl QuantickApp {
         self.pending_load_older = (pages > 1).then_some((pages - 1, budget));
     }
 
+    /// The `QUANTICK_HISTORY_NOTE` hook: the sentence a settled reach leaves,
+    /// held up over a chart for as long as the hook's budget lasts.
+    ///
+    /// Re-applied every frame rather than raised once, the way
+    /// `QUANTICK_PAN_PX` re-applies its drag — and for a reason a one-shot
+    /// could not survive. Switching source clears the note along with the run
+    /// that raised it, exactly as it should: a new market has nothing to say
+    /// about the last one's press. But a launch under `QUANTICK_REPLAY_AUTOSTART`
+    /// *is* a source switch, arriving a second after the first bars, so a note
+    /// raised once was swept away before any shutter could open on it.
+    ///
+    /// Holding it re-raises only while it is absent, so the surface itself is
+    /// unchanged — the same sentence, from the same call, in the same lane.
+    /// When the budget runs out the note keeps its ordinary
+    /// [`crate::tab::HISTORY_NOTE_LINGER`] from the last raise and then leaves
+    /// on its own, so even a hooked run photographs a note that expires.
+    fn apply_history_note_hook(&mut self) {
+        let Some((end, budget)) = self.pending_history_note else {
+            return;
+        };
+        let Some(left) = budget.checked_sub(1) else {
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HISTORY_NOTE_HOOK_RELEASED",
+                ending = end.action(),
+                frames_held = HISTORY_NOTE_HOOK_FRAMES,
+                action = "note_left_to_expire",
+                "QUANTICK_HISTORY_NOTE let go of its sentence"
+            );
+            self.pending_history_note = None;
+            return;
+        };
+        self.pending_history_note = Some((end, left));
+        let tab = self.active_tab();
+        // Nothing charted yet, or the note is already up: nothing to raise.
+        //
+        // And never while a request is out. Paired with `QUANTICK_LOAD_OLDER`
+        // — which the harness table pairs it with — the press clears the note
+        // and sends a real `load_older`, and re-raising here would paint a
+        // settled verdict over a request still in flight, with the spinner
+        // turning above it. That is the dishonesty this branch removes, and a
+        // hook has no business manufacturing it for a capture.
+        if tab.flow_pane.slots() == 0
+            || tab.history_note().is_some()
+            || tab.loading.is_active(LoadingTask::History)
+        {
+            return;
+        }
+        // Always `Some`: the hook only ever holds an ending the env read above
+        // kept, and it keeps only endings that have words.
+        let Some(notice) = end.notice() else {
+            return;
+        };
+        self.active_tab_mut().raise_history_note(notice);
+    }
+
     /// The `QUANTICK_LOAD_OLDER_CANDLES` hook: the history menu's "+ older
     /// candles" entry, pressed without a hand, once per frame at most.
     ///
@@ -10862,6 +10981,19 @@ impl QuantickApp {
         self.last_frame = Some(now);
 
         self.drain_tabs();
+        // A "load older" outcome is a passing remark: it leaves after
+        // `tab::HISTORY_NOTE_LINGER` whether or not anyone read it. Every tab,
+        // not only the one on screen — a background tab keeps draining, so it
+        // can settle a run while hidden, and bringing it forward minutes later
+        // must not surface a sentence about a press that is long over.
+        for tab in &mut self.tabs {
+            tab.expire_history_note(now);
+        }
+        // After the expiry, never before it: the hook re-raises a note it
+        // finds absent, and running it first would let a note expire *after*
+        // it looked, drawing one frame with an empty lane before the next
+        // raise. A shutter timed on the linger catches exactly that frame.
+        self.apply_history_note_hook();
         if self.pending_control_access_enable {
             self.pending_control_access_enable = false;
             if let Some(access) = self.control_access.as_mut() {
@@ -11212,7 +11344,8 @@ impl QuantickApp {
                 // Each wait on the surface it is about. The panes published
                 // their rects on the draw just above, so these are this
                 // frame's geometry rather than the previous one's.
-                loading::overlay_scoped(ui, area, &tab.loading, LoadingScope::Whole);
+                let history_note = tab.history_note();
+                loading::overlay_scoped(ui, area, &tab.loading, LoadingScope::Whole, history_note);
                 // A scope whose surface is not on screen falls back to the
                 // canvas rather than dropping its wait: the flow pane is not
                 // painted in the Time layout, and a flow-only layout has no
@@ -11224,6 +11357,7 @@ impl QuantickApp {
                     tab.flow_pane.last_area.unwrap_or(area),
                     &tab.loading,
                     LoadingScope::Flow,
+                    history_note,
                 );
                 let time_panes: Vec<egui::Rect> = tab
                     .panes()
@@ -11231,10 +11365,22 @@ impl QuantickApp {
                     .filter_map(|(pane, _)| pane.last_area)
                     .collect();
                 if time_panes.is_empty() {
-                    loading::overlay_scoped(ui, area, &tab.loading, LoadingScope::TimePanes);
+                    loading::overlay_scoped(
+                        ui,
+                        area,
+                        &tab.loading,
+                        LoadingScope::TimePanes,
+                        history_note,
+                    );
                 } else {
                     for rect in time_panes {
-                        loading::overlay_scoped(ui, rect, &tab.loading, LoadingScope::TimePanes);
+                        loading::overlay_scoped(
+                            ui,
+                            rect,
+                            &tab.loading,
+                            LoadingScope::TimePanes,
+                            history_note,
+                        );
                     }
                 }
                 // And the card on the pane that is actually waiting, rather
@@ -28415,6 +28561,222 @@ crosshair = false
         assert!(
             !app.active_tab().loading.is_active(LoadingTask::History),
             "and nothing is left waiting on a reply"
+        );
+    }
+
+    /// The sentence has to reach the glass, not just the field.
+    ///
+    /// Every other test here proves the tab *holds* the right words. This one
+    /// proves a trader can read them, which is the entire complaint: the
+    /// outcome existed in a log line and nowhere a person looks.
+    #[test]
+    fn the_settled_reach_paints_its_sentence_over_the_chart() {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame(&mut app, &ctx);
+        let quiet = painted_text(&run_frame(&mut app, &ctx));
+        let sentence = crate::history_reach::CampaignEnd::NothingComingBack
+            .notice()
+            .expect("the ending's own sentence");
+        assert!(
+            !quiet.iter().any(|text| text == sentence),
+            "a chart nobody pressed anything on says nothing; painted: {quiet:?}"
+        );
+
+        app.active_tab_mut().raise_history_note(sentence);
+        let spoken = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            spoken.iter().any(|text| text == sentence),
+            "the outcome of the press has to be on screen; painted: {spoken:?}"
+        );
+
+        // And it leaves on its own, with nothing to dismiss.
+        app.active_tab_mut()
+            .expire_history_note(std::time::Instant::now() + crate::tab::HISTORY_NOTE_LINGER);
+        let after = painted_text(&run_frame(&mut app, &ctx));
+        assert!(
+            !after.iter().any(|text| text == sentence),
+            "and it is gone again without a click; painted: {after:?}"
+        );
+    }
+
+    /// The reported bug, as a test: a reach that lands nothing must not end in
+    /// silence.
+    ///
+    /// A run answered with empty page after empty page gives up after
+    /// `MAX_IDLE_PAGES` — correctly — and before this change said so only in a
+    /// log line. On screen the press was indistinguishable from a button that
+    /// does nothing, which is how "previous session" shipped looking like a
+    /// facade.
+    #[test]
+    fn a_run_that_reaches_nothing_says_so_where_the_trader_is_looking() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_load_older(&mut commands);
+        app.history_reach = crate::history_reach::HistoryReach::PreviousSession;
+        app.drain_tabs();
+
+        app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+        drain_load_older(&mut commands);
+        assert!(
+            app.active_tab().history_note().is_none(),
+            "a run under way has nothing to report yet"
+        );
+        for _ in 0..crate::history_reach::MAX_CAMPAIGN_PAGES {
+            if !app.active_tab().history_reach_running() {
+                break;
+            }
+            events
+                .try_send(FeedEvent::HistoryPrepended(Vec::new()))
+                .unwrap();
+            app.drain_tabs();
+            drain_load_older(&mut commands);
+        }
+        assert!(
+            !app.active_tab().history_reach_running(),
+            "the run gave up, as it should"
+        );
+        assert_eq!(
+            app.active_tab().history_note(),
+            crate::history_reach::CampaignEnd::NothingComingBack.notice(),
+            "and it says the reason the campaign actually stopped for"
+        );
+    }
+
+    /// The other half of the same rule: a press that worked says nothing. The
+    /// chart is a better answer than a sentence about the chart, and a message
+    /// after every successful press is noise a trader learns to stop reading.
+    #[test]
+    fn a_run_that_meets_its_reach_says_nothing() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_load_older(&mut commands);
+        app.history_reach = crate::history_reach::HistoryReach::PreviousSession;
+        app.drain_tabs();
+
+        app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+        drain_load_older(&mut commands);
+        // One page inside today's session, then one that crosses the close and
+        // lands the lead — the shape `the_previous_session_reach_pages_until…`
+        // proves in full.
+        events
+            .try_send(FeedEvent::HistoryPrepended(
+                (-120..0).map(minute_trade_at).collect(),
+            ))
+            .unwrap();
+        app.drain_tabs();
+        drain_load_older(&mut commands);
+
+        const MINUTE_MS: i64 = crate::feed::OHLCV_BASE_INTERVAL_MS;
+        let close_minute = -120 - (crate::history_reach::SESSION_GAP_MS / MINUTE_MS) - 1;
+        let lead_minutes = crate::history_reach::PREVIOUS_SESSION_LEAD_MS / MINUTE_MS;
+        events
+            .try_send(FeedEvent::HistoryPrepended(
+                (close_minute - lead_minutes..=close_minute)
+                    .map(minute_trade_at)
+                    .collect(),
+            ))
+            .unwrap();
+        app.drain_tabs();
+
+        assert!(
+            !app.active_tab().history_reach_running(),
+            "the reach was met"
+        );
+        assert_eq!(
+            app.active_tab().history_note(),
+            None,
+            "and yesterday being on screen is the whole of the report"
+        );
+    }
+
+    /// The default reach is held to the same honesty. It runs no campaign, so
+    /// nothing settles it — and one press answered with an empty block was as
+    /// silent as a whole run of them.
+    #[test]
+    fn a_single_page_press_that_brings_nothing_back_says_so() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_load_older(&mut commands);
+        assert_eq!(
+            app.active_tab().history_reach,
+            crate::history_reach::HistoryReach::Page,
+            "the default reach, unchanged"
+        );
+
+        app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+        assert_eq!(drain_load_older(&mut commands).len(), 1);
+        events
+            .try_send(FeedEvent::HistoryPrepended(Vec::new()))
+            .unwrap();
+        app.drain_tabs();
+
+        assert!(
+            app.active_tab().history_note().is_some(),
+            "an empty answer to a press is a fact the trader owns"
+        );
+    }
+
+    /// And a single page that *did* bring prints back stays quiet, for the
+    /// same reason a met reach does.
+    #[test]
+    fn a_single_page_press_that_lands_prints_says_nothing() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_load_older(&mut commands);
+
+        app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+        drain_load_older(&mut commands);
+        events
+            .try_send(FeedEvent::HistoryPrepended(
+                (-60..0).map(minute_trade_at).collect(),
+            ))
+            .unwrap();
+        app.drain_tabs();
+
+        assert_eq!(
+            app.active_tab().history_note(),
+            None,
+            "sixty prints appeared on the chart; that is the acknowledgement"
+        );
+    }
+
+    /// A note is a passing remark, not a card to dismiss: it leaves on its
+    /// own, and a fresh press clears whatever the last one left behind.
+    #[test]
+    fn a_history_note_leaves_on_its_own_and_a_new_press_clears_it() {
+        let ctx = egui::Context::default();
+        let (mut app, events, mut commands) = history_app(&ctx);
+        drain_load_older(&mut commands);
+
+        app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+        drain_load_older(&mut commands);
+        events
+            .try_send(FeedEvent::HistoryPrepended(Vec::new()))
+            .unwrap();
+        app.drain_tabs();
+        assert!(app.active_tab().history_note().is_some());
+
+        let past_its_welcome = std::time::Instant::now() + crate::tab::HISTORY_NOTE_LINGER;
+        app.active_tab_mut().expire_history_note(past_its_welcome);
+        assert_eq!(
+            app.active_tab().history_note(),
+            None,
+            "it fades rather than waiting to be dismissed"
+        );
+
+        // A second press must not leave the previous sentence hanging over a
+        // request whose outcome is not known yet.
+        events
+            .try_send(FeedEvent::HistoryPrepended(Vec::new()))
+            .unwrap();
+        app.drain_tabs();
+        assert!(app.active_tab().history_note().is_some(), "the new one");
+        app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+        assert_eq!(
+            app.active_tab().history_note(),
+            None,
+            "a press in flight has no outcome yet, so it reports none"
         );
     }
 

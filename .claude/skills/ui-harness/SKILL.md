@@ -317,6 +317,14 @@ Landing with the one-week candle default (`fix/frvp-candles-window-and-history`)
 
 Once merged, move it into the table above.
 
+Landing with the load-older outcome (`fix/history-reach-speaks`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_HISTORY_NOTE=<ending>` | the **outcome** of a `+ older` press, in the loading lane where the spinner was — the one line that tells a trader their press reached nothing. Named by the ending's own log token and resolved through `CampaignEnd::from_action`: `nothing_coming_back` (the venue answered empty and the run gave up), `venue_exhausted` (the record is spent), `page_budget_spent` / `print_budget_spent` / `span_cap_covered` (stopped on a budget, press again), `nothing_charted`. `reach_met` raises nothing and says so in the log — a press that worked has the chart as its answer. Raised through `Tab::raise_history_note`, the same call a settled run makes, so the picture is the picture a refusing venue gives. Without this the surface is invisible to a capture: on any feed a validation run can arrange, the reach either lands its session or the source declares it cannot page and the button never takes a press. An unknown token raises no note rather than the wrong one |
+
+Once merged, move it into the table above.
+
 ## Reading the running app through the control plane
 
 A screenshot shows what a window looks like. It does not say what the
