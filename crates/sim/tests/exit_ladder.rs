@@ -333,3 +333,57 @@ fn the_ladder_is_deterministic_over_a_fixed_tape() {
 
     assert_eq!(replay(), replay(), "same tape in, same events out");
 }
+
+/// A manual measurement, not a gate: the per-trade cost the ladder adds.
+///
+/// The simulator sees every print, so `fire_protective_legs` is on the
+/// per-trade path. It costs one scan of the working orders while a position
+/// is open, against the two `Option` compares a plain bracket costs. This
+/// replays a fixed tape both ways and prints the two times, which is the
+/// evidence a performance claim about this change has to carry.
+///
+/// Ignored by default for the same reason the app's health comparison is:
+/// a timing number is not a pass/fail the suite can own.
+#[test]
+#[ignore = "manual per-trade cost comparison for the exit ladder"]
+fn the_ladders_per_trade_cost_against_a_plain_bracket() {
+    const PRINTS: u64 = 200_000;
+
+    fn replay(bracket: Bracket) -> std::time::Duration {
+        let mut sim = seeded(5000);
+        sim.apply(Command::PlaceMarket {
+            side: Side::Buy,
+            quantity: dec(2),
+            bracket,
+        });
+        sim.on_trade(&print(1, 4995));
+        let started = std::time::Instant::now();
+        for id in 2..PRINTS {
+            // A tape that oscillates inside the bracket, so nothing fires
+            // and every print pays the full check.
+            let price = 4990 + i64::try_from(id % 5).expect("small");
+            sim.on_trade(&print(id, price));
+        }
+        started.elapsed()
+    }
+
+    let plain = replay(Bracket::whole(Some(dec(4900)), Some(dec(5100))));
+    let ladder = replay(
+        Bracket::ladder(&[
+            ExitPart {
+                quantity: Some(Decimal::ONE),
+                stop_loss: Some(dec(4900)),
+                take_profit: Some(dec(5100)),
+            },
+            ExitPart {
+                quantity: Some(Decimal::ONE),
+                stop_loss: Some(dec(4890)),
+                take_profit: Some(dec(5200)),
+            },
+        ])
+        .expect("two parts"),
+    );
+    println!("prints: {PRINTS}");
+    println!("plain bracket: {plain:?}");
+    println!("two-part ladder: {ladder:?}");
+}

@@ -90,6 +90,14 @@ const SNAP_FALLBACK_DECIMALS: u32 = 2;
 /// scroll accumulates in `ruler_travel_px` until it has earned one.
 const RULER_NOTCH_PX: f32 = 50.0;
 
+/// The distance a freshly added rung starts at, in ticks.
+///
+/// A seed, not a default anyone lives with: the editor exists to change it,
+/// and a row that arrived at zero would be a row the strategy refuses. Named
+/// because it appears in three places - a new strategy, a new row, and a leg
+/// switched back on - and three copies of a starting point drift.
+const NEW_RUNG_TICKS: u32 = 20;
+
 /// The furthest the ruler walks from the aim.
 ///
 /// Past this the distance stops being a read taken at a glance and becomes a
@@ -4248,8 +4256,8 @@ impl PaperTrading {
         {
             strategy.rows.push(crate::order_strategies::StrategyRow {
                 share_percent: Decimal::ZERO,
-                gain_ticks: Some(20),
-                loss_ticks: Some(20),
+                gain_ticks: Some(NEW_RUNG_TICKS),
+                loss_ticks: Some(NEW_RUNG_TICKS),
             });
             changed = true;
         }
@@ -5873,8 +5881,8 @@ fn new_strategy(existing: usize) -> crate::order_strategies::OrderStrategy {
         name: format!("Strategy {}", existing + 1),
         rows: vec![crate::order_strategies::StrategyRow {
             share_percent: Decimal::ONE_HUNDRED,
-            gain_ticks: Some(20),
-            loss_ticks: Some(20),
+            gain_ticks: Some(NEW_RUNG_TICKS),
+            loss_ticks: Some(NEW_RUNG_TICKS),
         }],
     }
 }
@@ -5884,7 +5892,7 @@ fn ticks_field(ui: &mut egui::Ui, ticks: &mut Option<u32>, hover: &str) -> bool 
     let mut on = ticks.is_some();
     let mut changed = false;
     if ui.checkbox(&mut on, "").on_hover_text(hover).changed() {
-        *ticks = if on { Some(20) } else { None };
+        *ticks = if on { Some(NEW_RUNG_TICKS) } else { None };
         changed = true;
     }
     let mut value = ticks.unwrap_or(0);
@@ -9797,6 +9805,26 @@ mod tests {
         paper.set_order_strategies(vec![halves()], Some("a strategy that was deleted"));
         assert!(paper.selected_order_strategy().is_none());
         assert_eq!(paper.order_strategies().len(), 1, "the list is intact");
+    }
+
+    /// The named call and the wheel leave the ruler in the same place, and
+    /// neither can put it somewhere the other cannot reach.
+    #[test]
+    fn setting_the_ruler_by_name_lands_where_the_wheel_would() {
+        let mut by_name = PaperTrading::new();
+        by_name.seed(&print(0, 100));
+        assert_eq!(by_name.set_ruler_ticks(3), 3);
+
+        let mut by_wheel = PaperTrading::new();
+        by_wheel.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let aim = egui::pos2(400.0, 250.0);
+        by_wheel.handle_chart_input(&ruler_frame(chart, &scale, aim, 150.0));
+
+        assert_eq!(by_name.ruler_ticks, by_wheel.ruler_ticks);
+        // And the bound is the same bound: a caller cannot reach past what
+        // the wheel itself clamps to.
+        assert_eq!(by_name.set_ruler_ticks(u32::MAX), RULER_MAX_TICKS);
     }
 
     /// A frame with the aim's modifier held and wheel travel to spend.
