@@ -4446,6 +4446,12 @@ impl ChartPane {
                             }))
             });
         let paper_layer_visible = self.layer_visible(ChartLayer::PaperTrading, chrome.style);
+        // The wheel over the plot, offered to the paper layer first: with an
+        // aim up it belongs to the ruler, and the chart's zoom is told below
+        // to leave that frame's travel alone.
+        let paper_scroll = pointer_position
+            .filter(|position| drawing_area.contains(*position))
+            .map_or(0.0, |_| ui.input(|input| input.raw_scroll_delta.y));
         let paper_gesture = if chrome.paper_takes_input && !tool_armed {
             chrome.paper.handle_chart_input(&ChartInput {
                 chart: drawing_area,
@@ -4456,6 +4462,7 @@ impl ChartPane {
                 primary_released,
                 modifiers,
                 canvas_claimed,
+                scroll_y: paper_scroll,
                 layer_visible: paper_layer_visible,
             })
         } else {
@@ -5144,7 +5151,9 @@ impl ChartPane {
         if total > 0 && pane_time_gesture.pan_x != 0.0 {
             self.viewport.pan_pixels(pane_time_gesture.pan_x, total);
         }
-        if pane_time_gesture.scroll_y.abs() > 0.0 {
+        // One wheel, one meaning at a time: while the ruler is walking a
+        // bracket out from an aim, the same travel must not also zoom.
+        if pane_time_gesture.scroll_y.abs() > 0.0 && !chrome.paper.consumed_scroll() {
             self.viewport
                 .zoom(2.0_f32.powf(pane_time_gesture.scroll_y / SCROLL_ZOOM_PX));
         }

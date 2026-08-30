@@ -70,6 +70,8 @@ pub(crate) const CANCEL_EVENT_KIND: &str = "trade.order.cancelled";
 
 pub(crate) const PLACE_CAPABILITY_ID: &str = "trade.order.place";
 pub(crate) const BRACKET_CAPABILITY_ID: &str = "trade.order.bracket";
+const SELECT_STRATEGY_CAPABILITY_ID: &str = "trade.strategy.select";
+const SET_RULER_CAPABILITY_ID: &str = "trade.ruler.set";
 pub(crate) const CANCEL_CAPABILITY_ID: &str = "trade.order.cancel";
 pub(crate) const CAPABILITY_VERSION: u32 = 1;
 
@@ -201,6 +203,15 @@ pub(crate) struct TradeResult {
     /// also when nothing can be placed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mark_price: Option<String>,
+    /// The named exit ladder the ticket is set to, if any. Every call in
+    /// this family reports it, because it is what the *next* order will
+    /// carry and a caller that placed one needs to know which ladder it
+    /// just armed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_strategy: Option<String>,
+    /// How far the aim's ruler stands from an entry, in ticks; zero when it
+    /// is not in use.
+    pub ruler_ticks: u32,
     /// A reminder in every result: these fills are simulated.
     pub simulated: bool,
 }
@@ -235,6 +246,13 @@ fn answer(app: &QuantickApp, events: &[VenueEvent]) -> TradeResult {
         _ => None,
     });
     TradeResult {
+        selected_strategy: app
+            .control_active_paper()
+            .and_then(|paper| paper.selected_order_strategy())
+            .map(|strategy| strategy.name.clone()),
+        ruler_ticks: app
+            .control_active_paper()
+            .map_or(0, crate::paper_trading::PaperTrading::ruler_ticks),
         accepted: rejected_because.is_none(),
         rejected_because,
         order_id,
@@ -513,8 +531,94 @@ fn cancel_descriptor() -> CapabilityDescriptor {
     )
 }
 
+/// Which named exit ladder the ticket arms next.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SelectStrategyInput {
+    /// The strategy's name, exactly as `observe.session.paper` reports it.
+    /// Omitted or null selects none, which is the bare order the trader
+    /// brackets by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// How far the ruler walks the projected bracket from an aimed entry.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SetRulerInput {
+    /// Distance in ticks, the same on both sides. Zero puts the ruler away
+    /// and leaves the next order bare.
+    pub ticks: u32,
+}
+
+fn select_strategy_descriptor() -> CapabilityDescriptor {
+    descriptor(
+        SELECT_STRATEGY_CAPABILITY_ID,
+        "Choose the ticket's exit ladder",
+        "Sets which named exit strategy the next order rests with, or none for a bare order. Changes no order that already exists and never touches an open position; the same call the ticket's own selector makes.",
+        generated_schema::<SelectStrategyInput>(),
+        false,
+        "The call names the strategy it selected and answers with the one that is now set, so a caller working from a stale read can see that it chose something else. It changes nothing that is already working.",
+    )
+}
+
+fn set_ruler_descriptor() -> CapabilityDescriptor {
+    descriptor(
+        SET_RULER_CAPABILITY_ID,
+        "Set the aim's ruler distance",
+        "Walks the projected stop and target out from an aimed entry, the same distance on both sides, in ticks of the instrument. Zero puts the ruler away. Shapes what the next order would carry rather than changing one that exists - the read a trader takes before committing.",
+        generated_schema::<SetRulerInput>(),
+        false,
+        "The call answers with where the ruler actually landed, clamped to what the wheel itself can reach, so a caller that asked for more can see what it got. It changes nothing that is already working.",
+    )
+}
+
+fn select_strategy(
+    app: &mut QuantickApp,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let asked = input.clone();
+    let input: SelectStrategyInput = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
+    let strategies = paper.order_strategies().to_vec();
+    if let Some(name) = input.name.as_deref()
+        && !strategies.iter().any(|strategy| strategy.name == name)
+    {
+        return Err(ControlError::invalid_request(format!(
+            "no exit strategy is named `{name}`"
+        )));
+    }
+    paper.set_order_strategies(strategies, input.name.as_deref());
+    app.control_persist_order_strategies();
+    let result = answer(app, &[]);
+    journal(access, actor, PLACE_EVENT_KIND, &result, asked);
+    to_value(result)
+}
+
+fn set_ruler(
+    app: &mut QuantickApp,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let asked = input.clone();
+    let input: SetRulerInput = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    app.control_active_paper_mut()
+        .ok_or_else(no_chart_open)?
+        .set_ruler_ticks(input.ticks);
+    let result = answer(app, &[]);
+    journal(access, actor, PLACE_EVENT_KIND, &result, asked);
+    to_value(result)
+}
+
 /// Register the family. One call from `standard_actions`, nothing else opens.
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
+    registry.register(select_strategy_descriptor(), select_strategy)?;
+    registry.register(set_ruler_descriptor(), set_ruler)?;
     registry.register(place_descriptor(), place_order)?;
     registry.register(bracket_descriptor(), bracket_order)?;
     registry.register(cancel_descriptor(), cancel_order)?;

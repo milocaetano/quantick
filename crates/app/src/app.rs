@@ -1497,6 +1497,14 @@ impl QuantickApp {
             trades_dir.clone(),
         );
         tab.paper.set_cmd_trading(cmd_trading);
+        // The named ladders the trader built last session, and the one the
+        // ticket was set to. A selection naming a strategy the file no
+        // longer carries selects nothing, which `set_order_strategies`
+        // enforces rather than each caller remembering to.
+        tab.paper.set_order_strategies(
+            paper_state.order_strategies.clone().unwrap_or_default(),
+            paper_state.selected_order_strategy.as_deref(),
+        );
         // Resolved once: under test the settings path is a fresh scratch
         // file per call, and the load must read the same file the saves
         // will write.
@@ -2661,6 +2669,33 @@ impl QuantickApp {
         crate::paper_state::save(&path, &state);
     }
 
+    /// Save and fan out the strategies after a capability changed them, so a
+    /// named call leaves the same durable trace a click does.
+    pub(crate) fn control_persist_order_strategies(&mut self) {
+        self.persist_order_strategies();
+    }
+
+    /// Persist the named exit strategies and the ticket's selection, and fan
+    /// them out - app-wide like cmd trading, because a ladder a trader built
+    /// in one tab is a ladder they mean everywhere.
+    fn persist_order_strategies(&mut self) {
+        let strategies = self.active_tab().paper.order_strategies().to_vec();
+        let selected = self
+            .active_tab()
+            .paper
+            .selected_order_strategy()
+            .map(|strategy| strategy.name.clone());
+        for tab in &mut self.tabs {
+            tab.paper
+                .set_order_strategies(strategies.clone(), selected.as_deref());
+        }
+        let path = crate::paper_state::default_path();
+        let mut state = crate::paper_state::load(&path);
+        state.order_strategies = Some(strategies);
+        state.selected_order_strategy = selected;
+        crate::paper_state::save(&path, &state);
+    }
+
     /// The active tab beside the config it reads.
     ///
     /// Split here, once, because almost every tab operation needs both and
@@ -3429,6 +3464,12 @@ impl QuantickApp {
         // Cmd trading is app-wide (the trades-dir rule): a new tab starts
         // with the settings every other tab already carries.
         let cmd_trading = self.active_tab().paper.cmd_trading();
+        let inherited_strategies = self.active_tab().paper.order_strategies().to_vec();
+        let inherited_selection = self
+            .active_tab()
+            .paper
+            .selected_order_strategy()
+            .map(|strategy| strategy.name.clone());
         // Orientation travels with the working state the new tab inherits —
         // a market opened to compare against the active one is only
         // comparable the same way up. Per pane; a pane the source tab does
@@ -3453,6 +3494,8 @@ impl QuantickApp {
         let flow_pane_id = self.pane_ids.alloc();
         let mut tab = Tab::new(id, flow_pane_id, feed_id, symbol, spec, feed, trades_dir);
         tab.paper.set_cmd_trading(cmd_trading);
+        tab.paper
+            .set_order_strategies(inherited_strategies, inherited_selection.as_deref());
         tab.flow_pane.layout = inherited_layout;
         self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
@@ -11309,6 +11352,9 @@ impl QuantickApp {
         }
         if dock_response.pick_trades_dir {
             self.open_trades_dir_picker();
+        }
+        if dock_response.order_strategies_changed {
+            self.persist_order_strategies();
         }
         if dock_response.cmd_trading_changed {
             self.persist_cmd_trading();

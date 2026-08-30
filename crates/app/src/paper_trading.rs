@@ -82,6 +82,27 @@ const TOAST_LIFT_PX: f32 = 96.0;
 /// Price precision for snapped drags before any print reveals the
 /// instrument's own (two decimals, the crypto-major default).
 const SNAP_FALLBACK_DECIMALS: u32 = 2;
+
+/// How much wheel travel walks the ruler one tick.
+///
+/// egui reports roughly 50 px for one notch of a mouse wheel, so a notch is
+/// a tick and the gesture reads as "one click, one tick". A trackpad's finer
+/// scroll accumulates in `ruler_travel_px` until it has earned one.
+const RULER_NOTCH_PX: f32 = 50.0;
+
+/// The furthest the ruler walks from the aim.
+///
+/// Past this the distance stops being a read taken at a glance and becomes a
+/// different trade; a bracket that wide belongs in the ticket's own offset
+/// fields, where it can be typed exactly.
+const RULER_MAX_TICKS: u32 = 999;
+
+/// What the strategy selector calls "no strategy" - the bare order.
+const STRATEGY_NONE: &str = "<None>";
+
+/// Opens the strategy editor on launch, so a capture run can photograph it
+/// without a hand on the mouse. See `docs/ux/paper-trading.md`.
+const STRATEGY_EDITOR_ENV: &str = "QUANTICK_PAPER_STRATEGY_EDITOR";
 /// The position's entry line leads the paper lines: it is the one that is
 /// history rather than an order, and it matches the drawings' default width.
 const POSITION_LINE_WIDTH_PX: f32 = 1.5;
@@ -751,6 +772,10 @@ pub enum TradingTabAction {
     /// Cmd-trading settings changed — app-wide like the trades dir: the
     /// app persists them and fans them out to every tab.
     CmdTradingChanged,
+    /// The named exit strategies, or which one the ticket is set to,
+    /// changed. App-wide for the same reason: a trader who builds a ladder
+    /// in one tab means it everywhere.
+    OrderStrategiesChanged,
 }
 
 /// What the Trades ledger asked of its host.
@@ -874,6 +899,10 @@ pub struct ChartInput<'a> {
     /// nothing there; the buy modifier is Shift by default, which is also
     /// the key that levels a channel corner mid-drag.
     pub canvas_claimed: bool,
+    /// This frame's wheel travel over the chart, in pixels. The ruler
+    /// spends it while the aim is up; the chart's own zoom is told to leave
+    /// it alone on those frames (see [`PaperTrading::consumed_scroll`]).
+    pub scroll_y: f32,
     /// Whether the paper layer is painted this frame. Switched off, its
     /// lines and tags are unpainted — so they take no press either. An
     /// invisible control is not a control, and the aim's target is now the
@@ -1105,6 +1134,16 @@ struct CmdPreview {
     /// a run with nobody at the keyboard is holding no modifier, and a
     /// stray click during one must not write orders into a journal.
     forced: bool,
+    /// The protection this order would carry: a strategy's ladder, the
+    /// ruler's symmetric pair, or the ticket's typed offsets. Empty when the
+    /// order would rest bare.
+    ///
+    /// One value, computed once, painted by the projection and placed by the
+    /// click - a preview that promised one bracket while the order took
+    /// another is the worst bug this surface can have.
+    bracket: Bracket,
+    /// How many ticks the ruler stands at; zero means it is not in use.
+    ruler_ticks: u32,
 }
 
 /// One frame's answer for one working order's in-plot tag: computed by
@@ -1225,6 +1264,25 @@ pub struct PaperTrading {
     stop_offset_text: String,
     profit_offset_text: String,
     armed: Option<ArmedPlacement>,
+    /// The named exit strategies the trader keeps, in their own order.
+    strategies: Vec<crate::order_strategies::OrderStrategy>,
+    /// Which strategy the ticket is set to; `None` is the bare order the
+    /// trader brackets by hand.
+    selected_strategy: Option<usize>,
+    /// Whether the strategy editor window is up.
+    strategy_editor_open: bool,
+    /// Which strategy the editor has open; `None` while the list is empty.
+    strategy_editing: Option<usize>,
+    /// How many ticks the wheel has walked the projected bracket out from
+    /// the aim. Sticky across aims within a session: a trader who decided
+    /// their distance should not have to re-roll it for the next setup.
+    ruler_ticks: u32,
+    /// Sub-notch wheel travel not yet worth a tick (a trackpad's scroll
+    /// arrives in fractions of a notch).
+    ruler_travel_px: f32,
+    /// Whether the ruler spent this frame's wheel travel, so the chart's
+    /// zoom can leave it alone.
+    scroll_consumed: bool,
     // Chart-layer drag.
     drag: PaperDrag,
     drag_price: Option<f64>,
@@ -1401,6 +1459,14 @@ impl PaperTrading {
             stop_offset_text: String::new(),
             profit_offset_text: String::new(),
             armed: None,
+            strategies: Vec::new(),
+            selected_strategy: None,
+            strategy_editor_open: std::env::var(STRATEGY_EDITOR_ENV)
+                .is_ok_and(|value| value == "1"),
+            strategy_editing: None,
+            ruler_ticks: 0,
+            ruler_travel_px: 0.0,
+            scroll_consumed: false,
             drag: PaperDrag::None,
             drag_price: None,
             hovered_order: None,
@@ -2253,6 +2319,58 @@ impl PaperTrading {
             galley,
             theme::CHIP_INK,
         );
+        self.draw_aim_bracket(ctx, &preview);
+    }
+
+    /// The protection the aim is carrying, drawn beside it.
+    ///
+    /// Under the ruler both levels sit the same distance from the pointer,
+    /// so the pair *is* the 1:1 read, and one chip states that distance in
+    /// points and in ticks - a trader deciding whether a setup is worth
+    /// taking is asking how far, not where. Under a strategy the whole
+    /// ladder is drawn instead, every rung of it, before the click.
+    fn draw_aim_bracket(&self, ctx: &PaintCtx<'_>, preview: &CmdPreview) {
+        if preview.bracket.is_empty() {
+            return;
+        }
+        let laddered = preview.bracket.is_laddered();
+        let distance = self
+            .tick()
+            .saturating_mul(Decimal::from(preview.ruler_ticks));
+        for part in preview.bracket.parts() {
+            for (level, word, color) in [
+                (part.stop_loss, "SL", theme::SELL),
+                (part.take_profit, "TP", theme::BUY),
+            ] {
+                let Some(level) = level else { continue };
+                let y = ctx.scale.y(level.to_f64().unwrap_or_default());
+                if !ctx.in_range(y) {
+                    continue;
+                }
+                ctx.level_line(y, color, true, LINE_WIDTH_PX, false, false);
+                ctx.gutter_chip(y, color, &fmt_decimal(level));
+                let text = if laddered {
+                    // A ladder labels each rung with the slice it closes:
+                    // "TP" on three lines at three prices says nothing about
+                    // which part each one belongs to.
+                    format!(
+                        "{word} {} · {}",
+                        fmt_decimal(level),
+                        part.quantity.map_or_else(|| "all".to_owned(), fmt_decimal),
+                    )
+                } else if preview.ruler_ticks > 0 {
+                    format!(
+                        "{word} {} · {} pts · {} ticks · 1:1",
+                        fmt_decimal(level),
+                        fmt_decimal(distance),
+                        preview.ruler_ticks,
+                    )
+                } else {
+                    format!("{word} {}", fmt_decimal(level))
+                };
+                ctx.chip_tag(y, color, &text, false);
+            }
+        }
     }
 
     /// One protective leg: its resting line and tag, the drag that reprices
@@ -2513,6 +2631,25 @@ impl PaperTrading {
         self.layer_visible = input.layer_visible;
         self.refresh_open_tags(input);
         self.cmd_preview = self.compute_cmd_preview(input);
+
+        // The ruler. With the aim up, the wheel walks the projected stop and
+        // target out from the pointer, one tick per notch, the same distance
+        // on both sides - so what is on screen before the click is the trade
+        // at 1:1, and the trader can see whether that distance is worth
+        // taking. A forced aim is a capture fixture with no hand behind it
+        // and never spends the wheel; a selected strategy owns the distances
+        // and hands the wheel back to the chart.
+        self.scroll_consumed = false;
+        if input.scroll_y.abs() > f32::EPSILON
+            && self.selected_strategy.is_none()
+            && self.cmd_preview.is_some_and(|preview| !preview.forced)
+        {
+            self.step_ruler(input.scroll_y);
+            self.scroll_consumed = true;
+            // The aim now carries its bracket; recompute so the paint and
+            // the press read one value rather than two.
+            self.cmd_preview = self.compute_cmd_preview(input);
+        }
 
         // Nothing paper is painted while its layer is off, so nothing
         // paper takes the press: an invisible line is not a control.
@@ -2801,6 +2938,138 @@ impl PaperTrading {
     /// *down* rather than merely refusing its press is what keeps the
     /// promise: no preview means nothing paints, no hand cursor, no place
     /// — the label can never advertise an order the press will not make.
+    /// One tick of the instrument: the smallest price move its own prints
+    /// can express. Read from the mark the same way [`Self::snap`] reads it,
+    /// so the ruler steps in exactly the units a drag would land on.
+    fn tick(&self) -> Decimal {
+        let places = self
+            .venue
+            .mark_price()
+            .map_or(SNAP_FALLBACK_DECIMALS, |mark| mark.scale());
+        Decimal::new(1, places)
+    }
+
+    /// Spend this frame's wheel travel on the ruler, one tick per notch.
+    ///
+    /// Rolling up widens the bracket, rolling down narrows it; at zero the
+    /// ruler is off and the order rests as bare as it always did.
+    fn step_ruler(&mut self, scroll_y: f32) {
+        self.ruler_travel_px += scroll_y;
+        let notches = (self.ruler_travel_px / RULER_NOTCH_PX).trunc();
+        if notches == 0.0 {
+            return;
+        }
+        self.ruler_travel_px -= notches * RULER_NOTCH_PX;
+        let stepped = i64::from(self.ruler_ticks) + notches as i64;
+        self.ruler_ticks = stepped.clamp(0, i64::from(RULER_MAX_TICKS)) as u32;
+    }
+
+    /// Put the ruler at `ticks`, clamped to what the wheel itself can reach,
+    /// and answer with where it landed.
+    ///
+    /// The named form of rolling the wheel: same field, same bound, so a
+    /// hand and a second operator can never leave the ruler somewhere the
+    /// other cannot.
+    pub(crate) fn set_ruler_ticks(&mut self, ticks: u32) -> u32 {
+        self.ruler_ticks = ticks.min(RULER_MAX_TICKS);
+        self.ruler_travel_px = 0.0;
+        self.ruler_ticks
+    }
+
+    /// How far the ruler stands from the aim, in ticks; zero when it is off.
+    #[must_use]
+    pub(crate) fn ruler_ticks(&self) -> u32 {
+        self.ruler_ticks
+    }
+
+    /// Whether the ruler spent this frame's wheel travel. The chart asks
+    /// before zooming: one wheel, one meaning at a time.
+    #[must_use]
+    pub fn consumed_scroll(&self) -> bool {
+        self.scroll_consumed
+    }
+
+    /// The ruler's projected protection around an aimed entry.
+    ///
+    /// The same distance either side, always: what the trader reads is the
+    /// trade at 1:1, and the question it answers is "is that distance worth
+    /// it?" - asked before the order exists rather than after. `None` while
+    /// the ruler is at zero, while a strategy owns the distances, and for a
+    /// stop that would fall through zero on a cheap instrument.
+    fn ruler_levels(&self, side: Side, price: Decimal) -> (Option<Decimal>, Option<Decimal>) {
+        if self.ruler_ticks == 0 || self.selected_strategy.is_some() {
+            return (None, None);
+        }
+        let distance = self.tick().saturating_mul(Decimal::from(self.ruler_ticks));
+        let (stop, target) = match side {
+            Side::Buy => (
+                price.saturating_sub(distance),
+                price.saturating_add(distance),
+            ),
+            Side::Sell => (
+                price.saturating_add(distance),
+                price.saturating_sub(distance),
+            ),
+        };
+        if stop <= Decimal::ZERO || target <= Decimal::ZERO {
+            return (None, None);
+        }
+        (Some(stop), Some(target))
+    }
+
+    /// The strategies the trader keeps, in their own order.
+    pub(crate) fn order_strategies(&self) -> &[crate::order_strategies::OrderStrategy] {
+        &self.strategies
+    }
+
+    /// The strategy the ticket is set to, if any.
+    pub(crate) fn selected_order_strategy(
+        &self,
+    ) -> Option<&crate::order_strategies::OrderStrategy> {
+        self.strategies.get(self.selected_strategy?)
+    }
+
+    /// Replace the kept strategies and the selection, by name.
+    ///
+    /// A name this build no longer knows selects nothing: telling the trader
+    /// their strategy is gone beats silently arming a different one.
+    pub(crate) fn set_order_strategies(
+        &mut self,
+        strategies: Vec<crate::order_strategies::OrderStrategy>,
+        selected: Option<&str>,
+    ) {
+        self.selected_strategy =
+            selected.and_then(|name| strategies.iter().position(|item| item.name == name));
+        self.strategies = strategies;
+    }
+
+    /// The protection an aimed entry would carry, in priority order: the
+    /// selected strategy's ladder, then the ruler's symmetric pair, then the
+    /// ticket's typed offsets.
+    ///
+    /// One function, called by the projection *and* by the placement, so the
+    /// two can never disagree about what the click is about to do.
+    fn aim_bracket(
+        &self,
+        side: Side,
+        price: Decimal,
+        quantity: Decimal,
+        ticket: Bracket,
+    ) -> Bracket {
+        if let Some(strategy) = self.selected_order_strategy() {
+            // A strategy edited into an invalid state falls through to the
+            // plainer sources rather than blocking the trade; the editor is
+            // where it says what is wrong with it.
+            if let Ok(bracket) = strategy.resolve(side, price, quantity, self.tick()) {
+                return bracket;
+            }
+        }
+        if let (Some(stop), Some(target)) = self.ruler_levels(side, price) {
+            return Bracket::whole(Some(stop), Some(target));
+        }
+        ticket
+    }
+
     fn compute_cmd_preview(&self, input: &ChartInput<'_>) -> Option<CmdPreview> {
         if !self.cmd_trading.enabled || !input.layer_visible {
             return None;
@@ -2869,6 +3138,10 @@ impl PaperTrading {
         // kind. `None` stands the aim down rather than substituting the
         // other kind — see `resolve_cmd_kind`.
         let kind = resolve_cmd_kind(self.cmd_trading.kind, side, price, mark)?;
+        let quantity = self.quantity_preview().unwrap_or(Decimal::ONE);
+        let ticket = self
+            .ticket_bracket(side, price)
+            .unwrap_or_else(|_| Bracket::none());
         Some(CmdPreview {
             side,
             kind,
@@ -2876,6 +3149,12 @@ impl PaperTrading {
             raw_price,
             pointer,
             forced,
+            bracket: self.aim_bracket(side, price, quantity, ticket),
+            ruler_ticks: if self.selected_strategy.is_some() {
+                0
+            } else {
+                self.ruler_ticks
+            },
         })
     }
 
@@ -3068,9 +3347,10 @@ impl PaperTrading {
             return false;
         };
         let price = self.snap(raw_price);
-        let Some(bracket) = self.parse_bracket(side, price) else {
+        let Some(ticket) = self.parse_bracket(side, price) else {
             return false;
         };
+        let bracket = self.aim_bracket(side, price, quantity, ticket);
         let command = match kind {
             EntryKind::Limit => Command::PlaceLimit {
                 side,
@@ -3194,15 +3474,20 @@ impl PaperTrading {
 
         self.draw_position_card(ui);
         ui.separator();
-        let cmd_changed = self.draw_order_entry(ui);
+        let changed = self.draw_order_entry(ui);
         ui.separator();
         self.draw_pending_orders(ui);
         ui.separator();
         let action = self.draw_session_summary(ui);
-        if action.is_none() && cmd_changed {
+        if action.is_none() {
             // Same-frame collision with another action is a picker click;
             // the settings change persists on its next touch.
-            return Some(TradingTabAction::CmdTradingChanged);
+            if changed.strategies {
+                return Some(TradingTabAction::OrderStrategiesChanged);
+            }
+            if changed.cmd_trading {
+                return Some(TradingTabAction::CmdTradingChanged);
+            }
         }
         action
     }
@@ -3482,7 +3767,7 @@ impl PaperTrading {
         }
     }
 
-    fn draw_order_entry(&mut self, ui: &mut egui::Ui) -> bool {
+    fn draw_order_entry(&mut self, ui: &mut egui::Ui) -> OrderEntryChanges {
         ui.label(caption("ORDER"));
         // Qty: free decimal text (empty must keep meaning "fix me"), with
         // steppers beside it; Shift steps by ten.
@@ -3542,6 +3827,7 @@ impl PaperTrading {
             ui.add(egui::TextEdit::singleline(&mut self.profit_offset_text).desired_width(52.0));
             ui.label(egui::RichText::new("pts").color(theme::TEXT_FAINT).small());
         });
+        let strategies_changed = self.draw_strategy_row(ui);
         ui.add_space(4.0);
 
         // The entry pair: the surface where you commit, taller than the
@@ -3620,7 +3906,10 @@ impl PaperTrading {
             .color(theme::TEXT_SUPPORT)
             .small(),
         );
-        self.draw_cmd_trading_settings(ui)
+        OrderEntryChanges {
+            cmd_trading: self.draw_cmd_trading_settings(ui),
+            strategies: strategies_changed,
+        }
     }
 
     /// The cmd-trading block of the ticket: the enable pill and the two
@@ -3740,6 +4029,246 @@ impl PaperTrading {
                 .color(theme::TEXT_SUPPORT)
                 .small(),
             );
+        }
+        changed
+    }
+
+    /// The ticket's strategy row: which named ladder the next order rests
+    /// with, and the way into the editor that shapes them.
+    ///
+    /// Returns true when the selection changed, so the app can remember it.
+    fn draw_strategy_row(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Strategy")
+                    .color(theme::TEXT_MUTED)
+                    .small(),
+            )
+            .on_hover_text(
+                "a named exit ladder: the order rests with its parts already drawn on \\
+                 the chart. <None> rests a bare order you bracket by hand",
+            );
+            let selected = self.selected_order_strategy().map_or_else(
+                || STRATEGY_NONE.to_owned(),
+                |strategy| strategy.name.clone(),
+            );
+            let mut choice = self.selected_strategy;
+            egui::ComboBox::from_id_salt("paper_order_strategy")
+                .width(140.0)
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut choice, None, STRATEGY_NONE);
+                    for (index, strategy) in self.strategies.iter().enumerate() {
+                        ui.selectable_value(&mut choice, Some(index), &strategy.name);
+                    }
+                });
+            if choice != self.selected_strategy {
+                self.selected_strategy = choice;
+                changed = true;
+            }
+            if ui
+                .small_button("Edit…")
+                .on_hover_text("build and change the named exit ladders")
+                .clicked()
+            {
+                self.strategy_editor_open = true;
+                self.strategy_editing = self.selected_strategy.or(if self.strategies.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                });
+            }
+        });
+        // The selected ladder, said in words: a trader must be able to read
+        // what the next click will place without aiming it first.
+        if let Some(strategy) = self.selected_order_strategy() {
+            ui.label(
+                egui::RichText::new(summarise_strategy(strategy))
+                    .color(theme::TEXT_SUPPORT)
+                    .small(),
+            );
+        }
+        changed |= self.draw_strategy_editor(ui.ctx());
+        changed
+    }
+
+    /// The strategy editor: the list on the left, the open one's rows on the
+    /// right, and one line saying why it cannot be used when it cannot.
+    ///
+    /// A window rather than a panel, because building a ladder is a job the
+    /// trader finishes and closes - it is not part of reading the chart.
+    ///
+    /// Returns true when anything changed, so the app can persist it.
+    fn draw_strategy_editor(&mut self, ctx: &egui::Context) -> bool {
+        if !self.strategy_editor_open {
+            return false;
+        }
+        let mut changed = false;
+        let mut open = true;
+        egui::Window::new("Exit strategies")
+            .open(&mut open)
+            .resizable(true)
+            .default_width(460.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_min_width(130.0);
+                        ui.label(caption("STRATEGIES"));
+                        for index in 0..self.strategies.len() {
+                            let selected = self.strategy_editing == Some(index);
+                            let name = self.strategies[index].name.clone();
+                            if ui.selectable_label(selected, name).clicked() {
+                                self.strategy_editing = Some(index);
+                            }
+                        }
+                        ui.add_space(4.0);
+                        if ui
+                            .small_button("+ New")
+                            .on_hover_text("start a ladder from one whole-position rung")
+                            .clicked()
+                        {
+                            self.strategies.push(new_strategy(self.strategies.len()));
+                            self.strategy_editing = Some(self.strategies.len() - 1);
+                            changed = true;
+                        }
+                        if let Some(index) = self.strategy_editing
+                            && ui
+                                .small_button("Delete")
+                                .on_hover_text("remove this strategy")
+                                .clicked()
+                        {
+                            let removed = self.strategies.remove(index).name;
+                            // A selection pointing at a deleted strategy
+                            // would silently arm its neighbour.
+                            if self
+                                .selected_order_strategy()
+                                .is_none_or(|current| current.name == removed)
+                            {
+                                self.selected_strategy = None;
+                            }
+                            self.strategy_editing = if self.strategies.is_empty() {
+                                None
+                            } else {
+                                Some(index.min(self.strategies.len() - 1))
+                            };
+                            changed = true;
+                        }
+                    });
+                    ui.separator();
+                    ui.vertical(|ui| {
+                        changed |= self.draw_strategy_rows(ui);
+                    });
+                });
+            });
+        if !open {
+            self.strategy_editor_open = false;
+        }
+        changed
+    }
+
+    /// The open strategy's name and rungs.
+    fn draw_strategy_rows(&mut self, ui: &mut egui::Ui) -> bool {
+        let Some(index) = self.strategy_editing else {
+            ui.label(
+                egui::RichText::new("No strategy yet - New starts one.")
+                    .color(theme::TEXT_SUPPORT)
+                    .small(),
+            );
+            return false;
+        };
+        let Some(strategy) = self.strategies.get_mut(index) else {
+            return false;
+        };
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Name").color(theme::TEXT_MUTED).small());
+            if ui
+                .add(egui::TextEdit::singleline(&mut strategy.name).desired_width(200.0))
+                .changed()
+            {
+                changed = true;
+            }
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Qty %")
+                    .color(theme::TEXT_MUTED)
+                    .small(),
+            );
+            ui.add_space(38.0);
+            ui.label(egui::RichText::new("Gain").color(theme::TEXT_MUTED).small());
+            ui.add_space(34.0);
+            ui.label(egui::RichText::new("Loss").color(theme::TEXT_MUTED).small());
+            ui.label(
+                egui::RichText::new("ticks")
+                    .color(theme::TEXT_FAINT)
+                    .small(),
+            );
+        });
+        let mut remove: Option<usize> = None;
+        for (row_index, row) in strategy.rows.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                let mut share = row.share_percent.to_f64().unwrap_or_default();
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut share)
+                            .speed(1.0)
+                            .range(0.0..=100.0)
+                            .suffix("%"),
+                    )
+                    .changed()
+                {
+                    row.share_percent = Decimal::from_f64_retain(share)
+                        .unwrap_or_default()
+                        .round_dp(2);
+                    changed = true;
+                }
+                changed |= ticks_field(ui, &mut row.gain_ticks, "how far the target sits");
+                changed |= ticks_field(ui, &mut row.loss_ticks, "how far the stop sits");
+                if ui
+                    .small_button("−")
+                    .on_hover_text("remove this row")
+                    .clicked()
+                {
+                    remove = Some(row_index);
+                }
+            });
+        }
+        if let Some(row_index) = remove {
+            strategy.rows.remove(row_index);
+            changed = true;
+        }
+        if strategy.rows.len() < crate::order_strategies::MAX_ROWS
+            && ui
+                .small_button("+ Row")
+                .on_hover_text("split the exit one more time")
+                .clicked()
+        {
+            strategy.rows.push(crate::order_strategies::StrategyRow {
+                share_percent: Decimal::ZERO,
+                gain_ticks: Some(20),
+                loss_ticks: Some(20),
+            });
+            changed = true;
+        }
+        // The verdict, in one line, beside the fields that caused it.
+        match strategy.validate() {
+            Ok(()) => {
+                ui.label(
+                    egui::RichText::new("ready - the shares add up")
+                        .color(theme::TEXT_SUPPORT)
+                        .small(),
+                );
+            }
+            Err(error) => {
+                ui.label(
+                    egui::RichText::new(error.advice())
+                        .color(theme::AMBER)
+                        .small(),
+                );
+            }
         }
         changed
     }
@@ -5296,24 +5825,25 @@ impl PaperTrading {
     /// around `reference` (the entry's own price, or the mark for market
     /// orders). `None` means a field failed to parse and was toasted.
     fn parse_bracket(&mut self, side: Side, reference: Decimal) -> Option<Bracket> {
-        let stop_offset = match parse_offset(&self.stop_offset_text) {
-            Ok(value) => value,
-            Err(got) => {
-                self.show_toast(format!(
-                    "SIM: the stop offset must be a positive number of points - got `{got}`",
-                ));
-                return None;
+        match self.ticket_bracket(side, reference) {
+            Ok(bracket) => Some(bracket),
+            Err(message) => {
+                self.show_toast(message);
+                None
             }
-        };
-        let profit_offset = match parse_offset(&self.profit_offset_text) {
-            Ok(value) => value,
-            Err(got) => {
-                self.show_toast(format!(
-                    "SIM: the profit offset must be a positive number of points - got `{got}`",
-                ));
-                return None;
-            }
-        };
+        }
+    }
+
+    /// The reading half of [`Self::parse_bracket`]: the same arithmetic with
+    /// no toast, so the projection can ask what the ticket says without
+    /// putting a message on screen every frame.
+    fn ticket_bracket(&self, side: Side, reference: Decimal) -> Result<Bracket, String> {
+        let stop_offset = parse_offset(&self.stop_offset_text).map_err(|got| {
+            format!("SIM: the stop offset must be a positive number of points - got `{got}`")
+        })?;
+        let profit_offset = parse_offset(&self.profit_offset_text).map_err(|got| {
+            format!("SIM: the profit offset must be a positive number of points - got `{got}`")
+        })?;
         let (stop_loss, take_profit) = match side {
             Side::Buy => (
                 stop_offset.map(|offset| reference.saturating_sub(offset)),
@@ -5324,8 +5854,73 @@ impl PaperTrading {
                 profit_offset.map(|offset| reference.saturating_sub(offset)),
             ),
         };
-        Some(Bracket::whole(stop_loss, take_profit))
+        Ok(Bracket::whole(stop_loss, take_profit))
     }
+}
+
+/// What the order form changed this frame; both are app-wide settings the
+/// host persists and fans out to every tab.
+#[derive(Debug, Clone, Copy, Default)]
+struct OrderEntryChanges {
+    cmd_trading: bool,
+    strategies: bool,
+}
+
+/// A ladder to start from: one rung covering the whole position, which is
+/// the plain bracket a trader already knows, ready to be split.
+fn new_strategy(existing: usize) -> crate::order_strategies::OrderStrategy {
+    crate::order_strategies::OrderStrategy {
+        name: format!("Strategy {}", existing + 1),
+        rows: vec![crate::order_strategies::StrategyRow {
+            share_percent: Decimal::ONE_HUNDRED,
+            gain_ticks: Some(20),
+            loss_ticks: Some(20),
+        }],
+    }
+}
+
+/// One optional tick distance, with a box that empties to "no leg here".
+fn ticks_field(ui: &mut egui::Ui, ticks: &mut Option<u32>, hover: &str) -> bool {
+    let mut on = ticks.is_some();
+    let mut changed = false;
+    if ui.checkbox(&mut on, "").on_hover_text(hover).changed() {
+        *ticks = if on { Some(20) } else { None };
+        changed = true;
+    }
+    let mut value = ticks.unwrap_or(0);
+    let enabled = ticks.is_some();
+    if ui
+        .add_enabled(
+            enabled,
+            egui::DragValue::new(&mut value)
+                .speed(1.0)
+                .range(1..=100_000),
+        )
+        .changed()
+        && enabled
+    {
+        *ticks = Some(value);
+        changed = true;
+    }
+    changed
+}
+
+/// A strategy said in one line: the rungs, in the trader's own order.
+fn summarise_strategy(strategy: &crate::order_strategies::OrderStrategy) -> String {
+    let rungs: Vec<String> = strategy
+        .rows
+        .iter()
+        .map(|row| {
+            let gain = row
+                .gain_ticks
+                .map_or_else(|| "runs".to_owned(), |ticks| format!("+{ticks}"));
+            let loss = row
+                .loss_ticks
+                .map_or_else(|| "no stop".to_owned(), |ticks| format!("-{ticks}"));
+            format!("{}% {gain}/{loss}", fmt_decimal(row.share_percent))
+        })
+        .collect();
+    rungs.join(" · ")
 }
 
 /// The three headline tiles: NET (the one coloured number in the window),
@@ -9113,6 +9708,235 @@ mod tests {
 
     /// A 800×400 chart over the given price range, plus the input for one
     /// pointer frame at `(x, y)`.
+    /// The strategy from the trader's own editor, halved.
+    fn halves() -> crate::order_strategies::OrderStrategy {
+        use crate::order_strategies::{OrderStrategy, StrategyRow};
+        OrderStrategy {
+            name: "halves".to_owned(),
+            rows: vec![
+                StrategyRow {
+                    share_percent: Decimal::from(50),
+                    gain_ticks: Some(8),
+                    loss_ticks: Some(4),
+                },
+                StrategyRow {
+                    share_percent: Decimal::from(50),
+                    gain_ticks: Some(2),
+                    loss_ticks: Some(5),
+                },
+            ],
+        }
+    }
+
+    /// The projection and the placement go through one function, so what the
+    /// aim showed is exactly what rested. Proven by comparing the two
+    /// brackets rather than by reading the code that builds them.
+    #[test]
+    fn the_strategys_ladder_is_both_projected_and_placed() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        paper.set_order_strategies(vec![halves()], Some("halves"));
+        paper.qty_text = "2".to_owned();
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        // y = 250 is 95: below the mark, so a buy rests as a limit there.
+        let aim = egui::pos2(400.0, 250.0);
+
+        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
+        let projected = paper.cmd_preview.expect("the aim is up").bracket;
+        let parts: Vec<_> = projected.parts().copied().collect();
+        assert_eq!(parts.len(), 2, "both rungs are projected: {parts:?}");
+        assert_eq!(parts[0].quantity, Some(Decimal::ONE));
+        assert_eq!(parts[0].take_profit, Some(Decimal::from(103)));
+        assert_eq!(parts[0].stop_loss, Some(Decimal::from(91)));
+        assert_eq!(parts[1].take_profit, Some(Decimal::from(97)));
+        assert_eq!(parts[1].stop_loss, Some(Decimal::from(90)));
+
+        let mut press = ruler_frame(chart, &scale, aim, 0.0);
+        press.primary_pressed = true;
+        press.primary_down = true;
+        assert!(paper.handle_chart_input(&press), "the aim placed");
+
+        assert_eq!(
+            paper.working_orders()[0].bracket,
+            projected,
+            "the order carries the very bracket the aim projected"
+        );
+    }
+
+    /// With a strategy selected the wheel is the chart's again: the strategy
+    /// owns the distances, and two rulers on one aim would be two answers to
+    /// the same question.
+    #[test]
+    fn a_selected_strategy_stands_the_ruler_down() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        paper.set_order_strategies(vec![halves()], Some("halves"));
+        paper.qty_text = "2".to_owned();
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let aim = egui::pos2(400.0, 250.0);
+
+        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 250.0));
+        assert!(
+            !paper.consumed_scroll(),
+            "the wheel was left to the chart's zoom"
+        );
+        assert_eq!(paper.ruler_ticks, 0, "and walked nothing");
+        let preview = paper.cmd_preview.expect("the aim is up");
+        assert_eq!(
+            preview.bracket.parts().count(),
+            2,
+            "the strategy is what the aim projects"
+        );
+    }
+
+    /// A name the strategies no longer carry selects nothing rather than
+    /// quietly arming a different ladder.
+    #[test]
+    fn a_selection_naming_a_missing_strategy_selects_nothing() {
+        let mut paper = PaperTrading::new();
+        paper.set_order_strategies(vec![halves()], Some("a strategy that was deleted"));
+        assert!(paper.selected_order_strategy().is_none());
+        assert_eq!(paper.order_strategies().len(), 1, "the list is intact");
+    }
+
+    /// A frame with the aim's modifier held and wheel travel to spend.
+    fn ruler_frame<'a>(
+        chart: egui::Rect,
+        scale: &'a PriceScale,
+        pointer: egui::Pos2,
+        scroll_y: f32,
+    ) -> ChartInput<'a> {
+        ChartInput {
+            chart,
+            scale: Some(scale),
+            pointer: Some(pointer),
+            primary_pressed: false,
+            primary_down: false,
+            primary_released: false,
+            modifiers: egui::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+            canvas_claimed: false,
+            scroll_y,
+            layer_visible: true,
+        }
+    }
+
+    /// The ruler walks both legs out together, one tick per notch, and says
+    /// how far in the units the trader reads.
+    #[test]
+    fn the_wheel_walks_the_projected_bracket_out_symmetrically() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        // y = 250 is 95: below the mark, so a buy rests as a limit there.
+        let aim = egui::pos2(400.0, 250.0);
+
+        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
+        let preview = paper.cmd_preview.expect("the aim is up");
+        assert_eq!(preview.kind, EntryKind::Limit);
+        assert_eq!(preview.ruler_ticks, 0, "the ruler starts off");
+        assert_eq!(preview.bracket.stop_loss(), None, "and projects nothing");
+
+        // Three notches up.
+        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 150.0));
+        assert!(paper.consumed_scroll(), "the wheel belonged to the ruler");
+        assert_eq!(paper.ruler_ticks, 3);
+        let preview = paper.cmd_preview.expect("the aim is still up");
+        assert_eq!(
+            preview.bracket.stop_loss(),
+            Some(Decimal::from(92)),
+            "three ticks below the aim"
+        );
+        assert_eq!(
+            preview.bracket.take_profit(),
+            Some(Decimal::from(98)),
+            "and three ticks above it - the same distance, which is the 1:1"
+        );
+
+        // One notch back down.
+        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, -50.0));
+        assert_eq!(paper.ruler_ticks, 2);
+        let preview = paper.cmd_preview.expect("still aiming");
+        assert_eq!(preview.bracket.stop_loss(), Some(Decimal::from(93)));
+        assert_eq!(preview.bracket.take_profit(), Some(Decimal::from(97)));
+    }
+
+    /// A short's ruler mirrors: the stop goes above the aim, the target
+    /// below, and both stay the same distance from it.
+    #[test]
+    fn the_ruler_mirrors_for_a_sell() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        // y = 250 is 95: below the mark, so a sell arms as a stop there.
+        let aim = egui::pos2(400.0, 250.0);
+        let mut frame = ruler_frame(chart, &scale, aim, 200.0);
+        frame.modifiers = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        };
+        paper.handle_chart_input(&frame);
+
+        let preview = paper.cmd_preview.expect("the sell aim is up");
+        assert_eq!(preview.side, Side::Sell);
+        assert_eq!(
+            preview.bracket.stop_loss(),
+            Some(Decimal::from(99)),
+            "above a short"
+        );
+        assert_eq!(
+            preview.bracket.take_profit(),
+            Some(Decimal::from(91)),
+            "below it"
+        );
+    }
+
+    /// The wheel with no aim up is the chart's, not the ruler's.
+    #[test]
+    fn without_an_aim_the_wheel_is_left_to_the_chart() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let mut frame = ruler_frame(chart, &scale, egui::pos2(400.0, 250.0), 150.0);
+        frame.modifiers = egui::Modifiers::default();
+        paper.handle_chart_input(&frame);
+        assert!(paper.cmd_preview.is_none(), "no modifier, no aim");
+        assert!(!paper.consumed_scroll(), "so the wheel is not the ruler's");
+        assert_eq!(paper.ruler_ticks, 0);
+    }
+
+    /// What the ruler shows is what the click places.
+    #[test]
+    fn the_order_the_click_places_carries_the_rulers_bracket() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let aim = egui::pos2(400.0, 250.0);
+        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 250.0));
+        assert_eq!(paper.ruler_ticks, 5);
+
+        let mut press = ruler_frame(chart, &scale, aim, 0.0);
+        press.primary_pressed = true;
+        press.primary_down = true;
+        assert!(paper.handle_chart_input(&press), "the aim placed");
+
+        let order = &paper.working_orders()[0];
+        assert_eq!(order.price, Some(Decimal::from(95)));
+        assert_eq!(
+            order.bracket.stop_loss(),
+            Some(Decimal::from(90)),
+            "the stop the ruler was showing"
+        );
+        assert_eq!(
+            order.bracket.take_profit(),
+            Some(Decimal::from(100)),
+            "and the target beside it"
+        );
+    }
+
     fn chart_and_scale(lo: f64, hi: f64) -> (egui::Rect, PriceScale) {
         let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
         (chart, PriceScale::from_range(lo, hi, 0.0, 400.0))
@@ -9149,6 +9973,7 @@ mod tests {
             primary_released: released,
             modifiers: egui::Modifiers::default(),
             canvas_claimed: false,
+            scroll_y: 0.0,
             layer_visible: true,
         }
     }
@@ -9171,6 +9996,7 @@ mod tests {
             primary_released: false,
             modifiers,
             canvas_claimed: false,
+            scroll_y: 0.0,
             layer_visible: true,
         }
     }
@@ -9538,6 +10364,7 @@ mod tests {
             primary_released: false,
             modifiers: shift,
             canvas_claimed: true,
+            scroll_y: 0.0,
             layer_visible: true,
         };
         assert!(
@@ -9859,6 +10686,7 @@ mod tests {
             primary_released: false,
             modifiers: shift,
             canvas_claimed: false,
+            scroll_y: 0.0,
             layer_visible: false,
         };
         assert!(
@@ -10353,6 +11181,7 @@ mod tests {
             primary_released: false,
             modifiers: egui::Modifiers::default(),
             canvas_claimed: false,
+            scroll_y: 0.0,
             layer_visible: true,
         };
         assert!(paper.handle_chart_input(&press), "the ✕ owns the press");
@@ -10389,6 +11218,7 @@ mod tests {
             primary_released: false,
             modifiers: egui::Modifiers::default(),
             canvas_claimed: false,
+            scroll_y: 0.0,
             layer_visible: true,
         };
         assert!(

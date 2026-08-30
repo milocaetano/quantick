@@ -147,6 +147,9 @@ pub struct DockResponse {
     /// The Trading tab changed the cmd-trading settings — app-wide like
     /// the trades dir: the app persists and fans them out.
     pub cmd_trading_changed: bool,
+    /// The Trading tab changed the named exit strategies, or which one the
+    /// ticket is set to. App-wide for the same reason.
+    pub order_strategies_changed: bool,
 }
 
 /// The dock's chrome state. Hidden, collapsed to the strip, or open on one
@@ -337,6 +340,9 @@ impl Dock {
                                     }
                                     Some(TradingTabAction::CmdTradingChanged) => {
                                         response.cmd_trading_changed = true;
+                                    }
+                                    Some(TradingTabAction::OrderStrategiesChanged) => {
+                                        response.order_strategies_changed = true;
                                     }
                                     None => {}
                                 });
