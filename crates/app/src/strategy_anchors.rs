@@ -451,6 +451,9 @@ mod tests {
             cancel_at: None,
             flat_only: false,
             placed_ms: 0,
+            role: quantick_sim::OrderRole::Entry,
+            oco: None,
+            reduce_only: false,
         })]);
 
         let mut anchors = StrategyAnchors::default();
@@ -530,6 +533,9 @@ mod tests {
             cancel_at: None,
             flat_only: false,
             placed_ms: 0,
+            role: quantick_sim::OrderRole::Entry,
+            oco: None,
+            reduce_only: false,
         })]);
 
         let mut anchors = StrategyAnchors::default();

@@ -37,6 +37,8 @@ pub mod fake;
 
 pub use events::{CancelReason, ExitReason, Fill, FillRole, RejectReason, VenueEvent};
 pub use intent::{BracketTarget, CloseAmount, OrderIntent};
-pub use order::{Bracket, EntryKind, Order, OrderId};
+pub use order::{
+    Bracket, EntryKind, ExitPart, LadderError, MAX_EXIT_PARTS, OcoId, Order, OrderId, OrderRole,
+};
 pub use position::{ClosedTrade, Position, signed_points};
 pub use venue::TradingVenue;

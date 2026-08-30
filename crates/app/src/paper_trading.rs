@@ -340,16 +340,16 @@ impl Leg {
     /// measured against while this one is being dragged.
     fn other(self, bracket: Bracket) -> Option<Decimal> {
         match self {
-            Self::StopLoss => bracket.take_profit,
-            Self::TakeProfit => bracket.stop_loss,
+            Self::StopLoss => bracket.take_profit(),
+            Self::TakeProfit => bracket.stop_loss(),
         }
     }
 
     /// This leg's level within a bracket.
     fn level(self, bracket: Bracket) -> Option<Decimal> {
         match self {
-            Self::StopLoss => bracket.stop_loss,
-            Self::TakeProfit => bracket.take_profit,
+            Self::StopLoss => bracket.stop_loss(),
+            Self::TakeProfit => bracket.take_profit(),
         }
     }
 
@@ -359,14 +359,8 @@ impl Leg {
     /// nobody was touching.
     fn applied(self, bracket: Bracket, level: Option<Decimal>) -> Bracket {
         match self {
-            Self::StopLoss => Bracket {
-                stop_loss: level,
-                take_profit: bracket.take_profit,
-            },
-            Self::TakeProfit => Bracket {
-                stop_loss: bracket.stop_loss,
-                take_profit: level,
-            },
+            Self::StopLoss => Bracket::whole(level, bracket.take_profit()),
+            Self::TakeProfit => Bracket::whole(bracket.stop_loss(), level),
         }
     }
 
@@ -1599,14 +1593,14 @@ impl PaperTrading {
                         .round_dp(mark.scale())
                         .max(tick);
                     match side {
-                        Side::Buy => Bracket {
-                            stop_loss: Some(price.saturating_sub(reach)),
-                            take_profit: Some(price.saturating_add(reach)),
-                        },
-                        Side::Sell => Bracket {
-                            stop_loss: Some(price.saturating_add(reach)),
-                            take_profit: Some(price.saturating_sub(reach)),
-                        },
+                        Side::Buy => Bracket::whole(
+                            Some(price.saturating_sub(reach)),
+                            Some(price.saturating_add(reach)),
+                        ),
+                        Side::Sell => Bracket::whole(
+                            Some(price.saturating_add(reach)),
+                            Some(price.saturating_sub(reach)),
+                        ),
                     }
                 } else {
                     Bracket::none()
@@ -2655,10 +2649,7 @@ impl PaperTrading {
                 (
                     position.side,
                     position.avg_price,
-                    Bracket {
-                        stop_loss: position.stop_loss,
-                        take_profit: position.take_profit,
-                    },
+                    Bracket::whole(position.stop_loss, position.take_profit),
                     position.quantity,
                 )
             }),
@@ -2972,10 +2963,7 @@ impl PaperTrading {
         } else {
             Leg::StopLoss
         };
-        let bracket = Bracket {
-            stop_loss: position.stop_loss,
-            take_profit: position.take_profit,
-        };
+        let bracket = Bracket::whole(position.stop_loss, position.take_profit);
         // A side whose leg already exists stays blocked: that leg's own
         // line is its handle.
         self.drag = if leg.level(bracket).is_none() {
@@ -5336,10 +5324,7 @@ impl PaperTrading {
                 profit_offset.map(|offset| reference.saturating_sub(offset)),
             ),
         };
-        Some(Bracket {
-            stop_loss,
-            take_profit,
-        })
+        Some(Bracket::whole(stop_loss, take_profit))
     }
 }
 
@@ -8798,13 +8783,13 @@ mod tests {
         let bracket = paper
             .parse_bracket(Side::Buy, Decimal::from(100))
             .expect("both parse");
-        assert_eq!(bracket.stop_loss, Some(Decimal::from(95)));
-        assert_eq!(bracket.take_profit, Some(Decimal::from(110)));
+        assert_eq!(bracket.stop_loss(), Some(Decimal::from(95)));
+        assert_eq!(bracket.take_profit(), Some(Decimal::from(110)));
         let bracket = paper
             .parse_bracket(Side::Sell, Decimal::from(100))
             .expect("both parse");
-        assert_eq!(bracket.stop_loss, Some(Decimal::from(105)));
-        assert_eq!(bracket.take_profit, Some(Decimal::from(90)));
+        assert_eq!(bracket.stop_loss(), Some(Decimal::from(105)));
+        assert_eq!(bracket.take_profit(), Some(Decimal::from(90)));
     }
 
     #[test]
@@ -8857,7 +8842,7 @@ mod tests {
         paper.handle_chart_input(&frame(chart, &scale, 300.0, false, false, true));
 
         assert_eq!(
-            paper.working_orders()[0].bracket.stop_loss,
+            paper.working_orders()[0].bracket.stop_loss(),
             Some(Decimal::from(90)),
             "the drag set the order's own stop, before it ever filled"
         );
@@ -8931,10 +8916,7 @@ mod tests {
         let id = paper.working_orders()[0].id;
         assert_eq!(
             paper.working_orders()[0].bracket,
-            Bracket {
-                stop_loss: Some(Decimal::from(90)),
-                take_profit: Some(Decimal::from(110)),
-            },
+            Bracket::whole(Some(Decimal::from(90)), Some(Decimal::from(110)),),
             "the ticket offsets rode along on the resting order"
         );
 
@@ -8962,10 +8944,7 @@ mod tests {
         paper.amend_leg(BracketTarget::Order(id), Leg::StopLoss, None);
         assert_eq!(
             paper.working_orders()[0].bracket,
-            Bracket {
-                stop_loss: None,
-                take_profit: Some(Decimal::from(110)),
-            },
+            Bracket::whole(None, Some(Decimal::from(110)),),
             "clearing one leg never drops the other"
         );
     }
@@ -8986,7 +8965,7 @@ mod tests {
             Some(Decimal::from(96)),
         );
         assert_eq!(
-            paper.working_orders()[0].bracket.stop_loss,
+            paper.working_orders()[0].bracket.stop_loss(),
             None,
             "the refusal left the order as it was"
         );
@@ -10083,8 +10062,8 @@ mod tests {
         assert_eq!(orders.len(), 2, "one rung, both sides");
         for order in orders {
             let price = order.price.expect("a limit has a price");
-            let stop = order.bracket.stop_loss.expect("a stop rides along");
-            let target = order.bracket.take_profit.expect("and a target");
+            let stop = order.bracket.stop_loss().expect("a stop rides along");
+            let target = order.bracket.take_profit().expect("and a target");
             match order.side {
                 Side::Buy => {
                     assert!(stop < price, "a long's stop sits below its entry");

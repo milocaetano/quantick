@@ -329,8 +329,8 @@ impl OrderRevisionKey {
             id: order.id.0,
             price: order.price,
             quantity: order.quantity,
-            stop_loss: order.bracket.stop_loss,
-            take_profit: order.bracket.take_profit,
+            stop_loss: order.bracket.stop_loss(),
+            take_profit: order.bracket.take_profit(),
             cancel_at: order.cancel_at,
         }
     }
@@ -470,8 +470,8 @@ fn order_snapshot(order: &Order) -> PaperOrderSnapshot {
         kind: order.kind.as_str().to_owned(),
         price: order.price.map(canonical_decimal),
         quantity: canonical_decimal(order.quantity),
-        stop_loss: order.bracket.stop_loss.map(canonical_decimal),
-        take_profit: order.bracket.take_profit.map(canonical_decimal),
+        stop_loss: order.bracket.stop_loss().map(canonical_decimal),
+        take_profit: order.bracket.take_profit().map(canonical_decimal),
         cancel_at: order.cancel_at.map(canonical_decimal),
         flat_only: order.flat_only,
         placed_unix_ms: order.placed_ms,

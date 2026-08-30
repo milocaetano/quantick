@@ -256,8 +256,8 @@ fn answer(app: &QuantickApp, events: &[VenueEvent]) -> TradeResult {
                 kind: order.kind.as_str().to_owned(),
                 price: order.price.map(|price| price.to_string()),
                 quantity: order.quantity.to_string(),
-                stop_loss: order.bracket.stop_loss.map(|level| level.to_string()),
-                take_profit: order.bracket.take_profit.map(|level| level.to_string()),
+                stop_loss: order.bracket.stop_loss().map(|level| level.to_string()),
+                take_profit: order.bracket.take_profit().map(|level| level.to_string()),
             })
             .collect(),
         simulated: true,
@@ -350,18 +350,18 @@ fn place_order(
             ));
         }
     };
-    let bracket = Bracket {
-        stop_loss: input
+    let bracket = Bracket::whole(
+        input
             .stop_loss
             .as_deref()
             .map(|text| parse_price("stop_loss", text))
             .transpose()?,
-        take_profit: input
+        input
             .take_profit
             .as_deref()
             .map(|text| parse_price("take_profit", text))
             .transpose()?,
-    };
+    );
     let events = app
         .control_active_paper_mut()
         .ok_or_else(no_chart_open)?
@@ -380,18 +380,18 @@ fn bracket_order(
     let asked = input.clone();
     let input: BracketInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let bracket = Bracket {
-        stop_loss: input
+    let bracket = Bracket::whole(
+        input
             .stop_loss
             .as_deref()
             .map(|text| parse_price("stop_loss", text))
             .transpose()?,
-        take_profit: input
+        input
             .take_profit
             .as_deref()
             .map(|text| parse_price("take_profit", text))
             .transpose()?,
-    };
+    );
     let events = app
         .control_active_paper_mut()
         .ok_or_else(no_chart_open)?

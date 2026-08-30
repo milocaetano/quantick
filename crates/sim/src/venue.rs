@@ -65,26 +65,15 @@ impl Command {
             } => venue.submit(OrderIntent::stop(side, quantity, trigger).with_bracket(bracket)),
             Self::ModifyOrder { id, price } => venue.amend_price(id, price),
             Self::CancelOrder { id } => venue.cancel(id),
-            Self::SetOrderBracket {
-                id,
-                stop_loss,
-                take_profit,
-            } => venue.amend_bracket(
-                BracketTarget::Order(id),
-                Bracket {
-                    stop_loss,
-                    take_profit,
-                },
-            ),
+            Self::SetOrderBracket { id, bracket } => {
+                venue.amend_bracket(BracketTarget::Order(id), bracket)
+            }
             Self::SetBracket {
                 stop_loss,
                 take_profit,
             } => venue.amend_bracket(
                 BracketTarget::Position,
-                Bracket {
-                    stop_loss,
-                    take_profit,
-                },
+                Bracket::whole(stop_loss, take_profit),
             ),
             Self::ClosePosition => venue.close(CloseAmount::All),
             Self::ClosePartial { quantity } => venue.close(CloseAmount::Partial(quantity)),
@@ -133,14 +122,13 @@ impl TradingVenue for Simulator {
     fn amend_bracket(&mut self, target: BracketTarget, bracket: Bracket) -> Vec<VenueEvent> {
         let command = match target {
             BracketTarget::Position => Command::SetBracket {
-                stop_loss: bracket.stop_loss,
-                take_profit: bracket.take_profit,
+                stop_loss: bracket.stop_loss(),
+                take_profit: bracket.take_profit(),
             },
-            BracketTarget::Order(id) => Command::SetOrderBracket {
-                id,
-                stop_loss: bracket.stop_loss,
-                take_profit: bracket.take_profit,
-            },
+            // The whole bracket travels, ladder and all: flattening it to
+            // two levels here would make a ladder unreachable through the
+            // very port that exists so callers need one vocabulary.
+            BracketTarget::Order(id) => Command::SetOrderBracket { id, bracket },
         };
         self.apply(command)
     }
@@ -273,21 +261,15 @@ mod tests {
         TradingVenue::amend_bracket(
             &mut sim,
             BracketTarget::Order(id),
-            Bracket {
-                stop_loss: Some(dec(90)),
-                take_profit: Some(dec(110)),
-            },
+            Bracket::whole(Some(dec(90)), Some(dec(110))),
         );
-        assert_eq!(sim.orders()[0].bracket.stop_loss, Some(dec(90)));
+        assert_eq!(sim.orders()[0].bracket.stop_loss(), Some(dec(90)));
         // No position exists yet, so the position-targeted call refuses
         // rather than quietly addressing the order.
         let events = TradingVenue::amend_bracket(
             &mut sim,
             BracketTarget::Position,
-            Bracket {
-                stop_loss: Some(dec(90)),
-                take_profit: None,
-            },
+            Bracket::whole(Some(dec(90)), None),
         );
         assert_eq!(events, vec![VenueEvent::Rejected(RejectReason::NoPosition)]);
     }
@@ -341,10 +323,7 @@ mod tests {
                     side: Side::Buy,
                     quantity: dec(1),
                     trigger: dec(105),
-                    bracket: Bracket {
-                        stop_loss: Some(dec(101)),
-                        take_profit: None,
-                    },
+                    bracket: Bracket::whole(Some(dec(101)), None),
                 },
             );
             run(
@@ -352,8 +331,7 @@ mod tests {
                 place_through_port,
                 Command::SetOrderBracket {
                     id: OrderId(0),
-                    stop_loss: Some(dec(90)),
-                    take_profit: Some(dec(99)),
+                    bracket: Bracket::whole(Some(dec(90)), Some(dec(99))),
                 },
             );
             run(

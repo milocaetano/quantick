@@ -96,6 +96,16 @@ pub enum CancelReason {
     /// filling would have traded against (or piled onto) a position the
     /// order's owner never accounted for, so it stood down instead.
     AccountOccupied,
+    /// The other leg of this order's OCO pair filled. Its ladder part is
+    /// closed, so this leg would have exited a quantity nobody holds.
+    OcoFilled,
+    /// The position this leg protected is gone - taken by another part, by
+    /// a hand close, or reversed by an opposite entry. Protection never
+    /// outlives what it protects.
+    PositionClosed,
+    /// The trader replaced the protection wholesale: a new bracket, or a
+    /// bracketed entry averaging into the same position.
+    BracketReplaced,
 }
 
 /// Why a command was refused. Messages are written for a beginner: they say

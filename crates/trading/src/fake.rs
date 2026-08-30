@@ -16,7 +16,7 @@ use rust_decimal::Decimal;
 
 use crate::events::{CancelReason, ExitReason, Fill, FillRole, RejectReason, VenueEvent};
 use crate::intent::{BracketTarget, CloseAmount, OrderIntent};
-use crate::order::{Bracket, Order, OrderId};
+use crate::order::{Bracket, Order, OrderId, OrderRole};
 use crate::position::{ClosedTrade, Position, signed_points};
 use crate::venue::TradingVenue;
 
@@ -83,6 +83,12 @@ impl FakeVenue {
             cancel_at: intent.cancel_at,
             flat_only: intent.flat_only,
             placed_ms: self.last_ms,
+            // The fake models no ladder: it arms the position pair a plain
+            // bracket carries and nothing else, which is exactly the part of
+            // the contract the parity tests hold both venues to.
+            role: OrderRole::Entry,
+            oco: None,
+            reduce_only: false,
         }
     }
 
@@ -134,8 +140,8 @@ impl FakeVenue {
         if let Some(position) = self.position.as_mut()
             && !order.bracket.is_empty()
         {
-            position.stop_loss = order.bracket.stop_loss;
-            position.take_profit = order.bracket.take_profit;
+            position.stop_loss = order.bracket.stop_loss();
+            position.take_profit = order.bracket.take_profit();
         }
     }
 
@@ -219,11 +225,11 @@ impl TradingVenue for FakeVenue {
                 let Some(position) = self.position.as_mut() else {
                     return vec![VenueEvent::Rejected(RejectReason::NoPosition)];
                 };
-                position.stop_loss = bracket.stop_loss;
-                position.take_profit = bracket.take_profit;
+                position.stop_loss = bracket.stop_loss();
+                position.take_profit = bracket.take_profit();
                 vec![VenueEvent::BracketSet {
-                    stop_loss: bracket.stop_loss,
-                    take_profit: bracket.take_profit,
+                    stop_loss: bracket.stop_loss(),
+                    take_profit: bracket.take_profit(),
                 }]
             }
             BracketTarget::Order(id) => {

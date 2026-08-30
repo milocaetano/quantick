@@ -4,8 +4,8 @@ use quantick_engine::{Side, Trade};
 use rust_decimal::Decimal;
 
 use quantick_trading::{
-    Bracket, CancelReason, ClosedTrade, EntryKind, ExitReason, Fill, FillRole, Order, OrderId,
-    Position, RejectReason, VenueEvent, signed_points,
+    Bracket, CancelReason, ClosedTrade, EntryKind, ExitPart, ExitReason, Fill, FillRole, OcoId,
+    Order, OrderId, OrderRole, Position, RejectReason, VenueEvent, signed_points,
 };
 
 /// A user command, applied between prints. Commands and prints interleave
@@ -65,11 +65,7 @@ pub enum Command {
     /// while the order rested is dropped and reported
     /// ([`crate::VenueEvent::BracketDropped`]) rather than kept wearing a
     /// lying label.
-    SetOrderBracket {
-        id: OrderId,
-        stop_loss: Option<Decimal>,
-        take_profit: Option<Decimal>,
-    },
+    SetOrderBracket { id: OrderId, bracket: Bracket },
     /// Remove a pending order without filling it.
     CancelOrder { id: OrderId },
     /// Replace the open position's protective prices wholesale — `None`
@@ -96,8 +92,9 @@ pub enum Command {
 /// A market action waiting for the next print.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueuedAction {
-    /// A market entry order.
-    Entry(Order),
+    /// A market entry order. Boxed: an entry carries its exit ladder and
+    /// dwarfs the other variants, and the queue is walked once per print.
+    Entry(Box<Order>),
     /// A user close. If the position is already gone when the print
     /// arrives (a bracket fired first), the close dissolves — there is
     /// nothing left for it to close.
@@ -120,6 +117,7 @@ struct Mark {
 #[derive(Debug, Default)]
 pub struct Simulator {
     next_id: u64,
+    next_oco: u64,
     mark: Option<Mark>,
     /// Market actions awaiting the next print, in command order.
     queue: Vec<QueuedAction>,
@@ -241,6 +239,12 @@ impl Simulator {
             }
         }
 
+        // 1b) The ladder's protective legs, armed on prints before this
+        //     one and walked in the order the trader listed their parts. A
+        //     print can reach several - a gap through two stops fires both -
+        //     and each reduces the position by its own part's quantity.
+        self.fire_protective_legs(price, trade, &mut events);
+
         // 2) Queued market actions, in command order.
         for action in std::mem::take(&mut self.queue) {
             match action {
@@ -271,6 +275,12 @@ impl Simulator {
         let resting = std::mem::take(&mut self.resting);
         let mut kept = Vec::with_capacity(resting.len());
         for order in resting {
+            // Protective legs had their turn in phase 1b; they never fill as
+            // entries, whatever their price says.
+            if order.is_protective() {
+                kept.push(order);
+                continue;
+            }
             // Resting orders always carry a price by construction.
             let Some(level) = order.price else {
                 kept.push(order);
@@ -310,7 +320,17 @@ impl Simulator {
                 None => kept.push(order),
             }
         }
+        // An entry filled by this print installed its legs into the list
+        // while it was taken, so they are collected here rather than
+        // overwritten. They are the newest orders, so they sit last.
+        kept.extend(std::mem::take(&mut self.resting));
         self.resting = kept;
+
+        // No protective leg outlives the position it protects: an orphan
+        // would exit a position nobody holds on some later print.
+        if self.position.is_none() {
+            self.sweep_protective(CancelReason::PositionClosed, &mut events);
+        }
 
         // 4) The mark updates last; a position that survived the print has
         //    been exposed to its price, which the excursions must remember.
@@ -334,7 +354,7 @@ impl Simulator {
         for action in std::mem::take(&mut self.queue) {
             if let QueuedAction::Entry(order) = action {
                 events.push(VenueEvent::Cancelled {
-                    order,
+                    order: *order,
                     reason: CancelReason::Reset,
                 });
             }
@@ -391,7 +411,7 @@ impl Simulator {
                     mark.timestamp_ms,
                 );
                 let placed = VenueEvent::Placed(order.clone());
-                self.queue.push(QueuedAction::Entry(order));
+                self.queue.push(QueuedAction::Entry(Box::new(order)));
                 Ok(vec![placed])
             }
             Command::PlaceLimit {
@@ -466,11 +486,7 @@ impl Simulator {
                 order.price = Some(price);
                 Ok(vec![VenueEvent::Updated(order.clone())])
             }
-            Command::SetOrderBracket {
-                id,
-                stop_loss,
-                take_profit,
-            } => {
+            Command::SetOrderBracket { id, bracket } => {
                 let Some(order) = self.resting.iter_mut().find(|order| order.id == id) else {
                     return Err(RejectReason::UnknownOrder(id));
                 };
@@ -481,10 +497,6 @@ impl Simulator {
                 // panicking a live session.
                 let Some(reference) = order.price else {
                     return Err(RejectReason::UnknownOrder(id));
-                };
-                let bracket = Bracket {
-                    stop_loss,
-                    take_profit,
                 };
                 validate_bracket(order.side, reference, bracket)?;
                 order.bracket = bracket;
@@ -505,7 +517,7 @@ impl Simulator {
                     && let QueuedAction::Entry(order) = self.queue.remove(index)
                 {
                     return Ok(vec![VenueEvent::Cancelled {
-                        order,
+                        order: *order,
                         reason: CancelReason::User,
                     }]);
                 }
@@ -522,10 +534,7 @@ impl Simulator {
                 validate_bracket(
                     position.side,
                     mark.price,
-                    Bracket {
-                        stop_loss,
-                        take_profit,
-                    },
+                    Bracket::whole(stop_loss, take_profit),
                 )?;
                 position.stop_loss = stop_loss;
                 position.take_profit = take_profit;
@@ -554,7 +563,7 @@ impl Simulator {
                 for action in std::mem::take(&mut self.queue) {
                     if let QueuedAction::Entry(order) = action {
                         events.push(VenueEvent::Cancelled {
-                            order,
+                            order: *order,
                             reason: CancelReason::Flatten,
                         });
                     }
@@ -599,6 +608,179 @@ impl Simulator {
             cancel_at,
             flat_only,
             placed_ms,
+            role: OrderRole::Entry,
+            oco: None,
+            reduce_only: false,
+        }
+    }
+
+    /// One protective leg of a ladder part, resting on the reducing side.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one leg has one natural field list; bundling it into a struct would name nothing"
+    )]
+    fn make_leg(
+        &mut self,
+        side: Side,
+        kind: EntryKind,
+        price: Decimal,
+        quantity: Decimal,
+        role: OrderRole,
+        oco: OcoId,
+        placed_ms: i64,
+    ) -> Order {
+        self.next_id += 1;
+        Order {
+            id: OrderId(self.next_id),
+            side,
+            kind,
+            price: Some(price),
+            quantity,
+            bracket: Bracket::none(),
+            cancel_at: None,
+            flat_only: false,
+            placed_ms,
+            role,
+            oco: Some(oco),
+            reduce_only: true,
+        }
+    }
+
+    /// Turn a filled entry's ladder into working protective legs.
+    ///
+    /// Only a ladder gets legs. A plain whole-fill bracket arms the
+    /// position's own pair, which is what the port reports and what every
+    /// venue already models - splitting it into orders would change an
+    /// answer nothing asked to change.
+    ///
+    /// Each part becomes an OCO pair on the reducing side: a take profit
+    /// resting at its level and a stop armed at its own, sharing one
+    /// [`OcoId`] so whichever fills first removes the other.
+    fn install_protection(
+        &mut self,
+        side: Side,
+        filled_quantity: Decimal,
+        placed_ms: i64,
+        bracket: Bracket,
+        events: &mut Vec<VenueEvent>,
+    ) {
+        if !bracket.is_laddered() {
+            return;
+        }
+        let reducing = opposite(side);
+        let parts: Vec<ExitPart> = bracket.parts().copied().collect();
+        for part in parts {
+            if part.is_empty() {
+                continue;
+            }
+            let quantity = part
+                .quantity
+                .unwrap_or(filled_quantity)
+                .min(filled_quantity);
+            if quantity <= Decimal::ZERO {
+                continue;
+            }
+            self.next_oco += 1;
+            let oco = OcoId(self.next_oco);
+            if let Some(level) = part.take_profit {
+                let leg = self.make_leg(
+                    reducing,
+                    EntryKind::Limit,
+                    level,
+                    quantity,
+                    OrderRole::TakeProfit,
+                    oco,
+                    placed_ms,
+                );
+                events.push(VenueEvent::Placed(leg.clone()));
+                self.resting.push(leg);
+            }
+            if let Some(level) = part.stop_loss {
+                let leg = self.make_leg(
+                    reducing,
+                    EntryKind::Stop,
+                    level,
+                    quantity,
+                    OrderRole::StopLoss,
+                    oco,
+                    placed_ms,
+                );
+                events.push(VenueEvent::Placed(leg.clone()));
+                self.resting.push(leg);
+            }
+        }
+    }
+
+    /// Fire every protective leg this print reaches, in placement order.
+    ///
+    /// A leg reduces the position by its own quantity - clamped to what is
+    /// actually still open, because a hand close may have got there first -
+    /// and cancels the sibling it shares an OCO group with. Parts the print
+    /// did not reach carry on untouched: that is the whole point of a
+    /// ladder.
+    ///
+    /// The scan restarts after each fill. An OCO cancellation removes a
+    /// sibling from anywhere in the list, and a cursor walking past that is
+    /// how a leg gets silently skipped; a ladder is at most four pairs long,
+    /// so the rescan costs nothing a per-trade path would notice.
+    fn fire_protective_legs(
+        &mut self,
+        price: Decimal,
+        print: &Trade,
+        events: &mut Vec<VenueEvent>,
+    ) {
+        while self.position.is_some() {
+            let Some(index) = self.resting.iter().position(|order| {
+                order.is_protective()
+                    && order
+                        .price
+                        .is_some_and(|level| leg_reached(order.role, order.side, level, price))
+            }) else {
+                return;
+            };
+            let leg = self.resting.remove(index);
+            // A stop is a market order once touched and fills at the print,
+            // so a gap fills honestly worse than the trigger; a take profit
+            // is a resting limit and fills at its own level.
+            let level = leg.price.unwrap_or(price);
+            let (at, reason, role) = match leg.role {
+                OrderRole::StopLoss => (price, ExitReason::StopLoss, FillRole::StopLoss),
+                _ => (level, ExitReason::TakeProfit, FillRole::TakeProfit),
+            };
+            self.close_quantity_at(leg.quantity, at, print, reason, role, events);
+            if let Some(oco) = leg.oco {
+                self.cancel_oco_sibling(oco, events);
+            }
+        }
+    }
+
+    /// Remove the other leg of `oco`: its part is closed, and a lone
+    /// survivor would exit a quantity that is no longer open.
+    fn cancel_oco_sibling(&mut self, oco: OcoId, events: &mut Vec<VenueEvent>) {
+        if let Some(index) = self
+            .resting
+            .iter()
+            .position(|order| order.is_protective() && order.oco == Some(oco))
+        {
+            let order = self.resting.remove(index);
+            events.push(VenueEvent::Cancelled {
+                order,
+                reason: CancelReason::OcoFilled,
+            });
+        }
+    }
+
+    /// Cancel every protective leg, saying why. User entries are untouched:
+    /// an order waiting for its own moment is not protection.
+    fn sweep_protective(&mut self, reason: CancelReason, events: &mut Vec<VenueEvent>) {
+        let mut index = 0;
+        while index < self.resting.len() {
+            if self.resting[index].is_protective() {
+                let order = self.resting.remove(index);
+                events.push(VenueEvent::Cancelled { order, reason });
+            } else {
+                index += 1;
+            }
         }
     }
 
@@ -616,7 +798,23 @@ impl Simulator {
         bracket: Bracket,
         events: &mut Vec<VenueEvent>,
     ) -> Bracket {
-        let mut kept = bracket;
+        let parts: Vec<ExitPart> = bracket
+            .parts()
+            .map(|part| Self::admissible_part(side, at, *part, events))
+            .filter(|part| !part.is_empty())
+            .collect();
+        Bracket::ladder(&parts).unwrap_or_else(|_| Bracket::none())
+    }
+
+    /// One part of a ladder, with the levels the fill has already outrun
+    /// dropped and reported. See [`Self::admissible_bracket`].
+    fn admissible_part(
+        side: Side,
+        at: Decimal,
+        part: ExitPart,
+        events: &mut Vec<VenueEvent>,
+    ) -> ExitPart {
+        let mut kept = part;
         if let Some(level) = kept.stop_loss {
             let lying = match side {
                 Side::Buy => level > at,
@@ -674,6 +872,13 @@ impl Simulator {
                     print,
                     bracket,
                 ));
+                self.install_protection(
+                    order.side,
+                    order.quantity,
+                    print.timestamp_ms,
+                    bracket,
+                    events,
+                );
             }
             Some(mut position) if position.side == order.side => {
                 // Average in. The newest entry's bracket wins where it sets
@@ -688,13 +893,28 @@ impl Simulator {
                 }
                 position.quantity = total;
                 position.observe(at);
-                if bracket.stop_loss.is_some() {
-                    position.stop_loss = bracket.stop_loss;
+                if bracket.stop_loss().is_some() {
+                    position.stop_loss = bracket.stop_loss();
                 }
-                if bracket.take_profit.is_some() {
-                    position.take_profit = bracket.take_profit;
+                if bracket.take_profit().is_some() {
+                    position.take_profit = bracket.take_profit();
                 }
+                let total_open = position.quantity;
                 self.position = Some(position);
+                // A bracketed add re-protects the whole position: a ladder's
+                // parts are slices of one entry, and old legs left beside
+                // new ones would protect some quantity twice and some not at
+                // all. An add carrying no ladder leaves the legs alone.
+                if bracket.is_laddered() {
+                    self.sweep_protective(CancelReason::BracketReplaced, events);
+                    self.install_protection(
+                        order.side,
+                        total_open,
+                        print.timestamp_ms,
+                        bracket,
+                        events,
+                    );
+                }
             }
             Some(mut position) => {
                 // Netting: the opposite entry closes quantity first, then
@@ -766,6 +986,33 @@ impl Simulator {
         print: &Trade,
         events: &mut Vec<VenueEvent>,
     ) {
+        self.close_quantity_at(
+            quantity,
+            at,
+            print,
+            ExitReason::Manual,
+            FillRole::Close,
+            events,
+        );
+    }
+
+    /// The one path out of a position: reduce it by up to `quantity` at
+    /// `at`, book the closed trade, and keep whatever remains with its
+    /// average entry and opening time untouched.
+    ///
+    /// A ladder's leg, a hand close and a flatten all run through here, so a
+    /// rung and a button can never disagree about what closing means.
+    /// Dissolves quietly when there is no position: a queued close whose
+    /// position a stop already took has nothing left to do.
+    fn close_quantity_at(
+        &mut self,
+        quantity: Decimal,
+        at: Decimal,
+        print: &Trade,
+        reason: ExitReason,
+        role: FillRole,
+        events: &mut Vec<VenueEvent>,
+    ) {
         let Some(mut position) = self.position.take() else {
             return;
         };
@@ -776,7 +1023,7 @@ impl Simulator {
             side: opposite(position.side),
             price: at,
             quantity: close_quantity,
-            role: FillRole::Close,
+            role,
         }));
         self.record_close(
             &position,
@@ -784,7 +1031,7 @@ impl Simulator {
             at,
             print.timestamp_ms,
             print.agg_id,
-            ExitReason::Manual,
+            reason,
             events,
         );
         if position.quantity > close_quantity {
@@ -850,8 +1097,26 @@ fn opened_position(
         opened_agg_id: print.agg_id,
         low_price: at,
         high_price: at,
-        stop_loss: bracket.stop_loss,
-        take_profit: bracket.take_profit,
+        // The single-pair view the port reports. A ladder has several stops
+        // and no single one of them is true, so it answers `None` here and
+        // the legs in `working_orders` carry the truth instead.
+        stop_loss: bracket.stop_loss(),
+        take_profit: bracket.take_profit(),
+    }
+}
+
+/// True when `price` reaches a protective leg resting at `level`.
+///
+/// The leg's own side is the reducing one - a sell protects a long - so the
+/// direction a stop is reached from is the opposite of the direction a take
+/// profit is reached from.
+fn leg_reached(role: OrderRole, side: Side, level: Decimal, price: Decimal) -> bool {
+    match (role, side) {
+        (OrderRole::StopLoss, Side::Sell) => price <= level,
+        (OrderRole::StopLoss, Side::Buy) => price >= level,
+        (OrderRole::TakeProfit, Side::Sell) => price >= level,
+        (OrderRole::TakeProfit, Side::Buy) => price <= level,
+        (OrderRole::Entry, _) => false,
     }
 }
 
@@ -924,24 +1189,26 @@ fn validate_stop_side(side: Side, trigger: Decimal, mark: Decimal) -> Result<(),
 /// entry's own price, or the mark for market orders and open positions):
 /// the stop on the losing side, the take profit on the winning side.
 fn validate_bracket(side: Side, reference: Decimal, bracket: Bracket) -> Result<(), RejectReason> {
-    if let Some(level) = bracket.stop_loss {
-        require_positive_price(level)?;
-        let protective = match side {
-            Side::Buy => level < reference,
-            Side::Sell => level > reference,
-        };
-        if !protective {
-            return Err(RejectReason::StopLossOnWrongSide(side));
+    for part in bracket.parts() {
+        if let Some(level) = part.stop_loss {
+            require_positive_price(level)?;
+            let protective = match side {
+                Side::Buy => level < reference,
+                Side::Sell => level > reference,
+            };
+            if !protective {
+                return Err(RejectReason::StopLossOnWrongSide(side));
+            }
         }
-    }
-    if let Some(level) = bracket.take_profit {
-        require_positive_price(level)?;
-        let winning = match side {
-            Side::Buy => level > reference,
-            Side::Sell => level < reference,
-        };
-        if !winning {
-            return Err(RejectReason::TakeProfitOnWrongSide(side));
+        if let Some(level) = part.take_profit {
+            require_positive_price(level)?;
+            let winning = match side {
+                Side::Buy => level > reference,
+                Side::Sell => level < reference,
+            };
+            if !winning {
+                return Err(RejectReason::TakeProfitOnWrongSide(side));
+            }
         }
     }
     Ok(())
@@ -1124,10 +1391,7 @@ mod tests {
             side: Side::Sell,
             quantity: Decimal::ONE,
             price: dec(100),
-            bracket: Bracket {
-                stop_loss: Some(dec(104)),
-                take_profit: Some(dec(88)),
-            },
+            bracket: Bracket::whole(Some(dec(104)), Some(dec(88))),
             cancel_at: Some(dec(88)),
             flat_only: false,
         });
@@ -1195,10 +1459,7 @@ mod tests {
             side: Side::Sell,
             quantity: Decimal::ONE,
             price: dec(100),
-            bracket: Bracket {
-                stop_loss: Some(dec(104)),
-                take_profit: Some(dec(88)),
-            },
+            bracket: Bracket::whole(Some(dec(104)), Some(dec(88))),
             cancel_at: Some(dec(88)),
             flat_only: true,
         });
@@ -1337,10 +1598,7 @@ mod tests {
         sim.apply(Command::PlaceMarket {
             side: Side::Buy,
             quantity: dec(3),
-            bracket: Bracket {
-                stop_loss: Some(dec(97)),
-                take_profit: Some(dec(110)),
-            },
+            bracket: Bracket::whole(Some(dec(97)), Some(dec(110))),
         });
         sim.on_trade(&print(1, 100));
         let position = sim.position().expect("opened");
@@ -1365,10 +1623,7 @@ mod tests {
         sim.apply(Command::PlaceMarket {
             side: Side::Buy,
             quantity: Decimal::ONE,
-            bracket: Bracket {
-                stop_loss: None,
-                take_profit: Some(dec(101)),
-            },
+            bracket: Bracket::whole(None, Some(dec(101))),
         });
         // The tape outruns the target before the fill: entry lands at 102,
         // above the 101 target that validated fine against the 100 mark.
@@ -1396,10 +1651,7 @@ mod tests {
             side: Side::Buy,
             quantity: Decimal::ONE,
             trigger: dec(105),
-            bracket: Bracket {
-                stop_loss: Some(dec(104)),
-                take_profit: None,
-            },
+            bracket: Bracket::whole(Some(dec(104)), None),
         });
         // Gap to 108: the fill is worse than the trigger, but 104 still
         // protects a long entered at 108 — kept, not dropped.
@@ -1413,10 +1665,7 @@ mod tests {
         sim.apply(Command::PlaceMarket {
             side: Side::Buy,
             quantity: Decimal::ONE,
-            bracket: Bracket {
-                stop_loss: None,
-                take_profit: Some(dec(110)),
-            },
+            bracket: Bracket::whole(None, Some(dec(110))),
         });
         sim.on_trade(&print(1, 100));
         // Gap above the target: a resting limit fills at 110, not 115.
@@ -1433,10 +1682,7 @@ mod tests {
         sim.apply(Command::PlaceMarket {
             side: Side::Buy,
             quantity: Decimal::ONE,
-            bracket: Bracket {
-                stop_loss: Some(dec(99)),
-                take_profit: None,
-            },
+            bracket: Bracket::whole(Some(dec(99)), None),
         });
         // …fills at 99: at or below the stop, but on the same print.
         let events = sim.on_trade(&print(1, 99));
@@ -1553,10 +1799,7 @@ mod tests {
         sim.apply(Command::PlaceMarket {
             side: Side::Buy,
             quantity: dec(1),
-            bracket: Bracket {
-                stop_loss: Some(dec(98)),
-                take_profit: None,
-            },
+            bracket: Bracket::whole(Some(dec(98)), None),
         });
         sim.on_trade(&print(1, 100));
         sim.apply(Command::ClosePosition);
@@ -1717,17 +1960,13 @@ mod tests {
 
         let events = sim.apply(Command::SetOrderBracket {
             id,
-            stop_loss: Some(dec(90)),
-            take_profit: Some(dec(110)),
+            bracket: Bracket::whole(Some(dec(90)), Some(dec(110))),
         });
         assert!(matches!(
             events.as_slice(),
             [VenueEvent::Updated(order)]
                 if order.bracket
-                    == Bracket {
-                        stop_loss: Some(dec(90)),
-                        take_profit: Some(dec(110)),
-                    }
+                    == Bracket::whole(Some(dec(90)), Some(dec(110)))
         ));
 
         // The tape reaches the limit; the position it opens wears both legs.
@@ -1760,8 +1999,7 @@ mod tests {
 
         let events = sim.apply(Command::SetOrderBracket {
             id,
-            stop_loss: Some(dec(96)),
-            take_profit: None,
+            bracket: Bracket::whole(Some(dec(96)), None),
         });
         assert_eq!(
             events,
@@ -1782,25 +2020,15 @@ mod tests {
             side: Side::Sell,
             quantity: dec(1),
             trigger: dec(95),
-            bracket: Bracket {
-                stop_loss: Some(dec(99)),
-                take_profit: Some(dec(90)),
-            },
+            bracket: Bracket::whole(Some(dec(99)), Some(dec(90))),
         });
         let id = sim.orders()[0].id;
 
         sim.apply(Command::SetOrderBracket {
             id,
-            stop_loss: None,
-            take_profit: Some(dec(88)),
+            bracket: Bracket::whole(None, Some(dec(88))),
         });
-        assert_eq!(
-            sim.orders()[0].bracket,
-            Bracket {
-                stop_loss: None,
-                take_profit: Some(dec(88)),
-            }
-        );
+        assert_eq!(sim.orders()[0].bracket, Bracket::whole(None, Some(dec(88))));
     }
 
     /// An id that never rested — a filled, cancelled or market order — is
@@ -1810,8 +2038,7 @@ mod tests {
         let mut sim = seeded(100);
         let events = sim.apply(Command::SetOrderBracket {
             id: OrderId(42),
-            stop_loss: Some(dec(90)),
-            take_profit: None,
+            bracket: Bracket::whole(Some(dec(90)), None),
         });
         assert_eq!(
             events,
@@ -1977,10 +2204,7 @@ mod tests {
         sim.apply(Command::PlaceMarket {
             side: Side::Buy,
             quantity: dec(1),
-            bracket: Bracket {
-                stop_loss: Some(dec(98)),
-                take_profit: None,
-            },
+            bracket: Bracket::whole(Some(dec(98)), None),
         });
         sim.on_trade(&print(1, 100));
         sim.apply(Command::ClosePartial { quantity: dec(1) });
@@ -2042,10 +2266,7 @@ mod tests {
         sim.apply(Command::PlaceMarket {
             side: Side::Buy,
             quantity: dec(1),
-            bracket: Bracket {
-                stop_loss: Some(dec(98)),
-                take_profit: None,
-            },
+            bracket: Bracket::whole(Some(dec(98)), None),
         });
         sim.on_trade(&print(1, 100));
         sim.on_trade(&print(2, 95));
@@ -2129,10 +2350,7 @@ mod tests {
                         side: Side::Buy,
                         quantity: dec(2),
                         price: dec(96),
-                        bracket: Bracket {
-                            stop_loss: Some(dec(90)),
-                            take_profit: Some(dec(104)),
-                        },
+                        bracket: Bracket::whole(Some(dec(90)), Some(dec(104))),
                         cancel_at: None,
                         flat_only: false,
                     }) {

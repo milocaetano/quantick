@@ -132,6 +132,9 @@ pub fn cancel_code(reason: &quantick_sim::CancelReason) -> &'static str {
         CancelReason::Reset => "reset",
         CancelReason::PriceTouched => "price_touched",
         CancelReason::AccountOccupied => "account_occupied",
+        CancelReason::OcoFilled => "oco_filled",
+        CancelReason::PositionClosed => "position_closed",
+        CancelReason::BracketReplaced => "bracket_replaced",
     }
 }
 
