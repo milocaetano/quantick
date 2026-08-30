@@ -133,11 +133,13 @@ cargo build --release -p quantick-mcp
 target/release/quantick-mcp setup --client claude   # or: --client codex
 ```
 
-1. In Quantick, open **Tools → Local agent access** and enable it, picking
-   the read scopes the connection gets.
-2. Run `setup`. It prints the exact registration command for your client,
-   filled in with the binary's absolute path.
-3. In the client, call `quantick_describe`.
+1. **Register.** `setup` prints the exact registration command for your
+   client, filled in with the binary's absolute path. It reads nothing but
+   its own path, so it works before Quantick is running. Run the command it
+   prints.
+2. **Allow.** In Quantick, open **Tools → Local agent access**, enable
+   it, and tick the scopes the connection gets.
+3. **Connect.** In the client, call `quantick_describe`.
 
 The adapter attaches to a window you already opened — it never launches
 the application, never writes a client configuration file and never stores a
@@ -161,7 +163,8 @@ token. Close the window, or turn access off, and every connection is revoked.
 Grant the **annotator** profile and the agent also gets `quantick_annotate`,
 `quantick_remove_annotation`, `quantick_notify`, `quantick_attach_script` and
 `quantick_detach_script` — the half of the loop that answers on the chart.
-The **cockpit** profile adds the canvas layout on top.
+The **cockpit** profile adds the canvas layout — panes, tabs, presets, focus
+— and the ability to reconnect the market feed.
 
 ### The loop this is built for
 
@@ -176,19 +179,25 @@ tier. It is not screenshotting your screen and guessing.
 - **Local only.** An authenticated loopback socket, discovered through a
   private per-user descriptor the running instance publishes. Nothing listens
   on the network.
-- **You choose the ceiling.** Three profiles — `observer` reads,
-  `annotator` also answers on the chart, `cockpit` also rearranges the canvas
-  — each strictly containing the one below, each selected before the
-  connection is made.
+- **You choose the ceiling.** Three grantable profiles, each containing the
+  one below: `observer` reads, `annotator` also answers on the chart, and
+  `cockpit` also rearranges the canvas and may reconnect the feed. The
+  contract declares a fourth, `trader`, over order placement — its
+  permission is sensitive and denied by default, the access panel filters it
+  out, and the MCP adapter never asks for it, so nothing reaches it today.
+  It is written down now so that the day fills are not simulated, the
+  boundary is not decided in a hurry.
 - **Refused at the gate.** A capability you did not grant fails with
   `control.permission_denied`, whichever tool asked for it. `quantick_invoke`
   is checked exactly like a named tool.
 - **Attributed and reversible.** Anything an agent draws is visibly marked as
   the agent's wherever you see it, and it can never remove something you drew
   by hand.
-- **Written down.** The surface is 29 capabilities across 19 modules, with 17
-  snapshot scopes and 25 selectable permissions. The wire schemas are
-  generated from the Rust contracts and committed under
+- **Written down.** The catalog records 34 capabilities across 20 modules,
+  with 17 snapshot scopes and 27 selectable permissions — recount them in
+  [`observer-capability-catalog-v1.json`](schemas/control/observer-capability-catalog-v1.json)
+  rather than trusting this sentence. The wire schemas are generated from the
+  Rust contracts and committed under
   [`schemas/control/`](schemas/control/), so a snapshot test rejects
   undeclared drift. The trust boundary has a
   [threat model](docs/control-plane/observer-threat-model.md); the transport
@@ -410,7 +419,7 @@ The project is a Cargo workspace of small, one-way-dependent crates (`app` → `
 - **Indicators & scripting** — ✅ an indicator runtime with incremental `ta.*` kernels, and "Quantick Pine", a Pine v5 subset compiled and run in-process, plotted on the chart and readable headlessly by a backtest or bot (`crates/indicators`, `crates/pine`)
 - **Agent control plane** — ✅ a versioned capability contract with profiles, scopes and consent, over an authenticated local transport (`crates/control`, `crates/control-local`)
 - **MCP adapter** — ✅ a local STDIO server exposing the running chart to Codex, Claude Code or any MCP client, at the ceiling the trader granted (`crates/mcp`)
-- **Backtest runner** — ⏳ next up: a headless strategy runner over recorded sessions, consuming the exact engine and indicator path the chart draws
+- **Backtest runner** — ✅ a headless harness that replays recorded sessions through the exact engine and indicator path the chart draws, with a disclosed, conservative fill model (`crates/backtest`, `crates/sim`, `crates/trading`)
 - **Bindings** — ⏳ Python bindings and a C API are planned, so the engine plugs into existing backtest stacks and bots in any language
 
 ## Design principles
@@ -434,7 +443,7 @@ The project is a Cargo workspace of small, one-way-dependent crates (`app` → `
 - [x] CVD & delta visuals (native EMA/CVD indicators, delta histograms, order-flow series in scripts)
 - [x] Scriptable indicators — "Quantick Pine", a Pine v5 subset with order-flow builtins (`delta`, `cvd`, `buy_volume`, …), drawing objects, hot reload and a persisted indicator set; see [docs/pine-dialect.md](docs/pine-dialect.md)
 - [x] Agent control plane and MCP adapter — a versioned capability contract, three consent profiles and a local STDIO MCP server, so an assistant can read the chart and answer on it; see [docs/control-plane](docs/control-plane/)
-- [ ] **Next up: backtest runner** — a headless crate + CLI that replays a recorded session through the exact bar/indicator path the chart uses and executes a strategy's orders against the tape, with a disclosed, conservative fill model; strategies read indicator plot columns, and the order/fill/position core is designed to be shared with a future paper-trading simulator
+- [x] Backtest runner — a headless crate + CLI that replays a recorded session through the exact bar/indicator path the chart uses and executes a strategy's orders against the tape, with a disclosed, conservative fill model; the order/fill/position core is the `TradingVenue` port in `crates/trading`, shared with the chart's live paper trading
 - [ ] Depth replay — record L2 depth alongside a session's trades, so the liquidity heatmap works in market replay and the book pipeline gets deterministic fixtures
 - [ ] Python bindings, once the backtest runner has exercised the engine API from outside the chart
 - [ ] C API, so bots in C++ (or any language) can consume the engine

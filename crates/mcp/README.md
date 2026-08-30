@@ -12,9 +12,10 @@ none and says what to do next.
 
 ## Tools
 
-Every connection gets the observer set. Each tool maps to exactly one
-registered capability, so nothing here is a second vocabulary beside the
-instance's own IDs.
+Every connection gets the observer set. A tool is a name for the instance's
+own capabilities, never a second vocabulary beside them: most map to exactly
+one, the routed ones name a fixed set and let a property pick which, and
+`quantick_invoke` reaches whatever the instance registers.
 
 | Tool | Capability | What it answers |
 | --- | --- | --- |
@@ -41,8 +42,18 @@ the half of the loop that answers on the chart:
 | `quantick_detach_script` | `indicator.script.detach` | Removes one slot this client attached, leaving the pane as it was. |
 
 The **cockpit** profile is a superset of the annotator's: the same tools, plus
-the `layout.*` module reached through `quantick_invoke` — panes, layout tabs,
-presets and focus. It is still not destructive.
+two modules reached through `quantick_invoke`. `cockpit.layout` unlocks the
+`layout.*` capabilities — panes, layout tabs, presets and focus — and the
+`cockpit` permission on its own unlocks `feed.reconnect`, which respawns the
+live market transport. Neither is destructive.
+
+`feed.reload` is, and it sits outside what this adapter can reach: it also
+requires the separately sensitive `cockpit.recover`, declares
+`reversible: false` with the risk flag `timeline_rebuilt`, and closes any open
+paper position and disarms every strategy. `main.rs` asks for `cockpit` and
+`cockpit.layout` only, so a cockpit connection through `quantick-mcp` cannot
+invoke it — the contract comment on `COCKPIT_RECOVER_PERMISSION_ID` is the
+reason it is a separate permission at all.
 
 Every instance-bound tool takes an optional routing `instance_id`, removed
 before the payload reaches the instance. With one live instance it is

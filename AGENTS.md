@@ -31,10 +31,11 @@ cargo build --release -p quantick-mcp
 target/release/quantick-mcp setup --client claude   # or: --client codex
 ```
 
-`setup` prints the exact registration command for your client, filled in with
-the binary's absolute path. It writes no configuration file and embeds no
-token. In the app, the trader enables the connection under
-**Tools → Local agent access**.
+`setup` only prints the registration command for your client, filled in with
+the binary's absolute path — it reads nothing but its own path, so it works
+before Quantick is running. It writes no configuration file and embeds no
+token. Register the command it prints, then, in the app, enable the connection
+under **Tools → Local agent access** and pick the scopes it gets.
 
 Then call `quantick_describe` first: with no argument it lists the reachable
 instances; with an `instance_id` it reports the protocol, the effective
@@ -43,24 +44,42 @@ availability, the snapshot scopes and the limits. The rest of the tool set is
 discoverable from that one answer, which is the point — the adapter carries no
 hardcoded vocabulary the running instance might not implement.
 
-Three profiles, each a ceiling the trader chooses, each strictly containing
-the one below:
+### Profiles
+
+The contract declares four, chained so each inherits the one before it —
+`observer` → `annotator` → `cockpit` → `trader`. Only the first three are
+reachable today, and the adapter only ever asks for those.
 
 | Profile | The connection may… |
 | --- | --- |
 | `observer` | read: instances, snapshots, closed bars, diagnostics, the semantic scene, the event journal, evidence bundles |
 | `annotator` | …and answer on the chart: labels, arrows, zones, toasts and popups, attach and detach a Pine script |
-| `cockpit` | …and rearrange the canvas: panes, layout tabs, presets, focus |
+| `cockpit` | …and rearrange the canvas (panes, layout tabs, presets, focus) **and reconnect the market feed** |
+| `trader` | place, bracket and cancel orders. Its `trade` permission is marked sensitive with `default_grant: Denied`, the access panel filters it out, and `quantick-mcp` never requests it — so no connection reaches it today. It exists so the day fills are not simulated, nothing has to be re-decided in a hurry. |
+
+Two boundaries inside `cockpit` are worth stating precisely, because "cockpit
+just moves panes" is the comfortable reading and it is wrong:
+
+- The `cockpit` permission alone unlocks `feed.reconnect`, which respawns the
+  live market transport. The layout capabilities need `cockpit.layout` on top.
+- `feed.reload` needs the additional, separately-marked-sensitive
+  `cockpit.recover`. It declares `reversible: false` and the risk flag
+  `timeline_rebuilt`, and it closes any open paper position and disarms every
+  strategy. `quantick-mcp` requests only `cockpit` and `cockpit.layout`, so an
+  MCP connection cannot reach it — but the capability is in the registry, and
+  a client that asked for the scope by hand would be a different question.
 
 A capability the trader did not grant is refused at the gate with
 `control.permission_denied`, whatever the connection asked for and whichever
 tool it came through — `quantick_invoke` is checked exactly like a named tool.
-The surface is 29 capabilities across 19 modules, with 17 snapshot scopes and
-25 selectable permissions. The wire schemas are committed under
-[`schemas/control/`](schemas/control/) and generated from the Rust contracts,
-so a snapshot test rejects undeclared drift.
 
-Two things worth knowing before writing a client:
+As [`schemas/control/observer-capability-catalog-v1.json`](schemas/control/observer-capability-catalog-v1.json)
+records it, the surface is **34 capabilities across 20 modules, with 17
+snapshot scopes and 27 selectable permissions**. Recount from that file rather
+than trusting this sentence: the schemas are generated from the Rust contracts
+and guarded by a snapshot test, but this prose is hand-typed and has no guard.
+
+### Two things worth knowing before writing a client
 
 - **`quantick_wait_for_change` parks instead of polling.** It blocks up to 30 s
   until the event journal moves past your cursor. A trader pressing the mark
@@ -82,26 +101,11 @@ they admit they do not carry, is in [`crates/mcp/README.md`](crates/mcp/README.m
 ## The map
 
 A Cargo workspace under `crates/`. The dependency direction is one-way and
-enforced by review; never add a reverse edge.
+enforced by review; never add a reverse edge. An arrow reads *depends on*, so
+everything flows downward to the pure domain crates at the bottom.
 
 ```mermaid
-graph BT
-  subgraph pure["Pure domain — no workspace dependencies"]
-    engine["engine<br/>trades → bars"]
-    orderbook["orderbook<br/>L2 book core"]
-    control["control<br/>control-plane contracts"]
-  end
-
-  indicators["indicators<br/>bars → plot series"] --> engine
-  replay["replay<br/>recorded sessions"] --> engine
-  sim["sim<br/>paper-trading fills"] --> engine
-  pine["pine<br/>Quantick Pine frontend"] --> indicators
-  strategy["strategy<br/>armed regions, alarms"] --> engine
-  strategy --> sim
-  feeds["feed-binance<br/>feed-hyperliquid<br/>feed-mt5"] --> engine
-  feeds --> orderbook
-  controllocal["control-local<br/>local transport"] --> control
-
+graph TD
   subgraph leaves["Leaves — nothing depends on these"]
     app["app<br/>desktop chart"]
     backtest["backtest<br/>headless runner"]
@@ -117,6 +121,24 @@ graph BT
   backtest --> pine
   backtest --> replay
   mcp --> controllocal
+
+  pine["pine<br/>Quantick Pine frontend"] --> indicators
+  strategy["strategy<br/>armed regions, alarms"] --> sim
+  strategy --> engine
+  controllocal["control-local<br/>local transport"] --> control
+  indicators["indicators<br/>bars → plot series"] --> engine
+  replay["replay<br/>recorded sessions"] --> engine
+  sim["sim<br/>paper-trading fills"] --> trading
+  sim --> engine
+  trading["trading<br/>TradingVenue port"] --> engine
+  feeds["feed-binance<br/>feed-hyperliquid<br/>feed-mt5"] --> engine
+  feeds --> orderbook
+
+  subgraph pure["Pure domain — no workspace dependencies"]
+    engine["engine<br/>trades → bars"]
+    orderbook["orderbook<br/>L2 book core"]
+    control["control<br/>control-plane contracts"]
+  end
 ```
 
 | Crate | What it owns |
@@ -126,7 +148,8 @@ graph BT
 | `indicators` | The indicator runtime: the `Indicator` trait (commit/preview with rollback), incremental `ta.*` kernels, draw objects, headless host. |
 | `pine` | "Quantick Pine" — a Pine v5 subset. Hand-rolled lexer, parser, compile passes and interpreter; zero external dependencies. |
 | `replay` | Recorded market-replay sessions: the CSV format, the folder scan, the playback clock. It is *told* how much time passed. |
-| `sim` | Deterministic paper trading. Conservative tape-based fills — never on quotes the tape cannot prove. |
+| `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements — so a real broker adapter docks where the paper simulator sits, and nothing above learns a second vocabulary. |
+| `sim` | Deterministic paper trading: one implementation of `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
 | `strategy` | The strategy kernel: armed price regions, projected brackets, the armed-instance state machine, and the `SignalAlarm` beside it. |
 | `control` | Transport-neutral control-plane contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors. |
 | `control-local` | The local transport: the private instance-descriptor directory and the blocking loopback client. One implementation of the ownership checks serves publisher and client. |
@@ -140,11 +163,11 @@ session down the same `FeedEvent` channel a live venue uses, so bars,
 navigation and metrics run one code path. UI affordances gate on
 `FeedCapabilities`, never on "is this a replay?".
 
-## The four non-negotiables
+## The non-negotiable design rules
 
-Summarised here so an agent reading only this file does not violate one.
-[`CLAUDE.md`](CLAUDE.md) is authoritative and carries the full list with its
-exemptions.
+Named here so an agent reading only this file does not violate one.
+[`CLAUDE.md`](CLAUDE.md) states them and is authoritative; where this summary
+and that file differ, that file wins.
 
 1. **Determinism.** Same trades in → same bars out, always. Inside the engine:
    no wall clock, no randomness, no iteration-order-dependent output.
@@ -153,13 +176,16 @@ exemptions.
 3. **Data honesty.** Inferred or incomplete data is labelled as such, never
    silently patched. A depth reduction is an "unattributed L2 reduction", not
    a cancellation, because the tape cannot tell which it was.
-4. **Operable without a hand.** A capability never ships reachable by mouse
+4. **English is the repository's language.** `CLAUDE.md` is the rule's single
+   owner — it defines the scope and the four exemptions where the foreign text
+   *is* the data. Read it there; this file deliberately does not restate it,
+   and `crates/app/tests/language_guard.rs` enforces the mechanical half.
+5. **Small and focused.** This is not a trading platform. Build bars, show
+   bars, expose bars to code. This is the rule that refuses scope creep, and
+   it applies to the control plane above as much as to the chart.
+6. **Operable without a hand.** A capability never ships reachable by mouse
    alone: it gets a named call, a readable result and a registry entry. This
-   is why the control plane above exists.
-
-Everything written into a tracked file is English — identifiers, comments, UI
-strings, test names, commit messages. `crates/app/tests/language_guard.rs`
-enforces the mechanical half.
+   is why the control plane exists.
 
 ## Verification loop (mandatory)
 
@@ -172,17 +198,20 @@ cargo build --workspace
 cargo test --workspace
 ```
 
-Two more the workspace cannot see, needed when you touch `tools/mt5/` or
-`bridge/mt5/` — they are Python, and cargo never compiles them:
+CI runs four more steps that `cargo` cannot see. Run the ones your change
+touches — the Python is never compiled by the workspace, so an undefined name
+there ships silently:
 
 ```sh
-ruff check --select F tools/mt5/ bridge/mt5/
-python3 tools/mt5/test_export_session.py
+sh .claude/hooks/guardrails_test.sh          # the agent guardrails' own tests
+ruff check --select F tools/mt5/ bridge/mt5/ # when you touch either folder
+python3 tools/mt5/test_export_session.py     # the session exporter
+python3 bridge/mt5/tests/test_paging.py      # the MT5 bridge's candle paging
 ```
 
 ## Where the documentation is
 
-[`docs/README.md`](docs/README.md) indexes the whole tree. The entries an agent
+[`docs/README.md`](docs/README.md) indexes the tree. The entries an agent
 reaches for most often:
 
 - [`docs/control-plane/`](docs/control-plane/) — the control contract, ADR

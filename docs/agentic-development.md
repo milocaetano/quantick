@@ -56,9 +56,11 @@ agent's own judgement that it is finished.
 **The four-check verification loop.** `cargo fmt --all -- --check`, then
 clippy with `-D warnings`, then `cargo build --workspace`, then
 `cargo test --workspace`. CI runs the same four on every PR and on every push
-to `main`, plus two the workspace cannot see: `ruff check --select F` over the
-Python under `tools/mt5/` and `bridge/mt5/`, and that folder's own test
-script. A PR with red CI is never merged.
+to `main`, plus four steps the workspace cannot see: the guardrails' own
+test script, `ruff check --select F` over the Python under `tools/mt5/` and
+`bridge/mt5/`, the session exporter's tests, and the MT5 bridge's paging
+tests — whose own comment records that without that step a revert ships
+green. A PR with red CI is never merged.
 
 **`arch-review` over `git diff main...HEAD`.** Every Blocker and Should-fix
 finding is resolved before the PR opens. A finding deliberately deferred is
@@ -72,34 +74,24 @@ English check or the correctness pass.
 
 ## The hooks that make the gates real
 
-Two of those rules were enforceable only by an agent remembering them. They
-are now enforced by the harness, in `.claude/hooks/guardrails.sh` — POSIX `sh`
-with no `jq`, so it runs under Git Bash on Windows and `dash` in CI, and it is
-covered by its own test script that CI runs as a separate step.
+Two of those rules — work in a worktree, run arch-review before the PR —
+were enforceable only by an agent remembering them. They are now walls the
+harness puts up, in `.claude/hooks/guardrails.sh`.
 
-| Mode | Effect |
-| --- | --- |
-| `worktree-guard` | Denies any write that lands in the main checkout while that checkout is on `main`. One goal, one worktree — not by discipline. |
-| `pr-gate` | Denies `gh pr create` until an arch-review is recorded for the exact `HEAD` being shipped. |
-| `commit-reminder` | Cannot block, since the commit already landed. After a commit on a branch ahead of `origin/main`, it says the gate is coming. |
+[`.claude/hooks/README.md`](../.claude/hooks/README.md) owns the details — the
+three modes, what each denies, the overrides and why they fail open — and is
+not repeated here. What is worth pulling out for an outside reader is the one
+design decision that makes the gate honest rather than decorative:
 
-`pr-gate` is honest in a specific way worth copying: the marker it reads holds
-**the commit sha the review covered**, not a timestamp or a boolean. Commit
-again after reviewing and the sha no longer matches, so the gate denies and
-names both shas. A marker that only recorded "a review happened" would pass
-while the newest three commits went unreviewed — which is the failure this
-repository actually hit.
+> The marker `pr-gate` reads holds **the commit sha the review covered**, not
+> a timestamp or a boolean. Commit again after reviewing and the sha no longer
+> matches, so the gate denies and names both shas.
 
-It proves a review was *recorded*, not that it was *good*. Nothing outside the
-review can prove the latter, and the file says so rather than implying
-otherwise.
-
-Both hooks **fail open**. Anything the script cannot determine — no
-`file_path` in the payload, a path outside a git repository, a `git`
-invocation that errors — exits 0 and the normal permission flow applies. A
-guardrail that blocks a session over its own bugs would be worse than no
-guardrail, and the rules it protects are written down in
-[`CLAUDE.md`](../CLAUDE.md) as well.
+A marker that only recorded "a review happened" would pass while the newest
+three commits went unreviewed — which is the failure this repository
+actually hit. It still only proves a review was *recorded*, not that it was
+*good*; nothing outside the review can prove the latter, and the hooks README
+says so rather than implying otherwise.
 
 ## The mission archive
 

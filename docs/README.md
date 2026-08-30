@@ -1,8 +1,11 @@
 # Documentation index
 
-Every document in this tree, grouped by what it is for. Design records state
-their own status in their first lines; where a record and the code disagree,
-**the code is the authority** unless the document says otherwise.
+The documents in this tree, grouped by what they are for. Design records
+state their own status in their first lines, and each sub-tree owns its own
+precedence rule — notably
+[`control-plane/README.md`](control-plane/README.md), where the plan and the
+contract outrank the code until a reconciling change lands, which is the
+opposite of the usual default. Read the document before assuming which wins.
 
 New here? [`../README.md`](../README.md) is the project introduction and
 [`../AGENTS.md`](../AGENTS.md) is the entry point for an AI agent — reading
@@ -24,7 +27,7 @@ boundary and the evidence each delivery left behind.
 | [`control-plane/roadmap.md`](control-plane/roadmap.md) | The ledger between plan and code: which item is at which stage, in which PR |
 
 The per-PR evidence records — what each delivery proved and what it carried
-forward — are `control-plane/pr2-performance.md`,
+forward — are [`pr2-performance.md`](control-plane/pr2-performance.md),
 [`pr3-gateway-evidence.md`](control-plane/pr3-gateway-evidence.md),
 [`pr4-mcp-evidence.md`](control-plane/pr4-mcp-evidence.md),
 [`pr5a-events-evidence.md`](control-plane/pr5a-events-evidence.md),
@@ -40,7 +43,7 @@ The generated wire schemas live outside this tree, in
 | --- | --- |
 | [`agentic-development.md`](agentic-development.md) | The skills, the review gates and the hooks that enforce them — how work actually moves from objective to merged PR here |
 | [`../CLAUDE.md`](../CLAUDE.md) | The working rules, authoritative for any agent changing this repository |
-| [`../.claude/hooks/README.md`](../.claude/hooks/README.md) | The two guardrails, why they fail open, and how to override them |
+| [`../.claude/hooks/README.md`](../.claude/hooks/README.md) | The guardrail hooks — the three modes, why they fail open, and how to override them |
 
 ## Scripting and indicators
 
@@ -65,4 +68,6 @@ The generated wire schemas live outside this tree, in
 | [`ux/strategy-anchors.md`](ux/strategy-anchors.md) | The semi-automatic operation and the division of labour between trader and machine |
 | [`drawing-toolbar-ux.md`](drawing-toolbar-ux.md) | The drawing toolbar and inspector redesign (specification) |
 | [`ux/drawing-tools-2026-08.md`](ux/drawing-tools-2026-08.md) | The design review that reshaped the drawing rail into a price-action toolbox |
+| [`ux/drawing-tools-ux-spec.html`](ux/drawing-tools-ux-spec.html) | The detailed interaction target for user-authored chart objects: toolbox, non-modal inspector, selection, lock/visibility/delete semantics, keyboard grammar and the Fibonacci level editor. Pre-dates the English rule and is allowlisted by `language_guard` |
+| [`ux/img/`](ux/img/) | The shell diagrams `ui-design-model.md` refers to as part of the spec, not decoration |
 | [`ux/ux-audit-2026-08.md`](ux/ux-audit-2026-08.md) | The August 2026 audit of the whole `crates/app` surface — six reviewers, one report per area in [`ux/ux-audit-2026-08/`](ux/ux-audit-2026-08/) |
