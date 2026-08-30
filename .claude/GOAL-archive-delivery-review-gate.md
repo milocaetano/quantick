@@ -229,15 +229,15 @@ gate for this branch's own PR. The gate arms for every session started after
 the merge. This branch therefore proves the behaviour with
 `guardrails_test.sh` and runs `delivery-review` voluntarily, which is A9.
 
-## Deferral requested — NOT granted
+## Deferred — granted by the trader
 
-One gap, recorded here rather than quietly counted as met. `delivery-review`
-found it and this session cannot grant it: only the trader can.
-
-The heading deliberately does not read `## Deferred`. That token is reserved,
-in `delivery-review`'s own text, for a deferral the trader **has** approved —
-so using it here would let a later reader, or a later reviewer keying on the
-heading, read an approval that was never given.
+One gap. `delivery-review` found it across three rounds and refused to pass on
+it, because only the trader grants a deferral. **The trader granted this one**
+on 2026-08-30, choosing "accept as environmental and let CI be the authority"
+over "treat the criterion as unmet until a machine with a real `python3` runs
+it". The heading now reads `## Deferred`, which is the token reserved for an
+approved deferral; until that answer arrived it read `## Deferral requested —
+NOT granted`, so that no reader could mistake the state.
 
 - **G2, the fourth check.** `cargo fmt`, `cargo clippy` and `cargo build` exit
   0 on a branch now rebased on `origin/main`. `cargo test --workspace` exits
@@ -253,9 +253,10 @@ heading, read an approval that was never given.
   not exist while this is being written — the same ordering problem that put
   `delivery-review` and the PR itself among the closing steps.
 
-  **The trader's call**: accept this as environmental and let CI be the
-  authority, or treat the criterion as unmet until a machine with a real
-  `python3` runs it.
+  **Granted.** The criterion counts as met with that caveat attached, and the
+  confirming evidence is the PR's own CI run, where `python3` is a real
+  interpreter. If CI fails this test, the deferral is void and the criterion is
+  simply unmet — an approval is not a licence for the check to stay red.
 
 ## The request as received
 
