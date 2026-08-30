@@ -29,6 +29,7 @@ use crate::drawings::{
     MIN_DRAWING_WIDTH_PX, PresetHost as _,
 };
 use crate::feed::{self, FeedCommand, FeedHandle, ReplayControl};
+use crate::feed_notice;
 use crate::indicator_legend;
 use crate::indicator_panel::{self, SettingsDialog, SettingsOutcome};
 use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorSource, SlotId};
@@ -38,7 +39,6 @@ use crate::indicators::preset_file;
 use crate::indicators::state_file::{self, SavedInput, SavedKind};
 use crate::loading::{self, LoadingScope, LoadingTask};
 use crate::metrics::{self, FrameStats};
-use crate::notice_card;
 use crate::orderflow::LaneWindow;
 use crate::pane::{self, ChartPane, DRAWING_ANCHOR_RADIUS_PX, PaneSide};
 use crate::replay_view::{ReplayAction, ReplayView};
@@ -874,6 +874,35 @@ pub struct QuantickApp {
     /// Handed out to new tabs and never reused, so a closed tab's ids can
     /// never be mistaken for a living one's.
     next_tab_id: u64,
+    /// Where the offline chip was drawn, or `None` when it was not.
+    ///
+    /// Written as part of drawing it, exactly as a pane records its own chart
+    /// area, and for the same two reasons. It says what is *painted* rather
+    /// than what a fresh reading of the clock would have painted a
+    /// millisecond later, so the scene and the screen cannot disagree across
+    /// the edge of a stall budget. And it is the one control on screen with
+    /// no capability behind it — opening a popup is a gesture, not a call —
+    /// so its rectangle is the only way an operator reaches it at all.
+    ///
+    /// A `Rect` per frame, and only while the chart is not being fed. Nothing
+    /// is recorded on a healthy chart, which is every frame of a normal
+    /// session.
+    feed_chip_rect: Option<egui::Rect>,
+    /// The tab whose chip opened the feed's recovery popup, if any.
+    ///
+    /// Opened by clicking the offline chip and by nothing else — the rule the
+    /// trader asked for, after a card that opened itself over the chart every
+    /// morning. It is the *tab's* id rather than a window-wide flag because
+    /// one dead terminal stalls every MT5 tab at once: a bare flag opened on
+    /// one chart and then found the next chart already offline, and drew
+    /// itself there with nobody having clicked anything. The chip is window
+    /// chrome speaking for the active market, and this says which market it
+    /// was speaking for.
+    ///
+    /// Leaving that chart closes it, the way clicking elsewhere does: the
+    /// frame answers for the tab it is drawing, so a switch clears the flag.
+    /// A glance, not a mode — nothing waits on a chart nobody is looking at.
+    feed_popup_tab: Option<u64>,
     /// Whether the toolbar's layout popover is open.
     layout_picker_open: bool,
     /// A pending request to open that popover, from the
@@ -1605,6 +1634,10 @@ impl QuantickApp {
             progressive_history: true,
             history_reach: crate::history_reach::HistoryReach::default(),
             venue_lead_in: false,
+            feed_chip_rect: None,
+            // The hook stands in for a click on the opening tab's chip, which
+            // is the first tab there is.
+            feed_popup_tab: feed_notice::popup_open_from_env().then_some(FIRST_TAB_ID),
             tz: TzOffset::default(),
             trades_dir,
             trades_dir_picker: None,
@@ -2667,7 +2700,7 @@ impl QuantickApp {
     ///
     /// [`Self::active_with_config`] for a tab that is not necessarily the
     /// active one — a capability names the tab it acts on, and respawning a
-    /// feed needs the feed table the same way a click on the notice card does.
+    /// feed needs the feed table the same way a click in the corner does.
     pub(crate) fn control_tab_with_config(
         &mut self,
         index: usize,
@@ -2876,6 +2909,39 @@ impl QuantickApp {
     /// screen at all.
     pub(crate) fn control_tool_rail(&self) -> &ToolRail {
         &self.toolrail
+    }
+
+    /// The colour the chart's corner is wearing, or `None` while the chart
+    /// is being fed.
+    ///
+    /// The status line's provenance dot takes this rather than deciding for
+    /// itself. It used to read the connection alone, which is a socket's
+    /// opinion: a terminal that froze with the socket open had the
+    /// bottom-left of the window saying `live` while the bottom-right said
+    /// `offline`, about the same feed, at the same moment. Two surfaces
+    /// disagreeing about the one question the trader is asking is worse than
+    /// either answer alone, so there is one report and both read it.
+    fn feed_offline_accent(
+        &self,
+        stall: Option<&crate::feed::stall::Stall>,
+    ) -> Option<egui::Color32> {
+        feed_notice::report(&self.active_tab().notice, stall)
+            .filter(feed_notice::Report::is_offline)
+            .map(|report| report.accent())
+    }
+
+    /// Where the feed's offline chip was painted, or `None` when it was not.
+    ///
+    /// The projection reads what was drawn rather than re-deciding it, so the
+    /// scene and the screen cannot disagree across the edge of a stall budget.
+    pub(crate) fn control_feed_chip_rect(&self) -> Option<egui::Rect> {
+        self.feed_chip_rect
+    }
+
+    /// Whether the recovery popup that chip opens is showing, on the chart
+    /// the trader is looking at.
+    pub(crate) fn control_feed_popup_open(&self) -> bool {
+        self.feed_popup_tab == Some(self.active_tab().id)
     }
 
     /// The right-hand dock: whether it is shown, and which tab is open.
@@ -11069,29 +11135,17 @@ impl QuantickApp {
         self.maintain_indicator_state();
         self.maintain_chart_layers();
         // This tab's judgement about its own feed, taken once for the frame:
-        // the status bar reads it here and the notice card reads it below, and
-        // two readings a millisecond apart could disagree about whether a
-        // budget had run out.
+        // the status bar reads it here and the corner reads it below, and two
+        // readings a millisecond apart could disagree about whether a budget
+        // had run out.
         let stall = self
             .active_tab()
             .stall_at(&self.config, metrics::wall_clock_ms());
+        let offline_accent = self.feed_offline_accent(stall.as_ref());
         let status = self.status_model();
-        let status_response = statusbar::draw(ctx, &status, &mut self.tz, stall.as_ref());
+        let status_response = statusbar::draw(ctx, &status, &mut self.tz, offline_accent);
         if status_response.open_trading_tab {
             self.dock.open_tab(DockTab::Trading);
-        }
-        // Recovery from the status bar is the same act as recovery from the
-        // card, so it goes through the same two methods.
-        match status_response.recovery {
-            None => {}
-            Some(crate::feed::stall::Recovery::Reconnect) => {
-                let (tab, config) = self.active_with_config();
-                let _ = tab.reconnect_feed(config);
-            }
-            Some(crate::feed::stall::Recovery::Reload) => {
-                let (tab, config) = self.active_with_config();
-                let _ = tab.reload_feed(config);
-            }
         }
         // Above the status bar, below the canvas: the layout tabs.
         self.draw_layout_strip(ctx);
@@ -11296,7 +11350,16 @@ impl QuantickApp {
             .set_active(LoadingTask::ReplaySession, replay_loading);
         tab.loading.set_active(LoadingTask::BookSync, book_syncing);
 
-        let mut notice_action = notice_card::NoticeAction::None;
+        let mut notice_action = feed_notice::NoticeAction::None;
+        // Read before the canvas borrows `self`, and answered after it lets go.
+        let popup_tab = self.active_tab().id;
+        let popup_open = self.feed_popup_tab == Some(popup_tab);
+        let mut chip_clicked = false;
+        let mut dismissed = false;
+        // Where the corner landed, and so whether there was one at all. A feed
+        // that recovered while the popup was open closes it, rather than
+        // leaving a stale explanation over a chart that is fine again.
+        let mut chip_rect = None;
         // The layer menu offers what this source can produce; resolved once
         // here rather than per pane, per entry, inside the canvas.
         let capabilities = self.active_tab().capabilities(&self.config);
@@ -11383,13 +11446,48 @@ impl QuantickApp {
                         );
                     }
                 }
-                // And the card on the pane that is actually waiting, rather
-                // than across a canvas whose other panes are painting fine.
-                if let Some(report) = notice_card::report(&tab.notice, stall.as_ref())
-                    && let Some((pane_rect, slots)) = tab.starved_pane()
-                    && notice_card::should_draw(&report, slots)
+                // And the feed's own report, in the corner rather than over
+                // the chart. Progress never gets here: a first connection and a
+                // history block already have the loading overlay above, and a
+                // second badge beside it would be the interface talking about
+                // itself twice.
+                if let Some(report) = feed_notice::report(&tab.notice, stall.as_ref())
+                    && report.is_offline()
                 {
-                    notice_action = notice_card::draw(ui, pane_rect, &report);
+                    // Measured once, then handed to everything that needs
+                    // it: the chip's own hit test, the popup's anchor, the
+                    // dismissal test, and the scene's bounds.
+                    let chip = feed_notice::chip_rect(ui.painter(), area);
+                    chip_rect = Some(chip);
+                    chip_clicked = feed_notice::draw_chip(ui, chip, &report, popup_open);
+                    // A pane with nothing on it has room to say why, and a
+                    // corner chip alone on a blank canvas is a puzzle. One
+                    // muted line, no border and no buttons — the way out is
+                    // still the corner.
+                    //
+                    // Not while the popup is up. The line and the popup carry
+                    // the same headline, and on the empty chart that is
+                    // exactly where both of them draw: one sentence, twice, a
+                    // hand apart.
+                    if !popup_open && let Some((pane_rect, 0)) = tab.starved_pane() {
+                        feed_notice::draw_empty_pane_note(ui.painter(), pane_rect, &report);
+                    }
+                    if popup_open {
+                        // A click anywhere else puts it away, measured against
+                        // the rectangles that were actually drawn — so a click
+                        // on the edge of what the trader can see is never read
+                        // as a click outside it, and the popup is laid out
+                        // once rather than measured again to ask.
+                        let popup;
+                        (notice_action, popup) = feed_notice::draw_popup(ui, area, chip, &report);
+                        dismissed = ui.input(|input| {
+                            input.pointer.any_click()
+                                && input
+                                    .pointer
+                                    .interact_pos()
+                                    .is_some_and(|at| !popup.contains(at) && !chip.contains(at))
+                        });
+                    }
                 }
             });
         // Floating drawing controls must be registered after the opaque
@@ -11410,8 +11508,8 @@ impl QuantickApp {
         }
         self.play_pending_alarms();
         self.draw_toast(ctx, now);
-        // Both are window chrome reading the active tab, like the notice card
-        // and the transport strip: they speak for one market at a time.
+        // Both are window chrome reading the active tab, like the offline
+        // corner and the transport strip: they speak for one market at a time.
         let tz = self.tz;
         self.active_tab_mut().paper.draw_report_window(ctx, tz);
         self.active_tab_mut().paper.draw_toast(ctx, now);
@@ -11419,16 +11517,25 @@ impl QuantickApp {
         // the registered control-plane actions call: a click and a named call
         // must be able to disagree about nothing.
         match notice_action {
-            notice_card::NoticeAction::None => {}
-            notice_card::NoticeAction::Reconnect => {
+            feed_notice::NoticeAction::None => {}
+            feed_notice::NoticeAction::Reconnect => {
                 let (tab, config) = self.active_with_config();
                 let _ = tab.reconnect_feed(config);
             }
-            notice_card::NoticeAction::Reload => {
+            feed_notice::NoticeAction::Reload => {
                 let (tab, config) = self.active_with_config();
                 let _ = tab.reload_feed(config);
             }
         }
+        self.feed_chip_rect = chip_rect;
+        self.feed_popup_tab = feed_notice::popup_still_open(
+            popup_open,
+            chip_clicked,
+            chip_rect.is_some(),
+            dismissed,
+            notice_action,
+        )
+        .then_some(popup_tab);
         // Live feed: keep polling the channel ~60×/s without busy-spinning.
         ctx.request_repaint_after(Duration::from_millis(16));
     }
@@ -13834,30 +13941,406 @@ plot(close)
         let time = tab.time_panes[0].last_area.expect("the time pane painted");
         let (chosen, slots) = tab.starved_pane().expect("a painted pane");
         assert_eq!(slots, 0, "the starved pane is the one with nothing on it");
-        assert_eq!(chosen, flow, "the card belongs to the pane that is waiting");
+        assert_eq!(chosen, flow, "the note belongs to the pane that is waiting");
         assert_ne!(
             chosen, time,
             "a pane full of candles is not waiting for anything"
         );
 
-        // And the card really fits there, rather than spilling over the chart
-        // beside it.
-        let notice = FeedNotice::working("loading WINV26 history from MetaTrader");
-        let report = notice_card::report(&notice, None).expect("a card");
-        assert!(notice_card::should_draw(&report, slots));
+        // The corner belongs to the window, and the line belongs to the empty
+        // pane. Neither may land on the pane that is painting fine.
+        let notice = FeedNotice::attention("MetaTrader 5 is not running", "Open the terminal.");
+        let report = feed_notice::report(&notice, None).expect("a named reason speaks");
+        assert!(report.is_offline());
+        let canvas = flow.union(time);
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                let card = notice_card::card_rect(ui.painter(), chosen, &report);
+                let chip = feed_notice::chip_rect(ui.painter(), canvas);
                 assert!(
-                    flow.contains_rect(card),
-                    "card {card:?} left the flow pane {flow:?}"
+                    !chip.intersects(time),
+                    "chip {chip:?} covered the working time pane {time:?}"
                 );
+                let popup = feed_notice::popup_rect(ui.painter(), canvas, chip, &report);
                 assert!(
-                    !card.intersects(time),
-                    "card {card:?} covered the working time pane {time:?}"
+                    canvas.contains_rect(popup),
+                    "popup {popup:?} left the canvas {canvas:?}"
                 );
             });
         });
+    }
+
+    /// The corner appears only while the chart is not being fed, and it is a
+    /// corner: what the trader asked for in place of a card across the chart.
+    #[test]
+    fn the_corner_appears_only_while_the_chart_is_not_being_fed() {
+        let (mut app, _notices, _channels) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.control_feed_chip_rect().is_none(),
+            "a chart with nothing wrong with it says nothing"
+        );
+
+        app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        run_frame(&mut app, &ctx);
+        let chip = app
+            .control_feed_chip_rect()
+            .expect("a stalled feed shows the corner");
+        assert!(
+            chip.width() < 100.0 && chip.height() < 30.0,
+            "the corner is a corner, not a card: {chip:?}"
+        );
+        // And the status line is reading the same report rather than the
+        // socket's opinion.
+        let stall = app
+            .active_tab()
+            .stall_at(&app.config, metrics::wall_clock_ms());
+        assert!(
+            app.feed_offline_accent(stall.as_ref()).is_some(),
+            "the line has to know what the corner knows"
+        );
+
+        app.active_tab_mut().forced_stall = None;
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.control_feed_chip_rect().is_none(),
+            "a feed that came back takes its corner with it"
+        );
+    }
+
+    /// The chip is the popup's only door, in both directions — the rule the
+    /// trader asked for after a card that opened itself every morning.
+    #[test]
+    fn the_chip_is_the_popups_only_door() {
+        let (mut app, _notices, _channels) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        run_frame(&mut app, &ctx);
+        assert!(
+            !app.control_feed_popup_open(),
+            "a stall alone must not open anything"
+        );
+
+        let chip = app.control_feed_chip_rect().expect("the corner is up");
+        click_chart(&mut app, &ctx, chip.center());
+        assert!(app.control_feed_popup_open(), "the chip opens it");
+
+        let chip = app
+            .control_feed_chip_rect()
+            .expect("the corner is still up");
+        click_chart(&mut app, &ctx, chip.center());
+        assert!(!app.control_feed_popup_open(), "and the chip closes it");
+    }
+
+    /// The reason is one hover away, not one click: a trader mid-session who
+    /// wants to know *why* the tape stopped should not have to open something
+    /// and then put it away again.
+    #[test]
+    fn the_corner_answers_a_hover_without_being_opened() {
+        let (mut app, _notices, (events, _book)) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        // Bars, so the empty pane's own line cannot be what the hover finds.
+        events
+            .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+        app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        run_frame(&mut app, &ctx);
+        let chip = app.control_feed_chip_rect().expect("the corner is up");
+        let headline = app
+            .active_tab()
+            .stall_at(&app.config, metrics::wall_clock_ms())
+            .expect("the stall is forced")
+            .headline;
+
+        let at = chip.center();
+        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        let output = run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at)]);
+        assert!(
+            painted_text(&output).iter().any(|text| text == &headline),
+            "the hover has to carry the reason: {headline}"
+        );
+        assert!(
+            !app.control_feed_popup_open(),
+            "and it must not open anything"
+        );
+    }
+
+    /// One sentence, once. The muted line and the popup carry the same
+    /// headline, and on an empty chart both of them draw in the same place —
+    /// which is how a capture caught the same words twice, a hand apart.
+    #[test]
+    fn the_empty_chart_never_says_the_same_thing_twice() {
+        let (mut app, _notices, _channels) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        let output = run_frame(&mut app, &ctx);
+        let headline = app
+            .active_tab()
+            .stall_at(&app.config, metrics::wall_clock_ms())
+            .expect("the stall is forced")
+            .headline;
+
+        let says_it = |output: &egui::FullOutput| {
+            painted_text(output)
+                .iter()
+                .filter(|text| *text == &headline)
+                .count()
+        };
+        assert_eq!(
+            says_it(&output),
+            1,
+            "the empty pane explains itself once: {headline}"
+        );
+
+        let chip = app.control_feed_chip_rect().expect("the corner is up");
+        click_chart(&mut app, &ctx, chip.center());
+        let output = run_frame(&mut app, &ctx);
+        assert!(app.control_feed_popup_open(), "the popup is up");
+        assert_eq!(
+            says_it(&output),
+            1,
+            "the popup takes the line's job rather than joining it: {headline}"
+        );
+    }
+
+    /// A click on the chart puts the popup away. The rule is a table in
+    /// `feed_notice`; this proves the frame feeds it the right answer, which
+    /// means measuring the click against the two rectangles that were drawn.
+    #[test]
+    fn a_click_on_the_chart_puts_the_popup_away() {
+        let (mut app, _notices, _channels) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        run_frame(&mut app, &ctx);
+        let chip = app.control_feed_chip_rect().expect("the corner is up");
+        click_chart(&mut app, &ctx, chip.center());
+        assert!(app.control_feed_popup_open(), "the chip opened it");
+
+        // Far from both rectangles: the popup grows up and left of the chip,
+        // and this is the other side of the canvas.
+        click_chart(
+            &mut app,
+            &ctx,
+            egui::pos2(chip.left() - 600.0, chip.top() - 500.0),
+        );
+        assert!(
+            !app.control_feed_popup_open(),
+            "a click on the chart is a click somewhere else"
+        );
+        assert!(
+            app.control_feed_chip_rect().is_some(),
+            "and the corner itself stays, because the feed is still stalled"
+        );
+    }
+
+    /// One dead terminal stalls every MetaTrader tab at once, and the popup
+    /// must not follow the trader into a chart whose chip they never pressed.
+    ///
+    /// Leaving the chart closes it, which is the second half of the same rule:
+    /// the popup is a glance, not a mode, so it never waits on a chart the
+    /// trader walked away from.
+    #[test]
+    fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
+        let (mut app, _notices, _channels) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        app.open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
+        for tab in &mut app.tabs {
+            tab.forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        }
+        app.active_tab = 0;
+        run_frame(&mut app, &ctx);
+        let chip = app.control_feed_chip_rect().expect("the corner is up");
+        click_chart(&mut app, &ctx, chip.center());
+        assert!(app.control_feed_popup_open(), "opened on the first chart");
+
+        app.active_tab = 1;
+        run_frame(&mut app, &ctx);
+        assert!(
+            app.control_feed_chip_rect().is_some(),
+            "the second chart is stalled too, so it has its own corner"
+        );
+        assert!(
+            !app.control_feed_popup_open(),
+            "but nobody pressed that corner"
+        );
+
+        app.active_tab = 0;
+        run_frame(&mut app, &ctx);
+        assert!(
+            !app.control_feed_popup_open(),
+            "and leaving the chart put it away, the way clicking elsewhere does"
+        );
+        assert!(
+            app.control_feed_chip_rect().is_some(),
+            "the corner itself stays: the feed is still stalled"
+        );
+    }
+
+    /// The popup is chrome over a chart that may be full of bars, so it takes
+    /// the pointer rather than letting it through to the candles underneath.
+    ///
+    /// Before this the body was painted, not allocated: a click on the
+    /// headline reached the pane's own `click_and_drag` sense and panned the
+    /// chart, or dropped a drawing anchor on it, while the dismissal logic
+    /// counted the same click as landing inside the popup and left it open.
+    #[test]
+    fn a_click_on_the_popup_never_reaches_the_chart() {
+        let (mut app, _notices, (events, _book)) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        events
+            .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2), trade(3)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+        app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        run_frame(&mut app, &ctx);
+        let chip = app.control_feed_chip_rect().expect("the corner is up");
+        click_chart(&mut app, &ctx, chip.center());
+        assert!(app.control_feed_popup_open());
+
+        // Where the popup landed, derived rather than assumed: the corner is
+        // measured against the canvas, and on a flow-only layout the pane *is*
+        // the canvas — which the chip's own rectangle proves before the popup
+        // is measured from it.
+        let stall = app
+            .active_tab()
+            .stall_at(&app.config, metrics::wall_clock_ms());
+        let report = feed_notice::report(&app.active_tab().notice, stall.as_ref())
+            .expect("a stalled feed speaks");
+        let area = app
+            .active_tab()
+            .flow_pane
+            .last_area
+            .expect("the pane painted");
+        let mut popup = egui::Rect::NOTHING;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            assert_eq!(
+                feed_notice::chip_rect(&painter, area),
+                chip,
+                "the pane is the canvas on this layout"
+            );
+            popup = feed_notice::popup_rect(&painter, area, chip, &report);
+        });
+
+        // The headline's own row: painted text, which registers no widget.
+        let on_the_sentence = egui::pos2(popup.center().x, popup.top() + 12.0);
+        let held = app.active_tab().flow_pane.state.trades().len();
+        let before = {
+            let viewport = &app.active_tab().flow_pane.viewport;
+            (viewport.px_per_bar(), viewport.right_edge_bar(held))
+        };
+        click_chart(&mut app, &ctx, on_the_sentence);
+
+        assert!(
+            app.control_feed_popup_open(),
+            "a click on the popup is not a click somewhere else"
+        );
+        let after = {
+            let viewport = &app.active_tab().flow_pane.viewport;
+            (viewport.px_per_bar(), viewport.right_edge_bar(held))
+        };
+        assert_eq!(
+            after, before,
+            "and it must not have moved the chart under it"
+        );
+    }
+
+    /// A feed that recovered while the trader was reading about it takes the
+    /// explanation away with it, rather than leaving a stale one on the chart.
+    #[test]
+    fn a_recovered_feed_puts_the_popup_away() {
+        let (mut app, _notices, _channels) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        run_frame(&mut app, &ctx);
+        let chip = app.control_feed_chip_rect().expect("the corner is up");
+        click_chart(&mut app, &ctx, chip.center());
+        assert!(app.control_feed_popup_open());
+
+        app.active_tab_mut().forced_stall = None;
+        run_frame(&mut app, &ctx);
+        assert!(!app.control_feed_popup_open());
+        assert!(app.control_feed_chip_rect().is_none());
+    }
+
+    /// The mission's own rule: seeing no data is worse than not being
+    /// connected, so nothing the corner does may throw a chart away.
+    #[test]
+    fn nothing_the_corner_does_throws_a_chart_away() {
+        let (mut app, _notices, (events, _book)) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        events
+            .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2), trade(3)]))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+        let held = app.active_tab().flow_pane.state.trades().len();
+        assert!(held > 0, "the chart has something to lose");
+
+        app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        run_frame(&mut app, &ctx);
+        let chip = app.control_feed_chip_rect().expect("the corner is up");
+        click_chart(&mut app, &ctx, chip.center());
+        let chip = app
+            .control_feed_chip_rect()
+            .expect("the corner is still up");
+        click_chart(&mut app, &ctx, chip.center());
+        run_frame(&mut app, &ctx);
+
+        assert_eq!(
+            app.active_tab().flow_pane.state.trades().len(),
+            held,
+            "a stall, a chip and a popup are things to read, not things that reset a chart"
+        );
+    }
+
+    /// An operator sees what the trader sees: the corner is named in the
+    /// scene, with the rectangle it was drawn at, and the popup's two controls
+    /// name the capabilities that operate them.
+    #[test]
+    fn the_scene_names_the_corner_and_what_operates_it() {
+        let (mut app, _notices, _channels) = test_app_with_notices();
+        let ctx = egui::Context::default();
+        app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        run_frame(&mut app, &ctx);
+
+        let scene = observer_scene(&app);
+        let chip = scene["controls"]
+            .as_array()
+            .expect("the scene reports a control list")
+            .iter()
+            .find(|control| control["control_id"] == "feed_status.chip")
+            .expect("the corner is on screen, so the scene names it")
+            .clone();
+        assert_eq!(chip["label"], crate::feed_notice::OFFLINE_LABEL);
+        assert_eq!(chip["role"], "toggle");
+        assert_eq!(chip["selected"], false, "the popup is shut");
+        assert!(
+            chip["bounds"].is_object(),
+            "the one control with no capability behind it has to be reachable by its rectangle"
+        );
+        assert!(
+            !scene_control_ids(&scene)
+                .iter()
+                .any(|id| id == "feed_status.reconnect"),
+            "a control behind a click is not on screen"
+        );
+
+        let chip_rect = app.control_feed_chip_rect().expect("the corner is up");
+        click_chart(&mut app, &ctx, chip_rect.center());
+        let scene = observer_scene(&app);
+        let calls: Vec<String> = scene["controls"]
+            .as_array()
+            .expect("the scene reports a control list")
+            .iter()
+            .filter(|control| {
+                control["control_id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("feed_status."))
+            })
+            .filter_map(|control| control["capability_id"].as_str().map(str::to_owned))
+            .collect();
+        assert_eq!(calls, ["feed.reconnect", "feed.reload"]);
     }
 
     /// A reconnect that keeps the timeline: the bars survive, the window the

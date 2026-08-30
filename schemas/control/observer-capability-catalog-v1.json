@@ -4421,7 +4421,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Respawns the transport and keeps everything the chart has built: bars, drawings, indicators, armed strategies and any open paper position. The window the new session replays is dropped rather than counted twice, and a silence long enough to leave a hole in the tape is marked on the chart. The same call the Reconnect button on the notice card makes.",
+      "description": "Respawns the transport and keeps everything the chart has built: bars, drawings, indicators, armed strategies and any open paper position. The window the new session replays is dropped rather than counted twice, and a silence long enough to leave a hole in the tape is marked on the chart. The same call the Reconnect button in the chart's offline corner makes.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -4513,7 +4513,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button on the notice card makes.",
+      "description": "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button in the chart's offline corner makes.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit.recover",
@@ -10762,6 +10762,11 @@
                 "const": "tab",
                 "description": "One open chart tab, owning its panes.",
                 "type": "string"
+              },
+              {
+                "const": "feed_status",
+                "description": "The feed's offline corner, bottom-right of the chart.\n\nPresent only while the chart is not being fed — which is the whole\npoint of it, and why a capture with no `feed_status` control in it is\nan operator's evidence that the feed is healthy rather than a gap in\nthe walk.",
+                "type": "string"
               }
             ]
           },
@@ -10803,6 +10808,11 @@
               {
                 "const": "canvas",
                 "description": "A chart surface: the thing the pointer resolves against.",
+                "type": "string"
+              },
+              {
+                "const": "action",
+                "description": "A control that does one thing and returns, leaving no mode behind.\n\nThe first role whose controls carry a `capability_id`: pressing one is\nexactly a call, so the scene can say which call it is instead of\nleaving an operator to guess from the label.",
                 "type": "string"
               }
             ]

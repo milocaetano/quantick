@@ -292,6 +292,18 @@ its read timeout (default 30 s) presumes the bridge dead.
 Bracket the historical block. An empty block still sends both markers —
 `backfill_end` is the "history is done" signal.
 
+**What the block covers is the bridge's business, not the feed's.** Both
+bridges send a window of the width their operator asked for
+(`--backfill-minutes`, `InpBackfillMinutes`), and both move that window's *end*
+from the clock to the tape when the clock's own window holds nothing: outside a
+session, `now` names hours in which nothing printed, while the terminal still
+holds the last session on disk. The block is then the newest session there is,
+and the feed charts it exactly as it charts any other backfill — the ticks
+carry their real timestamps, so how far behind they are is something the chart
+reads off them rather than something this protocol has to say. A symbol the
+terminal has never held is still an empty block; the search finds history, it
+does not invent any.
+
 ### load_older (feed → bridge)
 
 ```json

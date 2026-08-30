@@ -3654,7 +3654,7 @@ impl Tab {
     ///
     /// The cheap half of recovery, and the one a trader reaches for when the
     /// feed hiccuped: nothing on screen moves. Before it existed the only
-    /// button on the notice card said "Try again" and quietly ran
+    /// button the feed's notice offered said "Try again" and quietly ran
     /// [`Self::reload_feed`] — which flattens the position and disarms every
     /// strategy. A control that costs a trader their position without saying so
     /// is not a recovery control.
@@ -3973,8 +3973,9 @@ impl Tab {
             // Cleared before the loop, set by whichever panes it actually
             // walks. A collapsed context column draws nothing and would
             // otherwise keep the rect it had when it was last open, which
-            // `starved_pane` would then offer the notice card as somewhere to
-            // paint — off the visible canvas, on a chart that is not there.
+            // `starved_pane` would then offer as somewhere to paint the
+            // offline note — off the visible canvas, on a chart that is not
+            // there.
             flow_pane.last_area = None;
             for pane in time_panes.iter_mut() {
                 pane.last_area = None;

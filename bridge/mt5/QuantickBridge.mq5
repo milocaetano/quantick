@@ -63,6 +63,25 @@ input int    InpPumpIntervalMs   = 25;          // Safety-net pump interval (OnT
 // millisecond, so this only fires when the reader has stopped reading and the
 // send is blocking the very thread that would otherwise collect ticks.
 #define SEND_STALL_LOG_MS 25
+// The opening backfill's window is anchored on the clock, which is the wrong
+// anchor whenever the market is shut: at 07:00 `now - InpBackfillMinutes` is
+// last night, and B3 last printed the afternoon before. When that window comes
+// back empty the anchor moves to the tape — these bound the search for it, and
+// they are the same two numbers the Python bridge uses for the same search
+// (OPENING_REACH_* in quantick_bridge.py).
+//
+// One step of the search, in seconds. Fixed rather than widening: the caller
+// has already been told the recent window is empty, so every step but the last
+// is over dead time, and a step that lands inside a session answers on its
+// newest tick whatever else it returned. Nothing is kept but a timestamp, so a
+// wide step costs the terminal one search and this EA nothing.
+#define REACH_WINDOW_S   (4 * 60 * 60)
+// Steps the search may take before it gives up and sends an empty block.
+// Forty-eight of these reach back eight days. B3 shuts for Carnival — Friday
+// afternoon to Wednesday morning, about 86 h — and for Easter, and a search
+// sized to a weekend gives up in the middle of both.
+#define REACH_MAX_CALLS  48
+
 // Bounds for InpPumpIntervalMs: fast enough that the safety net is a net, slow
 // enough that a mistyped 0 cannot spin the terminal's timer thread.
 #define PUMP_INTERVAL_MIN_MS 5
@@ -539,8 +558,9 @@ bool StartSession()
 
    // Backfill: recent ticks so the chart opens populated. An empty block is
    // still announced — the feed treats backfill_end as "history is done".
-   long now_msc  = (long)TimeTradeServer() * 1000;
-   long from_msc = now_msc - (long)InpBackfillMinutes * 60 * 1000;
+   long now_msc    = (long)TimeTradeServer() * 1000;
+   long window_msc = (long)InpBackfillMinutes * 60 * 1000;
+   long from_msc   = now_msc - window_msc;
    MqlTick history[];
    int fetched = CopyTicksRange(_Symbol, history, TickFlagsWanted(), from_msc, now_msc);
    if(fetched < 0)
@@ -549,6 +569,10 @@ bool StartSession()
                StringFormat("\"mql_error\":%d", GetLastError()));
       fetched = 0;
      }
+   // Nothing in the window the clock names, which is not the same thing as
+   // nothing to send.
+   if(fetched == 0)
+      fetched = ReachLastSession(history, now_msc, window_msc);
    if(!SendLine(StringFormat("{\"type\":\"backfill_start\",\"count_hint\":%d}", fetched)))
       return(false);
    // History is stamped like anything else: `sent_ms` says when the bridge
@@ -580,6 +604,75 @@ bool StartSession()
             StringFormat("\"backfill_ticks\":%d,\"host\":\"%s\",\"port\":%d",
                          fetched, InpHost, InpPort));
    return(true);
+  }
+
+//+------------------------------------------------------------------+
+//| The newest session the terminal holds, when the clock's window   |
+//| came back empty. Fills `out`, returns its count.                 |
+//+------------------------------------------------------------------+
+// Seeing no data at all is worse than not being connected: a trader opening
+// the chart before the open, over a weekend or on a holiday is preparing, and
+// that session is already on the terminal's disk. Nothing was missing but the
+// question.
+//
+// So the search widens backwards until a window holds a print, then asks for
+// the *same* window again ending there. InpBackfillMinutes keeps meaning what
+// it says; only its end moves. Nothing is invented — a symbol the terminal has
+// never held still returns 0.
+int ReachLastSession(MqlTick &out[], long now_msc, long window_msc)
+  {
+   // Starts where the clock's window ended, not at `now`: that interval has
+   // just been reported empty, and re-scanning it would spend the first steps
+   // proving the same thing twice.
+   long    cursor_msc = now_msc - window_msc;
+   int     calls      = 0;
+   MqlTick probe[];
+   while(calls < REACH_MAX_CALLS && cursor_msc > 0)
+     {
+      long from_msc = cursor_msc - (long)REACH_WINDOW_S * 1000;
+      if(from_msc < 0)
+         from_msc = 0;
+      calls++;
+      int found = CopyTicksRange(_Symbol, probe, TickFlagsWanted(), from_msc, cursor_msc);
+      if(found < 0)
+        {
+         LogEvent("BRIDGE_BACKFILL_REACH_FAILED",
+                  StringFormat("\"mql_error\":%d,\"calls\":%d,\"action\":\"send_an_empty_block\"",
+                               GetLastError(), calls));
+         return(0);
+        }
+      if(found > 0)
+        {
+         long last_msc  = probe[found - 1].time_msc;
+         long start_msc = last_msc - window_msc;
+         if(start_msc < 0)
+            start_msc = 0;
+         int block = CopyTicksRange(_Symbol, out, TickFlagsWanted(), start_msc, last_msc);
+         if(block < 0)
+           {
+            // The wide ask failed where the search succeeded, so fall back to
+            // the step the search itself proved is populated. A poorer answer
+            // than the re-anchored one, and a far better answer than throwing
+            // away the only history known to exist.
+            block = CopyTicksRange(_Symbol, out, TickFlagsWanted(), from_msc, cursor_msc);
+            if(block < 0)
+               block = 0;
+           }
+         LogEvent("BRIDGE_BACKFILL_REANCHORED",
+                  StringFormat("\"last_print_ms\":%I64d,\"behind_s\":%I64d,\"count\":%d,\"calls\":%d",
+                               last_msc, (now_msc - last_msc) / 1000, block, calls));
+         return(block);
+        }
+      cursor_msc = from_msc;
+     }
+   // The count the search really made, not the budget it was allowed: the walk
+   // also ends by reaching the epoch, and a log that always printed the cap
+   // would tell whoever is diagnosing an empty block that the budget ran out
+   // when it did not. The Python bridge reports the same number.
+   LogEvent("BRIDGE_BACKFILL_NO_HISTORY",
+            StringFormat("\"calls\":%d,\"note\":\"the terminal holds no ticks for this symbol\"",
+                         calls));
+   return(0);
   }
 
 //+------------------------------------------------------------------+
