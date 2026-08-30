@@ -7485,7 +7485,11 @@ impl ChartPane {
         // on through `unhide_layer_for_armed_tool`, so a second conjunct
         // asking whether the layer is visible could never be false and would
         // read as a condition that can be met.
-        let crosshair_owns_the_price = chrome.toolrail.tool() == Tool::Crosshair;
+        // The paper aim writes a price on this axis for the very pixel the
+        // pointer is on, and while it is up it owns that chip for the same
+        // reason the crosshair does.
+        let crosshair_owns_the_price =
+            chrome.toolrail.tool() == Tool::Crosshair || chrome.paper.aiming();
         Some(PointerCompass {
             price: price_on && !crosshair_owns_the_price,
             time: time_on && readout.bar.is_some(),

@@ -105,9 +105,19 @@ lines span the chart width and end in a gutter chip (the third instance of
 the `draw_last_price` chip geometry, so prices never disagree about their
 pixel).
 
+Every one of them spans the *whole* width, the live tape lane included.
+That lane is the widest thing on a flow chart and it sits between the
+pointer and the axis, so a line stopping at its divider left the order
+invisible exactly where the trader watches it arrive. The divider bounds
+what a *press* can reach — labels, ✕s, handles all stop there — never what
+a line may say.
+
 The gutter chip carries **the price and nothing else** (still dodging the
-last-price row); the words and the controls live in a tag right-anchored
-*inside* the plot. The tag grammar is semantic: an order that will fire
+last-price row), and a small triangle on the axis edge points back at the
+line's own height. The chip dodges the last-price row and near a chart edge
+dodges again, which is precisely when a price and its line part company;
+the triangle never moves, so the two are only ever read together. The words
+and the controls live in a tag right-anchored *inside* the plot. The tag grammar is semantic: an order that will fire
 wears a solid chip; the position — a fact about the account, not an order —
 wears a card (`INSET` fill, hairline border, a side-colour rail).
 
@@ -205,8 +215,9 @@ answer.
 
 Hold the buy modifier (Shift by default; Ctrl sells, both configurable in
 the Trading tab) and the chart paints the order the next click would place:
-a dashed line from under the cursor out to the axis, the exact snapped
-price on the gutter, and a `BUY stop 1` label riding beside the cursor —
+a dashed line from under the cursor out to the axis — across the tape lane,
+not stopping at it — the exact snapped price on the gutter under its own
+triangle, and a `BUY stop 1` label riding beside the cursor —
 a fixed gap to its left, flipping to the right near the left edge, never
 under the crosshair it belongs to. Whether the entry rests as a stop or a
 limit follows the same validity table the right-click menu uses: above the

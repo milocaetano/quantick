@@ -84,6 +84,13 @@ const TOAST_LIFT_PX: f32 = 96.0;
 /// instrument's own (two decimals, the crypto-major default).
 const SNAP_FALLBACK_DECIMALS: u32 = 2;
 
+/// How far the axis notch reaches back into the plot, in pixels.
+///
+/// Small enough to read as a pointer rather than as another line, big
+/// enough to find on a busy heat map — the levels it marks are the ones a
+/// trader is about to commit size against.
+const GUTTER_NOTCH_PX: f32 = 6.0;
+
 /// The smallest wheel travel that can still count as a notch.
 ///
 /// A floor, not the notch itself: how many pixels a mouse reports per notch
@@ -1697,6 +1704,13 @@ impl PaperTrading {
     /// every switch performs.
     pub fn set_symbol(&mut self, symbol: &str) {
         if self.symbol != symbol {
+            // Leaving an instrument is what forgets its geometry; *arriving*
+            // at the first one is not a switch. The app names the opening
+            // symbol a frame after construction, so treating that as a
+            // departure wiped a ruler the launch had just been asked for -
+            // which is also why the harness hook below could never paint a
+            // stop and target.
+            let arriving = self.symbol.is_empty();
             self.symbol = symbol.to_owned();
             // The tick is the *instrument's*, and it only ever ratchets
             // finer: carried across a switch it would price the next
@@ -1705,7 +1719,9 @@ impl PaperTrading {
             // chosen on one instrument means nothing on the next, and it
             // would silently arm the first order placed there.
             self.tick_scale = 0;
-            self.ruler_notches = 0;
+            if !arriving {
+                self.ruler_notches = 0;
+            }
             self.ruler_travel_px = 0.0;
             self.ruler_step_text = self
                 .ruler_steps
@@ -2442,7 +2458,7 @@ impl PaperTrading {
         if preview.pointer.x < band.left() || preview.pointer.x > band.right() {
             return;
         }
-        let (start, end, label) = cmd_preview_layout(band, preview.pointer);
+        let (start, end, label) = cmd_preview_layout(band, ctx.axis_x, preview.pointer);
         // The gesture in progress reads a step above a resting order's
         // line: this is the one thing on the chart the next click acts on.
         // The dash period stretches on a very wide plot rather than paying
@@ -2496,6 +2512,7 @@ impl PaperTrading {
                         ctx.chart_rect.max.y,
                     ),
                 ),
+                ctx.axis_x,
                 preview.pointer,
             );
             ctx.painter.text(
@@ -3396,6 +3413,17 @@ impl PaperTrading {
         self.ruler_notches
     }
 
+    /// Whether an aim is on screen this frame.
+    ///
+    /// The pointer compass asks before writing its own price on the axis:
+    /// the aim already puts one there, on the same pixel, and two chips
+    /// stacked on one pixel is not two facts. Same rule the crosshair tool
+    /// already earns.
+    #[must_use]
+    pub fn aiming(&self) -> bool {
+        self.cmd_preview.is_some()
+    }
+
     /// Whether the ruler spent this frame's wheel travel. The chart asks
     /// before zooming: one wheel, one meaning at a time.
     #[must_use]
@@ -4025,10 +4053,18 @@ impl PaperTrading {
     /// mark's decimal places), so a dragged line lands on a price the
     /// instrument can actually print.
     fn snap(&self, price: f64) -> Decimal {
-        let places = self
-            .venue
-            .mark_price()
-            .map_or(SNAP_FALLBACK_DECIMALS, |mark| mark.scale());
+        // The instrument's own precision, learned from the tape - not the
+        // raw scale of the last print. A venue that quotes
+        // `79172.37000000` has a raw scale of eight, and snapping to it put
+        // eight decimals on every level this layer draws: `SL 79026.38465256`
+        // where the instrument trades in cents. The tick is the same one the
+        // ruler and the ladders step in, so every number on this surface
+        // rounds the same way.
+        let places = if self.venue.mark_price().is_some() {
+            self.tick_scale
+        } else {
+            SNAP_FALLBACK_DECIMALS
+        };
         Decimal::from_f64_retain(price)
             .unwrap_or_default()
             .round_dp(places)
@@ -7696,6 +7732,34 @@ impl PaintCtx<'_> {
         self.painter
             .rect_filled(bg, egui::Rounding::same(2.0), color);
         self.painter.galley(text_pos, galley, theme::CHIP_INK);
+        // A chip dodged away from its own line is a price with no arrow back
+        // to it, and near a chart edge every chip is dodged. The notch is
+        // drawn at the *line's* height, not the chip's, so the two are only
+        // ever read together.
+        self.gutter_notch(y, color);
+    }
+
+    /// A small triangle on the axis edge, pointing into the plot at `y`.
+    ///
+    /// The dashed line says where across the width; this says where on the
+    /// axis, which is the half a trader reads when the line is behind the
+    /// tape band or the heat map. Drawn for every level the aim carries —
+    /// the entry and both its legs — so one glance at the axis answers
+    /// "where does this order sit" without following three lines back.
+    fn gutter_notch(&self, y: f32, color: egui::Color32) {
+        if !self.in_range(y) {
+            return;
+        }
+        let x = self.axis_x;
+        self.painter.add(egui::Shape::convex_polygon(
+            vec![
+                egui::pos2(x - GUTTER_NOTCH_PX, y),
+                egui::pos2(x, y - GUTTER_NOTCH_PX * 0.75),
+                egui::pos2(x, y + GUTTER_NOTCH_PX * 0.75),
+            ],
+            color,
+            egui::Stroke::NONE,
+        ));
     }
 
     /// A solid tag on a line, right-anchored inside the plot. When it is
@@ -8697,6 +8761,7 @@ fn elide_path(path: &Path) -> String {
 /// app opens — it parks against the closer edge.
 fn cmd_preview_layout(
     band: egui::Rect,
+    axis_x: f32,
     pointer: egui::Pos2,
 ) -> (egui::Pos2, egui::Pos2, egui::Rect) {
     let need = CMD_LABEL_CURSOR_GAP_PX + CMD_LABEL_WIDTH_PX;
@@ -8728,7 +8793,18 @@ fn cmd_preview_layout(
             .max(band.left()),
         pointer.y,
     );
-    (start, egui::pos2(band.right(), pointer.y), label)
+    // The *band* stops at the live lane's divider, because that is where a
+    // click can still be pressed; the line does not, because it is a read
+    // and not a control. Stopping it there left the tape lane — the widest
+    // thing on the chart — as a blank gap between the aim and its own price
+    // on the axis, so the one place a trader watches the order arrive was
+    // the one place the order was invisible. Every other level here already
+    // spans to the axis (`level_line`); this now says the same.
+    (
+        start,
+        egui::pos2(axis_x.max(band.right()), pointer.y),
+        label,
+    )
 }
 
 /// The row around a line where its in-plot tag counts as hovered: the
@@ -11092,6 +11168,23 @@ mod tests {
         assert_eq!(paper.tick(), Decimal::new(1, 1));
     }
 
+    /// The opening instrument is arrival, not departure. The app names the
+    /// symbol a frame after construction, so a ruler standing before that
+    /// first call — the launch hook's, or a session restored into a fresh
+    /// simulator — must survive it. Only leaving an instrument forgets.
+    #[test]
+    fn the_first_symbol_of_a_session_keeps_a_standing_ruler() {
+        let mut paper = PaperTrading::new();
+        paper.ruler_notches = 6;
+        paper.set_symbol("BTCUSDT");
+        assert_eq!(
+            paper.ruler_notches, 6,
+            "arriving at the opening instrument is not a switch"
+        );
+        paper.set_symbol("WIN$N");
+        assert_eq!(paper.ruler_notches, 0, "leaving one still forgets");
+    }
+
     /// Pressing the wheel puts the ruler away, and only while an aim is up.
     #[test]
     fn pressing_the_wheel_puts_the_ruler_away() {
@@ -11597,7 +11690,7 @@ mod tests {
         let band = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
         let mut previous: Option<f32> = None;
         for x in [200.0_f32, 400.0, 600.0] {
-            let (start, end, label) = cmd_preview_layout(band, egui::pos2(x, 250.0));
+            let (start, end, label) = cmd_preview_layout(band, band.right(), egui::pos2(x, 250.0));
             assert_eq!(end.x, 800.0, "the line always reaches the axis");
             assert_eq!(start.x, x, "the line starts under the cursor");
             assert_eq!(
@@ -11618,6 +11711,45 @@ mod tests {
         }
     }
 
+    /// The tape lane is not a wall. Its divider ends the *band* — where a
+    /// press can still land — and the label stops there with it, but the
+    /// line carries on to the axis, because a gap across the widest lane on
+    /// the chart is exactly where a trader loses the order.
+    #[test]
+    fn the_aim_line_crosses_the_live_lane_to_the_axis() {
+        // A chart 1000 wide whose live tape lane opens at 700: the band the
+        // aim lays out against stops at the divider, the gutter does not.
+        let band = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(700.0, 400.0));
+        let axis_x = 1000.0;
+        let (start, end, label) = cmd_preview_layout(band, axis_x, egui::pos2(400.0, 250.0));
+        assert_eq!(
+            end.x, axis_x,
+            "the line spans the lane instead of stopping at its divider"
+        );
+        assert!(
+            end.x > band.right(),
+            "and it is the lane it crosses, not the plot it started in"
+        );
+        assert_eq!(start.x, 400.0, "it still starts under the cursor");
+        assert!(
+            label.right() <= band.right(),
+            "the label stays inside the band a press can reach: {label:?}"
+        );
+    }
+
+    /// A pane with no live lane hands the same x twice, and the line must
+    /// not double back on itself.
+    #[test]
+    fn the_aim_line_ends_at_the_axis_with_no_lane_open() {
+        let band = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
+        let (_, end, _) = cmd_preview_layout(band, 800.0, egui::pos2(400.0, 250.0));
+        assert_eq!(end.x, 800.0, "band right and axis coincide");
+        // A gutter reported left of the plot (a pane mid-resize) must never
+        // shorten the line to a stub pointing the wrong way.
+        let (start, end, _) = cmd_preview_layout(band, 10.0, egui::pos2(400.0, 250.0));
+        assert!(end.x >= start.x, "never a line running backwards");
+    }
+
     /// The two edges: near the left one the label flips to the pointer's
     /// right rather than leaving the band, and near the right one the line
     /// starts further left so there is still a line to read.
@@ -11626,7 +11758,7 @@ mod tests {
         let band = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
 
         let pointer = egui::pos2(20.0, 250.0);
-        let (_, _, label) = cmd_preview_layout(band, pointer);
+        let (_, _, label) = cmd_preview_layout(band, band.right(), pointer);
         assert!(label.left() >= band.left(), "never off the left edge");
         assert_eq!(
             label.left(),
@@ -11636,7 +11768,7 @@ mod tests {
         assert!(!label.contains(pointer), "still clear of the cursor");
 
         let pointer = egui::pos2(780.0, 250.0);
-        let (start, end, label) = cmd_preview_layout(band, pointer);
+        let (start, end, label) = cmd_preview_layout(band, band.right(), pointer);
         assert!(label.right() <= band.right(), "never off the right edge");
         assert_eq!(
             end.x - start.x,
@@ -11648,7 +11780,7 @@ mod tests {
         // A band narrower than the label plus its gap cannot hold both; it
         // parks at the left edge rather than running off-plot to the left.
         let sliver = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 400.0));
-        let (start, _, label) = cmd_preview_layout(sliver, egui::pos2(50.0, 250.0));
+        let (start, _, label) = cmd_preview_layout(sliver, sliver.right(), egui::pos2(50.0, 250.0));
         assert_eq!(label.left(), sliver.left(), "a sliver parks at its edge");
         assert_eq!(start.x, sliver.left(), "and the line spans what there is");
     }
@@ -11670,7 +11802,7 @@ mod tests {
         paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, false));
         let preview = paper.cmd_preview.expect("the held key builds a preview");
         assert_eq!(preview.pointer, aim, "the aim is the pointer, whole");
-        let (_, _, label) = cmd_preview_layout(chart, preview.pointer);
+        let (_, _, label) = cmd_preview_layout(chart, chart.right(), preview.pointer);
         assert_eq!(
             label.right(),
             aim.x - CMD_LABEL_CURSOR_GAP_PX,
@@ -12373,7 +12505,7 @@ mod tests {
         ));
         let _ = layer_shapes(&paper, sliver, &scale, Some(pointer));
         let _ = paper.control_at(pointer, sliver, &scale);
-        let _ = cmd_preview_layout(sliver, pointer);
+        let _ = cmd_preview_layout(sliver, sliver.right(), pointer);
     }
 
     #[test]
@@ -12696,7 +12828,7 @@ mod tests {
     }
 
     #[test]
-    fn snapping_uses_the_marks_own_precision() {
+    fn snapping_uses_the_instruments_learned_precision() {
         let mut paper = PaperTrading::new();
         paper.seed(&Trade {
             agg_id: 1,
@@ -12706,8 +12838,16 @@ mod tests {
             side: Side::Buy,
         });
         assert_eq!(paper.snap(101.23456), Decimal::new(10123, 2));
-        // An integer-printing instrument snaps drags to whole points.
-        paper.seed(&print(2, 182_035));
-        assert_eq!(paper.snap(182_036.7), Decimal::from(182_037));
+        // A cent-printing instrument keeps cents, whatever round numbers
+        // come after: precision the tape has shown does not go away because
+        // the next print happened to land on a whole one.
+        paper.on_trade(&print(2, 103));
+        assert_eq!(paper.snap(101.23456), Decimal::new(10123, 2));
+
+        // An instrument that only ever prints whole points snaps to them -
+        // its own instance, because a tick belongs to one market.
+        let mut whole = PaperTrading::new();
+        whole.seed(&print(1, 182_035));
+        assert_eq!(whole.snap(182_036.7), Decimal::from(182_037));
     }
 }
