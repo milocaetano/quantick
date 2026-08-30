@@ -34,7 +34,9 @@ cd "$WT" && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-r
 They are separate files because they answer separate questions. `arch-review`
 asks whether the branch is well built — shape, plus the bug pass its step 0
 runs. `delivery-review` asks whether it is what was asked for, grading every
-ask in `.claude/GOAL.md`'s request ledger and every acceptance criterion. A
+ask in the branch's goal file — `.claude/GOAL.md`, or the
+`GOAL-archive-<slug>.md` it becomes, since the mandated order archives it
+before either review runs — and every acceptance criterion in it. A
 branch can pass either one while failing the other, so passing one is not
 evidence about the other and the gate never treats it as such. The denial names
 which marker is missing or stale — with two of them, "a review is missing"
@@ -81,6 +83,21 @@ Each mode inspects the tool payload itself and exits immediately when the
 command is not its business, so the cost on unrelated calls is one `sed` and
 the behaviour is covered by tests.
 
+### What worktree-guard does not see
+
+It matches `Edit|Write|NotebookEdit`, so it guards writes made through the file
+tools. A write driven from a shell — `Set-Content`, `sed -i`, `python` editing
+a file in place, a heredoc redirect — reaches the main checkout unguarded, and
+this repo's own notes make scripted edits routine.
+
+Closing that would mean deciding, from a command string, whether it writes and
+where. `pr-gate` already does a narrower version of that (does this command run
+one named program?) and it took four review rounds and ten discovered
+spellings to make it hold. Applying the same approach to "does this write a
+file" is a larger surface with no equivalent anchor, so the gap is documented
+rather than half-covered: a guard that catches four spellings out of five
+teaches the reader it is a wall when it is a fence.
+
 ## Fail-open by design
 
 Anything `guardrails.sh` cannot determine exits 0 and the normal permission
@@ -93,6 +110,13 @@ written down in CLAUDE.md.
 
 - `QUANTICK_ALLOW_MAIN_WRITES=1` in the environment before launching disables
   `worktree-guard`, for the rare deliberate edit on the main checkout.
+- `QUANTICK_SKIP_PR_GATE=1` does the same for `pr-gate`. It exists because
+  that gate deliberately errs toward denying: it splits a command on
+  separators a quoted string can also contain, so a commit message or a
+  heredoc that merely *names* `gh pr create` after a `&&` or a pipe is denied
+  along with the real thing. The alternative error is a PR opening unreviewed,
+  and that one is silent. An override used shows up in the transcript where a
+  reader can see it; a spelling that slips past the gate shows up nowhere.
 - Paths under `.claude/` are always allowed: the goal file, its archives, the
   skills and these hooks live in the main checkout by design, and blocking
   them would break the workflow the guard exists to protect.

@@ -238,12 +238,26 @@ run "a double-quoted sh -c does not hide it" \
 run "a PowerShell payload is gated like a Bash one" \
     pr-gate "$(printf '{"tool_name":"PowerShell","cwd":"%s","tool_input":{"command":"cd %s; gh pr create --fill"}}' "$root/mainco" "$root/wt")" deny
 
-# ...and the heredoc exception, which is a deliberate false-negative rather
-# than an oversight: this repo's own docs carry a line beginning `gh pr
-# create`, and denying an agent for writing documentation would be worse than
-# the gap.
-run "a heredoc that merely contains the gated command is ignored" \
-    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && cat > notes.md <<'EOF'\\nRun this:\\ngh pr create --fill\\nEOF")" silent
+# A heredoc gets no exception, and the reason is worth pinning. One was tried:
+# suppress newline-splitting whenever the command contains `<<`. It let
+# `ship`'s own documented flow through ungated — write the body with a heredoc,
+# then `gh pr create --body-file` on the next line — because the heredoc turned
+# detection off for the whole command. Erring toward the denial keeps the gate
+# honest; `QUANTICK_SKIP_PR_GATE=1` is the visible way past a false positive.
+run "a heredoc containing the gated command is denied, not exempted" \
+    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && cat > notes.md <<'EOF'\\nRun this:\\ngh pr create --fill\\nEOF")" deny
+
+run "a heredoc body followed by a real gh pr create is denied" \
+    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && cat > body.md <<'EOF'\\nsummary\\nEOF\\ngh pr create --body-file body.md")" deny
+
+out=$(printf '%s' "$(json_bash "$root/wt" "gh pr create --fill")" |
+    QUANTICK_SKIP_PR_GATE=1 sh "$GUARDRAILS" pr-gate)
+if [ -z "$out" ]; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL the pr-gate override is honoured\n  output: %s\n' "$out"
+    failed=$((failed + 1))
+fi
 
 # With neither recorded, the message must name arch-review: guardrails.sh
 # states that order as a contract ("a delivery review of a branch the shape
@@ -413,14 +427,28 @@ done
 # owned its marker and arch-review did not, so the recording lived only in
 # `ship` and `mission` and a standalone run of one skill silently recorded
 # nothing.
+# It also has to be its *own* marker. Checking only that a recording command
+# exists would stay green with the two swapped — `/arch-review` stamping the
+# conformance marker, so a branch ships with the delivery gate satisfied by a
+# shape review. The expected name is derived from the skill's directory rather
+# than listed here, which would be a third copy of the marker names.
 for doc in $review_skills; do
-    if grep -q -- 'absolute-git-dir)/' "$repo_root/$doc"; then
-        passed=$((passed + 1))
-    else
-        printf 'FAIL %s carries no marker-recording command of its own
-' "$doc"
+    skill=$(basename "$(dirname "$doc")")
+    written=$(grep -o -- 'absolute-git-dir)/[A-Za-z0-9._-]*' "$repo_root/$doc" | sed 's|.*/||' | sort -u)
+    if [ -z "$written" ]; then
+        printf 'FAIL %s carries no marker-recording command of its own\n' "$doc"
         failed=$((failed + 1))
+        continue
     fi
+    for name in $written; do
+        case "$name" in
+            "$skill"-*) passed=$((passed + 1)) ;;
+            *)
+                printf 'FAIL %s records %s, which is not a marker named for %s\n' "$doc" "$name" "$skill"
+                failed=$((failed + 1))
+                ;;
+        esac
+    done
 done
 
 # Direction two, and the one that catches a one-sided rename: every marker name

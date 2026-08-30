@@ -165,7 +165,8 @@ claim in the session transcript is **UNPROVEN**, not met.
       only; everything else is session-time prose that never runs in the
       product. No numbers required, and this line is the reason why.
       *Evidence:* this statement, repeated in the PR body.
-- [ ] **G5** — `arch-review` run over `git diff main...HEAD`, every Blocker and
+- [ ] **G5** — `arch-review` run over `git diff origin/main...HEAD` (the remote
+      ref, per the rule this branch adds to CLAUDE.md), every Blocker and
       Should-fix resolved or deferred in the PR body. Shape dimensions 1–7 are
       waived for the prose-only skill files and **not** for `guardrails.sh`
       (S2). Step 0 and dimension 8 are never waived.
