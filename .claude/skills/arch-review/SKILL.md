@@ -606,6 +606,15 @@ Each finding: `file:line`, what is wrong, why it matters *in this order of
 priorities*, and the concrete fix — the trait to extract, the constant to
 name, the test to add. Never a vague "consider refactoring".
 
+**Name the commit the verdict graded, and write the verdict after that commit
+exists.** The marker holds a sha and nothing else, so an undated verdict cannot
+be told apart from one produced for an earlier head — and the marker will be
+stamped over it without complaint. That is the one dishonest move the gate
+cannot detect, and an unnamed sha is how it happens by accident rather than by
+intent. It happened once on the branch that added this paragraph: the verdict
+was written forty seconds *before* the commit whose marker it justified, and
+only a file mtime caught it.
+
 Close with a verdict in six lines:
 
 - **Correctness** — what the step 0 code review returned, and whether anything
