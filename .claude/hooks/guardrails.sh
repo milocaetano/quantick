@@ -20,7 +20,7 @@
 # is deliberately left as it was rather than deepened. It splits on `&&`, `||`
 # and `;` and anchors the match, so spellings that put the command elsewhere —
 # a pipe, a newline, an env prefix, a wrapper — are not detected. An attempt to
-# close that by parsing harder ran to five review rounds without converging:
+# close that by parsing harder ran to eight review rounds without converging:
 # every round shut some spellings and opened others, twice producing a denial
 # whose own remedy would have disabled the gate permanently. Widening this is
 # its own change, with its own review; a half-parser that looks airtight is

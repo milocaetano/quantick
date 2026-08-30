@@ -77,7 +77,7 @@ mission's goal file — the request quoted verbatim, the ledger of asks derived
 from it, the acceptance criteria — and grades each one, from a subagent that
 receives artifacts rather than the implementing session's story. It passes only
 when nothing is MISSING, PARTIAL or UNPROVEN, and a gap ships only as a
-deferral the maintainer approved.
+deferral the trader approved.
 
 **The review gates the work actually earns.** `mission` decides which apply:
 a change a trader touches mid-session gets `trader-ux-review`; anything

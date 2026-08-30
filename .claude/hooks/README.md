@@ -98,7 +98,7 @@ earlier draft of this paragraph named `ship` as the pipe example, which would
 have told an auditor that the repo's own standard flow evades the gate.
 
 That is a real gap and it is deliberately left as it was rather than deepened
-here. Closing it by parsing harder was tried, over five review rounds, and did
+here. Closing it by parsing harder was tried, over eight review rounds, and did
 not converge: each round shut some spellings and opened others, and twice
 produced a denial whose own remedy — telling the agent to record markers in the
 main checkout's shared git dir — would have disabled the gate permanently for
