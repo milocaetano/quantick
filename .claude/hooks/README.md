@@ -124,12 +124,30 @@ written down in CLAUDE.md.
 
 - `QUANTICK_ALLOW_MAIN_WRITES=1` in the environment before launching disables
   `worktree-guard`, for the rare deliberate edit on the main checkout.
-- `pr-gate` has no override. It does not need one: it fires only on a command
-  whose first statement is `gh pr create`, so a commit message that merely
-  mentions the phrase after a separator is not caught by it.
-- Paths under `.claude/` are always allowed: the goal file, its archives, the
-  skills and these hooks live in the main checkout by design, and blocking
-  them would break the workflow the guard exists to protect.
+- A file named `skip-pr-gate` beside the markers, in the worktree's own git
+  dir, disables `pr-gate` for that worktree. It exists because the gate has a
+  real false positive: `runs_command` matches the gated command at the start of
+  **any** `&&`/`||`/`;` segment, so a shell command that merely *quotes* the
+  workflow is denied along with the real thing — `git commit -m 'run cd wt &&
+  gh pr create last'` is denied, and so is a heredoc PR body describing this
+  gate. Only a mention with no separator in front of it gets through.
+
+  It is a file rather than an environment variable so the session that hits the
+  denial can create it: the hook inherits the environment of whatever launched
+  Claude, so an inline `VAR=1 <command>` never reaches it and a `settings.json`
+  entry needs a restart. The denial names the exact path. It is checked *after*
+  the main-checkout refusal, so a skip file in the shared git dir cannot switch
+  the gate off for every branch at once.
+- Paths under `.claude/` are allowed even on the main checkout: the goal file,
+  its archives and the skills live there by design, and blocking them would
+  break the workflow the guard exists to protect.
+
+  **`.claude/hooks/` is the exception to that exception.** `settings.json` arms
+  every session from `${CLAUDE_PROJECT_DIR}/.claude/hooks/`, so an edit there
+  while the main checkout sits on `main` disarms both gates for every session
+  and every branch at once — no record, no override, nothing to review. That is
+  a code change like any other and belongs on a branch, where this guard allows
+  it and the reviews can see it.
 
 ## Tests
 
@@ -152,26 +170,37 @@ iterate them have nothing to iterate and their cases vanish, while the "no
 `MARKER_NAME` constants found" case appears in their place. Count failures,
 not the denominator.
 
-Mutations run against the suite as it was built, each of which it catches:
-neutering the arch-review staleness branch alone; swapping the order in which
-the denial names the two reviews; renaming a marker constant in the script
-without touching the prose; renaming it in the prose without touching the
-script; swapping the two review skills' recording commands; and deleting the
-delivery marker's check outright.
+Mutations run against the suite, each measured and reverted rather than
+recalled:
 
-The ordering case had to be rewritten to earn its place. Its first version
-asserted that the denial *contained* `arch-review-ok`, which is true in both
-orderings when neither review has run — so the swap it existed to catch left
-the suite green while this file claimed otherwise. It now compares the two
-names' positions in the message.
+| Mutation | Suite result |
+| --- | --- |
+| intact | 49 passed, 0 failed |
+| `guardrails.sh` replaced by `exit 0` | about half the hook cases fail |
+| the delivery marker's check deleted | the cases asserting it fail |
+| the two marker checks swapped in order | the ordering case fails |
+| the remedy changed back to `git -C .` | its case fails |
+| the main-checkout refusal removed | two cases fail |
+| a marker renamed in the script only | fails, naming each instruction file |
+| a marker renamed in `mission/SKILL.md` only | fails in both directions |
+| the two skills' recording commands swapped | both pairing cases fail |
+| a literal newline put back into a denial payload | the payload-shape check fails |
 
 The `pr-gate` cases move one marker at a time — arch-review satisfied and
-delivery-review absent, and the reverse — because the failure worth catching
-is one gate silently carrying the branch through for the other. Those cases
-assert the text of the denial, not only that it denied. Separate cases pin the
-command shapes that must reach the gate at all: a pipe, a newline and an
-env-var prefix each walked past it once, and the pipe is the spelling `ship`
-itself recommends.
+delivery-review absent, and the reverse — because the failure worth catching is
+one gate silently carrying the branch through for the other. They assert the
+text of the denial, not only that it denied, and `run` checks that every
+payload is a single-line JSON object: a raw newline in a reason makes the
+payload unparseable, the decision is discarded, and the gate stops denying
+while every case still reports green. That happened, which is why the check
+exists.
+
+Two cases pin the failure that would matter most. A command resolving to the
+main checkout must deny **and name no recording path**, and the remedy must
+name the worktree rather than `.` — because it is pasted into a shell whose cwd
+is the session's. Together those were a bypass: follow the denial's own
+instruction from the session cwd, then run the command with no leading `cd`,
+and the gate is off for every later branch.
 
 ### What the last block actually proves
 

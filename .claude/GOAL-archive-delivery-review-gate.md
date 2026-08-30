@@ -177,25 +177,29 @@ claim in the session transcript is **UNPROVEN**, not met.
       it; CI runs it as its own step, so it is run locally too.
       *Evidence:* the test script's own summary line, plus the by-hand gate
       probe. → `scratchpad/delivery-review/guardrails_test.log`, `scratchpad/delivery-review/gate-probe.log`.
-- [x] **G4** — Performance impact declared. The honest class is **per shell
-      tool call**, not "rare": `pr-gate` and `commit-reminder` both run on every
-      `Bash` and `PowerShell` call, so whatever they do before deciding "not my
-      business" is paid on every command a session issues. That is why the
-      command parser was replaced by a substring test behind a `case` on the
-      program's first word — the parser it replaced measured about 34 ms per
-      call, twice per command. Past that early exit the work is rare: two `git
-      rev-parse` calls and two small file reads, only when the command actually
-      names the gated program. Nothing in this branch executes in the product.
-      *Evidence:* the rate class stated with the reason no numbers are
-      required. → `scratchpad/delivery-review/checks.md`.
+- [x] **G4** — Performance impact declared: **rare**, and unchanged from
+      `main`. `pr-gate` runs on every `Bash` and `PowerShell` call but returns
+      through `runs_command` — one `sed`, one `grep` — before touching git
+      unless the command's first statement is the gated one. Past that the
+      branch adds one `git rev-parse --absolute-git-dir` and one `head` read
+      for the second marker, plus the two `rev-parse` calls that decide whether
+      the directory is a linked worktree. Nothing here executes in the product.
+      An earlier revision of this branch replaced that predicate with a
+      multi-stage parser measured at ~34 ms per call; it was reverted, so this
+      line describes the shipped code and not that attempt.
+      *Evidence:* the rate class with the reason no numbers are required.
+      → `scratchpad/delivery-review/checks.md`.
+
 - [x] **G5** — `arch-review` run over `git diff origin/main...HEAD` (the remote
       ref, per the rule this branch adds to CLAUDE.md), every Blocker and
-      Should-fix resolved or deferred in the PR body. Shape dimensions 1–7 are
-      waived for the prose-only skill files and **not** for `guardrails.sh`
-      (S2). Step 0 and dimension 8 are never waived.
-      *Evidence:* the review's six-line verdict and its step 0 header line,
-      naming the sha it graded and post-dating that commit.
-      → `scratchpad/delivery-review/arch-review-verdict.md`.
+      Should-fix resolved or deferred. Seven rounds; the last two reverted the
+      command-parser rewrite after it failed to converge.
+      *Evidence:* the review's six-line verdict and its step-0 header line,
+      naming the sha it graded and written after that commit existed. The
+      verdict lives in the session's scratchpad and is reproduced in the PR
+      body, because a review artifact committed to the branch it grades would
+      change the sha it names.
+      → PR body, and `scratchpad/delivery-review/arch-review-verdict.md`.
 
 ### Closing steps — not graded, and deliberately so
 
@@ -217,11 +221,13 @@ the gate shipped, so they live here instead.
   behaviour.
 - `new-extension` — the new capability is a skill and a hook mode, not a port
   in the product, so the skill genuinely does not apply. Note what this
-  exclusion does *not* claim: the change to `guardrails.sh` is a rewrite of the
-  gate's command parsing across five functions, not a registration-only edit to
-  its `case` statement. Adding a *mode* would be registration-only; this branch
-  did more than that, and saying otherwise would be the kind of tidy
-  justification `delivery-review` exists to catch.
+  exclusion does *not* claim: the change to `guardrails.sh` is not a
+  registration-only edit to its `case` statement. Adding a *mode* would be;
+  this adds a second marker to `pr_gate`, a shared `require_marker`, and a
+  refusal to judge the main checkout. Saying otherwise would be the kind of
+  tidy justification `delivery-review` exists to catch — as an earlier
+  revision of this line found out, when it described a parser rewrite that had
+  since been reverted.
 
 ## Known limitation, stated up front
 

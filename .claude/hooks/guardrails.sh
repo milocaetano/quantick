@@ -52,6 +52,10 @@ MAIN_BRANCH="main"
 # passed one has not passed both.
 ARCH_MARKER_NAME="arch-review-ok"
 DELIVERY_MARKER_NAME="delivery-review-ok"
+# The visible opt-out from `pr-gate`, deliberately a file beside the markers
+# rather than an environment variable, so the session that hits a false
+# positive can create it. Named in the denial itself.
+SKIP_NAME="skip-pr-gate"
 
 mode="${1:-}"
 input=$(cat)
@@ -141,17 +145,26 @@ require_marker() {
     require_how=$5
 
     require_file=$(marker_path "$require_dir" "$require_name")
-    require_record="git -C . rev-parse HEAD > \\\"\$(git rev-parse --absolute-git-dir)/$require_name\\\""
+
+    # `git -C "$require_dir"`, never `git -C .`. The remedy is pasted into a
+    # shell whose cwd is the session's — the main checkout — not the worktree
+    # being shipped. With `.` the marker lands in the *shared* git dir holding
+    # main's HEAD, and a later `gh pr create` with no leading `cd` (the shape
+    # the PowerShell tool's own contract mandates) falls back to that same
+    # directory, matches, and is allowed. One paste of the gate's own
+    # instruction switches it off for every later branch. Naming the resolved
+    # worktree is what stops the remedy from being the bypass.
+    require_record="git -C \\\"$require_dir\\\" rev-parse HEAD > \\\"$require_file\\\""
 
     if [ ! -f "$require_file" ]; then
-        deny "\"CLAUDE.md: $require_rule. \`$require_name\` has not been recorded for this branch. $require_how, then record it:\n\n  $require_record\""
+        deny "\"CLAUDE.md: $require_rule. \`$require_name\` has not been recorded for this branch. $require_how, then record it:\n\n  $require_record\n\nIf this command only *mentions* the gated command rather than running it, that is a known false positive of the matcher; the visible way past is a file the gate names:\n\n  : > \\\"$(marker_path "$require_dir" "$SKIP_NAME")\\\"\""
     fi
 
     require_reviewed=$(head -n 1 "$require_file" 2>/dev/null | tr -cd '0-9a-fA-F' | tr 'A-F' 'a-f')
     [ ${#require_reviewed} -eq 40 ] || require_reviewed="(not a commit id)"
 
     if [ "$require_reviewed" != "$require_head" ]; then
-        deny "\"CLAUDE.md: $require_rule. \`$require_name\` was recorded for $require_reviewed but HEAD is now $require_head, so the newest commits are ungraded. Run it again over the final branch and record it again:\n\n  $require_record\""
+        deny "\"CLAUDE.md: $require_rule. \`$require_name\` was recorded for $require_reviewed but HEAD is now $require_head, so the newest commits are ungraded. $require_how, then record it again:\n\n  $require_record\""
     fi
 }
 
@@ -169,9 +182,17 @@ worktree_guard() {
     path=$(normalize_path "$raw")
 
     # Agent working files live in the main checkout by design: the goal file,
-    # its archives, the skills, these hooks. Blocking them would break the
-    # very workflow this guard protects.
+    # its archives, the skills. Blocking them would break the very workflow
+    # this guard protects.
+    #
+    # The hooks are the exception to the exception. `settings.json` arms every
+    # session from `${CLAUDE_PROJECT_DIR}/.claude/hooks/`, so an edit there
+    # while the main checkout sits on `main` disarms both gates for every
+    # session and every branch at once, with no record and no override. That is
+    # a code change like any other and belongs on a branch — where this guard
+    # allows it, and where the reviews can see it.
     case "$path" in
+        */.claude/hooks/*) ;;
         */.claude/*) exit 0 ;;
     esac
 
@@ -200,6 +221,35 @@ pr_gate() {
     [ -d "$dir" ] || exit 0
 
     head=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || exit 0
+
+    git_dir=$(git -C "$dir" rev-parse --absolute-git-dir 2>/dev/null) || exit 0
+    common_dir=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
+
+    # A PR ships from a linked worktree — CLAUDE.md's "one goal, one worktree".
+    # Landing on the main checkout means either that rule is being broken or
+    # the `cd` was spelled in a way this script cannot read, and judging it
+    # there is how the gate gets switched off: main's HEAD rarely moves, so
+    # markers written into the shared git dir keep matching for every later
+    # branch. Deny instead, and name no path — a remedy pointing at the main
+    # checkout is the bypass, not the fix.
+    if [ "$git_dir" = "$common_dir" ]; then
+        deny "\"CLAUDE.md: no branch ships un-reviewed. This resolves to the main checkout ($dir) rather than a linked worktree, so the gate cannot tell which branch is being shipped and will not guess. Run it from the worktree, with an explicit leading \`cd\` so the gate can follow:\n\n  cd <worktree>\n  <the command>\""
+    fi
+
+    # The deliberate way past a false positive, and it must be reachable by the
+    # session that hits one. `runs_command` matches the gated command at the
+    # start of any `&&`/`||`/`;` segment, so a shell command that merely
+    # *quotes* the workflow — a doc line, a commit message, a heredoc PR body
+    # describing this very gate — is denied along with the real thing. An
+    # environment variable cannot help there: the hook inherits the environment
+    # of whatever launched Claude, so an inline `VAR=1 <command>` never reaches
+    # it. A file in the worktree's git dir can be created by the session that
+    # was just denied, is plainly visible, and goes away with the worktree.
+    #
+    # Checked *after* the main-checkout refusal above, deliberately: a
+    # skip file in the shared git dir would otherwise switch the gate off for
+    # every branch at once, which is the failure that refusal exists to stop.
+    [ -f "$(marker_path "$dir" "$SKIP_NAME")" ] && exit 0
 
     # Checked in the order the reviews run. arch-review first: a delivery
     # review of a branch the shape review is about to change is wasted work,

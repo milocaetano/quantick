@@ -48,14 +48,24 @@ wt_git_dir=$(git -C "$root/wt" rev-parse --absolute-git-dir)
 
 # --- harness ----------------------------------------------------------------
 
-# run <name> <mode> <stdin-json> <expect: deny|context|silent>
+# run <name> <mode> <stdin-json> <expect: deny|context|silent> [substring]
+#
+# The optional fifth argument asserts that the emitted reason carries a given
+# string — which marker the denial names, say. It is a parameter rather than a
+# second helper because the second helper skipped the exit-status and
+# payload-shape checks, and six of the eight pr-gate cases ran through it.
 run() {
     name=$1
     mode=$2
     payload=$3
     expect=$4
+    want=${5:-}
 
-    out=$(printf '%s' "$payload" | sh "$GUARDRAILS" "$mode" 2>&1)
+    # stdout only: `run` shape-checks this text, and folding stderr in lets a
+    # stray git warning ("LF will be replaced by CRLF", which this fixture
+    # emits on Windows) fail a correct deny as "spans multiple lines". That
+    # was an intermittent red on a required CI step.
+    out=$(printf '%s' "$payload" | sh "$GUARDRAILS" "$mode" 2>/dev/null)
     status=$?
 
     actual=silent
@@ -97,39 +107,20 @@ run() {
         esac
     fi
 
+    if [ -n "$want" ]; then
+        case "$out" in
+            *"$want"*) ;;
+            *)
+                printf 'FAIL %s: output did not carry "%s"
+  output: %s
+' "$name" "$want" "$out"
+                failed=$((failed + 1))
+                return
+                ;;
+        esac
+    fi
+
     passed=$((passed + 1))
-}
-
-# run_deny_naming <name> <mode> <stdin-json> <substring the denial must carry>
-#
-# `run` sees three states and cannot tell a denial for the right reason from a
-# denial for the other one. With two markers gating the PR that difference is
-# the whole value of the message: an agent told only "a review is missing" has
-# to guess which, and guessing wrong costs a full review.
-#
-# stdout only, deliberately: folding stderr in would let a diagnostic satisfy
-# the assertion. Drop one of the script's `2>/dev/null` guards and `cat: …/
-# delivery-review-ok: No such file` would match a check for that name while the
-# JSON named the other marker.
-run_deny_naming() {
-    dn_name=$1
-    dn_out=$(printf '%s' "$3" | sh "$GUARDRAILS" "$2" 2>/dev/null)
-
-    case "$dn_out" in
-        *'"permissionDecision":"deny"'*) ;;
-        *)
-            printf 'FAIL %s: expected deny\n  output: %s\n' "$dn_name" "$dn_out"
-            failed=$((failed + 1))
-            return
-            ;;
-    esac
-    case "$dn_out" in
-        *"$4"*) passed=$((passed + 1)) ;;
-        *)
-            printf 'FAIL %s: denial did not name "%s"\n  output: %s\n' "$dn_name" "$4" "$dn_out"
-            failed=$((failed + 1))
-            ;;
-    esac
 }
 
 # set_marker <marker-name> <sha, or empty to remove it>
@@ -154,6 +145,16 @@ run "a file that does not exist yet is still denied" \
 
 run "agent working files under .claude are allowed" \
     worktree-guard "$(json_path "$root/mainco/.claude/GOAL.md")" silent
+
+# ...but not the hooks themselves. `settings.json` arms every session from the
+# main checkout's copy, so an edit there while it sits on `main` disarms both
+# gates for every session and every branch at once, with no record and no
+# override. That is a code change like any other and belongs on a branch.
+run "editing the hooks in the main checkout on main is denied" \
+    worktree-guard "$(json_path "$root/mainco/.claude/hooks/guardrails.sh")" deny
+
+run "editing the hooks from a linked worktree is allowed" \
+    worktree-guard "$(json_path "$root/wt/.claude/hooks/guardrails.sh")" silent
 
 run "write into a linked worktree is allowed" \
     worktree-guard "$(json_path "$root/wt/src/a.txt")" silent
@@ -202,8 +203,8 @@ run "gh pr create without a recorded review is denied" \
 # this assertion the two `require_marker` calls could be swapped with every
 # case still green, and an agent starting a fresh branch would be sent to the
 # conformance review first.
-run_deny_naming "with neither review recorded the gate names arch-review first" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "arch-review-ok"
+run "with neither review recorded the gate names arch-review first" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "arch-review-ok"
 
 # Staleness, one marker at a time. Each keeps the *other* marker at HEAD, so
 # the case can only pass through the staleness branch it aims at — with the
@@ -211,13 +212,13 @@ run_deny_naming "with neither review recorded the gate names arch-review first" 
 # nothing about staleness at all.
 set_marker arch-review-ok "$stale_sha"
 set_marker delivery-review-ok "$head_sha"
-run_deny_naming "an arch review recorded for an older commit is denied" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "arch-review-ok"
+run "an arch review recorded for an older commit is denied" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "arch-review-ok"
 
 set_marker arch-review-ok "$head_sha"
 set_marker delivery-review-ok "$stale_sha"
-run_deny_naming "a delivery review recorded for an older commit is denied" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "delivery-review-ok"
+run "a delivery review recorded for an older commit is denied" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
 
 # A marker holding something other than a sha must trip the gate, not break it:
 # `deny` interpolates the contents into JSON, and a payload the harness cannot
@@ -225,25 +226,91 @@ run_deny_naming "a delivery review recorded for an older commit is denied" \
 # parked at HEAD so the arch marker is the only thing left to complain about.
 set_marker delivery-review-ok "$head_sha"
 printf 'he said "hi"\nsecond line\n' > "$wt_git_dir/arch-review-ok"
-run_deny_naming "a corrupt marker is reported as not a commit id" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" '(not a commit id)'
+run "a corrupt marker is reported as not a commit id" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny '(not a commit id)'
 
 # Absence, one marker at a time. Each pins that the *other* being satisfied
 # does not carry the branch through.
 set_marker arch-review-ok "$head_sha"
 set_marker delivery-review-ok ""
-run_deny_naming "arch-review alone does not open the PR" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "delivery-review-ok"
+run "arch-review alone does not open the PR" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
 
 set_marker arch-review-ok ""
 set_marker delivery-review-ok "$head_sha"
-run_deny_naming "delivery-review alone does not open the PR" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "arch-review-ok"
+run "delivery-review alone does not open the PR" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "arch-review-ok"
 
 set_marker arch-review-ok "$head_sha"
 set_marker delivery-review-ok "$head_sha"
 run "both reviews recorded for the exact HEAD is allowed" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
+
+# The two halves of the gate's worst failure mode, pinned.
+#
+# A command that resolves to the main checkout must deny and must NOT name a
+# directory: main's HEAD rarely moves, so markers written into the shared git
+# dir keep matching for every later branch. And the remedy must name the
+# worktree rather than `.`, because it is pasted into a shell whose cwd is the
+# session's. Together those two lines were the bypass: follow the denial's own
+# instruction from the session cwd, then issue the command with no leading
+# `cd` — the shape the PowerShell tool's contract mandates — and the gate is
+# off, for good.
+set_marker arch-review-ok ""
+set_marker delivery-review-ok ""
+run "a command resolving to the main checkout is denied"     pr-gate "$(json_bash "$root/mainco" "gh pr create --fill")" deny "main checkout"
+
+mc_out=$(printf '%s' "$(json_bash "$root/mainco" "gh pr create --fill")" |
+    sh "$GUARDRAILS" pr-gate 2>/dev/null)
+case "$mc_out" in
+    *"$root/mainco/.git"*|*"rev-parse HEAD >"*)
+        printf 'FAIL the main-checkout denial hands back a recording path
+  output: %s
+' "$mc_out"
+        failed=$((failed + 1)) ;;
+    *) passed=$((passed + 1)) ;;
+esac
+
+wt_out=$(printf '%s' "$(json_bash "$root/wt" "gh pr create --fill")" |
+    sh "$GUARDRAILS" pr-gate 2>/dev/null)
+case "$wt_out" in
+    *'git -C .'*)
+        printf 'FAIL the remedy uses `git -C .`, which resolves against the pasting shell
+  output: %s
+' "$wt_out"
+        failed=$((failed + 1)) ;;
+    *"$wt_git_dir"*) passed=$((passed + 1)) ;;
+    *)
+        printf 'FAIL the remedy does not name the worktree marker path
+  output: %s
+' "$wt_out"
+        failed=$((failed + 1)) ;;
+esac
+
+# The escape hatch, and the ordering that keeps it from being a bypass.
+#
+# `runs_command` matches the gated command at the start of any segment, so a
+# shell command that merely quotes the workflow — a doc line, a commit message,
+# a heredoc PR body describing this gate — is denied along with the real thing.
+# The skip file is the visible way past; the denial names it. It lives in the
+# worktree's git dir and is checked *after* the main-checkout refusal, so one
+# in the shared git dir cannot switch the gate off for every branch at once.
+set_marker arch-review-ok ""
+set_marker delivery-review-ok ""
+run "the denial names the skip file, so the way out is discoverable"     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "skip-pr-gate"
+
+: > "$wt_git_dir/skip-pr-gate"
+run "the skip file releases the command it was created for"     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
+rm -f "$wt_git_dir/skip-pr-gate"
+run "removing the skip file restores the gate"     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny
+
+# A skip file in the *shared* git dir must not disable the gate: the
+# main-checkout refusal runs first, so it is never reached from there.
+main_git_dir=$(git -C "$root/mainco" rev-parse --absolute-git-dir)
+: > "$main_git_dir/skip-pr-gate"
+run "a skip file in the shared git dir does not disable the gate"     pr-gate "$(json_bash "$root/mainco" "gh pr create --fill")" deny "main checkout"
+run "and it does not leak into a linked worktree either"     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny
+rm -f "$main_git_dir/skip-pr-gate"
 
 # The gate must reach commands run through the PowerShell tool too: on Windows
 # that is the primary shell, and its payload carries the same `command` field.

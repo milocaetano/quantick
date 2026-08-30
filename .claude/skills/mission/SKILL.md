@@ -46,9 +46,13 @@ else, and `delivery-review` is that someone else.
      the one that judges the others. Ledger it.
    - Keep the trader's own words as a **verbatim fragment** wherever the
      wording carries the ambiguity, or where restating it would put words in
-     their mouth. This rests on `CLAUDE.md`'s quotation exemption — cited, not
-     re-scoped here — and `GOAL-archive-*.md` sits outside `language_guard`'s
-     scan by design. The operative statement on each line is still English.
+     their mouth. Keep it to the fragment that carries the ambiguity, not the
+     whole request: `CLAUDE.md` exempts *a marked, attributed quotation*, and a
+     standing block of untranslated prose in every goal file is a wider reading
+     than that bullet grants — it owns the rule's scope, and this one does not
+     widen it. The operative statement on each line is English, and
+     `GOAL-archive-*.md` sits outside `language_guard`'s scan by design, which
+     is a reason to be careful here rather than a licence.
    - Map every `R` to at least one **`A` criterion**, and cite at least one `R`
      from every `A`. **An `R` with no criterion is a hole. An `A` with no `R`
      is scope you invented** — take it to the trader or drop it.
