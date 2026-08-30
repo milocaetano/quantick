@@ -23,10 +23,10 @@ sha the review it names covered:
 
 ```sh
 # after arch-review, its findings handled
-git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
+cd <worktree> && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
 
 # after delivery-review returns PASS
-git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
+cd <worktree> && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
 ```
 
 They are separate files because they answer separate questions. `arch-review`
@@ -103,34 +103,48 @@ sh .claude/hooks/guardrails_test.sh
 
 Builds throwaway git repos under a temp dir, exercises all three modes
 including the fail-open paths, and cleans up after itself. CI runs it as its
-own step. Intact, it reports `37 passed, 0 failed`.
+own step. Intact, it reports `44 passed, 0 failed`.
 
 The check that the cases test the behaviour and not the harness: replace
-`guardrails.sh` with `exit 0` and the run reports `14 passed, 22 failed`. The
-totals differ on purpose and the difference is worth knowing before you go
-looking for a bug — a neutered script defines no `*_MARKER_NAME` constants, so
-the doc-pinning loops have nothing to iterate and their cases disappear, while
-the "no `MARKER_NAME` constants found" case appears in their place. Count
+`guardrails.sh` with `exit 0` and the run reports `16 passed, 23 failed`. The
+totals differ on purpose, and knowing why saves someone a bug hunt — a
+neutered script defines no `*_MARKER_NAME` constants, so the loops that
+iterate them have nothing to iterate and their cases disappear, while the
+"no `MARKER_NAME` constants found" case appears in their place. Count
 failures, not the denominator.
 
-Three sharper checks were run against the suite when the second marker was
-added, each of which it now catches: neutering the arch-review staleness
-branch alone, swapping the order of the two `require_marker` calls, and
-renaming a marker constant in the script without touching the prose.
+Five mutations were run against the suite as it was built, and it catches all
+five: neutering the arch-review staleness branch alone; swapping the order of
+the two `require_marker` calls; renaming a marker constant in the script
+without touching the prose; renaming it in the prose without touching the
+script; and deleting the delivery marker's check outright.
 
 The `pr-gate` cases move one marker at a time — arch-review satisfied and
-delivery-review absent, and the reverse — because the failure worth catching is
-one gate silently carrying the branch through for the other. Those cases assert
-the text of the denial too, not only that it denied.
+delivery-review absent, and the reverse — because the failure worth catching
+is one gate silently carrying the branch through for the other. Those cases
+assert the text of the denial, not only that it denied. Separate cases pin the
+command shapes that must reach the gate at all: a pipe, a newline and an
+env-var prefix each walked past it once, and the pipe is the spelling `ship`
+itself recommends.
 
-The last block leaves the fixture repos alone and checks this repo instead:
-that every `*_MARKER_NAME` in `guardrails.sh` is also named by this file, by
-`mission` and by `ship`. A marker name is a value the script and the prose must
-agree on across a boundary nothing type-checks, and renaming one side alone
-would deny a branch whose review actually ran while handing back a recording
-line that does not fix it. The names are read out of the script rather than
-repeated in the test, so the test follows a rename instead of pinning the old
-spelling.
+### What the last block actually proves
+
+It leaves the fixture repos alone and reads this repository, which is the one
+place the suite is not hermetic — see the note in its header and in `ci.yml`.
+Three properties, and it is worth being exact about them because an
+overstatement here is a false sense of cover:
+
+- Every marker `guardrails.sh` defines is named by **each** of this file,
+  `mission` and `ship` — per file, not "somewhere among them". Checking the
+  set would stay green while the instruction vanished from two of the three.
+- Each review skill carries a recording command of its own, so `/arch-review`
+  and `/delivery-review` each record their own marker instead of leaving it to
+  a caller. That asymmetry was a real bug here.
+- Every marker name the prose tells an agent to **write** is one the script
+  reads. This is anchored on the recording command's shape rather than on the
+  marker names, because the first version grepped for the current names to
+  decide which files to inspect — so a file that renamed its marker dropped
+  out of the set, and the one-sided rename it exists to catch went green.
 
 ## If a hook does not fire
 

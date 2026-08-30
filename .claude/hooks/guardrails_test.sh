@@ -177,6 +177,23 @@ set_marker delivery-review-ok ""
 run "a bash command that is not gh pr create is ignored" \
     pr-gate "$(json_bash "$root/wt" "cargo test --workspace")" silent
 
+# Every shape that runs `gh pr create` has to reach the gate. Each of these
+# walked straight past it while only `&&`, `||` and `;` counted as separators,
+# and the pipe is the one that matters most: `ship` step 6 tells the agent to
+# `use gh pr create --body-file -`, and piping the body in is how that is
+# spelled. A gate the documented spelling avoids is not a gate.
+run "a piped gh pr create is gated" \
+    pr-gate "$(json_bash "$root/wt" "cd $root/wt && cat body.md | gh pr create --body-file -")" deny
+
+run "a newline-separated gh pr create is gated" \
+    pr-gate "$(json_bash "$root/wt" "cd $root/wt\\ngh pr create --fill")" deny
+
+run "an env-prefixed gh pr create is gated" \
+    pr-gate "$(json_bash "$root/wt" "cd $root/wt && GH_TOKEN=x gh pr create --fill")" deny
+
+run "a heredoc body piped into gh pr create is gated" \
+    pr-gate "$(json_bash "$root/wt" "cd $root/wt && printf 'body' | gh pr create --body-file - --title x")" deny
+
 # With neither recorded, the message must name arch-review: guardrails.sh
 # states that order as a contract ("a delivery review of a branch the shape
 # review is about to change is wasted work"), and without this assertion the
@@ -282,10 +299,7 @@ run "a cd to a path that does not exist falls back to the session cwd" \
 # The marker names cross a boundary nothing in the repo type-checks:
 # guardrails.sh reads those files, and the prose tells an agent to write them.
 # Rename one side only and the gate denies a branch whose review actually ran,
-# handing back a recording line that does not fix it. The repo's rule for a
-# value that cannot be imported is a test pinning the two sides together, so
-# the names come out of the script itself rather than being repeated here — a
-# third copy in the test would be the same bug wearing a different hat.
+# handing back a recording line that does not fix it.
 #
 # This block is the one part of the suite that is NOT hermetic, and the header
 # says so. It has to read the repository the script sits in, because the
@@ -299,37 +313,73 @@ markers=$(sed -n 's/^[A-Z_]*MARKER_NAME="\([^"]*\)".*/\1/p' "$GUARDRAILS")
 markers_padded=" $(echo $markers) "
 
 if [ -z "$markers" ]; then
-    printf 'FAIL no MARKER_NAME constants found in guardrails.sh\n'
+    printf 'FAIL no MARKER_NAME constants found in guardrails.sh
+'
     failed=$((failed + 1))
 fi
 
-# The files to check are found, not listed. A hand-kept list beside the thing
-# it mirrors is the same class of bug one layer up: add an instruction file,
-# forget to add it here, and the drift this block exists to catch walks right
-# past it. Anything that talks about a `*-review-ok` marker is in scope.
-marker_docs=$(cd "$repo_root" && grep -rl -- '-review-ok' CLAUDE.md .claude/skills .claude/hooks/README.md 2>/dev/null)
+# The files that describe the whole gate, and must therefore name every marker
+# it requires. This list is written out rather than discovered, and the first
+# attempt at discovering it is why: building the set by grepping for the
+# current marker names made the check self-selecting, so a doc that renamed its
+# marker dropped out of the set and the one-sided rename went unnoticed —
+# verified, the suite stayed green. A stale list here fails loudly (a named
+# file that does not exist); a self-selecting one fails silently.
+flow_docs=".claude/hooks/README.md .claude/skills/mission/SKILL.md .claude/skills/ship/SKILL.md"
 
-# Direction one: every marker the gate requires is named by some instruction,
-# or nothing tells an agent how to satisfy it.
+# The two review skills, each of which must carry its own recording command.
+# Which marker belongs to which is deliberately not asserted here — that would
+# be a third copy of the names. Direction two below checks the name each one
+# actually writes.
+review_skills=".claude/skills/arch-review/SKILL.md .claude/skills/delivery-review/SKILL.md"
+
+# Direction one, per file rather than across the set. Checking "some file names
+# it" would pass while the recording instruction was deleted from both mission
+# and ship, because the README alone still named the marker.
 for marker in $markers; do
-    if (cd "$repo_root" && grep -qlF -- "$marker" $marker_docs >/dev/null 2>&1); then
+    for doc in $flow_docs; do
+        if [ ! -f "$repo_root/$doc" ]; then
+            printf 'FAIL %s is listed as an instruction file but does not exist
+' "$doc"
+            failed=$((failed + 1))
+        elif grep -qF -- "$marker" "$repo_root/$doc"; then
+            passed=$((passed + 1))
+        else
+            printf 'FAIL %s never names %s, which the gate requires
+' "$doc" "$marker"
+            failed=$((failed + 1))
+        fi
+    done
+done
+
+# Each review skill records its own marker, rather than leaving that to a
+# caller. The asymmetry this pins was a real bug on this branch: delivery-review
+# owned its marker and arch-review did not, so the recording lived only in
+# `ship` and `mission` and a standalone run of one skill silently recorded
+# nothing.
+for doc in $review_skills; do
+    if grep -q -- 'absolute-git-dir)/' "$repo_root/$doc"; then
         passed=$((passed + 1))
     else
-        printf 'FAIL no instruction file names %s, which the gate requires\n' "$marker"
+        printf 'FAIL %s carries no marker-recording command of its own
+' "$doc"
         failed=$((failed + 1))
     fi
 done
 
-# Direction two, and the one that catches a one-sided rename: every
-# marker-shaped name the instructions mention is one the script actually
-# defines. Rename the constant alone and the stale spelling left behind in any
-# doc fails here, named with the file it sits in.
-for doc in $marker_docs; do
-    for mentioned in $(cd "$repo_root" && grep -oh -- '[a-z][a-z-]*-review-ok' "$doc" | sort -u); do
+# Direction two, and the one that catches a one-sided rename: every marker name
+# the instructions tell an agent to *write* is one the gate reads. Anchored on
+# the recording command's shape, not on the marker names — grepping for the
+# current names is what let a renamed doc escape the set last time. Whatever
+# name follows `absolute-git-dir)/`, it has to be a marker the script defines.
+for doc in $flow_docs $review_skills CLAUDE.md; do
+    [ -f "$repo_root/$doc" ] || continue
+    for written in $(sed -n 's|.*absolute-git-dir)/\([A-Za-z0-9._-]*\).*|\1|p' "$repo_root/$doc" | sort -u); do
         case "$markers_padded" in
-            *" $mentioned "*) passed=$((passed + 1)) ;;
+            *" $written "*) passed=$((passed + 1)) ;;
             *)
-                printf 'FAIL %s names %s, but guardrails.sh defines no such marker\n' "$doc" "$mentioned"
+                printf 'FAIL %s tells an agent to write %s, which guardrails.sh never reads
+' "$doc" "$written"
                 failed=$((failed + 1))
                 ;;
         esac

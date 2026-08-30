@@ -1,7 +1,7 @@
 #!/bin/sh
 # Agent guardrails for quantick. See .claude/hooks/README.md.
 #
-# Two CLAUDE.md rules were enforceable only by an agent remembering them.
+# Three CLAUDE.md rules were enforceable only by an agent remembering them.
 # These make the harness enforce them instead:
 #
 #   worktree-guard    PreToolUse on Edit|Write|NotebookEdit. Denies a write
@@ -87,9 +87,32 @@ context() {
 # mentioning it. A commit message body reaches the hook inside the command
 # string, so a free substring match blocks `git commit -F -` whenever the
 # message happens to name the gated command.
+#
+# Every statement separator has to be here, and the list was once short enough
+# to be a hole rather than a gap: splitting only on `&&`, `||` and `;` let
+# `cat body.md | gh pr create --body-file -` through ungated — the spelling
+# `ship` itself recommends — along with a newline in place of `&&` and a
+# `GH_TOKEN=x` prefix. A gate that the documented way of doing the thing walks
+# around is not a gate. So: pipes and newlines count as separators, the
+# two-character `\n` a JSON payload carries in place of a real one is turned
+# back into one first, and a leading `VAR=value` run of assignments is stripped
+# before the match.
+#
+# The trade is deliberate. Splitting inside a quoted string can misread a
+# commit message that contains a pipe or a semicolon, and the result there is a
+# denial the author can see and argue with. The other error — a PR opening with
+# no review because of how the command was spelled — is silent, which is the
+# one this script must not make.
 runs_command() {
     printf '%s' "$1" |
-        sed 's/&&/\n/g; s/||/\n/g; s/;/\n/g' |
+        sed 's/\\n/\
+/g' |
+        sed 's/&&/\
+/g; s/||/\
+/g; s/;/\
+/g; s/|/\
+/g' |
+        sed 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]\{1,\}\)\{1,\}/ /' |
         grep -qE "^[[:space:]]*$2([[:space:]]|\$)"
 }
 
@@ -111,22 +134,18 @@ marker_path() {
     printf '%s/%s' "$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null)" "$2"
 }
 
-# Deny unless marker `$3` in worktree `$1` records exactly the commit `$2` being
-# shipped. `$4` states the rule in CLAUDE.md's own words and `$5` says how to
-# satisfy it; the recording line is derived from the marker name, so the
-# instruction and the file the gate reads can never drift apart.
-require_marker() {
-    require_dir=$1
-    require_head=$2
-    require_name=$3
-    require_rule=$4
-    require_how=$5
+# What is wrong with marker `$3` in worktree `$1` for the commit `$2` being
+# shipped: empty when nothing is. Reporting rather than denying is what lets
+# the caller collect every unsatisfied marker and deny once — an agent that has
+# done neither review should learn that in one denial, not discover the second
+# review after re-running `gh pr create`, by which time the fix commits from
+# the first may have moved HEAD again.
+marker_problem() {
+    problem_file=$(marker_path "$1" "$3")
 
-    require_marker_file=$(marker_path "$require_dir" "$require_name")
-    require_record="git rev-parse HEAD > \\\"\$(git rev-parse --absolute-git-dir)/$require_name\\\""
-
-    if [ ! -f "$require_marker_file" ]; then
-        deny "\"CLAUDE.md: $require_rule. \`$require_name\` has not been recorded for this branch. $require_how, then record it:\n\n  $require_record\""
+    if [ ! -f "$problem_file" ]; then
+        printf '`%s` has not been recorded for this branch' "$3"
+        return 0
     fi
 
     # The marker is meant to hold a sha, and nothing enforces that: a mistyped
@@ -137,16 +156,28 @@ require_marker() {
     # parse, and a *lost* deny decision turns the gate off instead of tripping
     # it. Fail-open is this script's rule for what it cannot determine; it is
     # not licence to fail open on a marker it can read and does not like.
-    require_reviewed=$(head -n 1 "$require_marker_file" 2>/dev/null | tr -cd '0-9a-fA-F')
-    if [ ${#require_reviewed} -ne 40 ]; then
+    problem_reviewed=$(head -n 1 "$problem_file" 2>/dev/null | tr -cd '0-9a-fA-F')
+    if [ ${#problem_reviewed} -ne 40 ]; then
         # Whatever is in there, it is not a commit id. Say that rather than
         # printing the hex residue, which would read like a truncated sha.
-        require_reviewed="(not a commit id)"
+        problem_reviewed="(not a commit id)"
     fi
 
-    if [ "$require_reviewed" != "$require_head" ]; then
-        deny "\"CLAUDE.md: $require_rule. \`$require_name\` was recorded for $require_reviewed but HEAD is now $require_head, so the newest commits are ungraded. Run it again over the final branch and record it again:\n\n  $require_record\""
+    if [ "$problem_reviewed" != "$2" ]; then
+        printf '`%s` was recorded for %s but HEAD is now %s, so the newest commits are ungraded' "$3" "$problem_reviewed" "$2"
     fi
+}
+
+# The line that records marker `$2`, run from worktree `$1`.
+#
+# The `cd` is not decoration. Both `git` calls resolve against the shell's cwd,
+# which for an agent session is the main checkout and not the worktree being
+# shipped — this script's own `effective_dir` treats that as established fact.
+# Without the prefix the pasted line writes the main checkout's git dir with
+# main's HEAD, the worktree's marker still does not exist, and the next
+# `gh pr create` denies with the identical message and no clue why.
+record_line() {
+    printf 'cd \\"%s\\" && git rev-parse HEAD > \\"$(git rev-parse --absolute-git-dir)/%s\\"' "$1" "$2"
 }
 
 # --- worktree-guard ---------------------------------------------------------
@@ -195,18 +226,27 @@ pr_gate() {
 
     head=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || exit 0
 
-    # Checked in the order the reviews run. arch-review first: a delivery
-    # review of a branch the shape review is about to change is wasted work,
-    # and naming the earlier gap first is the shorter path back to green.
-    require_marker "$dir" "$head" "$ARCH_MARKER_NAME" \
-        "no branch ships un-reviewed" \
-        "Run the arch-review skill over \`git diff $MAIN_BRANCH...HEAD\` and resolve every Blocker and Should-fix (or note the deferral in the PR body)"
+    # Both are inspected before anything is said, so one denial can carry both
+    # gaps. They are still *run* in this order — a delivery review of a branch
+    # the shape review is about to change is wasted work — and the instructions
+    # below say so; that is an ordering of work, not a reason to report half of
+    # it and make the agent come back for the rest.
+    arch_problem=$(marker_problem "$dir" "$head" "$ARCH_MARKER_NAME")
+    delivery_problem=$(marker_problem "$dir" "$head" "$DELIVERY_MARKER_NAME")
 
-    require_marker "$dir" "$head" "$DELIVERY_MARKER_NAME" \
-        "no branch ships ungraded against what was asked for" \
-        "Run the delivery-review skill: it grades every ask in the request ledger and every acceptance criterion in \`.claude/GOAL.md\`, and passes only when none is MISSING, PARTIAL or UNPROVEN"
+    if [ -z "$arch_problem" ] && [ -z "$delivery_problem" ]; then
+        exit 0
+    fi
 
-    exit 0
+    reason="CLAUDE.md: no branch ships un-reviewed, or ungraded against what was asked for."
+    [ -z "$arch_problem" ] || reason="$reason\n\n  * $arch_problem.\n    Run the arch-review skill over \`git diff origin/$MAIN_BRANCH...HEAD\`, resolve every Blocker and Should-fix (or note the deferral in the PR body), then:\n      $(record_line "$dir" "$ARCH_MARKER_NAME")"
+    [ -z "$delivery_problem" ] || reason="$reason\n\n  * $delivery_problem.\n    Run the delivery-review skill: it grades every ask in the request ledger and every acceptance criterion in \`.claude/GOAL.md\`, and passes only when none is MISSING, PARTIAL or UNPROVEN. Then:\n      $(record_line "$dir" "$DELIVERY_MARKER_NAME")"
+
+    if [ -n "$arch_problem" ] && [ -n "$delivery_problem" ]; then
+        reason="$reason\n\nRun them in that order: the shape review is the one that sends you back to the code."
+    fi
+
+    deny "\"$reason\""
 }
 
 # --- commit-reminder --------------------------------------------------------

@@ -74,6 +74,28 @@ When the findings land:
 `mission` waives the shape pass — run this skill anyway and report step 0's
 findings through it. The bug pass is not the waived part.
 
+## Record the marker when the review closes
+
+A branch cannot open a PR until this review is recorded against the exact
+commit being shipped. Recording it belongs here, in the skill that knows
+whether the review actually closed — not to whichever caller happened to
+invoke it. Once every Blocker and Should-fix is resolved or deferred in the PR
+body, and the branch has no further commits coming:
+
+```sh
+cd <worktree> && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
+```
+
+The `cd` matters: both `git` calls resolve against the shell's cwd, which for
+an agent session is the main checkout, not the worktree being shipped. Without
+it the marker lands in the wrong git dir holding the wrong sha, and the next
+`gh pr create` denies with no clue why.
+
+If the branch gains another commit after this — a review fix, an archived goal
+file — the marker is stale by design and this review runs again over the new
+head before it is re-recorded. Re-stamping a marker whose review did not run
+again is the one dishonest move the gate cannot detect.
+
 ## What this skill does not review
 
 Whether the change is *what was asked for*. Every dimension below takes the

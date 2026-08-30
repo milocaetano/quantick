@@ -37,17 +37,33 @@ the verdict is worth.
    the mission already archived it). Written by `mission`, in its documented
    format: a request ledger `R1`…`Rn`, decisions `D1`…`Dn`, assumptions
    `S1`…`Sn`, criteria `A1`…`An` and `G1`…`Gn`. This is the strong source.
-2. **The linked issue's `## Acceptance criteria`**, for a branch started from
-   `/new-task` rather than `/mission`. `gh issue view <N>`. No ledger exists,
-   so grade the criteria and say the ledger was absent.
-3. **The branch's own stated objective** — the PR description or the commit
-   messages — when there is nothing else. Grade what it claims to do, and open
-   the verdict by saying the checklist source was weak: a branch that names its
-   own homework is graded against homework it chose.
+2. **The linked issue**, for a branch started from `/new-task` rather than
+   `/mission`. `gh issue view <N>`. Its `## Acceptance criteria` are the
+   criteria, and its `## Context` / `## Scope` are the request the completeness
+   pass reads. There is no `R` ledger, so say so, and derive the asks from the
+   issue body yourself.
 
-If the source is `GOAL.md` but it carries no criteria in the documented format,
-return **NOT GRADEABLE**, name what is missing, and stop. That is not a pass,
-and the marker is not recorded.
+**There is no third source.** A branch's own commit messages and PR
+description are not a statement of what was asked for — they are the author's
+account of what they did, which is the one thing this skill exists not to take
+on trust. If neither source above exists, return **NOT GRADEABLE**, say that
+nothing independent of the branch states what it was supposed to do, and stop.
+The session's move then is to get that statement — from the trader, or from
+the issue — not to grade the branch against its own homework.
+
+Return **NOT GRADEABLE** and record nothing in these cases too:
+
+- the source is `GOAL.md` but it carries no criteria in the documented format;
+- the source is `GOAL.md` and it carries no verbatim request section, so the
+  completeness pass cannot run at all.
+
+Both are the same failure wearing different clothes: **an absent input makes
+every check over it vacuously true.** With no request to compare against,
+nothing can be `UNLEDGERED`; with no ledger, every `R` is trivially `COVERED`.
+A verdict assembled from empty sets satisfies every PASS clause below and
+records the marker, which is precisely the "gate grades its own summary" hole
+this skill was built to close. Missing input is never a quiet pass — it is a
+refusal to grade, and it is loud.
 
 ## Step 2 — Assemble the dossier, then dispatch
 
@@ -94,11 +110,24 @@ writing the PR is a story.
 - any "I ran X and it passed" that is not backed by output written to a file,
   or that the reviewer cannot re-run itself.
 
-Dispatch with the `Agent` tool, `subagent_type: general-purpose`. **Never
-`fork`** — a fork inherits this session's context, which is precisely the
-contamination the trader asked to remove. Hand it the checklist and the dossier
-paths in the prompt, tell it to read the repo itself for anything else, and ask
-for the grade table and verdict below.
+Dispatch with the `Agent` tool. Two constraints on the agent type, and both are
+structural — neither is satisfied by telling the reviewer to behave:
+
+- **Never `fork`.** A fork inherits this session's context, which is exactly
+  the contamination this skill exists to remove.
+- **It must not be able to write.** Pick an agent type whose tools exclude
+  `Edit`, `Write` and `NotebookEdit` — `Explore` is the read-only type
+  available today. A reviewer with write access that notices a `MISSING`
+  criterion can write the missing line and then grade it `DELIVERED`, and the
+  result is a PASS whose evidence the reviewer manufactured. That is the one
+  failure in this whole mechanism with no downstream detector: `arch-review`
+  has already run, `pr-gate` only compares a sha, and the calling session never
+  sees the subagent's transcript *by design*. "The reviewer must not edit the
+  branch" written in prose is a rule enforced by the party it constrains, which
+  is no enforcement at all. Take the capability away instead.
+
+Hand it the checklist and the dossier paths in the prompt, tell it to read the
+repo itself for anything else, and ask for the grade table and verdict below.
 
 ## Step 3 — Grade every line
 
@@ -120,10 +149,10 @@ work that fell short of a written promise; this one is about a promise that was
 never written, and it is the only failure the rest of the pipeline is blind to
 by construction. Report it with the trader's own words beside it.
 
-If `GOAL.md` has no verbatim request section, say so and grade this pass
-**NOT POSSIBLE**. Do not quietly skip it: a review that cannot run its own
-first pass is worth less than the reader will assume, and the fix is one
-paste.
+For a source-2 branch the issue body is the request: derive the asks from it
+the same way. Step 1 already refuses to grade a `GOAL.md` with no verbatim
+request section, so this pass always has something to read — an absent request
+is a refusal to grade, never a pass with one check skipped.
 
 **Ledger pass** — one grade per `R`:
 
@@ -187,9 +216,17 @@ on the subagent and go into its prompt.
 
 ## Step 4 — Verdict
 
-**PASS** only when all of: nothing `UNLEDGERED`; every `R` `COVERED`; every `A`
-and `G` `DELIVERED`; nothing `UNPROVEN`, `MISSING` or `PARTIAL` — except a line
+**PASS** only when all of: the checklist source was 1 or 2 and the completeness
+pass actually ran; nothing `UNLEDGERED`; every `R` `COVERED`; every `A` and `G`
+`DELIVERED`; nothing `UNPROVEN`, `MISSING` or `PARTIAL` — except a line
 carrying an approved deferral (below).
+
+That first clause is not a formality. Every clause after it quantifies over a
+set, and an empty set satisfies all of them: no request means nothing can be
+`UNLEDGERED`, no ledger means every `R` is `COVERED` by vacuity. A PASS
+assembled that way is indistinguishable from a real one at the marker, and the
+marker is all `pr-gate` can see. So check that the inputs existed before
+checking what they say.
 
 **FAIL** otherwise, with the failing lines listed first, each naming the
 smallest concrete thing that would change the grade.
@@ -225,7 +262,7 @@ the failure this skill was built to stop.
 On **PASS** only:
 
 ```sh
-git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
+cd <worktree> && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
 ```
 
 `pr-gate` denies `gh pr create` until this file holds the exact HEAD being

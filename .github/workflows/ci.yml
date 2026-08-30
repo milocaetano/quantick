@@ -16,8 +16,12 @@ jobs:
       - name: Agent guardrails
         # The hooks in .claude/settings.json are what keep an agent session off
         # the main checkout and off an un-reviewed PR. Nothing in cargo test
-        # touches them, so they get their own step. Hermetic: the suite builds
-        # its own throwaway repos and never reads this checkout.
+        # touches them, so they get their own step. The suite builds its own
+        # throwaway repos for the hook cases, with one deliberate exception:
+        # its last block reads this checkout's CLAUDE.md and .claude/ prose to
+        # pin that the marker names the gate reads are the ones the
+        # instructions tell an agent to write. So this step can go red on a
+        # docs-only PR that renames a marker on one side, which is the point.
         run: sh .claude/hooks/guardrails_test.sh
       - name: Python tooling lint
         # The MetaTrader bridge and the session exporter are Python, so not one

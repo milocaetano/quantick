@@ -46,9 +46,9 @@ else, and `delivery-review` is that someone else.
      the one that judges the others. Ledger it.
    - Keep the trader's own words as a **verbatim fragment** wherever the
      wording carries the ambiguity, or where restating it would put words in
-     their mouth. `CLAUDE.md`'s quotation exemption covers exactly this, and
-     `GOAL-archive-*.md` sits outside `language_guard`'s scan by design. The
-     operative statement on each line is still English.
+     their mouth. This rests on `CLAUDE.md`'s quotation exemption — cited, not
+     re-scoped here — and `GOAL-archive-*.md` sits outside `language_guard`'s
+     scan by design. The operative statement on each line is still English.
    - Map every `R` to at least one **`A` criterion**, and cite at least one `R`
      from every `A`. **An `R` with no criterion is a hole. An `A` with no `R`
      is scope you invented** — take it to the trader or drop it.
@@ -117,7 +117,7 @@ else, and `delivery-review` is that someone else.
 
    | The mission… | Injected acceptance criteria |
    | --- | --- |
-   | Any mission at all | **every artifact in English** — the rule, its scope and its three exemptions live in `CLAUDE.md`, which is already loaded; do not restate them here. Graded by `arch-review` dimension 8, enforced by `crates/app/tests/language_guard.rs`. It costs one edit now and a review round later |
+   | Any mission at all | **every artifact in English** — the rule, its scope and its exemptions live in `CLAUDE.md`, which is already loaded and is their single owner; do not restate or count them here. Graded by `arch-review` dimension 8, enforced by `crates/app/tests/language_guard.rs`. It costs one edit now and a review round later |
    | Any code change | four checks green after rebasing on latest `main`; **performance impact declared** — classify every touched path by rate (per-trade / per-depth / per-frame / rare, the `arch-review` table) as part of the plan, not the review; `arch-review` run with every Blocker/Should-fix resolved or deferred in the PR body |
    | Touches a hot path (per-trade, per-depth, per-frame) | evidence that performance is flat or better, not a belief: `APP_HEALTH_SUMMARY` fps/frame_avg under a dense tape vs. a `main` control run, or a bench over a fixture — measured before the PR, numbers in its body |
    | Touches anything user-visible | follow `ui-harness`: every new/changed surface reachable by env hook (hook added in the same change); `visual-qa` pass with all surfaces PASS or defects explicitly accepted; `trader-ux-review` with no unresolved Blocker |
@@ -222,21 +222,22 @@ else, and `delivery-review` is that someone else.
    **Archive before you review, not after.** The markers hold shas, so the
    archive has to be part of the branch the reviews actually graded:
 
-   ```sh
-   # 1. the last commit of the mission, made before either review runs
-   git mv .claude/GOAL.md .claude/GOAL-archive-<slug>.md
-   git commit -m "docs: archive the <slug> mission"
+   1. **Archive**, as the mission's last commit, before either review runs.
+      Assign the slug first: an unquoted `<slug>` is two shell redirections and
+      not a placeholder, so pasted verbatim it renames the file to
+      `GOAL-archive-.md` and reads a file called `slug`.
 
-   # 2. shape and bugs, over the final branch
-   Skill(arch-review)
-   git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
+      ```sh
+      SLUG=my-mission-slug
+      git mv .claude/GOAL.md ".claude/GOAL-archive-$SLUG.md"
+      git commit -m "docs: archive the $SLUG mission"
+      ```
 
-   # 3. conformance, over the same final branch
-   Skill(delivery-review)
-   git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
-
-   # 4. gh pr create
-   ```
+   2. **`Skill(arch-review)`** — shape and bugs, over the final branch. It
+      records `arch-review-ok` itself when the review closes.
+   3. **`Skill(delivery-review)`** — conformance, over the same final branch.
+      It records `delivery-review-ok` itself, on PASS only.
+   4. **`gh pr create`.**
 
    The order is the whole point, and getting it backwards is a trap with a
    pleasant-looking exit. Archive *after* recording the markers and that commit
