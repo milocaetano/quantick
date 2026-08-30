@@ -24,14 +24,9 @@ description: Deliver the current branch - run the full verification loop, commit
 
 2. **Commit** anything pending: conventional style (`feat: ...`, `fix: ...`), imperative mood, English. If this branch came from `/mission`, its `.claude/GOAL.md` is archived **now**, as the last commit before the reviews — never after them. Both markers hold shas, so a commit made after they are recorded makes both stale, `pr-gate` denies, and the cheapest way out of that denial is to re-stamp them without re-running either review, which silently destroys the only property the markers provide:
 
-   ```sh
-   SLUG=my-mission-slug
-   # `mv`, not `git mv`: `.claude/GOAL.md` is gitignored and therefore
-   # never tracked, so `git mv` aborts. Only the archive is tracked.
-   mv .claude/GOAL.md ".claude/GOAL-archive-$SLUG.md"
-   git add ".claude/GOAL-archive-$SLUG.md"
-   git commit -m "docs: archive the $SLUG mission"
-   ```
+   The exact commands are `mission` step 8's — kept in one place rather
+   than copied here, because two divergent copies of a five-line procedure
+   is the drift this repo has a test for elsewhere on this very branch.
 
 3. **Arch-review** (mandatory, see `CLAUDE.md`): run the `arch-review` skill over `git diff origin/main...HEAD`. Its step 0 dispatches the bundled `code-review` in the background, so this step is not done when the skill returns — it is done when those findings have landed and been handled. Fix every Blocker and Should-fix finding, re-running step 1 on whatever changed. A finding deliberately deferred is noted in the PR body. Never push or open a PR ahead of this step. The skill records `arch-review-ok` itself when the review closes — it is the one that knows whether it closed — so there is nothing to record here.
 

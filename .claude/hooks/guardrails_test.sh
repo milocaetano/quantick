@@ -31,6 +31,12 @@ trap 'git -C "$root/mainco" worktree remove --force "$root/wt" >/dev/null 2>&1; 
 git init -b main -q "$root/mainco"
 git -C "$root/mainco" config user.email t@t
 git -C "$root/mainco" config user.name t
+# The fixture, not the harness, is where the noise belongs: without this,
+# git's "LF will be replaced by CRLF" warnings on Windows reach the
+# captured output and fail correct cases. Discarding stderr in `run`
+# instead would hide every diagnostic guardrails.sh ever emits.
+git -C "$root/mainco" config core.autocrlf false
+git -C "$root/mainco" config core.safecrlf false
 mkdir -p "$root/mainco/src" "$root/mainco/.claude"
 echo one > "$root/mainco/src/a.txt"
 git -C "$root/mainco" add -A
@@ -48,17 +54,26 @@ wt_git_dir=$(git -C "$root/wt" rev-parse --absolute-git-dir)
 
 # --- harness ----------------------------------------------------------------
 
-# run <name> <mode> <stdin-json> <expect: deny|context|silent>
+# run <name> <mode> <stdin-json> <expect: deny|context|silent> [substring]
+#
+# The optional fifth argument asserts the output carries a given string —
+# which marker the denial names, say. It is a parameter rather than a second
+# helper because a second helper skipped the exit-status and payload-shape
+# checks, and six of the eight pr-gate cases ran through it, including the
+# corrupt-marker case whose whole point is that the payload stays parseable.
 run() {
     name=$1
     mode=$2
     payload=$3
     expect=$4
+    want=${5:-}
 
-    # stdout only: this text is shape-checked below, and folding stderr in
-    # lets a stray git warning fail a correct deny as "spans multiple
-    # lines" — an intermittent red on a required CI step.
-    out=$(printf '%s' "$payload" | sh "$GUARDRAILS" "$mode" 2>/dev/null)
+    # stderr is captured on purpose. It is the only channel guardrails.sh
+    # has for explaining itself, and a diagnostic it prints while still
+    # emitting a well-formed decision is a defect the suite should see.
+    # The fixture silences git's own CRLF warnings above so this stays
+    # signal rather than noise.
+    out=$(printf '%s' "$payload" | sh "$GUARDRAILS" "$mode" 2>&1)
     status=$?
 
     actual=silent
@@ -100,39 +115,18 @@ run() {
         esac
     fi
 
+    if [ -n "$want" ]; then
+        case "$out" in
+            *"$want"*) ;;
+            *)
+                printf 'FAIL %s: output did not carry "%s"\n  output: %s\n' "$name" "$want" "$out"
+                failed=$((failed + 1))
+                return
+                ;;
+        esac
+    fi
+
     passed=$((passed + 1))
-}
-
-# run_deny_naming <name> <mode> <stdin-json> <substring the denial must carry>
-#
-# `run` sees three states and cannot tell a denial for the right reason from a
-# denial for the other one. With two markers gating the PR that difference is
-# the whole value of the message: an agent told only "a review is missing" has
-# to guess which, and guessing wrong costs a full review.
-#
-# stdout only, deliberately: folding stderr in would let a diagnostic satisfy
-# the assertion. Drop one of the script's `2>/dev/null` guards and `cat: …/
-# delivery-review-ok: No such file` would match a check for that name while the
-# JSON named the other marker.
-run_deny_naming() {
-    dn_name=$1
-    dn_out=$(printf '%s' "$3" | sh "$GUARDRAILS" "$2" 2>/dev/null)
-
-    case "$dn_out" in
-        *'"permissionDecision":"deny"'*) ;;
-        *)
-            printf 'FAIL %s: expected deny\n  output: %s\n' "$dn_name" "$dn_out"
-            failed=$((failed + 1))
-            return
-            ;;
-    esac
-    case "$dn_out" in
-        *"$4"*) passed=$((passed + 1)) ;;
-        *)
-            printf 'FAIL %s: denial did not name "%s"\n  output: %s\n' "$dn_name" "$4" "$dn_out"
-            failed=$((failed + 1))
-            ;;
-    esac
 }
 
 # set_marker <marker-name> <sha, or empty to remove it>
@@ -188,7 +182,11 @@ git -C "$root/mainco" checkout -q main
 # The cases move one marker at a time, so a regression says which half broke
 # rather than only that the gate stopped working.
 
-stale_sha="0000000000000000000000000000000000000000"
+# Derived, not literal: `require_marker` grades any marker whose length
+# differs from HEAD's as "(not a commit id)", so a hardcoded 40 zeroes
+# would take the corrupt path instead of the staleness path in a repo
+# using a longer hash — still green, testing nothing it claims to.
+stale_sha=$(printf '%*s' "${#head_sha}" '' | tr ' ' 0)
 
 set_marker arch-review-ok ""
 set_marker delivery-review-ok ""
@@ -205,8 +203,8 @@ run "gh pr create without a recorded review is denied" \
 # this assertion the two `require_marker` calls could be swapped with every
 # case still green, and an agent starting a fresh branch would be sent to the
 # conformance review first.
-run_deny_naming "with neither review recorded the gate names arch-review first" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "arch-review-ok"
+run "with neither review recorded the gate names arch-review first" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "arch-review-ok"
 
 # Staleness, one marker at a time. Each keeps the *other* marker at HEAD, so
 # the case can only pass through the staleness branch it aims at — with the
@@ -214,13 +212,13 @@ run_deny_naming "with neither review recorded the gate names arch-review first" 
 # nothing about staleness at all.
 set_marker arch-review-ok "$stale_sha"
 set_marker delivery-review-ok "$head_sha"
-run_deny_naming "an arch review recorded for an older commit is denied" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "arch-review-ok"
+run "an arch review recorded for an older commit is denied" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "arch-review-ok"
 
 set_marker arch-review-ok "$head_sha"
 set_marker delivery-review-ok "$stale_sha"
-run_deny_naming "a delivery review recorded for an older commit is denied" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "delivery-review-ok"
+run "a delivery review recorded for an older commit is denied" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
 
 # A marker holding something other than a sha must trip the gate, not break it:
 # `deny` interpolates the contents into JSON, and a payload the harness cannot
@@ -228,33 +226,41 @@ run_deny_naming "a delivery review recorded for an older commit is denied" \
 # parked at HEAD so the arch marker is the only thing left to complain about.
 set_marker delivery-review-ok "$head_sha"
 printf 'he said "hi"\nsecond line\n' > "$wt_git_dir/arch-review-ok"
-run_deny_naming "a corrupt marker is reported as not a commit id" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" '(not a commit id)'
+run "a corrupt marker is reported as not a commit id" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny '(not a commit id)'
 
 # Absence, one marker at a time. Each pins that the *other* being satisfied
 # does not carry the branch through.
 set_marker arch-review-ok "$head_sha"
 set_marker delivery-review-ok ""
-run_deny_naming "arch-review alone does not open the PR" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "delivery-review-ok"
+run "arch-review alone does not open the PR" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
 
 set_marker arch-review-ok ""
 set_marker delivery-review-ok "$head_sha"
-run_deny_naming "delivery-review alone does not open the PR" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "arch-review-ok"
+run "delivery-review alone does not open the PR" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "arch-review-ok"
 
 set_marker arch-review-ok "$head_sha"
 set_marker delivery-review-ok "$head_sha"
 run "both reviews recorded for the exact HEAD is allowed" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
 
-# The gate must reach commands run through the PowerShell tool too: on Windows
-# that is the primary shell, and its payload carries the same `command` field.
-# Only the matcher in `.claude/settings.json` decides whether the hook fires,
-# which is why that matcher now names both tools.
+# The script is tool-agnostic: it reads the payload's `command` field and does
+# not care which tool produced it. What decides coverage is the matcher in
+# `.claude/settings.json`, and that names `Bash` only.
+#
+# PowerShell is deliberately NOT gated, though it is this machine's primary
+# shell. Adding it to the matcher was tried on this branch and reverted: that
+# tool's commands carry no leading `cd` (its own contract forbids one), so
+# `effective_dir` fell back to the session cwd and the gate judged the main
+# checkout — and the remedy it then printed pointed at the shared git dir,
+# which would have opened the gate for every branch. Gating a shell means
+# teaching the parser that shell; until then this case pins only that the
+# script itself is indifferent to the tool name.
 set_marker arch-review-ok ""
 set_marker delivery-review-ok ""
-run "a PowerShell payload is gated like a Bash one" \
+run "the script judges the payload, not the tool that produced it" \
     pr-gate "$(printf '{"tool_name":"PowerShell","cwd":"%s","tool_input":{"command":"gh pr create --fill"}}' "$root/wt")" deny
 
 # --- commit-reminder --------------------------------------------------------
@@ -377,7 +383,11 @@ done
 # `sed`, because a leading `.*` is greedy and would see only the last recording
 # command on a line.
 for doc in $flow_docs $review_skills CLAUDE.md; do
-    [ -f "$repo_root/$doc" ] || continue
+    if [ ! -f "$repo_root/$doc" ]; then
+        printf 'FAIL %s is checked for marker drift but does not exist\n' "$doc"
+        failed=$((failed + 1))
+        continue
+    fi
     for written in $(grep -o -- 'absolute-git-dir)/[A-Za-z0-9._-]*' "$repo_root/$doc" | sed 's|.*/||' | sort -u); do
         case "$markers_padded" in
             *" $written "*) passed=$((passed + 1)) ;;

@@ -13,8 +13,8 @@ Wired in `.claude/settings.json`, implemented in `guardrails.sh` (POSIX sh, no
 | Mode | Event | Acts on | Effect |
 | --- | --- | --- | --- |
 | `worktree-guard` | `PreToolUse` | `Edit`, `Write`, `NotebookEdit` | Denies the write when it lands in the main checkout while that checkout is on `main`. |
-| `pr-gate` | `PreToolUse` | `Bash`, `PowerShell` | Denies `gh pr create` until **both** `arch-review-ok` and `delivery-review-ok` record the exact `HEAD` being shipped. |
-| `commit-reminder` | `PostToolUse` | `Bash`, `PowerShell` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming and names both markers. |
+| `pr-gate` | `PreToolUse` | `Bash` | Denies `gh pr create` until **both** `arch-review-ok` and `delivery-review-ok` record the exact `HEAD` being shipped. |
+| `commit-reminder` | `PostToolUse` | `Bash` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming and names both markers. |
 
 ## Recording the two reviews
 
@@ -130,6 +130,20 @@ written down in CLAUDE.md.
 
 - `QUANTICK_ALLOW_MAIN_WRITES=1` in the environment before launching disables
   `worktree-guard`, for the rare deliberate edit on the main checkout.
+- Paths under `.claude/` are always allowed on the main checkout, even while
+  it sits on `main`: the goal file, its archives and the skills live there by
+  design, and blocking them would break the workflow the guard exists to
+  protect.
+
+  **This is the guard's broadest hole and it is worth naming.** The exemption
+  covers `.claude/hooks/guardrails.sh` and `.claude/settings.json` — the two
+  files that arm every session — so a single `Edit` on the main checkout
+  disarms both gates for every branch, with no worktree, no branch and no
+  review. Narrowing it was tried on this branch and reverted: the carve-out
+  guarded the script but not `settings.json`, and the version that guarded
+  both still could not see a shell-driven write. It is documented rather than
+  half-closed, which is the same call made about `runs_command` above.
+
 - `pr-gate` has **no override**, and that is a real cost rather than a design
   boast. `runs_command` matches the gated command at the start of *any*
   `&&`/`||`/`;` segment, so a command that merely quotes the workflow is denied

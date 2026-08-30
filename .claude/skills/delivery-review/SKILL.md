@@ -79,12 +79,12 @@ claim this skill exists to disbelieve.
 # two redirections, and the line would truncate a file at the filesystem root.
 DOSSIER="/path/to/scratchpad/delivery-review"
 WT=/path/to/worktree            # the branch under review, not the session cwd
-mkdir -p "$DOSSIER"
-cd "$WT" || exit 1
-git fetch origin
-git diff origin/main...HEAD         > "$DOSSIER/branch.diff"
-git diff origin/main...HEAD --stat  > "$DOSSIER/branch.stat"
-git log origin/main..HEAD --oneline > "$DOSSIER/branch.log"
+mkdir -p "$DOSSIER" &&
+  cd "$WT" &&
+  git fetch origin &&
+  git diff origin/main...HEAD         > "$DOSSIER/branch.diff" &&
+  git diff origin/main...HEAD --stat  > "$DOSSIER/branch.stat" &&
+  git log origin/main..HEAD --oneline > "$DOSSIER/branch.log"
 ```
 
 Both the `cd` and the fetch are load-bearing, and both fail the same quiet way.
@@ -159,8 +159,12 @@ Know what that check cannot see. The markers live in the worktree's **git
 dir**, outside both `HEAD` and the working tree, so a subagent that wrote
 `delivery-review-ok` itself would leave both readings unchanged. So the
 calling session records the marker — after reading the verdict, on PASS
-only — and treats a marker that already exists when the verdict returns as
-the review having written it: discard the verdict and say so.
+only — and reads the marker **before** dispatch alongside `HEAD` and the
+porcelain status. What condemns a verdict is the marker *appearing or
+changing* while the review ran, not its merely being there: a re-run after
+a deferral edit finds the previous round's marker still on disk, and a rule
+keyed on existence alone would discard every verdict from the second round
+onward and leave the branch permanently denied.
 
 Hand it the checklist and the dossier paths in the prompt, tell it to read the
 repo itself for anything else, and ask for the grade table and verdict below.

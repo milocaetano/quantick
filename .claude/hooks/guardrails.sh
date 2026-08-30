@@ -7,12 +7,12 @@
 #   worktree-guard    PreToolUse on Edit|Write|NotebookEdit. Denies a write
 #                     that lands in the main checkout while it sits on the
 #                     main branch ("one goal, one worktree").
-#   pr-gate           PreToolUse on Bash|PowerShell. Denies `gh pr create`
+#   pr-gate           PreToolUse on Bash. Denies `gh pr create`
 #                     until BOTH reviews have been recorded for the exact
 #                     commit being shipped: arch-review ("no branch ships
 #                     un-reviewed") and delivery-review ("no branch ships
 #                     ungraded against what was asked for").
-#   commit-reminder   PostToolUse on Bash|PowerShell. Cannot block (the commit
+#   commit-reminder   PostToolUse on Bash. Cannot block (the commit
 #                     already landed); says the gate is coming and how to
 #                     satisfy it.
 #
@@ -118,8 +118,13 @@ effective_dir() {
     printf '%s' "$2"
 }
 
+# Empty when the git dir cannot be resolved, so the caller can fail open
+# rather than build a path rooted at `/` and hand back a remedy telling an
+# agent to write the marker at the filesystem root.
 marker_path() {
-    printf '%s/%s' "$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null)" "$2"
+    marker_git_dir=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+    [ -n "$marker_git_dir" ] || return 1
+    printf '%s/%s' "$marker_git_dir" "$2"
 }
 
 # Deny unless marker `$3` in worktree `$1` records exactly the commit `$2`
@@ -140,7 +145,7 @@ require_marker() {
     require_rule=$4
     require_how=$5
 
-    require_file=$(marker_path "$require_dir" "$require_name")
+    require_file=$(marker_path "$require_dir" "$require_name") || exit 0
     # `git -C "$require_dir"`, never `git -C .`. The remedy is pasted into a
     # shell whose cwd is the session's — the main checkout — not the worktree
     # being shipped. With `.` the marker lands in the *shared* git dir holding

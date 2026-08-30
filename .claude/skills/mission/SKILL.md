@@ -256,14 +256,16 @@ else, and `delivery-review` is that someone else.
       `GOAL-archive-.md` and reads a file called `slug`.
 
       ```sh
+      WT=/path/to/worktree
       SLUG=my-mission-slug
       # `mv`, not `git mv`: `.gitignore` lists `.claude/GOAL.md`, so the
       # live file is never tracked and `git mv` aborts with "not under
       # version control". Only the archive it becomes is tracked — which
       # is why goal files strand when this is got wrong.
-      mv .claude/GOAL.md ".claude/GOAL-archive-$SLUG.md"
-      git add ".claude/GOAL-archive-$SLUG.md"
-      git commit -m "docs: archive the $SLUG mission"
+      cd "$WT" &&
+        mv .claude/GOAL.md ".claude/GOAL-archive-$SLUG.md" &&
+        git add ".claude/GOAL-archive-$SLUG.md" &&
+        git commit -m "docs: archive the $SLUG mission"
       ```
 
    2. **`Skill(arch-review)`** — shape and bugs, over the final branch. It
