@@ -183,7 +183,7 @@ claim in the session transcript is **UNPROVEN**, not met.
       nothing about that shell: its commands carry no `cd`, so the gate
       judged the main checkout, and a marker it wrote could never be read
       back. Gating a shell requires teaching the parser that shell, which is
-      its own change. `pr-gate` runs on every `Bash` and `PowerShell` call but returns
+      its own change. `pr-gate` runs on every `Bash` call but returns
       through `runs_command` — one `sed`, one `grep` — before touching git
       unless the command's first statement is the gated one. Past that the
       branch adds one `git rev-parse --absolute-git-dir` and one `head` read
@@ -224,7 +224,7 @@ the gate shipped, so they live here instead.
   user-visible application surface. Nothing launches, nothing paints.
 - Engine / determinism — untouched; no crate under `crates/` changes
   behaviour.
-- `new-extension` — the new capability is a skill and a hook mode, not a port
+- `new-extension` — the new capability is a skill and a second marker, not a port
   in the product, so the skill genuinely does not apply. Note what this
   exclusion does *not* claim: the change to `guardrails.sh` is not a
   registration-only edit to its `case` statement. Adding a *mode* would be;
