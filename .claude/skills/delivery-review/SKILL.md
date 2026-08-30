@@ -121,13 +121,20 @@ Dispatch with the `Agent` tool.
 
 - **Never `fork`.** A fork inherits this session's context, which is exactly
   the contamination this skill exists to remove. This one *is* structural.
-- **Give it the least write capability the harness offers.** `Explore` is the
-  closest today: its tools exclude `Edit`, `Write` and `NotebookEdit`. Be
-  clear-eyed that this narrows the capability rather than removing it — it
-  keeps `Bash`, and `printf … >> file` writes a file as surely as `Edit` does.
-  No fully read-only agent type exists here, so "the reviewer must not edit the
-  branch" is genuinely prose, and prose is a rule enforced by the party it
-  constrains.
+- **Pick the type that can read whole files.** `general-purpose`, with the
+  read-only instruction written into the prompt. The obvious alternative is a
+  search-shaped type whose tools exclude `Edit` and `Write` — but those types
+  are specified to read *excerpts* rather than whole files, and the
+  anti-rubber-stamp rules below require citing `file:line`, reading a named
+  test's assertions and quoting prose verbatim. A reviewer that grades from
+  excerpts on the one gate whose entire value is that it did not take the work
+  on trust is the wrong trade.
+
+  The capability argument for the narrower type does not survive contact
+  either: every type here keeps `Bash`, and `printf … >> file` writes a file as
+  surely as `Edit` does. So "the reviewer must not edit the branch" is prose in
+  every case, and prose is a rule enforced by the party it constrains. Choose
+  for reading depth and enforce the rest with the check below.
 
 The failure that guards against is the sharpest in this whole mechanism: a
 reviewer that finds a criterion `MISSING`, writes the missing line, and then

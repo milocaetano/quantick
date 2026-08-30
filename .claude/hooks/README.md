@@ -13,8 +13,8 @@ Wired in `.claude/settings.json`, implemented in `guardrails.sh` (POSIX sh, no
 | Mode | Event | Acts on | Effect |
 | --- | --- | --- | --- |
 | `worktree-guard` | `PreToolUse` | `Edit`, `Write`, `NotebookEdit` | Denies the write when it lands in the main checkout while that checkout is on `main`. |
-| `pr-gate` | `PreToolUse` | `Bash` | Denies `gh pr create` until **both** `arch-review-ok` and `delivery-review-ok` record the exact `HEAD` being shipped. |
-| `commit-reminder` | `PostToolUse` | `Bash` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming and names both markers. |
+| `pr-gate` | `PreToolUse` | `Bash`, `PowerShell` | Denies `gh pr create` until **both** `arch-review-ok` and `delivery-review-ok` record the exact `HEAD` being shipped. |
+| `commit-reminder` | `PostToolUse` | `Bash`, `PowerShell` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming and names both markers. |
 
 ## Recording the two reviews
 
@@ -80,8 +80,12 @@ matcher (`"if": "Bash(gh pr create:*)"`). These hooks do not use it. A matcher
 that silently fails to match leaves a gate that looks armed and is not, which
 is worse than no gate, and the exact syntax was not verifiable from the docs.
 Each mode inspects the tool payload itself and exits immediately when the
-command is not its business, so the cost on unrelated calls is one `sed` and
-the behaviour is covered by tests.
+command is not its business. That exit is one `case` over a substring, which
+matters because it runs on every `Bash` and `PowerShell` call in a session,
+twice — `pr-gate` before and `commit-reminder` after. An earlier version parsed
+the command into statements first, four `sed` stages deep, and measured about
+34 ms slower per call on this machine: roughly 70 ms added to every shell tool
+call for a check that answers "no" almost every time.
 
 ### What worktree-guard does not see
 
@@ -142,11 +146,18 @@ iterate them have nothing to iterate and their cases vanish, while the "no
 `MARKER_NAME` constants found" case appears in their place. Count failures,
 not the denominator.
 
-Five mutations were run against the suite as it was built, and it catches all
-five: neutering the arch-review staleness branch alone; swapping the order of
-the two `require_marker` calls; renaming a marker constant in the script
+Mutations run against the suite as it was built, each of which it catches:
+neutering the arch-review staleness branch alone; swapping the order in which
+the denial names the two reviews; renaming a marker constant in the script
 without touching the prose; renaming it in the prose without touching the
-script; and deleting the delivery marker's check outright.
+script; swapping the two review skills' recording commands; and deleting the
+delivery marker's check outright.
+
+The ordering case had to be rewritten to earn its place. Its first version
+asserted that the denial *contained* `arch-review-ok`, which is true in both
+orderings when neither review has run — so the swap it existed to catch left
+the suite green while this file claimed otherwise. It now compares the two
+names' positions in the message.
 
 The `pr-gate` cases move one marker at a time — arch-review satisfied and
 delivery-review absent, and the reverse — because the failure worth catching

@@ -263,8 +263,30 @@ fi
 # states that order as a contract ("a delivery review of a branch the shape
 # review is about to change is wasted work"), and without this assertion the
 # two `require_marker` calls could be swapped with the suite still green.
-run_deny_naming "with neither review recorded the gate names arch-review first" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "arch-review-ok"
+# With neither recorded, the message names both — so asserting that it contains
+# "arch-review-ok" proves nothing about order. It has to compare positions.
+# The vacuous version of this case survived a mutation that swapped the two
+# checks, while two documents claimed the swap was caught; an agent obeying the
+# swapped message would record `arch-review-ok`, be denied identically, and
+# loop.
+order_out=$(printf '%s' "$(json_bash "$root/wt" "gh pr create --fill")" |
+    sh "$GUARDRAILS" pr-gate 2>/dev/null)
+order_head=${order_out%%arch-review-ok*}
+order_tail=${order_out%%delivery-review-ok*}
+case "$order_out" in
+    *arch-review-ok*delivery-review-ok*)
+        if [ "${#order_head}" -lt "${#order_tail}" ]; then
+            passed=$((passed + 1))
+        else
+            printf 'FAIL the denial names delivery-review before arch-review\n  output: %s\n' "$order_out"
+            failed=$((failed + 1))
+        fi
+        ;;
+    *)
+        printf 'FAIL the denial with neither review recorded does not name both markers in order\n  output: %s\n' "$order_out"
+        failed=$((failed + 1))
+        ;;
+esac
 
 # Staleness, one marker at a time. Each of these keeps the *other* marker at
 # HEAD, so the case can only pass through the staleness branch it is aiming
@@ -330,16 +352,31 @@ run "a commit on main says nothing" \
 run "a commit on a branch ahead of origin/main reminds" \
     commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context
 
-# --- the gate must judge the command, not the prose around it ---------------
+# --- the deliberate false positive, and the way out of it -------------------
 #
-# Both cases below blocked or misjudged real work the first time these hooks
-# ran for real, which is why they are pinned here.
+# `pr-gate` matches the command name as a substring rather than parsing the
+# command, so a commit message or a doc edit that merely *names* it is denied
+# too. That is the trade, and it is pinned here so nobody "fixes" it back into
+# a parser: five review rounds of parsing produced a new bypass every round,
+# each one silent, while this error is loud and its author sees exactly why.
 
 set_marker arch-review-ok ""
 set_marker delivery-review-ok ""
 
-run "a commit message that merely names the gated command is ignored" \
-    pr-gate "$(json_bash "$root/wt" "git commit -m 'records the marker the gate checks before gh pr create'")" silent
+run "a commit message that merely names the gated command is denied too" \
+    pr-gate "$(json_bash "$root/wt" "git commit -m 'records the marker the gate checks before gh pr create'")" deny
+
+# The escape must be reachable by the session that hit the denial — which an
+# environment variable is not, since the hook inherits the environment of
+# whatever launched Claude and the inline `VAR=1 cmd` form never reaches it.
+: > "$wt_git_dir/skip-pr-gate"
+run "the skip file lets a denied command through" \
+    pr-gate "$(json_bash "$root/wt" "git commit -m 'mentions gh pr create'")" silent
+run "the skip file also releases the real thing, deliberately and visibly" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
+rm -f "$wt_git_dir/skip-pr-gate"
+run "removing the skip file restores the gate" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny
 
 run "a commit message naming the gated command still reminds, not blocks" \
     commit-reminder "$(json_bash "$root/wt" "git commit -m 'note about gh pr create'")" context

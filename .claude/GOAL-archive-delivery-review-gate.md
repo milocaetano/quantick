@@ -175,10 +175,15 @@ claim in the session transcript is **UNPROVEN**, not met.
       it; CI runs it as its own step, so it is run locally too.
       *Evidence:* the test script's own summary line, plus the by-hand gate
       probe. → `scratchpad/delivery-review/guardrails_test.log`, `scratchpad/delivery-review/gate-probe.log`.
-- [ ] **G4** — Performance impact declared: **rare** rate class. The hook adds
-      one string test per `Bash` call and one extra file read on `gh pr create`
-      only; everything else is session-time prose that never runs in the
-      product. No numbers required, and this line is the reason why.
+- [ ] **G4** — Performance impact declared. The honest class is **per shell
+      tool call**, not "rare": `pr-gate` and `commit-reminder` both run on every
+      `Bash` and `PowerShell` call, so whatever they do before deciding "not my
+      business" is paid on every command a session issues. That is why the
+      command parser was replaced by a substring test behind a `case` on the
+      program's first word — the parser it replaced measured about 34 ms per
+      call, twice per command. Past that early exit the work is rare: two `git
+      rev-parse` calls and two small file reads, only when the command actually
+      names the gated program. Nothing in this branch executes in the product.
       *Evidence:* the rate class stated with the reason no numbers are
       required. → `scratchpad/delivery-review/checks.md`.
 - [ ] **G5** — `arch-review` run over `git diff origin/main...HEAD` (the remote
