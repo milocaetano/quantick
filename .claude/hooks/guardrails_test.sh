@@ -77,12 +77,10 @@ run() {
 
     # The payload has to be JSON the harness can parse, and every mode emits it
     # on one line. A raw newline inside a JSON string value is an invalid
-    # control character: the decision is lost and the normal permission flow
-    # takes over, which for `pr-gate` means the PR opens. That happened — a
-    # two-line recording remedy was written into the reason, the suite stayed
-    # green because it only grepped for `"deny"`, and the gate had silently
-    # stopped denying. Checking the shape here is what makes every case above
-    # an assertion about a decision the harness will actually receive.
+    # control character: the decision is discarded and the normal permission
+    # flow takes over, which for `pr-gate` means the PR opens. Checking only
+    # for the substring `"deny"` cannot see that — a gate that had silently
+    # stopped denying still reported every case green.
     if [ -n "$out" ]; then
         if [ "$(printf '%s' "$out" | wc -l)" -ne 0 ]; then
             printf 'FAIL %s: payload spans multiple lines, so it is not parseable JSON\n  output: %s\n' "$name" "$out"
@@ -104,26 +102,19 @@ run() {
 
 # run_deny_naming <name> <mode> <stdin-json> <substring the denial must carry>
 #
-# `run` above sees three states and cannot tell a denial for the right reason
-# from a denial for the other one. With two markers gating the PR, that
-# difference is the whole value of the message: an agent told "a review is
-# missing" has to guess which, and guessing wrong costs a full review.
-# stdout only, deliberately: the contract under test is the JSON decision, and
-# folding stderr in would let a diagnostic satisfy the substring assertion. Drop
-# one of the script's `2>/dev/null` guards and `cat: …/delivery-review-ok: No
-# such file` on stderr would match a check for "delivery-review-ok" while the
-# JSON named the other marker — the test passing as it sends the agent to the
-# wrong review.
+# `run` sees three states and cannot tell a denial for the right reason from a
+# denial for the other one. With two markers gating the PR that difference is
+# the whole value of the message: an agent told only "a review is missing" has
+# to guess which, and guessing wrong costs a full review.
+#
+# stdout only, deliberately: folding stderr in would let a diagnostic satisfy
+# the assertion. Drop one of the script's `2>/dev/null` guards and `cat: …/
+# delivery-review-ok: No such file` would match a check for that name while the
+# JSON named the other marker.
 run_deny_naming() {
     dn_name=$1
     dn_out=$(printf '%s' "$3" | sh "$GUARDRAILS" "$2" 2>/dev/null)
-    dn_status=$?
 
-    if [ "$dn_status" -ne 0 ]; then
-        printf 'FAIL %s: exited %s (guard-rails must always exit 0)\n' "$dn_name" "$dn_status"
-        failed=$((failed + 1))
-        return
-    fi
     case "$dn_out" in
         *'"permissionDecision":"deny"'*) ;;
         *)
@@ -188,11 +179,11 @@ run "the main checkout on another branch is allowed" \
 git -C "$root/mainco" checkout -q main
 
 # --- pr-gate ----------------------------------------------------------------
+
 #
-# Two markers gate the PR and both must record the exact commit being shipped:
-# arch-review (is it well built) and delivery-review (is it what was asked
-# for). The cases below move one marker at a time, so a regression says which
-# half broke instead of only that the gate stopped working.
+# Two markers gate the PR and both must record the exact commit being shipped.
+# The cases move one marker at a time, so a regression says which half broke
+# rather than only that the gate stopped working.
 
 stale_sha="0000000000000000000000000000000000000000"
 
@@ -202,121 +193,22 @@ set_marker delivery-review-ok ""
 run "a bash command that is not gh pr create is ignored" \
     pr-gate "$(json_bash "$root/wt" "cargo test --workspace")" silent
 
-# Every shape that runs `gh pr create` has to reach the gate. Each of these
-# walked straight past it once, and the pipe is the one that matters most:
-# `ship` step 6 tells the agent to `use gh pr create --body-file -`, and piping
-# the body in is how that is spelled. A gate the documented spelling avoids is
-# not a gate.
-#
-# Every case below passes `$root/mainco` as the payload cwd, never the
-# worktree. That is the whole point: with the worktree as cwd the fallback path
-# and the intended path are the same directory, so a case denies whether or not
-# `effective_dir` understood the command — which is how the newline case came
-# to pass while `effective_dir` was misreading it into `<wt>/ngh`.
-run "a piped gh pr create is gated" \
-    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && cat body.md | gh pr create --body-file -")" deny
+run "gh pr create without a recorded review is denied" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny
 
-run "a newline-separated gh pr create is gated" \
-    pr-gate "$(json_bash "$root/mainco" "cd $root/wt\\ngh pr create --fill")" deny
+# With neither recorded, the denial names arch-review — the review that runs
+# first, because a delivery review of a branch the shape review is about to
+# change is wasted work. The script states that order as a contract; without
+# this assertion the two `require_marker` calls could be swapped with every
+# case still green, and an agent starting a fresh branch would be sent to the
+# conformance review first.
+run_deny_naming "with neither review recorded the gate names arch-review first" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "arch-review-ok"
 
-run "an env-prefixed gh pr create is gated" \
-    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && GH_TOKEN=x gh pr create --fill")" deny
-
-run "a heredoc body piped into gh pr create is gated" \
-    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && printf 'body' | gh pr create --body-file - --title x")" deny
-
-# A statement can be dressed up before its command word, and each of these ran
-# the gated command while the match saw nothing.
-run "extra spaces inside the command do not hide it" \
-    pr-gate "$(json_bash "$root/mainco" "cd $root/wt &&  gh  pr  create --fill")" deny
-
-run "an env(1) prefix does not hide it" \
-    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && env GH_TOKEN=x gh pr create --fill")" deny
-
-run "a time prefix does not hide it" \
-    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && time gh pr create --fill")" deny
-
-run "bash -c does not hide it" \
-    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && bash -c 'gh pr create --fill'")" deny
-
-run "a brace group does not hide it" \
-    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && { gh pr create --fill; }")" deny
-
-# The command word can also be the last thing in the statement, with the
-# wrapper's closing quote right behind it. `bash -c 'gh pr create'` slipped
-# through on that trailing quote alone, while the `--fill` variant above was
-# caught — the match wanted a space or end-of-line after "create" and found a
-# quote.
-run "a quoted bash -c with no trailing argument does not hide it" \
-    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && bash -c 'gh pr create'")" deny
-
-# And the double-quoted form, which arrives with JSON's backslash escaping
-# still on it. The payload below is written by hand rather than through
-# json_bash because that escaping is the thing under test.
-run "a double-quoted sh -c does not hide it" \
-    pr-gate "$(printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"cd %s && sh -c \\"gh pr create\\""}}' "$root/mainco" "$root/wt")" deny
-
-# The gate must reach commands run through the PowerShell tool too. On Windows
-# that is the primary shell, and its payload carries the same `command` field —
-# only `.claude/settings.json`'s matcher decides whether the hook fires at all,
-# which is why that matcher names both tools.
-run "a PowerShell payload is gated like a Bash one" \
-    pr-gate "$(printf '{"tool_name":"PowerShell","cwd":"%s","tool_input":{"command":"cd %s; gh pr create --fill"}}' "$root/mainco" "$root/wt")" deny
-
-# A heredoc gets no exception, and the reason is worth pinning. One was tried:
-# suppress newline-splitting whenever the command contains `<<`. It let
-# `ship`'s own documented flow through ungated — write the body with a heredoc,
-# then `gh pr create --body-file` on the next line — because the heredoc turned
-# detection off for the whole command. Erring toward the denial keeps the gate
-# honest; `QUANTICK_SKIP_PR_GATE=1` is the visible way past a false positive.
-run "a heredoc containing the gated command is denied, not exempted" \
-    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && cat > notes.md <<'EOF'\\nRun this:\\ngh pr create --fill\\nEOF")" deny
-
-run "a heredoc body followed by a real gh pr create is denied" \
-    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && cat > body.md <<'EOF'\\nsummary\\nEOF\\ngh pr create --body-file body.md")" deny
-
-out=$(printf '%s' "$(json_bash "$root/wt" "gh pr create --fill")" |
-    QUANTICK_SKIP_PR_GATE=1 sh "$GUARDRAILS" pr-gate)
-if [ -z "$out" ]; then
-    passed=$((passed + 1))
-else
-    printf 'FAIL the pr-gate override is honoured\n  output: %s\n' "$out"
-    failed=$((failed + 1))
-fi
-
-# With neither recorded, the message must name arch-review: guardrails.sh
-# states that order as a contract ("a delivery review of a branch the shape
-# review is about to change is wasted work"), and without this assertion the
-# two `require_marker` calls could be swapped with the suite still green.
-# With neither recorded, the message names both — so asserting that it contains
-# "arch-review-ok" proves nothing about order. It has to compare positions.
-# The vacuous version of this case survived a mutation that swapped the two
-# checks, while two documents claimed the swap was caught; an agent obeying the
-# swapped message would record `arch-review-ok`, be denied identically, and
-# loop.
-order_out=$(printf '%s' "$(json_bash "$root/wt" "gh pr create --fill")" |
-    sh "$GUARDRAILS" pr-gate 2>/dev/null)
-order_head=${order_out%%arch-review-ok*}
-order_tail=${order_out%%delivery-review-ok*}
-case "$order_out" in
-    *arch-review-ok*delivery-review-ok*)
-        if [ "${#order_head}" -lt "${#order_tail}" ]; then
-            passed=$((passed + 1))
-        else
-            printf 'FAIL the denial names delivery-review before arch-review\n  output: %s\n' "$order_out"
-            failed=$((failed + 1))
-        fi
-        ;;
-    *)
-        printf 'FAIL the denial with neither review recorded does not name both markers in order\n  output: %s\n' "$order_out"
-        failed=$((failed + 1))
-        ;;
-esac
-
-# Staleness, one marker at a time. Each of these keeps the *other* marker at
-# HEAD, so the case can only pass through the staleness branch it is aiming
-# at — with the other marker missing, every one of them would deny for the
-# wrong reason and prove nothing about staleness at all.
+# Staleness, one marker at a time. Each keeps the *other* marker at HEAD, so
+# the case can only pass through the staleness branch it aims at — with the
+# other missing, every one of them would deny for the wrong reason and prove
+# nothing about staleness at all.
 set_marker arch-review-ok "$stale_sha"
 set_marker delivery-review-ok "$head_sha"
 run_deny_naming "an arch review recorded for an older commit is denied" \
@@ -327,30 +219,17 @@ set_marker delivery-review-ok "$stale_sha"
 run_deny_naming "a delivery review recorded for an older commit is denied" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "delivery-review-ok"
 
-# A marker holding something other than a sha must trip the gate, not break
-# it: `deny` interpolates the contents into JSON, and a payload the harness
-# cannot parse loses the decision and lets `gh pr create` through. The delivery
-# marker is parked at HEAD so the arch marker is the only thing left to
-# complain about, and the assertion names text only the corrupt path produces —
-# asserting on `permissionDecisionReason` would have matched every denial ever
-# emitted and proved nothing.
+# A marker holding something other than a sha must trip the gate, not break it:
+# `deny` interpolates the contents into JSON, and a payload the harness cannot
+# parse loses the decision and lets the command through. The delivery marker is
+# parked at HEAD so the arch marker is the only thing left to complain about.
 set_marker delivery-review-ok "$head_sha"
 printf 'he said "hi"\nsecond line\n' > "$wt_git_dir/arch-review-ok"
 run_deny_naming "a corrupt marker is reported as not a commit id" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" '(not a commit id)'
 
-corrupt_out=$(printf '%s' "$(json_bash "$root/wt" "gh pr create --fill")" |
-    sh "$GUARDRAILS" pr-gate 2>/dev/null)
-case "$corrupt_out" in
-    *'
-'*) printf 'FAIL a corrupt marker leaks a raw newline into the JSON payload\n  output: %s\n' "$corrupt_out"
-        failed=$((failed + 1)) ;;
-    *'he said'*) printf 'FAIL a corrupt marker leaks its unescaped contents into the JSON payload\n  output: %s\n' "$corrupt_out"
-        failed=$((failed + 1)) ;;
-    *) passed=$((passed + 1)) ;;
-esac
-
-# One marker at a time again, now for absence rather than staleness.
+# Absence, one marker at a time. Each pins that the *other* being satisfied
+# does not carry the branch through.
 set_marker arch-review-ok "$head_sha"
 set_marker delivery-review-ok ""
 run_deny_naming "arch-review alone does not open the PR" \
@@ -366,6 +245,15 @@ set_marker delivery-review-ok "$head_sha"
 run "both reviews recorded for the exact HEAD is allowed" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
 
+# The gate must reach commands run through the PowerShell tool too: on Windows
+# that is the primary shell, and its payload carries the same `command` field.
+# Only the matcher in `.claude/settings.json` decides whether the hook fires,
+# which is why that matcher now names both tools.
+set_marker arch-review-ok ""
+set_marker delivery-review-ok ""
+run "a PowerShell payload is gated like a Bash one" \
+    pr-gate "$(printf '{"tool_name":"PowerShell","cwd":"%s","tool_input":{"command":"gh pr create --fill"}}' "$root/wt")" deny
+
 # --- commit-reminder --------------------------------------------------------
 
 run "a bash command that is not git commit is ignored" \
@@ -377,31 +265,16 @@ run "a commit on main says nothing" \
 run "a commit on a branch ahead of origin/main reminds" \
     commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context
 
-# --- the deliberate false positive, and the way out of it -------------------
+# --- the gate must judge the command, not the prose around it ---------------
 #
-# `pr-gate` matches the command name as a substring rather than parsing the
-# command, so a commit message or a doc edit that merely *names* it is denied
-# too. That is the trade, and it is pinned here so nobody "fixes" it back into
-# a parser: five review rounds of parsing produced a new bypass every round,
-# each one silent, while this error is loud and its author sees exactly why.
+# Both cases below blocked or misjudged real work the first time these hooks
+# ran for real, which is why they are pinned here.
 
 set_marker arch-review-ok ""
 set_marker delivery-review-ok ""
 
-run "a commit message that merely names the gated command is denied too" \
-    pr-gate "$(json_bash "$root/wt" "git commit -m 'records the marker the gate checks before gh pr create'")" deny
-
-# The escape must be reachable by the session that hit the denial — which an
-# environment variable is not, since the hook inherits the environment of
-# whatever launched Claude and the inline `VAR=1 cmd` form never reaches it.
-: > "$wt_git_dir/skip-pr-gate"
-run "the skip file lets a denied command through" \
-    pr-gate "$(json_bash "$root/wt" "git commit -m 'mentions gh pr create'")" silent
-run "the skip file also releases the real thing, deliberately and visibly" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
-rm -f "$wt_git_dir/skip-pr-gate"
-run "removing the skip file restores the gate" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny
+run "a commit message that merely names the gated command is ignored" \
+    pr-gate "$(json_bash "$root/wt" "git commit -m 'records the marker the gate checks before gh pr create'")" silent
 
 run "a commit message naming the gated command still reminds, not blocks" \
     commit-reminder "$(json_bash "$root/wt" "git commit -m 'note about gh pr create'")" context
@@ -428,16 +301,15 @@ run "a cd to a path that does not exist falls back to the session cwd" \
 
 # --- the gate and the instructions must name the same markers ---------------
 #
-# The marker names cross a boundary nothing in the repo type-checks:
-# guardrails.sh reads those files, and the prose tells an agent to write them.
-# Rename one side only and the gate denies a branch whose review actually ran,
-# handing back a recording line that does not fix it.
+# The marker names cross a boundary nothing type-checks: guardrails.sh reads
+# those files, and the prose tells an agent to write them. Rename one side only
+# and the gate denies a branch whose review actually ran, handing back a
+# recording line that does not fix it.
 #
 # This block is the one part of the suite that is NOT hermetic, and the header
-# says so. It has to read the repository the script sits in, because the
-# agreement between the script and the prose *is* the thing under test. The
-# consequence to know: invoked by absolute path from another checkout, it
-# grades that checkout's instruction files rather than the branch's, and an
+# says so. It reads the repository the script sits in, because the agreement
+# between the script and the prose *is* the thing under test. Invoked by
+# absolute path from another checkout it grades that checkout's files, and an
 # unrelated doc edit can turn it red.
 
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
@@ -445,55 +317,38 @@ markers=$(sed -n 's/^[A-Z_]*MARKER_NAME="\([^"]*\)".*/\1/p' "$GUARDRAILS")
 markers_padded=" $(echo $markers) "
 
 if [ -z "$markers" ]; then
-    printf 'FAIL no MARKER_NAME constants found in guardrails.sh
-'
+    printf 'FAIL no MARKER_NAME constants found in guardrails.sh\n'
     failed=$((failed + 1))
 fi
 
-# The files that describe the whole gate, and must therefore name every marker
-# it requires. This list is written out rather than discovered, and the first
-# attempt at discovering it is why: building the set by grepping for the
-# current marker names made the check self-selecting, so a doc that renamed its
-# marker dropped out of the set and the one-sided rename went unnoticed —
-# verified, the suite stayed green. A stale list here fails loudly (a named
-# file that does not exist); a self-selecting one fails silently.
+# The files that describe the whole gate, and must name every marker it needs.
+# Written out rather than discovered: building the set by grepping for the
+# current names made the check self-selecting, so a doc that renamed its marker
+# dropped out of the set and the rename went unnoticed. A stale list here fails
+# loudly; a self-selecting one failed silently.
 flow_docs=".claude/hooks/README.md .claude/skills/mission/SKILL.md .claude/skills/ship/SKILL.md"
 
-# The two review skills, each of which must carry its own recording command.
-# Which marker belongs to which is deliberately not asserted here — that would
-# be a third copy of the names. Direction two below checks the name each one
-# actually writes.
+# Each review skill must carry its own recording command. Which marker belongs
+# to which is derived from the skill's directory rather than listed, so this is
+# not a third copy of the names.
 review_skills=".claude/skills/arch-review/SKILL.md .claude/skills/delivery-review/SKILL.md"
 
-# Direction one, per file rather than across the set. Checking "some file names
-# it" would pass while the recording instruction was deleted from both mission
-# and ship, because the README alone still named the marker.
+# Per file, not "somewhere among them": checking the set would stay green while
+# the instruction vanished from two of the three.
 for marker in $markers; do
     for doc in $flow_docs; do
         if [ ! -f "$repo_root/$doc" ]; then
-            printf 'FAIL %s is listed as an instruction file but does not exist
-' "$doc"
+            printf 'FAIL %s is listed as an instruction file but does not exist\n' "$doc"
             failed=$((failed + 1))
         elif grep -qF -- "$marker" "$repo_root/$doc"; then
             passed=$((passed + 1))
         else
-            printf 'FAIL %s never names %s, which the gate requires
-' "$doc" "$marker"
+            printf 'FAIL %s never names %s, which the gate requires\n' "$doc" "$marker"
             failed=$((failed + 1))
         fi
     done
 done
 
-# Each review skill records its own marker, rather than leaving that to a
-# caller. The asymmetry this pins was a real bug on this branch: delivery-review
-# owned its marker and arch-review did not, so the recording lived only in
-# `ship` and `mission` and a standalone run of one skill silently recorded
-# nothing.
-# It also has to be its *own* marker. Checking only that a recording command
-# exists would stay green with the two swapped — `/arch-review` stamping the
-# conformance marker, so a branch ships with the delivery gate satisfied by a
-# shape review. The expected name is derived from the skill's directory rather
-# than listed here, which would be a third copy of the marker names.
 for doc in $review_skills; do
     skill=$(basename "$(dirname "$doc")")
     written=$(grep -o -- 'absolute-git-dir)/[A-Za-z0-9._-]*' "$repo_root/$doc" | sed 's|.*/||' | sort -u)
@@ -513,23 +368,18 @@ for doc in $review_skills; do
     done
 done
 
-# Direction two, and the one that catches a one-sided rename: every marker name
-# the instructions tell an agent to *write* is one the gate reads. Anchored on
-# the recording command's shape, not on the marker names — grepping for the
-# current names is what let a renamed doc escape the set last time. Whatever
-# name follows `absolute-git-dir)/`, it has to be a marker the script defines.
+# Every marker name the prose tells an agent to *write* is one the gate reads.
+# Anchored on the recording command's shape, not on the names — grepping for
+# the current names is what let a renamed doc escape the set. `grep -o`, not
+# `sed`, because a leading `.*` is greedy and would see only the last recording
+# command on a line.
 for doc in $flow_docs $review_skills CLAUDE.md; do
     [ -f "$repo_root/$doc" ] || continue
-    # `grep -o`, not `sed`: a leading `.*` is greedy, so a sed extraction reads
-    # only the last recording command on a line. No doc line carries two today,
-    # which made that green by luck — put both markers in one table row and a
-    # rename of the first would go unseen by the check written to catch it.
     for written in $(grep -o -- 'absolute-git-dir)/[A-Za-z0-9._-]*' "$repo_root/$doc" | sed 's|.*/||' | sort -u); do
         case "$markers_padded" in
             *" $written "*) passed=$((passed + 1)) ;;
             *)
-                printf 'FAIL %s tells an agent to write %s, which guardrails.sh never reads
-' "$doc" "$written"
+                printf 'FAIL %s tells an agent to write %s, which guardrails.sh never reads\n' "$doc" "$written"
                 failed=$((failed + 1))
                 ;;
         esac

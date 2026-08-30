@@ -81,54 +81,54 @@ claim in the session transcript is **UNPROVEN**, not met.
 
 ### Mission-specific
 
-- [ ] **A1** — `mission` produces a request ledger: every distinct ask in the
+- [x] **A1** — `mission` produces a request ledger: every distinct ask in the
       trader's request appears as a numbered `R` line in `.claude/GOAL.md`,
       each mapped to at least one acceptance criterion, with the verbatim
       fragment kept where the wording carries the ambiguity.
       *Evidence:* the ledger section of the skill's written template, and this
       very file carrying `R1`–`R10`. → `.claude/skills/mission/SKILL.md`,
       `.claude/GOAL-archive-delivery-review-gate.md`. *(R3, R8, R9)*
-- [ ] **A2** — `mission` runs one mandatory interrogation round before any
+- [x] **A2** — `mission` runs one mandatory interrogation round before any
       work, covering ambiguity, double meaning, contradiction between asks,
       silent narrowing, and calls that are the trader's — and the skill names
       what does **not** qualify, so the round stays short. Anything not asked
       becomes a written assumption.
       *Evidence:* the step's text, including its negative list.
       → `.claude/skills/mission/SKILL.md`. *(R5, R6, R7)*
-- [ ] **A3** — The checklist format is specified, not improvised: stable IDs,
+- [x] **A3** — The checklist format is specified, not improvised: stable IDs,
       one observable outcome per line, the evidence kind, the path the
       evidence lands at, and the ledger back-reference. A copyable template
       lives in the skill.
       *Evidence:* the template block. → `.claude/skills/mission/SKILL.md`.
       *(R3, R4, R8)*
-- [ ] **A4** — A new `delivery-review` skill grades every ledger line and every
+- [x] **A4** — A new `delivery-review` skill grades every ledger line and every
       criterion as DELIVERED / PARTIAL / MISSING / UNPROVEN, and carries an
       explicit anti-rubber-stamp rule: evidence that exists only as a claim in
       chat is UNPROVEN, and "the code looks right" is not evidence.
       *Evidence:* the skill file, its verdict table and its refusal rules.
       → `.claude/skills/delivery-review/SKILL.md`. *(R1, R2, R4, R9)*
-- [ ] **A5** — The reviewer runs in a fresh-context subagent: the skill states
+- [x] **A5** — The reviewer runs in a fresh-context subagent: the skill states
       the exact inputs it may receive (`GOAL.md`, the diff, evidence files) and
       forbids handing it the implementing session's narrative.
       *Evidence:* the dispatch section naming inputs and the prohibition.
       → `.claude/skills/delivery-review/SKILL.md`. *(R1, R10)*
-- [ ] **A6** — Gap handling is bounded and autonomous: fix, re-review, at most
+- [x] **A6** — Gap handling is bounded and autonomous: fix, re-review, at most
       three rounds, then escalate to the trader. The only way to ship a gap is
       a deferral the trader approved, recorded in both `GOAL.md` and the PR
       body.
       *Evidence:* the loop section with the round bound and the deferral rule.
       → `.claude/skills/delivery-review/SKILL.md`. *(R9, R10)*
-- [ ] **A7** — `pr-gate` denies `gh pr create` until **both** `arch-review-ok`
+- [x] **A7** — `pr-gate` denies `gh pr create` until **both** `arch-review-ok`
       and `delivery-review-ok` match the exact HEAD, and the denial names which
       marker is missing or stale.
       *Evidence:* passing cases in the hook's own test file, run and pasted.
       → `.claude/hooks/guardrails.sh`, `.claude/hooks/guardrails_test.sh`.
       *(R2, R9, R10)*
-- [ ] **A8** — `CLAUDE.md` and the `ship` skill name the new gate, so the
+- [x] **A8** — `CLAUDE.md` and the `ship` skill name the new gate, so the
       requirement does not live only inside `mission`.
       *Evidence:* the workflow bullet and the ship step.
       → `CLAUDE.md`, `.claude/skills/ship/SKILL.md`. *(R2)*
-- [ ] **A9** — This mission dogfoods its own mechanism: this file is written in
+- [x] **A9** — This mission dogfoods its own mechanism: this file is written in
       the new format that `mission` now documents — request ledger, decisions,
       assumptions, criteria, closing steps, verbatim request.
       *Evidence:* this file, read against the format spec in the skill.
@@ -141,7 +141,7 @@ claim in the session transcript is **UNPROVEN**, not met.
       `mission/SKILL.md`'s *Closing steps are not criteria*. Written as an `A`
       it would have failed every time, including this one.
 
-- [ ] **A10** — `GOAL.md` carries the trader's request quoted in full and
+- [x] **A10** — `GOAL.md` carries the trader's request quoted in full and
       verbatim, as its last section, so `delivery-review` can re-derive the asks
       itself and report any the ledger failed to carry. Without it the reviewer
       grades the mission's own summary and the gate is self-referential.
@@ -153,7 +153,7 @@ claim in the session transcript is **UNPROVEN**, not met.
 
 ### Standard gates
 
-- [ ] **G1** — English throughout, per `CLAUDE.md`. `language_guard` scans
+- [x] **G1** — English throughout, per `CLAUDE.md`. `language_guard` scans
       `.claude/skills` and `.claude/hooks`, but only the extensions in its
       `SCANNED_EXTS` — `rs`, `pine`, `md`, `html`, `toml`. **`.sh` is not among
       them**, so this branch's only executable file, `guardrails.sh`, has no
@@ -165,17 +165,19 @@ claim in the session transcript is **UNPROVEN**, not met.
       *Evidence:* `language_guard` output at the shipped HEAD, plus a stated
       reading of the shell script and the branch/commit prose the guard cannot
       see. → `scratchpad/delivery-review/cargo-test.log`, `scratchpad/delivery-review/checks.md`.
-- [ ] **G2** — `cargo fmt --all -- --check`, `cargo clippy --workspace
+- [ ] **G2** — *(deferred with the trader's approval — see `## Deferred`;
+      three of four checks exit 0, the fourth is the `python3` alias)*
+      `cargo fmt --all -- --check`, `cargo clippy --workspace
       --all-targets -- -D warnings`, `cargo build --workspace`, `cargo test
       --workspace`, each run separately, all green on a branch rebased on
       latest `main`.
       *Evidence:* the four exit codes, each naming the HEAD they were run
       against. → `scratchpad/delivery-review/checks.md`, `scratchpad/delivery-review/cargo-test.log`.
-- [ ] **G3** — `sh .claude/hooks/guardrails_test.sh` green. Cargo cannot see
+- [x] **G3** — `sh .claude/hooks/guardrails_test.sh` green. Cargo cannot see
       it; CI runs it as its own step, so it is run locally too.
       *Evidence:* the test script's own summary line, plus the by-hand gate
       probe. → `scratchpad/delivery-review/guardrails_test.log`, `scratchpad/delivery-review/gate-probe.log`.
-- [ ] **G4** — Performance impact declared. The honest class is **per shell
+- [x] **G4** — Performance impact declared. The honest class is **per shell
       tool call**, not "rare": `pr-gate` and `commit-reminder` both run on every
       `Bash` and `PowerShell` call, so whatever they do before deciding "not my
       business" is paid on every command a session issues. That is why the
@@ -186,7 +188,7 @@ claim in the session transcript is **UNPROVEN**, not met.
       names the gated program. Nothing in this branch executes in the product.
       *Evidence:* the rate class stated with the reason no numbers are
       required. → `scratchpad/delivery-review/checks.md`.
-- [ ] **G5** — `arch-review` run over `git diff origin/main...HEAD` (the remote
+- [x] **G5** — `arch-review` run over `git diff origin/main...HEAD` (the remote
       ref, per the rule this branch adds to CLAUDE.md), every Blocker and
       Should-fix resolved or deferred in the PR body. Shape dimensions 1–7 are
       waived for the prose-only skill files and **not** for `guardrails.sh`

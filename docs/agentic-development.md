@@ -36,6 +36,7 @@ name as a slash command.
 | `new-task` | Starts work from a GitHub issue: reads it, branches from updated `main` with the right prefix, moves the board card. |
 | `new-extension` | The build-time twin of the review question below. `arch-review` asks after the fact whether a feature could have been a new file plus one registration line; this skill designs it that way from the start. |
 | `arch-review` | The pre-PR review. Step 0 runs a correctness pass; then it grades *shape* — does the change dock like a module, does it declare its performance impact, do its tests stay out of the shipped binary, is it drivable without a mouse, does it hide anything behind a magic number, is it English throughout. |
+| `delivery-review` | The other pre-PR review, and the one that asks a different question: not *is this well built* but **is this what was asked for**. It grades every ask in the mission's request ledger and every acceptance criterion — DELIVERED, PARTIAL, MISSING or UNPROVEN — from a fresh-context subagent that never sees the implementing session's account of its own work. |
 | `visual-qa` | Autonomous visual QA. Drives every affected surface through the harness hooks, **asks the live control plane what the application believes is on screen**, captures a state matrix, and reads the images against a defect checklist. |
 | `trader-ux-review` | The same screenshots, judged by trader personas against order-flow heuristics: does this cost attention, clicks or trust at a moment the market is moving? |
 | `ui-harness` | The contract that makes the two above possible: every user-visible surface must be reachable from a fresh launch by environment hooks alone, zero clicks. A new panel that cannot be opened without a mouse is an incomplete panel. |
@@ -50,7 +51,7 @@ reachable only by mouse fails both.
 
 ## The gates
 
-Three things stand between a change and `main`, and none of them is the
+Four things stand between a change and `main`, and none of them is the
 agent's own judgement that it is finished.
 
 **The four-check verification loop.** `cargo fmt --all -- --check`, then
@@ -62,10 +63,21 @@ test script, `ruff check --select F` over the Python under `tools/mt5/` and
 tests — whose own comment records that without that step a revert ships
 green. A PR with red CI is never merged.
 
-**`arch-review` over `git diff main...HEAD`.** Every Blocker and Should-fix
-finding is resolved before the PR opens. A finding deliberately deferred is
-named in the PR body, so the deferral is a decision on the record rather than
-an omission.
+**`arch-review` over `git diff origin/main...HEAD`.** Every Blocker and
+Should-fix finding is resolved before the PR opens. A finding deliberately
+deferred is named in the PR body, so the deferral is a decision on the record
+rather than an omission. The range names the remote deliberately: `git fetch`
+moves `origin/main` and leaves the local `main` ref behind, so `main...HEAD` in
+a worktree shows other branches' merged work as though this branch wrote it.
+
+**`delivery-review` over the branch as shipped.** `arch-review` takes the
+change as given and grades how well it is made; it never opens the request and
+checks that all of it arrived. That is this gate's only question. It reads the
+mission's goal file — the request quoted verbatim, the ledger of asks derived
+from it, the acceptance criteria — and grades each one, from a subagent that
+receives artifacts rather than the implementing session's story. It passes only
+when nothing is MISSING, PARTIAL or UNPROVEN, and a gap ships only as a
+deferral the maintainer approved.
 
 **The review gates the work actually earns.** `mission` decides which apply:
 a change a trader touches mid-session gets `trader-ux-review`; anything
@@ -74,8 +86,9 @@ English check or the correctness pass.
 
 ## The hooks that make the gates real
 
-Two of those rules — work in a worktree, run arch-review before the PR —
-were enforceable only by an agent remembering them. They are now walls the
+Three of those rules — work in a worktree, run arch-review before the PR, and
+grade the branch against what was asked — were enforceable only by an agent
+remembering them. They are now walls the
 harness puts up, in `.claude/hooks/guardrails.sh`.
 
 [`.claude/hooks/README.md`](../.claude/hooks/README.md) owns the details — the
@@ -83,9 +96,10 @@ three modes, what each denies, the overrides and why they fail open — and is
 not repeated here. What is worth pulling out for an outside reader is the one
 design decision that makes the gate honest rather than decorative:
 
-> The marker `pr-gate` reads holds **the commit sha the review covered**, not
+> Each marker `pr-gate` reads holds **the commit sha the review covered**, not
 > a timestamp or a boolean. Commit again after reviewing and the sha no longer
-> matches, so the gate denies and names both shas.
+> matches, so the gate denies and names both shas. There are two of them, one
+> per review, because a branch that passed one has not passed the other.
 
 A marker that only recorded "a review happened" would pass while the newest
 three commits went unreviewed — which is the failure this repository

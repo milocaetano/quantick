@@ -80,27 +80,37 @@ matcher (`"if": "Bash(gh pr create:*)"`). These hooks do not use it. A matcher
 that silently fails to match leaves a gate that looks armed and is not, which
 is worse than no gate, and the exact syntax was not verifiable from the docs.
 Each mode inspects the tool payload itself and exits immediately when the
-command is not its business. That exit is one `case` over a substring, which
-matters because it runs on every `Bash` and `PowerShell` call in a session,
-twice — `pr-gate` before and `commit-reminder` after. An earlier version parsed
-the command into statements first, four `sed` stages deep, and measured about
-34 ms slower per call on this machine: roughly 70 ms added to every shell tool
-call for a check that answers "no" almost every time.
+command is not its business, so the cost on unrelated calls is one `sed` and
+the behaviour is covered by tests.
+
+### What `pr-gate` can and cannot see
+
+`runs_command` splits a command on `&&`, `||` and `;` and anchors the match to
+the start of a segment. Spellings that put the gated command somewhere else are
+not detected: a pipe (`cat body.md | gh pr create --body-file -`, which is what
+`ship` step 6 recommends), a newline, an `env`/`time`/`sudo` wrapper, a
+`VAR=value` prefix, `bash -c '…'`, a brace group, an absolute path.
+
+That is a real gap and it is deliberately left as it was rather than deepened
+here. Closing it by parsing harder was tried, over five review rounds, and did
+not converge: each round shut some spellings and opened others, and twice
+produced a denial whose own remedy — telling the agent to record markers in the
+main checkout's shared git dir — would have disabled the gate permanently for
+every later branch. A half-parser that looks airtight is worse than a narrow
+one that is written down, because only the first kind gets trusted.
+
+Widening it is its own change with its own review. What this gate is for is the
+failure the repo actually hits: forgetting the review entirely, or reviewing
+and then pushing three more commits.
 
 ### What worktree-guard does not see
 
 It matches `Edit|Write|NotebookEdit`, so it guards writes made through the file
 tools. A write driven from a shell — `Set-Content`, `sed -i`, `python` editing
 a file in place, a heredoc redirect — reaches the main checkout unguarded, and
-this repo's own notes make scripted edits routine.
-
-Closing that would mean deciding, from a command string, whether it writes and
-where. `pr-gate` already does a narrower version of that (does this command run
-one named program?) and it took four review rounds and ten discovered
-spellings to make it hold. Applying the same approach to "does this write a
-file" is a larger surface with no equivalent anchor, so the gap is documented
-rather than half-covered: a guard that catches four spellings out of five
-teaches the reader it is a wall when it is a fence.
+this repo's own notes make scripted edits routine. Same reasoning as above:
+deciding "does this command write a file, and where" from a command string is a
+larger version of the problem that would not converge for one named program.
 
 ## Fail-open by design
 
@@ -114,13 +124,9 @@ written down in CLAUDE.md.
 
 - `QUANTICK_ALLOW_MAIN_WRITES=1` in the environment before launching disables
   `worktree-guard`, for the rare deliberate edit on the main checkout.
-- `QUANTICK_SKIP_PR_GATE=1` does the same for `pr-gate`. It exists because
-  that gate deliberately errs toward denying: it splits a command on
-  separators a quoted string can also contain, so a commit message or a
-  heredoc that merely *names* `gh pr create` after a `&&` or a pipe is denied
-  along with the real thing. The alternative error is a PR opening unreviewed,
-  and that one is silent. An override used shows up in the transcript where a
-  reader can see it; a spelling that slips past the gate shows up nowhere.
+- `pr-gate` has no override. It does not need one: it fires only on a command
+  whose first statement is `gh pr create`, so a commit message that merely
+  mentions the phrase after a separator is not caught by it.
 - Paths under `.claude/` are always allowed: the goal file, its archives, the
   skills and these hooks live in the main checkout by design, and blocking
   them would break the workflow the guard exists to protect.
