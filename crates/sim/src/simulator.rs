@@ -538,10 +538,18 @@ impl Simulator {
                 )?;
                 position.stop_loss = stop_loss;
                 position.take_profit = take_profit;
-                Ok(vec![VenueEvent::BracketSet {
+                // Replacing the protection replaces all of it. A ladder left
+                // armed beside a new whole-position pair would protect the
+                // same quantity twice, and whichever fired first would
+                // surprise a trader who believed they had just said what
+                // protects this position.
+                let mut events = Vec::new();
+                self.sweep_protective(CancelReason::BracketReplaced, &mut events);
+                events.push(VenueEvent::BracketSet {
                     stop_loss,
                     take_profit,
-                }])
+                });
+                Ok(events)
             }
             Command::ClosePosition => {
                 if self.position.is_none() {
@@ -668,18 +676,10 @@ impl Simulator {
             return;
         }
         let reducing = opposite(side);
-        let parts: Vec<ExitPart> = bracket.parts().copied().collect();
-        for part in parts {
-            if part.is_empty() {
+        for part in fitted_parts(bracket, filled_quantity) {
+            let Some(quantity) = part.quantity else {
                 continue;
-            }
-            let quantity = part
-                .quantity
-                .unwrap_or(filled_quantity)
-                .min(filled_quantity);
-            if quantity <= Decimal::ZERO {
-                continue;
-            }
+            };
             self.next_oco += 1;
             let oco = OcoId(self.next_oco);
             if let Some(level) = part.take_profit {
@@ -931,14 +931,29 @@ impl Simulator {
                     events,
                 );
                 if position.quantity > close_quantity {
+                    // Part of the old position survives, and so does its
+                    // protection: the legs still reduce the right side, and
+                    // each clamps to what is open when it fires.
                     position.quantity = position.quantity.saturating_sub(close_quantity);
                     position.observe(at);
                     self.position = Some(position);
                 } else {
+                    // The old position is gone and its protection goes with
+                    // it: legs that reduced a long are the wrong side of the
+                    // short now opening, and left working they would exit it
+                    // at a price nothing armed for.
+                    self.sweep_protective(CancelReason::PositionClosed, events);
                     let remainder = order.quantity.saturating_sub(close_quantity);
                     if remainder > Decimal::ZERO {
                         self.position =
                             Some(opened_position(order.side, remainder, at, print, bracket));
+                        self.install_protection(
+                            order.side,
+                            remainder,
+                            print.timestamp_ms,
+                            bracket,
+                            events,
+                        );
                     }
                 }
             }
@@ -1103,6 +1118,38 @@ fn opened_position(
         stop_loss: bracket.stop_loss(),
         take_profit: bracket.take_profit(),
     }
+}
+
+/// The ladder's parts resized to cover `total` exactly.
+///
+/// A ladder is written against the entry that carried it, and the quantity
+/// it ends up protecting is not always that entry: averaging in enlarges the
+/// position, and a partial fill would shrink it. Parts are taken in order up
+/// to what is left, and the last one takes the remainder — the same rule the
+/// strategy's own resolution follows, and for the same reason. A ladder that
+/// summed short would leave a sliver of the position naked, which is the one
+/// outcome a protective ladder may never produce.
+fn fitted_parts(bracket: Bracket, total: Decimal) -> Vec<ExitPart> {
+    let mut parts: Vec<ExitPart> = bracket
+        .parts()
+        .copied()
+        .filter(|part| !part.is_empty())
+        .collect();
+    let Some(last) = parts.len().checked_sub(1) else {
+        return parts;
+    };
+    let mut assigned = Decimal::ZERO;
+    for (index, part) in parts.iter_mut().enumerate() {
+        let left = total.saturating_sub(assigned).max(Decimal::ZERO);
+        let share = if index == last {
+            left
+        } else {
+            part.quantity.unwrap_or(total).min(left)
+        };
+        assigned = assigned.saturating_add(share);
+        part.quantity = (share > Decimal::ZERO).then_some(share);
+    }
+    parts
 }
 
 /// True when `price` reaches a protective leg resting at `level`.

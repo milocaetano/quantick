@@ -19,8 +19,8 @@ use egui_phosphor::regular as icons;
 use quantick_engine::{Side, Trade};
 use quantick_sim::{
     Bracket, BracketTarget, CloseAmount, ClosedTrade, Command, EntryKind, OrderId, OrderIntent,
-    PerformanceReport, Position, SideReport, Simulator, TradingVenue, VenueEvent, history,
-    signed_points,
+    OrderRole, PerformanceReport, Position, SideReport, Simulator, TradingVenue, VenueEvent,
+    history, signed_points,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
@@ -391,6 +391,26 @@ impl Leg {
             Self::StopLoss => Bracket::whole(level, bracket.take_profit()),
             Self::TakeProfit => Bracket::whole(bracket.stop_loss(), level),
         }
+    }
+
+    /// Every level of `role` this bracket holds, rung by rung, with the
+    /// quantity each closes.
+    ///
+    /// `level` answers only the whole-bracket case, because that is the one
+    /// a drag can amend. Painting needs the other one: a ladder's rungs are
+    /// several prices, and a chart that showed none of them would leave a
+    /// protected order looking naked.
+    fn levels(self, bracket: Bracket) -> Vec<(Decimal, Option<Decimal>)> {
+        bracket
+            .parts()
+            .filter_map(|part| {
+                let level = match self {
+                    Self::StopLoss => part.stop_loss,
+                    Self::TakeProfit => part.take_profit,
+                }?;
+                Some((level, part.quantity))
+            })
+            .collect()
     }
 
     /// Whether this leg's price sits **above** the entry, for `side`.
@@ -1279,6 +1299,15 @@ pub struct PaperTrading {
     selected_strategy: Option<usize>,
     /// Whether the strategy editor window is up.
     strategy_editor_open: bool,
+    /// An edit inside the editor that has not been saved yet.
+    ///
+    /// A name is typed one character at a time and a `DragValue` fires every
+    /// frame it is held; persisting each of those would read, parse and
+    /// rewrite the sidecar - and clone the list into every tab - dozens of
+    /// times for one word, on the UI thread. The edits live in memory and
+    /// the save happens when the editor closes, which is also when the
+    /// trader has finished saying what they meant.
+    strategy_dirty: bool,
     /// Which strategy the editor has open; `None` while the list is empty.
     strategy_editing: Option<usize>,
     /// How many ticks the wheel has walked the projected bracket out from
@@ -1471,6 +1500,7 @@ impl PaperTrading {
             selected_strategy: None,
             strategy_editor_open: std::env::var(STRATEGY_EDITOR_ENV)
                 .is_ok_and(|value| value == "1"),
+            strategy_dirty: false,
             strategy_editing: None,
             ruler_ticks: 0,
             ruler_travel_px: 0.0,
@@ -1869,9 +1899,13 @@ impl PaperTrading {
             return;
         };
         let reference = self.venue.mark_price().unwrap_or_default();
-        let Some(bracket) = self.parse_bracket(side, reference) else {
+        let Some(ticket) = self.parse_bracket(side, reference) else {
             return;
         };
+        // The same three sources the aim reads, in the same order. A button
+        // sitting directly under the Strategy row must not place a bare
+        // order while that row says a ladder is armed.
+        let bracket = self.aim_bracket(side, reference, quantity, ticket);
         let events = self
             .venue
             .submit(OrderIntent::market(side, quantity).with_bracket(bracket));
@@ -2134,28 +2168,30 @@ impl PaperTrading {
             // questions stayed separate.
             let hovered = ctx.hovers_line(y) || self.hovered_order == Some(order.id);
             let shown = if dragged { self.snap(price) } else { level };
-            ctx.level_line(y, theme::ACCENT, true, LINE_WIDTH_PX, hovered, dragged);
-            ctx.gutter_chip(y, theme::ACCENT, &fmt_decimal(shown));
+            // A protective leg is a working order like any other, but it
+            // is not an entry and must never read as one: it takes its
+            // role's colour and says what it does rather than which way it
+            // trades. Four accent-dashed `SELL LMT 1` rows over a long the
+            // trader is already holding is the misreading this surface
+            // cannot afford.
+            let color = order_line_color(order.role);
+            ctx.level_line(y, color, true, LINE_WIDTH_PX, hovered, dragged);
+            ctx.gutter_chip(y, color, &fmt_decimal(shown));
             // Resting, the pill states what the gutter chip cannot — which
             // side and what kind of order waits there. The price is the
             // chip's job, and the id only matters once you mean to act on
             // it, so both wait for the open form.
+            let name = order_line_name(order);
             let mut text = if expanded {
                 format!(
-                    "#{} {} {} {} @ {}",
+                    "#{} {} {} @ {}",
                     order.id.0,
-                    side_word_upper(order.side),
-                    kind_short(order.kind),
+                    name,
                     fmt_decimal(order.quantity),
                     fmt_decimal(shown),
                 )
             } else {
-                format!(
-                    "{} {} {}",
-                    side_word_upper(order.side),
-                    kind_short(order.kind),
-                    fmt_decimal(order.quantity),
-                )
+                format!("{name} {}", fmt_decimal(order.quantity))
             };
             // An order that can remove itself says so: without this, a
             // retest limit vanishing at its target reads as a glitch.
@@ -2164,7 +2200,7 @@ impl PaperTrading {
             }
             // The ✕ is painted exactly when the press-side offers it —
             // one value, read twice, never two formulas.
-            ctx.chip_tag(y, theme::ACCENT, &text, open.is_some_and(|tag| tag.cancel));
+            ctx.chip_tag(y, color, &text, open.is_some_and(|tag| tag.cancel));
 
             // The order's own protective legs, and the handles for the ones
             // it does not have yet. Dashed, because they are a promise: they
@@ -2459,6 +2495,46 @@ impl PaperTrading {
         ctx.chip_tag(y, color, &text, !dragging);
     }
 
+    /// Every rung of a laddered bracket, labelled with the slice it closes.
+    ///
+    /// Dashed like any protection that has not armed yet, and carrying the
+    /// quantity because "TP" on three lines at three prices says nothing
+    /// about which part each one belongs to. No handles and no `×`: a rung
+    /// is the strategy's, not the pointer's.
+    fn draw_ladder_rungs(
+        &self,
+        ctx: &PaintCtx<'_>,
+        side: Side,
+        reference: Decimal,
+        bracket: Bracket,
+    ) {
+        for leg in [Leg::StopLoss, Leg::TakeProfit] {
+            let color = leg.color();
+            for (level, quantity) in leg.levels(bracket) {
+                let y = ctx.scale.y(level.to_f64().unwrap_or_default());
+                if !ctx.in_range(y) {
+                    continue;
+                }
+                ctx.level_line(y, color, true, LINE_WIDTH_PX, false, false);
+                ctx.gutter_chip(y, color, &fmt_decimal(level));
+                let share = quantity.unwrap_or(Decimal::ONE);
+                let points = signed_points(side, reference, level, share);
+                ctx.chip_tag(
+                    y,
+                    color,
+                    &format!(
+                        "{} {} · {} · {} pts",
+                        leg.word(),
+                        fmt_decimal(level),
+                        fmt_decimal(share),
+                        fmt_signed_points(points),
+                    ),
+                    false,
+                );
+            }
+        }
+    }
+
     /// Both legs of one bracket owner, plus the labelled handles for the
     /// legs it does not have yet.
     ///
@@ -2478,6 +2554,15 @@ impl PaperTrading {
         let Some((side, reference, bracket, quantity)) = self.bracket_owner(owner) else {
             return;
         };
+        // A ladder's rungs are several prices and none of them is amendable
+        // by a drag: the numbers belong to the strategy that shaped them.
+        // They are drawn — an order the trader protected must never look
+        // naked — and then this function stops, so no handle is offered that
+        // would replace the whole ladder with one level.
+        if bracket.is_laddered() {
+            self.draw_ladder_rungs(ctx, side, reference, bracket);
+            return;
+        }
         for leg in [Leg::StopLoss, Leg::TakeProfit] {
             self.draw_bracket_leg(
                 ctx,
@@ -3023,6 +3108,24 @@ impl PaperTrading {
             return (None, None);
         }
         (Some(stop), Some(target))
+    }
+
+    /// The protection an entry would carry right now: the ticket's armed
+    /// ladder, its ruler, or its typed offsets.
+    ///
+    /// The reading half of what a click resolves, exposed so a named call
+    /// arrives at the same answer instead of re-deriving one beside it.
+    #[must_use]
+    pub(crate) fn armed_bracket(
+        &self,
+        side: Side,
+        reference: Decimal,
+        quantity: Decimal,
+    ) -> Bracket {
+        let ticket = self
+            .ticket_bracket(side, reference)
+            .unwrap_or_else(|_| Bracket::none());
+        self.aim_bracket(side, reference, quantity, ticket)
     }
 
     /// The strategies the trader keeps, in their own order.
@@ -4054,7 +4157,7 @@ impl PaperTrading {
                     .small(),
             )
             .on_hover_text(
-                "a named exit ladder: the order rests with its parts already drawn on \\
+                "a named exit ladder: the order rests with its parts already drawn on \
                  the chart. <None> rests a bare order you bracket by hand",
             );
             let selected = self.selected_order_strategy().map_or_else(
@@ -4097,6 +4200,9 @@ impl PaperTrading {
                     .small(),
             );
         }
+        // The editor's own edits are held until it closes; see
+        // `strategy_dirty`. The selection above is not one of them - it is a
+        // single click that decides what the next order carries.
         changed |= self.draw_strategy_editor(ui.ctx());
         changed
     }
@@ -4138,7 +4244,7 @@ impl PaperTrading {
                         {
                             self.strategies.push(new_strategy(self.strategies.len()));
                             self.strategy_editing = Some(self.strategies.len() - 1);
-                            changed = true;
+                            self.strategy_dirty = true;
                         }
                         if let Some(index) = self.strategy_editing
                             && ui
@@ -4146,31 +4252,42 @@ impl PaperTrading {
                                 .on_hover_text("remove this strategy")
                                 .clicked()
                         {
-                            let removed = self.strategies.remove(index).name;
-                            // A selection pointing at a deleted strategy
-                            // would silently arm its neighbour.
-                            if self
+                            // Read the selection's *name* before the list
+                            // shifts: resolving the index afterwards answers
+                            // with whichever strategy slid into that slot, and
+                            // the ticket would silently arm the neighbour of
+                            // the one that was deleted.
+                            let selected = self
                                 .selected_order_strategy()
-                                .is_none_or(|current| current.name == removed)
-                            {
-                                self.selected_strategy = None;
-                            }
+                                .map(|strategy| strategy.name.clone());
+                            let removed = self.strategies.remove(index).name;
+                            self.selected_strategy =
+                                selected.filter(|name| *name != removed).and_then(|name| {
+                                    self.strategies
+                                        .iter()
+                                        .position(|strategy| strategy.name == name)
+                                });
                             self.strategy_editing = if self.strategies.is_empty() {
                                 None
                             } else {
                                 Some(index.min(self.strategies.len() - 1))
                             };
-                            changed = true;
+                            self.strategy_dirty = true;
                         }
                     });
                     ui.separator();
                     ui.vertical(|ui| {
-                        changed |= self.draw_strategy_rows(ui);
+                        // Structural edits and typed ones alike: held until
+                        // the window closes, so one word is one save.
+                        self.strategy_dirty |= self.draw_strategy_rows(ui);
                     });
                 });
             });
         if !open {
             self.strategy_editor_open = false;
+            // Closing is the save point: whatever was typed is what the
+            // trader meant, and it reaches disk once.
+            changed |= std::mem::take(&mut self.strategy_dirty);
         }
         changed
     }
@@ -5760,6 +5877,31 @@ impl PaperTrading {
                         order.id
                     ));
                 }
+                // A ladder's own bookkeeping, for the same reason: up to
+                // eight chips can vanish at once when a part closes or the
+                // position ends, and a trader watching them go needs the
+                // sentence more than they needed it for a single leg.
+                VenueEvent::Cancelled {
+                    order,
+                    reason: quantick_sim::CancelReason::OcoFilled,
+                } => {
+                    self.show_toast(format!("SIM cancelled {}: its pair filled", order.id));
+                }
+                VenueEvent::Cancelled {
+                    order,
+                    reason: quantick_sim::CancelReason::PositionClosed,
+                } => {
+                    self.show_toast(format!(
+                        "SIM cancelled {}: the position it protected is closed",
+                        order.id
+                    ));
+                }
+                VenueEvent::Cancelled {
+                    order,
+                    reason: quantick_sim::CancelReason::BracketReplaced,
+                } => {
+                    self.show_toast(format!("SIM cancelled {}: protection replaced", order.id));
+                }
                 _ => {}
             }
         }
@@ -5929,6 +6071,28 @@ fn summarise_strategy(strategy: &crate::order_strategies::OrderStrategy) -> Stri
         })
         .collect();
     rungs.join(" · ")
+}
+
+/// A working order's line colour: accent for an entry waiting to trade, the
+/// leg's own side colour for protection guarding a position.
+fn order_line_color(role: OrderRole) -> egui::Color32 {
+    match role {
+        OrderRole::Entry => theme::ACCENT,
+        OrderRole::StopLoss => theme::SELL,
+        OrderRole::TakeProfit => theme::BUY,
+    }
+}
+
+/// What a working order calls itself in its tag. An entry names its side and
+/// kind, because those are what the accent line cannot say; a protective leg
+/// names its job, because "SELL LMT" over a long is a lie about what it is
+/// waiting to do.
+fn order_line_name(order: &quantick_sim::Order) -> String {
+    match order.role {
+        OrderRole::Entry => format!("{} {}", side_word_upper(order.side), kind_short(order.kind)),
+        OrderRole::StopLoss => "SL".to_owned(),
+        OrderRole::TakeProfit => "TP".to_owned(),
+    }
 }
 
 /// The three headline tiles: NET (the one coloured number in the window),
@@ -9825,6 +9989,33 @@ mod tests {
         // And the bound is the same bound: a caller cannot reach past what
         // the wheel itself clamps to.
         assert_eq!(by_name.set_ruler_ticks(u32::MAX), RULER_MAX_TICKS);
+    }
+
+    /// The ticket's own buttons honour the ticket's own strategy.
+    ///
+    /// The Strategy row sits directly above BUY/SELL and prints what is
+    /// armed; a button under it that placed a bare order would be two
+    /// surfaces disagreeing about the very next order.
+    #[test]
+    fn the_market_buttons_honour_the_selected_strategy() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        paper.set_order_strategies(vec![halves()], Some("halves"));
+        paper.qty_text = "2".to_owned();
+
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+
+        let legs: Vec<_> = paper
+            .working_orders()
+            .iter()
+            .filter(|order| order.is_protective())
+            .collect();
+        assert_eq!(
+            legs.len(),
+            4,
+            "both rungs armed from the button, not a bare order: {legs:?}"
+        );
     }
 
     /// A frame with the aim's modifier held and wheel travel to spend.

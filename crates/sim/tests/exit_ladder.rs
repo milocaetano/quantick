@@ -310,6 +310,121 @@ fn a_whole_bracket_arms_the_position_pair_and_makes_no_legs() {
     assert!(sim.orders().is_empty());
 }
 
+/// A reversal takes the old protection with it and arms its own.
+///
+/// The legs that reduced a long are the wrong side of the short that
+/// replaces it: left working they would exit the new position at a price
+/// nothing armed for, and a stop below a short is a winning price.
+#[test]
+fn a_reversal_sweeps_the_old_legs_and_arms_the_new_position() {
+    let mut sim = seeded(5000);
+    place_laddered_entry(&mut sim);
+    sim.on_trade(&print(1, 4990));
+    assert_eq!(protective(&sim).len(), 4, "the long is laddered");
+
+    // Sell four against a long of two: two close it, two open a short.
+    sim.apply(Command::PlaceMarket {
+        side: Side::Sell,
+        quantity: dec(4),
+        bracket: Bracket::ladder(&[
+            ExitPart {
+                quantity: Some(Decimal::ONE),
+                take_profit: Some(dec(4900)),
+                stop_loss: Some(dec(5050)),
+            },
+            ExitPart {
+                quantity: Some(Decimal::ONE),
+                take_profit: Some(dec(4880)),
+                stop_loss: Some(dec(5060)),
+            },
+        ])
+        .expect("two parts"),
+    });
+    sim.on_trade(&print(2, 4990));
+
+    let position = sim.position().expect("the short opened");
+    assert_eq!(position.side, Side::Sell);
+    assert_eq!(position.quantity, dec(2));
+
+    let legs = protective(&sim);
+    assert!(
+        legs.iter().all(|leg| leg.side == Side::Buy),
+        "a short is reduced by buys, not by the dead long's sells: {legs:?}"
+    );
+    let stops: Vec<_> = legs
+        .iter()
+        .filter(|leg| leg.role == OrderRole::StopLoss)
+        .filter_map(|leg| leg.price)
+        .collect();
+    assert_eq!(
+        stops,
+        vec![dec(5050), dec(5060)],
+        "the short's own rungs, above it"
+    );
+}
+
+/// Averaging into a laddered position re-protects the whole of it.
+///
+/// A ladder is written against the entry that carried it; the position it
+/// ends up guarding is larger. Parts that summed to the new entry alone
+/// would leave the rest of the position naked.
+#[test]
+fn averaging_in_covers_the_whole_position_not_just_the_new_entry() {
+    let mut sim = seeded(5000);
+    place_laddered_entry(&mut sim);
+    sim.on_trade(&print(1, 4990));
+
+    // Add one more contract carrying the same two-part ladder.
+    sim.apply(Command::PlaceMarket {
+        side: Side::Buy,
+        quantity: Decimal::ONE,
+        bracket: two_part_ladder(),
+    });
+    sim.on_trade(&print(2, 4990));
+
+    let position = sim.position().expect("the long grew");
+    assert_eq!(position.quantity, dec(3));
+    let stopped: Decimal = protective(&sim)
+        .iter()
+        .filter(|leg| leg.role == OrderRole::StopLoss)
+        .map(|leg| leg.quantity)
+        .sum();
+    assert_eq!(
+        stopped, position.quantity,
+        "every contract is stopped, not just the one that was added"
+    );
+}
+
+/// Replacing the position's pair replaces the ladder it replaces.
+///
+/// Two mechanisms guarding one position is two answers to "what protects
+/// this", and whichever fired first would surprise the trader who thought
+/// they had just said.
+#[test]
+fn setting_a_whole_bracket_sweeps_the_ladder_it_replaces() {
+    let mut sim = seeded(5000);
+    place_laddered_entry(&mut sim);
+    sim.on_trade(&print(1, 4990));
+    assert_eq!(protective(&sim).len(), 4);
+
+    let events = sim.apply(Command::SetBracket {
+        stop_loss: Some(dec(4960)),
+        take_profit: Some(dec(5030)),
+    });
+    assert_eq!(
+        cancels(&events).len(),
+        4,
+        "every rung stood down, and said so: {events:?}"
+    );
+    assert!(
+        protective(&sim).is_empty(),
+        "nothing of the ladder is left armed"
+    );
+    let position = sim.position().expect("still long");
+    assert_eq!(position.stop_loss, Some(dec(4960)));
+    assert_eq!(position.take_profit, Some(dec(5030)));
+}
+
 /// The determinism guard: the same prints and the same commands at the same
 /// points in the stream produce identical events, twice over.
 #[test]

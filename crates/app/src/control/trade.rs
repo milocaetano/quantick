@@ -70,6 +70,10 @@ pub(crate) const CANCEL_EVENT_KIND: &str = "trade.order.cancelled";
 
 pub(crate) const PLACE_CAPABILITY_ID: &str = "trade.order.place";
 pub(crate) const BRACKET_CAPABILITY_ID: &str = "trade.order.bracket";
+/// What the two shaping calls journal under. They place nothing, so an
+/// order-placed event would put a phantom order in the trail the constants
+/// above exist to keep honest.
+pub(crate) const TICKET_EVENT_KIND: &str = "trade.ticket.changed";
 const SELECT_STRATEGY_CAPABILITY_ID: &str = "trade.strategy.select";
 const SET_RULER_CAPABILITY_ID: &str = "trade.ruler.set";
 pub(crate) const CANCEL_CAPABILITY_ID: &str = "trade.order.cancel";
@@ -368,7 +372,7 @@ fn place_order(
             ));
         }
     };
-    let bracket = Bracket::whole(
+    let named = Bracket::whole(
         input
             .stop_loss
             .as_deref()
@@ -380,6 +384,21 @@ fn place_order(
             .map(|text| parse_price("take_profit", text))
             .transpose()?,
     );
+    // Levels the caller named win; otherwise the call takes what the
+    // ticket is set to, exactly as a click does. A named call that
+    // ignored the armed ladder while the result it answers with reports
+    // that ladder would be the two-surfaces bug this rule exists to
+    // prevent.
+    let bracket = if named.is_empty() {
+        let paper = app.control_active_paper().ok_or_else(no_chart_open)?;
+        let reference = intent
+            .price
+            .or_else(|| paper.mark_price())
+            .unwrap_or_default();
+        paper.armed_bracket(intent.side, reference, intent.quantity)
+    } else {
+        named
+    };
     let events = app
         .control_active_paper_mut()
         .ok_or_else(no_chart_open)?
@@ -551,26 +570,42 @@ pub(crate) struct SetRulerInput {
     pub ticks: u32,
 }
 
+/// A shaping call's descriptor: `descriptor`'s shape with the three fields
+/// that are simply not true of it corrected.
+///
+/// Placing an order is transient, forbidden to retry and answers with the
+/// order it made. Choosing a ladder or moving the ruler is none of those: it
+/// rewrites the paper-state sidecar and fans out to every tab, so it is
+/// durable; setting the same value twice leaves the same value, so it is
+/// idempotent; and it places nothing.
+fn shaping_descriptor(inner: CapabilityDescriptor) -> CapabilityDescriptor {
+    CapabilityDescriptor {
+        persistence: EffectPersistence::Durable,
+        idempotency: IdempotencyPolicy::Optional,
+        ..inner
+    }
+}
+
 fn select_strategy_descriptor() -> CapabilityDescriptor {
-    descriptor(
+    shaping_descriptor(descriptor(
         SELECT_STRATEGY_CAPABILITY_ID,
         "Choose the ticket's exit ladder",
         "Sets which named exit strategy the next order rests with, or none for a bare order. Changes no order that already exists and never touches an open position; the same call the ticket's own selector makes.",
         generated_schema::<SelectStrategyInput>(),
         false,
         "The call names the strategy it selected and answers with the one that is now set, so a caller working from a stale read can see that it chose something else. It changes nothing that is already working.",
-    )
+    ))
 }
 
 fn set_ruler_descriptor() -> CapabilityDescriptor {
-    descriptor(
+    shaping_descriptor(descriptor(
         SET_RULER_CAPABILITY_ID,
         "Set the aim's ruler distance",
         "Walks the projected stop and target out from an aimed entry, the same distance on both sides, in ticks of the instrument. Zero puts the ruler away. Shapes what the next order would carry rather than changing one that exists - the read a trader takes before committing.",
         generated_schema::<SetRulerInput>(),
         false,
         "The call answers with where the ruler actually landed, clamped to what the wheel itself can reach, so a caller that asked for more can see what it got. It changes nothing that is already working.",
-    )
+    ))
 }
 
 fn select_strategy(
@@ -594,7 +629,7 @@ fn select_strategy(
     paper.set_order_strategies(strategies, input.name.as_deref());
     app.control_persist_order_strategies();
     let result = answer(app, &[]);
-    journal(access, actor, PLACE_EVENT_KIND, &result, asked);
+    journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
 }
 
@@ -611,7 +646,7 @@ fn set_ruler(
         .ok_or_else(no_chart_open)?
         .set_ruler_ticks(input.ticks);
     let result = answer(app, &[]);
-    journal(access, actor, PLACE_EVENT_KIND, &result, asked);
+    journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
 }
 

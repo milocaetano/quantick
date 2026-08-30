@@ -4851,7 +4851,12 @@ impl ChartPane {
                 }
             }
         }
-        if chart.hovered() {
+        // One wheel, one meaning at a time. While an aim is up the ruler has
+        // already spent this frame's travel walking a bracket out, and the
+        // same roll must not also rescale the plot under it. The guard is
+        // here as well as on the stacked panes' accumulated gesture, because
+        // this is the canvas the aim actually lives on.
+        if chart.hovered() && !chrome.paper.consumed_scroll() {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if scroll.abs() > 0.0 {
                 // Scroll up (positive) zooms in — the candles, wherever on the

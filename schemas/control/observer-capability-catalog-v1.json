@@ -7328,7 +7328,7 @@
         "max_response_bytes": 8388608
       },
       "id": "trade.ruler.set",
-      "idempotency": "forbidden",
+      "idempotency": "optional",
       "input_schema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -7462,7 +7462,7 @@
         "title": "TradeResult",
         "type": "object"
       },
-      "persistence": "transient",
+      "persistence": "durable",
       "preconditions": [],
       "read_only": false,
       "required_permissions": [
@@ -7491,7 +7491,7 @@
         "max_response_bytes": 8388608
       },
       "id": "trade.strategy.select",
-      "idempotency": "forbidden",
+      "idempotency": "optional",
       "input_schema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -7623,7 +7623,7 @@
         "title": "TradeResult",
         "type": "object"
       },
-      "persistence": "transient",
+      "persistence": "durable",
       "preconditions": [],
       "read_only": false,
       "required_permissions": [
