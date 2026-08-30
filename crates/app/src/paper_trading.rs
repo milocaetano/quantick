@@ -4200,10 +4200,9 @@ impl PaperTrading {
                     .small(),
             );
         }
-        // The editor's own edits are held until it closes; see
-        // `strategy_dirty`. The selection above is not one of them - it is a
-        // single click that decides what the next order carries.
-        changed |= self.draw_strategy_editor(ui.ctx());
+        // The editor itself is drawn from the app's own frame, not from
+        // here: it is a window, and a window that lives inside a dock tab
+        // disappears the moment the trader looks at another panel.
         changed
     }
 
@@ -4214,20 +4213,33 @@ impl PaperTrading {
     /// trader finishes and closes - it is not part of reading the chart.
     ///
     /// Returns true when anything changed, so the app can persist it.
-    fn draw_strategy_editor(&mut self, ctx: &egui::Context) -> bool {
+    pub(crate) fn draw_strategy_editor(&mut self, ctx: &egui::Context) -> bool {
         if !self.strategy_editor_open {
             return false;
+        }
+        // Opening onto a blank right pane while the list holds strategies is
+        // an editor that looks broken. Whatever route opened it - the
+        // ticket's button, or the launch hook, which has no click to carry a
+        // choice - it opens on the one the ticket is armed with, else the
+        // first.
+        if self.strategy_editing.is_none() && !self.strategies.is_empty() {
+            self.strategy_editing = Some(self.selected_strategy.unwrap_or(0));
         }
         let mut changed = false;
         let mut open = true;
         egui::Window::new("Exit strategies")
             .open(&mut open)
             .resizable(true)
-            .default_width(460.0)
+            // Clear of the plot's top-left corner, where the indicator
+            // legend lives: a window that opens under the legend reads as a
+            // broken one, and the legend is an overlay the trader cannot
+            // move out of the way.
+            .default_pos(egui::pos2(360.0, 140.0))
+            .default_width(520.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.set_min_width(130.0);
+                        ui.set_min_width(150.0);
                         ui.label(caption("STRATEGIES"));
                         for index in 0..self.strategies.len() {
                             let selected = self.strategy_editing == Some(index);

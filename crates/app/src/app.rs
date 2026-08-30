@@ -11297,6 +11297,14 @@ impl QuantickApp {
                 },
             )
         };
+        // The strategy editor is a window of the active tab's ticket, drawn
+        // whatever the dock is showing and whether it is showing at all: it
+        // is opened from the Trading tab but it does not belong to it, and a
+        // trader who opens it and then looks at the ledger has not asked for
+        // it to close.
+        if self.active_tab_mut().paper.draw_strategy_editor(ctx) {
+            self.persist_order_strategies();
+        }
         if dock_response.restart_book_capture {
             self.active_tab_mut().restart_book_capture();
         }
