@@ -178,21 +178,72 @@ run "a bash command that is not gh pr create is ignored" \
     pr-gate "$(json_bash "$root/wt" "cargo test --workspace")" silent
 
 # Every shape that runs `gh pr create` has to reach the gate. Each of these
-# walked straight past it while only `&&`, `||` and `;` counted as separators,
-# and the pipe is the one that matters most: `ship` step 6 tells the agent to
-# `use gh pr create --body-file -`, and piping the body in is how that is
-# spelled. A gate the documented spelling avoids is not a gate.
+# walked straight past it once, and the pipe is the one that matters most:
+# `ship` step 6 tells the agent to `use gh pr create --body-file -`, and piping
+# the body in is how that is spelled. A gate the documented spelling avoids is
+# not a gate.
+#
+# Every case below passes `$root/mainco` as the payload cwd, never the
+# worktree. That is the whole point: with the worktree as cwd the fallback path
+# and the intended path are the same directory, so a case denies whether or not
+# `effective_dir` understood the command — which is how the newline case came
+# to pass while `effective_dir` was misreading it into `<wt>/ngh`.
 run "a piped gh pr create is gated" \
-    pr-gate "$(json_bash "$root/wt" "cd $root/wt && cat body.md | gh pr create --body-file -")" deny
+    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && cat body.md | gh pr create --body-file -")" deny
 
 run "a newline-separated gh pr create is gated" \
-    pr-gate "$(json_bash "$root/wt" "cd $root/wt\\ngh pr create --fill")" deny
+    pr-gate "$(json_bash "$root/mainco" "cd $root/wt\\ngh pr create --fill")" deny
 
 run "an env-prefixed gh pr create is gated" \
-    pr-gate "$(json_bash "$root/wt" "cd $root/wt && GH_TOKEN=x gh pr create --fill")" deny
+    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && GH_TOKEN=x gh pr create --fill")" deny
 
 run "a heredoc body piped into gh pr create is gated" \
-    pr-gate "$(json_bash "$root/wt" "cd $root/wt && printf 'body' | gh pr create --body-file - --title x")" deny
+    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && printf 'body' | gh pr create --body-file - --title x")" deny
+
+# A statement can be dressed up before its command word, and each of these ran
+# the gated command while the match saw nothing.
+run "extra spaces inside the command do not hide it" \
+    pr-gate "$(json_bash "$root/mainco" "cd $root/wt &&  gh  pr  create --fill")" deny
+
+run "an env(1) prefix does not hide it" \
+    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && env GH_TOKEN=x gh pr create --fill")" deny
+
+run "a time prefix does not hide it" \
+    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && time gh pr create --fill")" deny
+
+run "bash -c does not hide it" \
+    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && bash -c 'gh pr create --fill'")" deny
+
+run "a brace group does not hide it" \
+    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && { gh pr create --fill; }")" deny
+
+# The command word can also be the last thing in the statement, with the
+# wrapper's closing quote right behind it. `bash -c 'gh pr create'` slipped
+# through on that trailing quote alone, while the `--fill` variant above was
+# caught — the match wanted a space or end-of-line after "create" and found a
+# quote.
+run "a quoted bash -c with no trailing argument does not hide it" \
+    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && bash -c 'gh pr create'")" deny
+
+# And the double-quoted form, which arrives with JSON's backslash escaping
+# still on it. The payload below is written by hand rather than through
+# json_bash because that escaping is the thing under test.
+run "a double-quoted sh -c does not hide it" \
+    pr-gate "$(printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"cd %s && sh -c \\"gh pr create\\""}}' "$root/mainco" "$root/wt")" deny
+
+# The gate must reach commands run through the PowerShell tool too. On Windows
+# that is the primary shell, and its payload carries the same `command` field —
+# only `.claude/settings.json`'s matcher decides whether the hook fires at all,
+# which is why that matcher names both tools.
+run "a PowerShell payload is gated like a Bash one" \
+    pr-gate "$(printf '{"tool_name":"PowerShell","cwd":"%s","tool_input":{"command":"cd %s; gh pr create --fill"}}' "$root/mainco" "$root/wt")" deny
+
+# ...and the heredoc exception, which is a deliberate false-negative rather
+# than an oversight: this repo's own docs carry a line beginning `gh pr
+# create`, and denying an agent for writing documentation would be worse than
+# the gap.
+run "a heredoc that merely contains the gated command is ignored" \
+    pr-gate "$(json_bash "$root/mainco" "cd $root/wt && cat > notes.md <<'EOF'\\nRun this:\\ngh pr create --fill\\nEOF")" silent
 
 # With neither recorded, the message must name arch-review: guardrails.sh
 # states that order as a contract ("a delivery review of a branch the shape
@@ -217,10 +268,15 @@ run_deny_naming "a delivery review recorded for an older commit is denied" \
 
 # A marker holding something other than a sha must trip the gate, not break
 # it: `deny` interpolates the contents into JSON, and a payload the harness
-# cannot parse loses the decision and lets `gh pr create` through.
+# cannot parse loses the decision and lets `gh pr create` through. The delivery
+# marker is parked at HEAD so the arch marker is the only thing left to
+# complain about, and the assertion names text only the corrupt path produces —
+# asserting on `permissionDecisionReason` would have matched every denial ever
+# emitted and proved nothing.
+set_marker delivery-review-ok "$head_sha"
 printf 'he said "hi"\nsecond line\n' > "$wt_git_dir/arch-review-ok"
-run_deny_naming "a corrupt marker denies rather than emitting broken JSON" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" '"permissionDecisionReason"'
+run_deny_naming "a corrupt marker is reported as not a commit id" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" '(not a commit id)'
 
 corrupt_out=$(printf '%s' "$(json_bash "$root/wt" "gh pr create --fill")" |
     sh "$GUARDRAILS" pr-gate 2>/dev/null)
@@ -374,7 +430,11 @@ done
 # name follows `absolute-git-dir)/`, it has to be a marker the script defines.
 for doc in $flow_docs $review_skills CLAUDE.md; do
     [ -f "$repo_root/$doc" ] || continue
-    for written in $(sed -n 's|.*absolute-git-dir)/\([A-Za-z0-9._-]*\).*|\1|p' "$repo_root/$doc" | sort -u); do
+    # `grep -o`, not `sed`: a leading `.*` is greedy, so a sed extraction reads
+    # only the last recording command on a line. No doc line carries two today,
+    # which made that green by luck — put both markers in one table row and a
+    # rename of the first would go unseen by the check written to catch it.
+    for written in $(grep -o -- 'absolute-git-dir)/[A-Za-z0-9._-]*' "$repo_root/$doc" | sed 's|.*/||' | sort -u); do
         case "$markers_padded" in
             *" $written "*) passed=$((passed + 1)) ;;
             *)

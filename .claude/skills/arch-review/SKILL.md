@@ -83,7 +83,8 @@ invoke it. Once every Blocker and Should-fix is resolved or deferred in the PR
 body, and the branch has no further commits coming:
 
 ```sh
-cd <worktree> && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
+WT=/path/to/worktree
+cd "$WT" && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
 ```
 
 The `cd` matters: both `git` calls resolve against the shell's cwd, which for

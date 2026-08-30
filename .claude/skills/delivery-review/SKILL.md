@@ -78,17 +78,24 @@ claim this skill exists to disbelieve.
 # an unquoted placeholder in angle brackets is not a placeholder to `sh`, it is
 # two redirections, and the line would truncate a file at the filesystem root.
 DOSSIER="/path/to/scratchpad/delivery-review"
+WT=/path/to/worktree            # the branch under review, not the session cwd
 mkdir -p "$DOSSIER"
+cd "$WT" || exit 1
 git fetch origin
 git diff origin/main...HEAD         > "$DOSSIER/branch.diff"
 git diff origin/main...HEAD --stat  > "$DOSSIER/branch.stat"
 git log origin/main..HEAD --oneline > "$DOSSIER/branch.log"
 ```
 
-Fetch first. A diff against a stale local `main` grades another branch's merged
-work as though this one had done it — the same trap `arch-review`'s *Scope the
-review* names, and it reads as a suspiciously generous pass rather than as an
-error.
+Both the `cd` and the fetch are load-bearing, and both fail the same quiet way.
+An agent session's cwd is the main checkout, not the worktree — this repo's own
+hook treats that as established fact — so without the `cd` the diff compares
+`main` to `origin/main` and comes back empty, and the reviewer then grades every
+criterion against a diff containing none of the branch's work. Without the
+fetch, a stale local `main` makes the diff carry other branches' merged work as
+though this one had done it. Neither mistake announces itself: both read as a
+suspiciously generous pass. Check the stat before dispatching — if it does not
+look like the branch you are reviewing, stop.
 
 **Inputs the reviewer may receive:**
 
@@ -110,21 +117,36 @@ writing the PR is a story.
 - any "I ran X and it passed" that is not backed by output written to a file,
   or that the reviewer cannot re-run itself.
 
-Dispatch with the `Agent` tool. Two constraints on the agent type, and both are
-structural — neither is satisfied by telling the reviewer to behave:
+Dispatch with the `Agent` tool.
 
 - **Never `fork`.** A fork inherits this session's context, which is exactly
-  the contamination this skill exists to remove.
-- **It must not be able to write.** Pick an agent type whose tools exclude
-  `Edit`, `Write` and `NotebookEdit` — `Explore` is the read-only type
-  available today. A reviewer with write access that notices a `MISSING`
-  criterion can write the missing line and then grade it `DELIVERED`, and the
-  result is a PASS whose evidence the reviewer manufactured. That is the one
-  failure in this whole mechanism with no downstream detector: `arch-review`
-  has already run, `pr-gate` only compares a sha, and the calling session never
-  sees the subagent's transcript *by design*. "The reviewer must not edit the
-  branch" written in prose is a rule enforced by the party it constrains, which
-  is no enforcement at all. Take the capability away instead.
+  the contamination this skill exists to remove. This one *is* structural.
+- **Give it the least write capability the harness offers.** `Explore` is the
+  closest today: its tools exclude `Edit`, `Write` and `NotebookEdit`. Be
+  clear-eyed that this narrows the capability rather than removing it — it
+  keeps `Bash`, and `printf … >> file` writes a file as surely as `Edit` does.
+  No fully read-only agent type exists here, so "the reviewer must not edit the
+  branch" is genuinely prose, and prose is a rule enforced by the party it
+  constrains.
+
+The failure that guards against is the sharpest in this whole mechanism: a
+reviewer that finds a criterion `MISSING`, writes the missing line, and then
+grades it `DELIVERED` returns a PASS whose evidence it manufactured. Nothing
+downstream sees it — `arch-review` has already run, `pr-gate` compares a sha
+and nothing else, and the calling session never reads the subagent's transcript
+*by design*.
+
+So do not rest on the prose. **Check that the branch did not move**, which the
+calling session can do and the reviewer cannot forge:
+
+```sh
+cd "$WT" && git rev-parse HEAD && git status --porcelain
+```
+
+Once before dispatch, once after the verdict returns. Any difference — a new
+commit, a dirty file — invalidates the verdict: discard it, record no marker,
+and say what changed. A review that edited what it was grading is not a review,
+and this is the one check that can tell.
 
 Hand it the checklist and the dossier paths in the prompt, tell it to read the
 repo itself for anything else, and ask for the grade table and verdict below.
@@ -252,17 +274,25 @@ trader is not the one who closes these gaps either. The session is.
   `mission`, arriving late.
 
 **Deferral** is the only way a gap ships, and only the trader grants it. A
-granted deferral is written into `GOAL.md` under a `## Deferred` heading — the
-line's ID, what is missing, why, and that the trader approved it — and repeated
-in the PR body. A deferral the session grants itself is not a deferral; it is
-the failure this skill was built to stop.
+granted deferral is written into the goal file under a `## Deferred` heading —
+the line's ID, what is missing, why, and that the trader approved it — and
+repeated in the PR body. Note *which* file that is: the mandated order archives
+`.claude/GOAL.md` to `.claude/GOAL-archive-<slug>.md` before either review
+runs, so by the time a deferral exists the archive is the file to edit. And
+editing it is a commit, which stales both markers by design — so both reviews
+run again over the new head before either is re-recorded. Re-stamping instead
+is the cheap exit this whole mechanism is built to make unattractive.
+
+A deferral the session grants itself is not a deferral; it is the failure this
+skill was built to stop.
 
 ## Step 6 — Record the marker
 
 On **PASS** only:
 
 ```sh
-cd <worktree> && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
+WT=/path/to/worktree
+cd "$WT" && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
 ```
 
 `pr-gate` denies `gh pr create` until this file holds the exact HEAD being

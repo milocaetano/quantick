@@ -132,9 +132,12 @@ else, and `delivery-review` is that someone else.
 
    ### Closing steps are not criteria
 
-   Three things finish every mission and **none of them is an `A` or a `G`**:
-   `delivery-review` returns PASS, `GOAL.md` is archived, and the PR is open.
-   List them separately, as `C1`…`Cn` under a **Closing steps** heading.
+   Two things finish every mission and **neither is an `A` or a `G`**:
+   `delivery-review` returns PASS, and the PR is open. List them separately, as
+   `C1`…`Cn` under a **Closing steps** heading. Archiving `GOAL.md` is *not*
+   among them — step 8 puts it before the reviews, as the branch's last commit,
+   and listing it here would send a reader to do it afterwards and stale both
+   markers.
 
    They are not criteria because they cannot be graded when the grading
    happens. `delivery-review` reads the checklist and grades every `A` and `G`

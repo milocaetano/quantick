@@ -23,10 +23,12 @@ sha the review it names covered:
 
 ```sh
 # after arch-review, its findings handled
-cd <worktree> && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
+WT=/path/to/worktree
+cd "$WT" && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
 
 # after delivery-review returns PASS
-cd <worktree> && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
+WT=/path/to/worktree
+cd "$WT" && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
 ```
 
 They are separate files because they answer separate questions. `arch-review`
@@ -103,15 +105,18 @@ sh .claude/hooks/guardrails_test.sh
 
 Builds throwaway git repos under a temp dir, exercises all three modes
 including the fail-open paths, and cleans up after itself. CI runs it as its
-own step. Intact, it reports `44 passed, 0 failed`.
+own step. Intact, it reports zero failures.
 
 The check that the cases test the behaviour and not the harness: replace
-`guardrails.sh` with `exit 0` and the run reports `16 passed, 23 failed`. The
-totals differ on purpose, and knowing why saves someone a bug hunt — a
+`guardrails.sh` with `exit 0` and roughly half the cases go red. No exact
+total is written down here on purpose — it moves with every case added, CI
+compares it against nothing, and a number nobody verifies is a line that
+quietly becomes false. The neutered run's total differs from the intact one
+besides, which is worth knowing before it sends someone bug-hunting: a
 neutered script defines no `*_MARKER_NAME` constants, so the loops that
-iterate them have nothing to iterate and their cases disappear, while the
-"no `MARKER_NAME` constants found" case appears in their place. Count
-failures, not the denominator.
+iterate them have nothing to iterate and their cases vanish, while the "no
+`MARKER_NAME` constants found" case appears in their place. Count failures,
+not the denominator.
 
 Five mutations were run against the suite as it was built, and it catches all
 five: neutering the arch-review staleness branch alone; swapping the order of

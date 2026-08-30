@@ -83,6 +83,14 @@ context() {
     exit 0
 }
 
+# The command as a shell would see it: JSON's doubled backslashes collapsed to
+# one. Order matters for what comes next — a Windows path arrives as
+# `C:\\new\\x`, and its `\n` must not be mistaken for JSON's two-character line
+# break, so the doubling is resolved before anything looks for `\n`.
+unescaped_command() {
+    printf '%s' "$1" | sed 's|\\\\|/|g; s|\\"|"|g'
+}
+
 # True when the command actually runs `$2` as a statement, rather than merely
 # mentioning it. A commit message body reaches the hook inside the command
 # string, so a free substring match blocks `git commit -F -` whenever the
@@ -91,37 +99,76 @@ context() {
 # Every statement separator has to be here, and the list was once short enough
 # to be a hole rather than a gap: splitting only on `&&`, `||` and `;` let
 # `cat body.md | gh pr create --body-file -` through ungated — the spelling
-# `ship` itself recommends — along with a newline in place of `&&` and a
-# `GH_TOKEN=x` prefix. A gate that the documented way of doing the thing walks
-# around is not a gate. So: pipes and newlines count as separators, the
-# two-character `\n` a JSON payload carries in place of a real one is turned
-# back into one first, and a leading `VAR=value` run of assignments is stripped
-# before the match.
+# `ship` itself recommends — along with a newline in place of `&&`. A gate the
+# documented way of doing the thing walks around is not a gate.
 #
-# The trade is deliberate. Splitting inside a quoted string can misread a
-# commit message that contains a pipe or a semicolon, and the result there is a
-# denial the author can see and argue with. The other error — a PR opening with
-# no review because of how the command was spelled — is silent, which is the
-# one this script must not make.
+# Beyond separators, a statement can be dressed up before its command word.
+# `gh  pr create` with two spaces, `env`/`time`/`sudo` in front, a `VAR=value`
+# prefix, `bash -c '…'`, an opening brace, a `then` — each of these ran the
+# gated command while the match, anchored to the literal single-spaced string,
+# saw nothing. Whitespace is squeezed and the known dressings are stripped.
+#
+# The prefix strips run twice: `env VAR=x gh` needs the wrapper gone before
+# the assignment, `VAR=x env gh` needs the reverse, and one pass can only
+# serve one of those orders.
+#
+# Two honest limits, stated rather than papered over:
+#
+#   * A heredoc carries prose, not statements, so when the command opens one
+#     (`<<`) newlines stop being separators. Without that, `cat > notes.md
+#     <<'EOF' … EOF` denies an agent for *writing documentation* — and this
+#     repo's own docs contain a line beginning `gh pr create`. The cost is that
+#     `sh <<EOF` with the gated command inside is not caught.
+#   * A determined wrapper — `xargs`, a shell function, a script — still gets
+#     past. This gate exists against forgetting, not against someone working to
+#     defeat it, and the README says the same about what the marker proves.
+#
+# Where it must not err is the other way. A misread commit message produces a
+# denial its author can see and argue with; a PR opening unreviewed because of
+# how the command was spelled is silent.
 runs_command() {
-    printf '%s' "$1" |
-        sed 's/\\n/\
-/g' |
+    runs_text=$(unescaped_command "$1")
+
+    case "$runs_text" in
+        *'<<'*) ;;
+        *) runs_text=$(printf '%s' "$runs_text" | sed 's/\\n/\
+/g') ;;
+    esac
+
+    printf '%s' "$runs_text" |
         sed 's/&&/\
 /g; s/||/\
 /g; s/;/\
 /g; s/|/\
 /g' |
-        sed 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]\{1,\}\)\{1,\}/ /' |
-        grep -qE "^[[:space:]]*$2([[:space:]]|\$)"
+        sed -E 's/^[[:space:]]*[{(][[:space:]]*/ /' |
+        sed -E 's/^[[:space:]]*(then|do|else|!)[[:space:]]+/ /' |
+        sed -E "s/^[[:space:]]*(sh|bash|zsh|pwsh|powershell)[[:space:]]+-[Cc][[:space:]]+['\"]?/ /" |
+        sed -E 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)+/ /' |
+        sed -E 's/^[[:space:]]*(env|time|sudo|nohup|command|builtin|exec)[[:space:]]+/ /' |
+        sed -E 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)+/ /' |
+        sed -E 's/^[[:space:]]*(env|time|sudo|nohup|command|builtin|exec)[[:space:]]+/ /' |
+        sed -E 's/[[:space:]]+/ /g' |
+        sed -E "s/['\"]+ ?$//" |
+        grep -qE "^ ?$2( |\$)"
 }
 
 # The directory the command operates on. The payload's `cwd` is the session's,
 # which resets between calls, while every agent command reaches its worktree
 # with a leading `cd <dir> &&`. Trusting `cwd` alone made the gate judge the
 # main checkout no matter which branch was being shipped.
+#
+# The `\n` is turned into a real line break here for the same reason
+# `runs_command` does it: once a newline counts as a separator there, a command
+# spelled `cd <wt>\ngh pr create` is *detected* — and was then judged against
+# the wrong directory, because this function read the path as `<wt>\ngh`, found
+# no such directory and fell back to the session's cwd. The denial that
+# produced named the main checkout in its recording line, which is exactly the
+# mistake `record_line` exists to prevent.
 effective_dir() {
-    d=$(printf '%s' "$1" | sed -n 's|^[[:space:]]*cd[[:space:]][[:space:]]*"\{0,1\}\([^"[:space:];&|]*\)"\{0,1\}.*|\1|p' | head -n 1)
+    dir_text=$(unescaped_command "$1" | sed 's/\\n/\
+/g')
+    d=$(printf '%s' "$dir_text" | sed -n 's|^[[:space:]]*cd[[:space:]][[:space:]]*"\{0,1\}\([^"[:space:];&|]*\)"\{0,1\}.*|\1|p' | head -n 1)
     d=$(normalize_path "$d")
     if [ -n "$d" ] && [ -d "$d" ]; then
         printf '%s' "$d"

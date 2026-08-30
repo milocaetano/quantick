@@ -33,13 +33,15 @@ description: Deliver the current branch - run the full verification loop, commit
 3. **Arch-review** (mandatory, see `CLAUDE.md`): run the `arch-review` skill over `git diff origin/main...HEAD`. Its step 0 dispatches the bundled `code-review` in the background, so this step is not done when the skill returns — it is done when those findings have landed and been handled. Fix every Blocker and Should-fix finding, re-running step 1 on whatever changed. A finding deliberately deferred is noted in the PR body. Never push or open a PR ahead of this step. Record it once the findings are handled and the branch is final:
 
    ```sh
-   cd <worktree> && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
+   WT=/path/to/worktree
+   cd "$WT" && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
    ```
 
-4. **Delivery-review** (mandatory, see `CLAUDE.md`): run the `delivery-review` skill. It grades the branch against what was asked for — every ask in `.claude/GOAL.md`'s request ledger and every acceptance criterion — from a fresh-context subagent, and passes only when nothing is MISSING, PARTIAL or UNPROVEN. It runs *after* step 3, because it grades the branch as shipped, including whatever arch-review made you change. A branch started from `/new-task` rather than `/mission` has no `GOAL.md`; the skill grades it against the linked issue's `## Acceptance criteria` and says so in the verdict. Fix what it reports and re-run, up to three rounds, then take the rest to the user. Record the marker only on PASS:
+4. **Delivery-review** (mandatory, see `CLAUDE.md`): run the `delivery-review` skill. It grades the branch against what was asked for — every ask in `.claude/GOAL.md`'s request ledger and every acceptance criterion — from a fresh-context subagent, and passes only when nothing is MISSING, PARTIAL or UNPROVEN. It runs *after* step 3, because it grades the branch as shipped, including whatever arch-review made you change. A branch started from `/new-task` rather than `/mission` has no `GOAL.md`; the skill grades it against the linked issue's `## Acceptance criteria` and says so in the verdict. Fix what it reports and re-run, up to three rounds, then take the rest to the user. Every fix is a commit, so it stales `arch-review-ok` as well — re-run step 3 over the new head and record that marker again too, rather than re-stamping a review that did not run. Record this marker only on PASS:
 
    ```sh
-   cd <worktree> && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
+   WT=/path/to/worktree
+   cd "$WT" && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
    ```
 
 5. **Push**: `git push -u origin <branch>`.
