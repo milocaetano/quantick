@@ -18,9 +18,9 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::{Side, Trade};
 use quantick_sim::{
-    Bracket, BracketTarget, CloseAmount, ClosedTrade, Command, EntryKind, OrderId, OrderIntent,
-    OrderRole, PerformanceReport, Position, SideReport, Simulator, TradingVenue, VenueEvent,
-    history, signed_points,
+    Bracket, BracketTarget, CloseAmount, ClosedTrade, Command, EntryKind, OcoId, OrderId,
+    OrderIntent, OrderRole, PerformanceReport, Position, SideReport, Simulator, TradingVenue,
+    VenueEvent, history, signed_points,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
@@ -2931,7 +2931,7 @@ impl PaperTrading {
                 (
                     position.side,
                     position.avg_price,
-                    Bracket::whole(position.stop_loss, position.take_profit),
+                    self.position_bracket(position),
                     position.quantity,
                 )
             }),
@@ -2998,6 +2998,13 @@ impl PaperTrading {
             let Some((side, reference, bracket, _)) = self.bracket_owner(owner) else {
                 continue;
             };
+            // A ladder's rungs are the strategy's, not the pointer's: they
+            // carry no cross and offer no handle, and the paint says the
+            // same. The two must agree here or a press acts on something
+            // nothing drew - and this press replaces every rung at once.
+            if bracket.is_laddered() {
+                continue;
+            }
             let reference_center = visible_center(reference);
             for leg in [Leg::TakeProfit, Leg::StopLoss] {
                 match leg.level(bracket) {
@@ -3066,6 +3073,12 @@ impl PaperTrading {
                     .working_orders()
                     .iter()
                     .rev()
+                    // A protective leg is not an entry: it *is* protection,
+                    // and offering it a bracket of its own would put SL/TP
+                    // handles beside a rung the trader is already using as
+                    // one. The venue refuses such an amendment anyway; the
+                    // chart must not offer the gesture that earns a refusal.
+                    .filter(|order| !order.is_protective())
                     .map(|order| BracketTarget::Order(order.id)),
             )
     }
@@ -3161,6 +3174,58 @@ impl PaperTrading {
             return (None, None);
         }
         (Some(stop), Some(target))
+    }
+
+    /// What actually guards the open position, whatever shape it is in.
+    ///
+    /// The position's own `stop_loss`/`take_profit` answer only the plain
+    /// pair; under a ladder they are `None` and the working legs carry the
+    /// truth. Reading the pair alone left a laddered position drawn as if it
+    /// had no protection at all *and* offering the create-handles of an
+    /// unprotected one - and one drag on those replaces the whole ladder
+    /// with a single level. Folding the legs back into a bracket here means
+    /// every surface downstream sees the same shape for a position that it
+    /// already sees for an order.
+    ///
+    /// Grouped by OCO id, which is what a rung *is*, and walked in placement
+    /// order so the rungs read in the order the trader wrote them.
+    fn position_bracket(&self, position: &Position) -> Bracket {
+        let mut parts: Vec<(OcoId, quantick_sim::ExitPart)> = Vec::new();
+        for leg in self
+            .venue
+            .working_orders()
+            .iter()
+            .filter(|order| order.is_protective())
+        {
+            let (Some(level), Some(oco)) = (leg.price, leg.oco) else {
+                continue;
+            };
+            let part = match parts.iter_mut().find(|(id, _)| *id == oco) {
+                Some((_, part)) => part,
+                None => {
+                    parts.push((
+                        oco,
+                        quantick_sim::ExitPart {
+                            quantity: Some(leg.quantity),
+                            stop_loss: None,
+                            take_profit: None,
+                        },
+                    ));
+                    &mut parts.last_mut().expect("just pushed").1
+                }
+            };
+            match leg.role {
+                OrderRole::StopLoss => part.stop_loss = Some(level),
+                OrderRole::TakeProfit => part.take_profit = Some(level),
+                OrderRole::Entry => {}
+            }
+        }
+        if parts.is_empty() {
+            return Bracket::whole(position.stop_loss, position.take_profit);
+        }
+        let rungs: Vec<quantick_sim::ExitPart> = parts.into_iter().map(|(_, part)| part).collect();
+        Bracket::ladder(&rungs)
+            .unwrap_or_else(|_| Bracket::whole(position.stop_loss, position.take_profit))
     }
 
     /// The protection an entry would carry right now: the ticket's armed
@@ -10120,6 +10185,47 @@ mod tests {
             side: Side::Buy,
         });
         assert_eq!(paper.tick(), Decimal::new(1, 3));
+    }
+
+    /// A laddered position shows its rungs and offers no create-handle.
+    ///
+    /// Its own `stop_loss`/`take_profit` are `None` under a ladder, and a
+    /// surface reading only those drew the position as unprotected *and*
+    /// offered the handles of an unprotected one - where a single drag
+    /// replaces every rung with one level.
+    #[test]
+    fn a_laddered_position_reads_as_protected_and_offers_no_handle() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        paper.set_order_strategies(vec![halves()], Some("halves"));
+        paper.qty_text = "2".to_owned();
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+
+        let position = paper.venue.position().expect("long").clone();
+        let bracket = paper.position_bracket(&position);
+        assert!(
+            bracket.is_laddered(),
+            "the legs fold back into the ladder that armed them: {bracket:?}"
+        );
+        assert_eq!(bracket.parts().count(), 2, "one rung per OCO pair");
+        assert_eq!(
+            bracket.stop_loss(),
+            None,
+            "and it still refuses to name one stop for two"
+        );
+
+        // The handles are what a drag would destroy the ladder through.
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let entry_y = 200.0;
+        for above in [true, false] {
+            let handle = bracket_handle_rect(chart.right(), entry_y, above).center();
+            assert_eq!(
+                paper.control_at(handle, chart, &scale),
+                None,
+                "a laddered position offers no create-handle (above: {above})"
+            );
+        }
     }
 
     /// A frame with the aim's modifier held and wheel travel to spend.
