@@ -104,9 +104,23 @@ The process lesson, recorded rather than excused: a long session must re-fetch
 
 ### Not done, and named as such
 
-- **`trader-ux-review` was not run**, and the visual pass covered only the
-  editor. The chart-side surfaces this adds — a laddered order's rungs, the
-  projected ladder under a held modifier, the ruler's chips — are
-  unphotographed, and no trader's eye has been over the flow as a whole. That
-  is the remaining gap in this mission's gate list and the first thing to
-  close before merge.
+`trader-ux-review` ran and left **four Should-fix findings deliberately
+open**, listed in the pull request body. None costs money on its own; each
+costs attention or trust, and each is a small change:
+
+1. The **ruler is sticky and invisible** outside an aim. It survives across
+   aims by design, but it is drawn only while the modifier is held and `Esc`
+   does not clear it — so a distance chosen for one setup silently arms the
+   next order. Show it in the ticket, and clear it on `Esc`.
+2. **One wheel, two meanings.** With a strategy selected the wheel zooms;
+   with none it rules. Nothing on screen says which, and the pane's own
+   comment records that exact ambiguity being fixed for the tape lane.
+3. The **editor saves only on close**, so edits left open live in memory.
+   Flush on focus loss or on shutdown as well.
+4. The **editor never says what a tick is worth** on the current instrument,
+   while the ruler's own chip says both. On BTCUSDT 80 ticks is 0.80; on WIN
+   it is 400 points, and the editor reads the same either way.
+
+One observation, no finding: on a fine-tick instrument the rungs of an
+80/40-tick ladder span under a point and collapse into each other visually.
+On the index futures the feature was designed for they are well separated.
