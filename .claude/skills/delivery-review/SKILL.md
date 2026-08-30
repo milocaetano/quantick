@@ -56,10 +56,12 @@ files, because anything that cannot be written to a file is exactly the kind of
 claim this skill exists to disbelieve.
 
 ```sh
-# The session's scratchpad directory, never the repo: the dossier is working
-# material, and a diff of the branch committed into the branch is a mess the
-# next review has to read past.
-DOSSIER=<scratchpad>/delivery-review
+# Point this at the session's scratchpad directory, never at the repo: the
+# dossier is working material, and a diff of the branch committed into the
+# branch is a mess the next review has to read past. Substitute a real path —
+# an unquoted placeholder in angle brackets is not a placeholder to `sh`, it is
+# two redirections, and the line would truncate a file at the filesystem root.
+DOSSIER="/path/to/scratchpad/delivery-review"
 mkdir -p "$DOSSIER"
 git fetch origin
 git diff origin/main...HEAD         > "$DOSSIER/branch.diff"
@@ -78,6 +80,12 @@ error.
 - the diff, its stat and its log;
 - every path named in a criterion's `→` evidence tail;
 - the repository itself, read-only, to see the shipped state.
+
+A criterion whose evidence tail says "the PR body" has nowhere to point yet —
+this skill runs before the PR exists. Write that evidence into the dossier as
+a file first and let the PR body be authored from it. The order matters:
+evidence written down and then published is a record, evidence recalled while
+writing the PR is a story.
 
 **Inputs it may not receive — this list is the skill:**
 
@@ -125,7 +133,15 @@ paste.
 | `PARTLY COVERED` | a criterion claims it but delivers less than the ask says — name the part that did not arrive |
 | `DROPPED` | no criterion discharges it, or every criterion that does failed |
 
-**Criteria pass** — one grade per `A` and per `G`:
+**Criteria pass** — one grade per `A` and per `G`.
+
+Grade those two groups and no others. A `C` line under **Closing steps** —
+this review returning PASS, `GOAL.md` archived, the PR open — is deliberately
+not a criterion: none of them can have happened at the moment you are writing
+this verdict, and two of them are unblocked *by* it. Grading them would fail
+every branch that ever ran this skill, which is a gate nobody would keep. If a
+checklist puts them among the `A` or `G` lines anyway, say so as a finding
+against the checklist and grade the rest.
 
 | Grade | Meaning |
 | --- | --- |

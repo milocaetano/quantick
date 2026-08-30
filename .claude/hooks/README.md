@@ -103,8 +103,20 @@ sh .claude/hooks/guardrails_test.sh
 
 Builds throwaway git repos under a temp dir, exercises all three modes
 including the fail-open paths, and cleans up after itself. CI runs it as its
-own step. Neutering `guardrails.sh` to `exit 0` fails 12 of the 30 cases, which
-is the check that they test the behaviour and not the harness.
+own step. Intact, it reports `37 passed, 0 failed`.
+
+The check that the cases test the behaviour and not the harness: replace
+`guardrails.sh` with `exit 0` and the run reports `14 passed, 22 failed`. The
+totals differ on purpose and the difference is worth knowing before you go
+looking for a bug — a neutered script defines no `*_MARKER_NAME` constants, so
+the doc-pinning loops have nothing to iterate and their cases disappear, while
+the "no `MARKER_NAME` constants found" case appears in their place. Count
+failures, not the denominator.
+
+Three sharper checks were run against the suite when the second marker was
+added, each of which it now catches: neutering the arch-review staleness
+branch alone, swapping the order of the two `require_marker` calls, and
+renaming a marker constant in the script without touching the prose.
 
 The `pr-gate` cases move one marker at a time — arch-review satisfied and
 delivery-review absent, and the reverse — because the failure worth catching is

@@ -129,7 +129,21 @@ require_marker() {
         deny "\"CLAUDE.md: $require_rule. \`$require_name\` has not been recorded for this branch. $require_how, then record it:\n\n  $require_record\""
     fi
 
-    require_reviewed=$(cat "$require_marker_file" 2>/dev/null)
+    # The marker is meant to hold a sha, and nothing enforces that: a mistyped
+    # redirect (`git log >` in place of `git rev-parse HEAD >`), an editor
+    # appending a line, a half-written file. Reduce it to the shape a sha has
+    # before it reaches `deny`, which interpolates it into a JSON string — an
+    # unescaped quote or a raw newline emits a payload the harness cannot
+    # parse, and a *lost* deny decision turns the gate off instead of tripping
+    # it. Fail-open is this script's rule for what it cannot determine; it is
+    # not licence to fail open on a marker it can read and does not like.
+    require_reviewed=$(head -n 1 "$require_marker_file" 2>/dev/null | tr -cd '0-9a-fA-F')
+    if [ ${#require_reviewed} -ne 40 ]; then
+        # Whatever is in there, it is not a commit id. Say that rather than
+        # printing the hex residue, which would read like a truncated sha.
+        require_reviewed="(not a commit id)"
+    fi
+
     if [ "$require_reviewed" != "$require_head" ]; then
         deny "\"CLAUDE.md: $require_rule. \`$require_name\` was recorded for $require_reviewed but HEAD is now $require_head, so the newest commits are ungraded. Run it again over the final branch and record it again:\n\n  $require_record\""
     fi

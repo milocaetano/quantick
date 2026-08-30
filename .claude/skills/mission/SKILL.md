@@ -49,9 +49,13 @@ else, and `delivery-review` is that someone else.
      their mouth. `CLAUDE.md`'s quotation exemption covers exactly this, and
      `GOAL-archive-*.md` sits outside `language_guard`'s scan by design. The
      operative statement on each line is still English.
-   - Map every `R` to at least one criterion, and cite at least one `R` from
-     every criterion. **An `R` with no criterion is a hole. A criterion with no
-     `R` is scope you invented** — take it to the trader or drop it.
+   - Map every `R` to at least one **`A` criterion**, and cite at least one `R`
+     from every `A`. **An `R` with no criterion is a hole. An `A` with no `R`
+     is scope you invented** — take it to the trader or drop it.
+   - The injected gates, `G1`…`Gn`, carry **no** `R` tail and are not scope you
+     invented: no trader ever asked for `cargo clippy` to pass. They come from
+     step 4's table, which is their provenance. Only `A` lines answer to the
+     ledger.
    - Numbers are stable for the life of the mission. Never renumber. An ask the
      trader withdraws stays on the ledger, struck through, with the reason.
 
@@ -92,6 +96,14 @@ else, and `delivery-review` is that someone else.
    trader**. A decision recorded there is settled: re-opening one is a scope
    change, not a judgement call.
 
+   **When more than four things qualify** — and with six categories above, they
+   will — rank by the cost of being wrong: how much work a wrong guess throws
+   away, and how hard it is to reverse. Ask the top four. Record **every one
+   you did not ask** as an `S` line marked *wanted to ask*, with the reading you
+   went with. Do not let the cap swallow them: dropping the fifth ambiguity in
+   silence is the same failure as dropping the fifth ask, and the `S` list is
+   the only place `delivery-review` can find it.
+
    If nothing qualifies, say so in one line. "Nothing ambiguous enough to ask"
    is a legitimate outcome — but it is stated, never silent.
 
@@ -105,8 +117,8 @@ else, and `delivery-review` is that someone else.
 
    | The mission… | Injected acceptance criteria |
    | --- | --- |
-   | Any mission at all | **every artifact in English** — the rule, its scope and its three exemptions live in `CLAUDE.md`, which is already loaded; do not restate them here. Graded by `arch-review` dimension 8, enforced by `crates/app/tests/language_guard.rs`. It costs one edit now and a review round later. And **`delivery-review` returns PASS** — the branch graded against this checklist by a reviewer that did not write it |
-   | Any code change | four checks green after rebasing on latest `main`; **performance impact declared** — classify every touched path by rate (per-trade / per-depth / per-frame / rare, the `arch-review` table) as part of the plan, not the review; `arch-review` run with every Blocker/Should-fix resolved or deferred in the PR body; **PR opened** — the mission is not done before the PR exists, and merging is never part of it |
+   | Any mission at all | **every artifact in English** — the rule, its scope and its three exemptions live in `CLAUDE.md`, which is already loaded; do not restate them here. Graded by `arch-review` dimension 8, enforced by `crates/app/tests/language_guard.rs`. It costs one edit now and a review round later |
+   | Any code change | four checks green after rebasing on latest `main`; **performance impact declared** — classify every touched path by rate (per-trade / per-depth / per-frame / rare, the `arch-review` table) as part of the plan, not the review; `arch-review` run with every Blocker/Should-fix resolved or deferred in the PR body |
    | Touches a hot path (per-trade, per-depth, per-frame) | evidence that performance is flat or better, not a belief: `APP_HEALTH_SUMMARY` fps/frame_avg under a dense tape vs. a `main` control run, or a bench over a fixture — measured before the PR, numbers in its body |
    | Touches anything user-visible | follow `ui-harness`: every new/changed surface reachable by env hook (hook added in the same change); `visual-qa` pass with all surfaces PASS or defects explicitly accepted; `trader-ux-review` with no unresolved Blocker |
    | Adds a capability (feed, bar type, indicator, layer, panel, crate) | follow `new-extension`: port named, registration-only edits, defaults preserve today's behaviour, fake second implementation tested, blast radius (added vs. edited files) stated in the PR body |
@@ -117,6 +129,21 @@ else, and `delivery-review` is that someone else.
    Write down what is **not applicable and why**, too. A gate silently omitted
    and a gate deliberately excluded look identical to the next reader, and only
    one of them is honest.
+
+   ### Closing steps are not criteria
+
+   Three things finish every mission and **none of them is an `A` or a `G`**:
+   `delivery-review` returns PASS, `GOAL.md` is archived, and the PR is open.
+   List them separately, as `C1`…`Cn` under a **Closing steps** heading.
+
+   They are not criteria because they cannot be graded when the grading
+   happens. `delivery-review` reads the checklist and grades every `A` and `G`
+   against the shipped branch — but its own verdict does not exist while it is
+   being written, and `pr-gate` will not let the PR open until that verdict is
+   recorded. Written as criteria, those two lines come back UNPROVEN on every
+   mission, the fix loop burns three rounds on gaps no edit can close, and the
+   gate escalates to the trader every single time. A gate that always fails
+   teaches everyone to ignore it, which costs more than not having it.
 
    Present the merged checklist to the user before starting work.
 
@@ -163,7 +190,8 @@ else, and `delivery-review` is that someone else.
      what stops evidence from being remembered instead of recorded. A criterion
      whose evidence exists only as a claim in the session transcript comes back
      from `delivery-review` as **UNPROVEN**, which is not a pass.
-   - **Ledger back-reference.** The `(R…)` tail. It is how a dropped ask gets
+   - **Ledger back-reference.** The `(R…)` tail, on `A` lines only — `G` lines
+     come from the gate table, not from an ask. It is how a dropped ask gets
      found before the PR instead of after.
 
    Assumptions get their own list, `S1`…`Sn`, each with the reason it was safe
@@ -191,21 +219,40 @@ else, and `delivery-review` is that someone else.
    substitutes for the other — one asks whether this is well built, the other
    whether it is what was asked for:
 
+   **Archive before you review, not after.** The markers hold shas, so the
+   archive has to be part of the branch the reviews actually graded:
+
    ```sh
-   Skill(arch-review)            # shape, plus its step 0 bug pass
+   # 1. the last commit of the mission, made before either review runs
+   git mv .claude/GOAL.md .claude/GOAL-archive-<slug>.md
+   git commit -m "docs: archive the <slug> mission"
+
+   # 2. shape and bugs, over the final branch
+   Skill(arch-review)
    git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
 
-   Skill(delivery-review)        # conformance to this GOAL.md
+   # 3. conformance, over the same final branch
+   Skill(delivery-review)
    git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
+
+   # 4. gh pr create
    ```
 
-   `delivery-review` runs last, because it grades the branch as shipped —
-   including whatever `arch-review` made you change. Record each marker only
-   once that skill has actually passed. The markers hold shas, so any commit
-   after either one invalidates it and `pr-gate` says which by name.
+   The order is the whole point, and getting it backwards is a trap with a
+   pleasant-looking exit. Archive *after* recording the markers and that commit
+   moves `HEAD`, both markers go stale, `pr-gate` denies — and the cheapest way
+   out is to re-stamp both markers without re-running either review, which
+   silently destroys the one property the sha-based marker exists to give.
+   Nothing would catch that; the gate would still say two reviews passed.
 
-   Only then archive `.claude/GOAL.md` (move to
-   `.claude/GOAL-archive-<slug>.md`, committed on the branch) and open the PR.
+   `delivery-review` runs after `arch-review` because it grades the branch as
+   shipped, including whatever the shape review made you change. It reads the
+   checklist from the archived file at that point, which it knows how to find.
+
+   If either review sends you back to the code, you commit again — and then
+   both markers are stale by design. Re-run the review that owns each one
+   before re-recording it. Re-stamping a marker whose review did not run again
+   is the one dishonest move this whole mechanism cannot detect.
 
 9. **Hand over the `/goal` condition.** Right after step 4, print the built-in
    command for the user to paste, so the session keeps working across turns

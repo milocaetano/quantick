@@ -7,7 +7,12 @@
 #
 #   sh .claude/hooks/guardrails_test.sh
 #
-# Hermetic: builds throwaway git repos under a temp dir and removes them.
+# Hermetic, with one stated exception: the hook cases build throwaway git repos
+# under a temp dir and remove them, but the final block reads this repository's
+# own instruction files, because the agreement between the script's marker
+# names and the prose that tells an agent to write them is itself under test.
+# That block is marked where it starts.
+#
 # POSIX sh, no jq, so it runs under Git Bash on Windows and dash in CI.
 
 set -u
@@ -78,9 +83,15 @@ run() {
 # from a denial for the other one. With two markers gating the PR, that
 # difference is the whole value of the message: an agent told "a review is
 # missing" has to guess which, and guessing wrong costs a full review.
+# stdout only, deliberately: the contract under test is the JSON decision, and
+# folding stderr in would let a diagnostic satisfy the substring assertion. Drop
+# one of the script's `2>/dev/null` guards and `cat: …/delivery-review-ok: No
+# such file` on stderr would match a check for "delivery-review-ok" while the
+# JSON named the other marker — the test passing as it sends the agent to the
+# wrong review.
 run_deny_naming() {
     dn_name=$1
-    dn_out=$(printf '%s' "$3" | sh "$GUARDRAILS" "$2" 2>&1)
+    dn_out=$(printf '%s' "$3" | sh "$GUARDRAILS" "$2" 2>/dev/null)
     dn_status=$?
 
     if [ "$dn_status" -ne 0 ]; then
@@ -166,23 +177,49 @@ set_marker delivery-review-ok ""
 run "a bash command that is not gh pr create is ignored" \
     pr-gate "$(json_bash "$root/wt" "cargo test --workspace")" silent
 
-run "gh pr create without a recorded review is denied" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny
+# With neither recorded, the message must name arch-review: guardrails.sh
+# states that order as a contract ("a delivery review of a branch the shape
+# review is about to change is wasted work"), and without this assertion the
+# two `require_marker` calls could be swapped with the suite still green.
+run_deny_naming "with neither review recorded the gate names arch-review first" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "arch-review-ok"
 
+# Staleness, one marker at a time. Each of these keeps the *other* marker at
+# HEAD, so the case can only pass through the staleness branch it is aiming
+# at — with the other marker missing, every one of them would deny for the
+# wrong reason and prove nothing about staleness at all.
 set_marker arch-review-ok "$stale_sha"
-run "a review recorded for an older commit is denied" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny
+set_marker delivery-review-ok "$head_sha"
+run_deny_naming "an arch review recorded for an older commit is denied" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "arch-review-ok"
 
-# The delivery gate, one marker at a time. Each case pins that the *other*
-# marker being satisfied does not carry the branch through.
+set_marker arch-review-ok "$head_sha"
+set_marker delivery-review-ok "$stale_sha"
+run_deny_naming "a delivery review recorded for an older commit is denied" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "delivery-review-ok"
 
+# A marker holding something other than a sha must trip the gate, not break
+# it: `deny` interpolates the contents into JSON, and a payload the harness
+# cannot parse loses the decision and lets `gh pr create` through.
+printf 'he said "hi"\nsecond line\n' > "$wt_git_dir/arch-review-ok"
+run_deny_naming "a corrupt marker denies rather than emitting broken JSON" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" '"permissionDecisionReason"'
+
+corrupt_out=$(printf '%s' "$(json_bash "$root/wt" "gh pr create --fill")" |
+    sh "$GUARDRAILS" pr-gate 2>/dev/null)
+case "$corrupt_out" in
+    *'
+'*) printf 'FAIL a corrupt marker leaks a raw newline into the JSON payload\n  output: %s\n' "$corrupt_out"
+        failed=$((failed + 1)) ;;
+    *'he said'*) printf 'FAIL a corrupt marker leaks its unescaped contents into the JSON payload\n  output: %s\n' "$corrupt_out"
+        failed=$((failed + 1)) ;;
+    *) passed=$((passed + 1)) ;;
+esac
+
+# One marker at a time again, now for absence rather than staleness.
 set_marker arch-review-ok "$head_sha"
 set_marker delivery-review-ok ""
 run_deny_naming "arch-review alone does not open the PR" \
-    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "delivery-review-ok"
-
-set_marker delivery-review-ok "$stale_sha"
-run_deny_naming "a delivery review recorded for an older commit is denied" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" "delivery-review-ok"
 
 set_marker arch-review-ok ""
@@ -249,23 +286,53 @@ run "a cd to a path that does not exist falls back to the session cwd" \
 # value that cannot be imported is a test pinning the two sides together, so
 # the names come out of the script itself rather than being repeated here — a
 # third copy in the test would be the same bug wearing a different hat.
+#
+# This block is the one part of the suite that is NOT hermetic, and the header
+# says so. It has to read the repository the script sits in, because the
+# agreement between the script and the prose *is* the thing under test. The
+# consequence to know: invoked by absolute path from another checkout, it
+# grades that checkout's instruction files rather than the branch's, and an
+# unrelated doc edit can turn it red.
 
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
 markers=$(sed -n 's/^[A-Z_]*MARKER_NAME="\([^"]*\)".*/\1/p' "$GUARDRAILS")
+markers_padded=" $(echo $markers) "
 
 if [ -z "$markers" ]; then
     printf 'FAIL no MARKER_NAME constants found in guardrails.sh\n'
     failed=$((failed + 1))
 fi
 
+# The files to check are found, not listed. A hand-kept list beside the thing
+# it mirrors is the same class of bug one layer up: add an instruction file,
+# forget to add it here, and the drift this block exists to catch walks right
+# past it. Anything that talks about a `*-review-ok` marker is in scope.
+marker_docs=$(cd "$repo_root" && grep -rl -- '-review-ok' CLAUDE.md .claude/skills .claude/hooks/README.md 2>/dev/null)
+
+# Direction one: every marker the gate requires is named by some instruction,
+# or nothing tells an agent how to satisfy it.
 for marker in $markers; do
-    for doc in .claude/hooks/README.md .claude/skills/mission/SKILL.md .claude/skills/ship/SKILL.md; do
-        if grep -q -- "$marker" "$repo_root/$doc"; then
-            passed=$((passed + 1))
-        else
-            printf 'FAIL %s never names %s, which the gate requires\n' "$doc" "$marker"
-            failed=$((failed + 1))
-        fi
+    if (cd "$repo_root" && grep -qlF -- "$marker" $marker_docs >/dev/null 2>&1); then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL no instruction file names %s, which the gate requires\n' "$marker"
+        failed=$((failed + 1))
+    fi
+done
+
+# Direction two, and the one that catches a one-sided rename: every
+# marker-shaped name the instructions mention is one the script actually
+# defines. Rename the constant alone and the stale spelling left behind in any
+# doc fails here, named with the file it sits in.
+for doc in $marker_docs; do
+    for mentioned in $(cd "$repo_root" && grep -oh -- '[a-z][a-z-]*-review-ok' "$doc" | sort -u); do
+        case "$markers_padded" in
+            *" $mentioned "*) passed=$((passed + 1)) ;;
+            *)
+                printf 'FAIL %s names %s, but guardrails.sh defines no such marker\n' "$doc" "$mentioned"
+                failed=$((failed + 1))
+                ;;
+        esac
     done
 done
 
