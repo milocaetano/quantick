@@ -341,6 +341,20 @@ enum PaperDrag {
     /// working order needs no such state — its line already means
     /// "reprice", so its legs are born from their handles alone.
     CreatePending,
+    /// Moving one rung of a resting entry's ladder.
+    ///
+    /// The rung belongs to the *order*, not to the strategy that shaped it:
+    /// the strategy was the template, the order carries a copy, and hauling
+    /// this line edits the copy. Nothing is written back to the named
+    /// ladder, so the next order still rests with what the trader saved.
+    ///
+    /// A filled position needs no such state — its rungs are working orders
+    /// by then, and their own lines already mean "reprice".
+    Rung {
+        order: OrderId,
+        index: usize,
+        leg: Leg,
+    },
 }
 
 /// Which side of a bracket a gesture is about.
@@ -400,26 +414,6 @@ impl Leg {
         }
     }
 
-    /// Every level of `role` this bracket holds, rung by rung, with the
-    /// quantity each closes.
-    ///
-    /// `level` answers only the whole-bracket case, because that is the one
-    /// a drag can amend. Painting needs the other one: a ladder's rungs are
-    /// several prices, and a chart that showed none of them would leave a
-    /// protected order looking naked.
-    fn levels(self, bracket: Bracket) -> Vec<(Decimal, Option<Decimal>)> {
-        bracket
-            .parts()
-            .filter_map(|part| {
-                let level = match self {
-                    Self::StopLoss => part.stop_loss,
-                    Self::TakeProfit => part.take_profit,
-                }?;
-                Some((level, part.quantity))
-            })
-            .collect()
-    }
-
     /// Whether this leg's price sits **above** the entry, for `side`.
     ///
     /// Named for the geometry and not for the meaning, because the two part
@@ -452,6 +446,14 @@ enum PaperControl {
     /// Labelled `SL`/`TP` handle beside a line that owns brackets: the
     /// press starts a create-drag for that leg.
     Handle { owner: BracketTarget, leg: Leg },
+    /// ✕ on one rung of a resting entry's ladder: clear that rung's leg and
+    /// leave every other rung alone. A rung with neither leg left is dropped
+    /// — a part that protects nothing is not a part.
+    ClearRung {
+        order: OrderId,
+        index: usize,
+        leg: Leg,
+    },
 }
 
 /// One transient message; rejections double as the tutorial.
@@ -2556,32 +2558,61 @@ impl PaperTrading {
     fn draw_ladder_rungs(
         &self,
         ctx: &PaintCtx<'_>,
+        owner: BracketTarget,
         side: Side,
         reference: Decimal,
         bracket: Bracket,
     ) {
-        for leg in [Leg::StopLoss, Leg::TakeProfit] {
-            let color = leg.color();
-            for (level, quantity) in leg.levels(bracket) {
-                let y = ctx.scale.y(level.to_f64().unwrap_or_default());
+        let order = match owner {
+            BracketTarget::Order(id) => Some(id),
+            BracketTarget::Position => None,
+        };
+        for (index, part) in bracket.parts().enumerate() {
+            for (level, leg) in [
+                (part.stop_loss, Leg::StopLoss),
+                (part.take_profit, Leg::TakeProfit),
+            ] {
+                let Some(level) = level else { continue };
+                let color = leg.color();
+                // The rung being hauled follows the pointer, exactly as a
+                // whole bracket's leg does: what the trader sees moving is
+                // what the release will submit.
+                let dragging = order.is_some_and(|id| {
+                    self.drag
+                        == PaperDrag::Rung {
+                            order: id,
+                            index,
+                            leg,
+                        }
+                });
+                let shown = if dragging {
+                    self.drag_price.map_or(level, |price| self.snap(price))
+                } else {
+                    level
+                };
+                let y = ctx.scale.y(shown.to_f64().unwrap_or_default());
                 if !ctx.in_range(y) {
                     continue;
                 }
-                ctx.level_line(y, color, true, LINE_WIDTH_PX, false, false);
-                ctx.gutter_chip(y, color, &fmt_decimal(level));
-                let share = quantity.unwrap_or(Decimal::ONE);
-                let points = signed_points(side, reference, level, share);
+                let hovered = ctx.hovers_line(y);
+                ctx.level_line(y, color, true, LINE_WIDTH_PX, hovered, dragging);
+                ctx.gutter_chip(y, color, &fmt_decimal(shown));
+                let share = part.quantity.unwrap_or(Decimal::ONE);
+                let points = signed_points(side, reference, shown, share);
+                // The cross only where a press would take it: a rung of a
+                // resting entry. A position's rungs are working orders by
+                // then and carry their own.
                 ctx.chip_tag(
                     y,
                     color,
                     &format!(
                         "{} {} · {} · {} pts",
                         leg.word(),
-                        fmt_decimal(level),
+                        fmt_decimal(shown),
                         fmt_decimal(share),
                         fmt_signed_points(points),
                     ),
-                    false,
+                    order.is_some() && !dragging,
                 );
             }
         }
@@ -2612,7 +2643,7 @@ impl PaperTrading {
         // naked — and then this function stops, so no handle is offered that
         // would replace the whole ladder with one level.
         if bracket.is_laddered() {
-            self.draw_ladder_rungs(ctx, side, reference, bracket);
+            self.draw_ladder_rungs(ctx, owner, side, reference, bracket);
             return;
         }
         for leg in [Leg::StopLoss, Leg::TakeProfit] {
@@ -2819,6 +2850,9 @@ impl PaperTrading {
             match control {
                 PaperControl::ClosePosition => self.close_position(),
                 PaperControl::ClearLeg { owner, leg } => self.amend_leg(owner, leg, None),
+                PaperControl::ClearRung { order, index, leg } => {
+                    self.amend_rung(order, index, leg, None);
+                }
                 PaperControl::CancelOrder(id) => {
                     let events = self.venue.cancel(id);
                     self.handle_events(events);
@@ -2905,6 +2939,9 @@ impl PaperTrading {
                     PaperDrag::Order(id) => {
                         let events = self.venue.amend_price(id, price);
                         self.handle_events(events);
+                    }
+                    PaperDrag::Rung { order, index, leg } => {
+                        self.amend_rung(order, index, leg, Some(price));
                     }
                     PaperDrag::None | PaperDrag::Blocked | PaperDrag::CreatePending => {}
                 }
@@ -2998,11 +3035,17 @@ impl PaperTrading {
             let Some((side, reference, bracket, _)) = self.bracket_owner(owner) else {
                 continue;
             };
-            // A ladder's rungs are the strategy's, not the pointer's: they
-            // carry no cross and offer no handle, and the paint says the
-            // same. The two must agree here or a press acts on something
-            // nothing drew - and this press replaces every rung at once.
+            // A ladder offers no *whole-bracket* handle: one drag there
+            // would replace every rung with a single level. Its rungs are
+            // reachable one at a time instead, each with its own cross,
+            // tested below - the trader's order is the trader's to move.
             if bracket.is_laddered() {
+                if let BracketTarget::Order(id) = owner
+                    && let Some(control) =
+                        self.rung_control_at(id, bracket, pointer, tag_right, &visible_center)
+                {
+                    return Some(control);
+                }
                 continue;
             }
             let reference_center = visible_center(reference);
@@ -3226,6 +3269,68 @@ impl PaperTrading {
         let rungs: Vec<quantick_sim::ExitPart> = parts.into_iter().map(|(_, part)| part).collect();
         Bracket::ladder(&rungs)
             .unwrap_or_else(|_| Bracket::whole(position.stop_loss, position.take_profit))
+    }
+
+    /// The ✕ of whichever rung the pointer is over, if any.
+    ///
+    /// Separate from the whole-bracket controls because a rung is addressed
+    /// by index: clearing one must leave the others exactly where they are,
+    /// which a leg-shaped control cannot say.
+    fn rung_control_at(
+        &self,
+        order: OrderId,
+        bracket: Bracket,
+        pointer: egui::Pos2,
+        tag_right: f32,
+        visible_center: &impl Fn(Decimal) -> Option<f32>,
+    ) -> Option<PaperControl> {
+        for (index, part) in bracket.parts().enumerate() {
+            for (level, leg) in [
+                (part.stop_loss, Leg::StopLoss),
+                (part.take_profit, Leg::TakeProfit),
+            ] {
+                if let Some(level) = level
+                    && let Some(center_y) = visible_center(level)
+                    && close_button_rect(tag_right, center_y).contains(pointer)
+                {
+                    return Some(PaperControl::ClearRung { order, index, leg });
+                }
+            }
+        }
+        None
+    }
+
+    /// Set one rung's leg on a resting entry, or clear it with `None`.
+    ///
+    /// Every other rung is carried through untouched, and the named
+    /// strategy is never written to: an order on the chart is the trader's,
+    /// and the ladder that shaped it is a template they can still reuse.
+    /// A rung left protecting nothing is dropped rather than rested empty.
+    fn amend_rung(&mut self, order: OrderId, index: usize, leg: Leg, level: Option<Decimal>) {
+        let Some(entry) = self
+            .venue
+            .working_orders()
+            .iter()
+            .find(|working| working.id == order)
+        else {
+            return;
+        };
+        let mut parts: Vec<quantick_sim::ExitPart> = entry.bracket.parts().copied().collect();
+        let Some(part) = parts.get_mut(index) else {
+            return;
+        };
+        match leg {
+            Leg::StopLoss => part.stop_loss = level,
+            Leg::TakeProfit => part.take_profit = level,
+        }
+        parts.retain(|part| !part.is_empty());
+        let Ok(bracket) = Bracket::ladder(&parts) else {
+            return;
+        };
+        let events = self
+            .venue
+            .amend_bracket(BracketTarget::Order(order), bracket);
+        self.handle_events(events);
     }
 
     /// The protection an entry would carry right now: the ticket's armed
@@ -3513,9 +3618,10 @@ impl PaperTrading {
         }
         match self.line_at(pointer, scale)? {
             PaperDrag::Blocked => Some(egui::CursorIcon::NotAllowed),
-            PaperDrag::Leg { .. } | PaperDrag::Order(_) | PaperDrag::CreatePending => {
-                Some(egui::CursorIcon::ResizeVertical)
-            }
+            PaperDrag::Leg { .. }
+            | PaperDrag::Rung { .. }
+            | PaperDrag::Order(_)
+            | PaperDrag::CreatePending => Some(egui::CursorIcon::ResizeVertical),
             PaperDrag::None | PaperDrag::CreateLeg { .. } => None,
         }
     }
@@ -3534,6 +3640,34 @@ impl PaperTrading {
                 && near(level)
             {
                 return Some(PaperDrag::Order(order.id));
+            }
+        }
+        // A resting entry's rungs, newest order first, matching the draw
+        // stack. They are the trader's to move: the strategy was the
+        // template and this order carries a copy of it.
+        for entry in self
+            .venue
+            .working_orders()
+            .iter()
+            .rev()
+            // Only a ladder has rungs. A whole bracket's two levels stay
+            // `Leg`s, which is the grammar every other surface already
+            // speaks for them.
+            .filter(|order| !order.is_protective() && order.bracket.is_laddered())
+        {
+            for (index, part) in entry.bracket.parts().enumerate() {
+                for (level, leg) in [
+                    (part.take_profit, Leg::TakeProfit),
+                    (part.stop_loss, Leg::StopLoss),
+                ] {
+                    if level.is_some_and(near) {
+                        return Some(PaperDrag::Rung {
+                            order: entry.id,
+                            index,
+                            leg,
+                        });
+                    }
+                }
             }
         }
         for owner in self.bracket_owners() {
@@ -10226,6 +10360,65 @@ mod tests {
                 "a laddered position offers no create-handle (above: {above})"
             );
         }
+    }
+
+    /// A rung of a resting order can be hauled, and hauling it edits *that
+    /// order* - never the named ladder that shaped it.
+    ///
+    /// The strategy is a template. Once an order is on the chart it is the
+    /// trader's, and a stop they cannot move is not a stop.
+    #[test]
+    fn a_rung_of_a_resting_order_moves_and_leaves_the_strategy_alone() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        paper.set_order_strategies(vec![halves()], Some("halves"));
+        paper.qty_text = "2".to_owned();
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        // y = 250 is 95: below the mark, so a buy rests as a limit there.
+        let aim = egui::pos2(400.0, 250.0);
+        let mut press = ruler_frame(chart, &scale, aim, 0.0);
+        press.primary_pressed = true;
+        press.primary_down = true;
+        assert!(paper.handle_chart_input(&press), "the aim placed");
+
+        let id = paper.working_orders()[0].id;
+        let before: Vec<_> = paper.working_orders()[0].bracket.parts().copied().collect();
+        assert_eq!(before.len(), 2, "a two-rung ladder rests: {before:?}");
+        // The first rung's stop is 91 (95 - 4 ticks), at y = 290.
+        let stop = before[0].stop_loss.expect("the first rung is stopped");
+        assert_eq!(stop, Decimal::from(91));
+
+        let stop_y = scale.y(91.0);
+        assert_eq!(
+            paper.line_at(egui::pos2(400.0, stop_y), &scale),
+            Some(PaperDrag::Rung {
+                order: id,
+                index: 0,
+                leg: Leg::StopLoss
+            }),
+            "the rung is a line the trader can grab"
+        );
+        assert!(paper.handle_chart_input(&frame(chart, &scale, stop_y, true, true, false)));
+        // Pull it down to 88 (y = 320) and let go.
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 320.0, false, true, false)));
+        assert!(paper.handle_chart_input(&frame(chart, &scale, 320.0, false, false, true)));
+
+        let after: Vec<_> = paper.working_orders()[0].bracket.parts().copied().collect();
+        assert_eq!(
+            after[0].stop_loss,
+            Some(Decimal::from(88)),
+            "the rung moved where it was dropped"
+        );
+        assert_eq!(
+            after[0].take_profit, before[0].take_profit,
+            "its own target is untouched"
+        );
+        assert_eq!(after[1], before[1], "and the other rung never moved");
+
+        // The template is exactly as the trader saved it.
+        let strategy = paper.selected_order_strategy().expect("still armed");
+        assert_eq!(strategy.rows[0].loss_ticks, Some(4));
+        assert_eq!(strategy.rows[0].gain_ticks, Some(8));
     }
 
     /// A frame with the aim's modifier held and wheel travel to spend.

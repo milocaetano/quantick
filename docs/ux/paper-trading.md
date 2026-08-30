@@ -277,6 +277,16 @@ It arms the position's own pair exactly as it always did, which is what the
 port reports and what every venue models — so nothing about the single-pair
 trader's chart changed.
 
+**A rung is the order's, not the strategy's.** The named ladder is a
+template: once an order rests on the chart it carries a *copy*, and each rung
+is a line the trader can haul and a `×` they can clear, one at a time,
+leaving every other rung where it is. Nothing is written back to the saved
+strategy, so the next order still rests with what they configured. What a
+ladder does refuse is the *whole-bracket* handle, where one drag would
+replace every rung with a single level — the rungs are reachable
+individually instead. After the fill the question does not arise: the rungs
+are working orders by then and their own lines already mean "reprice".
+
 A **ladder** is what is new. On the fill each part becomes a
 one-cancels-the-other pair of working orders on the reducing side:
 whichever leg fills closes that part and cancels its sibling, and the parts
@@ -541,10 +551,6 @@ would guard it is already carved out (§9b).
 - **A per-rung stop offset, and a nested trailing-stop strategy.** Recorded,
   not built: neither is expressible in a ladder that arms a fixed level per
   part.
-- **Editing one rung of a ladder by dragging it.** A laddered entry's legs
-  are drawn but the numbers belong to the strategy that shaped them; a drag
-  that silently forked a named ladder would leave two things called the same
-  name meaning different trades.
 - Shaded risk bands between entry and SL/TP: considered and rejected —
   the line-and-tag grammar carries the same information without painting
   over the candles.
