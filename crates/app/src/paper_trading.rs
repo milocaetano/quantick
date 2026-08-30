@@ -111,6 +111,13 @@ const STRATEGY_NONE: &str = "<None>";
 /// Opens the strategy editor on launch, so a capture run can photograph it
 /// without a hand on the mouse. See `docs/ux/paper-trading.md`.
 const STRATEGY_EDITOR_ENV: &str = "QUANTICK_PAPER_STRATEGY_EDITOR";
+/// Stands the ruler at this many ticks on launch.
+///
+/// The ruler is walked with the wheel, and a scripted run has no wheel — so
+/// without this the projected pair, its distance in points and ticks and the
+/// `1:1` it reads are unreachable from a capture. Pair with
+/// `QUANTICK_CMD_PREVIEW`, which supplies the aim the ruler measures from.
+const RULER_TICKS_ENV: &str = "QUANTICK_PAPER_RULER_TICKS";
 /// The position's entry line leads the paper lines: it is the one that is
 /// history rather than an order, and it matches the drawings' default width.
 const POSITION_LINE_WIDTH_PX: f32 = 1.5;
@@ -1310,6 +1317,18 @@ pub struct PaperTrading {
     strategy_dirty: bool,
     /// Which strategy the editor has open; `None` while the list is empty.
     strategy_editing: Option<usize>,
+    /// The finest precision this instrument's prints have actually shown,
+    /// as a number of decimal places.
+    ///
+    /// One tick is `10^-tick_scale`, and it has to come from the tape rather
+    /// than from any single print: a venue may quote `78112.57000000`, whose
+    /// raw scale is eight and whose real step is two, and the very next print
+    /// may land on `78100` and normalize to zero. Reading one print gives a
+    /// tick that changes under the trader's hand — 80 of them a whole point
+    /// one second and a hundred-millionth the next. Taking the finest scale
+    /// the prints have *ever* shown is stable, monotonic and costs one
+    /// comparison per trade.
+    tick_scale: u32,
     /// How many ticks the wheel has walked the projected bracket out from
     /// the aim. Sticky across aims within a session: a trader who decided
     /// their distance should not have to re-roll it for the next setup.
@@ -1502,7 +1521,11 @@ impl PaperTrading {
                 .is_ok_and(|value| value == "1"),
             strategy_dirty: false,
             strategy_editing: None,
-            ruler_ticks: 0,
+            tick_scale: 0,
+            ruler_ticks: std::env::var(RULER_TICKS_ENV)
+                .ok()
+                .and_then(|value| value.trim().parse::<u32>().ok())
+                .map_or(0, |ticks| ticks.min(RULER_MAX_TICKS)),
             ruler_travel_px: 0.0,
             scroll_consumed: false,
             drag: PaperDrag::None,
@@ -1638,11 +1661,22 @@ impl PaperTrading {
 
     /// Seed the mark from backfilled history — never fills (look-ahead).
     pub fn seed(&mut self, trade: &Trade) {
+        self.observe_precision(trade);
         self.venue.seed(trade);
+    }
+
+    /// Fold one print's own precision into the instrument's, so the tick the
+    /// ruler and the strategies step in is the smallest move the tape has
+    /// shown rather than whatever the last print happened to look like.
+    ///
+    /// Per-trade path: one `normalize`, one comparison, no allocation.
+    fn observe_precision(&mut self, trade: &Trade) {
+        self.tick_scale = self.tick_scale.max(trade.price.normalize().scale());
     }
 
     /// Feed one live print through the simulator and act on what it did.
     pub fn on_trade(&mut self, trade: &Trade) {
+        self.observe_precision(trade);
         let events = self.venue.on_trade(trade);
         self.handle_events(events);
         if self.orders_demo.is_some() {
@@ -1685,7 +1719,25 @@ impl PaperTrading {
                 // The legs go on the correct side of the *order's own*
                 // price, which is what the venue validates against — the
                 // hook cannot place one the venue would refuse.
-                let bracket = if self.order_bracket_demo {
+                // A ticket armed with a ladder rests a laddered order, which
+                // is the only way a capture reaches a working order's rungs:
+                // arranging one by hand needs a strategy selected and an
+                // order placed, and a scripted run has neither click.
+                // One contract per rung, so each one gets a whole contract
+                // and the ladder photographs as the trader wrote it rather
+                // than collapsing into a single rounded part.
+                let quantity = self
+                    .selected_order_strategy()
+                    .map_or(Decimal::ONE, |strategy| {
+                        Decimal::from(strategy.rows.len().max(1))
+                    });
+                let armed = self
+                    .selected_order_strategy()
+                    .and_then(|strategy| strategy.resolve(side, price, quantity, tick).ok())
+                    .filter(quantick_sim::Bracket::is_laddered);
+                let bracket = if let Some(bracket) = armed {
+                    bracket
+                } else if self.order_bracket_demo {
                     // The same floor the rung `step` carries, for the same
                     // reason: on a coarsely quoted market 15 bp rounds to
                     // nothing, both legs price *at* the order, and
@@ -1711,7 +1763,7 @@ impl PaperTrading {
                 };
                 let events = self
                     .venue
-                    .submit(OrderIntent::limit(side, Decimal::ONE, price).with_bracket(bracket));
+                    .submit(OrderIntent::limit(side, quantity, price).with_bracket(bracket));
                 self.handle_events(events);
             }
         }
@@ -3035,10 +3087,11 @@ impl PaperTrading {
     /// can express. Read from the mark the same way [`Self::snap`] reads it,
     /// so the ruler steps in exactly the units a drag would land on.
     fn tick(&self) -> Decimal {
-        let places = self
-            .venue
-            .mark_price()
-            .map_or(SNAP_FALLBACK_DECIMALS, |mark| mark.scale());
+        let places = if self.venue.mark_price().is_some() {
+            self.tick_scale
+        } else {
+            SNAP_FALLBACK_DECIMALS
+        };
         Decimal::new(1, places)
     }
 
@@ -10028,6 +10081,45 @@ mod tests {
             4,
             "both rungs armed from the button, not a bare order: {legs:?}"
         );
+    }
+
+    /// The tick is the finest move the tape has shown, not the last print's
+    /// own decoration.
+    ///
+    /// A venue that quotes `78112.57000000` has a raw scale of eight and a
+    /// real step of two; the next print at `78100` normalizes to zero. Both
+    /// readings would make the ruler step by a different amount under the
+    /// trader's hand.
+    #[test]
+    fn the_tick_is_the_finest_step_the_tape_has_shown() {
+        let mut paper = PaperTrading::new();
+        // Trailing zeros are decoration, not precision.
+        paper.seed(&Trade {
+            agg_id: 0,
+            timestamp_ms: 0,
+            price: Decimal::new(7_811_257_000_000, 8),
+            quantity: Decimal::ONE,
+            side: Side::Buy,
+        });
+        assert_eq!(paper.tick(), Decimal::new(1, 2), "two places, not eight");
+
+        // A rounder print does not coarsen an instrument already seen finer.
+        paper.on_trade(&print(1, 78_100));
+        assert_eq!(
+            paper.tick(),
+            Decimal::new(1, 2),
+            "the tick never grows back under a round print"
+        );
+
+        // A genuinely finer print does refine it.
+        paper.on_trade(&Trade {
+            agg_id: 2,
+            timestamp_ms: 2_000,
+            price: Decimal::new(78_100_123, 3),
+            quantity: Decimal::ONE,
+            side: Side::Buy,
+        });
+        assert_eq!(paper.tick(), Decimal::new(1, 3));
     }
 
     /// A frame with the aim's modifier held and wheel travel to spend.
