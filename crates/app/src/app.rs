@@ -1505,6 +1505,16 @@ impl QuantickApp {
             paper_state.order_strategies.clone().unwrap_or_default(),
             paper_state.selected_order_strategy.as_deref(),
         );
+        // A step this build cannot parse is dropped rather than defaulted:
+        // the instrument then follows its derived default, which is a real
+        // answer, where a zero would be a silently broken wheel.
+        tab.paper.set_ruler_steps(
+            paper_state
+                .ruler_steps
+                .iter()
+                .filter_map(|(symbol, step)| step.parse().ok().map(|value| (symbol.clone(), value)))
+                .collect(),
+        );
         // Resolved once: under test the settings path is a fresh scratch
         // file per call, and the load must read the same file the saves
         // will write.
@@ -2679,6 +2689,16 @@ impl QuantickApp {
     /// them out - app-wide like cmd trading, because a ladder a trader built
     /// in one tab is a ladder they mean everywhere.
     fn persist_order_strategies(&mut self) {
+        // The wheel's per-instrument step rides with the strategies: both
+        // are ticket settings the trader configures once, and both are
+        // app-wide rather than per tab.
+        let steps: std::collections::BTreeMap<String, String> = self
+            .active_tab()
+            .paper
+            .ruler_steps()
+            .iter()
+            .map(|(symbol, step)| (symbol.clone(), step.normalize().to_string()))
+            .collect();
         let strategies = self.active_tab().paper.order_strategies().to_vec();
         let selected = self
             .active_tab()
@@ -2688,11 +2708,20 @@ impl QuantickApp {
         for tab in &mut self.tabs {
             tab.paper
                 .set_order_strategies(strategies.clone(), selected.as_deref());
+            tab.paper.set_ruler_steps(
+                steps
+                    .iter()
+                    .filter_map(|(symbol, step)| {
+                        step.parse().ok().map(|value| (symbol.clone(), value))
+                    })
+                    .collect(),
+            );
         }
         let path = crate::paper_state::default_path();
         let mut state = crate::paper_state::load(&path);
         state.order_strategies = Some(strategies);
         state.selected_order_strategy = selected;
+        state.ruler_steps = steps;
         crate::paper_state::save(&path, &state);
     }
 

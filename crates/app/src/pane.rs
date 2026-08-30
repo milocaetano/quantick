@@ -4477,6 +4477,8 @@ impl ChartPane {
                 modifiers,
                 canvas_claimed,
                 scroll_y: paper_scroll,
+                middle_pressed: ui
+                    .input(|input| input.pointer.button_pressed(egui::PointerButton::Middle)),
                 layer_visible: paper_layer_visible,
             })
         } else {
