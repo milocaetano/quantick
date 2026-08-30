@@ -135,7 +135,7 @@ claim in the session transcript is **UNPROVEN**, not met.
       → `.claude/GOAL-archive-delivery-review-gate.md`. *(R8)*
 
       The other half of the dogfood — `delivery-review` actually grading this
-      branch, and its verdict reaching the PR body — is `C1`/`C4` below, not a
+      branch, and its verdict reaching the PR body — is `C1`/`C3` below, not a
       criterion. It cannot be observed at the moment the reviewer writes its
       verdict, which is precisely the rule this branch adds at
       `mission/SKILL.md`'s *Closing steps are not criteria*. Written as an `A`
@@ -202,12 +202,9 @@ unblocked by it. Written as criteria they would fail every mission on the day
 the gate shipped, so they live here instead.
 
 - [ ] **C1** — `delivery-review` returns PASS over this checklist.
-- [ ] **C2** — `.claude/GOAL.md` archived to
-      `.claude/GOAL-archive-delivery-review-gate.md` and committed, *before*
-      either review runs, so both markers record the branch the reviews saw.
-- [ ] **C3** — PR opened with the evidence in its body. Merging is the trader's
+- [ ] **C2** — PR opened with the evidence in its body. Merging is the trader's
       call and is not part of this mission.
-- [ ] **C4** — `delivery-review`'s verdict pasted into the PR body, so the next
+- [ ] **C3** — `delivery-review`'s verdict pasted into the PR body, so the next
       reader sees what it graded and what it refused.
 
 ### Not applicable, and why

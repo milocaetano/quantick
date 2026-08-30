@@ -167,12 +167,20 @@ effective_dir() {
 # shell it was denied in. `cd` on its own line, then the redirect, is valid in
 # both — as is `$(…)`, which PowerShell reads as a subexpression.
 #
+# The break between them is the *escaped* `\n`, not a real one. `deny` puts
+# this string inside a JSON value, where a literal newline is an invalid
+# control character: the payload stops parsing, the decision is lost, and the
+# gate fails open on exactly the command it meant to stop. That is how the
+# `&&` chain got here in the first place — it was the version that produced
+# valid JSON, and the two-line form that replaced it broke the payload for one
+# commit before this line was written.
+#
 # The `cd` is not decoration. Both `git` calls resolve against the shell's cwd,
 # which for an agent session is the main checkout and not the worktree being
 # shipped, so without it the pasted line writes the main checkout's git dir
 # with main's HEAD and the next attempt denies identically.
 record_line() {
-    printf 'cd \\"%s\\"\n      git rev-parse HEAD > \\"$(git rev-parse --absolute-git-dir)/%s\\"' "$1" "$2"
+    printf 'cd \\"%s\\"\\n      git rev-parse HEAD > \\"$(git rev-parse --absolute-git-dir)/%s\\"' "$1" "$2"
 }
 
 marker_path() {
@@ -216,18 +224,6 @@ marker_problem() {
     if [ "$problem_reviewed" != "$2" ]; then
         printf '`%s` was recorded for %s but HEAD is now %s, so the newest commits are ungraded' "$3" "$problem_reviewed" "$2"
     fi
-}
-
-# The line that records marker `$2`, run from worktree `$1`.
-#
-# The `cd` is not decoration. Both `git` calls resolve against the shell's cwd,
-# which for an agent session is the main checkout and not the worktree being
-# shipped — this script's own `effective_dir` treats that as established fact.
-# Without the prefix the pasted line writes the main checkout's git dir with
-# main's HEAD, the worktree's marker still does not exist, and the next
-# `gh pr create` denies with the identical message and no clue why.
-record_line() {
-    printf 'cd \\"%s\\" && git rev-parse HEAD > \\"$(git rev-parse --absolute-git-dir)/%s\\"' "$1" "$2"
 }
 
 # --- worktree-guard ---------------------------------------------------------
@@ -318,10 +314,7 @@ pr_gate() {
     # gate that can be switched off by being obeyed is worse than no gate, so
     # when the directory is uncertain the remedy names no path at all.
     if [ "$git_dir" = "$common_dir" ]; then
-        deny "\"CLAUDE.md: no branch ships un-reviewed. This resolves to the main checkout ($dir) rather than a linked worktree, so the gate cannot tell which branch is being shipped and will not guess. Run it from the worktree with an explicit leading \`cd\`:
-
-  cd <worktree>
-  <the command>\""
+        deny "\"CLAUDE.md: no branch ships un-reviewed. This resolves to the main checkout ($dir) rather than a linked worktree, so the gate cannot tell which branch is being shipped and will not guess. Run it from the worktree with an explicit leading \`cd\`:\n\n  cd <worktree>\n  <the command>\""
     fi
 
     # Both are inspected before anything is said, so one denial can carry both

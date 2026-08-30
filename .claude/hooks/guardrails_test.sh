@@ -74,6 +74,31 @@ run() {
         failed=$((failed + 1))
         return
     fi
+
+    # The payload has to be JSON the harness can parse, and every mode emits it
+    # on one line. A raw newline inside a JSON string value is an invalid
+    # control character: the decision is lost and the normal permission flow
+    # takes over, which for `pr-gate` means the PR opens. That happened — a
+    # two-line recording remedy was written into the reason, the suite stayed
+    # green because it only grepped for `"deny"`, and the gate had silently
+    # stopped denying. Checking the shape here is what makes every case above
+    # an assertion about a decision the harness will actually receive.
+    if [ -n "$out" ]; then
+        if [ "$(printf '%s' "$out" | wc -l)" -ne 0 ]; then
+            printf 'FAIL %s: payload spans multiple lines, so it is not parseable JSON\n  output: %s\n' "$name" "$out"
+            failed=$((failed + 1))
+            return
+        fi
+        case "$out" in
+            '{'*'}') ;;
+            *)
+                printf 'FAIL %s: payload is not a JSON object\n  output: %s\n' "$name" "$out"
+                failed=$((failed + 1))
+                return
+                ;;
+        esac
+    fi
+
     passed=$((passed + 1))
 }
 
