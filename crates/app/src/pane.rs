@@ -4451,7 +4451,21 @@ impl ChartPane {
         // to leave that frame's travel alone.
         let paper_scroll = pointer_position
             .filter(|position| drawing_area.contains(*position))
-            .map_or(0.0, |_| ui.input(|input| input.raw_scroll_delta.y));
+            .map_or(0.0, |_| {
+                ui.input(|input| {
+                    let delta = input.raw_scroll_delta;
+                    // Windows turns a vertical wheel into *horizontal* scroll
+                    // while a modifier is held, so the value the ruler needs
+                    // arrives on `x` for exactly the gesture the ruler is
+                    // made of. Reading only `y` meant the ruler saw nothing
+                    // whenever the trader was actually holding the key.
+                    if delta.y.abs() > f32::EPSILON {
+                        delta.y
+                    } else {
+                        delta.x
+                    }
+                })
+            });
         let paper_gesture = if chrome.paper_takes_input && !tool_armed {
             chrome.paper.handle_chart_input(&ChartInput {
                 chart: drawing_area,

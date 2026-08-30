@@ -10655,6 +10655,30 @@ mod tests {
         assert_eq!(paper.ruler_ticks, 0, "and it put the ruler away");
     }
 
+    /// The gesture the ruler is made of is the one Windows reports sideways.
+    ///
+    /// Holding a modifier turns a vertical wheel into horizontal scroll, so
+    /// `raw_scroll_delta` arrives as `x = 40, y = 0` for exactly the roll the
+    /// ruler exists to serve. Reading only `y` meant the ruler saw nothing
+    /// whenever the trader was actually holding the key - the one case that
+    /// matters. The pane hands over whichever axis carried it; this proves
+    /// the ruler steps on what it is handed.
+    #[test]
+    fn the_ruler_steps_on_the_travel_the_pane_hands_it() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let (chart, scale) = chart_and_scale(80.0, 120.0);
+        let aim = egui::pos2(400.0, 250.0);
+        // 40 px is what this machine's wheel reports, on whichever axis.
+        for _ in 0..3 {
+            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
+        }
+        assert_eq!(paper.ruler_ticks, 3);
+        let preview = paper.cmd_preview.expect("the aim is up");
+        assert_eq!(preview.bracket.stop_loss(), Some(Decimal::from(92)));
+        assert_eq!(preview.bracket.take_profit(), Some(Decimal::from(98)));
+    }
+
     /// A frame with the aim's modifier held and wheel travel to spend.
     fn ruler_frame<'a>(
         chart: egui::Rect,
