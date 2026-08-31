@@ -117,10 +117,10 @@ impl Surface for ToastSurface {
     /// save — so a capture that never performs the act can photograph neither,
     /// and the Undo button is the affordance most worth seeing. Goes through
     /// the same two entry points the application uses.
-    fn apply_env_hook(&mut self, now: Instant) {
+    fn apply_env_hook(&mut self, env: &SurfaceEnv<'_>) {
         match std::env::var("QUANTICK_TOAST").as_deref() {
-            Ok("plain") => self.note("Workspace saved.", now),
-            Ok("undo") => self.note_with_undo("Trend line deleted.", now),
+            Ok("plain") => self.note("Workspace saved.", env.now),
+            Ok("undo") => self.note_with_undo("Trend line deleted.", env.now),
             // A typo must not photograph the wrong state and call it a pass.
             _ => {}
         }
@@ -192,10 +192,7 @@ mod tests {
     use super::*;
 
     fn env(now: Instant) -> SurfaceEnv<'static> {
-        SurfaceEnv {
-            bookmarks: &[],
-            now,
-        }
+        SurfaceEnv::quiet(now)
     }
 
     /// A toast leaves on its own after the undo window, without anyone having

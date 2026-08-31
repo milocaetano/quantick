@@ -5,8 +5,6 @@
 //! off `QuantickApp` with it — the point of the port, and the reason this
 //! file's existence is the whole registration.
 
-use std::time::Instant;
-
 use eframe::egui;
 
 use super::{Surface, SurfaceEnv, SurfaceResponse};
@@ -91,7 +89,7 @@ impl Surface for AgentPopupSurface {
     /// assistant, so a scripted capture has no way to raise one — which is
     /// exactly the case `ui-harness` says a hook must cover. It goes through
     /// [`Self::show`], the same call `quantick_notify` makes.
-    fn apply_env_hook(&mut self, _now: Instant) {
+    fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
         if std::env::var("QUANTICK_AGENT_POPUP").is_ok_and(|value| value == "1") {
             self.show(AgentPopup {
                 title: "Assistant".to_string(),
