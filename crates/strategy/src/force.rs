@@ -686,4 +686,80 @@ mod tests {
             other => panic!("the range floor admits this bar, got {other:?}"),
         }
     }
+
+    /// The trader's own preset, and the two regimes it splits the reported
+    /// bar into.
+    ///
+    /// Every other fixture here runs the shipped band (1.5-2.5) over a
+    /// 3-bar window. `SellGainAlarm` runs **`window = 20`, `min_factor =
+    /// 2`, `max_factor = 4.5`, floor 100**, and that difference decides
+    /// whether this branch's change touches the reported bar at all: the
+    /// floor is consulted **only inside the band**, so a body under 2x the
+    /// 20-bar average is `Quiet` and never reaches any floor, of either
+    /// kind.
+    ///
+    /// So the honest diagnosis is conditional, and this test is the
+    /// condition written down:
+    ///
+    /// - body under 2x the average -> `Quiet`. The floor never ran, and
+    ///   changing what it measures would not have fired the bar.
+    /// - body inside the band, candle over the floor -> the change is
+    ///   exactly what fires it.
+    ///
+    /// Which one the marked bar was cannot be settled from here: there is
+    /// no BTCUSDT recording of that session on disk, and the badge that
+    /// would have named the gate is the thing this branch repairs. It is a
+    /// question for the trader with the fix in hand, not a claim to make
+    /// without the tape.
+    #[test]
+    fn under_the_traders_own_band_the_floor_is_only_reached_inside_it() {
+        let preset = || ForceParams {
+            window: 20,
+            min_factor: dec("2"),
+            max_factor: dec("4.5"),
+            min_range: dec("100"),
+        };
+        // Twenty 40-point bodies: a congested stretch, average body 40.
+        let warm: Vec<Bar> = (0..20).map(|_| bar("100", "140")).collect();
+
+        // Regime one: a 60-point body is 1.46x the average - under the
+        // band's floor of 2x. `Quiet`, and no floor of any kind was read.
+        let mut ruler = ForceWindow::new(preset());
+        for b in &warm {
+            ruler.classify(b);
+        }
+        match ruler.classify(&wicked("180000", "179940", "180100", "179960")) {
+            BarVerdict::Quiet { ratio } => assert!(
+                ratio < dec("2"),
+                "under the band, so the floor is never consulted: {ratio}"
+            ),
+            other => panic!("a 60-point body against a 40-point average is quiet, got {other:?}"),
+        }
+
+        // Regime two: a 95-point body is 2.22x - inside the band, so the
+        // floor decides. Its candle reaches 140, which clears 100.
+        let mut ruler = ForceWindow::new(preset());
+        for b in &warm {
+            ruler.classify(b);
+        }
+        match ruler.classify(&wicked("180000", "179905", "180100", "179960")) {
+            BarVerdict::Force(force) => {
+                assert_eq!(force.body, dec("95"));
+                assert_eq!(force.range, dec("140"));
+                assert!(
+                    force.ratio >= dec("2") && force.ratio <= dec("4.5"),
+                    "inside the trader's band, which is what lets the floor \
+                     decide at all: {}",
+                    force.ratio
+                );
+                assert!(
+                    force.body < dec("100"),
+                    "and the old body floor of 100 refused exactly this bar"
+                );
+            }
+            other => {
+                panic!("a 95-point body at 2.22x with a 140-point candle fires, got {other:?}")
+            }
+        }
+    }
 }

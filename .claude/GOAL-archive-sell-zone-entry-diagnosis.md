@@ -256,25 +256,30 @@ reports **all checks passed across 31 tests**, exit 0 — which is what CI runs.
 
 ### G3 — performance impact, by rate class
 
-- `ForceWindow::weigh` — **per closed bar** (rare). One extra subtraction
-  (`high - low`), computed once and reused by the gate and the `ForceBar`
-  it builds. No allocation.
+**Rewritten after `delivery-review` found the previous version describing a
+build that is not this branch.** It claimed `ArmedStrategy` caches the ruler's
+reading, that the badge borrows it, and that a named test pins the cache — all
+true of a commit that was then reverted, and left standing in this file. A
+performance declaration that describes code which is not shipped is worse than
+none, because it is read as measurement.
+
+What the shipped branch actually does:
+
+- `ForceWindow::weigh` — **per closed bar, and also per print**. One extra
+  subtraction (`high - low`), read once and reused by the gate and the
+  `ForceBar` it builds; no allocation. The per-print half was missed in the
+  first declaration and is the reason **G4** below is not N/A: `weigh` is
+  reached from `ForceTrigger::preview`, which the alarm's forming-bar path
+  calls on every print through `preview_opportunity`.
 - `ArmedStrategy::on_closed_bar` — **per closed bar** (rare). Unchanged.
-- `ChartPane::badge_text_for` — **per frame**, once per armed instance
-  (hot). The first version of this fix called `Trigger::status()` here,
-  which returns an owned `String` — a `format!` per armed instance per
-  frame, and a dimension-2 finding against my own change. It was caught in
-  arch-review and removed rather than declared: `ArmedStrategy` now caches
-  the ruler's reading in `trigger_status`, refreshed at the three sites
-  that can change what the ruler would say (a judged bar, a warmup, a
-  re-arm that resets the series), and the badge **borrows** it. The
-  allocation moved from 60 Hz to the bar rate, and
-  `the_cached_ruler_reading_never_drifts_from_the_trigger` pins the cache
-  to the trigger so the saving cannot become a stale badge — the exact
-  failure this branch exists to fix.
-- `ArmedStrategy::status_line` now reads the same cached string, so the
-  chart badge and the right-click menu quote **one** value rather than two
-  calls that happen to agree.
+- `ChartPane::badge_text_for` — **per frame**, once per armed instance. It
+  calls `Trigger::status()`, which formats two `Decimal`s and returns an owned
+  `String`. That is the same call `status_line` has always made, and it is not
+  new to this path so much as newly *reached* from it. A cache was written to
+  avoid it and reverted: it moved the cost onto every closed bar of every
+  backtest session, which never reads the string, to save one allocation of
+  several on a paint path that allocates regardless. `status_line` makes its
+  own separate call; the two are not shared.
 
 ### G4 and G5 — what could not be finished, and why
 
@@ -286,9 +291,10 @@ A run of the branch build reached the armed-instance surface
 trader's workspace could not be touched) and stayed healthy for its whole
 life: **fps 59–60, frame_avg 16.64–16.67 ms, frame_cpu 1.9–4.5 ms** on a
 live Binance tape at ~39 trades/s. That is the vsync ceiling, so nothing in
-this change costs a visible frame. Those numbers were taken **before**
-the cache above landed, so they measure the more expensive version; the
-shipped one does strictly less work per frame.
+this change costs a visible frame. Those numbers were taken before the
+cache was written *and* the cache was later reverted, so they measure the
+shape that shipped — not, as an earlier version of this file claimed, a
+more expensive one the branch improved on.
 
 It is short of what G4 asked for on two counts, and both are stated rather
 than glossed: there is **no `main` control run** to compare against, and the
