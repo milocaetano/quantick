@@ -261,13 +261,20 @@ reports **all checks passed across 31 tests**, exit 0 — which is what CI runs.
   it builds. No allocation.
 - `ArmedStrategy::on_closed_bar` — **per closed bar** (rare). Unchanged.
 - `ChartPane::badge_text_for` — **per frame**, once per armed instance
-  (hot). This is the one path that grew: it now calls `Trigger::status()`,
-  which returns an owned `String`, when no gate refused the current bar.
-  The port returns `String`, so the allocation cannot be avoided without
-  changing the trait; it is bounded by the number of armed instances on
-  screen (single digits) and sits beside allocations the function already
-  made. **This is the change's only hot-path cost and it is not measured
-  away — see G4.**
+  (hot). The first version of this fix called `Trigger::status()` here,
+  which returns an owned `String` — a `format!` per armed instance per
+  frame, and a dimension-2 finding against my own change. It was caught in
+  arch-review and removed rather than declared: `ArmedStrategy` now caches
+  the ruler's reading in `trigger_status`, refreshed at the three sites
+  that can change what the ruler would say (a judged bar, a warmup, a
+  re-arm that resets the series), and the badge **borrows** it. The
+  allocation moved from 60 Hz to the bar rate, and
+  `the_cached_ruler_reading_never_drifts_from_the_trigger` pins the cache
+  to the trigger so the saving cannot become a stale badge — the exact
+  failure this branch exists to fix.
+- `ArmedStrategy::status_line` now reads the same cached string, so the
+  chart badge and the right-click menu quote **one** value rather than two
+  calls that happen to agree.
 
 ### G4 and G5 — what could not be finished, and why
 
@@ -279,7 +286,9 @@ A run of the branch build reached the armed-instance surface
 trader's workspace could not be touched) and stayed healthy for its whole
 life: **fps 59–60, frame_avg 16.64–16.67 ms, frame_cpu 1.9–4.5 ms** on a
 live Binance tape at ~39 trades/s. That is the vsync ceiling, so nothing in
-this change costs a visible frame.
+this change costs a visible frame. Those numbers were taken **before**
+the cache above landed, so they measure the more expensive version; the
+shipped one does strictly less work per frame.
 
 It is short of what G4 asked for on two counts, and both are stated rather
 than glossed: there is **no `main` control run** to compare against, and the

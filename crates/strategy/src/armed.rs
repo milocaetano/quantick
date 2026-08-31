@@ -297,6 +297,17 @@ pub struct ArmedStrategy {
     /// What the bar just judged left standing, cleared by the next bar the
     /// trigger had nothing to say about.
     note: Option<Note>,
+    /// The ruler's own reading of the last bar it judged, kept as text.
+    ///
+    /// Cached rather than asked for on demand because the badge paints it
+    /// **every frame** while [`Trigger::status`] builds an owned `String`.
+    /// The reading changes only when a bar closes or the ruler is reset, so
+    /// holding it here moves that allocation from 60 Hz to the bar rate.
+    /// Every site that can change what the ruler would say refreshes it
+    /// through [`Self::refresh_trigger_status`], and
+    /// `the_cached_ruler_reading_never_drifts_from_the_trigger` is what
+    /// keeps the two from disagreeing.
+    trigger_status: String,
     /// The most recent gate that refused a signal, kept **across** the quiet
     /// bars that follow it.
     ///
@@ -326,14 +337,33 @@ impl ArmedStrategy {
     /// A freshly armed instance.
     #[must_use]
     pub fn new(params: StrategyParams, trigger: Box<dyn Trigger>) -> Self {
+        let trigger_status = trigger.status();
         Self {
             params,
             trigger,
             state: ArmedState::Armed,
             note: None,
+            trigger_status,
             last_hold: None,
             last_close_opportunity: None,
         }
+    }
+
+    /// Re-read the ruler after something changed what it would say. One
+    /// door, so a new site that advances or resets the trigger cannot
+    /// forget half the job and leave the badge quoting a stale bar.
+    fn refresh_trigger_status(&mut self) {
+        self.trigger_status = self.trigger.status();
+    }
+
+    /// The ruler's reading of the last bar it judged — "force 2.1×",
+    /// "quiet 0.8×", "2.08× in band · candle 95 under floor".
+    ///
+    /// Borrowed rather than built, because the chart badge paints it every
+    /// frame. See [`Self::trigger_status`] for why it is cached.
+    #[must_use]
+    pub fn trigger_status(&self) -> &str {
+        &self.trigger_status
     }
 
     #[must_use]
@@ -416,6 +446,7 @@ impl ArmedStrategy {
         account_flat: bool,
     ) -> Vec<Command> {
         let signal = self.trigger.on_closed_bar(bar);
+        self.refresh_trigger_status();
         // The *opportunity* is judged for every closed bar, whatever the
         // state machine is doing and whoever holds the account: it is a
         // statement about the setup, not about this instance's ability to
@@ -718,6 +749,7 @@ impl ArmedStrategy {
         match &self.state {
             ArmedState::Disarmed { reason } if reason.resets_series() => {
                 self.trigger.reset();
+                self.refresh_trigger_status();
                 self.clear_notes();
                 self.state = ArmedState::Armed;
             }
@@ -738,6 +770,7 @@ impl ArmedStrategy {
         for bar in bars {
             let _ = self.trigger.on_closed_bar(bar);
         }
+        self.refresh_trigger_status();
         self.clear_notes();
     }
 
@@ -798,9 +831,9 @@ impl ArmedStrategy {
             ArmedState::Armed => match (self.note, self.last_hold) {
                 (Some(note), _) => format!("armed · {}", note.line()),
                 (None, Some(held)) => {
-                    format!("armed · {} · last held: {held}", self.trigger.status())
+                    format!("armed · {} · last held: {held}", self.trigger_status)
                 }
-                (None, None) => format!("armed · {}", self.trigger.status()),
+                (None, None) => format!("armed · {}", self.trigger_status),
             },
             ArmedState::Fired { retest: false, .. } => "fired · waiting for fill".to_owned(),
             // Only promise the self-cancel when the order actually carries
@@ -2232,6 +2265,57 @@ mod tests {
         assert_eq!(
             resting.preview_opportunity(&cutting, &region, true),
             Some(Opportunity::Retest { edge: dec("105") })
+        );
+    }
+
+    /// The cache and the ruler are one fact, and a test says so.
+    ///
+    /// `trigger_status` exists to keep an owned `String` off the badge's
+    /// per-frame path, and every cache buys that with a way to be wrong.
+    /// The failure would be silent and exactly the kind this branch was
+    /// opened to fix — a badge quoting a bar that has already passed — so
+    /// it is pinned here rather than left to review. Walks the three sites
+    /// that can change what the ruler would say: a judged bar, a warmup,
+    /// and a re-arm that resets the series.
+    #[test]
+    fn the_cached_ruler_reading_never_drifts_from_the_trigger() {
+        let region = Region::new(dec("100"), dec("110"));
+        let mut instance = force_instance(Side::Buy);
+        assert_eq!(
+            instance.trigger_status(),
+            instance.trigger().status(),
+            "a fresh instance already quotes its ruler"
+        );
+
+        for bar in [
+            bar("100", "101"),
+            bar("101", "102"),
+            bar("102", "106"),
+            bar("106", "106"),
+        ] {
+            instance.on_closed_bar(&bar, &region, true, true);
+            assert_eq!(
+                instance.trigger_status(),
+                instance.trigger().status(),
+                "after a judged bar"
+            );
+        }
+
+        instance.warm(&[bar("106", "112"), bar("112", "113")]);
+        assert_eq!(
+            instance.trigger_status(),
+            instance.trigger().status(),
+            "after a warmup the gates never saw"
+        );
+
+        // The cleanup commands are the simulator's business, not this
+        // test's: what is under test is what the badge quotes afterwards.
+        let _ = instance.disarm(DisarmReason::MarketChanged);
+        instance.rearm();
+        assert_eq!(
+            instance.trigger_status(),
+            instance.trigger().status(),
+            "after a re-arm that reset the series under the ruler"
         );
     }
 }

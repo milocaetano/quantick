@@ -2419,7 +2419,7 @@ impl ChartPane {
         // `region_pause` above exists to end, found again the same way.
         if armed {
             text.push_str(" · ");
-            text.push_str(&instance.armed.trigger().status());
+            text.push_str(instance.armed.trigger_status());
         }
         if let Some(held) = held {
             text.push_str(" · last held: ");
