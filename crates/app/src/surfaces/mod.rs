@@ -109,10 +109,15 @@ pub(crate) struct SurfaceEnv<'a> {
     /// for a surface nobody can see is exactly the cost this port was
     /// supposed to make visible rather than hide.
     pub open_markets: &'a [(String, String)],
-    /// Which tab is on screen. The arming dialog speaks for one drawing on
-    /// one tab, and drawing ids are per-pane counters — the same id over
-    /// there names an unrelated object — so it closes when this changes.
-    pub active_tab: usize,
+    /// The **stable id** of the tab on screen. The arming dialog speaks for
+    /// one drawing on one tab, and drawing ids are per-pane counters — the
+    /// same id over there names an unrelated object — so it closes when this
+    /// changes.
+    ///
+    /// The id and not the index: `close_tab` clamps the active index rather
+    /// than shifting it, so an index can keep comparing equal while pointing
+    /// at a different market.
+    pub active_tab: u64,
     /// The sides whose bar rule closes on a **count**, so a fraction of the
     /// bar is a thing that exists.
     ///
@@ -369,6 +374,20 @@ pub(crate) struct Surfaces {
 }
 
 impl Surfaces {
+    /// Whether the capture hooks have still to run.
+    ///
+    /// The host reads this when it decides whether to build the environment
+    /// slices that only an open surface needs. A hook opens its surface
+    /// *inside* [`Self::draw_all`], which is after those slices were
+    /// gathered, so on that one frame "is it open" is the wrong question —
+    /// the right one is "is it about to be". Without it a hook-opened market
+    /// dialog draws its first frame against an empty open-markets list and
+    /// photographs Remove buttons that should have been greyed out: a capture
+    /// of a state the application would never reach on its own.
+    pub fn hooks_pending(&self) -> bool {
+        !self.hooks_applied
+    }
+
     /// Draw every surface and return the merged asks.
     ///
     /// Per-frame path: one virtual call per registered surface, each of which
@@ -379,10 +398,13 @@ impl Surfaces {
     /// Call order does not decide what covers what. Every surface here names
     /// its own `egui::Order`, and egui sorts by layer before it considers the
     /// sequence: the toast paints in `Foreground` wherever it is called from,
-    /// while the popup is an ordinary `Middle`-order window. That is what
-    /// makes it safe for one call site to replace the scattered ones — but it
-    /// is also why a surface added here must set its own order rather than
-    /// rely on being last.
+    /// while the popup is an ordinary `Middle`-order window. Within one order
+    /// egui puts a newly created area on top, and every window here is created
+    /// on the frame it opens — so the window a trader just opened is in front
+    /// of whatever else is on screen, wherever this call sits in the frame.
+    /// That is what makes it safe for one call site to replace the scattered
+    /// ones, and it is also why a surface added here must set its own order
+    /// rather than rely on being last.
     pub fn draw_all(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
         if !self.hooks_applied {
             self.hooks_applied = true;
@@ -531,14 +553,25 @@ mod tests {
             test_alert: Some(crate::audio::Cue::default()),
             ..SurfaceResponse::default()
         };
+        let mut contested = crate::style::ChartStyle::default();
+        contested.canvas.grid_enabled = !contested.canvas.grid_enabled;
         first.merge(SurfaceResponse {
             save_workspace_as: Some("second".to_owned()),
+            style: Some(contested),
+            log_style_change: Some(StyleLogRequest {
+                applied_preset: Some(crate::style::CandlePreset::Classic),
+            }),
             footprint: Some(FootprintChange::Applied(Box::default())),
             market: Some(MarketRequest::Remove {
                 feed_id: "second".to_owned(),
                 symbol: "SECOND".to_owned(),
             }),
-            ..SurfaceResponse::default()
+            arm_strategy: None,
+            test_alert: Some(crate::audio::Cue::new(
+                crate::audio::AlertSound::Critical,
+                None,
+            )),
+            undo_drawing: false,
         });
         assert_eq!(first.save_workspace_as.as_deref(), Some("first"));
         assert_eq!(first.footprint, Some(FootprintChange::ResetToDefault));
@@ -549,6 +582,22 @@ mod tests {
                 symbol: "FIRST".to_owned(),
             })
         );
+        // The three the first version of this test set but never contested,
+        // which is how a field folded with assignment instead of `or` would
+        // have shipped: an appearance edit silently clobbered by whatever
+        // surface happened to draw after the style panel.
+        assert_eq!(
+            first.style.map(|style| style.canvas.grid_enabled),
+            Some(crate::style::ChartStyle::default().canvas.grid_enabled),
+            "the first surface's appearance survives a later one's"
+        );
+        assert_eq!(
+            first.log_style_change,
+            Some(StyleLogRequest {
+                applied_preset: None
+            })
+        );
+        assert_eq!(first.test_alert, Some(crate::audio::Cue::default()));
     }
 
     /// The same function drives a surface that really ships, so the fake is
@@ -607,6 +656,31 @@ mod tests {
             ..SurfaceResponse::default()
         });
         assert_eq!(merged.save_workspace_as.as_deref(), Some("only"));
+    }
+
+    /// A response is built once per registered surface and once for the
+    /// fold, **every frame**, and returned by value each time. So its size is
+    /// a per-frame cost, and the way it grows is by someone adding a field
+    /// that carries a whole configuration by value instead of boxing it —
+    /// which is exactly what [`FootprintChange::Applied`] and
+    /// [`ArmRequest::form`] box for.
+    ///
+    /// The ceiling is generous rather than exact: struct layout is the
+    /// compiler's business and pinning today's number would fail on a
+    /// harmless field reorder. It is set where an unboxed configuration
+    /// would break it and ordinary growth would not — 264 bytes today, and
+    /// one unboxed `StoredPreset` is over 300 on its own.
+    const RESPONSE_SIZE_CEILING: usize = 512;
+
+    /// See [`RESPONSE_SIZE_CEILING`].
+    #[test]
+    fn a_response_stays_small_enough_to_return_every_frame() {
+        let size = std::mem::size_of::<SurfaceResponse>();
+        assert!(
+            size <= RESPONSE_SIZE_CEILING,
+            "SurfaceResponse is {size} bytes, over the {RESPONSE_SIZE_CEILING} ceiling — a new \
+             request is carrying a configuration by value where it should box it"
+        );
     }
 
     /// Order must not decide the outcome: a later surface with nothing to ask

@@ -866,7 +866,6 @@ pub struct QuantickApp {
     /// interaction state across the whole window rather than within a tab, so
     /// this may not be per-tab state: two panes sharing an id share a drag.
     pane_ids: PaneIdAllocator,
-    /// The `+` dialog, while it is open.
     /// The instruments the user added from the picker, already folded into
     /// `config`'s catalog. Kept apart from it so the picker can tell an
     /// addition — which it may take back out — from a shipped entry, which is
@@ -1148,14 +1147,10 @@ pub struct QuantickApp {
     footprint_config: crate::footprint_config::FootprintConfig,
     /// Where those edits persist (see `footprint_config::settings_path`).
     footprint_settings_path: std::path::PathBuf,
-    /// Whether the footprint settings window is open (the layer menu's
-    /// "configure footprint…" entry opens it).
-    /// Named tape-reading setups, and where they live.
     // Named input setups per indicator kind, offered by the settings
     // dialog's preset picker.
     indicator_presets: preset_file::PresetStore,
     indicator_presets_path: std::path::PathBuf,
-    /// The settings window's "save preset" field, kept across frames.
     /// The boot hooks' requests, kept so tabs opened later (replay
     /// autostart) get them too: `QUANTICK_FOOTPRINT_AUTOSTART`,
     /// `QUANTICK_CANDLE_WIDTH` and `QUANTICK_PAN_PX`.
@@ -1225,7 +1220,9 @@ pub struct QuantickApp {
     /// filled, which no boot-time code can guarantee.
     scripted_indicator_settings: bool,
 
-    // Candle appearance + whether the style panel is open.
+    /// The chart appearance every renderer reads. The window that edits it
+    /// is `surfaces::style_panel`, which hands back a copy rather than
+    /// holding a reference to this one.
     style: ChartStyle,
     style_revision: u64,
     // Whether the status bar shows the perf readings (View → perf readings).
@@ -4559,13 +4556,6 @@ impl QuantickApp {
         }
     }
 
-    /// The footprint settings window, editing the **focused chart's** setup.
-    ///
-    /// A chart that has never been configured follows the window's last
-    /// setup, so the first edit anywhere reads like a global preference and
-    /// the second chart only diverges when the trader configures it too.
-    /// Whatever is edited also becomes the window default, which is what a
-    /// chart opened later inherits.
     /// Settle every tab's paper panel and hand its acknowledgement to the
     /// window's one toast.
     ///
@@ -4589,9 +4579,19 @@ impl QuantickApp {
     ///
     /// A message from a background tab is **named**, because an unlabelled
     /// "SIM: dropped at the fill" would read as being about the chart on
-    /// screen. The active tab's message carries no prefix and is posted last,
-    /// so where two tabs speak in one frame the one being watched wins the
-    /// slot rather than tab order deciding in silence.
+    /// screen.
+    ///
+    /// # Which message wins a slot that holds one
+    ///
+    /// The watched tab's, always: it carries no prefix and is posted last, so
+    /// it takes the slot from any background message raised on the same
+    /// frame. Among background tabs the **first** in tab order wins and the
+    /// rest of that frame are dropped — the same first-wins rule
+    /// `SurfaceResponse::merge` uses for a request that carries a value, so
+    /// the window has one tie-break rule rather than two. Posting each of
+    /// them in turn would look like it showed them all and would in fact
+    /// show whichever `tabs.iter()` reached last, which is tab order deciding
+    /// in silence.
     fn settle_paper_panels(&mut self, now: Instant) {
         let Self {
             tabs,
@@ -4600,6 +4600,7 @@ impl QuantickApp {
             ..
         } = self;
         let mut watched = None;
+        let mut background = None;
         for (index, tab) in tabs.iter_mut().enumerate() {
             tab.paper.settle();
             let Some(message) = tab.paper.take_toast() else {
@@ -4607,11 +4608,12 @@ impl QuantickApp {
             };
             if index == *active_tab {
                 watched = Some(message);
-            } else {
-                surfaces
-                    .toast
-                    .note(format!("{}: {message}", tab.symbol), now);
+            } else if background.is_none() {
+                background = Some(format!("{}: {message}", tab.symbol));
             }
+        }
+        if let Some(message) = background {
+            surfaces.toast.note(message, now);
         }
         if let Some(message) = watched {
             surfaces.toast.note(message, now);
@@ -10006,12 +10008,10 @@ impl QuantickApp {
                 if mode == StrategyDemoMode::AlarmSounds {
                     self.surfaces.strategy_popup.stage_sound_picker();
                 }
-                self.surfaces.strategy_popup.open(
-                    self.active_tab,
-                    pane::PaneSide::Flow,
-                    drawing_id,
-                    form,
-                );
+                let tab = self.active_tab().id;
+                self.surfaces
+                    .strategy_popup
+                    .open(tab, pane::PaneSide::Flow, drawing_id, form);
             }
         }
         // This demo places its rectangle, which selects it, which closes a
@@ -10429,6 +10429,25 @@ impl QuantickApp {
         if let Some(access) = self.control_access.as_mut() {
             access.draw_panel(ctx);
         }
+        self.draw_toolbar(ctx);
+        // Before the dialog is drawn, so a double click on a pane or a curve
+        // opens it on the same frame the gesture happened rather than the next.
+        self.open_requested_indicator_settings();
+        self.draw_indicator_settings(ctx);
+        self.draw_indicator_legends(ctx);
+        // **After** the dialogs above, and that placement is load-bearing.
+        // The preview watermark reads whether a settings dialog is previewing
+        // an unapplied draft, and `draw_indicator_settings` is what sets that
+        // — so an environment built before it would put the banner on screen
+        // a frame after the legend chip that says the same thing, and take it
+        // off a frame later too. Two surfaces the trader reads as one is this
+        // repo's own bug class; sixteen milliseconds of it is still one
+        // frame a capture can photograph.
+        //
+        // It is also where the windows this pass drew used to sit: the
+        // appearance and footprint panels ran after the toolbar that toggles
+        // them, so a click on LOOK opens the panel on the same frame rather
+        // than the next.
         // A pane's right-click asked to arm one of its drawings. Drained
         // here, into the surface that owns the dialog: the click happens
         // while the canvas draws, which is later in this frame than the
@@ -10447,15 +10466,20 @@ impl QuantickApp {
                 let form = crate::strategy_presets::StoredPreset::starting_point(
                     quantick_engine::Side::Buy,
                 );
-                let tab = self.active_tab;
+                let tab = self.active_tab().id;
                 self.surfaces.strategy_popup.open(tab, side, drawing, form);
             }
         }
         // The bar rules the arming dialog's alarm section reads: a share of
         // the bar only means something where the rule closes on a count.
         // Built only while that dialog is open, like the open markets below.
+        // `hooks_pending` is the frame a capture hook opens a surface from
+        // inside `draw_all`: it is not open yet when this runs, but it is
+        // about to be, and it must not draw its first frame against an empty
+        // environment.
+        let staging = self.surfaces.hooks_pending();
         let counted_bar_sides: SmallVec<[pane::PaneSide; MAX_CANVAS_PANES]> =
-            if self.surfaces.strategy_popup.is_open() {
+            if staging || self.surfaces.strategy_popup.is_open() {
                 let tab = self.active_tab();
                 tab.sides()
                     .filter(|side| tab.pane(*side).state.progress().is_some())
@@ -10468,14 +10492,15 @@ impl QuantickApp {
         // gets silently retargeted by the next SOURCE correction. Built only
         // while the dialog is open — it is a `String` pair per tab, and no
         // frame should pay for it to be thrown away.
-        let open_markets: Vec<(String, String)> = if self.surfaces.source_picker.is_open() {
-            self.tabs
-                .iter()
-                .map(|tab| (tab.feed_id.clone(), tab.symbol.clone()))
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let open_markets: Vec<(String, String)> =
+            if staging || self.surfaces.source_picker.is_open() {
+                self.tabs
+                    .iter()
+                    .map(|tab| (tab.feed_id.clone(), tab.symbol.clone()))
+                    .collect()
+            } else {
+                Vec::new()
+            };
         // Split into disjoint borrows: the surfaces are drawn through `&mut`
         // while the environment they read is borrowed from the rest of the
         // application. That the compiler insists on the split is the port
@@ -10496,7 +10521,11 @@ impl QuantickApp {
             ..
         } = self;
         let focused_tab = &tabs[*active_tab];
-        let focused_pane = focused_tab.focused_pane();
+        // Read once. `focused_pane` resolves the same side internally, and
+        // the answer is not a field lookup — it reads the layout, because
+        // focus on a collapsed pane is focus on nothing.
+        let focused_side = focused_tab.focused_side();
+        let focused_pane = focused_tab.pane(focused_side);
         let surfaces = registry.draw_all(
             ctx,
             &crate::surfaces::SurfaceEnv {
@@ -10511,11 +10540,11 @@ impl QuantickApp {
                 style,
                 footprint: focused_pane.footprint_config(footprint_config),
                 footprint_customized: focused_pane.footprint_override.is_some(),
-                focused_side: focused_tab.focused_side(),
+                focused_side,
                 config,
                 added_symbols,
                 open_markets: &open_markets,
-                active_tab: *active_tab,
+                active_tab: focused_tab.id,
                 counted_bar_sides: &counted_bar_sides,
                 alert_failure: alert_failure.as_deref(),
             },
@@ -10561,12 +10590,6 @@ impl QuantickApp {
             // instance rides may just have been taken away.
             pane.sweep_strategy_orphans();
         }
-        self.draw_toolbar(ctx);
-        // Before the dialog is drawn, so a double click on a pane or a curve
-        // opens it on the same frame the gesture happened rather than the next.
-        self.open_requested_indicator_settings();
-        self.draw_indicator_settings(ctx);
-        self.draw_indicator_legends(ctx);
         self.poll_script_files();
         self.maintain_indicator_state();
         self.maintain_chart_layers();
@@ -11062,7 +11085,6 @@ impl QuantickApp {
         }
     }
 
-    /// The `+` dialog, while it is open.
     /// Do what the "Open market" dialog settled on.
     fn apply_market_request(&mut self, request: crate::surfaces::MarketRequest) {
         use crate::surfaces::MarketRequest;

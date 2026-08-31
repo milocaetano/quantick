@@ -65,6 +65,18 @@ impl StylePanelSurface {
         self.log_pending && (settled || !self.open)
     }
 
+    /// Hand over the pending log line, if one is owed, and clear it.
+    fn take_pending_log(
+        &mut self,
+        applied_preset: Option<crate::style::CandlePreset>,
+    ) -> Option<StyleLogRequest> {
+        if !self.log_pending {
+            return None;
+        }
+        self.log_pending = false;
+        Some(StyleLogRequest { applied_preset })
+    }
+
     /// Whether the window is on screen — read by the toolbar, whose
     /// Appearance button lights while it is.
     pub fn is_open(&self) -> bool {
@@ -95,7 +107,21 @@ impl Surface for StylePanelSurface {
 
     fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
         if !self.open {
-            return SurfaceResponse::default();
+            // A closed window still has one thing to do: flush a change the
+            // debounce was holding. The window's own X is not the only way it
+            // closes — the toolbar's LOOK button and the View menu both call
+            // `toggle`, from outside this surface — and returning here
+            // unconditionally would strand the pending line, dropping the
+            // record of that edit and then emitting it, dated wrong, on the
+            // frame the trader next opened the panel.
+            //
+            // No preset is named: whatever was clicked was clicked on some
+            // earlier frame, so the log falls back to reading the appearance
+            // itself, which is what it does on every settled gesture anyway.
+            return SurfaceResponse {
+                log_style_change: self.take_pending_log(None),
+                ..SurfaceResponse::default()
+            };
         }
         let mut edited = *env.style;
         let panel = draw_style_window(ctx, &mut self.open, &mut edited);
@@ -106,12 +132,9 @@ impl Surface for StylePanelSurface {
             response.style = Some(edited);
         }
         // Read after `draw_style_window`, so a window the trader just closed
-        // flushes on the same frame it left.
+        // with its own X flushes on the same frame it left.
         if self.should_log(env.now) {
-            self.log_pending = false;
-            response.log_style_change = Some(StyleLogRequest {
-                applied_preset: panel.applied_preset,
-            });
+            response.log_style_change = self.take_pending_log(panel.applied_preset);
         }
         response
     }
@@ -250,5 +273,45 @@ mod tests {
             last_change: None,
         };
         assert!(!untouched.should_log(now));
+    }
+
+    /// The window closes two ways, and only one of them runs inside this
+    /// surface's own draw. Closing it from the **toolbar** — the LOOK button,
+    /// or the View menu — flips the flag between frames, so the next draw
+    /// returns early; if that early return skipped the flush, the trader's
+    /// last appearance edit would go unrecorded and then be reported later,
+    /// on a frame where nothing happened.
+    #[test]
+    fn closing_from_the_toolbar_still_records_the_edit() {
+        let ctx = egui::Context::default();
+        let style = ChartStyle::default();
+        let now = Instant::now();
+        let mut surface = StylePanelSurface {
+            open: true,
+            log_pending: true,
+            last_change: Some(now),
+        };
+
+        // What the toolbar does, from outside the draw.
+        surface.toggle();
+        assert!(!surface.is_open());
+
+        let mut response = SurfaceResponse::default();
+        let _ = ctx.run(Default::default(), |ctx| {
+            response = surface.draw(ctx, &env(&style, now));
+        });
+        assert!(
+            response.log_style_change.is_some(),
+            "the edit is recorded on the frame after the button closed the window"
+        );
+        assert!(!surface.log_pending, "and recorded once");
+
+        let _ = ctx.run(Default::default(), |ctx| {
+            response = surface.draw(ctx, &env(&style, now));
+        });
+        assert!(
+            response.log_style_change.is_none(),
+            "a closed window with nothing pending asks for nothing"
+        );
     }
 }

@@ -63,10 +63,18 @@ const ARM_DIALOG_MIN_BODY_PT: f32 = 200.0;
 /// the form — the stored-preset shape edited in place, so "form", "bank row"
 /// and "what a future NL layer emits" stay one structure.
 struct StrategyPopup {
-    /// Index of the tab the dialog was opened over. Drawing ids are per-pane
-    /// counters, so the same id on another tab is an unrelated object —
-    /// switching tabs closes the dialog rather than arm it.
-    tab: usize,
+    /// The **stable id** of the tab the dialog was opened over. Drawing ids
+    /// are per-pane counters, so the same id on another tab is an unrelated
+    /// object — switching tabs closes the dialog rather than arm it.
+    ///
+    /// The id and not the index, which is what this was before it moved here.
+    /// `close_tab` clamps `active_tab` rather than shifting it, so closing a
+    /// tab to the left of the active one leaves the index pointing at a
+    /// *different market* while comparing equal — and Arm would then act on
+    /// that market. Every other cross-tab reference in the application
+    /// (`indicator_settings_target`, `slot_kinds`, `operator_slots`,
+    /// `script_files`) keys on the id for exactly this reason.
+    tab: u64,
     side: pane::PaneSide,
     drawing: drawings::DrawingId,
     form: presets::StoredPreset,
@@ -117,7 +125,7 @@ impl StrategyPopupSurface {
     /// hook, and any named call a future operator layer makes.
     pub fn open(
         &mut self,
-        tab: usize,
+        tab: u64,
         side: pane::PaneSide,
         drawing: drawings::DrawingId,
         form: presets::StoredPreset,
@@ -181,6 +189,12 @@ impl StrategyPopupSurface {
         env: &SurfaceEnv<'_>,
         test_alert: &mut Option<Cue>,
     ) {
+        // Taken before the early return below, so it is a one-shot whatever
+        // the form looks like. Left until the combo row, a staged flag on a
+        // form whose alarm box is clear would survive to a later arming and
+        // drop the sound list open under the trader's cursor.
+        let drop_sound_list_open = std::mem::take(&mut self.pending_sound_picker);
+
         ui.checkbox(&mut form.alarm, "alarm on signal bar")
             .on_hover_text(
                 "play a sound the moment this strategy's signal happens — the trigger \
@@ -279,7 +293,7 @@ impl StrategyPopupSurface {
             /// The shortest the sound list is allowed to be, in points:
             /// a heading and two names, enough to see that it scrolls.
             const SOUND_PICKER_MIN_HEIGHT: f32 = 72.0;
-            if std::mem::take(&mut self.pending_sound_picker) {
+            if drop_sound_list_open {
                 // The capture hook's one click: open the list the way the
                 // button's own click does. The popup id is the widget id
                 // plus "popup", and the widget id is the salt *as an `Id`*
@@ -631,7 +645,7 @@ mod tests {
 
     use super::*;
 
-    fn env(active_tab: usize) -> SurfaceEnv<'static> {
+    fn env(active_tab: u64) -> SurfaceEnv<'static> {
         SurfaceEnv {
             active_tab,
             ..SurfaceEnv::quiet(Instant::now())
