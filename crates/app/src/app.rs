@@ -2506,6 +2506,22 @@ impl QuantickApp {
         // silent one would look like the app relocated the trader's settings
         // behind their back — and leave them not knowing which folder to back
         // up. Same toast channel the journal's rescue uses.
+        // `QUANTICK_TOAST=paper`: a simulator acknowledgement, posted through
+        // the panel's own `show_toast`.
+        //
+        // The surface's own hook can raise a message *in* the lane; only this
+        // one proves the route to it, which is the half this change built —
+        // the panel's outbox, the drain in `settle_paper_panels`, and the
+        // eight-second clock the surface owns. Without it the paper path is
+        // reachable from a launch only by waiting for a fill and hoping the
+        // shutter lands inside the window: the demo trades within the first
+        // second and the message is gone eight seconds later, so a capture
+        // run photographs an empty lane and cannot tell that from a defect.
+        if std::env::var("QUANTICK_TOAST").is_ok_and(|value| value == "paper") {
+            app.tabs[0]
+                .paper
+                .show_toast("SIM: stop filled at 169 790 — flat.".to_owned());
+        }
         if let Some(notice) = crate::store_home::rescue_notice() {
             app.tabs[0].paper.show_toast(notice);
         }

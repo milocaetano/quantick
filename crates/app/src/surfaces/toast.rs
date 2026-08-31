@@ -173,6 +173,11 @@ impl Surface for ToastSurface {
     /// save — so a capture that never performs the act can photograph neither,
     /// and the Undo button is the affordance most worth seeing. Goes through
     /// the same two entry points the application uses.
+    ///
+    /// `paper` is handled by the host and not here: it stages the message
+    /// through the simulator's own `show_toast`, so what it photographs is
+    /// the whole route into this lane — the panel's outbox, the drain, and
+    /// the naming a background market gets — rather than this surface alone.
     fn apply_env_hook(&mut self, env: &SurfaceEnv<'_>) {
         match std::env::var("QUANTICK_TOAST").as_deref() {
             Ok("plain") => self.note("Workspace saved.", env.now),
