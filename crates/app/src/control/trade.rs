@@ -76,6 +76,8 @@ pub(crate) const BRACKET_CAPABILITY_ID: &str = "trade.order.bracket";
 pub(crate) const TICKET_EVENT_KIND: &str = "trade.ticket.changed";
 const SELECT_STRATEGY_CAPABILITY_ID: &str = "trade.strategy.select";
 const SET_RULER_CAPABILITY_ID: &str = "trade.ruler.set";
+const SET_RISK_CAPABILITY_ID: &str = "trade.risk.set";
+const SET_INSTRUMENT_MONEY_CAPABILITY_ID: &str = "trade.instrument.set_money";
 pub(crate) const CANCEL_CAPABILITY_ID: &str = "trade.order.cancel";
 pub(crate) const CAPABILITY_VERSION: u32 = 1;
 
@@ -399,10 +401,16 @@ fn place_order(
     } else {
         named
     };
-    let events = app
-        .control_active_paper_mut()
-        .ok_or_else(no_chart_open)?
-        .place_intent(intent.with_bracket(bracket));
+    let intent = intent.with_bracket(bracket);
+    let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
+    // The risk per trade is a ceiling on the account, so it holds on this
+    // path too. Asked of the same function the ticket asks, so an operator
+    // reads the refusal the trader would have read - and gets it as an
+    // error rather than as an empty answer it has to interpret.
+    if let Some(refusal) = paper.risk_refusal_for(&intent) {
+        return Err(ControlError::invalid_request(refusal));
+    }
+    let events = paper.place_intent(intent);
     let result = answer(app, &events);
     journal(access, actor, PLACE_EVENT_KIND, &result, asked);
     to_value(result)
@@ -570,6 +578,55 @@ pub(crate) struct SetRulerInput {
     pub ticks: u32,
 }
 
+/// What one trade may lose, and whether an entry over it is refused.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SetRiskInput {
+    /// `off` leaves the size to whoever types it; `amount` reads `amount`;
+    /// `percent` reads `percent` against the capital declared for the
+    /// instrument's own currency.
+    pub basis: String,
+    /// The fixed amount one trade may lose, as a decimal string.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<String>,
+    /// The share of declared capital one trade may lose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub percent: Option<String>,
+    /// Declare the capital for `currency`. Both or neither: a capital with
+    /// no currency has nothing to be keyed by, and nothing here converts
+    /// between currencies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capital: Option<String>,
+    /// The currency `capital` is in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    /// Whether an entry over the risk per trade is refused. Left out, the
+    /// lock stays as it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<bool>,
+}
+
+/// What one point of an instrument is worth, and its smallest tradable size.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SetInstrumentMoneyInput {
+    /// The symbol to declare for. Left out, the chart's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    /// What one point of price is worth per unit held, as a decimal string.
+    /// Given with either of the other two missing, the declaration is
+    /// cleared instead — which returns the instrument to "nothing here knows
+    /// what a point is worth", the same contract `set_ruler_step` uses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub point_value: Option<String>,
+    /// The smallest tradable increment of quantity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_step: Option<String>,
+    /// The currency the point value is in. Never converted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+}
+
 /// A shaping call's descriptor: `descriptor`'s shape with the three fields
 /// that are simply not true of it corrected.
 ///
@@ -650,10 +707,189 @@ fn set_ruler(
     to_value(result)
 }
 
+fn set_risk_descriptor() -> CapabilityDescriptor {
+    shaping_descriptor(descriptor(
+        SET_RISK_CAPABILITY_ID,
+        "Set the risk per trade",
+        "Says what one trade may lose - a fixed amount, or a share of the capital declared for the instrument's currency - and whether an entry whose stop risks more than that is refused. Shapes the size the next order would carry; changes no order that exists and never touches an open position.",
+        generated_schema::<SetRiskInput>(),
+        false,
+        "The call answers with the risk that is now set and with what it makes of the entry the ticket is holding, including the reason when it can name no size, so a caller sees the same sentence the trader is reading. It changes nothing that is already working.",
+    ))
+}
+
+fn set_instrument_money_descriptor() -> CapabilityDescriptor {
+    shaping_descriptor(descriptor(
+        SET_INSTRUMENT_MONEY_CAPABILITY_ID,
+        "Declare what an instrument's point is worth",
+        "Records what one point of price is worth per unit held, the smallest tradable size, and the currency - the three facts no feed reports and nothing here derives, without which risk sizing has nothing to size against. Leaving any of them out clears the declaration rather than half-setting it.",
+        generated_schema::<SetInstrumentMoneyInput>(),
+        false,
+        "The call answers with what the ticket now makes of the entry it is holding, so a caller can see the instrument turn from unknown into sized. It changes nothing that is already working, and it never converts between currencies.",
+    ))
+}
+
+fn set_risk(
+    app: &mut QuantickApp,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let asked = input.clone();
+    let input: SetRiskInput = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let basis = crate::risk_sizing::RiskBasis::from_token(&input.basis).ok_or_else(|| {
+        ControlError::invalid_request("basis must be `off`, `amount` or `percent`")
+    })?;
+    let decimal = |field: &str, text: &Option<String>| match text {
+        None => Ok(None),
+        Some(text) => Decimal::from_str_exact(text.trim())
+            .map(Some)
+            .map_err(|_| ControlError::invalid_request(format!("{field} must be a decimal"))),
+    };
+    let amount = decimal("amount", &input.amount)?;
+    let percent = decimal("percent", &input.percent)?;
+    let capital = decimal("capital", &input.capital)?;
+    // The UI and the launch hook both refuse a non-positive risk; a third
+    // entry point that accepts one would persist it and fan it to every tab,
+    // leaving the ticket saying "set a risk per trade above zero" about a
+    // number the trader never typed - and surviving a restart.
+    for (field, value) in [("amount", amount), ("percent", percent)] {
+        if value.is_some_and(|value| value <= Decimal::ZERO) {
+            return Err(ControlError::invalid_request(format!(
+                "{field} must be above zero"
+            )));
+        }
+    }
+    // A capital with no currency has nothing to be keyed by, and a currency
+    // with no capital declares nothing. Both or neither.
+    let currency = match (&capital, &input.currency) {
+        (Some(_), Some(code)) => Some(
+            quantick_sim::Currency::new(code)
+                .ok_or_else(|| ControlError::invalid_request("currency must not be blank"))?,
+        ),
+        (None, None) => None,
+        _ => {
+            return Err(ControlError::invalid_request(
+                "capital and currency go together - nothing here converts between currencies",
+            ));
+        }
+    };
+    let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
+    // The currency an amount set through this call is denominated in: the one
+    // the call named, or the chart's own instrument. Read before the mutation
+    // so it describes the instrument the caller was looking at.
+    let instrument_currency = paper
+        .instrument_money()
+        .get(paper.symbol())
+        .map(|money| money.currency.clone());
+    let mut risk = paper.risk_settings().clone();
+    risk.basis = basis;
+    if let Some(amount) = amount {
+        risk.amount = amount;
+        // Stamped with the currency it was entered in, never left to adopt
+        // whichever instrument a tab happens to be on later.
+        risk.amount_currency = currency.clone().or(instrument_currency);
+    }
+    if let Some(percent) = percent {
+        risk.percent = percent;
+    }
+    if let Some(lock) = input.lock {
+        risk.lock = lock;
+    }
+    paper.set_risk_settings(risk);
+    if let (Some(amount), Some(currency)) = (capital, currency) {
+        let mut declared = paper.capital().clone();
+        if amount > Decimal::ZERO {
+            declared.insert(currency.code().to_owned(), amount);
+        } else {
+            declared.remove(currency.code());
+        }
+        paper.set_capital(declared);
+    }
+    app.control_persist_risk_settings();
+    let result = answer(app, &[]);
+    journal(access, actor, TICKET_EVENT_KIND, &result, asked);
+    to_value(result)
+}
+
+fn set_instrument_money(
+    app: &mut QuantickApp,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let asked = input.clone();
+    let input: SetInstrumentMoneyInput = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
+    let symbol = match input.symbol.as_deref().map(str::trim) {
+        Some(symbol) if !symbol.is_empty() => symbol.to_owned(),
+        _ => paper.symbol().to_owned(),
+    };
+    if symbol.is_empty() {
+        return Err(ControlError::invalid_request(
+            "no chart symbol to declare money for - name one",
+        ));
+    }
+    let mut book = paper.instrument_money().clone();
+    let declared = match (
+        input.point_value.as_deref(),
+        input.size_step.as_deref(),
+        input.currency.as_deref(),
+    ) {
+        (Some(point_value), Some(size_step), Some(currency)) => {
+            let parse = |field: &str, text: &str| {
+                Decimal::from_str_exact(text.trim()).map_err(|_| {
+                    ControlError::invalid_request(format!("{field} must be a decimal"))
+                })
+            };
+            let point_value = parse("point_value", point_value)?;
+            let size_step = parse("size_step", size_step)?;
+            if point_value <= Decimal::ZERO || size_step <= Decimal::ZERO {
+                return Err(ControlError::invalid_request(
+                    "point_value and size_step must both be above zero",
+                ));
+            }
+            let currency = quantick_sim::Currency::new(currency)
+                .ok_or_else(|| ControlError::invalid_request("currency must not be blank"))?;
+            let existing = book.get(&symbol);
+            Some(quantick_sim::InstrumentMoney {
+                point_value,
+                size_step,
+                // Whatever minimum is already declared is the trader's, the
+                // same as the maximum beside it.
+                min_size: existing.map_or(size_step, |money| money.min_size),
+                max_size: existing.and_then(|money| money.max_size),
+                currency,
+                source: quantick_sim::MoneySource::Declared,
+            })
+        }
+        // Half a declaration is no declaration: clearing is the honest
+        // answer, and it is what returns the ticket to saying so.
+        _ => None,
+    };
+    match declared {
+        Some(money) => {
+            book.insert(symbol, money);
+        }
+        None => {
+            book.remove(&symbol);
+        }
+    }
+    paper.set_instrument_money(book);
+    app.control_persist_risk_settings();
+    let result = answer(app, &[]);
+    journal(access, actor, TICKET_EVENT_KIND, &result, asked);
+    to_value(result)
+}
+
 /// Register the family. One call from `standard_actions`, nothing else opens.
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
     registry.register(select_strategy_descriptor(), select_strategy)?;
     registry.register(set_ruler_descriptor(), set_ruler)?;
+    registry.register(set_risk_descriptor(), set_risk)?;
+    registry.register(set_instrument_money_descriptor(), set_instrument_money)?;
     registry.register(place_descriptor(), place_order)?;
     registry.register(bracket_descriptor(), bracket_order)?;
     registry.register(cancel_descriptor(), cancel_order)?;

@@ -1085,6 +1085,33 @@ impl QuantickApp {
                 .filter_map(|(symbol, step)| step.parse().ok().map(|value| (symbol.clone(), value)))
                 .collect(),
         );
+        // The risk per trade, and the money it is measured in. A trader who
+        // never set any of this gets the mode off and an empty book, which
+        // leaves every screen exactly as it was.
+        //
+        // Skipped when a launch hook set the risk for this run: an
+        // environment variable is an explicit request for one run and
+        // outranks the stored settings. Restoring them here left the hook's
+        // whole point - the derived size, the sentence, the lock -
+        // unreachable from a capture.
+        if !tab.paper.risk_from_hook() {
+            tab.paper
+                .set_risk_settings(crate::risk_sizing::settings_from_sidecar(
+                    paper_state.risk_per_trade_basis.as_deref(),
+                    paper_state.risk_per_trade_amount.as_deref(),
+                    paper_state.risk_per_trade_currency.as_deref(),
+                    paper_state.risk_per_trade_percent.as_deref(),
+                    paper_state.risk_per_trade_lock,
+                ));
+            tab.paper
+                .set_capital(crate::risk_sizing::capital_from_records(
+                    &paper_state.paper_capital,
+                ));
+        }
+        tab.paper
+            .set_instrument_money(crate::risk_sizing::book_from_records(
+                &paper_state.instrument_money,
+            ));
         // Resolved once: under test the settings path is a fresh scratch
         // file per call, and the load must read the same file the saves
         // will write.
@@ -2170,6 +2197,37 @@ impl QuantickApp {
         self.persist_order_strategies();
     }
 
+    /// Save and fan out the risk per trade after a capability changed it.
+    pub(crate) fn control_persist_risk_settings(&mut self) {
+        self.persist_risk_settings();
+    }
+
+    /// Persist the risk per trade, the declared capital and the instrument
+    /// money, and fan all three out.
+    ///
+    /// App-wide, like the ticket's other settings: a ceiling a trader sets
+    /// in one tab is one they mean everywhere, and what a point of WIN is
+    /// worth does not change because a second tab is looking at it.
+    pub(crate) fn persist_risk_settings(&mut self) {
+        let risk = self.active_tab().paper.risk_settings().clone();
+        let capital = self.active_tab().paper.capital().clone();
+        let book = self.active_tab().paper.instrument_money().clone();
+        for tab in &mut self.tabs {
+            tab.paper.set_risk_settings(risk.clone());
+            tab.paper.set_capital(capital.clone());
+            tab.paper.set_instrument_money(book.clone());
+        }
+        let path = crate::paper_state::default_path();
+        let mut state = crate::paper_state::load(&path);
+        state.risk_per_trade_basis = Some(risk.basis.token().to_owned());
+        state.risk_per_trade_amount = Some(risk.amount.normalize().to_string());
+        state.risk_per_trade_percent = Some(risk.percent.normalize().to_string());
+        state.risk_per_trade_lock = Some(risk.lock);
+        state.paper_capital = crate::risk_sizing::records_from_capital(&capital);
+        state.instrument_money = crate::risk_sizing::records_from_book(&book);
+        crate::paper_state::save(&path, &state);
+    }
+
     /// Persist the named exit strategies and the ticket's selection, and fan
     /// them out - app-wide like cmd trading, because a ladder a trader built
     /// in one tab is a ladder they mean everywhere.
@@ -2952,6 +3010,9 @@ impl QuantickApp {
         // that map speaks for every layer, and applying it here would undo the
         // switches of the session mid-flight. Reading the live state is also
         // what the comment below has always promised.
+        let inherited_risk = self.active_tab().paper.risk_settings().clone();
+        let inherited_capital = self.active_tab().paper.capital().clone();
+        let inherited_money = self.active_tab().paper.instrument_money().clone();
         let inherited_layers = self.active_tab().flow_pane.layer_states(&self.style);
         let flow_inverted = self.active_tab().flow_pane.price_view.is_inverted();
         let time_inverted = self
@@ -2966,6 +3027,13 @@ impl QuantickApp {
         tab.paper.set_cmd_trading(cmd_trading);
         tab.paper
             .set_order_strategies(inherited_strategies, inherited_selection.as_deref());
+        // The risk per trade travels with them. It is app-wide like the rest
+        // of the ticket's settings, and a tab that opened without it would
+        // hand the trader a bare quantity field on a market they meant to
+        // size the same way as the one beside it.
+        tab.paper.set_risk_settings(inherited_risk);
+        tab.paper.set_capital(inherited_capital);
+        tab.paper.set_instrument_money(inherited_money);
         tab.flow_pane.layout = inherited_layout;
         self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
@@ -3219,7 +3287,11 @@ impl QuantickApp {
             dock_visible,
             appearance_open: show_style,
             paper: toolbar::PaperTradeModel {
-                ready: tab.paper.ready(),
+                // The lock reaches the toolbar too. Gating only the dock's
+                // pair left these lit while the ticket refused, so a fast
+                // click here only toasted - and the doc promises the entry
+                // pair disables.
+                ready: tab.paper.ready() && !tab.paper.risk_report().1,
                 buy_label: tab.paper.entry_label(quantick_engine::Side::Buy),
                 sell_label: tab.paper.entry_label(quantick_engine::Side::Sell),
                 buy_hover: tab.paper.entry_hover(quantick_engine::Side::Buy),
@@ -9248,6 +9320,9 @@ impl QuantickApp {
         }
         if dock_response.cmd_trading_changed {
             self.persist_cmd_trading();
+        }
+        if dock_response.risk_settings_changed {
+            self.persist_risk_settings();
         }
         self.poll_trades_dir_picker();
         self.poll_workspace_picker();

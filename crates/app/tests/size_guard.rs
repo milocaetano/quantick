@@ -78,7 +78,7 @@ const BASELINE: &[(&str, usize)] = &[
     // the Save-as box out to `src/surfaces/`; the second batch took the
     // indicator-preview watermark, the appearance window, the footprint
     // settings window, the market dialog and the arming dialog with its alarm
-    // section — 403 production lines and nine struct fields — and gave back
+    // section - 403 production lines and nine struct fields - and gave back
     // the environment the port hands them instead, plus the review's fixes
     // and the `QUANTICK_TOAST=paper` hook that photographs the converged
     // acknowledgement lane.
@@ -87,20 +87,46 @@ const BASELINE: &[(&str, usize)] = &[
     // note editor, the inspector in both its hosts and the object manager,
     // with the title bar, the body, the placement rule and the action applier
     // they share. 1,548 production lines and twenty-one struct fields, out to
-    // `src/surfaces/drawing_chrome/` as one member — they are one subsystem,
+    // `src/surfaces/drawing_chrome/` as one member - they are one subsystem,
     // and four members would have left the state they share behind. The
     // number below is what that left, not a target: this file is still six
     // times the threshold.
-    ("crates/app/src/app.rs", 9700),
+    //
+    // Raised again by the risk-per-trade work, for the three things only this
+    // file can do: reading the sidecar into every tab on boot, the
+    // save-and-fan-out when a ticket changes the risk, and handing a newly
+    // opened tab the settings the one beside it is using. All three have the
+    // shapes `persist_order_strategies` and `set_cmd_trading` beside them
+    // already have, and none can move - they reach `self.tabs`, which is what
+    // this file is. The last of them came out of that branch's own review:
+    // the toolbar's entry pair reads the same lock the ticket does, because
+    // gating one and not the other left a button lit while the order behind
+    // it was already refused.
+    ("crates/app/src/app.rs", 9775),
     // The five entries below `pane.rs` were invisible to the first version of
     // this guard, which stopped counting at the first `#[cfg(test)]` of any
     // kind: `gateway.rs` scored 72 lines of its 4,142, `drawings/mod.rs` 221
     // of 2,283. They are recorded at today's true size, not at a target.
-    // `paper_trading.rs` came down two lines when its private toast — a
-    // second acknowledgement lane in the same place on a different clock —
+    // `paper_trading.rs` came down two lines when its private toast - a
+    // second acknowledgement lane in the same place on a different clock -
     // was converged onto the window's `ToastSurface`; what left was mostly
     // drawing code, and what stayed is the outbox that replaced it.
-    ("crates/app/src/paper_trading.rs", 8859),
+    //
+    // Then raised by the risk-per-trade work. The capability itself docked as
+    // `src/risk_sizing.rs` - the policy half of the arithmetic, the
+    // sentences, the whole RISK block, the sidecar records and the launch
+    // hook, around 1,300 production lines that never entered this file. What
+    // is recorded here is the seam that could not leave: the settings the
+    // ticket holds, the accessors the control plane reads through, the three
+    // placement sites where the lock is enforced, the quantity field turning
+    // derived, and one call that draws the block. They reach this struct's
+    // private state - `aim_bracket`, `quantity_preview`, `parse_quantity`,
+    // `show_toast`, `venue` - so moving them would mean widening five private
+    // items to a sibling module, which trades a number in this table for a
+    // hole in the type's encapsulation. The two-pass sizing *did* move,
+    // behind a closure, once it was clear it was logic rather than
+    // registration. Argue with these numbers rather than with their absence.
+    ("crates/app/src/paper_trading.rs", 9238),
     ("crates/app/src/pane.rs", 7757),
     ("crates/app/src/tab.rs", 4401),
     ("crates/app/src/control/gateway.rs", 4142),
