@@ -74,6 +74,39 @@ When the findings land:
 `mission` waives the shape pass — run this skill anyway and report step 0's
 findings through it. The bug pass is not the waived part.
 
+## Record the marker when the review closes
+
+A branch cannot open a PR until this review is recorded against the exact
+commit being shipped. Recording it belongs here, in the skill that knows
+whether the review actually closed — not to whichever caller happened to
+invoke it. Once every Blocker and Should-fix is resolved or deferred in the PR
+body, and the branch has no further commits coming:
+
+```sh
+WT=/path/to/worktree
+cd "$WT" && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
+```
+
+The `cd` matters: both `git` calls resolve against the shell's cwd, which for
+an agent session is the main checkout, not the worktree being shipped. Without
+it the marker lands in the wrong git dir holding the wrong sha, and the next
+`gh pr create` denies with no clue why.
+
+If the branch gains another commit after this — a review fix, an archived goal
+file — the marker is stale by design and this review runs again over the new
+head before it is re-recorded. Re-stamping a marker whose review did not run
+again is the one dishonest move the gate cannot detect.
+
+## What this skill does not review
+
+Whether the change is *what was asked for*. Every dimension below takes the
+diff as given and grades how well it is made; none of them opens the request
+and checks that all of it arrived. That question belongs to `delivery-review`,
+which runs after this skill, over the branch as shipped, and whose marker
+`pr-gate` wants alongside this one. A conformance gap noticed here — an
+acceptance criterion with no code behind it — is worth a sentence in passing,
+but it is graded there, not given a severity here.
+
 ## Priority order
 
 When two findings pull in opposite directions, this order decides the call.
@@ -631,6 +664,15 @@ Without that tool, write the same list as markdown grouped by severity.
 Each finding: `file:line`, what is wrong, why it matters *in this order of
 priorities*, and the concrete fix — the trait to extract, the constant to
 name, the test to add. Never a vague "consider refactoring".
+
+**Name the commit the verdict graded, and write the verdict after that commit
+exists.** The marker holds a sha and nothing else, so an undated verdict cannot
+be told apart from one produced for an earlier head — and the marker will be
+stamped over it without complaint. That is the one dishonest move the gate
+cannot detect, and an unnamed sha is how it happens by accident rather than by
+intent. It happened once on the branch that added this paragraph: the verdict
+was written forty seconds *before* the commit whose marker it justified, and
+only a file mtime caught it.
 
 Close with a verdict in seven lines:
 

@@ -1,17 +1,30 @@
 #!/bin/sh
 # Agent guardrails for quantick. See .claude/hooks/README.md.
 #
-# Two CLAUDE.md rules were enforceable only by an agent remembering them.
+# Three CLAUDE.md rules were enforceable only by an agent remembering them.
 # These make the harness enforce them instead:
 #
 #   worktree-guard    PreToolUse on Edit|Write|NotebookEdit. Denies a write
 #                     that lands in the main checkout while it sits on the
 #                     main branch ("one goal, one worktree").
-#   pr-gate           PreToolUse on Bash. Denies `gh pr create` until
-#                     arch-review has been recorded for the exact commit
-#                     being shipped ("no branch ships un-reviewed").
-#   commit-reminder   PostToolUse on Bash. Cannot block (the commit already
-#                     landed); says the gate is coming and how to satisfy it.
+#   pr-gate           PreToolUse on Bash. Denies `gh pr create`
+#                     until BOTH reviews have been recorded for the exact
+#                     commit being shipped: arch-review ("no branch ships
+#                     un-reviewed") and delivery-review ("no branch ships
+#                     ungraded against what was asked for").
+#   commit-reminder   PostToolUse on Bash. Cannot block (the commit
+#                     already landed); says the gate is coming and how to
+#                     satisfy it.
+#
+# What `runs_command` can and cannot see is a known, bounded limitation, and it
+# is deliberately left as it was rather than deepened. It splits on `&&`, `||`
+# and `;` and anchors the match, so spellings that put the command elsewhere —
+# a pipe, a newline, an env prefix, a wrapper — are not detected. An attempt to
+# close that by parsing harder ran to eight review rounds without converging:
+# every round shut some spellings and opened others, twice producing a denial
+# whose own remedy would have disabled the gate permanently. Widening this is
+# its own change, with its own review; a half-parser that looks airtight is
+# worse than a narrow one that is documented. See README.md.
 #
 # Every mode filters the tool payload itself rather than relying on the hook
 # config's `if` matcher: a matcher that silently fails to match would leave a
@@ -30,9 +43,15 @@ set -u
 # The branch that is never worked on directly, and the base every branch is
 # cut from and measured against.
 MAIN_BRANCH="main"
-# Where arch-review records what it approved. Lives in the worktree's own git
-# dir, so it is per-branch and never committed.
-REVIEW_MARKER_NAME="arch-review-ok"
+# Where the two pre-PR reviews record what they approved, in the order they
+# run. Each lives in the worktree's own git dir, so it is per-branch and never
+# committed, and each holds a sha rather than a timestamp: commit again after a
+# review and its marker no longer matches. They are separate files because they
+# answer separate questions — arch-review whether the branch is well built,
+# delivery-review whether it is what was asked for — and a branch that has
+# passed one has not passed both.
+ARCH_MARKER_NAME="arch-review-ok"
+DELIVERY_MARKER_NAME="delivery-review-ok"
 
 mode="${1:-}"
 input=$(cat)
@@ -99,8 +118,66 @@ effective_dir() {
     printf '%s' "$2"
 }
 
-review_marker_path() {
-    printf '%s/%s' "$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null)" "$REVIEW_MARKER_NAME"
+# Empty when the git dir cannot be resolved, so the caller can fail open
+# rather than build a path rooted at `/` and hand back a remedy telling an
+# agent to write the marker at the filesystem root.
+marker_path() {
+    marker_git_dir=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+    [ -n "$marker_git_dir" ] || return 1
+    printf '%s/%s' "$marker_git_dir" "$2"
+}
+
+# Deny unless marker `$3` in worktree `$1` records exactly the commit `$2`
+# being shipped. `$4` states the rule in CLAUDE.md's own words, `$5` says how
+# to satisfy it, and the recording line is derived from the marker name — so
+# the instruction and the file the gate reads cannot drift apart.
+#
+# The marker is meant to hold a sha and nothing enforces that: a mistyped
+# redirect, an editor appending a line, a half-written file. Its contents are
+# reduced to hex and lower-cased before they reach `deny`, which interpolates
+# them into a JSON string — an unescaped quote or a raw newline there emits a
+# payload the harness cannot parse, and a *lost* deny decision turns the gate
+# off rather than tripping it.
+require_marker() {
+    require_dir=$1
+    require_head=$2
+    require_name=$3
+    require_rule=$4
+    require_how=$5
+
+    require_file=$(marker_path "$require_dir" "$require_name") || exit 0
+    # `git -C "$require_dir"`, never `git -C .`. The remedy is pasted into a
+    # shell whose cwd is the session's — the main checkout — not the worktree
+    # being shipped. With `.` the marker lands in the *shared* git dir holding
+    # main's HEAD, where a later command resolving to the main checkout would
+    # match it, so one paste of the gate's own instruction could switch it off.
+    # Every doc on this branch spells the command with the `cd`; the message
+    # must not be the one place that drops it.
+    require_record="git -C \\\"$require_dir\\\" rev-parse HEAD > \\\"$require_file\\\""
+
+    if [ ! -f "$require_file" ]; then
+        deny "\"CLAUDE.md: $require_rule. \`$require_name\` has not been recorded for this branch. $require_how, then record it:\n\n  $require_record\""
+    fi
+
+    # Trim only what a file legitimately picks up — a trailing CR, a BOM,
+    # surrounding blanks — then require the remainder to be exactly a sha.
+    # Stripping every non-hex byte instead would silently accept `<sha> ok`
+    # or a sha with a comment beside it, which a verbatim compare rejects.
+    require_reviewed=$(head -n 1 "$require_file" 2>/dev/null |
+        tr -d '\r' |
+        sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    case "$require_reviewed" in
+        '' | *[!0-9a-fA-F]*) require_reviewed="(not a commit id)" ;;
+        *)
+            [ ${#require_reviewed} -eq ${#require_head} ] ||
+                require_reviewed="(not a commit id)"
+            ;;
+    esac
+    require_reviewed=$(printf '%s' "$require_reviewed" | tr 'A-F' 'a-f')
+
+    if [ "$require_reviewed" != "$require_head" ]; then
+        deny "\"CLAUDE.md: $require_rule. \`$require_name\` was recorded for $require_reviewed but HEAD is now $require_head, so the newest commits are ungraded. $require_how, then record it again:\n\n  $require_record\""
+    fi
 }
 
 # --- worktree-guard ---------------------------------------------------------
@@ -148,18 +225,17 @@ pr_gate() {
     [ -d "$dir" ] || exit 0
 
     head=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || exit 0
-    marker=$(review_marker_path "$dir")
 
-    record="git -C . rev-parse HEAD > \\\"\$(git rev-parse --absolute-git-dir)/$REVIEW_MARKER_NAME\\\""
+    # Checked in the order the reviews run. arch-review first: a delivery
+    # review of a branch the shape review is about to change is wasted work,
+    # and naming the earlier gap first is the shorter path back to green.
+    require_marker "$dir" "$head" "$ARCH_MARKER_NAME" \
+        "no branch ships un-reviewed" \
+        "Run the arch-review skill over \`git diff origin/$MAIN_BRANCH...HEAD\` and resolve every Blocker and Should-fix (or note the deferral in the PR body)"
 
-    if [ ! -f "$marker" ]; then
-        deny "\"CLAUDE.md: no branch ships un-reviewed. arch-review has not been recorded for this branch. Run the arch-review skill over \`git diff $MAIN_BRANCH...HEAD\`, resolve every Blocker and Should-fix (or note the deferral in the PR body), then record it:\n\n  $record\""
-    fi
-
-    reviewed=$(cat "$marker" 2>/dev/null)
-    if [ "$reviewed" != "$head" ]; then
-        deny "\"CLAUDE.md: no branch ships un-reviewed. arch-review was recorded for $reviewed but HEAD is now $head, so the newest commits are unreviewed. Re-run arch-review over \`git diff $MAIN_BRANCH...HEAD\` and record it again:\n\n  $record\""
-    fi
+    require_marker "$dir" "$head" "$DELIVERY_MARKER_NAME" \
+        "no branch ships ungraded against what was asked for" \
+        "Run the delivery-review skill: it grades every ask in the branch's goal file and every acceptance criterion, and passes only when none is MISSING, PARTIAL or UNPROVEN"
 
     exit 0
 }
@@ -179,7 +255,7 @@ commit_reminder() {
     ahead=$(git -C "$dir" rev-list --count "origin/$MAIN_BRANCH..HEAD" 2>/dev/null) || exit 0
     [ "${ahead:-0}" -gt 0 ] || exit 0
 
-    context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH. \`gh pr create\` is gated on arch-review having been recorded for the exact HEAD being shipped, so run it over \`git diff $MAIN_BRANCH...HEAD\` once the branch is final.\""
+    context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH. \`gh pr create\` is gated on both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recording the exact HEAD being shipped, so run arch-review and then delivery-review once the branch is final — a commit after either one makes its marker stale.\""
 }
 
 case "$mode" in
