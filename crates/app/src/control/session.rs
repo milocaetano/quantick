@@ -164,6 +164,35 @@ pub(crate) struct TabPaperSnapshot {
     /// One tick of this tab's instrument, so `ruler_ticks` can be read as a
     /// price rather than a count.
     pub tick_size: CanonicalDecimal,
+    /// What the risk per trade makes of the entry the ticket is holding:
+    /// `off`, `sized`, `short_of_budget`, `capped_at_max`,
+    /// `clamped_at_minimum`, `instrument_unknown`, `no_budget` or `refused`.
+    ///
+    /// The state, not the pixels. An operator asked "why is the size 1" has
+    /// to be able to read the answer rather than infer it from a number.
+    pub risk_state: String,
+    /// The size the risk per trade derived, absent when it derived none —
+    /// the mode is off, or nothing here could be sized.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk_quantity: Option<CanonicalDecimal>,
+    /// What that size stands to lose at the entry's own stop. Absent for the
+    /// same reasons as `risk_quantity`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk_amount: Option<CanonicalDecimal>,
+    /// The currency `risk_amount` is in. Nothing here converts between
+    /// currencies, so a reader comparing two tabs must compare these too.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk_currency: Option<String>,
+    /// Whether the trader's lock is refusing this entry right now.
+    pub risk_blocks_entry: bool,
+    /// The sentence the ticket is showing, verbatim.
+    ///
+    /// Produced by the same function that renders it on screen rather than a
+    /// second wording kept in step by hand: an operator reading this and a
+    /// trader reading the ticket are looking at one sentence. Absent only
+    /// when the mode is off and there is nothing to say.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk_sentence: Option<String>,
     pub position: Option<PaperPositionSnapshot>,
     #[schemars(length(max = CONTROL_SNAPSHOT_MAX_WORKING_ORDERS))]
     pub working_orders: Vec<PaperOrderSnapshot>,
@@ -450,6 +479,15 @@ fn tab_paper_snapshot(tab: &Tab) -> TabPaperSnapshot {
     let trade_page_start = trades
         .len()
         .saturating_sub(CONTROL_SNAPSHOT_MAX_CLOSED_TRADES);
+    // Asked once and published from that one answer, so the state, the
+    // size, the money and the sentence in this snapshot cannot describe
+    // four different moments.
+    let (risk_state, risk_blocks) = tab.paper.risk_report();
+    let risk_amount = match &risk_state {
+        crate::risk_sizing::RiskState::Sized { risk, .. }
+        | crate::risk_sizing::RiskState::OverBudget { risk, .. } => Some(risk.clone()),
+        _ => None,
+    };
     TabPaperSnapshot {
         tab_id: WireU64::new(tab.id),
         symbol: tab.symbol.clone(),
@@ -466,6 +504,16 @@ fn tab_paper_snapshot(tab: &Tab) -> TabPaperSnapshot {
             .map(|error| error.advice().to_owned()),
         ruler_ticks: tab.paper.ruler_ticks(),
         tick_size: canonical_decimal(tab.paper.tick_size()),
+        risk_state: risk_state.code().to_owned(),
+        risk_quantity: risk_state.derived_quantity().map(canonical_decimal),
+        risk_amount: risk_amount
+            .as_ref()
+            .map(|risk| canonical_decimal(risk.amount)),
+        risk_currency: risk_amount
+            .as_ref()
+            .map(|risk| risk.currency.code().to_owned()),
+        risk_blocks_entry: risk_blocks,
+        risk_sentence: Some(risk_state.sentence()).filter(|sentence| !sentence.is_empty()),
         position: tab.paper.position_summary().map(position_snapshot),
         working_orders: orders
             .iter()

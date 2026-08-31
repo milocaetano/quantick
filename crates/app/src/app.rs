@@ -15,19 +15,14 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use egui_phosphor::regular as icons;
 
-use crate::candle_view::draw_style_window;
 use crate::canvas_layout::{MAX_CANVAS_PANES, PaneIdAllocator};
 
 mod layout_wiring;
 use crate::chart_layers::{self, ChartLayer};
 use crate::config::AppConfig;
 use crate::dock::{Dock, DockEnv, DockTab};
-use crate::drawings::{
-    self, DeleteOutcome, DrawingAuthor, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX,
-    MIN_DRAWING_WIDTH_PX, PresetHost as _,
-};
+use crate::drawings::{self, DeleteOutcome, DrawingAuthor};
 use crate::feed::{self, FeedCommand, FeedHandle, ReplayControl};
 use crate::feed_notice;
 use crate::indicator_legend;
@@ -47,13 +42,12 @@ use crate::statusbar;
 use crate::style::{CandlePreset, ChartStyle};
 use crate::symbols_file::{self, AddedSymbols};
 use crate::tab::{CanvasChrome, CanvasLayout, LegendFold, Tab};
-use crate::tabstrip::{self, PickerOutcome, SourcePicker, TabAction};
+use crate::tabstrip::{self, TabAction};
 use crate::theme;
 use crate::timezone::TzOffset;
 use crate::toolbar::{self, ToolbarAction};
 use crate::toolrail::{Tool, ToolRail, ToolboxDock};
 use crate::ui_state;
-use crate::widgets::{IconButton, TOOLBAR_ICON};
 use crate::window_scale;
 use smallvec::SmallVec;
 
@@ -64,57 +58,6 @@ const TIME_STRIP: f32 = 24.0;
 /// Id of the tab the window opens with.
 const FIRST_TAB_ID: u64 = 0;
 
-/// The note being typed on the chart: which object, and how it looked before
-/// the first keystroke.
-///
-/// The baseline rides here rather than in the collection's gesture
-/// coalescing, and that is not a style choice: the inspector, the context bar
-/// and every drag share that one gesture slot, and any of them closing theirs
-/// while a note is being typed would swallow the note's undo entry — leaving
-/// Ctrl+Z to take back the *placement* instead of the words. Same shape as
-/// `inspector_edit_baseline`, same reason.
-///
-/// And the same *shape*, down to the tab and pane: an index alone identifies
-/// nothing once there are two panes, let alone two tabs. Switching tabs with
-/// an editor open would otherwise record the note's undo entry against
-/// whatever object happened to sit at that index on the tab now in front —
-/// swapping an unrelated drawing for a copy of the note on the next Ctrl+Z.
-struct InlineTextEdit {
-    tab: u64,
-    side: PaneSide,
-    index: usize,
-    before: drawings::Drawing,
-}
-
-/// Id of the on-chart note editor's floating area. One editor at a time —
-/// the keyboard has one caret.
-const INLINE_TEXT_AREA_ID: &str = "inline-text-editor";
-/// What an empty note's field says before anything is typed.
-const INLINE_TEXT_HINT: &str = "Add text";
-/// Width of the field. Wide enough for a sentence, narrow enough that it does
-/// not cover the price it is annotating.
-const INLINE_TEXT_WIDTH_PX: f32 = 180.0;
-/// Type size the editor falls back to when the tool declares none.
-const INLINE_TEXT_FALLBACK_PX: f32 = 12.0;
-/// Line height as a multiple of the type size, and the frame's own vertical
-/// padding — together, how tall the one-line field stands. Used to decide
-/// whether it still fits above the anchor.
-const INLINE_TEXT_LINE_FACTOR: f32 = 1.4;
-const INLINE_TEXT_FRAME_PAD_PX: f32 = 10.0;
-/// How much of the viewport's height the arming dialog's scrolling body may
-/// take. The rest pays for the window's own chrome, its Arm/Cancel footer and
-/// the margin that keeps a centred dialog off the chart's edges.
-///
-/// A fraction rather than a fixed height because the form's length is not
-/// fixed either: unfolding the alarm section adds six rows, and on a laptop
-/// that was enough to push **Arm** past the bottom of a window the trader
-/// cannot resize. Sized so the whole dialog — body, footer and chrome — sits
-/// comfortably inside the shortest viewport the app is used on.
-const ARM_DIALOG_BODY_SCREEN_FRACTION: f32 = 0.45;
-/// Floor under that fraction. On a viewport too short for even this the form
-/// scrolls within it rather than collapsing to nothing — a dialog whose Arm
-/// button cannot be reached is worse than one that scrolls.
-const ARM_DIALOG_MIN_BODY_PT: f32 = 200.0;
 /// Frames the `QUANTICK_LOAD_OLDER` hook waits for a chart worth paging from.
 ///
 /// It cannot fire at startup: paging asks for trades older than the ones on
@@ -204,9 +147,6 @@ const DEMO_FALLBACK_BAND_FRACTION: f64 = 0.004;
 /// mark. Any distance the tab cannot possibly hold would do; an hour is
 /// unambiguous at every timeframe the chart offers.
 const DEMO_OFF_SERIES_LEAD_MS: i64 = 3_600_000;
-/// Initial position of the selected-drawing inspector, before
-/// [`inspector_placement`] has a size and a bbox to place it from.
-const DRAWING_INSPECTOR_DEFAULT_POSITION: egui::Pos2 = egui::pos2(90.0, 120.0);
 /// Length of the EMA the toolbar's hardcoded M1 entry adds (the settings UI
 /// generated from `InputSpec` replaces this in M4).
 const DEFAULT_EMA_LEN: usize = 9;
@@ -214,93 +154,8 @@ const DEFAULT_EMA_LEN: usize = 9;
 const SCRIPT_RELOAD_POLL_INTERVAL: Duration = Duration::from_millis(1_000);
 /// How long after the last indicator change the state file is written.
 const INDICATOR_STATE_SAVE_DEBOUNCE: Duration = Duration::from_millis(1_000);
-/// Inspector width bounds (UX spec: resizable between 300 and 440 px).
-const INSPECTOR_MIN_WIDTH_PX: f32 = 300.0;
-/// See [`INSPECTOR_MIN_WIDTH_PX`].
-const INSPECTOR_MAX_WIDTH_PX: f32 = 440.0;
-/// Default inspector width for the shipped tools (the spec reserves 360 px
-/// for the Fib level editor).
-const INSPECTOR_DEFAULT_WIDTH_PX: f32 = 320.0;
-/// Default inspector width for tools that mount a level editor tab.
-const INSPECTOR_LEVELS_WIDTH_PX: f32 = 360.0;
-/// Gap kept between the inspector and the selected object's bounding box.
-const INSPECTOR_OBJECT_GAP_PX: f32 = 12.0;
-/// Assumed inspector height for placement before its first frame reports one.
-const INSPECTOR_FALLBACK_HEIGHT_PX: f32 = 280.0;
-/// Below this chart width a fresh selection opens the inspector pinned —
-/// there is no floating position that would not crowd the geometry. Stops
-/// applying once the user touches the pin either way.
-const INSPECTOR_AUTO_PIN_CHART_WIDTH_PX: f32 = 1180.0;
-/// Height of the floating inspector's custom title bar.
-const INSPECTOR_TITLE_HEIGHT_PX: f32 = 28.0;
-/// Title-bar paint metrics: leading padding, the title column when the grip
-/// glyph precedes it, and the two font sizes.
-const INSPECTOR_TITLE_PAD_X_PX: f32 = 2.0;
-const INSPECTOR_TITLE_TEXT_X_PX: f32 = 18.0;
-const INSPECTOR_TITLE_GRIP_GLYPH_PX: f32 = 14.0;
-const INSPECTOR_TITLE_TEXT_PX: f32 = 13.0;
-/// Gap between the object manager and the rail edge it opens beside.
-const DRAWING_MANAGER_GAP_PX: f32 = 12.0;
-/// Dragging the price field across the whole visible range takes this many
-/// steps, whatever the symbol's price magnitude.
-const PRICE_DRAG_STEPS: f64 = 200.0;
-/// DragValue speed of bar-index coordinates, in bars per drag point.
-const BAR_DRAG_SPEED: f64 = 0.25;
-/// Where the object manager first opens: under the toolbox's home corner.
-const DRAWING_MANAGER_DEFAULT_POSITION: egui::Pos2 = egui::pos2(70.0, 140.0);
-/// How long the delete toast keeps its Undo affordance on screen (UX spec).
-const TOAST_UNDO_MS: u64 = 8_000;
 /// Horizontal offset of a duplicated drawing, so the copy is visibly a copy.
 const DUPLICATE_OFFSET_BARS: f32 = 2.0;
-/// How far below the top edge the assistant's popup opens, clear of the menu
-/// row and the toolbar.
-const AGENT_POPUP_TOP_MARGIN_PX: f32 = 96.0;
-/// Widest the assistant's popup gets, so a long message wraps instead of
-/// covering the chart.
-const AGENT_POPUP_MAX_WIDTH_PX: f32 = 360.0;
-/// Room between the message and the attribution line under it.
-const AGENT_POPUP_SPACING_PX: f32 = 6.0;
-/// Vertical clearance between the toast and the bottom chrome.
-const TOAST_BOTTOM_MARGIN_PX: f32 = 44.0;
-/// Width of the Save-as box, in pixels. Wide enough that a name at the
-/// [`ui_state::MAX_WORKSPACE_NAME`] limit reads in one line.
-const WORKSPACE_NAME_BOX_WIDTH_PX: f32 = 280.0;
-
-/// Transient confirmation that the window did what was asked, with an escape
-/// hatch when the act has one. Undo works from the button for
-/// [`TOAST_UNDO_MS`] and from Ctrl+Z for as long as the history holds.
-///
-/// This is the window's one acknowledgement channel, not the drawings'. It
-/// floats over the chart's bottom edge instead of taking a cell on the status
-/// line, and that is the reason: the status bar's readings live at fixed
-/// positions Rafa's eye returns to without looking, and a cell that appears
-/// for eight seconds and then leaves would slide `bars` and `arrival`
-/// sideways twice per acknowledgement (`statusbar.rs`: "the layout never
-/// moves").
-#[derive(Debug)]
-struct Toast {
-    /// Borrowed for the fixed messages, owned when the act has a count to
-    /// report. Acknowledgements are event-driven and rare — never a frame
-    /// path — so an allocation here costs nothing anyone can see.
-    message: std::borrow::Cow<'static, str>,
-    shown_at: Instant,
-    /// Whether the toast offers Undo. A delete does; the honest clear after
-    /// a bar rebuild does not — its history is gone with the drawings, and
-    /// a dead Undo button would lie. Neither does a workspace save: the file
-    /// it replaced is gone, and `Reset startup layout` is the real way back.
-    offers_undo: bool,
-}
-
-/// Which inspector tab is open. Tabs exist per capability: every tool gets
-/// Style and Coordinates; a tool that brings its own tab (the Fib level
-/// editor) mounts it as Extra without the central code knowing its fields.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum InspectorTab {
-    #[default]
-    Style,
-    Extra,
-    Coordinates,
-}
 
 /// What the open file dialog is for, so the one poll can land either answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,76 +166,94 @@ enum WorkspacePick {
     Import,
 }
 
-/// What the inspector body asked for this frame. The caller owns every
-/// mutation, so the pinned panel and the floating window share one rule set.
-/// Which default-style button the Style tab was pressed on, so the caller can
-/// say out loud that something was remembered — a silent save leaves the
-/// trader wondering whether it took.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SavedDefault {
-    OneTool,
-    EveryTool,
-    Forgotten,
-}
-
-impl SavedDefault {
-    const fn message(self) -> &'static str {
-        match self {
-            Self::OneTool => "Saved - new drawings of this tool open configured like this one.",
-            Self::EveryTool => "Saved - every new drawing opens with this colour, width and fill.",
-            Self::Forgotten => "Reset - this tool goes back to how it opened out of the box.",
-        }
+/// The slice the drawing chrome reads, assembled from the pieces of the
+/// application it is allowed to see.
+///
+/// A free function rather than a method for the reason
+/// [`indicator_preview_area`] is one: every caller has already split
+/// `QuantickApp` into disjoint borrows to draw a surface through `&mut`, and a
+/// method would want the whole of `self` back. That the compiler insists on
+/// the split is the port working.
+///
+/// `manager_rows` is handed in rather than gathered here. Only one of the two
+/// call sites draws the list, and building a row per object for the site that
+/// does not would be a per-frame allocation for a window nobody is looking at.
+fn drawing_env<'a>(
+    tab: &'a Tab,
+    toolrail: &ToolRail,
+    presets: &'a drawings::presets::PresetStore,
+    read: DrawingRead<'a>,
+) -> crate::surfaces::DrawingEnv<'a> {
+    let side = tab.drawing_side();
+    let pane = tab.pane(side);
+    let selected = pane.drawings.selected().and_then(|index| {
+        pane.drawings
+            .items()
+            .get(index)
+            .map(|drawing| crate::surfaces::drawing_chrome::SelectedDrawing { index, drawing })
+    });
+    crate::surfaces::DrawingEnv {
+        selected,
+        chart_area: pane.last_chart_area,
+        focused_chart_area: tab.focused_pane().last_chart_area,
+        lane_divider_x: pane.last_lane_divider_x,
+        auto_range: pane.last_auto_range,
+        selected_bbox: read.selected_bbox,
+        selected_band: read.selected_band,
+        tab: tab.id,
+        side,
+        drawing_tool_armed: matches!(toolrail.tool(), Tool::Drawing(_)),
+        toolbox_dock: toolrail.dock(),
+        authored_objects: read.authored_objects,
+        manager_rows: read.manager_rows,
+        presets,
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-struct InspectorActions {
-    toggle_hidden: bool,
-    toggle_lock: bool,
-    toggle_pin: bool,
-    delete: bool,
-    cancel_delete: bool,
-    force_delete: bool,
-    close: bool,
-    edited: bool,
-    /// Which default-style button was pressed, if any.
-    saved_default: Option<SavedDefault>,
+/// The parts of [`drawing_env`] that cost something to work out, gathered by
+/// the caller so each pass pays only for what it draws.
+///
+/// Three fields and three prices. Projecting the selection's painted bounds
+/// walks its anchors through the price scale; naming its band formats a
+/// string; counting an assistant's objects walks every pane of every tab. All
+/// three are per-frame while a selection is on screen, which is why the pass
+/// that only runs the capture hooks gathers none of them and says so.
+#[derive(Default)]
+struct DrawingRead<'a> {
+    selected_bbox: Option<egui::Rect>,
+    selected_band: Option<String>,
+    authored_objects: usize,
+    manager_rows: &'a [crate::surfaces::drawing_chrome::ManagerRow],
 }
 
-impl InspectorActions {
-    /// Whether this frame asked for anything at all. The context bar reads
-    /// it to decide whether the undo baseline is worth cloning.
-    fn any(&self) -> bool {
-        self.toggle_hidden
-            || self.toggle_lock
-            || self.toggle_pin
-            || self.delete
-            || self.cancel_delete
-            || self.force_delete
-            || self.close
-            || self.edited
-            || self.saved_default.is_some()
+/// The chart rectangle a settings dialog is previewing an unapplied draft on,
+/// if one is.
+///
+/// The pane the *dialog* was opened over, not the focused one: a trader can
+/// preview a curve on the left pane and then click the right, and the banner
+/// belongs over the numbers that are actually provisional.
+///
+/// A free function rather than a method because its only caller has already
+/// split `QuantickApp` into disjoint borrows to build the surface
+/// environment, and a method would want the whole of `self` back. Per-frame,
+/// and shaped to leave immediately: no dialog open — the ordinary case — is
+/// one `Option` test before the tab scan is reached.
+fn indicator_preview_area(
+    tabs: &[Tab],
+    dialog: Option<&SettingsDialog>,
+    target: TabSlot,
+) -> Option<egui::Rect> {
+    if !dialog.is_some_and(|dialog| dialog.previewed) {
+        return None;
     }
-
-    /// Fold another frame section's requests into this one — the title bar
-    /// and the body each report intent, the host applies the union.
-    fn merge(&mut self, other: Self) {
-        self.toggle_hidden |= other.toggle_hidden;
-        self.toggle_lock |= other.toggle_lock;
-        self.toggle_pin |= other.toggle_pin;
-        self.delete |= other.delete;
-        self.cancel_delete |= other.cancel_delete;
-        self.force_delete |= other.force_delete;
-        self.close |= other.close;
-        self.edited |= other.edited;
-        self.saved_default = self.saved_default.or(other.saved_default);
-    }
+    tabs.iter()
+        .find(|tab| tab.id == target.tab)
+        .map(|tab| tab.pane(target.side))
+        .and_then(|pane| pane.last_chart_area)
 }
 
 /// How often the perf summary is logged (not every frame).
 const SUMMARY_INTERVAL: Duration = Duration::from_secs(2);
-/// Coalesce slider drags into one diagnostic event after the value settles.
-const STYLE_LOG_DEBOUNCE: Duration = Duration::from_millis(350);
 
 /// Split the padded plot area into the candle chart, the indicator panes, the
 /// optional live strip, the right price gutter and the bottom time strip, so
@@ -444,185 +317,6 @@ pub fn plot_split(
 #[must_use]
 pub fn gesture_hits_lane_divider(divider_x: Option<f32>, x: f32, half_width: f32) -> bool {
     divider_x.is_some_and(|divider| (x - divider).abs() <= half_width)
-}
-
-/// `X,Y` in screen points, for the harness hook that parks the properties
-/// popup. `None` when the text is not two finite numbers.
-///
-/// Off-screen coordinates are accepted rather than refused: a position outside
-/// the chart is a state the app already has an answer for
-/// ([`clamp_into_chart`]), and reaching it on purpose is how that answer gets
-/// photographed. Only text that is not a point at all is turned away.
-fn parse_point(raw: &str) -> Option<egui::Pos2> {
-    let (x, y) = raw.split_once(',')?;
-    let x: f32 = x.trim().parse().ok()?;
-    let y: f32 = y.trim().parse().ok()?;
-    (x.is_finite() && y.is_finite()).then_some(egui::pos2(x, y))
-}
-
-/// Clamp a window of `size` at `position` into `chart`, top-left biased when
-/// the window is larger than the pane.
-fn clamp_into_chart(position: egui::Pos2, size: egui::Vec2, chart: egui::Rect) -> egui::Pos2 {
-    let max_x = (chart.right() - size.x).max(chart.left());
-    let max_y = (chart.bottom() - size.y).max(chart.top());
-    egui::pos2(
-        position.x.clamp(chart.left(), max_x),
-        position.y.clamp(chart.top(), max_y),
-    )
-}
-
-/// The rectangle the context bar may occupy: the pane, with the live lane
-/// taken off its right edge.
-///
-/// The lane is where the price the trader is reading is being formed, and
-/// losing sight of it is the trader's first veto — `context_bar::place` has
-/// kept clear of it since it was written. A *parked* bar is placed by a
-/// different rule and has to be held to the same one, so both go through this
-/// rectangle rather than through the pane's own.
-///
-/// Never narrower than the bar itself: a lane wider than the history area
-/// would otherwise leave nothing to place in, and a pane's own edge is a
-/// better answer than an empty rectangle.
-fn context_bar_bounds(chart: egui::Rect, right_limit: f32, size: egui::Vec2) -> egui::Rect {
-    let right = right_limit
-        .min(chart.right())
-        .max(chart.left() + size.x)
-        .min(chart.right());
-    egui::Rect::from_min_max(chart.min, egui::pos2(right, chart.bottom()))
-}
-
-/// Where the inspector goes, and how wide it may be there.
-///
-/// The width is `Some` only when the panel had to be narrowed to fit a gutter
-/// beside a drawing too big to place around — see [`inspector_placement`].
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct InspectorPlacement {
-    position: egui::Pos2,
-    max_width: Option<f32>,
-}
-
-/// The inspector placement rule (`docs/ux/drawing-tools-2026-08.md` §D3).
-///
-/// The old rule scored least overlap with the object's *bounding box*, and a
-/// small object has a small box: "beside it with a 12 px gap" scored zero and
-/// won, dropping the panel straight onto the price action the trader drew the
-/// line to read. The read is the neighbourhood of the object, not its box.
-///
-/// So the corners come first, and the winner is the **farthest** clear one:
-///
-/// 1. the two **top** corners first, inset by the gap. Top before bottom is
-///    structural, not taste: a panel is positioned by its top-left and grows
-///    downwards, so a top corner always has the whole pane to grow into. A
-///    bottom-anchored panel that turns out taller than the placement assumed
-///    runs off the window and loses its last rows — and rows a trader cannot
-///    reach read as rows that do not exist;
-/// 2. of the two, the one that clears `bbox` and whose centre is farthest
-///    from the object wins, so the panel walks away from the drawing across
-///    the chart. An exact tie (a centred object) takes the left one, so the
-///    panel appears in the same place every time;
-/// 3. only if neither top corner is free, the bottom two on the same rule;
-/// 4. and if every corner is fouled — a large object covering the chart —
-///    the beside-the-object candidates, least overlap first.
-fn inspector_placement(
-    chart: egui::Rect,
-    bbox: egui::Rect,
-    size: egui::Vec2,
-) -> InspectorPlacement {
-    let gap = INSPECTOR_OBJECT_GAP_PX;
-    let top_corners = [
-        egui::pos2(chart.left() + gap, chart.top() + gap),
-        egui::pos2(chart.right() - gap - size.x, chart.top() + gap),
-    ];
-    let bottom_corners = [
-        egui::pos2(chart.left() + gap, chart.bottom() - gap - size.y),
-        egui::pos2(chart.right() - gap - size.x, chart.bottom() - gap - size.y),
-    ];
-    let farthest_clear = |candidates: [egui::Pos2; 2]| {
-        let mut best: Option<(egui::Pos2, f32)> = None;
-        for candidate in candidates {
-            let position = clamp_into_chart(candidate, size, chart);
-            let rect = egui::Rect::from_min_size(position, size);
-            if rect.intersect(bbox).is_positive() {
-                continue;
-            }
-            let distance = rect.center().distance(bbox.center());
-            if best.is_none_or(|(_, best)| distance > best) {
-                best = Some((position, distance));
-            }
-        }
-        best.map(|(position, _)| position)
-    };
-    if let Some(position) = farthest_clear(top_corners).or_else(|| farthest_clear(bottom_corners)) {
-        return InspectorPlacement {
-            position,
-            max_width: None,
-        };
-    }
-    // No corner is clear, which is what a big object — a volume profile, a
-    // range across the whole chart — does to all four of them. The panel then
-    // goes into whichever *gutter* the object leaves beside it, narrowed to
-    // fit, because a settings panel sitting on the drawing it configures is
-    // the one outcome this whole function exists to avoid.
-    //
-    // Horizontal gutters only. Narrowing a panel reflows it and its scroll
-    // area keeps every row reachable; shortening one hides rows, and rows a
-    // trader cannot reach read as rows that do not exist.
-    let left_gutter = bbox.left() - gap - chart.left();
-    let right_gutter = chart.right() - bbox.right() - gap;
-    let (gutter, gutter_left) = if right_gutter >= left_gutter {
-        (right_gutter, bbox.right() + gap)
-    } else {
-        (left_gutter, chart.left() + gap)
-    };
-    if gutter >= INSPECTOR_MIN_WIDTH_PX {
-        let width = gutter.min(size.x);
-        let position = clamp_into_chart(
-            egui::pos2(gutter_left, chart.top() + gap),
-            egui::vec2(width, size.y),
-            chart,
-        );
-        return InspectorPlacement {
-            position,
-            max_width: Some(width),
-        };
-    }
-
-    // The object leaves no strip wide enough to be a panel in. Nothing can be
-    // placed clear of it, and saying so by crowding it least is more honest
-    // than pretending: this is the one case the rule cannot keep.
-    let corners = [top_corners, bottom_corners].concat();
-    let fallbacks = [
-        egui::pos2(bbox.right() + gap, bbox.top()),
-        egui::pos2(bbox.left() - gap - size.x, bbox.top()),
-        egui::pos2(bbox.left(), bbox.bottom() + gap),
-        egui::pos2(bbox.left(), bbox.top() - gap - size.y),
-    ];
-    let mut best: Option<(egui::Pos2, f32, f32)> = None;
-    for candidate in fallbacks.into_iter().chain(corners.iter().copied()) {
-        let position = clamp_into_chart(candidate, size, chart);
-        let rect = egui::Rect::from_min_size(position, size);
-        let overlap = rect.intersect(bbox);
-        let overlap_area = if overlap.is_positive() {
-            overlap.area()
-        } else {
-            0.0
-        };
-        let distance = rect.center().distance(bbox.center());
-        let wins = match &best {
-            None => true,
-            Some((_, best_area, best_distance)) => {
-                overlap_area < *best_area
-                    || (overlap_area == *best_area && distance > *best_distance)
-            }
-        };
-        if wins {
-            best = Some((position, overlap_area, distance));
-        }
-    }
-    InspectorPlacement {
-        position: best.map_or_else(|| chart.left_top(), |(position, _, _)| position),
-        max_width: None,
-    }
 }
 
 /// Split the bottom time strip at the lane's divider: the candles' own time
@@ -715,23 +409,6 @@ enum StrategyDemoMode {
     /// only when a force bar happens to be half-formed, which no capture
     /// can wait for.
     AlarmBadge,
-}
-
-/// The arming dialog's state: which drawing on which pane of which tab,
-/// and the form — the stored-preset shape edited in place, so "form",
-/// "bank row" and "what a future NL layer emits" stay one structure.
-struct StrategyPopup {
-    /// Index of the tab the dialog was opened over. Drawing ids are
-    /// per-pane counters, so the same id on another tab is an unrelated
-    /// object — switching tabs closes the dialog rather than arm it.
-    tab: usize,
-    side: pane::PaneSide,
-    drawing: drawings::DrawingId,
-    form: crate::strategy_presets::StoredPreset,
-    /// The bank preset the form was seeded from, shown on the badge.
-    preset_choice: Option<String>,
-    save_name: String,
-    error: Option<String>,
 }
 
 /// Which pane a scripted right-click should land on.
@@ -914,8 +591,6 @@ pub struct QuantickApp {
     /// interaction state across the whole window rather than within a tab, so
     /// this may not be per-tab state: two panes sharing an id share a drag.
     pane_ids: PaneIdAllocator,
-    /// The `+` dialog, while it is open.
-    source_picker: Option<SourcePicker>,
     /// The instruments the user added from the picker, already folded into
     /// `config`'s catalog. Kept apart from it so the picker can tell an
     /// addition — which it may take back out — from a shipped entry, which is
@@ -992,43 +667,10 @@ pub struct QuantickApp {
     dock: Dock,
     toolrail: ToolRail,
 
-    // Delete confirmation for a locked drawing, shown next to the trigger.
-    drawing_delete_confirm: bool,
-    // Pre-edit copy of the selected drawing while an inspector edit gesture
-    // (slider/color/coordinate drag) is in flight; committed as one undo
-    // entry once pointer and keyboard let go.
-    inspector_edit_baseline: Option<InspectorEdit>,
-    toast: Option<Toast>,
-    /// The assistant's message, waiting to be read and dismissed. Drawn over
-    /// the chart, never modal: a trader mid-tape is never locked out of their
-    /// own window by something an assistant said.
-    agent_popup: Option<crate::control::AgentPopup>,
-    // Inspector chrome state: open tab, dock pin, whether the user moved the
-    // floating window this session (manual position wins over placement),
-    // and the selection the last placement was computed for.
-    inspector_tab: InspectorTab,
-    inspector_pinned: bool,
-    /// Whether the floating inspector is open. Selecting a drawing no longer
-    /// opens it: the context bar is what a selection raises, and the gear on
-    /// that bar is the one thing that opens the full panel. The pinned dock
-    /// ignores this — pinning *is* the standing request to keep it open.
-    inspector_open: bool,
-    /// A tool asked for the panel while it was being placed (a text note has
-    /// no words until the panel gives it some).
-    ///
-    /// Separate from `inspector_open` because of frame order: placement runs
-    /// in the canvas pass, and the context bar runs after it and clears
-    /// `inspector_open` on every selection change — including the selection
-    /// the placement just made. The request survives that and is applied on
-    /// the far side of it.
-    pending_open_settings: bool,
-    /// Raised by a placement whose tool holds words: the object just made
-    /// wants the caret. Consumed by [`Self::draw_inline_text_editor`] on the
-    /// same frame, which turns it into `inline_text_edit`.
-    pending_text_edit: bool,
-    /// The `QUANTICK_TEXT_NOTE` hook: place a note and open its editor on the
-    /// first drawn frame. See [`Self::apply_text_note_hook`].
-    pending_text_note: bool,
+    /// Floating chrome that owns the state it draws: the assistant's popup,
+    /// the acknowledgement toast. One field for the whole set, one module
+    /// per surface — see [`crate::surfaces::Surfaces`].
+    surfaces: crate::surfaces::Surfaces,
     /// The `QUANTICK_CONTROL_ACCESS` hook: enable observer access on the
     /// first frame, through the panel button's own `enable`.
     pending_control_access_enable: bool,
@@ -1051,14 +693,6 @@ pub struct QuantickApp {
     /// The `QUANTICK_CONTROL_MARK` hook: take a mark on the first frame,
     /// through the hotkey's own action, with the note the hook carried.
     pending_control_mark: Option<String>,
-    /// The note being typed on the chart — the on-chart editor's whole
-    /// state. See [`InlineTextEdit`].
-    inline_text_edit: Option<InlineTextEdit>,
-    inspector_moved: bool,
-    inspector_last_selection: Option<usize>,
-    /// The selected object's context bar: the floating row of icons that
-    /// opens where the object is.
-    context_bar: drawings::context_bar::ContextBar,
     // The floating inspector's position: automatic placement until the user
     // drags the title bar, manual from then on (only ever re-clamped). The
     // chart rectangle it is placed against belongs to the focused
@@ -1116,7 +750,6 @@ pub struct QuantickApp {
     // placed when the run opens, with the pointer parked where the next one
     // would go. Consumed once.
     pending_drawing_draft: Option<usize>,
-    inspector_pos: Option<egui::Pos2>,
     /// The popup's position changed by hand this frame and the workspace has
     /// not been told yet.
     ///
@@ -1133,41 +766,9 @@ pub struct QuantickApp {
     /// the frame that closes the window flushes this before taking the exit
     /// save, so nothing can be dropped between the two.
     inspector_position_dirty: bool,
-    /// How wide the floating inspector may be where it was placed.
-    ///
-    /// `Some` only when it had to be narrowed into a gutter beside a drawing
-    /// too big to place around; `None` means the usual width range applies.
-    inspector_max_width: Option<f32>,
-    // The floating panel's size as it was last actually drawn. Read back from
-    // the window response rather than from egui's area memory: the memory
-    // lookup is empty on the frame the panel is being laid out, which is
-    // exactly the frame the placement and the clamp need a size.
-    inspector_size: Option<egui::Vec2>,
-    // Whether the user ever toggled the pin — the auto-pin width rule stops
-    // firing once they have expressed a preference.
-    inspector_pin_touched: bool,
-    // Set on the unpin frame: the side panel still occupies that frame's
-    // layout, so the floating host waits one frame and places against the
-    // settled chart instead of the pinned-era geometry.
-    inspector_settle_frame: bool,
-    drawing_manager_open: bool,
-    // Last frame's open state: the manager places itself beside the rail on
-    // the frame it opens, and only then.
-    drawing_manager_was_open: bool,
-    // The manager's delete-all confirmation row is showing (audit M7): the
-    // one command that removes locked objects too, so it is never one click.
-    drawing_manager_confirm_delete_all: bool,
     // Custom drawing presets (named payload exports + default-for-new),
     // persisted across restarts in a versioned file.
     drawing_presets: drawings::presets::PresetStore,
-    #[cfg(test)]
-    inspector_pin_rect: Option<egui::Rect>,
-    #[cfg(test)]
-    context_bar_rect: Option<egui::Rect>,
-    #[cfg(test)]
-    toast_undo_rect: Option<egui::Rect>,
-    #[cfg(test)]
-    manager_action_rects: Vec<(usize, &'static str, egui::Rect)>,
 
     // Layer visibility (the right-click menu on a pane's canvas). The layers
     // belong to the pane that draws them; what lives here is where the choices
@@ -1200,19 +801,10 @@ pub struct QuantickApp {
     footprint_config: crate::footprint_config::FootprintConfig,
     /// Where those edits persist (see `footprint_config::settings_path`).
     footprint_settings_path: std::path::PathBuf,
-    /// Whether the footprint settings window is open (the layer menu's
-    /// "configure footprint…" entry opens it).
-    show_footprint_settings: bool,
-    /// Named tape-reading setups, and where they live.
-    footprint_presets: crate::footprint_presets::PresetStore,
-    footprint_presets_path: std::path::PathBuf,
-
     // Named input setups per indicator kind, offered by the settings
     // dialog's preset picker.
     indicator_presets: preset_file::PresetStore,
     indicator_presets_path: std::path::PathBuf,
-    /// The settings window's "save preset" field, kept across frames.
-    footprint_preset_draft: String,
     /// The boot hooks' requests, kept so tabs opened later (replay
     /// autostart) get them too: `QUANTICK_FOOTPRINT_AUTOSTART`,
     /// `QUANTICK_CANDLE_WIDTH` and `QUANTICK_PAN_PX`.
@@ -1239,12 +831,6 @@ pub struct QuantickApp {
     /// frame with no pointer over the canvas would take the compass away
     /// again.
     scripted_pointer: Option<egui::Vec2>,
-    /// The strategy bank: named presets, loaded once and written back on
-    /// every save — the declarative store a future natural-language layer
-    /// would write into.
-    strategy_bank: crate::strategy_presets::StrategyBank,
-    /// The arming dialog, opened by a drawing menu's "Add strategy…".
-    strategy_popup: Option<StrategyPopup>,
     /// Where signal alarms are played. The shipped sink is the platform's
     /// own sounds; a test swaps in a recorder, which is how "the alarm
     /// sounded, once, and it was the sound the preset named" is asserted
@@ -1257,11 +843,11 @@ pub struct QuantickApp {
     /// `QUANTICK_STRATEGY_DEMO`: rectangle + armed instance (`1`) or the
     /// arming dialog over it (`popup`), for validation runs. Consumed once
     /// the chart has bars enough, like the drawings demo.
+    ///
+    /// The dialog it stages lives in `surfaces::strategy_popup`; this hook
+    /// stays here because it has to place the drawing the dialog arms over
+    /// before it can open anything.
     pending_strategy_demo: Option<StrategyDemoMode>,
-    /// One-shot: the next draw of the arming dialog drops the sound picker
-    /// open. Set by [`StrategyDemoMode::AlarmSounds`], consumed by
-    /// [`Self::draw_alarm_controls`] on the first frame it draws the box.
-    pending_alarm_sound_picker: bool,
     /// Where the scripted press landed, until its release goes out.
     ///
     /// A real right-click spans frames: the button goes down, the app draws,
@@ -1288,12 +874,11 @@ pub struct QuantickApp {
     /// filled, which no boot-time code can guarantee.
     scripted_indicator_settings: bool,
 
-    // Candle appearance + whether the style panel is open.
+    /// The chart appearance every renderer reads. The window that edits it
+    /// is `surfaces::style_panel`, which hands back a copy rather than
+    /// holding a reference to this one.
     style: ChartStyle,
-    show_style: bool,
     style_revision: u64,
-    style_log_pending: bool,
-    last_style_change: Option<Instant>,
     // Whether the status bar shows the perf readings (View → perf readings).
     show_perf: bool,
     /// Whether venue candle history is asked for in slices, newest first
@@ -1363,8 +948,6 @@ pub struct QuantickApp {
     /// file: capturing the live window and saving it would drop the bookmarks
     /// on the floor if the app did not carry them between load and save.
     bookmarks: Vec<ui_state::NamedArrangement>,
-    /// The Save-as box, while it is open: what has been typed so far.
-    workspace_name_entry: Option<String>,
     /// Whether a workspace is on disk, so the menu can disable Reset without
     /// asking the filesystem. The menu body runs every frame it is open, and a
     /// `Path::exists` there is a syscall at 60 Hz for an answer that changes
@@ -1401,19 +984,6 @@ pub struct QuantickApp {
     /// what the window is ingesting, not what one market prints.
     trades_since_summary: u64,
     last_summary: Instant,
-}
-
-/// A drawing edit in flight, with the pane it was captured on.
-///
-/// The commit has to land on *that* pane: focus legitimately moves when the
-/// user clicks the other chart or another tab, and the index alone addresses
-/// a different object there. Pairing the baseline with its owner is what
-/// keeps one gesture one undo entry on one drawing.
-struct InspectorEdit {
-    tab: u64,
-    side: PaneSide,
-    index: usize,
-    before: drawings::Drawing,
 }
 
 /// An indicator slot together with the tab and pane that own it.
@@ -1515,11 +1085,37 @@ impl QuantickApp {
                 .filter_map(|(symbol, step)| step.parse().ok().map(|value| (symbol.clone(), value)))
                 .collect(),
         );
+        // The risk per trade, and the money it is measured in. A trader who
+        // never set any of this gets the mode off and an empty book, which
+        // leaves every screen exactly as it was.
+        //
+        // Skipped when a launch hook set the risk for this run: an
+        // environment variable is an explicit request for one run and
+        // outranks the stored settings. Restoring them here left the hook's
+        // whole point - the derived size, the sentence, the lock -
+        // unreachable from a capture.
+        if !tab.paper.risk_from_hook() {
+            tab.paper
+                .set_risk_settings(crate::risk_sizing::settings_from_sidecar(
+                    paper_state.risk_per_trade_basis.as_deref(),
+                    paper_state.risk_per_trade_amount.as_deref(),
+                    paper_state.risk_per_trade_currency.as_deref(),
+                    paper_state.risk_per_trade_percent.as_deref(),
+                    paper_state.risk_per_trade_lock,
+                ));
+            tab.paper
+                .set_capital(crate::risk_sizing::capital_from_records(
+                    &paper_state.paper_capital,
+                ));
+        }
+        tab.paper
+            .set_instrument_money(crate::risk_sizing::book_from_records(
+                &paper_state.instrument_money,
+            ));
         // Resolved once: under test the settings path is a fresh scratch
         // file per call, and the load must read the same file the saves
         // will write.
         let footprint_settings_path = crate::footprint_config::settings_path();
-        let footprint_presets_path = crate::footprint_presets::default_path();
         let indicator_presets_path = preset_file::default_path();
         let mut app = Self {
             tabs: vec![tab],
@@ -1529,7 +1125,6 @@ impl QuantickApp {
             layout_picker_autostart: std::env::var("QUANTICK_LAYOUT_PICKER")
                 .is_ok_and(|value| value == "1"),
             pane_ids,
-            source_picker: None,
             added_symbols: symbols_file::load(&symbols_file::default_path()),
             symbols_path: symbols_file::default_path(),
             config,
@@ -1560,16 +1155,7 @@ impl QuantickApp {
             ),
             dock: Dock::new(),
             toolrail: ToolRail::new(),
-            drawing_delete_confirm: false,
-            inspector_edit_baseline: None,
-            toast: None,
-            agent_popup: None,
-            inspector_tab: InspectorTab::default(),
-            inspector_pinned: false,
-            inspector_open: false,
-            pending_open_settings: false,
-            pending_text_edit: false,
-            pending_text_note: false,
+            surfaces: crate::surfaces::Surfaces::default(),
             pending_control_access_enable: false,
             operator_slots: std::collections::BTreeSet::new(),
             pending_control_annotation: None,
@@ -1577,10 +1163,6 @@ impl QuantickApp {
             pending_control_evidence: None,
             control_evidence_hook_frames: 0,
             pending_control_mark: None,
-            inline_text_edit: None,
-            inspector_moved: false,
-            inspector_last_selection: None,
-            context_bar: drawings::context_bar::ContextBar::default(),
             pending_drawing_demo: false,
             pending_load_older: None,
             pending_load_older_candles: None,
@@ -1590,26 +1172,10 @@ impl QuantickApp {
             pending_replay_restart: None,
             pending_venue_history_demo: None,
             pending_drawing_draft: None,
-            inspector_pos: None,
             inspector_position_dirty: false,
-            inspector_max_width: None,
-            inspector_size: None,
-            inspector_pin_touched: false,
-            inspector_settle_frame: false,
-            drawing_manager_open: false,
-            drawing_manager_was_open: false,
-            drawing_manager_confirm_delete_all: false,
             drawing_presets: drawings::presets::PresetStore::load_from(
                 drawings::presets::PresetStore::default_path(),
             ),
-            #[cfg(test)]
-            inspector_pin_rect: None,
-            #[cfg(test)]
-            context_bar_rect: None,
-            #[cfg(test)]
-            toast_undo_rect: None,
-            #[cfg(test)]
-            manager_action_rects: Vec::new(),
             chart_layers_path: chart_layers::default_path(),
             saved_layer_mask: 0,
             saved_layer_tab: 0,
@@ -1619,12 +1185,8 @@ impl QuantickApp {
             layer_actions: chart_layers::LayerActions::default(),
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
             footprint_settings_path,
-            show_footprint_settings: false,
-            footprint_presets: crate::footprint_presets::PresetStore::load(&footprint_presets_path),
-            footprint_presets_path,
             indicator_presets: preset_file::PresetStore::load(&indicator_presets_path),
             indicator_presets_path,
-            footprint_preset_draft: String::new(),
             scripted_footprint: false,
             scripted_menu: None,
             scripted_menu_release: None,
@@ -1632,22 +1194,14 @@ impl QuantickApp {
             scripted_context_menu: None,
             scripted_context_menu_release: None,
             scripted_pointer: None,
-            strategy_bank: crate::strategy_presets::StrategyBank::load_from(
-                crate::strategy_presets::StrategyBank::default_path(),
-            ),
-            strategy_popup: None,
             alerts: Box::new(crate::audio::Speaker::default()),
             alert_failure: None,
             pending_strategy_demo: None,
-            pending_alarm_sound_picker: false,
             scripted_indicator_settings: false,
             scripted_candle_width: None,
             scripted_pan_px: None,
             style: ChartStyle::default(),
-            show_style: false,
             style_revision: 0,
-            style_log_pending: false,
-            last_style_change: None,
             show_perf: true,
             progressive_history: true,
             history_reach: crate::history_reach::HistoryReach::default(),
@@ -1663,7 +1217,6 @@ impl QuantickApp {
             save_on_exit: true,
             favorites_are_staged: false,
             bookmarks: Vec::new(),
-            workspace_name_entry: None,
             workspace_saved: false,
             recent_workspaces: Vec::new(),
             recent_on_disk: Vec::new(),
@@ -1818,11 +1371,6 @@ impl QuantickApp {
         if let Ok(family_id) = std::env::var("QUANTICK_TOOLBOX_FLYOUT") {
             app.toolrail.request_flyout(family_id.trim().to_owned());
         }
-        // The on-chart note editor exists only between a placement and the
-        // first click elsewhere, so no click-free launch could photograph it
-        // without a hook — the same gap `QUANTICK_DRAWING_DRAFT` fills for a
-        // half-placed object.
-        app.pending_text_note = std::env::var("QUANTICK_TEXT_NOTE").is_ok_and(|value| value == "1");
         app.pending_drawing_demo = std::env::var("QUANTICK_DRAWINGS_DEMO")
             .is_ok_and(|value| matches!(value.as_str(), "1" | "bands"));
         // The replay seek, scripted: restart the recording once the session
@@ -1961,56 +1509,12 @@ impl QuantickApp {
                 "partial" => Some(VenueHistoryDemo::Partial),
                 _ => None,
             });
-        // The object manager is where a mark that cannot be trusted says so —
-        // the "off series", "other market" and band badges live there, and a
-        // mark clamped to an edge may be nowhere near the visible window,
-        // making the list the only place it can be found. Reachable from a
-        // launch, like every other surface, or it cannot be checked without a
-        // mouse.
-        app.drawing_manager_open =
-            std::env::var("QUANTICK_DRAWINGS_MANAGER").is_ok_and(|value| value == "1");
-        // The context bar only exists while something is selected, so the
-        // hook that reaches it is a hook that *selects*: pair it with
-        // QUANTICK_DRAWINGS_DEMO_SELECT. This one opens the panel behind the
-        // gear on top, which is the state a screenshot cannot otherwise
-        // reach without a click.
-        app.inspector_open =
-            std::env::var("QUANTICK_DRAWING_INSPECTOR").is_ok_and(|value| value == "1");
-        // The trader's own drag, scripted: `x,y` in screen points parks the
-        // properties popup exactly as a hand on the title bar would, through
-        // that gesture's own function. Without it the remembered position is
-        // unreachable from a launch — a drag is the only way to set one, and a
-        // capture run has no hand. Nonsense is refused rather than guessed, so
-        // a typo photographs automatic placement instead of an invented pixel.
-        // Which tab the panel opens on. The panel is one hook away, but its
-        // tool-owned tab — where a Fib's levels and colours are built, and
-        // where the two default controls sit — is a click deeper, and a
-        // capture has no hand for it.
-        if let Ok(tab) = std::env::var("QUANTICK_DRAWING_INSPECTOR_TAB") {
-            match tab.trim() {
-                "style" => app.inspector_tab = InspectorTab::Style,
-                "extra" => app.inspector_tab = InspectorTab::Extra,
-                "coordinates" => app.inspector_tab = InspectorTab::Coordinates,
-                // Refused rather than guessed: a typo shows the default tab,
-                // never a confident capture of the wrong one.
-                other => tracing::warn!(tab = other, "unknown drawing inspector tab"),
-            }
-        }
-        if let Some(position) = std::env::var("QUANTICK_DRAWING_INSPECTOR_POS")
-            .ok()
-            .and_then(|value| parse_point(&value))
-        {
-            app.place_inspector_by_hand(position);
-        }
-        // And the same drag on the context bar, which now keeps its position
-        // across selections too. Its own gesture is the grip, and a capture
-        // run has no more hand for that one than for the title bar.
-        if let Some(position) = std::env::var("QUANTICK_CONTEXT_BAR_POS")
-            .ok()
-            .and_then(|value| parse_point(&value))
-        {
-            app.context_bar.set_manual(position);
-        }
+        // The drawing chrome's five hooks, read here rather than on the first
+        // drawn frame: the demo appliers run earlier in that frame and ask
+        // whether the inspector is open, so a hook another hook depends on has
+        // to be in place before any of them. They live with the fields they
+        // set — see `surfaces::drawing_chrome::apply_launch_hooks`.
+        crate::surfaces::drawing_chrome::apply_launch_hooks(&mut app.surfaces.drawing_chrome);
 
         // Same convenience for the aggression layer (bubbles + the live
         // column's footprint). Same code path as the toolbar toggle.
@@ -2143,11 +1647,6 @@ impl QuantickApp {
             app.scripted_footprint = true;
             app.active_tab_mut().flow_pane.footprint_visible = true;
         }
-        // The settings window too — a validation run reaches every surface
-        // from env alone (ui-harness rule).
-        if std::env::var("QUANTICK_FOOTPRINT_PANEL").is_ok_and(|value| value == "1") {
-            app.show_footprint_settings = true;
-        }
         // Every style by its own id, resolved through the same registry the
         // panel's selector and the TOML read. A style reachable by click but
         // not by name is a style the second operator cannot pick, and one
@@ -2221,9 +1720,6 @@ impl QuantickApp {
         {
             app.scripted_pan_px = Some(px);
         }
-        // The appearance dialog, reachable without a pointer — where the
-        // candle gap and the rest of the candle style are edited.
-        app.show_style = std::env::var("QUANTICK_STYLE_PANEL").is_ok_and(|value| value == "1");
         // Same convenience for indicators: open with the two M1 natives on
         // (EMA overlay + CVD pane), through the same code path the toolbar
         // menu takes, so a scripted validation run needs no clicks.
@@ -2603,6 +2099,22 @@ impl QuantickApp {
         // silent one would look like the app relocated the trader's settings
         // behind their back — and leave them not knowing which folder to back
         // up. Same toast channel the journal's rescue uses.
+        // `QUANTICK_TOAST=paper`: a simulator acknowledgement, posted through
+        // the panel's own `show_toast`.
+        //
+        // The surface's own hook can raise a message *in* the lane; only this
+        // one proves the route to it, which is the half this change built —
+        // the panel's outbox, the drain in `settle_paper_panels`, and the
+        // eight-second clock the surface owns. Without it the paper path is
+        // reachable from a launch only by waiting for a fill and hoping the
+        // shutter lands inside the window: the demo trades within the first
+        // second and the message is gone eight seconds later, so a capture
+        // run photographs an empty lane and cannot tell that from a defect.
+        if std::env::var("QUANTICK_TOAST").is_ok_and(|value| value == "paper") {
+            app.tabs[0]
+                .paper
+                .show_toast("SIM: stop filled at 169 790 — flat.".to_owned());
+        }
         if let Some(notice) = crate::store_home::rescue_notice() {
             app.tabs[0].paper.show_toast(notice);
         }
@@ -2683,6 +2195,37 @@ impl QuantickApp {
     /// named call leaves the same durable trace a click does.
     pub(crate) fn control_persist_order_strategies(&mut self) {
         self.persist_order_strategies();
+    }
+
+    /// Save and fan out the risk per trade after a capability changed it.
+    pub(crate) fn control_persist_risk_settings(&mut self) {
+        self.persist_risk_settings();
+    }
+
+    /// Persist the risk per trade, the declared capital and the instrument
+    /// money, and fan all three out.
+    ///
+    /// App-wide, like the ticket's other settings: a ceiling a trader sets
+    /// in one tab is one they mean everywhere, and what a point of WIN is
+    /// worth does not change because a second tab is looking at it.
+    pub(crate) fn persist_risk_settings(&mut self) {
+        let risk = self.active_tab().paper.risk_settings().clone();
+        let capital = self.active_tab().paper.capital().clone();
+        let book = self.active_tab().paper.instrument_money().clone();
+        for tab in &mut self.tabs {
+            tab.paper.set_risk_settings(risk.clone());
+            tab.paper.set_capital(capital.clone());
+            tab.paper.set_instrument_money(book.clone());
+        }
+        let path = crate::paper_state::default_path();
+        let mut state = crate::paper_state::load(&path);
+        state.risk_per_trade_basis = Some(risk.basis.token().to_owned());
+        state.risk_per_trade_amount = Some(risk.amount.normalize().to_string());
+        state.risk_per_trade_percent = Some(risk.percent.normalize().to_string());
+        state.risk_per_trade_lock = Some(risk.lock);
+        state.paper_capital = crate::risk_sizing::records_from_capital(&capital);
+        state.instrument_money = crate::risk_sizing::records_from_book(&book);
+        crate::paper_state::save(&path, &state);
     }
 
     /// Persist the named exit strategies and the ticket's selection, and fan
@@ -2804,45 +2347,6 @@ impl QuantickApp {
         self.active_tab
     }
 
-    /// The assistant's message on screen: a small window over the chart that
-    /// says who is speaking, carries one message and closes on a click.
-    ///
-    /// Deliberately not modal and deliberately not on the status line: a
-    /// trader reading the tape keeps every control they had, and the fixed
-    /// readings never move to make room for something that leaves again.
-    fn draw_agent_popup(&mut self, ctx: &egui::Context) {
-        let Some(popup) = self.agent_popup.clone() else {
-            return;
-        };
-        let mut open = true;
-        let mut dismissed = false;
-        egui::Window::new(&popup.title)
-            .id(egui::Id::new("agent_popup"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(
-                egui::Align2::CENTER_TOP,
-                egui::vec2(0.0, AGENT_POPUP_TOP_MARGIN_PX),
-            )
-            .show(ctx, |ui| {
-                ui.set_max_width(AGENT_POPUP_MAX_WIDTH_PX);
-                ui.label(&popup.message);
-                ui.add_space(AGENT_POPUP_SPACING_PX);
-                ui.label(
-                    egui::RichText::new(format!("Sent by {}", popup.author))
-                        .small()
-                        .color(theme::TEXT_SUPPORT),
-                );
-                if ui.button("Dismiss").clicked() {
-                    dismissed = true;
-                }
-            });
-        if dismissed || !open {
-            self.agent_popup = None;
-        }
-    }
-
     /// Put one Quantick Pine script on the focused pane behind a fresh slot.
     ///
     /// The one door: the script library's click arrives here, and so does an
@@ -2914,18 +2418,14 @@ impl QuantickApp {
     /// the first rather than stacking windows over a chart someone is
     /// trading, and the trader dismisses it.
     pub(crate) fn show_agent_popup(&mut self, popup: crate::control::AgentPopup) {
-        self.agent_popup = Some(popup);
+        self.surfaces.agent_popup.show(popup);
     }
 
     /// Post one line to the window's own acknowledgement lane — the same
     /// channel a delete or a workspace save uses, with no Undo: there is
     /// nothing to take back from having been told something.
     pub(crate) fn show_agent_toast(&mut self, message: String) {
-        self.toast = Some(Toast {
-            message: message.into(),
-            shown_at: Instant::now(),
-            offers_undo: false,
-        });
+        self.surfaces.toast.note(message, Instant::now());
     }
 
     /// Ask for the platform's attention sound, through the same sink the
@@ -3077,9 +2577,8 @@ impl QuantickApp {
     /// every pane one can reach — an assistant may annotate any open tab, so
     /// counting the active pane alone would offer to take back a subset and
     /// call it all of them.
-    fn authored_object_count(&self) -> usize {
-        self.tabs
-            .iter()
+    fn authored_object_count(tabs: &[Tab]) -> usize {
+        tabs.iter()
             .map(|tab| {
                 tab.panes()
                     .map(|(pane, _side)| pane.drawings.authored_count())
@@ -3511,6 +3010,9 @@ impl QuantickApp {
         // that map speaks for every layer, and applying it here would undo the
         // switches of the session mid-flight. Reading the live state is also
         // what the comment below has always promised.
+        let inherited_risk = self.active_tab().paper.risk_settings().clone();
+        let inherited_capital = self.active_tab().paper.capital().clone();
+        let inherited_money = self.active_tab().paper.instrument_money().clone();
         let inherited_layers = self.active_tab().flow_pane.layer_states(&self.style);
         let flow_inverted = self.active_tab().flow_pane.price_view.is_inverted();
         let time_inverted = self
@@ -3525,6 +3027,13 @@ impl QuantickApp {
         tab.paper.set_cmd_trading(cmd_trading);
         tab.paper
             .set_order_strategies(inherited_strategies, inherited_selection.as_deref());
+        // The risk per trade travels with them. It is app-wide like the rest
+        // of the ticket's settings, and a tab that opened without it would
+        // hand the trader a bare quantity field on a market they meant to
+        // size the same way as the one beside it.
+        tab.paper.set_risk_settings(inherited_risk);
+        tab.paper.set_capital(inherited_capital);
+        tab.paper.set_instrument_money(inherited_money);
         tab.flow_pane.layout = inherited_layout;
         self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
@@ -3725,7 +3234,7 @@ impl QuantickApp {
             .map(|entry| entry.name.clone())
             .collect();
         let dock_visible = self.dock.visible();
-        let show_style = self.show_style;
+        let show_style = self.surfaces.style_panel.is_open();
         // Read before the tab is borrowed mutably. The reach is the window's
         // standing choice, like the progressive-history switch — a trader who
         // picked "previous session" once means it in the next tab too — so it
@@ -3778,7 +3287,11 @@ impl QuantickApp {
             dock_visible,
             appearance_open: show_style,
             paper: toolbar::PaperTradeModel {
-                ready: tab.paper.ready(),
+                // The lock reaches the toolbar too. Gating only the dock's
+                // pair left these lit while the ticket refused, so a fast
+                // click here only toasted - and the doc promises the entry
+                // pair disables.
+                ready: tab.paper.ready() && !tab.paper.risk_report().1,
                 buy_label: tab.paper.entry_label(quantick_engine::Side::Buy),
                 sell_label: tab.paper.entry_label(quantick_engine::Side::Sell),
                 buy_hover: tab.paper.entry_hover(quantick_engine::Side::Buy),
@@ -3866,11 +3379,11 @@ impl QuantickApp {
             ToolbarAction::SetFootprint(shown) => {
                 self.focused_pane_mut().footprint_visible = shown;
             }
-            ToolbarAction::OpenFootprintSettings => self.show_footprint_settings = true,
+            ToolbarAction::OpenFootprintSettings => self.surfaces.footprint_settings.open(),
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
             ToolbarAction::SetLayout(preset) => self.apply_layout_preset(preset),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
-            ToolbarAction::ToggleAppearance => self.show_style = !self.show_style,
+            ToolbarAction::ToggleAppearance => self.surfaces.style_panel.toggle(),
             // Every indicator command lands on the focused pane (§11), which
             // is the flow pane whenever the canvas is not split.
             // Adding an indicator by hand is the plainest possible request to
@@ -4282,7 +3795,6 @@ impl QuantickApp {
                 self.note_indicator_edit_at(target.tab, target.side);
             }
         }
-        self.draw_indicator_preview_watermark(ctx);
     }
 
     /// Replace the dialog's draft with a preset (`None` = the declared
@@ -4403,47 +3915,6 @@ impl QuantickApp {
                 dialog.preset_label = None;
             }
         }
-    }
-
-    /// While a preview is live, stamp the pane it paints on: a full SELL
-    /// triangle drawn from a slider mid-drag must never wear the authority
-    /// of a committed signal (trader-ux review). The legend chip says it in
-    /// the corner; this says it where the signals are.
-    fn draw_indicator_preview_watermark(&self, ctx: &egui::Context) {
-        /// Distance below the pane's top edge, in pixels — below the
-        /// top-centre toast lane ("loading venue history"), so the two never
-        /// overprint each other.
-        const WATERMARK_TOP_OFFSET_PX: f32 = 34.0;
-        /// Watermark font size, in pixels: larger than a legend chip, far
-        /// from a headline.
-        const WATERMARK_FONT_PX: f32 = 13.0;
-        let Some(dialog) = self.indicator_settings.as_ref() else {
-            return;
-        };
-        if !dialog.previewed {
-            return;
-        }
-        let target = self.indicator_settings_target;
-        let Some(rect) = self
-            .tabs
-            .iter()
-            .find(|tab| tab.id == target.tab)
-            .map(|tab| tab.pane(target.side))
-            .and_then(|pane| pane.last_chart_area)
-        else {
-            return;
-        };
-        let painter = ctx.layer_painter(egui::LayerId::new(
-            egui::Order::Middle,
-            egui::Id::new("indicator-preview-watermark"),
-        ));
-        painter.text(
-            egui::pos2(rect.center().x, rect.top() + WATERMARK_TOP_OFFSET_PX),
-            egui::Align2::CENTER_TOP,
-            "PREVIEW — settings not applied",
-            egui::FontId::proportional(WATERMARK_FONT_PX),
-            theme::ACCENT,
-        );
     }
 
     /// Send the open dialog's draft to the worker and keep the dialog open
@@ -4577,24 +4048,6 @@ impl QuantickApp {
         }
     }
 
-    /// Draw the modular candle-appearance panel and debounce its diagnostic
-    /// event so dragging a slider cannot flood logs at frame rate.
-    fn draw_style_panel(&mut self, ctx: &egui::Context, now: Instant) {
-        let response = draw_style_window(ctx, &mut self.show_style, &mut self.style);
-        if response.changed {
-            self.style_revision = self.style_revision.saturating_add(1);
-            self.style_log_pending = true;
-            self.last_style_change = Some(now);
-        }
-
-        let settled = self
-            .last_style_change
-            .is_some_and(|changed| now.saturating_duration_since(changed) >= STYLE_LOG_DEBOUNCE);
-        if self.style_log_pending && (settled || !self.show_style) {
-            self.emit_style_changed(response.applied_preset);
-        }
-    }
-
     fn emit_style_changed(&mut self, applied_preset: Option<CandlePreset>) {
         let candles = &self.style.candles;
         let preset = applied_preset
@@ -4618,7 +4071,6 @@ impl QuantickApp {
             action = "redraw_only",
             "candle appearance changed"
         );
-        self.style_log_pending = false;
     }
 
     /// Hot reload: about once a second, compare each file-backed script's
@@ -4753,55 +4205,95 @@ impl QuantickApp {
             crate::footprint_config::save(&self.footprint_settings_path, &self.footprint_config);
         }
         if actions.open_footprint_settings {
-            self.show_footprint_settings = true;
+            self.surfaces.footprint_settings.open();
         }
     }
 
-    /// The footprint settings window, editing the **focused chart's** setup.
+    /// Settle every tab's paper panel and hand its acknowledgement to the
+    /// window's one toast.
     ///
-    /// A chart that has never been configured follows the window's last
-    /// setup, so the first edit anywhere reads like a global preference and
-    /// the second chart only diverges when the trader configures it too.
-    /// Whatever is edited also becomes the window default, which is what a
-    /// chart opened later inherits.
-    fn draw_footprint_settings(&mut self, ctx: &egui::Context) {
-        if !self.show_footprint_settings {
-            return;
+    /// # One lane, and what that cost
+    ///
+    /// The panel used to draw its own toast: the same `CENTER_BOTTOM` anchor
+    /// as `ToastSurface`, 96px up instead of 44, on a 4-second clock instead
+    /// of 8. Two acknowledgements could therefore sit in one lane, at two
+    /// heights, disagreeing about how long an acknowledgement lasts. There is
+    /// one now, and this is where the panel's messages join it.
+    ///
+    /// # Every tab, not just the one on screen
+    ///
+    /// `settle` runs for all of them because the jobs it finishes — an
+    /// export, an import — belong to the tab that started them, and a trader
+    /// who starts an export and then looks at another chart should not have
+    /// to come back for it to land. The acknowledgements follow: a stop
+    /// filling on a chart the trader is not looking at is precisely the news
+    /// they most need, and dropping it silently is what the old per-tab toast
+    /// did.
+    ///
+    /// A message from a background tab is **named**, because an unlabelled
+    /// "SIM: dropped at the fill" would read as being about the chart on
+    /// screen.
+    ///
+    /// # Which message wins a slot that holds one
+    ///
+    /// The watched tab's, always: it carries no prefix and is posted last, so
+    /// it takes the slot from any background message raised on the same
+    /// frame. Among background tabs the **first** in tab order wins and the
+    /// rest of that frame are dropped — the same first-wins rule
+    /// `SurfaceResponse::merge` uses for a request that carries a value, so
+    /// the window has one tie-break rule rather than two. Posting each of
+    /// them in turn would look like it showed them all and would in fact
+    /// show whichever `tabs.iter()` reached last, which is tab order deciding
+    /// in silence.
+    fn settle_paper_panels(&mut self, now: Instant) {
+        let Self {
+            tabs,
+            active_tab,
+            surfaces,
+            ..
+        } = self;
+        let mut watched = None;
+        let mut background = None;
+        for (index, tab) in tabs.iter_mut().enumerate() {
+            tab.paper.settle();
+            let Some(message) = tab.paper.take_toast() else {
+                continue;
+            };
+            if index == *active_tab {
+                watched = Some(message);
+            } else if background.is_none() {
+                // The interpunct is the window's own separator — the status
+                // bar, the tape's axis caption and the layout strip all use
+                // it, and the messages themselves already carry a colon
+                // (`SIM: …`). A second one would read as two labels.
+                background = Some(format!("{} · {message}", tab.symbol));
+            }
         }
+        if let Some(message) = background {
+            surfaces.toast.note(message, now);
+        }
+        if let Some(message) = watched {
+            surfaces.toast.note(message, now);
+        }
+    }
+
+    /// Apply what the footprint settings window settled on.
+    ///
+    /// Whatever is edited also becomes the window default, which is what a
+    /// trader configuring their first chart means; a second chart diverges
+    /// only when they configure it too.
+    fn apply_footprint_change(&mut self, change: crate::surfaces::FootprintChange) {
         let side = self.active_tab().focused_side();
-        let customized = self
-            .active_tab()
-            .focused_pane()
-            .footprint_override
-            .is_some();
-        let mut edited = self
-            .active_tab()
-            .focused_pane()
-            .footprint_config(&self.footprint_config)
-            .clone();
-        let outcome = crate::footprint_panel::draw(
-            ctx,
-            crate::footprint_panel::PanelInput {
-                open: &mut self.show_footprint_settings,
-                config: &mut edited,
-                presets: &mut self.footprint_presets,
-                presets_path: &self.footprint_presets_path,
-                name_draft: &mut self.footprint_preset_draft,
-                target: &format!("{} chart", side.title().to_lowercase()),
-                customized,
-            },
-        );
-        match outcome {
-            crate::footprint_panel::PanelOutcome::Untouched => {}
-            crate::footprint_panel::PanelOutcome::Changed => {
-                self.active_tab_mut().pane_mut(side).footprint_override = Some(edited.clone());
-                self.footprint_config = edited;
+        match change {
+            crate::surfaces::FootprintChange::Applied(edited) => {
+                self.active_tab_mut().pane_mut(side).footprint_override = Some((*edited).clone());
+                self.footprint_config = *edited;
                 crate::footprint_config::save(
                     &self.footprint_settings_path,
                     &self.footprint_config,
                 );
             }
-            crate::footprint_panel::PanelOutcome::ResetToDefault => {
+            crate::surfaces::FootprintChange::ResetToDefault => {
                 self.active_tab_mut().pane_mut(side).footprint_override = None;
             }
         }
@@ -5027,7 +4519,9 @@ impl QuantickApp {
             self.history_reach = reach;
         }
         self.venue_lead_in = chrome.venue_lead_in;
-        self.restore_inspector_position(chrome.inspector_position);
+        self.surfaces
+            .drawing_chrome
+            .restore_inspector_position(chrome.inspector_position);
     }
 
     /// The tabs and the chrome as they stand — the part a startup workspace
@@ -5090,7 +4584,7 @@ impl QuantickApp {
             history_reach: (self.history_reach != crate::history_reach::HistoryReach::default())
                 .then(|| self.history_reach.token().to_owned()),
             venue_lead_in: self.venue_lead_in,
-            inspector_position: self.remembered_inspector_position(),
+            inspector_position: self.surfaces.drawing_chrome.remembered_inspector_position(),
         };
         (tabs, chrome)
     }
@@ -5464,8 +4958,7 @@ impl QuantickApp {
             drawings::presets::PresetStore::default_path(),
         );
         self.footprint_config = crate::footprint_config::load(&self.footprint_settings_path);
-        self.footprint_presets =
-            crate::footprint_presets::PresetStore::load(&self.footprint_presets_path);
+        self.surfaces.footprint_settings.reload_presets();
         self.indicator_presets = preset_file::PresetStore::load(&self.indicator_presets_path);
 
         // The tab strip first, and *before* the indicators: the restore adds
@@ -5613,7 +5106,7 @@ impl QuantickApp {
         let Some(chrome) = file.chrome.as_mut() else {
             return false;
         };
-        let position = self.remembered_inspector_position();
+        let position = self.surfaces.drawing_chrome.remembered_inspector_position();
         if chrome.inspector_position == position {
             return false;
         }
@@ -5630,73 +5123,6 @@ impl QuantickApp {
             "properties popup position"
         );
         saved
-    }
-
-    /// The Save-as box: one text field, Save and Cancel.
-    ///
-    /// A window rather than an inline menu field, because a menu closes the
-    /// moment focus moves and a name is several keystrokes long. Enter saves,
-    /// Escape cancels, and the field takes the keyboard on the frame it opens
-    /// so the trader can type without clicking into it first.
-    fn draw_workspace_name_box(&mut self, ctx: &egui::Context) {
-        let Some(mut entry) = self.workspace_name_entry.take() else {
-            return;
-        };
-        let mut save = false;
-        let mut cancel = false;
-        let mut open = true;
-        egui::Window::new("Save workspace as")
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_min_width(WORKSPACE_NAME_BOX_WIDTH_PX);
-                ui.label("A name you will recognise later.");
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut entry)
-                        .hint_text("scalp WIN")
-                        .char_limit(ui_state::MAX_WORKSPACE_NAME)
-                        .desired_width(f32::INFINITY),
-                );
-                field.request_focus();
-                if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    save = true;
-                }
-                // A name already in use replaces that bookmark. Saying so
-                // before the click is the difference between "save as" and
-                // "lose the arrangement I meant to keep".
-                if let Some(clean) = ui_state::clean_workspace_name(&entry)
-                    && self.bookmarks.iter().any(|held| held.name == clean)
-                {
-                    ui.label(
-                        egui::RichText::new(format!("Replaces the saved \"{clean}\"."))
-                            .color(theme::AMBER),
-                    );
-                }
-                ui.horizontal(|ui| {
-                    let named = ui_state::clean_workspace_name(&entry).is_some();
-                    if ui
-                        .add_enabled(named, egui::Button::new("Save"))
-                        .on_disabled_hover_text("Type a name first")
-                        .clicked()
-                    {
-                        save = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            });
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            cancel = true;
-        }
-        if save {
-            self.save_named_workspace(&entry);
-        } else if !cancel && open {
-            // Neither settled: keep what has been typed for the next frame.
-            self.workspace_name_entry = Some(entry);
-        }
     }
 
     /// Write the bookmarks without disturbing the startup arrangement.
@@ -6216,11 +5642,7 @@ impl QuantickApp {
     /// No Undo: the file it replaced is gone, and `Reset startup layout` is
     /// the honest way back rather than a button that pretends otherwise.
     fn note_workspace(&mut self, message: String) {
-        self.toast = Some(Toast {
-            message: message.into(),
-            shown_at: Instant::now(),
-            offers_undo: false,
-        });
+        self.surfaces.toast.note(message, Instant::now());
     }
 
     /// Periodically log a perf summary and warn on threshold breaches.
@@ -7104,7 +6526,7 @@ impl QuantickApp {
                             )
                             .clicked()
                         {
-                            self.workspace_name_entry = Some(String::new());
+                            self.surfaces.workspace_name.open();
                             ui.close_menu();
                         }
                         let mut open: Option<String> = None;
@@ -7230,7 +6652,7 @@ impl QuantickApp {
                     self.workspace_menu_rect = Some(workspace_menu.response.rect);
                     ui.menu_button("Tools", |ui| {
                         if ui.button("Appearance…").clicked() {
-                            self.show_style = true;
+                            self.surfaces.style_panel.open();
                             ui.close_menu();
                         }
                         let access_label = self
@@ -7305,7 +6727,7 @@ impl QuantickApp {
         });
         match self.drawing_pane_mut().drawings.delete_selected(false) {
             DeleteOutcome::Deleted => {
-                self.drawing_delete_confirm = false;
+                self.surfaces.drawing_chrome.set_delete_confirm(false);
                 // The instance dies with its drawing, immediately — not on
                 // the next closed bar, which a quiet tape may never bring.
                 if let Some((id, _)) = &doomed {
@@ -7316,13 +6738,11 @@ impl QuantickApp {
                     || "Drawing deleted.".to_owned(),
                     |name| format!("{name} deleted."),
                 );
-                self.toast = Some(Toast {
-                    message: message.into(),
-                    shown_at: now,
-                    offers_undo: true,
-                });
+                self.surfaces.toast.note_with_undo(message, now);
             }
-            DeleteOutcome::NeedsConfirmation => self.drawing_delete_confirm = true,
+            DeleteOutcome::NeedsConfirmation => {
+                self.surfaces.drawing_chrome.set_delete_confirm(true);
+            }
             DeleteOutcome::NothingSelected => {}
         }
     }
@@ -7393,8 +6813,8 @@ impl QuantickApp {
                 // dropped; nothing else loses state on this press. Only the
                 // active tab can have one in flight — a background tab has
                 // no pointer over it to arm or grab with.
-            } else if self.drawing_delete_confirm {
-                self.drawing_delete_confirm = false;
+            } else if self.surfaces.drawing_chrome.delete_confirm() {
+                self.surfaces.drawing_chrome.set_delete_confirm(false);
             } else if self.inline_text_editing().is_some() {
                 // A note being typed is its own layer, and it has to be one:
                 // egui clears widget focus at the top of the frame Escape
@@ -7477,545 +6897,192 @@ impl QuantickApp {
         }
     }
 
-    /// Commit a pending inspector edit gesture as one undo entry.
-    fn commit_inspector_gesture(&mut self) {
-        let Some(edit) = self.inspector_edit_baseline.take() else {
-            return;
-        };
-        // The pane the edit started on. Its tab may have been closed under the
-        // gesture, in which case the object it described is gone with it.
-        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == edit.tab) {
-            tab.pane_mut(edit.side)
-                .drawings
-                .record_edit_of(edit.index, edit.before);
-        }
-    }
-
-    /// The delete toast: visible for [`TOAST_UNDO_MS`], with an Undo button
-    /// driving the same history as Ctrl+Z.
-    fn draw_toast(&mut self, ctx: &egui::Context, now: Instant) {
-        // Expire first, so the borrow taken below is only ever of a toast that
-        // is still on screen.
-        if self.toast.as_ref().is_some_and(|toast| {
-            now.saturating_duration_since(toast.shown_at) >= Duration::from_millis(TOAST_UNDO_MS)
-        }) {
-            self.toast = None;
-        }
-        let Some(toast) = &self.toast else {
-            return;
-        };
-        // Borrowed, never cloned: the toast is painted on every frame of its
-        // eight seconds, and an owned message copied per frame would be ~500
-        // allocations for a string that never changes.
-        let message: &str = &toast.message;
-        let offers_undo = toast.offers_undo;
-        let mut undo_clicked = false;
-        #[cfg(test)]
-        let mut undo_rect = None;
-        egui::Area::new(egui::Id::new("toast"))
-            .anchor(
-                egui::Align2::CENTER_BOTTOM,
-                egui::vec2(0.0, -TOAST_BOTTOM_MARGIN_PX),
-            )
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                egui::Frame::none()
-                    .fill(theme::TAG_BG)
-                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
-                    .rounding(6.0_f32)
-                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(message);
-                            if offers_undo {
-                                let undo = ui.button("Undo");
-                                #[cfg(test)]
-                                {
-                                    undo_rect = Some(undo.rect);
-                                }
-                                undo_clicked = undo.clicked();
-                            }
-                        });
-                    });
-            });
-        #[cfg(test)]
-        {
-            self.toast_undo_rect = undo_rect;
-        }
-        if undo_clicked {
-            let pane = self.drawing_pane_mut();
-            pane.drawings.undo();
-            // Same orphan risk as the keyboard undo: the drawing an armed
-            // instance rides may just have been taken away.
-            pane.sweep_strategy_orphans();
-            self.toast = None;
-        }
-    }
-
-    /// The inspector's title bar, shared by both hosts: grip + title, then
-    /// the view controls (hide, pin, close) as icon buttons. In the floating
-    /// host the whole bar is the drag surface — the body never is, so a
-    /// slider drag can never move the window; double-click re-runs the
-    /// automatic placement.
-    fn draw_inspector_title_bar(
+    /// Record one edit gesture as the single undo entry it earned, on the pane
+    /// it started on.
+    ///
+    /// That pane's tab may have been closed under the gesture, in which case
+    /// the object it described is gone with it.
+    fn record_drawing_edit(
         &mut self,
-        ui: &mut egui::Ui,
+        tab_id: u64,
+        side: PaneSide,
         index: usize,
-        floating: bool,
-    ) -> InspectorActions {
-        let mut actions = InspectorActions::default();
-        let drawing = &self.drawing_pane().drawings.items()[index];
-        let hidden = drawing.hidden;
-        // The band belongs in the title, because that is where "which of
-        // these two trend lines am I editing" is actually asked. Nothing is
-        // added on the price band: it is where drawings have always lived,
-        // and a suffix on every object would be noise.
-        let title = match self.focused_pane().band_label(drawing).chip() {
-            Some(band) => format!("{} · {band}", drawing.tool.settings_title()),
-            None => drawing.tool.settings_title().to_owned(),
-        };
-        let sense = if floating {
-            egui::Sense::click_and_drag()
-        } else {
-            egui::Sense::hover()
-        };
-        let (bar_rect, bar) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), INSPECTOR_TITLE_HEIGHT_PX),
-            sense,
-        );
-        if ui.is_rect_visible(bar_rect) {
-            let painter = ui.painter();
-            if floating {
-                painter.text(
-                    egui::pos2(
-                        bar_rect.left() + INSPECTOR_TITLE_PAD_X_PX,
-                        bar_rect.center().y,
-                    ),
-                    egui::Align2::LEFT_CENTER,
-                    icons::DOTS_SIX_VERTICAL,
-                    egui::FontId::proportional(INSPECTOR_TITLE_GRIP_GLYPH_PX),
-                    theme::TEXT_FAINT,
-                );
-            }
-            let title_x = if floating {
-                INSPECTOR_TITLE_TEXT_X_PX
-            } else {
-                INSPECTOR_TITLE_PAD_X_PX
-            };
-            painter.text(
-                egui::pos2(bar_rect.left() + title_x, bar_rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                title,
-                egui::FontId::proportional(INSPECTOR_TITLE_TEXT_PX),
-                theme::TEXT_PRIMARY,
-            );
+        before: drawings::Drawing,
+    ) {
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+            tab.pane_mut(side).drawings.record_edit_of(index, before);
         }
-        // The controls are registered after the bar, so they win its pointer.
-        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(bar_rect), |ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let close = IconButton::new(icons::X, TOOLBAR_ICON)
-                    .hover_text("Close - keeps the drawing, clears the selection")
-                    .show(ui);
-                if close.clicked() {
-                    actions.close = true;
-                }
-                let pin_hover = if self.inspector_pinned {
-                    "Unpin - float the inspector over the chart"
-                } else {
-                    "Pin - dock the inspector at the side of the chart"
-                };
-                let pin = IconButton::new(icons::PUSH_PIN, TOOLBAR_ICON)
-                    .active(self.inspector_pinned)
-                    .hover_text(pin_hover)
-                    .show(ui);
-                #[cfg(test)]
-                {
-                    self.inspector_pin_rect = Some(pin.rect);
-                }
-                if pin.clicked() {
-                    actions.toggle_pin = true;
-                }
-                let eye_icon = if hidden { icons::EYE_SLASH } else { icons::EYE };
-                let eye_hover = if hidden {
-                    "Show this drawing again"
-                } else {
-                    "Hide this drawing - the inspector keeps the way back"
-                };
-                let eye = IconButton::new(eye_icon, TOOLBAR_ICON)
-                    .active(hidden)
-                    .hover_text(eye_hover)
-                    .show(ui);
-                if eye.clicked() {
-                    actions.toggle_hidden = true;
-                }
-            });
-        });
-        if floating {
-            let bar = bar.on_hover_text("Drag to move · double-click to reposition automatically");
-            if bar.double_clicked() {
-                // The reset path: back to automatic placement.
-                self.inspector_moved = false;
-                let placed = self.inspector_target_placement(ui.ctx(), index);
-                self.inspector_pos = placed.map(|placed| placed.position);
-                self.inspector_max_width = placed.and_then(|placed| placed.max_width);
-                // Giving the placement back is a decision too, and it has to
-                // reach the file: a reset that lived only until the next launch
-                // would hand the trader back the very position they discarded.
-                self.inspector_position_dirty = true;
-            } else if bar.dragged() {
-                // The gesture starts from where the window actually is, in
-                // preference to where it is remembered: the two differ
-                // whenever the pane is too small for the parked point and the
-                // host is drawing a clamped copy. Dragging the clamped window
-                // from the un-clamped point would make it jump the whole
-                // difference on the first pixel — and the trader is dragging
-                // what they can see.
-                if bar.drag_started()
-                    && let Some(drawn) = ui
-                        .ctx()
-                        .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
-                        .map(|rect| rect.min)
-                {
-                    self.inspector_pos = Some(drawn);
-                }
-                // From there the delta accumulates on the *remembered* point,
-                // never on the drawn one. The window is positioned from
-                // `inspector_pos` before this bar is laid out, so the drawn
-                // rect is always one frame behind it: adding this frame's
-                // delta to that rect throws the previous frame's away, and
-                // the popup travels at half the speed of the hand — which is
-                // what "ela treme" was, reported from the running app.
-                match self.inspector_pos {
-                    Some(position) => self.place_inspector_by_hand(position + bar.drag_delta()),
-                    // No position to move yet — the window has not been laid
-                    // out. The hand is still down, so the flag alone records
-                    // that placement is no longer the app's to decide.
-                    None => self.inspector_moved = true,
-                }
-            }
-            // Written when the hand comes off the window, not while it is still
-            // moving: one file write per gesture, and the position it records
-            // is the one the trader stopped at.
-            if bar.drag_stopped() {
-                self.inspector_position_dirty = true;
-            }
-        }
-        ui.separator();
-        actions
     }
 
-    /// Everything the inspector shows for the selected object, shared by the
-    /// floating window and the pinned dock panel. Sections are driven by the
-    /// tool's capabilities — an unsupported property is absent, not disabled.
-    fn drawing_inspector_body(&mut self, ui: &mut egui::Ui, index: usize) -> InspectorActions {
-        let mut actions = InspectorActions::default();
-        let drawing = &self.drawing_pane().drawings.items()[index];
-        let tool = drawing.tool;
-        let locked = drawing.locked;
-        let hidden = drawing.hidden;
-        let author = drawing.author.as_ref().map(DrawingAuthor::label);
-        let shareable = drawing.shareable();
-        let mut shared = drawing.scope == drawings::DrawingScope::AllCharts;
-        let show_confirm = self.drawing_delete_confirm && locked;
-
-        // The always-visible textual actions (UX spec: never glyph-only,
-        // never behind a scroll). Identity and the view controls live in the
-        // host's title bar, not here.
-        let intent = drawings::action_bar::draw(ui, locked);
-        actions.toggle_lock |= intent.toggle_lock;
-        actions.delete |= intent.delete;
-
-        if let Some(author) = &author {
-            // Data honesty, where the trader decides what to do with the
-            // object: an assistant's mark never passes for their own.
-            ui.label(
-                egui::RichText::new(format!("Placed by {author} - not by you."))
-                    .small()
-                    .color(theme::TEXT_SUPPORT),
-            );
-        }
-        if locked {
-            ui.label(
-                egui::RichText::new(
-                    "Locked - protected from accidental moves. Style stays editable.",
-                )
-                .small()
-                .color(theme::TEXT_SUPPORT),
-            );
-        }
-        if hidden {
-            ui.label(
-                egui::RichText::new("Hidden - Show brings it back.")
-                    .small()
-                    .color(theme::TEXT_SUPPORT),
-            );
-        }
-        // Where the object appears. Always visible, never behind a tab.
-        //
-        // It used to live on the Coordinates tab, because sharing is a
-        // statement about the anchors — which is the implementer's mental
-        // model, not the trader's. Nobody hunting for "also show this on the
-        // other chart" opens a tab called Coordinates, and that is not even
-        // the tab the panel opens on. Reported as unfindable, and it was.
-        ui.separator();
-        let sharing = ui.add_enabled(
-            shareable,
-            egui::Checkbox::new(&mut shared, "Show on all charts"),
-        );
-        if sharing.changed()
-            && let Some(drawing) = self.drawing_pane_mut().drawings.selected_mut()
-        {
-            drawing.scope = if shared {
-                drawings::DrawingScope::AllCharts
-            } else {
-                drawings::DrawingScope::ThisChart
-            };
-            actions.edited = true;
-        }
-        // A disabled control with no reason reads as a bug.
-        let sharing_hint = if shareable {
-            "The other chart of this tab draws it at the same moment in market time"
-        } else {
-            "This drawing has an anchor past the newest bar, so there is no market time to place              it by on another chart"
-        };
-        sharing.on_hover_text(sharing_hint);
-        if !shareable {
-            ui.label(
-                egui::RichText::new(sharing_hint)
-                    .small()
-                    .color(theme::TEXT_SUPPORT),
-            );
-        }
-
-        if show_confirm {
-            ui.separator();
-            ui.label("Delete locked drawing?");
-            ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
-                    actions.cancel_delete = true;
-                }
-                if ui.button("Delete anyway").clicked() {
-                    actions.force_delete = true;
-                }
-            });
-        }
-        ui.separator();
-
-        if self.inspector_tab == InspectorTab::Extra && tool.extra_tab().is_none() {
-            // The previous selection had an extra tab; this tool brings none.
-            self.inspector_tab = InspectorTab::Style;
-        }
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.inspector_tab, InspectorTab::Style, "Style");
-            // A tool that brings its own tab (the Fib level editor) mounts it
-            // here by name; the central code never learns what is inside.
-            if let Some(extra) = tool.extra_tab() {
-                ui.selectable_value(&mut self.inspector_tab, InspectorTab::Extra, extra);
-            }
-            ui.selectable_value(
-                &mut self.inspector_tab,
-                InspectorTab::Coordinates,
-                "Coordinates",
-            );
-        });
-        ui.separator();
-
-        let tab = self.inspector_tab;
-        let price_speed = self.drawing_pane().last_auto_range.map_or(1.0, |(lo, hi)| {
-            ((hi - lo) / PRICE_DRAG_STEPS).abs().max(1e-9)
-        });
-        let side = self.active_tab().drawing_side();
+    /// Put the caret in a note, on the chart — the one call that opens the
+    /// editor, whether a placement, a double click or a script asked for it.
+    ///
+    /// The surface decides whether the caret is allowed: an object that holds
+    /// no words, or a locked one, refuses it, because an editor that opened and
+    /// then dropped every keystroke would be worse than none. The store command
+    /// and the per-pane stand-down are the host's, so they happen here.
+    pub fn begin_inline_text_edit(&mut self, index: usize) -> bool {
         let Self {
             tabs,
             active_tab,
-            drawing_presets,
+            surfaces,
             ..
         } = self;
-        let drawings = &mut tabs[*active_tab].pane_mut(side).drawings;
-        let Some(drawing) = drawings.selected_mut() else {
-            return actions;
+        let tab = &tabs[*active_tab];
+        let side = tab.drawing_side();
+        let Some(drawing) = tab.pane(side).drawings.items().get(index) else {
+            return false;
         };
-        match tab {
-            InspectorTab::Extra => {
-                actions.edited |= tool.draw_extra_tab(ui, drawing, drawing_presets);
-            }
-            InspectorTab::Style => {
-                ui.label("Style");
-                actions.edited |= ui
-                    .color_edit_button_srgba(&mut drawing.style.color)
-                    .changed();
-                // Capability-driven, like the fill slider below: a tool with
-                // no stroke has no line width, and the repo's rule is that an
-                // unsupported property is *absent*, not present and inert.
-                // Caught by the visual pass — the text note's Style tab was
-                // offering a slider that moved nothing.
-                if tool.supports_stroke_width() {
-                    actions.edited |= ui
-                        .add(
-                            egui::Slider::new(
-                                &mut drawing.style.width_px,
-                                MIN_DRAWING_WIDTH_PX..=MAX_DRAWING_WIDTH_PX,
-                            )
-                            .text("line width (px)"),
-                        )
-                        .changed();
-                }
-                if tool.supports_fill() {
-                    actions.edited |= ui
-                        .add(
-                            egui::Slider::new(
-                                &mut drawing.style.fill_alpha,
-                                0..=MAX_DRAWING_FILL_ALPHA,
-                            )
-                            .text("fill opacity"),
-                        )
-                        .changed();
-                }
-
-                // Stop asking for the same look every single time. Every tool
-                // has a Style tab, so every tool gets this — the named-preset
-                // editor only ever existed on the Fib tab, which left fifteen
-                // tools with no way to remember anything.
-                //
-                // New objects only: a default that repainted the marks already
-                // on the chart would be a bulk edit nobody asked for.
-                ui.separator();
-                ui.label(egui::RichText::new("Default for new drawings").small());
-                ui.horizontal(|ui| {
-                    let style = drawing.style;
-                    if ui
-                        .button("Save as default")
-                        .on_hover_text(format!(
-                            "New {} objects open configured exactly like this one",
-                            tool.name().to_lowercase()
-                        ))
-                        .clicked()
-                    {
-                        drawings::save_tool_default(drawing_presets, drawing);
-                        actions.saved_default = Some(SavedDefault::OneTool);
-                    }
-                    // Style only, and that is not a shortcut: a Fib's level
-                    // list means nothing to a rectangle, so the one property
-                    // every tool shares is the only one this can carry.
-                    if ui
-                        .button("Colour on all tools")
-                        .on_hover_text("Every new drawing opens with this colour, width and fill")
-                        .clicked()
-                    {
-                        for other in drawings::DRAWING_TOOLS {
-                            drawing_presets.set_default_style(other.id(), Some(style));
-                        }
-                        actions.saved_default = Some(SavedDefault::EveryTool);
-                    }
-                    if drawings::has_saved_default(drawing_presets, tool)
-                        && ui
-                            .button("Reset to factory")
-                            .on_hover_text(format!(
-                                concat!(
-                                    "New {} objects go back to how they opened ",
-                                    "out of the box. Clears the default preset ",
-                                    "choice too; saved presets are kept"
-                                ),
-                                tool.name().to_lowercase()
-                            ))
-                            .clicked()
-                    {
-                        drawings::reset_tool_default(drawing_presets, tool);
-                        actions.saved_default = Some(SavedDefault::Forgotten);
-                    }
-                });
-            }
-            InspectorTab::Coordinates => {
-                // Geometry through numbers: bar index and price per anchor,
-                // the same canonical coordinates drags write. Locked blocks
-                // geometry here exactly as it does on the canvas.
-                const ANCHOR_LABELS: [&str; 4] = ["A", "B", "C", "D"];
-                ui.add_enabled_ui(!locked, |ui| {
-                    for (point_index, point) in drawing.points.iter_mut().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.label(ANCHOR_LABELS.get(point_index).copied().unwrap_or("?"));
-                            actions.edited |= ui
-                                .add(
-                                    egui::DragValue::new(&mut point.bar)
-                                        .speed(BAR_DRAG_SPEED)
-                                        .prefix("bar "),
-                                )
-                                .changed();
-                            actions.edited |= ui
-                                .add(egui::DragValue::new(&mut point.price).speed(price_speed))
-                                .changed();
-                        });
-                    }
-                });
-                if locked {
-                    ui.label(
-                        egui::RichText::new("Unlock the drawing to edit its coordinates.").small(),
-                    );
-                }
-            }
+        if !surfaces
+            .drawing_chrome
+            .begin_inline_text_edit(tab.id, side, index, drawing)
+        {
+            return false;
         }
-        actions
+        self.drawing_pane_mut().drawings.select(Some(index));
+        self.sync_content_editing();
+        true
     }
 
-    /// Apply what the inspector body asked for, with the shared undo
-    /// coalescing: the pre-edit object is captured at the first change and
-    /// committed once pointer and keyboard let go.
-    fn apply_inspector_actions(
+    /// Close the editor, keeping whatever was typed and recording it as the one
+    /// edit it was — on the pane the note actually lives on, which is not
+    /// necessarily the one in front when it closes.
+    fn end_inline_text_edit(&mut self) {
+        if let Some(edit) = self.surfaces.drawing_chrome.end_inline_text_edit() {
+            self.record_drawing_edit(edit.tab, edit.side, edit.index, edit.before);
+        }
+        self.sync_content_editing();
+    }
+
+    /// Tell every pane whether one of its objects is having its content typed
+    /// somewhere else on screen, so exactly one object anywhere stands down.
+    ///
+    /// Every pane, not just the one in front: the flag is what suppresses the
+    /// object's own painting, and a pane left holding a stale index would keep
+    /// a note invisible for the rest of the session with no way back.
+    fn sync_content_editing(&mut self) {
+        let editing = self.surfaces.drawing_chrome.content_editing_target();
+        for tab in &mut self.tabs {
+            let target = editing
+                .filter(|(id, _, _)| *id == tab.id)
+                .map(|(_, side, index)| (side, index));
+            tab.set_content_editing(target);
+        }
+    }
+
+    /// Which note is being typed on the chart right now — what a second
+    /// operator reads to know the keyboard belongs to an object.
+    #[must_use]
+    pub fn inline_text_editing(&self) -> Option<usize> {
+        self.surfaces.drawing_chrome.inline_text_editing()
+    }
+
+    /// The rows the object manager lists.
+    ///
+    /// A row's facts come from the drawing, the pane's band registry and the
+    /// tab's layout, and assembling them here is what keeps the manager from
+    /// needing all three. Built only while the window is open, like the market
+    /// dialog's list of open markets: a dozen short strings once a frame, on a
+    /// window that is shut the rest of the session.
+    fn drawing_manager_rows(&self) -> Vec<crate::surfaces::drawing_chrome::ManagerRow> {
+        let pane = self.drawing_pane();
+        let selected = pane.drawings.selected();
+        let focused = self.focused_pane();
+        pane.drawings
+            .items()
+            .iter()
+            .enumerate()
+            .map(
+                |(index, drawing)| crate::surfaces::drawing_chrome::ManagerRow {
+                    name: drawing.display_label(index),
+                    selected: selected == Some(index),
+                    locked: drawing.locked,
+                    hidden: drawing.hidden,
+                    shared: drawing.scope == drawings::DrawingScope::AllCharts,
+                    off_series: drawing.off_series,
+                    foreign_market: drawing.foreign_market,
+                    author: drawing.author.as_ref().map(DrawingAuthor::label),
+                    band: focused.band_label(drawing),
+                },
+            )
+            .collect()
+    }
+
+    /// Where the selected object is painted, in screen points. The chrome
+    /// cannot work this out for itself: it needs the viewport and the price
+    /// scale the host owns.
+    ///
+    /// Two separate answers rather than one pair, because they cost different
+    /// things and not every pass wants both — this one walks the object's
+    /// anchors through the price scale. Nothing is projected while nothing is
+    /// selected, which is every frame of an ordinary session.
+    fn selected_drawing_bbox(&self) -> Option<egui::Rect> {
+        let pane = self.drawing_pane();
+        let index = pane.drawings.selected()?;
+        let chart = pane.last_chart_area?;
+        self.drawing_bbox_on_screen(chart, index)
+    }
+
+    /// What the band the selected object lives on is called, for the
+    /// inspector's title. `None` on the price band, where a suffix on every
+    /// object would be noise. Formats a string, so it is asked for only by a
+    /// pass that shows the title.
+    fn selected_drawing_band(&self) -> Option<String> {
+        let pane = self.drawing_pane();
+        let index = pane.drawings.selected()?;
+        self.focused_pane()
+            .band_label(pane.drawings.items().get(index)?)
+            .chip()
+    }
+
+    /// Carry out what the drawing chrome asked for.
+    ///
+    /// One applier for all four pieces, in the order the trunk applied them
+    /// when each drew itself: the edit lands before the gesture that coalesces
+    /// it is committed, and both land before anything that can delete the
+    /// object they describe.
+    fn apply_drawing_chrome(
         &mut self,
-        ctx: &egui::Context,
-        actions: InspectorActions,
-        index: usize,
-        before: drawings::Drawing,
+        ask: crate::surfaces::drawing_chrome::DrawingChromeAsk,
         now: Instant,
     ) {
-        if actions.edited && self.inspector_edit_baseline.is_none() {
-            self.inspector_edit_baseline = Some(InspectorEdit {
-                tab: self.active_tab().id,
-                side: self.active_tab().focused_side(),
-                index,
-                before,
-            });
+        if let Some(edited) = ask.edited {
+            // Through the selection, never `items_mut`: that hatch is
+            // documented for derived-state refresh only, and a style or a
+            // note's words take part in payload equality — writing them through
+            // it would let an unrelated in-flight gesture swallow this edit.
+            if let Some(drawing) = self.drawing_pane_mut().drawings.selected_mut() {
+                *drawing = *edited;
+            }
         }
-        let gesture_settled = ctx.input(|input| !input.pointer.any_down())
-            && ctx.memory(|memory| memory.focused().is_none());
-        if gesture_settled {
-            self.commit_inspector_gesture();
+        if let Some(edit) = ask.commit_edit_gesture {
+            self.record_drawing_edit(edit.tab, edit.side, edit.index, edit.before);
         }
-        if actions.toggle_hidden {
+        if ask.toggle_selected_hidden
+            && let Some(index) = self.drawing_pane().drawings.selected()
+        {
             let hidden = self.drawing_pane().drawings.items()[index].hidden;
             self.drawing_pane_mut()
                 .drawings
                 .set_selected_hidden(!hidden);
         }
-        if actions.toggle_lock {
+        if ask.toggle_selected_locked
+            && let Some(index) = self.drawing_pane().drawings.selected()
+        {
             let locked = self.drawing_pane().drawings.items()[index].locked;
             self.drawing_pane_mut()
                 .drawings
                 .set_selected_locked(!locked);
-            self.drawing_delete_confirm = false;
         }
-        if actions.toggle_pin {
-            self.inspector_pinned = !self.inspector_pinned;
-            // The user has expressed a preference: the auto-pin width rule
-            // stops firing for the rest of the session.
-            self.inspector_pin_touched = true;
-            if !self.inspector_pinned {
-                // Unpinning re-opens the floating window. The pinned host
-                // has been claiming the selection each frame, so treat it
-                // as fresh again — otherwise automatic placement never runs
-                // and the window falls back to the fixed default corner.
-                self.inspector_last_selection = None;
-                self.inspector_settle_frame = true;
-            }
-        }
-        if actions.delete {
+        if ask.request_delete {
             self.request_delete_selected(now);
         }
-        if actions.cancel_delete {
-            self.drawing_delete_confirm = false;
+        if ask.cancel_delete {
+            // After the request, never before: a frame carrying both must end
+            // with the prompt gone, and a delete on a locked object raises it.
+            self.surfaces.drawing_chrome.set_delete_confirm(false);
         }
-        if actions.force_delete {
-            self.drawing_delete_confirm = false;
+        if ask.force_delete {
             let doomed = {
                 let pane = self.drawing_pane();
                 pane.drawings
@@ -8027,120 +7094,243 @@ impl QuantickApp {
                 if let Some(id) = doomed {
                     self.drawing_pane_mut().remove_strategy_for_drawing(id);
                 }
-                self.toast = Some(Toast {
-                    message: "Drawing deleted.".into(),
-                    shown_at: now,
-                    offers_undo: true,
-                });
+                self.surfaces.toast.note_with_undo("Drawing deleted.", now);
             }
         }
-        if actions.close {
-            // Closing the panel is now a smaller act than it used to be: it
-            // puts the trader back on the context bar, with the object still
-            // selected. Clearing the selection here would make the X the
-            // only control that answers a bigger question than it asks.
-            self.inspector_open = false;
-            if self.inspector_pinned {
-                self.inspector_pinned = false;
-                self.inspector_pin_touched = true;
-            }
-            self.drawing_delete_confirm = false;
+        if ask.duplicate {
+            self.duplicate_selected_drawing();
         }
-        if let Some(saved) = actions.saved_default {
+        if let Some(saved) = ask.saved_default {
             // Nothing to undo: this changed a preference, not the chart.
-            self.toast = Some(Toast {
-                message: saved.message().into(),
-                shown_at: now,
-                offers_undo: false,
-            });
+            self.surfaces.toast.note(saved.message(), now);
         }
-    }
-
-    /// Where a freshly opened floating inspector should sit, and how wide it
-    /// may be there: the farthest chart corner that clears the object, then a
-    /// gutter beside it narrowed to fit — see [`inspector_placement`]. The
-    /// chart pane already excludes both axes and the live lane, so the popup
-    /// can never cover them or leave the view.
-    fn inspector_target_placement(
-        &self,
-        ctx: &egui::Context,
-        index: usize,
-    ) -> Option<InspectorPlacement> {
-        let chart = self.drawing_pane().last_chart_area?;
-        let bbox = self.drawing_bbox_on_screen(chart, index)?;
-        Some(inspector_placement(chart, bbox, self.inspector_size(ctx)))
-    }
-
-    /// How big the floating inspector is, best answer available: the size it
-    /// was last drawn at, then egui's area memory, then the assumed default.
-    fn inspector_size(&self, ctx: &egui::Context) -> egui::Vec2 {
-        self.inspector_size
-            .or_else(|| {
-                ctx.memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
-                    .map(|rect| rect.size())
-            })
-            .unwrap_or(egui::vec2(
-                INSPECTOR_DEFAULT_WIDTH_PX,
-                INSPECTOR_FALLBACK_HEIGHT_PX,
-            ))
-    }
-
-    /// Park the properties popup where a hand put it: the position every later
-    /// selection reopens on, and the one the workspace records.
-    ///
-    /// The single door for all three callers — the title-bar drag, the harness
-    /// hook and a restored workspace — because the state is a *pair*. Setting
-    /// the position without the flag leaves automatic placement free to
-    /// overwrite it on the next selection; setting the flag without a position
-    /// pins the window to wherever it happens to be. Neither half is a state
-    /// worth being able to reach.
-    ///
-    /// The gutter width goes with it. `inspector_max_width` is set only by
-    /// automatic placement, to squeeze the panel into the strip beside a
-    /// drawing too big to place around — and automatic placement never runs
-    /// again once a hand has placed the window. Left behind, it would hold the
-    /// popup at a gutter's width out in open canvas for the rest of the
-    /// session, with nothing able to clear it.
-    fn place_inspector_by_hand(&mut self, position: egui::Pos2) {
-        self.inspector_pos = Some(position);
-        self.inspector_moved = true;
-        self.inspector_max_width = None;
-    }
-
-    /// The popup position a workspace should record: the one a hand placed,
-    /// never one the app computed.
-    ///
-    /// Automatic placement is a *rule* — beside the object, on the side with
-    /// room. Writing down the pixel that rule produced for yesterday's drawing
-    /// would freeze a stale answer into the file and stop the rule from ever
-    /// running again, which is the same bug as never forgetting a drag.
-    fn remembered_inspector_position(&self) -> Option<[f32; 2]> {
-        self.inspector_pos
-            .filter(|_| self.inspector_moved)
-            .map(|position| [position.x, position.y])
-    }
-
-    /// Adopt what a workspace remembers about the popup, including its
-    /// silence: no recorded position hands the window back to automatic
-    /// placement rather than leaving the previous cockpit's position behind.
-    ///
-    /// A non-finite pair is silence too. The file is hand-editable and TOML
-    /// spells `nan`, and NaN is the one value the repair below cannot walk
-    /// back: every comparison against it is false, so `f32::clamp` returns it
-    /// unchanged and the popup goes somewhere with no pixels — where its own
-    /// title bar, and with it the double-click that would undo this, cannot be
-    /// reached. It would then be written straight back at the next save. The
-    /// env hook already refuses the same input ([`parse_point`]); this is the
-    /// door the file comes through.
-    fn restore_inspector_position(&mut self, remembered: Option<[f32; 2]>) {
-        match remembered.filter(|[x, y]| x.is_finite() && y.is_finite()) {
-            Some([x, y]) => self.place_inspector_by_hand(egui::pos2(x, y)),
-            None => {
-                self.inspector_pos = None;
-                self.inspector_moved = false;
-                self.inspector_max_width = None;
+        for write in ask.presets {
+            write.apply_to(&mut self.drawing_presets);
+        }
+        if ask.sweep_authored {
+            let removed = self.remove_every_authored_object();
+            if removed > 0 {
+                self.surfaces
+                    .toast
+                    .note_with_undo(format!("{removed} object(s) placed for you removed."), now);
             }
         }
+        if ask.delete_all {
+            let pane = self.drawing_pane_mut();
+            let deleted = pane.drawings.delete_all();
+            // Every armed instance just lost its drawing at once; sweep them
+            // now so no resting bot order outlives its badge.
+            pane.sweep_strategy_orphans();
+            if deleted > 0 {
+                self.surfaces
+                    .toast
+                    .note_with_undo("All drawings deleted.", now);
+            }
+        }
+        if let Some(index) = ask
+            .manager_select
+            .filter(|index| *index < self.drawing_pane().drawings.items().len())
+        {
+            self.drawing_pane_mut().drawings.select(Some(index));
+            // Centre the viewport on the object's bar span.
+            let slots = self.drawing_pane().slots();
+            if let Some(chart) = self.drawing_pane().last_chart_area {
+                let points = &self.drawing_pane().drawings.items()[index].points;
+                if !points.is_empty() {
+                    let mid =
+                        points.iter().map(|point| point.bar).sum::<f32>() / points.len() as f32;
+                    self.drawing_pane_mut()
+                        .viewport
+                        .center_on_bar(mid, chart.width(), slots);
+                }
+            }
+        }
+        // Through `get`, never `[]`: the rows were snapshotted before any of
+        // the four pieces drew, and a destructive ask applied above — delete
+        // all, the assistant sweep, a confirmed delete — can have shortened
+        // the list under an index that was valid when the row was clicked. The
+        // store's own setters are already bounds-safe; these two reads were
+        // the only raw ones left.
+        if let Some(hidden) = ask.manager_toggle_hidden.and_then(|index| {
+            Some((
+                index,
+                self.drawing_pane().drawings.items().get(index)?.hidden,
+            ))
+        }) {
+            self.drawing_pane_mut()
+                .drawings
+                .set_hidden_at(hidden.0, !hidden.1);
+        }
+        if let Some(locked) = ask.manager_toggle_locked.and_then(|index| {
+            Some((
+                index,
+                self.drawing_pane().drawings.items().get(index)?.locked,
+            ))
+        }) {
+            self.drawing_pane_mut()
+                .drawings
+                .set_locked_at(locked.0, !locked.1);
+        }
+        if let Some(index) = ask.manager_bring_to_front {
+            self.drawing_pane_mut().drawings.bring_to_front(index);
+        }
+        if let Some(index) = ask.manager_delete {
+            // The exact same command path as the inspector button and the
+            // keyboard: select, then request. Locked rows raise the same
+            // confirmation in the inspector.
+            self.drawing_pane_mut().drawings.select(Some(index));
+            self.request_delete_selected(now);
+        }
+        if ask.show_all {
+            self.drawing_pane_mut().drawings.set_all_hidden(false);
+        }
+        if ask.unlock_all {
+            self.drawing_pane_mut().drawings.set_all_locked(false);
+        }
+        if ask.place_text_note && self.place_text_note() {
+            self.surfaces.drawing_chrome.note_text_note_placed();
+        }
+        if let Some(edit) = ask.record_inline_edit {
+            self.record_drawing_edit(edit.tab, edit.side, edit.index, edit.before);
+        }
+        if ask.content_editing_changed {
+            self.sync_content_editing();
+        }
+        if self.surfaces.drawing_chrome.take_inspector_position_dirty() {
+            self.inspector_position_dirty = true;
+        }
+    }
+
+    /// The docked inspector.
+    ///
+    /// Its own call site because a `SidePanel` has to be declared *before* the
+    /// central canvas — the canvas pays its width, and a panel declared after
+    /// it would overlay the chart instead of docking beside it.
+    fn draw_pinned_inspector(&mut self, ctx: &egui::Context, now: Instant) {
+        if !self.surfaces.drawing_chrome.inspector_pinned() {
+            return;
+        }
+        // No painted bounds: a docked panel has no placement rule to keep
+        // clear of the object, so the projection the floating one needs is not
+        // gathered here. The band still is — it is in the title.
+        let read = DrawingRead {
+            selected_band: self.selected_drawing_band(),
+            ..DrawingRead::default()
+        };
+        let ask = self.draw_chrome_pass(ctx, read, false);
+        self.apply_drawing_chrome(ask, now);
+    }
+
+    /// The four floating pieces, registered after the canvas so they stay in
+    /// front of the chart they are anchored to.
+    fn draw_drawing_chrome(&mut self, ctx: &egui::Context, now: Instant) {
+        let manager_open = self.surfaces.drawing_chrome.manager_open();
+        let rows = if manager_open {
+            self.drawing_manager_rows()
+        } else {
+            Vec::new()
+        };
+        // The band name goes in the inspector's title and nowhere else, so
+        // it is formatted only when one of the two inspector hosts is on
+        // screen. A selection alone raises the context bar, which never shows
+        // it — and `band_label` scans the pane's indicator views and `chip`
+        // allocates, every frame, for a value nothing would read.
+        let inspector_showing = self.surfaces.drawing_chrome.inspector_open()
+            || self.surfaces.drawing_chrome.inspector_pinned();
+        let read = DrawingRead {
+            selected_bbox: self.selected_drawing_bbox(),
+            selected_band: inspector_showing
+                .then(|| self.selected_drawing_band())
+                .flatten(),
+            // Counted only for the window that offers to take them back, and
+            // over every tab: an object an assistant placed on another chart
+            // still belongs in that count.
+            authored_objects: if manager_open {
+                Self::authored_object_count(&self.tabs)
+            } else {
+                0
+            },
+            manager_rows: &rows,
+        };
+        let ask = self.draw_chrome_pass(ctx, read, true);
+        self.apply_drawing_chrome(ask, now);
+    }
+
+    /// One split for both call sites. `floating` picks which of the surface's
+    /// two entry points runs.
+    fn draw_chrome_pass(
+        &mut self,
+        ctx: &egui::Context,
+        read: DrawingRead<'_>,
+        floating: bool,
+    ) -> crate::surfaces::drawing_chrome::DrawingChromeAsk {
+        // Split into disjoint borrows, like the surface registry above: the
+        // chrome is drawn through `&mut` while what it reads is borrowed from
+        // the rest of the application.
+        let Self {
+            surfaces,
+            tabs,
+            active_tab,
+            toolrail,
+            drawing_presets,
+            ..
+        } = self;
+        let env = drawing_env(&tabs[*active_tab], toolrail, drawing_presets, read);
+        if floating {
+            surfaces.drawing_chrome.draw_floating(ctx, &env)
+        } else {
+            surfaces.drawing_chrome.draw_pinned_panel(ctx, &env)
+        }
+    }
+
+    /// The `QUANTICK_TEXT_NOTE` hook's other half: place a note in the middle
+    /// of the window and open its editor, through the same two calls a click
+    /// makes.
+    ///
+    /// Here rather than in the surface because every line of it is the host's:
+    /// where the visible window is, what the tape last closed at, and the saved
+    /// defaults a fresh object opens with.
+    fn place_text_note(&mut self) -> bool {
+        let Some(tool) = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.holds_text())
+        else {
+            return false;
+        };
+        let point = {
+            let pane = self.drawing_pane();
+            let slots = pane.slots();
+            if pane.last_chart_area.is_none() || slots == 0 {
+                // No laid-out pane yet, and nothing to place against. The ask
+                // stands and the next frame tries again.
+                return false;
+            }
+            let close = pane
+                .closed_bar(slots.saturating_sub(1))
+                .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
+                .unwrap_or(1.0);
+            let centre = pane
+                .last_auto_range
+                .filter(|(lo, hi)| hi > lo)
+                .map_or(close, |(lo, hi)| (lo + hi) / 2.0);
+            let visible = DEMO_VISIBLE_SLOTS.min(slots);
+            let slot = (slots - visible / 2).min(slots.saturating_sub(1));
+            drawings::ChartPoint::at_time(slot as f32 + 0.5, centre, pane.slot_open_time(slot))
+        };
+        // Through the same door the click path uses, saved defaults and all —
+        // and on the same pane every drawing surface reads, so the index the
+        // editor opens on is the object this just placed.
+        let fresh = drawings::new_drawing_from_defaults(&self.drawing_presets, tool);
+        let placed = self.drawing_pane_mut().drawings.place_with(
+            tool,
+            &drawings::DrawingBand::Price,
+            point,
+            |_| fresh,
+        );
+        if placed && let Some(index) = self.drawing_pane().drawings.selected() {
+            self.begin_inline_text_edit(index);
+        }
+        placed
     }
 
     /// The selected object's screen bounding box, expanded by the anchor
@@ -8174,976 +7364,6 @@ impl QuantickApp {
         // profile while believing it had walked around it.
         let bbox = drawing.tool.painted_bounds(bbox, chart);
         Some(bbox.expand(DRAWING_ANCHOR_RADIUS_PX))
-    }
-
-    /// Shared prologue of both inspector hosts. Returns the selection and its
-    /// pre-frame copy, or cleans up when nothing is selected.
-    fn inspector_selection(&mut self) -> Option<(usize, drawings::Drawing)> {
-        let Some(index) = self.drawing_pane().drawings.selected() else {
-            self.drawing_delete_confirm = false;
-            self.commit_inspector_gesture();
-            self.inspector_last_selection = None;
-            return None;
-        };
-        // An edit gesture that outlived its object's selection commits now.
-        if self
-            .inspector_edit_baseline
-            .as_ref()
-            .is_some_and(|edit| edit.index != index)
-        {
-            self.commit_inspector_gesture();
-        }
-        Some((index, self.drawing_pane().drawings.items()[index].clone()))
-    }
-
-    /// Put the caret in a note, on the chart — the one call that opens the
-    /// editor, whether a placement, a double click or a script asked for it.
-    ///
-    /// Refused for an object that holds no words or is locked: a locked
-    /// object's geometry and content are both protected, and an editor that
-    /// opened and then dropped every keystroke would be worse than none.
-    pub fn begin_inline_text_edit(&mut self, index: usize) -> bool {
-        let tab = self.active_tab().id;
-        let side = self.active_tab().drawing_side();
-        let Some(drawing) = self.drawing_pane().drawings.items().get(index) else {
-            return false;
-        };
-        if drawing.locked || !drawing.tool.holds_text() {
-            return false;
-        }
-        // Typing is one edit: the note as it stands is kept here and recorded
-        // when the editor closes, so undo takes back the note, not the last
-        // letter of it.
-        let before = drawing.clone();
-        self.drawing_pane_mut().drawings.select(Some(index));
-        self.inline_text_edit = Some(InlineTextEdit {
-            tab,
-            side,
-            index,
-            before,
-        });
-        self.sync_content_editing();
-        true
-    }
-
-    /// Close the editor, keeping whatever was typed and recording it as the
-    /// one edit it was — on the pane the note actually lives on, which is not
-    /// necessarily the one in front when it closes.
-    fn end_inline_text_edit(&mut self) {
-        let Some(edit) = self.inline_text_edit.take() else {
-            return;
-        };
-        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == edit.tab) {
-            tab.pane_mut(edit.side)
-                .drawings
-                .record_edit_of(edit.index, edit.before);
-        }
-        self.sync_content_editing();
-    }
-
-    /// Tell every pane whether one of its objects is having its content typed
-    /// somewhere else on screen, so exactly one object anywhere stands down.
-    ///
-    /// Every pane, not just the one in front: the flag is what suppresses the
-    /// object's own painting, and a pane left holding a stale index would
-    /// keep a note invisible for the rest of the session with no way back.
-    fn sync_content_editing(&mut self) {
-        let editing = self
-            .inline_text_edit
-            .as_ref()
-            .map(|edit| (edit.tab, edit.side, edit.index));
-        for tab in &mut self.tabs {
-            let target = editing
-                .filter(|(id, _, _)| *id == tab.id)
-                .map(|(_, side, index)| (side, index));
-            tab.set_content_editing(target);
-        }
-    }
-
-    /// Which note is being typed on the chart right now — what a second
-    /// operator reads to know the keyboard belongs to an object.
-    #[must_use]
-    pub fn inline_text_editing(&self) -> Option<usize> {
-        self.inline_text_edit.as_ref().map(|edit| edit.index)
-    }
-
-    /// The on-chart note editor: a field where the words will be, opened by
-    /// the placement that made the note.
-    ///
-    /// The panel used to be the only way in, which put the note under the
-    /// pointer and the field that fills it on the far side of the screen. The
-    /// context bar the selection already raises carries the rest — colour,
-    /// type size, lock, delete — so what was missing was never a panel, only
-    /// a caret.
-    fn draw_inline_text_editor(&mut self, ctx: &egui::Context) {
-        // A placement that asked for the caret gets it here, on the frame it
-        // happened: the object it made is the selected one.
-        if std::mem::take(&mut self.pending_text_edit)
-            && let Some(index) = self.drawing_pane().drawings.selected()
-        {
-            self.begin_inline_text_edit(index);
-        }
-        let Some((tab, side, index)) = self
-            .inline_text_edit
-            .as_ref()
-            .map(|edit| (edit.tab, edit.side, edit.index))
-        else {
-            return;
-        };
-        // The object can go away underneath the editor — undo, delete, a tab
-        // switch, a click that moves the selection to the other pane. Any of
-        // those ends the editor, and it must not write into whatever now sits
-        // at that index: the note is only in front while its own tab and pane
-        // are the ones every drawing surface is reading.
-        if self.active_tab().id != tab
-            || self.active_tab().drawing_side() != side
-            || self.drawing_pane().drawings.selected() != Some(index)
-        {
-            self.end_inline_text_edit();
-            return;
-        }
-        let Some(chart) = self.drawing_pane().last_chart_area else {
-            self.end_inline_text_edit();
-            return;
-        };
-        let Some(bbox) = self.drawing_bbox_on_screen(chart, index) else {
-            self.end_inline_text_edit();
-            return;
-        };
-        let Some(drawing) = self.drawing_pane().drawings.items().get(index) else {
-            self.end_inline_text_edit();
-            return;
-        };
-        let tool = drawing.tool;
-        let Some(text) = tool.inline_text(drawing.payload.as_ref()) else {
-            self.end_inline_text_edit();
-            return;
-        };
-        // Read once, and only what the field needs: this runs every frame the
-        // editor is open, and the drawing behind it carries a boxed payload.
-        let mut buffer = text.to_owned();
-        let before = buffer.clone();
-        let size_px = tool
-            .glyph_size(drawing)
-            .map_or(INLINE_TEXT_FALLBACK_PX, |size| size.px);
-        let color = drawing.style.color;
-        let locked = drawing.locked;
-        if locked {
-            self.end_inline_text_edit();
-            return;
-        }
-
-        // Anchored where the words are painted, so the field opens over the
-        // object rather than beside it: the note is typed exactly where it
-        // will be read.
-        // Where the words are painted — above the anchor — unless there is no
-        // room up there, in which case it opens below it instead. A field
-        // pinned upward against the top of the chart lands on the flow legend
-        // and covers the very key it is annotating; flipping keeps both
-        // readable, the way a popover does.
-        //
-        // Constrained to the chart either way, like every other floating
-        // drawing surface: the object stands down while the editor is up, so
-        // a field that ran off the window would leave the trader typing blind
-        // into a widget they cannot see.
-        let field_height = size_px * INLINE_TEXT_LINE_FACTOR + INLINE_TEXT_FRAME_PAD_PX;
-        let (position, pivot) = if bbox.bottom() - field_height < chart.top() {
-            (bbox.left_top(), egui::Align2::LEFT_TOP)
-        } else {
-            (
-                egui::pos2(bbox.left(), bbox.bottom()),
-                egui::Align2::LEFT_BOTTOM,
-            )
-        };
-        let inner = egui::Area::new(egui::Id::new(INLINE_TEXT_AREA_ID))
-            .order(egui::Order::Foreground)
-            .fixed_pos(position)
-            .pivot(pivot)
-            .constrain_to(chart)
-            .show(ctx, |ui| {
-                // A frame around it, in the accent: over a candle chart an
-                // unframed field is a rectangle of dark on dark, and the one
-                // thing this surface has to say is "the keyboard is here
-                // now". The fill is opaque for the same reason — words typed
-                // over wicks are words nobody can read back.
-                egui::Frame::none()
-                    .fill(theme::CHROME)
-                    .stroke(egui::Stroke::new(1.0_f32, theme::ACCENT))
-                    .rounding(egui::Rounding::same(3.0))
-                    .inner_margin(egui::Margin::symmetric(4.0, 2.0))
-                    .show(ui, |ui| {
-                        let response = ui.add(
-                            egui::TextEdit::multiline(&mut buffer)
-                                .font(egui::FontId::proportional(size_px))
-                                .text_color(color)
-                                .hint_text(INLINE_TEXT_HINT)
-                                .desired_rows(1)
-                                .frame(false)
-                                .desired_width(INLINE_TEXT_WIDTH_PX),
-                        );
-                        // The caret on the first frame: a field that opens
-                        // unfocused asks for a click nobody was told about.
-                        if !response.has_focus() && ui.memory(|memory| memory.focused().is_none()) {
-                            response.request_focus();
-                        }
-                        response
-                    })
-                    .inner
-            })
-            .inner;
-
-        if buffer != before {
-            let text = buffer.clone();
-            // Through the selection, never `items_mut`: that hatch is
-            // documented for derived-state refresh only, and the words of a
-            // note take part in payload equality — writing them through it
-            // would let an unrelated in-flight gesture swallow this edit.
-            if let Some(drawing) = self.drawing_pane_mut().drawings.selected_mut() {
-                tool.set_inline_text(drawing.payload.as_mut(), text);
-            }
-        }
-        // Escape and clicking away both mean "done" — and Escape must not
-        // also fall through to the escape stack, which would drop the
-        // selection the bar is hanging off.
-        let escaped = inner.has_focus() && ctx.input(|input| input.key_pressed(egui::Key::Escape));
-        if escaped {
-            ctx.memory_mut(|memory| memory.surrender_focus(inner.id));
-        }
-        if escaped || inner.lost_focus() {
-            self.end_inline_text_edit();
-        }
-    }
-
-    /// The `QUANTICK_TEXT_NOTE` hook: place a note in the middle of the
-    /// window and open its editor, through the same two calls a click makes.
-    fn apply_text_note_hook(&mut self) {
-        if !self.pending_text_note {
-            return;
-        }
-        let Some(tool) = drawings::DRAWING_TOOLS
-            .into_iter()
-            .find(|tool| tool.holds_text())
-        else {
-            return;
-        };
-        let point = {
-            let pane = self.drawing_pane();
-            let slots = pane.slots();
-            if pane.last_chart_area.is_none() || slots == 0 {
-                return;
-            }
-            let close = pane
-                .closed_bar(slots.saturating_sub(1))
-                .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
-                .unwrap_or(1.0);
-            let centre = pane
-                .last_auto_range
-                .filter(|(lo, hi)| hi > lo)
-                .map_or(close, |(lo, hi)| (lo + hi) / 2.0);
-            let visible = DEMO_VISIBLE_SLOTS.min(slots);
-            let slot = (slots - visible / 2).min(slots.saturating_sub(1));
-            drawings::ChartPoint::at_time(slot as f32 + 0.5, centre, pane.slot_open_time(slot))
-        };
-        self.pending_text_note = false;
-        // Through the same door the click path uses, saved defaults and all —
-        // and on the same pane every drawing surface reads, so the index the
-        // editor opens on is the object this just placed.
-        let fresh = drawings::new_drawing_from_defaults(&self.drawing_presets, tool);
-        let placed = self.drawing_pane_mut().drawings.place_with(
-            tool,
-            &drawings::DrawingBand::Price,
-            point,
-            |_| fresh,
-        );
-        if placed && let Some(index) = self.drawing_pane().drawings.selected() {
-            self.begin_inline_text_edit(index);
-        }
-    }
-
-    /// The selected object's context bar.
-    ///
-    /// This is what a selection raises now — one row of icons, where the
-    /// object is, for the handful of things a trader does with their eye on
-    /// the chart. Everything else stayed exactly where it was, behind the
-    /// gear. The bar re-uses [`Self::apply_inspector_actions`] verbatim, so
-    /// lock, delete, hide and the undo coalescing have one implementation
-    /// and cannot drift between the two hosts.
-    fn draw_drawing_context_bar(&mut self, ctx: &egui::Context, now: Instant) {
-        let selection = self.drawing_pane().drawings.selected();
-        if self.context_bar.note_selection(selection) {
-            // A new object is a new question: the panel the last one opened
-            // does not follow the selection around.
-            self.inspector_open = false;
-        }
-        // …except when the object just placed asked for it. Applied after
-        // the reset above, because the placement that made the request also
-        // made the selection change that clears it.
-        if std::mem::take(&mut self.pending_open_settings) {
-            self.inspector_open = true;
-            self.inspector_last_selection = None;
-        }
-        let Some(index) = selection else {
-            return;
-        };
-        // An armed tool means the trader is drawing, not editing. The bar is
-        // opaque to the pointer, so leaving it up would let it eat the click
-        // that places the next object — the selection it belongs to is the
-        // one they just finished, not the one they are starting.
-        if matches!(self.toolrail.tool(), Tool::Drawing(_)) {
-            return;
-        }
-        // Which gestures hide the bar is decided here, once, from the raw
-        // input — not at each of the six call sites that could move the
-        // world. A *click* never suppresses: it is how the trader reaches
-        // the bar. Only a decided drag does, and only when it began outside
-        // the bar, so dragging the grip does not hide what is being dragged.
-        //
-        // Note what is deliberately absent: the market moving. A drawing
-        // carried along by the auto-scroll carries the bar with it, smoothly
-        // — suppressing that would blink the bar all session on a live tape.
-        let now_ms = (ctx.input(|input| input.time) * 1000.0) as u64;
-        let bar_rect = self.context_bar.last_rect();
-        let (dragging, origin, zoomed, screen) = ctx.input(|input| {
-            (
-                input.pointer.is_decidedly_dragging(),
-                input.pointer.press_origin(),
-                input.raw_scroll_delta.y.abs() > f32::EPSILON
-                    || (input.zoom_delta() - 1.0).abs() > f32::EPSILON,
-                input.screen_rect,
-            )
-        });
-        // Against the rect the press *landed* on, not this frame's — the bar
-        // moves with a grip drag, so comparing against the moved rect makes
-        // the origin fall outside after ~20 px and suppresses the very
-        // gesture that is moving it. The grip is the escape hatch for a bar
-        // sitting over something the trader needs to see; it has to survive
-        // being used.
-        let on_the_bar = matches!(
-            (origin, self.context_bar.press_rect(origin, bar_rect)),
-            (Some(origin), Some(rect)) if rect.contains(origin)
-        );
-        if dragging && !on_the_bar {
-            self.context_bar.suppress_gesture();
-        } else if !dragging {
-            self.context_bar.release_gesture();
-        }
-        if zoomed {
-            self.context_bar.suppress_transient(now_ms);
-        }
-        self.context_bar.note_screen(screen, now_ms);
-        // Suppressed means suppressed: nothing below this line runs, so the
-        // bar cannot measure a world the gesture that suppressed it is still
-        // moving. That is the rule the drag gestures already learned.
-        if self.context_bar.suppressed(now_ms) {
-            return;
-        }
-        let Some(chart) = self.drawing_pane().last_chart_area else {
-            return;
-        };
-        let Some(bbox) = self.drawing_bbox_on_screen(chart, index) else {
-            return;
-        };
-        // Read the object, never clone it, on the way in. This runs every
-        // frame something is selected, and a `Drawing` carries a `Vec` of
-        // anchors plus a boxed payload — a pencil stroke is 512 of them. The
-        // clone the undo baseline needs is paid for below, only on the frame
-        // an action actually happened.
-        let drawing = &self.drawing_pane().drawings.items()[index];
-        let tool = drawing.tool;
-        let locked = drawing.locked;
-        let mut style = drawing.style;
-        let glyph_before = tool.glyph_size(drawing);
-        // One line, only for an object the trader did not place. Formatting
-        // it costs an allocation on the frames a selected annotation is on
-        // screen — never on the tape's path, and never for the objects the
-        // trader drew.
-        let author = drawing.author.as_ref().map(DrawingAuthor::label);
-        let mut object = drawings::context_bar::BarObject {
-            style: &mut style,
-            glyph_size: glyph_before,
-            author: author.as_deref(),
-            locked,
-            hidden: drawing.hidden,
-            supports_fill: tool.supports_fill(),
-            // Pinned, the full panel is already on screen: a gear leading
-            // where the eye already is would be the dead slot the bar's own
-            // contract forbids.
-            settings_available: !self.inspector_pinned,
-            confirming_delete: self.drawing_delete_confirm && locked,
-            tool_name: tool.name(),
-        };
-        let size = drawings::context_bar::bar_size(&drawings::context_bar::slots(
-            drawings::context_bar::capabilities(&object),
-        ));
-        // The live lane is off limits to the bar however it got where it is:
-        // that strip is where the price the trader is reading is being formed,
-        // and `place` has kept clear of it since it was written. A parked bar
-        // is placed by a different rule, not held to a different one.
-        let right_limit = self
-            .drawing_pane()
-            .last_lane_divider_x
-            .unwrap_or(chart.right());
-        let reachable = context_bar_bounds(chart, right_limit, size);
-        let position = match self.context_bar.manual_position() {
-            // Repair for drawing, never overwrite — the rule the properties
-            // popup already follows, for the same reason. A bar parked out
-            // near the right edge of a wide pane must stay reachable when the
-            // canvas is split and that pane is half as wide, and the repair
-            // leaves the parked point alone, so widening the pane gives it
-            // back. (A fresh drag is a fresh decision and does replace it,
-            // measured from where the bar is actually drawn — dragging from a
-            // point the window is not at would make it jump on the first
-            // pixel.)
-            //
-            // The clamp is against the pane the *selection* lives on, which is
-            // what makes a bar parked over one chart of a split come back
-            // inside the other one rather than hovering over its neighbour.
-            Some(parked) => parked,
-            None => drawings::context_bar::place(chart, right_limit, bbox, size),
-        };
-        // Both answers go through the same repair, so "clear of the live lane"
-        // is a property of the bar and not of the branch that placed it.
-        // `place` keeps clear of the lane on every path but its last one — the
-        // fallback for an object that covers the pane end to end, which clamps
-        // against the pane's own right edge — and that path is reachable with
-        // a full-height profile on a narrow split. It also keeps the popover
-        // bound below honest, which is derived from where the bar ends up.
-        let position = clamp_into_chart(position, size, reachable);
-        // What the popovers are clamped into: the same rectangle *without* the
-        // bar's width floor, but never narrower than the bar that was actually
-        // drawn.
-        //
-        // The floor exists so a history area narrower than the bar still has
-        // somewhere to put one — `place` makes the same call — and it is the
-        // bar's reason, not the palette's: a palette can be pushed left, so
-        // nothing buys it the right to sit on the forming column. But when the
-        // floor did have to push the bar into the lane, a bound that stopped
-        // short of it would leave the palette hanging off nothing, which is
-        // the failure the placement rule spends its effort on.
-        let popover_bounds = egui::Rect::from_min_max(
-            chart.min,
-            egui::pos2(
-                right_limit.min(chart.right()).max(position.x + size.x),
-                chart.bottom(),
-            ),
-        );
-        let intent = drawings::context_bar::show(
-            &mut self.context_bar,
-            ctx,
-            position,
-            popover_bounds,
-            &mut object,
-        );
-        let glyph_after = object.glyph_size;
-        #[cfg(test)]
-        {
-            self.context_bar_rect = self.context_bar.last_rect();
-        }
-
-        if intent.reset_position {
-            self.context_bar.clear_manual();
-        } else if intent.drag_delta != egui::Vec2::ZERO {
-            self.context_bar.set_manual(position + intent.drag_delta);
-        }
-        let actions = InspectorActions {
-            toggle_hidden: intent.toggle_hidden,
-            toggle_lock: intent.actions.toggle_lock,
-            delete: intent.actions.delete,
-            force_delete: intent.force_delete,
-            cancel_delete: intent.cancel_delete,
-            edited: intent.edited,
-            ..InspectorActions::default()
-        };
-        // The undo baseline, taken *before* the edit below lands — a copy
-        // made afterwards would equal the new state and the change would
-        // never make it into the history. It costs its allocation only on a
-        // frame that asked for something, or one with a gesture still open
-        // waiting to be committed; idle frames clone nothing.
-        let before = (actions.any() || self.inspector_edit_baseline.is_some())
-            .then(|| self.drawing_pane().drawings.items()[index].clone());
-        if intent.edited
-            && let Some(drawing) = self.drawing_pane_mut().drawings.selected_mut()
-        {
-            drawing.style = style;
-            if let Some(size) = glyph_after {
-                let tool = drawing.tool;
-                tool.set_glyph_size(drawing, size.px);
-            }
-        }
-        if intent.open_settings {
-            self.inspector_open = true;
-            // Place against the object the way a fresh selection would.
-            self.inspector_last_selection = None;
-        }
-        if intent.duplicate {
-            self.duplicate_selected_drawing();
-        }
-        if let Some(before) = before {
-            self.apply_inspector_actions(ctx, actions, index, before, now);
-        }
-    }
-
-    /// The pinned inspector: a dock panel at the chart's side. Declared with
-    /// the chrome, before the central canvas, so the canvas pays its width.
-    fn draw_drawing_inspector_panel(&mut self, ctx: &egui::Context, now: Instant) {
-        if !self.inspector_pinned {
-            return;
-        }
-        let Some((index, before)) = self.inspector_selection() else {
-            return;
-        };
-        self.inspector_last_selection = Some(index);
-        let mut actions = InspectorActions::default();
-        egui::SidePanel::right("drawing_inspector_panel")
-            .resizable(true)
-            .default_width(INSPECTOR_DEFAULT_WIDTH_PX)
-            .width_range(INSPECTOR_MIN_WIDTH_PX..=INSPECTOR_MAX_WIDTH_PX)
-            .show(ctx, |ui| {
-                actions = self.draw_inspector_title_bar(ui, index, false);
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    let body = self.drawing_inspector_body(ui, index);
-                    actions.merge(body);
-                });
-            });
-        self.apply_inspector_actions(ctx, actions, index, before, now);
-    }
-
-    /// The selected object's floating inspector. Non-modal by contract: it
-    /// never captures the whole canvas — but it is opaque to the pointer, so
-    /// a press on it never falls through to the chart. Opens beside the
-    /// selection; once the user drags the title bar, the manual position
-    /// wins for the rest of the session (selection changes never snap it
-    /// back; the only automatic move is the re-clamp when the pane shrinks).
-    fn draw_drawing_inspector(&mut self, ctx: &egui::Context, now: Instant) {
-        if self.inspector_pinned {
-            // The pinned panel already drew (and cleaned up) this frame.
-            return;
-        }
-        let Some((index, before)) = self.inspector_selection() else {
-            return;
-        };
-        // Selecting an object no longer opens this window — the context bar
-        // does. The gear on that bar is the one door, so the panel only
-        // covers the chart when the trader asked for the panel.
-        if !self.inspector_open {
-            return;
-        }
-        if std::mem::take(&mut self.inspector_settle_frame) {
-            // The unpin happened this frame: the side panel still occupies
-            // this frame's layout and the drawing projects against the
-            // pinned-era chart. Wait one frame and place against the
-            // settled geometry.
-            return;
-        }
-        let selection_changed = self.inspector_last_selection != Some(index);
-        // The auto-pin (§4.2): a fresh selection on a chart too narrow for a
-        // floating window opens pinned instead — decided here because this
-        // host is the one that would otherwise claim the selection. Stops
-        // firing once the user touches the pin.
-        //
-        // A parked window stops it too, and for the same reason: the rule
-        // reads "no floating position here would leave the geometry alone",
-        // and a trader who chose where the floating window goes has answered
-        // that. Without this clause the everyday layout never reaches the
-        // remembered position at all — a split canvas puts the pane a drawing
-        // lives on under the threshold, so every selection would re-dock the
-        // panel. The pin flag itself is left alone: it records that the *pin
-        // button* was pressed, and borrowing it here would leak a placement
-        // into the next workspace opened, which carries no pin preference.
-        if selection_changed
-            && !self.inspector_pin_touched
-            && !self.inspector_moved
-            && self
-                .drawing_pane()
-                .last_chart_area
-                .is_some_and(|chart| chart.width() < INSPECTOR_AUTO_PIN_CHART_WIDTH_PX)
-        {
-            self.inspector_pinned = true;
-            // The pinned panel draws from the next frame on.
-            return;
-        }
-        self.inspector_last_selection = Some(index);
-        // Automatic placement only while the window is untouched.
-        if selection_changed
-            && !self.inspector_moved
-            && let Some(placed) = self.inspector_target_placement(ctx, index)
-        {
-            self.inspector_pos = Some(placed.position);
-            self.inspector_max_width = placed.max_width;
-        }
-        // Repair for drawing, never overwrite: a position that does not fit
-        // the chart pane is clamped into it *for this frame*, and the point
-        // the trader parked survives in `inspector_pos` untouched.
-        //
-        // The clamp used to be written back, which was harmless while the
-        // position died with the process and is not now that the workspace
-        // keeps it. Every reason the popup does not fit is temporary — a
-        // taller panel for the tool just selected, the split canvas opened,
-        // the window pulled narrow, a smaller second monitor — and writing the
-        // repair back would ratchet the parked point away a little at a time,
-        // with no way back to where the hand put it. The file records what the
-        // trader did; this line decides only where it is drawn today.
-        let draw_at = self.inspector_pos.map(|position| {
-            self.drawing_pane()
-                .last_chart_area
-                .map_or(position, |chart| {
-                    clamp_into_chart(position, self.inspector_size(ctx), chart)
-                })
-        });
-        // The level editor earns the wider default the spec reserves for it.
-        let default_width = if before.tool.extra_tab().is_some() {
-            INSPECTOR_LEVELS_WIDTH_PX
-        } else {
-            INSPECTOR_DEFAULT_WIDTH_PX
-        };
-        // Bounded by the window and scrolled inside it. A tool's panel can be
-        // taller than the screen — the Fib level editor is — and an unbounded
-        // window simply gets cut at the edge with no way to reach the rest.
-        // Rows a trader cannot reach read as rows that do not exist, and the
-        // control that was out of reach here was the Fib's own "extend", the
-        // one that decides whether its targets project forward at all.
-        let max_height = (ctx.screen_rect().height()
-            - self
-                .drawing_pane()
-                .last_chart_area
-                .map_or(0.0, |chart| chart.top())
-            - 2.0 * INSPECTOR_OBJECT_GAP_PX)
-            .max(INSPECTOR_FALLBACK_HEIGHT_PX);
-        let mut window = egui::Window::new(before.tool.settings_title())
-            .id(egui::Id::new("drawing_inspector"))
-            .title_bar(false)
-            .default_pos(DRAWING_INSPECTOR_DEFAULT_POSITION)
-            .default_width(default_width)
-            .min_width(INSPECTOR_MIN_WIDTH_PX)
-            .max_width(
-                self.inspector_max_width
-                    .map_or(INSPECTOR_MAX_WIDTH_PX, |width| {
-                        width.clamp(INSPECTOR_MIN_WIDTH_PX, INSPECTOR_MAX_WIDTH_PX)
-                    }),
-            )
-            .max_height(max_height)
-            .movable(false)
-            .interactable(true)
-            .resizable(true);
-        if let Some(position) = draw_at {
-            window = window.current_pos(position);
-        }
-        let response = window.show(ctx, |ui| {
-            let mut actions = self.draw_inspector_title_bar(ui, index, true);
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    actions.merge(self.drawing_inspector_body(ui, index));
-                });
-            actions
-        });
-        self.inspector_size = response
-            .as_ref()
-            .map(|response| response.response.rect.size());
-        let actions = response
-            .and_then(|response| response.inner)
-            .unwrap_or_default();
-        self.apply_inspector_actions(ctx, actions, index, before, now);
-    }
-
-    /// Where the object manager opens: one gap inboard of the rail's inner
-    /// edge, aligned with the rail's leading end, clamped into the chart —
-    /// beside the button that opened it in all four docks.
-    fn manager_target_position(&self, ctx: &egui::Context) -> Option<egui::Pos2> {
-        let chart = self.focused_pane().last_chart_area?;
-        let size = ctx
-            .memory(|memory| memory.area_rect(egui::Id::new("drawing_manager")))
-            .map_or(
-                egui::vec2(INSPECTOR_DEFAULT_WIDTH_PX, INSPECTOR_FALLBACK_HEIGHT_PX),
-                |rect| rect.size(),
-            );
-        let gap = DRAWING_MANAGER_GAP_PX;
-        let position = match self.toolrail.dock() {
-            ToolboxDock::Left | ToolboxDock::Top => {
-                egui::pos2(chart.left() + gap, chart.top() + gap)
-            }
-            ToolboxDock::Bottom => egui::pos2(chart.left() + gap, chart.bottom() - gap - size.y),
-        };
-        Some(clamp_into_chart(position, size, chart))
-    }
-
-    /// The object manager: a non-modal list of every drawing with the named
-    /// per-object actions. It sends the same store commands as the inspector
-    /// and the keyboard — nothing here re-implements lock or delete rules.
-    fn draw_drawing_manager(&mut self, ctx: &egui::Context, now: Instant) {
-        if !self.drawing_manager_open {
-            self.drawing_manager_was_open = false;
-            return;
-        }
-        let just_opened = !self.drawing_manager_was_open;
-        self.drawing_manager_was_open = true;
-        #[cfg(test)]
-        self.manager_action_rects.clear();
-        let mut open = true;
-        let mut select_row: Option<usize> = None;
-        let mut eye_row: Option<usize> = None;
-        let mut lock_row: Option<usize> = None;
-        let mut front_row: Option<usize> = None;
-        let mut delete_row: Option<usize> = None;
-        let mut show_all = false;
-        let mut unlock_all = false;
-        let mut delete_all = false;
-        let mut sweep_authored = false;
-        let mut window = egui::Window::new("Drawn objects")
-            .id(egui::Id::new("drawing_manager"))
-            .open(&mut open)
-            .default_pos(DRAWING_MANAGER_DEFAULT_POSITION)
-            .default_width(INSPECTOR_DEFAULT_WIDTH_PX)
-            .collapsible(false)
-            // Resizable, with the list scrolling below (audit M13): thirty
-            // objects used to grow the window past the screen and put the
-            // footer out of reach.
-            .resizable(true);
-        if just_opened && let Some(position) = self.manager_target_position(ctx) {
-            window = window.current_pos(position);
-        }
-        window.show(ctx, |ui| {
-            let count = self.drawing_pane().drawings.items().len();
-            if count == 0 {
-                ui.label("No drawings yet.");
-            }
-            // One gesture back from an assistant that drew too much. It
-            // appears only when there is something to take back, names the
-            // number, and is a single undo entry.
-            let authored = self.authored_object_count();
-            if authored > 0 {
-                if ui
-                    .button(format!("Remove {authored} object(s) placed for you"))
-                    .on_hover_text(
-                        "Removes every object an assistant placed on this chart. Ctrl+Z brings them back.",
-                    )
-                    .clicked()
-                {
-                    sweep_authored = true;
-                }
-                ui.add_space(4.0);
-            }
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    // Walked in reverse: the manager lists top-most first, the
-                    // same order hit-testing resolves overlap.
-                    for index in (0..count).rev() {
-                        let drawing = &self.drawing_pane().drawings.items()[index];
-                        let selected = self.drawing_pane().drawings.selected() == Some(index);
-                        let locked = drawing.locked;
-                        let hidden = drawing.hidden;
-                        let shared = drawing.scope == drawings::DrawingScope::AllCharts;
-                        let off_series = drawing.off_series;
-                        let foreign_market = drawing.foreign_market;
-                        let name = drawing.display_label(index);
-                        let author = drawing.author.as_ref().map(DrawingAuthor::label);
-                        // Read out with the rest of the row's facts, so the
-                        // row closure holds no borrow of the pane.
-                        let band = self.focused_pane().band_label(drawing);
-                        let band_hint = band.hint();
-                        let band_chip = band.chip();
-                        ui.horizontal(|ui| {
-                            let mut label = egui::RichText::new(name);
-                            if hidden {
-                                label = label.weak();
-                            }
-                            if ui.selectable_label(selected, label).clicked() {
-                                select_row = Some(index);
-                            }
-                            if let Some(author) = &author {
-                                ui.label(
-                                    egui::RichText::new("assistant")
-                                        .small()
-                                        .color(theme::TEXT_SUPPORT),
-                                )
-                                .on_hover_text(format!("Placed by {author}, not by you"));
-                            }
-                            if locked {
-                                ui.label(egui::RichText::new("locked").small());
-                            }
-                            if hidden {
-                                ui.label(egui::RichText::new("hidden").small());
-                            }
-                            // Which band an object is on, for the objects that
-                            // are not on the candles. An object nothing on
-                            // screen is showing — its indicator removed,
-                            // hidden, collapsed or errored — is listed in
-                            // amber and says which of those it is. It still
-                            // exists; deleting it stays the trader's call.
-                            if let Some(chip) = band_chip {
-                                let text = egui::RichText::new(chip).small();
-                                match band_hint {
-                                    Some(hint) => {
-                                        ui.label(text.color(theme::AMBER)).on_hover_text(hint);
-                                    }
-                                    None => {
-                                        ui.label(text);
-                                    }
-                                }
-                            }
-                            if foreign_market {
-                                // The one state the chart alone cannot
-                                // explain: the mark resolves onto real bars,
-                                // at a price that belonged to another
-                                // instrument.
-                                ui.label(egui::RichText::new("other market").small())
-                                    .on_hover_text(
-                                        "Drawn while this tab showed a different instrument. The                                          moment still exists here; the price does not mean the                                          same thing",
-                                    );
-                            }
-                            if off_series {
-                                // The mark outlived the bars it was drawn on
-                                // and the chart fades it (§D7b). The list is
-                                // where it can be found and removed, since a
-                                // clamped object may be nowhere near the
-                                // window the trader is looking at.
-                                ui.label(egui::RichText::new("off series").small())
-                                    .on_hover_text(
-                                        "Drawn at a moment this chart's bars do not cover. It is                                          shown at the nearest edge, faded, until you move or                                          delete it",
-                                    );
-                            }
-                            if shared {
-                                // Which marks are global is a question the
-                                // list must answer at a glance (Marina, §D7).
-                                ui.label(egui::RichText::new("all charts").small())
-                                    .on_hover_text(
-                                        "Also drawn on the other chart of this tab, at the same \
-                                         moment in market time",
-                                    );
-                            }
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    let delete = ui.small_button("Delete");
-                                    #[cfg(test)]
-                                    self.manager_action_rects
-                                        .push((index, "Delete", delete.rect));
-                                    if delete.clicked() {
-                                        delete_row = Some(index);
-                                    }
-                                    let front = ui.small_button("Front");
-                                    #[cfg(test)]
-                                    self.manager_action_rects.push((index, "Front", front.rect));
-                                    if front.clicked() {
-                                        front_row = Some(index);
-                                    }
-                                    let lock =
-                                        ui.small_button(if locked { "Unlock" } else { "Lock" });
-                                    #[cfg(test)]
-                                    self.manager_action_rects.push((index, "Lock", lock.rect));
-                                    if lock.clicked() {
-                                        lock_row = Some(index);
-                                    }
-                                    let eye = ui.small_button(if hidden { "Show" } else { "Hide" });
-                                    #[cfg(test)]
-                                    self.manager_action_rects.push((index, "Eye", eye.rect));
-                                    if eye.clicked() {
-                                        eye_row = Some(index);
-                                    }
-                                },
-                            );
-                        });
-                    }
-                });
-            ui.separator();
-            if self.drawing_manager_confirm_delete_all && count > 0 {
-                // The count-bearing gate (audit M7): deleting everything is
-                // one command, but never one stray click — and locked
-                // objects go too, which the question says out loud.
-                ui.horizontal(|ui| {
-                    ui.label(format!("Delete all {count} drawing(s), locked included?"));
-                    if ui.button("Delete all").clicked() {
-                        delete_all = true;
-                        self.drawing_manager_confirm_delete_all = false;
-                    }
-                    if ui.button("Keep").clicked() {
-                        self.drawing_manager_confirm_delete_all = false;
-                    }
-                });
-            } else {
-                self.drawing_manager_confirm_delete_all = false;
-                ui.horizontal(|ui| {
-                    if ui.button("Show all").clicked() {
-                        show_all = true;
-                    }
-                    if ui.button("Unlock all").clicked() {
-                        unlock_all = true;
-                    }
-                    if count > 0 && ui.button("Delete all…").clicked() {
-                        self.drawing_manager_confirm_delete_all = true;
-                    }
-                });
-            }
-        });
-        self.drawing_manager_open = open;
-        if sweep_authored {
-            let removed = self.remove_every_authored_object();
-            if removed > 0 {
-                self.toast = Some(Toast {
-                    message: format!("{removed} object(s) placed for you removed.").into(),
-                    shown_at: now,
-                    offers_undo: true,
-                });
-            }
-        }
-        if delete_all {
-            let pane = self.drawing_pane_mut();
-            let deleted = pane.drawings.delete_all();
-            // Every armed instance just lost its drawing at once; sweep
-            // them now so no resting bot order outlives its badge.
-            pane.sweep_strategy_orphans();
-            if deleted > 0 {
-                self.toast = Some(Toast {
-                    message: "All drawings deleted.".into(),
-                    shown_at: now,
-                    offers_undo: true,
-                });
-            }
-        }
-        if let Some(index) = select_row {
-            self.drawing_pane_mut().drawings.select(Some(index));
-            // Centre the viewport on the object's bar span.
-            let slots = self.drawing_pane().slots();
-            if let Some(chart) = self.drawing_pane().last_chart_area {
-                let points = &self.drawing_pane().drawings.items()[index].points;
-                if !points.is_empty() {
-                    let mid =
-                        points.iter().map(|point| point.bar).sum::<f32>() / points.len() as f32;
-                    self.drawing_pane_mut()
-                        .viewport
-                        .center_on_bar(mid, chart.width(), slots);
-                }
-            }
-        }
-        if let Some(index) = eye_row {
-            let hidden = self.drawing_pane().drawings.items()[index].hidden;
-            self.drawing_pane_mut()
-                .drawings
-                .set_hidden_at(index, !hidden);
-        }
-        if let Some(index) = lock_row {
-            let locked = self.drawing_pane().drawings.items()[index].locked;
-            self.drawing_pane_mut()
-                .drawings
-                .set_locked_at(index, !locked);
-        }
-        if let Some(index) = front_row {
-            self.drawing_pane_mut().drawings.bring_to_front(index);
-        }
-        if let Some(index) = delete_row {
-            // The exact same command path as the inspector button and the
-            // keyboard: select, then request. Locked rows raise the same
-            // confirmation in the inspector.
-            self.drawing_pane_mut().drawings.select(Some(index));
-            self.request_delete_selected(now);
-        }
-        if show_all {
-            self.drawing_pane_mut().drawings.set_all_hidden(false);
-        }
-        if unlock_all {
-            self.drawing_pane_mut().drawings.set_all_locked(false);
-        }
     }
 
     /// Carry out what the replay interface asked for.
@@ -9867,224 +8087,6 @@ impl QuantickApp {
         true
     }
 
-    /// The alarm section of the arming dialog.
-    ///
-    /// Its own function because it is the one part of the form that is
-    /// about hearing rather than trading, and because the fields under the
-    /// checkbox are only meaningful while it is ticked — a shape the rest
-    /// of the dialog does not have.
-    fn draw_alarm_controls(
-        &mut self,
-        ui: &mut egui::Ui,
-        side: pane::PaneSide,
-        form: &mut crate::strategy_presets::StoredPreset,
-    ) {
-        use crate::audio::{AlertSound, Cue, SoundCategory};
-        use crate::strategy_presets as presets;
-
-        ui.checkbox(&mut form.alarm, "alarm on signal bar")
-            .on_hover_text(
-                "play a sound the moment this strategy's signal happens — the trigger \
-                 fires on your side, inside the region. It is the *signal* that alarms, \
-                 not the order: with the share option below, you hear it before the bar \
-                 closes and before any order could be placed, which is the time you need \
-                 to act on another platform.",
-            );
-        if !form.alarm {
-            // The alarm-only mode goes with the alarm: an instance that
-            // neither trades nor alarms does nothing, and the form must not
-            // be able to describe one.
-            form.alarm_only = false;
-            return;
-        }
-
-        // The bar rule the chart is actually running decides whether a
-        // share of the bar means anything. An adaptive rule closes on a
-        // condition, not on a count, so there is no fraction of it to wait
-        // for — and saying so here is cheaper than a trader wondering for a
-        // session why the alarm only ever speaks at the close.
-        // The pane the dialog is arming on, not the focused one: with a
-        // split open, a strategy going onto the time pane must be judged by
-        // the time pane's bar rule. Reading the focused pane would disable
-        // the share gate because the *other* pane runs an adaptive rule.
-        let shares_available = self.active_tab().pane(side).state.progress().is_some();
-
-        ui.horizontal(|ui| {
-            ui.label("when:");
-            let on_close = form.alarm_when != "share";
-            if ui
-                .selectable_label(on_close, "bar closes")
-                .on_hover_text("the same instant the strategy itself judges")
-                .clicked()
-            {
-                form.alarm_when = "on_close".to_owned();
-            }
-            let share_button = ui.add_enabled(
-                shares_available,
-                egui::SelectableLabel::new(!on_close, "part-way through the bar"),
-            );
-            if share_button.clicked() {
-                form.alarm_when = "share".to_owned();
-            }
-            if !shares_available {
-                share_button.on_hover_text(
-                    "this bar rule closes on a condition rather than on a count, so there \
-                     is no share of it to wait for — the alarm speaks at the close",
-                );
-            }
-        });
-        if form.alarm_when == "share" {
-            ui.horizontal(|ui| {
-                ui.label("from");
-                ui.add(
-                    egui::DragValue::new(&mut form.alarm_share_percent)
-                        .range(presets::MIN_ALARM_SHARE_PERCENT..=presets::MAX_ALARM_SHARE_PERCENT),
-                );
-                ui.label("% of the bar onward").on_hover_text(
-                    "on a 2000-tick chart at 70%, the alarm starts judging past tick \
-                     1400. The bar is still moving, so the signal is marked \"preview\" \
-                     — and if it stops qualifying before the close, the chart says so.",
-                );
-            });
-        }
-
-        ui.horizontal(|ui| {
-            ui.label("repeat:");
-            let once = form.alarm_repeat != "cooldown";
-            if ui
-                .selectable_label(once, "once per bar")
-                .on_hover_text("one sound per bar, however many prints agree")
-                .clicked()
-            {
-                form.alarm_repeat = "once_per_bar".to_owned();
-            }
-            if ui.selectable_label(!once, "every").clicked() {
-                form.alarm_repeat = "cooldown".to_owned();
-            }
-            if form.alarm_repeat == "cooldown" {
-                ui.add(
-                    egui::DragValue::new(&mut form.alarm_cooldown_secs)
-                        .range(presets::MIN_ALARM_COOLDOWN_SECS..=presets::MAX_ALARM_COOLDOWN_SECS),
-                );
-                ui.label("s").on_hover_text(
-                    "counted across bars, not reset by one closing — the rule for a \
-                     trader who wants a reminder rather than one notice",
-                );
-            }
-        });
-
-        let current = AlertSound::from_token(&form.alarm_sound).unwrap_or_default();
-        ui.horizontal(|ui| {
-            ui.label("sound");
-            const SOUND_PICKER_ID: &str = "strategy_alarm_sound";
-            /// The shortest the sound list is allowed to be, in points:
-            /// a heading and two names, enough to see that it scrolls.
-            const SOUND_PICKER_MIN_HEIGHT: f32 = 72.0;
-            if std::mem::take(&mut self.pending_alarm_sound_picker) {
-                // The capture hook's one click: open the list the way the
-                // button's own click does. The popup id is the widget id
-                // plus "popup", and the widget id is the salt *as an `Id`*
-                // under this `Ui` — how `ComboBox::from_id_salt` derives
-                // it. The one private detail this hook depends on; a
-                // capture that opens nothing is the symptom if egui moves
-                // it.
-                let button_id = ui.make_persistent_id(egui::Id::new(SOUND_PICKER_ID));
-                ui.memory_mut(|memory| memory.open_popup(button_id.with("popup")));
-            }
-            // The list scrolls inside the room under the button. egui flips
-            // a combo above its button only from the size it remembered
-            // last frame, and a thirty-two-row list opened from the last
-            // rows of a dialog docked at the window's foot otherwise runs
-            // off the screen; a shorter list that scrolls is the honest
-            // answer, and the headings keep the scroll short.
-            let room_below = ui.ctx().screen_rect().bottom()
-                - ui.next_widget_position().y
-                - ui.spacing().interact_size.y
-                - ui.spacing().menu_margin.sum().y;
-            // `min` then `max`, not `clamp`: `clamp` asserts its bounds are
-            // ordered, and a style whose combo height is under the floor
-            // must shorten the list, not crash the dialog.
-            let list_height = room_below
-                .min(ui.spacing().combo_height)
-                .max(SOUND_PICKER_MIN_HEIGHT);
-            egui::ComboBox::from_id_salt(SOUND_PICKER_ID)
-                .selected_text(current.label())
-                .height(list_height)
-                .show_ui(ui, |ui| {
-                    // Grouped under the catalogue's headings: five system
-                    // beeps, then the clips that behave like alarms, then
-                    // the ones that behave like a room. A flat list of
-                    // thirty-two names would make the trader read every
-                    // row to find the phone.
-                    for category in SoundCategory::ALL {
-                        ui.label(egui::RichText::new(category.label()).small().weak());
-                        for sound in AlertSound::in_category(category) {
-                            if ui
-                                .selectable_label(sound == current, sound.label())
-                                .clicked()
-                            {
-                                form.alarm_sound = sound.token().to_owned();
-                            }
-                        }
-                    }
-                });
-            if ui
-                .button("Test")
-                .on_hover_text(
-                    "play it now, cut where the row below says, so the sound is chosen \
-                     with the ears",
-                )
-                .clicked()
-            {
-                // Same door as a real alarm, and the same cue — length
-                // included — so an audition that cannot be heard reports
-                // itself exactly as a missed signal would, and one that can
-                // is what the signal will sound like.
-                let cue = Cue::new(current, form.alarm_play_secs);
-                let outcome = self.alerts.play(&[cue]);
-                self.report_alert_attempt(outcome);
-            }
-        });
-
-        ui.horizontal(|ui| {
-            let mut cut = form.alarm_play_secs.is_some();
-            if ui
-                .checkbox(&mut cut, "stop after")
-                .on_hover_text(
-                    "cut the sound here rather than letting it run to its end — a nature \
-                     clip runs for minutes, and an alarm that outstays its news is one the \
-                     trader learns to talk over. Off, the sound plays whole.",
-                )
-                .changed()
-            {
-                form.alarm_play_secs = cut.then_some(presets::DEFAULT_ALARM_PLAY_SECS);
-            }
-            if let Some(secs) = form.alarm_play_secs.as_mut() {
-                ui.add(
-                    egui::DragValue::new(secs)
-                        .range(presets::MIN_ALARM_PLAY_SECS..=presets::MAX_ALARM_PLAY_SECS),
-                );
-                ui.label("s");
-                if !current.can_be_cut() {
-                    // Honest rather than silent: the cut is stored and
-                    // applies the moment a clip is picked, but this sound
-                    // is one beep the operating system plays whole.
-                    ui.weak("(a system sound is one beep — the cut applies to the clips)");
-                }
-            }
-        });
-
-        ui.checkbox(&mut form.alarm_only, "alarm only — never place an order")
-            .on_hover_text(
-                "the instance watches, judges and alarms, and places nothing. For a \
-                 trader who executes elsewhere: a simulated position they never meant \
-                 to take would occupy the account and silence the next signal.",
-            );
-        if let Some(reason) = &self.alert_failure {
-            ui.colored_label(theme::SELL, format!("no sound was played: {reason}"));
-        }
-    }
-
     /// Play the alarm cues every tab's armed instances asked for this
     /// frame, and empty their queues.
     ///
@@ -10334,236 +8336,6 @@ impl QuantickApp {
         Ok(())
     }
 
-    /// The arming dialog. Drains the panes' menu requests first, so the
-    /// click that chose "Add strategy…" opens the form on this same frame.
-    fn draw_strategy_popup(&mut self, ctx: &egui::Context) {
-        let sides: SmallVec<[pane::PaneSide; MAX_CANVAS_PANES]> =
-            self.active_tab().sides().collect();
-        for side in sides {
-            let request = self
-                .active_tab_mut()
-                .pane_mut(side)
-                .strategy_popup_request
-                .take();
-            if let Some(drawing) = request {
-                self.strategy_popup = Some(StrategyPopup {
-                    tab: self.active_tab,
-                    side,
-                    drawing,
-                    form: crate::strategy_presets::StoredPreset::starting_point(
-                        quantick_engine::Side::Buy,
-                    ),
-                    preset_choice: None,
-                    save_name: String::new(),
-                    error: None,
-                });
-            }
-        }
-        let Some(mut popup) = self.strategy_popup.take() else {
-            return;
-        };
-        // The dialog speaks for one drawing on one tab. Switching tabs
-        // closes it: drawing ids are per-pane counters, and the same id
-        // over there names an unrelated object.
-        if popup.tab != self.active_tab {
-            return;
-        }
-        let mut open = true;
-        let mut done = false;
-        // The form grew past a 900 pt window once the alarm section unfolds,
-        // and an anchored, non-resizable window simply clipped the rows past
-        // the edge — including **Arm**, which makes the dialog unusable at
-        // that height rather than merely cramped. The body scrolls instead,
-        // and its ceiling is read from the viewport rather than fixed, so the
-        // same form fits a laptop and still uses a tall monitor.
-        let max_body = (ctx.screen_rect().height() * ARM_DIALOG_BODY_SCREEN_FRACTION)
-            .max(ARM_DIALOG_MIN_BODY_PT);
-        egui::Window::new("Arm strategy")
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, true])
-                    .max_height(max_body)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label("preset");
-                            let current = popup.preset_choice.as_deref().unwrap_or("custom");
-                            egui::ComboBox::from_id_salt("strategy_preset_pick")
-                                .selected_text(current.to_owned())
-                                .show_ui(ui, |ui| {
-                                    let names: Vec<String> =
-                                        self.strategy_bank.names().map(str::to_owned).collect();
-                                    for name in names {
-                                        let picked =
-                                            popup.preset_choice.as_deref() == Some(name.as_str());
-                                        if ui.selectable_label(picked, &name).clicked()
-                                            && let Some(stored) = self.strategy_bank.get(&name)
-                                        {
-                                            popup.form = stored.clone();
-                                            popup.preset_choice = Some(name.clone());
-                                        }
-                                    }
-                                });
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("side");
-                            let buy = popup.form.side == "buy";
-                            if ui.selectable_label(buy, "BUY").clicked() {
-                                popup.form.side = "buy".to_owned();
-                            }
-                            if ui.selectable_label(!buy, "SELL").clicked() {
-                                popup.form.side = "sell".to_owned();
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("quantity");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.quantity)
-                                    .desired_width(60.0),
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("force band: body between");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.min_factor)
-                                    .desired_width(40.0),
-                            );
-                            ui.label("× and");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.max_factor)
-                                    .desired_width(40.0),
-                            );
-                            ui.label("× the average of");
-                            ui.add(
-                                egui::DragValue::new(&mut popup.form.window)
-                                    .range(1..=crate::strategy_presets::MAX_FORCE_WINDOW),
-                            );
-                            ui.label("bodies");
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("and body ≥");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.min_body)
-                                    .desired_width(50.0),
-                            );
-                            ui.label("pts (0 = off)").on_hover_text(
-                                "the elephant floor: the relative band alone marks dozens of small \
-                         bars as force on activity-cut bars; an elephant has a size",
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("projection: TP");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.tp_mult)
-                                    .desired_width(40.0),
-                            );
-                            ui.label("× range ahead, SL");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.sl_mult)
-                                    .desired_width(40.0),
-                            );
-                            ui.label("× range behind (0 = no leg)");
-                        });
-                        let mut auto = popup.form.rearm == "auto";
-                        if ui
-                            .checkbox(&mut auto, "re-arm automatically after the operation closes")
-                            .on_hover_text("off = one shot per arming, the over-fire guard")
-                            .changed()
-                        {
-                            popup.form.rearm = if auto { "auto" } else { "one_shot" }.to_owned();
-                        }
-                        let mut retest = popup.form.on_break == "retest_limit";
-                        if ui
-                            .checkbox(&mut retest, "on a cut: rest a limit at the region edge")
-                            .on_hover_text(
-                                "a trigger bar whose body cuts the region in the trade's direction \
-                         — it opened on the region's side of that edge and closed beyond it, \
-                         wicks ignored — rests a limit at the edge it cut, the retest entry, \
-                         bracketed off the bar. The order removes itself if the bar's \
-                         projected target trades first; with the TP multiplier at 0 there is \
-                         no such level, so it rests until it fills or you disarm it — the \
-                         badge says which. A bar that closed past an edge its body never \
-                         crossed, one that closed away on the far side, and a cut whose legs \
-                         would not clear the edge all rest nothing. Off = a cut holds fire, \
-                         as before.",
-                            )
-                            .changed()
-                        {
-                            popup.form.on_break =
-                                if retest { "retest_limit" } else { "ignore" }.to_owned();
-                        }
-                        ui.separator();
-                        self.draw_alarm_controls(ui, popup.side, &mut popup.form);
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.save_name)
-                                    .hint_text("preset name")
-                                    .desired_width(140.0),
-                            );
-                            let name = popup.save_name.trim().to_owned();
-                            if ui
-                                .add_enabled(!name.is_empty(), egui::Button::new("Save preset"))
-                                .clicked()
-                            {
-                                self.strategy_bank.save(&name, popup.form.clone());
-                                popup.preset_choice = Some(name);
-                            }
-                            if let Some(chosen) = popup.preset_choice.clone()
-                                && ui
-                                    .button("Delete preset")
-                                    .on_hover_text(
-                                        "remove it from the bank; the form keeps its values",
-                                    )
-                                    .clicked()
-                            {
-                                self.strategy_bank.remove(&chosen);
-                                popup.preset_choice = None;
-                            }
-                        });
-                    });
-                // Outside the scroll: **Arm** is the one control the dialog
-                // exists for, and a form that grows must never be able to
-                // push it off the bottom. Body scrolls, footer stays. The
-                // error goes with it — a refusal the trader has to scroll to
-                // find reads as a dialog that did nothing.
-                if let Some(error) = &popup.error {
-                    ui.colored_label(theme::SELL, error);
-                }
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button("Arm").clicked() {
-                        let label = popup
-                            .preset_choice
-                            .clone()
-                            .or_else(|| {
-                                let name = popup.save_name.trim();
-                                (!name.is_empty()).then(|| name.to_owned())
-                            })
-                            .unwrap_or_else(|| "custom".to_owned());
-                        match self.arm_strategy_instance(
-                            popup.side,
-                            popup.drawing,
-                            &popup.form.clone(),
-                            label,
-                        ) {
-                            Ok(()) => done = true,
-                            Err(error) => popup.error = Some(error),
-                        }
-                    }
-                    if ui.button("Cancel").clicked() {
-                        done = true;
-                    }
-                });
-            });
-        if !done && open {
-            self.strategy_popup = Some(popup);
-        }
-    }
-
     /// The `QUANTICK_REPLAY_RESTART_AFTER` hook: press the transport's own
     /// Restart once the session has closed that many round trips.
     ///
@@ -10767,16 +8539,13 @@ impl QuantickApp {
             StrategyDemoMode::Popup
             | StrategyDemoMode::AlarmPopup
             | StrategyDemoMode::AlarmSounds => {
-                self.pending_alarm_sound_picker = mode == StrategyDemoMode::AlarmSounds;
-                self.strategy_popup = Some(StrategyPopup {
-                    tab: self.active_tab,
-                    side: pane::PaneSide::Flow,
-                    drawing: drawing_id,
-                    form,
-                    preset_choice: None,
-                    save_name: String::new(),
-                    error: None,
-                });
+                if mode == StrategyDemoMode::AlarmSounds {
+                    self.surfaces.strategy_popup.stage_sound_picker();
+                }
+                let tab = self.active_tab().id;
+                self.surfaces
+                    .strategy_popup
+                    .open(tab, pane::PaneSide::Flow, drawing_id, form);
             }
         }
         // This demo places its rectangle, which selects it, which closes a
@@ -11007,7 +8776,7 @@ impl QuantickApp {
     /// looks merely uninteresting, and that is how three of these hooks came to
     /// disagree about it.
     fn carry_inspector_across_selection(&mut self) {
-        self.pending_open_settings |= self.inspector_open;
+        self.surfaces.drawing_chrome.carry_across_selection();
     }
 
     /// The `bands` half of the demo hook: on every indicator pane, a level on
@@ -11170,7 +8939,6 @@ impl QuantickApp {
         self.apply_load_older();
         self.apply_load_older_candles();
         self.apply_drawing_draft();
-        self.apply_text_note_hook();
         self.apply_venue_history_demo();
         self.apply_frvp_demo();
         self.apply_avwap_demo();
@@ -11194,15 +8962,167 @@ impl QuantickApp {
         if let Some(access) = self.control_access.as_mut() {
             access.draw_panel(ctx);
         }
-        self.draw_agent_popup(ctx);
         self.draw_toolbar(ctx);
-        self.draw_source_picker(ctx);
-        self.draw_workspace_name_box(ctx);
         // Before the dialog is drawn, so a double click on a pane or a curve
         // opens it on the same frame the gesture happened rather than the next.
         self.open_requested_indicator_settings();
         self.draw_indicator_settings(ctx);
         self.draw_indicator_legends(ctx);
+        // **After** the dialogs above, and that placement is load-bearing.
+        // The preview watermark reads whether a settings dialog is previewing
+        // an unapplied draft, and `draw_indicator_settings` is what sets that
+        // — so an environment built before it would put the banner on screen
+        // a frame after the legend chip that says the same thing, and take it
+        // off a frame later too. Two surfaces the trader reads as one is this
+        // repo's own bug class; sixteen milliseconds of it is still one
+        // frame a capture can photograph.
+        //
+        // It is also where the windows this pass drew used to sit: the
+        // appearance and footprint panels ran after the toolbar that toggles
+        // them, so a click on LOOK opens the panel on the same frame rather
+        // than the next.
+        // A pane's right-click asked to arm one of its drawings. Drained
+        // here, into the surface that owns the dialog: the click happens
+        // while the canvas draws, which is later in this frame than the
+        // surfaces are, so the dialog opens on the next one — a frame the
+        // trader cannot see, and the price of the dialog no longer living in
+        // the trunk.
+        let sides: SmallVec<[pane::PaneSide; MAX_CANVAS_PANES]> =
+            self.active_tab().sides().collect();
+        for side in sides {
+            let request = self
+                .active_tab_mut()
+                .pane_mut(side)
+                .strategy_popup_request
+                .take();
+            if let Some(drawing) = request {
+                let form = crate::strategy_presets::StoredPreset::starting_point(
+                    quantick_engine::Side::Buy,
+                );
+                let tab = self.active_tab().id;
+                self.surfaces.strategy_popup.open(tab, side, drawing, form);
+            }
+        }
+        // The bar rules the arming dialog's alarm section reads: a share of
+        // the bar only means something where the rule closes on a count.
+        // Built only while that dialog is open, like the open markets below.
+        // `hooks_pending` is the frame a capture hook opens a surface from
+        // inside `draw_all`: it is not open yet when this runs, but it is
+        // about to be, and it must not draw its first frame against an empty
+        // environment.
+        let staging = self.surfaces.hooks_pending();
+        let counted_bar_sides: SmallVec<[pane::PaneSide; MAX_CANVAS_PANES]> =
+            if staging || self.surfaces.strategy_popup.is_open() {
+                let tab = self.active_tab();
+                tab.sides()
+                    .filter(|side| tab.pane(*side).state.progress().is_some())
+                    .collect()
+            } else {
+                SmallVec::new()
+            };
+        // The markets tabs are showing: the dialog greys out removing one of
+        // those, because a tab left on a symbol the catalog no longer offers
+        // gets silently retargeted by the next SOURCE correction. Built only
+        // while the dialog is open — it is a `String` pair per tab, and no
+        // frame should pay for it to be thrown away.
+        let open_markets: Vec<(String, String)> =
+            if staging || self.surfaces.source_picker.is_open() {
+                self.tabs
+                    .iter()
+                    .map(|tab| (tab.feed_id.clone(), tab.symbol.clone()))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        // Split into disjoint borrows: the surfaces are drawn through `&mut`
+        // while the environment they read is borrowed from the rest of the
+        // application. That the compiler insists on the split is the port
+        // working — a surface cannot be handed the trunk it is being kept
+        // out of.
+        let Self {
+            surfaces: registry,
+            bookmarks,
+            style,
+            footprint_config,
+            tabs,
+            active_tab,
+            indicator_settings,
+            indicator_settings_target,
+            config,
+            added_symbols,
+            alert_failure,
+            ..
+        } = self;
+        let focused_tab = &tabs[*active_tab];
+        // Read once. `focused_pane` resolves the same side internally, and
+        // the answer is not a field lookup — it reads the layout, because
+        // focus on a collapsed pane is focus on nothing.
+        let focused_side = focused_tab.focused_side();
+        let focused_pane = focused_tab.pane(focused_side);
+        let surfaces = registry.draw_all(
+            ctx,
+            &crate::surfaces::SurfaceEnv {
+                bookmarks,
+                now,
+                indicator_preview_area: indicator_preview_area(
+                    tabs,
+                    indicator_settings.as_ref(),
+                    *indicator_settings_target,
+                ),
+                focused_chart_area: focused_pane.last_chart_area,
+                style,
+                footprint: focused_pane.footprint_config(footprint_config),
+                footprint_customized: focused_pane.footprint_override.is_some(),
+                focused_side,
+                config,
+                added_symbols,
+                open_markets: &open_markets,
+                active_tab: focused_tab.id,
+                counted_bar_sides: &counted_bar_sides,
+                alert_failure: alert_failure.as_deref(),
+            },
+        );
+        if let Some(name) = surfaces.save_workspace_as {
+            self.save_named_workspace(&name);
+        }
+        if let Some(style) = surfaces.style {
+            self.style = style;
+            self.style_revision = self.style_revision.saturating_add(1);
+        }
+        // After the assignment, never before: the log line reports the
+        // appearance that is now in force, and the revision it landed on.
+        if let Some(request) = surfaces.log_style_change {
+            self.emit_style_changed(request.applied_preset);
+        }
+        // The audition goes through the one speaker every armed instance
+        // shares, and reports a sound that could not be heard exactly as a
+        // missed signal would.
+        if let Some(cue) = surfaces.test_alert {
+            let outcome = self.alerts.play(&[cue]);
+            self.report_alert_attempt(outcome);
+        }
+        if let Some(request) = surfaces.arm_strategy {
+            let outcome = self.arm_strategy_instance(
+                request.side,
+                request.drawing,
+                &request.form,
+                request.label,
+            );
+            self.surfaces.strategy_popup.settle_arm(outcome);
+        }
+        if let Some(request) = surfaces.market {
+            self.apply_market_request(request);
+        }
+        if let Some(change) = surfaces.footprint {
+            self.apply_footprint_change(change);
+        }
+        if surfaces.undo_drawing {
+            let pane = self.drawing_pane_mut();
+            pane.drawings.undo();
+            // Same orphan risk as the keyboard undo: the drawing an armed
+            // instance rides may just have been taken away.
+            pane.sweep_strategy_orphans();
+        }
         self.poll_script_files();
         self.maintain_indicator_state();
         self.maintain_chart_layers();
@@ -11276,15 +9196,20 @@ impl QuantickApp {
             // The focused pane's objects: the toolbox lists and manages what a
             // click on the canvas would act on.
             let side = self.active_tab().focused_side();
-            let Self {
-                toolrail,
-                tabs,
-                active_tab,
-                drawing_manager_open,
-                ..
-            } = self;
-            let tab = &mut tabs[*active_tab];
-            toolrail.draw(ctx, &mut tab.pane_mut(side).drawings, drawing_manager_open);
+            // The flag lives with the window it opens, so it travels through
+            // a local rather than a `&mut` handed out of the surface.
+            let mut manager_open = self.surfaces.drawing_chrome.manager_open();
+            {
+                let Self {
+                    toolrail,
+                    tabs,
+                    active_tab,
+                    ..
+                } = self;
+                let tab = &mut tabs[*active_tab];
+                toolrail.draw(ctx, &mut tab.pane_mut(side).drawings, &mut manager_open);
+            }
+            self.surfaces.drawing_chrome.set_manager_open(manager_open);
         }
         // A star clicked this frame is on disk this frame, like the replay
         // folder above: the pinned rail is what the trader reaches for without
@@ -11396,11 +9321,14 @@ impl QuantickApp {
         if dock_response.cmd_trading_changed {
             self.persist_cmd_trading();
         }
+        if dock_response.risk_settings_changed {
+            self.persist_risk_settings();
+        }
         self.poll_trades_dir_picker();
         self.poll_workspace_picker();
         // The pinned inspector is chrome: declared before the central canvas
         // so the chart pays its width, exactly like the dock.
-        self.draw_drawing_inspector_panel(ctx, now);
+        self.draw_pinned_inspector(ctx, now);
         // Respawn the feed if the feed/symbol selection changed (resets the
         // chart), then apply any bar-type change (no-op if unchanged).
         let (tab, config) = self.active_with_config();
@@ -11422,8 +9350,6 @@ impl QuantickApp {
         // drawings before anything paints them.
         self.maintain_layouts();
         self.active_tab_mut().apply_spec_changes();
-        self.draw_style_panel(ctx, now);
-        self.draw_footprint_settings(ctx);
         // Waits owned by other components, mirrored level-style each frame so
         // the overlay needs no push notifications from either.
         let replay_loading = self.replay_view.is_loading();
@@ -11453,6 +9379,10 @@ impl QuantickApp {
         // words the editor is showing must stand down on the *same* frame,
         // or the note flashes its placeholder under the field for one.
         self.sync_content_editing();
+        // Raised by a placement that wants its note typed, and handed to the
+        // chrome below: the flag belongs to the editor that owns the caret,
+        // not to the canvas that asks for it.
+        let mut begin_text_edit = false;
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(bg))
             .show(ctx, |ui| {
@@ -11463,7 +9393,6 @@ impl QuantickApp {
                         active_tab,
                         toolrail,
                         drawing_presets,
-                        pending_text_edit,
                         style,
                         tz,
                         layer_actions,
@@ -11473,7 +9402,7 @@ impl QuantickApp {
                     let mut chrome = CanvasChrome {
                         toolrail,
                         presets: drawing_presets,
-                        begin_text_edit: pending_text_edit,
+                        begin_text_edit: &mut begin_text_edit,
                         style,
                         tz: *tz,
                         capabilities,
@@ -11573,13 +9502,15 @@ impl QuantickApp {
                     }
                 }
             });
+        if begin_text_edit {
+            self.surfaces.drawing_chrome.request_text_edit();
+        }
         // Floating drawing controls must be registered after the opaque
-        // central canvas so they stay in front of the chart.
-        self.draw_drawing_context_bar(ctx, now);
-        self.draw_inline_text_editor(ctx);
-        self.draw_drawing_inspector(ctx, now);
-        self.draw_drawing_manager(ctx, now);
-        self.draw_strategy_popup(ctx);
+        // central canvas so they stay in front of the chart. That is why the
+        // drawing chrome is the one surface `Surfaces::draw_all` does not
+        // draw: it is anchored *to* the chart rather than floating over the
+        // window, so it is commanded by name from here instead.
+        self.draw_drawing_chrome(ctx, now);
         // The menus above may have disarmed a bot over a resting retest
         // limit; its cancel goes to the simulator on this same frame, not
         // on the next print. Every tab, not just the active one: a menu
@@ -11590,12 +9521,11 @@ impl QuantickApp {
             tab.apply_strategy_cleanup();
         }
         self.play_pending_alarms();
-        self.draw_toast(ctx, now);
         // Both are window chrome reading the active tab, like the offline
         // corner and the transport strip: they speak for one market at a time.
         let tz = self.tz;
         self.active_tab_mut().paper.draw_report_window(ctx, tz);
-        self.active_tab_mut().paper.draw_toast(ctx, now);
+        self.settle_paper_panels(now);
         // Both controls go through the tab's own methods, which are also what
         // the registered control-plane actions call: a click and a named call
         // must be able to disagree about nothing.
@@ -11689,7 +9619,7 @@ impl QuantickApp {
             )
         });
         if new_tab {
-            self.source_picker = Some(SourcePicker::new(&self.config));
+            self.surfaces.source_picker.open(&self.config);
         }
         if close_tab {
             self.close_tab(self.active_tab);
@@ -11702,51 +9632,22 @@ impl QuantickApp {
         }
     }
 
-    /// The `+` dialog, while it is open.
-    fn draw_source_picker(&mut self, ctx: &egui::Context) {
-        if self.source_picker.is_none() {
-            return;
-        }
-        // The markets tabs are showing: the picker greys out removing one of
-        // those, because a tab left on a symbol the catalog no longer offers
-        // gets silently retargeted by the next SOURCE correction.
-        let open_symbols: Vec<(String, String)> = self
-            .tabs
-            .iter()
-            .map(|tab| (tab.feed_id.clone(), tab.symbol.clone()))
-            .collect();
-        let outcome = {
-            let Self {
-                source_picker,
-                config,
-                added_symbols,
-                ..
-            } = self;
-            let picker = source_picker.as_mut().expect("checked above");
-            picker.draw(ctx, config, added_symbols, &open_symbols)
-        };
-        match outcome {
-            PickerOutcome::Open => {}
-            PickerOutcome::Cancel => self.source_picker = None,
-            PickerOutcome::Chosen(feed_id, symbol) => {
-                self.source_picker = None;
-                self.open_tab(feed_id, symbol, None);
-            }
-            PickerOutcome::Added { feed_id, symbol } => match self.add_symbol(&feed_id, &symbol) {
+    /// Do what the "Open market" dialog settled on.
+    fn apply_market_request(&mut self, request: crate::surfaces::MarketRequest) {
+        use crate::surfaces::MarketRequest;
+        match request {
+            MarketRequest::Open { feed_id, symbol } => self.open_tab(feed_id, symbol, None),
+            MarketRequest::Add { feed_id, symbol } => match self.add_symbol(&feed_id, &symbol) {
                 Ok(()) => {
-                    self.source_picker = None;
+                    self.surfaces.source_picker.close();
                     self.open_tab(feed_id, symbol, None);
                 }
                 // The dialog stays open carrying the reason: the user is one
                 // keystroke from a symbol that does fit, and closing would
                 // make the refusal look like a crash.
-                Err(reason) => {
-                    if let Some(picker) = self.source_picker.as_mut() {
-                        picker.refuse(reason);
-                    }
-                }
+                Err(reason) => self.surfaces.source_picker.refuse(reason),
             },
-            PickerOutcome::Removed { feed_id, symbol } => self.remove_symbol(&feed_id, &symbol),
+            MarketRequest::Remove { feed_id, symbol } => self.remove_symbol(&feed_id, &symbol),
         }
     }
 
@@ -11842,7 +9743,7 @@ impl QuantickApp {
                 }
             }
             TabAction::Close(index) => self.close_tab(index),
-            TabAction::New => self.source_picker = Some(SourcePicker::new(&self.config)),
+            TabAction::New => self.surfaces.source_picker.open(&self.config),
         }
     }
 }
@@ -11884,10 +9785,17 @@ mod tests {
 
     use crate::canvas_layout::CANVAS_DIVIDER_PX;
     use crate::config::{AppConfig, FeedCapabilities, FeedConfig, ProviderKind};
-    use crate::drawings::{ChartPoint, PresetHost};
+    use crate::drawings::{ChartPoint, MAX_DRAWING_WIDTH_PX, PresetHost};
+    // The drawing chrome moved out to its own module; the tests that drive it
+    // through `QuantickApp` stay here, and reach its numbers by name.
     use crate::feed::{FeedConnectionState, FeedEvent, FeedNotice};
     use crate::pane::DEFAULT_PANE_FRACTION;
     use crate::pane::DrawingDrag;
+    use crate::surfaces::drawing_chrome::inline_editor::INLINE_TEXT_HINT;
+    use crate::surfaces::drawing_chrome::{
+        DRAWING_INSPECTOR_DEFAULT_POSITION, DRAWING_MANAGER_GAP_PX,
+        INSPECTOR_AUTO_PIN_CHART_WIDTH_PX, INSPECTOR_MIN_WIDTH_PX, InspectorTab,
+    };
     use crate::tab::BOOK_GENERATION_STRIDE;
     use crate::time_header;
     use crate::viewport::Viewport;
@@ -15103,12 +13011,12 @@ plot(close)
     ) -> R {
         let capabilities = app.active_tab().capabilities(&app.config);
         let side_inferred = app.active_tab().side_note(&app.config).is_some();
+        let mut begin_text_edit = false;
         let QuantickApp {
             tabs,
             active_tab,
             toolrail,
             drawing_presets,
-            pending_text_edit,
             style,
             tz,
             layer_actions,
@@ -15119,7 +13027,7 @@ plot(close)
         let mut chrome = pane::PaneChrome {
             toolrail,
             presets: drawing_presets,
-            begin_text_edit: pending_text_edit,
+            begin_text_edit: &mut begin_text_edit,
             style,
             tz: *tz,
             feed_gaps: &[],
@@ -18089,7 +15997,7 @@ crosshair = false
     /// trader does. `the_gear_on_the_context_bar_opens_the_inspector` is the
     /// test that proves this shortcut matches the real button.
     fn open_inspector(app: &mut QuantickApp, ctx: &egui::Context) {
-        app.inspector_open = true;
+        app.surfaces.drawing_chrome.set_inspector_open(true);
         // Two frames: the first opens the window, the second lets it settle
         // its size and automatic placement before anything reads its rect.
         run_frame(app, ctx);
@@ -18170,7 +16078,9 @@ crosshair = false
         run_frame(&mut app, &ctx);
 
         let style_tab_labels = |app: &mut QuantickApp, ctx: &egui::Context| -> Vec<String> {
-            app.inspector_tab = InspectorTab::Style;
+            app.surfaces
+                .drawing_chrome
+                .set_inspector_tab(InspectorTab::Style);
             open_inspector(app, ctx);
             painted_text(&run_frame(app, ctx))
         };
@@ -19105,7 +17015,9 @@ crosshair = false
 
         arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-        app.inspector_tab = InspectorTab::Coordinates;
+        app.surfaces
+            .drawing_chrome
+            .set_inspector_tab(InspectorTab::Coordinates);
         open_inspector(&mut app, &ctx);
         let texts = painted_text(&run_frame(&mut app, &ctx));
         assert!(
@@ -19273,8 +17185,8 @@ crosshair = false
 
         // Pinned, and the user has expressed the preference — the exact
         // state the report was in.
-        app.inspector_pinned = true;
-        app.inspector_pin_touched = true;
+        app.surfaces.drawing_chrome.set_inspector_pinned(true);
+        app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
         app.active_tab_mut().flow_pane.drawings.select(None);
         run_frame(&mut app, &ctx);
         let wide = app
@@ -19874,11 +17786,13 @@ crosshair = false
         let inspector = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
             .expect("placing the selected line opens its inspector");
-        app.inspector_moved = true;
-        app.inspector_pos = Some(egui::pos2(
-            inspector.left(),
-            anchor.y - inspector.height() / 2.0,
-        ));
+        app.surfaces.drawing_chrome.set_inspector_moved(true);
+        app.surfaces
+            .drawing_chrome
+            .set_inspector_pos(Some(egui::pos2(
+                inspector.left(),
+                anchor.y - inspector.height() / 2.0,
+            )));
         run_frame(&mut app, &ctx);
         let inspector = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
@@ -20022,9 +17936,16 @@ crosshair = false
             .last_chart_area
             .expect("chart laid out");
 
-        let pin = app.inspector_pin_rect.expect("pin button rendered");
+        let pin = app
+            .surfaces
+            .drawing_chrome
+            .inspector_pin_rect()
+            .expect("pin button rendered");
         click_chart(&mut app, &ctx, pin.center());
-        assert!(app.inspector_pinned, "clicking Pin docks the inspector");
+        assert!(
+            app.surfaces.drawing_chrome.inspector_pinned(),
+            "clicking Pin docks the inspector"
+        );
         run_frame(&mut app, &ctx);
         let chart_after = app
             .active_tab()
@@ -20039,233 +17960,6 @@ crosshair = false
         assert!(
             texts.iter().any(|text| text.contains("Delete drawing")),
             "the docked panel still shows the named actions"
-        );
-    }
-
-    /// The eight §4.2 candidates, clamped — restated here so a drifted
-    /// implementation cannot silently shrink its own search space.
-    fn placement_candidates(
-        chart: egui::Rect,
-        bbox: egui::Rect,
-        size: egui::Vec2,
-    ) -> [egui::Pos2; 8] {
-        let gap = INSPECTOR_OBJECT_GAP_PX;
-        [
-            egui::pos2(bbox.right() + gap, bbox.top()),
-            egui::pos2(bbox.left() - gap - size.x, bbox.top()),
-            egui::pos2(bbox.left(), bbox.bottom() + gap),
-            egui::pos2(bbox.left(), bbox.top() - gap - size.y),
-            egui::pos2(chart.left() + gap, chart.top() + gap),
-            egui::pos2(chart.right() - gap - size.x, chart.top() + gap),
-            egui::pos2(chart.left() + gap, chart.bottom() - gap - size.y),
-            egui::pos2(chart.right() - gap - size.x, chart.bottom() - gap - size.y),
-        ]
-        .map(|candidate| clamp_into_chart(candidate, size, chart))
-    }
-
-    /// The session's complaint (`docs/ux/drawing-tools-2026-08.md` §F3): the
-    /// old rule put the panel 12 px beside a small object, right on top of
-    /// the price action the trader drew it to read. A corner must win.
-    /// The rule a volume profile broke: a drawing big enough to foul all four
-    /// corners used to get the panel dropped straight onto it.
-    ///
-    /// A profile is exactly that shape — tall enough to span the price axis,
-    /// wide enough to reach past every corner candidate — so "least overlap"
-    /// meant "on the figure", and the panel covered the thing it configures.
-    /// It goes into the gutter beside the object instead, narrowed to fit.
-    #[test]
-    fn a_drawing_too_big_for_any_corner_sends_the_panel_to_a_gutter_beside_it() {
-        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1200.0, 700.0));
-        let size = egui::vec2(320.0, 280.0);
-        // A profile down the middle, wide enough that a panel parked at any
-        // corner overlaps it, and narrow enough that the strip beside it can
-        // still hold a narrowed one. That band is exactly what narrowing is
-        // for: the corner candidate assumes the full width and fouls, the
-        // gutter takes what fits.
-        let bbox = egui::Rect::from_min_max(egui::pos2(320.0, 0.0), egui::pos2(880.0, 700.0));
-        let gap = INSPECTOR_OBJECT_GAP_PX;
-        for corner in [
-            egui::pos2(chart.left() + gap, chart.top() + gap),
-            egui::pos2(chart.right() - gap - size.x, chart.top() + gap),
-            egui::pos2(chart.left() + gap, chart.bottom() - gap - size.y),
-            egui::pos2(chart.right() - gap - size.x, chart.bottom() - gap - size.y),
-        ] {
-            assert!(
-                egui::Rect::from_min_size(corner, size)
-                    .intersect(bbox)
-                    .is_positive(),
-                "the fixture has to actually foul every corner: {corner:?}"
-            );
-        }
-
-        let placed = inspector_placement(chart, bbox, size);
-        let rect = egui::Rect::from_min_size(
-            placed.position,
-            egui::vec2(placed.max_width.unwrap_or(size.x), size.y),
-        );
-        assert!(
-            !rect.intersect(bbox).is_positive(),
-            "the panel must not cover the drawing it configures: {rect:?} vs {bbox:?}"
-        );
-        assert!(
-            chart.contains_rect(rect),
-            "and it stays inside the chart: {rect:?}"
-        );
-        assert!(
-            placed
-                .max_width
-                .is_some_and(|w| w >= INSPECTOR_MIN_WIDTH_PX),
-            "narrowed, but never below what a panel needs: {:?}",
-            placed.max_width
-        );
-    }
-
-    /// The wider side wins, so the panel goes where there is most room — and
-    /// a corner that *is* free still beats any gutter, because the gutter is
-    /// the fallback, not the rule.
-    #[test]
-    fn the_gutter_is_the_wider_side_and_never_preferred_over_a_free_corner() {
-        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1200.0, 700.0));
-        let size = egui::vec2(320.0, 280.0);
-
-        // Object hugging the left: the room is on its right.
-        let left_heavy = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 700.0));
-        let placed = inspector_placement(chart, left_heavy, size);
-        assert!(
-            placed.position.x >= left_heavy.right(),
-            "the panel takes the wider side: {placed:?}"
-        );
-
-        // Object hugging the right: the room is on its left.
-        let right_heavy =
-            egui::Rect::from_min_max(egui::pos2(800.0, 0.0), egui::pos2(1200.0, 700.0));
-        let placed = inspector_placement(chart, right_heavy, size);
-        assert!(
-            placed.position.x + placed.max_width.unwrap_or(size.x) <= right_heavy.left(),
-            "and the other side when that is where the room is: {placed:?}"
-        );
-
-        // A small object leaves corners free, and a free corner is unnarrowed.
-        let small = egui::Rect::from_center_size(chart.center(), egui::vec2(40.0, 40.0));
-        let placed = inspector_placement(chart, small, size);
-        assert_eq!(
-            placed.max_width, None,
-            "a corner placement never narrows the panel: {placed:?}"
-        );
-    }
-
-    #[test]
-    fn placement_sends_the_panel_to_a_corner_not_beside_a_small_object() {
-        let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_400.0, 800.0));
-        let bbox = egui::Rect::from_center_size(chart.center(), egui::vec2(40.0, 40.0));
-        let size = egui::vec2(320.0, 280.0);
-        let position = inspector_placement(chart, bbox, size).position;
-        let rect = egui::Rect::from_min_size(position, size);
-        assert!(!rect.intersects(bbox), "a clear candidate exists and wins");
-        assert!(chart.contains_rect(rect));
-        assert_ne!(
-            position,
-            egui::pos2(bbox.right() + INSPECTOR_OBJECT_GAP_PX, bbox.top()),
-            "beside-the-object is exactly the placement this rule replaced"
-        );
-        assert!(
-            placement_candidates(chart, bbox, size)[4..].contains(&position),
-            "the winner is one of the four chart corners"
-        );
-        assert_eq!(
-            position,
-            inspector_placement(chart, bbox, size).position,
-            "identical inputs give identical placements"
-        );
-    }
-
-    /// With the object centred, all four corners are equidistant, so the
-    /// order tie-break decides — and it must always decide the same way, or
-    /// the panel appears somewhere new every time (Duda, §D3).
-    #[test]
-    fn placement_prefers_the_top_left_corner_on_a_tie() {
-        let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_400.0, 800.0));
-        let bbox = egui::Rect::from_center_size(chart.center(), egui::vec2(40.0, 40.0));
-        let size = egui::vec2(320.0, 280.0);
-        let gap = INSPECTOR_OBJECT_GAP_PX;
-        assert_eq!(
-            inspector_placement(chart, bbox, size).position,
-            egui::pos2(chart.left() + gap, chart.top() + gap)
-        );
-    }
-
-    /// A panel taller than the placement assumed must not be sent to a bottom
-    /// corner, where it would grow off the window and lose its last rows. The
-    /// top-first order is what guarantees that, so it is worth a test of its
-    /// own: whatever height the panel turns out to have, the chosen spot
-    /// leaves room for it below.
-    #[test]
-    fn placement_leaves_a_tall_panel_room_to_grow_downwards() {
-        let chart = egui::Rect::from_min_size(egui::pos2(60.0, 88.0), egui::vec2(1_224.0, 744.0));
-        let bbox = egui::Rect::from_center_size(egui::pos2(700.0, 300.0), egui::vec2(40.0, 40.0));
-        // The height the placement believes in, and the height the panel
-        // turns out to want once its level editor is open.
-        let assumed = egui::vec2(360.0, 280.0);
-        let actual = 620.0;
-        let position = inspector_placement(chart, bbox, assumed).position;
-        assert!(
-            position.y + actual <= chart.bottom(),
-            "a panel that grows to {actual} px must still fit below {position:?}"
-        );
-    }
-
-    /// The farthest clear corner wins, so the panel walks away from the
-    /// object instead of hugging the nearest empty spot.
-    #[test]
-    fn placement_picks_the_corner_farthest_from_the_object() {
-        let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_400.0, 800.0));
-        // Object parked in the bottom-left quadrant.
-        let bbox = egui::Rect::from_center_size(egui::pos2(260.0, 640.0), egui::vec2(40.0, 40.0));
-        let size = egui::vec2(320.0, 280.0);
-        let gap = INSPECTOR_OBJECT_GAP_PX;
-        assert_eq!(
-            inspector_placement(chart, bbox, size).position,
-            egui::pos2(chart.right() - gap - size.x, chart.top() + gap),
-            "the opposite corner is the farthest clear one"
-        );
-    }
-
-    #[test]
-    fn placement_picks_the_least_overlap_when_nothing_clears() {
-        let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_000.0, 600.0));
-        // The object spans ~90% of the pane: every candidate overlaps.
-        let bbox = chart.shrink2(egui::vec2(50.0, 30.0));
-        let size = egui::vec2(320.0, 280.0);
-        let position = inspector_placement(chart, bbox, size).position;
-        let chosen = egui::Rect::from_min_size(position, size)
-            .intersect(bbox)
-            .area();
-        for candidate in placement_candidates(chart, bbox, size) {
-            let overlap = egui::Rect::from_min_size(candidate, size)
-                .intersect(bbox)
-                .area();
-            assert!(
-                chosen <= overlap + 0.01,
-                "the chosen spot must cover the object least: {chosen} vs {overlap}"
-            );
-        }
-        assert!(chart.contains_rect(egui::Rect::from_min_size(position, size)));
-    }
-
-    #[test]
-    fn placement_never_returns_the_blind_first_candidate_at_the_right_edge() {
-        let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_000.0, 600.0));
-        let bbox = egui::Rect::from_min_max(egui::pos2(900.0, 200.0), egui::pos2(1_000.0, 300.0));
-        let size = egui::vec2(320.0, 280.0);
-        let position = inspector_placement(chart, bbox, size).position;
-        let rect = egui::Rect::from_min_size(position, size);
-        assert!(
-            !rect.intersects(bbox),
-            "left of the object clears; the old code clamped right-of back onto it"
-        );
-        assert!(
-            position.x < bbox.left(),
-            "the panel must sit clear on the left, not clamp over the object"
         );
     }
 
@@ -20290,10 +17984,14 @@ crosshair = false
         let bar = egui::pos2(inspector.left() + 60.0, inspector.top() + 14.0);
         drag_chart(&mut app, &ctx, bar, bar + egui::vec2(150.0, 120.0));
         assert!(
-            app.inspector_moved,
+            app.surfaces.drawing_chrome.inspector_moved(),
             "a title-bar drag records the manual move"
         );
-        let held = app.inspector_pos.expect("the manual position is recorded");
+        let held = app
+            .surfaces
+            .drawing_chrome
+            .inspector_pos()
+            .expect("the manual position is recorded");
 
         // Selecting the other line must not snap the window back. The panel
         // closes with the selection now — the context bar is what the next
@@ -20303,11 +18001,14 @@ crosshair = false
         run_frame(&mut app, &ctx);
         open_inspector(&mut app, &ctx);
         assert_eq!(
-            app.inspector_pos,
+            app.surfaces.drawing_chrome.inspector_pos(),
             Some(held),
             "the manual position survives a selection change"
         );
-        assert!(app.inspector_moved, "the manual flag is never auto-cleared");
+        assert!(
+            app.surfaces.drawing_chrome.inspector_moved(),
+            "the manual flag is never auto-cleared"
+        );
     }
 
     #[test]
@@ -20326,7 +18027,7 @@ crosshair = false
             .expect("the inspector is open");
         let bar = egui::pos2(inspector.left() + 60.0, inspector.top() + 14.0);
         drag_chart(&mut app, &ctx, bar, bar + egui::vec2(120.0, 90.0));
-        assert!(app.inspector_moved);
+        assert!(app.surfaces.drawing_chrome.inspector_moved());
 
         let inspector = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
@@ -20344,7 +18045,7 @@ crosshair = false
             ],
         );
         assert!(
-            !app.inspector_moved,
+            !app.surfaces.drawing_chrome.inspector_moved(),
             "double-click on the title bar re-arms automatic placement"
         );
     }
@@ -20462,7 +18163,10 @@ crosshair = false
         // The write is queued during the release frame and flushed at the top
         // of the next one, where every other workspace write lives.
         run_frame(app, ctx);
-        app.inspector_pos.expect("the drag records a position")
+        app.surfaces
+            .drawing_chrome
+            .inspector_pos()
+            .expect("the drag records a position")
     }
 
     /// A cockpit already on disk, which is what every session after the first
@@ -20472,7 +18176,7 @@ crosshair = false
         app.ui_state_path = scratch_ui_state(name);
         run_frame(app, ctx);
         app.save_workspace("test");
-        app.toast = None;
+        app.surfaces.toast.clear();
         assert!(app.ui_state_path.exists(), "the cockpit is on disk");
     }
 
@@ -20512,9 +18216,10 @@ crosshair = false
             "and nothing else — the drift is not adopted as the startup screen"
         );
         assert!(
-            !app.toast
-                .as_ref()
-                .is_some_and(|toast| toast.message.contains("Workspace saved")),
+            !app.surfaces
+                .toast
+                .message()
+                .is_some_and(|message| message.contains("Workspace saved")),
             "an autosave nobody asked for by name does not talk over the trader"
         );
         let _ = std::fs::remove_file(&app.ui_state_path);
@@ -20535,7 +18240,7 @@ crosshair = false
         let parked = park_the_popup(&mut app, &ctx, egui::vec2(150.0, 90.0));
 
         assert_eq!(
-            app.inspector_pos,
+            app.surfaces.drawing_chrome.inspector_pos(),
             Some(parked),
             "the window still went where it was dragged"
         );
@@ -20588,12 +18293,12 @@ crosshair = false
         next.restore_workspace(ui_state::load(&app.ui_state_path).restore(&config));
 
         assert_eq!(
-            next.inspector_pos,
+            next.surfaces.drawing_chrome.inspector_pos(),
             Some(parked),
             "the popup opens where the last session left it"
         );
         assert!(
-            next.inspector_moved,
+            next.surfaces.drawing_chrome.inspector_moved(),
             "and counts as hand-placed, so nothing places it again"
         );
         let _ = std::fs::remove_file(&app.ui_state_path);
@@ -20613,7 +18318,9 @@ crosshair = false
 
         // What a restored workspace does, through the same one door.
         let remembered = egui::pos2(420.0, 200.0);
-        app.place_inspector_by_hand(remembered);
+        app.surfaces
+            .drawing_chrome
+            .place_inspector_by_hand(remembered);
 
         // A different drawing than the one selected when it was parked.
         click_chart(&mut app, &ctx, egui::pos2(400.0, 250.0));
@@ -20667,9 +18374,12 @@ crosshair = false
         // where it used to be" — and the last place it was is exactly the
         // value that would make a position assertion pass on a popup that is
         // no longer floating. Ask the app what it drew before reading egui.
-        assert!(app.inspector_open, "the gear's door is open");
         assert!(
-            !app.inspector_pinned,
+            app.surfaces.drawing_chrome.inspector_open(),
+            "the gear's door is open"
+        );
+        assert!(
+            !app.surfaces.drawing_chrome.inspector_pinned(),
             "and the popup is floating, not docked"
         );
         assert_eq!(
@@ -20712,7 +18422,10 @@ crosshair = false
         let grip = egui::pos2(popup.left() + 60.0, popup.top() + 14.0);
         drag_chart(&mut app, &ctx, grip, grip + egui::vec2(-220.0, 150.0));
         run_frame(&mut app, &ctx);
-        assert!(app.inspector_moved, "the drag records the manual move");
+        assert!(
+            app.surfaces.drawing_chrome.inspector_moved(),
+            "the drag records the manual move"
+        );
         let parked = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
             .expect("still open")
@@ -20755,26 +18468,41 @@ crosshair = false
         app.drawing_pane_mut().drawings.select(Some(avwap));
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
-        let bar = app.context_bar_rect.expect("the selection raised the bar");
+        let bar = app
+            .surfaces
+            .drawing_chrome
+            .context_bar_rect()
+            .expect("the selection raised the bar");
         let grip = egui::pos2(bar.left() + 8.0, bar.center().y);
         drag_chart(&mut app, &ctx, grip, grip + egui::vec2(-180.0, 200.0));
         run_frame(&mut app, &ctx);
         assert!(
-            app.context_bar.manual_position().is_some(),
+            app.surfaces
+                .drawing_chrome
+                .context_bar()
+                .manual_position()
+                .is_some(),
             "the grip drag records a hand-placed position"
         );
-        let parked = app.context_bar_rect.expect("still up").min;
+        let parked = app
+            .surfaces
+            .drawing_chrome
+            .context_bar_rect()
+            .expect("still up")
+            .min;
 
         app.drawing_pane_mut().drawings.select(Some(profile));
         // The mirror is written only when the bar actually draws, and none of
         // the host's early returns clear it — so a stale value would answer
         // for a bar that stopped appearing, which is the regression this test
         // exists to catch. Blank it and let the frame fill it in.
-        app.context_bar_rect = None;
+        app.surfaces.drawing_chrome.forget_context_bar_rect();
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
         assert_eq!(
-            app.context_bar_rect
+            app.surfaces
+                .drawing_chrome
+                .context_bar_rect()
                 .expect("the next object raises it too")
                 .min,
             parked,
@@ -20797,7 +18525,11 @@ crosshair = false
         for _ in 0..quiet_frames {
             run_frame(&mut app, &ctx);
         }
-        let bar = app.context_bar_rect.expect("still up");
+        let bar = app
+            .surfaces
+            .drawing_chrome
+            .context_bar_rect()
+            .expect("still up");
         let grip = egui::pos2(bar.left() + 8.0, bar.center().y);
         run_frame_with_events(
             &mut app,
@@ -20810,10 +18542,10 @@ crosshair = false
                 pointer_button(grip, false),
             ],
         );
-        app.context_bar_rect = None;
+        app.surfaces.drawing_chrome.forget_context_bar_rect();
         run_frame(&mut app, &ctx);
         assert_eq!(
-            app.context_bar.manual_position(),
+            app.surfaces.drawing_chrome.context_bar().manual_position(),
             None,
             "the double-click hands placement back to the rule"
         );
@@ -20822,7 +18554,11 @@ crosshair = false
         // that is no longer the parked point. This is the only door out of the
         // parked state, and a door that clears the flag while leaving the bar
         // in a third place would be no door at all.
-        let placed = app.context_bar_rect.expect("the bar is still up");
+        let placed = app
+            .surfaces
+            .drawing_chrome
+            .context_bar_rect()
+            .expect("the bar is still up");
         let chart = app.drawing_pane().last_chart_area.expect("the pane drew");
         let expected = drawings::context_bar::place(
             chart,
@@ -20876,11 +18612,16 @@ crosshair = false
         app.drawing_pane_mut().drawings.select(Some(line));
         run_frame(&mut app, &ctx);
         let parked = egui::pos2(320.0, 240.0);
-        app.context_bar.set_manual(parked);
-        app.context_bar_rect = None;
+        app.surfaces
+            .drawing_chrome
+            .context_bar_mut()
+            .set_manual(parked);
+        app.surfaces.drawing_chrome.forget_context_bar_rect();
         run_frame(&mut app, &ctx);
         let drawn = app
-            .context_bar_rect
+            .surfaces
+            .drawing_chrome
+            .context_bar_rect()
             .expect("the bar is up where it was put")
             .min;
 
@@ -20896,7 +18637,7 @@ crosshair = false
             "the press does what the trader aimed it at: the selection goes"
         );
         assert_eq!(
-            app.context_bar.manual_position(),
+            app.surfaces.drawing_chrome.context_bar().manual_position(),
             Some(parked),
             "and the position they chose is still theirs on the next object"
         );
@@ -20907,54 +18648,18 @@ crosshair = false
         // against the parked point itself, so the test says "unchanged" and
         // not "happens to need no repair at this window size".
         app.drawing_pane_mut().drawings.select(Some(other));
-        app.context_bar_rect = None;
+        app.surfaces.drawing_chrome.forget_context_bar_rect();
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
         assert_eq!(
-            app.context_bar_rect.expect("the bar is back").min,
+            app.surfaces
+                .drawing_chrome
+                .context_bar_rect()
+                .expect("the bar is back")
+                .min,
             drawn,
             "the bar comes back parked, on another object, not beside it"
         );
-    }
-
-    /// The live lane is off limits to the bar however it got where it is.
-    ///
-    /// `context_bar::place` has kept clear of that strip since it was written
-    /// — it is where the price the trader is reading is being formed, and
-    /// losing sight of it is the trader's first veto. A parked bar is placed
-    /// by a different rule, so the bound both rules clamp into is what keeps
-    /// them honest: without it the repair would happily pin a parked bar at
-    /// the pane's own right edge, on top of the forming column, for every
-    /// object of the session.
-    #[test]
-    fn the_context_bar_bound_takes_the_live_lane_off_the_pane() {
-        let chart = egui::Rect::from_min_max(egui::pos2(60.0, 88.0), egui::pos2(1284.0, 832.0));
-        let size = egui::vec2(292.0, 40.0);
-        let divider = 900.0;
-
-        let bounds = context_bar_bounds(chart, divider, size);
-        assert_eq!(bounds.right(), divider, "the lane is not the bar's to use");
-        assert_eq!(
-            clamp_into_chart(egui::pos2(3000.0, 400.0), size, bounds).x,
-            divider - size.x,
-            "a bar parked out past the lane is repaired to its inner edge"
-        );
-
-        // No lane on this pane: the chart's own edge is the answer, exactly as
-        // the automatic rule takes `chart.right()` when the divider is None.
-        assert_eq!(
-            context_bar_bounds(chart, chart.right(), size).right(),
-            chart.right()
-        );
-
-        // A lane wider than the history area leaves nothing to place in. The
-        // pane's edge beats an empty rectangle — the same call `place` makes.
-        let all_lane = context_bar_bounds(chart, chart.left() + 10.0, size);
-        assert!(
-            all_lane.width() >= size.x.min(chart.width()),
-            "a bar still has somewhere to go: {all_lane:?}"
-        );
-        assert!(chart.contains_rect(all_lane), "and it is inside the pane");
     }
 
     /// A position parked on a full-width canvas has to survive the canvas
@@ -20978,13 +18683,16 @@ crosshair = false
 
         // Parked far to the right of what either pane of a split will offer.
         let parked = egui::pos2(1200.0, 780.0);
-        app.context_bar.set_manual(parked);
+        app.surfaces
+            .drawing_chrome
+            .context_bar_mut()
+            .set_manual(parked);
         app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
         // Blank the mirror first: it is written only when the bar reaches
         // `show`, and every early return leaves the previous frame's value —
         // here the full-width rect, which would satisfy the assertion below
         // with the repair never having run.
-        app.context_bar_rect = None;
+        app.surfaces.drawing_chrome.forget_context_bar_rect();
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
 
@@ -20992,13 +18700,17 @@ crosshair = false
             .drawing_pane()
             .last_chart_area
             .expect("the pane holding the selection drew");
-        let bar = app.context_bar_rect.expect("the bar is still up");
+        let bar = app
+            .surfaces
+            .drawing_chrome
+            .context_bar_rect()
+            .expect("the bar is still up");
         assert!(
             chart.contains_rect(bar),
             "the parked bar is repaired into {chart:?}, drawn at {bar:?}"
         );
         assert_eq!(
-            app.context_bar.manual_position(),
+            app.surfaces.drawing_chrome.context_bar().manual_position(),
             Some(parked),
             "and the point the hand chose survives the repair"
         );
@@ -21069,13 +18781,15 @@ crosshair = false
 
         // What a restored workspace does.
         let remembered = egui::pos2(300.0, 200.0);
-        app.restore_inspector_position(Some([remembered.x, remembered.y]));
-        app.inspector_open = true;
+        app.surfaces
+            .drawing_chrome
+            .restore_inspector_position(Some([remembered.x, remembered.y]));
+        app.surfaces.drawing_chrome.set_inspector_open(true);
         run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
         run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
 
         assert!(
-            !app.inspector_pinned,
+            !app.surfaces.drawing_chrome.inspector_pinned(),
             "the parked position wins over the narrow-chart auto-pin"
         );
         assert!(
@@ -21095,22 +18809,24 @@ crosshair = false
         app.ui_state_path = scratch_ui_state("popup-auto-pin-default");
         // A previous cockpit that *did* park the popup, so this proves the
         // silence is adopted rather than merely never contradicted.
-        app.place_inspector_by_hand(egui::pos2(300.0, 200.0));
-        app.restore_inspector_position(None);
+        app.surfaces
+            .drawing_chrome
+            .place_inspector_by_hand(egui::pos2(300.0, 200.0));
+        app.surfaces.drawing_chrome.restore_inspector_position(None);
         run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_sized(&mut app, &ctx, MIN_WINDOW, egui::pos2(500.0, 300.0));
-        app.inspector_open = true;
+        app.surfaces.drawing_chrome.set_inspector_open(true);
         run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
         run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
 
         assert!(
-            !app.inspector_pin_touched,
+            !app.surfaces.drawing_chrome.inspector_pin_touched(),
             "silence in the file is not a preference about the pin"
         );
         assert!(
-            app.inspector_pinned,
+            app.surfaces.drawing_chrome.inspector_pinned(),
             "so a chart too narrow for a floating window still docks the panel"
         );
     }
@@ -21132,7 +18848,7 @@ crosshair = false
         app.ui_state_path = scratch_ui_state("popup-clamp");
         // The auto-pin owns a chart this narrow until the trader touches the
         // pin; this test is about the floating window, so say they have.
-        app.inspector_pin_touched = true;
+        app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
         run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
@@ -21148,7 +18864,7 @@ crosshair = false
             Vec::new(),
             Some(chrome_with_popup_at(Some(parked))),
         ));
-        app.inspector_open = true;
+        app.surfaces.drawing_chrome.set_inspector_open(true);
         run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
         run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
 
@@ -21165,7 +18881,7 @@ crosshair = false
              {popup:?} against {chart:?}"
         );
         assert_eq!(
-            app.remembered_inspector_position(),
+            app.surfaces.drawing_chrome.remembered_inspector_position(),
             Some(parked),
             "and the point the trader parked is not eaten by the repair — the \
              desk monitor gets it back"
@@ -21180,7 +18896,7 @@ crosshair = false
         let ctx = egui::Context::default();
         let (mut app, _commands) = app_with_history(200);
         app.ui_state_path = scratch_ui_state("popup-ratchet");
-        app.inspector_pin_touched = true;
+        app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
         run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
@@ -21190,14 +18906,14 @@ crosshair = false
         // Parked against the bottom-right of a big screen, then squeezed by a
         // small one for a while.
         let parked = egui::pos2(1_500.0, 900.0);
-        app.place_inspector_by_hand(parked);
-        app.inspector_open = true;
+        app.surfaces.drawing_chrome.place_inspector_by_hand(parked);
+        app.surfaces.drawing_chrome.set_inspector_open(true);
         for _ in 0..6 {
             run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
         }
 
         assert_eq!(
-            app.inspector_pos,
+            app.surfaces.drawing_chrome.inspector_pos(),
             Some(parked),
             "six frames of repair leave the parked point exactly as it was"
         );
@@ -21212,14 +18928,19 @@ crosshair = false
         let (mut app, _commands) = app_with_history(50);
 
         for pair in [[f32::NAN, 200.0], [200.0, f32::NAN], [f32::INFINITY, 200.0]] {
-            app.place_inspector_by_hand(egui::pos2(10.0, 10.0));
-            app.restore_inspector_position(Some(pair));
+            app.surfaces
+                .drawing_chrome
+                .place_inspector_by_hand(egui::pos2(10.0, 10.0));
+            app.surfaces
+                .drawing_chrome
+                .restore_inspector_position(Some(pair));
             assert_eq!(
-                app.inspector_pos, None,
+                app.surfaces.drawing_chrome.inspector_pos(),
+                None,
                 "{pair:?} is not a position, and must not survive as one"
             );
             assert!(
-                !app.inspector_moved,
+                !app.surfaces.drawing_chrome.inspector_moved(),
                 "{pair:?} hands the popup back to automatic placement"
             );
         }
@@ -21235,7 +18956,7 @@ crosshair = false
         let (mut app, _commands) = app_with_history(500);
         app.ui_state_path = scratch_ui_state("demo-inspector");
         app.pending_drawing_demo = true;
-        app.inspector_open = true;
+        app.surfaces.drawing_chrome.set_inspector_open(true);
 
         for _ in 0..4 {
             run_frame(&mut app, &ctx);
@@ -21247,20 +18968,55 @@ crosshair = false
             "and left an object selected, which is what closes the panel"
         );
         assert!(
-            app.inspector_open,
+            app.surfaces.drawing_chrome.inspector_open(),
             "the panel the hook asked for survives the demo's own selection"
         );
     }
 
-    /// A harness hook that guessed would photograph an invented pixel and call
-    /// it the trader's. Refuse instead, and the capture shows the default.
+    /// The same guarantee reached the way a capture run reaches it: through
+    /// the environment variable, not by setting the field first.
+    ///
+    /// The distinction is the whole test. `QUANTICK_DRAWING_INSPECTOR` used to
+    /// be read in the constructor, and when it moved to the surface's own hook
+    /// it landed in the pass the registry applies on the first *drawn* frame —
+    /// which runs after `apply_drawing_demo`, the very code that asks whether
+    /// the panel is open before it moves the selection. The panel then closed
+    /// itself and every capture pairing the two hooks photographed a chart
+    /// with no inspector. Nothing failed: the sibling test above sets the
+    /// field directly, so it could not see the order slip.
     #[test]
-    fn the_popup_position_hook_refuses_what_is_not_a_point() {
-        assert_eq!(parse_point("420,200"), Some(egui::pos2(420.0, 200.0)));
-        assert_eq!(parse_point(" 420 , 200.5 "), Some(egui::pos2(420.0, 200.5)));
-        for raw in ["", "420", "420,", ",200", "left,top", "420x200"] {
-            assert_eq!(parse_point(raw), None, "{raw:?} is not a point");
+    fn the_inspector_hook_survives_the_demo_that_runs_before_it() {
+        let ctx = egui::Context::default();
+        // `set_var` is process-wide and the suite is threaded, and this one
+        // is a *real* hook name every `QuantickApp::new` in the suite reads —
+        // so unlike `store_home`'s unique-name trick, a lock is the only way
+        // a neighbour cannot see it.
+        static LAUNCH_HOOK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = LAUNCH_HOOK.lock().unwrap_or_else(|held| held.into_inner());
+        // SAFETY: single-threaded section held by the lock above, and the
+        // variable is removed again before it is released.
+        unsafe { std::env::set_var("QUANTICK_DRAWING_INSPECTOR", "1") };
+        let (mut app, _commands) = app_with_history(500);
+        unsafe { std::env::remove_var("QUANTICK_DRAWING_INSPECTOR") };
+        app.ui_state_path = scratch_ui_state("hook-inspector");
+        app.pending_drawing_demo = true;
+
+        assert!(
+            app.surfaces.drawing_chrome.inspector_open(),
+            "the hook is read at launch, before any frame the demo runs in"
+        );
+        for _ in 0..4 {
+            run_frame(&mut app, &ctx);
         }
+        assert!(!app.pending_drawing_demo, "the demo has run");
+        assert!(
+            app.drawing_pane().drawings.selected().is_some(),
+            "and left an object selected, which is what closes the panel"
+        );
+        assert!(
+            app.surfaces.drawing_chrome.inspector_open(),
+            "the panel the hook asked for survives the demo's own selection"
+        );
     }
 
     fn run_sized_frame(
@@ -21317,19 +19073,29 @@ crosshair = false
         // The auto-pin is about the *panel*, and the panel now opens on
         // request: asking for it on a chart this narrow is what trips the
         // rule, because a 320 px floating window has nowhere to go here.
-        app.inspector_open = true;
+        app.surfaces.drawing_chrome.set_inspector_open(true);
         run_sized_frame(&mut app, &ctx, narrow, Vec::new());
         assert!(
-            app.inspector_pinned,
+            app.surfaces.drawing_chrome.inspector_pinned(),
             "opening the panel on a narrow chart opens it pinned"
         );
 
         // The user unpins: their preference holds from here on.
         run_sized_frame(&mut app, &ctx, narrow, Vec::new());
-        let pin = app.inspector_pin_rect.expect("the panel renders its pin");
+        let pin = app
+            .surfaces
+            .drawing_chrome
+            .inspector_pin_rect()
+            .expect("the panel renders its pin");
         click_sized(&mut app, &ctx, narrow, pin.center());
-        assert!(!app.inspector_pinned, "the pin toggles the panel off");
-        assert!(app.inspector_pin_touched, "the preference is recorded");
+        assert!(
+            !app.surfaces.drawing_chrome.inspector_pinned(),
+            "the pin toggles the panel off"
+        );
+        assert!(
+            app.surfaces.drawing_chrome.inspector_pin_touched(),
+            "the preference is recorded"
+        );
 
         // Unpinning with the same selection must recompute placement — not
         // fall back to the fixed default corner (the pinned host claimed the
@@ -21366,7 +19132,7 @@ crosshair = false
         click_sized(&mut app, &ctx, narrow, egui::pos2(500.0, 300.0));
         run_sized_frame(&mut app, &ctx, narrow, Vec::new());
         assert!(
-            !app.inspector_pinned,
+            !app.surfaces.drawing_chrome.inspector_pinned(),
             "once touched, the auto-pin width rule stops firing"
         );
     }
@@ -21387,11 +19153,13 @@ crosshair = false
             .expect("the inspector is open");
         // Parked over the stroke by hand: automatic placement now clears the
         // object on purpose (§D3), and this proof needs the overlap.
-        app.inspector_moved = true;
-        app.inspector_pos = Some(egui::pos2(
-            inspector.left(),
-            300.0 - inspector.height() / 2.0,
-        ));
+        app.surfaces.drawing_chrome.set_inspector_moved(true);
+        app.surfaces
+            .drawing_chrome
+            .set_inspector_pos(Some(egui::pos2(
+                inspector.left(),
+                300.0 - inspector.height() / 2.0,
+            )));
         run_frame(&mut app, &ctx);
         let inspector = ctx
             .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
@@ -21423,7 +19191,7 @@ crosshair = false
             .objects_button_rect()
             .expect("the rail shows the Objects entry");
         click_chart(&mut app, &ctx, objects.center());
-        assert!(app.drawing_manager_open);
+        assert!(app.surfaces.drawing_chrome.manager_open());
         run_frame(&mut app, &ctx);
 
         let manager = ctx
@@ -21454,13 +19222,15 @@ crosshair = false
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-        app.drawing_manager_open = true;
+        app.surfaces.drawing_chrome.set_manager_open(true);
         // Let the manager window settle its size before reading button rects.
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
 
         let delete = app
-            .manager_action_rects
+            .surfaces
+            .drawing_chrome
+            .manager_action_rects()
             .iter()
             .find(|(index, action, _)| *index == 0 && *action == "Delete")
             .map(|(_, _, rect)| *rect)
@@ -21471,7 +19241,7 @@ crosshair = false
             "the manager's Delete lands the same command"
         );
         assert!(
-            app.toast.is_some(),
+            app.surfaces.toast.message().is_some(),
             "the manager delete raises the same Undo toast as the keyboard"
         );
         run_frame_with_modifiers(
@@ -21503,13 +19273,15 @@ crosshair = false
             .expect("the toolbox shows the Objects entry");
         click_chart(&mut app, &ctx, objects.center());
         assert!(
-            app.drawing_manager_open,
+            app.surfaces.drawing_chrome.manager_open(),
             "the Objects button opens the manager"
         );
         run_frame(&mut app, &ctx);
 
         let rect_of = |app: &QuantickApp, index: usize, action: &str| {
-            app.manager_action_rects
+            app.surfaces
+                .drawing_chrome
+                .manager_action_rects()
                 .iter()
                 .find(|(row, name, _)| *row == index && *name == action)
                 .map(|(_, _, rect)| *rect)
@@ -21616,7 +19388,11 @@ crosshair = false
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
         run_frame(&mut app, &ctx);
-        let before = app.context_bar_rect.expect("the bar is on screen");
+        let before = app
+            .surfaces
+            .drawing_chrome
+            .context_bar_rect()
+            .expect("the bar is on screen");
 
         // The grip is the leading cell; grab its middle and pull well past
         // the distance that used to break it.
@@ -21625,10 +19401,16 @@ crosshair = false
         run_frame(&mut app, &ctx);
 
         let after = app
-            .context_bar_rect
+            .surfaces
+            .drawing_chrome
+            .context_bar_rect()
             .expect("the bar must survive its own drag");
         assert!(
-            app.context_bar.manual_position().is_some(),
+            app.surfaces
+                .drawing_chrome
+                .context_bar()
+                .manual_position()
+                .is_some(),
             "the drag has to be recorded as a hand-placed position"
         );
         assert!(
@@ -21723,7 +19505,7 @@ crosshair = false
             "the field opens focused: a caret nobody can see is a click nobody was told about"
         );
         assert!(
-            !app.inspector_open,
+            !app.surfaces.drawing_chrome.inspector_open(),
             "the panel is no longer how a note is written"
         );
 
@@ -22027,7 +19809,7 @@ crosshair = false
         let (mut app, _commands) = app_with_history(200);
         let ctx = egui::Context::default();
         run_frame(&mut app, &ctx);
-        app.pending_text_note = true;
+        app.surfaces.drawing_chrome.set_pending_text_note(true);
         run_frame(&mut app, &ctx);
         let index = app
             .inline_text_editing()
@@ -22265,7 +20047,7 @@ crosshair = false
 
         assert_eq!(app.active_tab().flow_pane.drawings.selected(), Some(0));
         assert!(
-            app.context_bar_rect.is_some(),
+            app.surfaces.drawing_chrome.context_bar_rect().is_some(),
             "the selection raises the context bar"
         );
         for absent in ["Horizontal line settings", "Delete drawing", "Style"] {
@@ -22297,7 +20079,9 @@ crosshair = false
         let undo_before = app.active_tab().flow_pane.drawings.undo_depth();
 
         let swatch = app
-            .context_bar
+            .surfaces
+            .drawing_chrome
+            .context_bar()
             .color_rect()
             .expect("the bar renders its colour slot");
         click_chart(&mut app, &ctx, swatch.center());
@@ -22306,7 +20090,9 @@ crosshair = false
         // The palette's fourth entry is BUY — "this is the buy zone" is the
         // reason a level gets recoloured at all.
         let buy = app
-            .context_bar
+            .surfaces
+            .drawing_chrome
+            .context_bar()
             .swatch_rect(3)
             .expect("the palette opened under the slot");
         click_chart(&mut app, &ctx, buy.center());
@@ -22339,13 +20125,18 @@ crosshair = false
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
         run_frame(&mut app, &ctx);
         let gear = app
-            .context_bar
+            .surfaces
+            .drawing_chrome
+            .context_bar()
             .gear_rect()
             .expect("the bar rendered its gear");
         click_chart(&mut app, &ctx, gear.center());
         run_frame(&mut app, &ctx);
 
-        assert!(app.inspector_open, "the gear opens the panel");
+        assert!(
+            app.surfaces.drawing_chrome.inspector_open(),
+            "the gear opens the panel"
+        );
         let texts = painted_text(&run_frame(&mut app, &ctx));
         assert!(
             texts
@@ -22367,14 +20158,17 @@ crosshair = false
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
         run_frame(&mut app, &ctx);
-        assert!(app.context_bar_rect.is_some(), "the finished object has it");
+        assert!(
+            app.surfaces.drawing_chrome.context_bar_rect().is_some(),
+            "the finished object has it"
+        );
 
-        app.context_bar_rect = None;
+        app.surfaces.drawing_chrome.forget_context_bar_rect();
         app.toolrail
             .arm(Tool::Drawing(drawing_tool("horizontal-line")));
         run_frame(&mut app, &ctx);
         assert!(
-            app.context_bar_rect.is_none(),
+            app.surfaces.drawing_chrome.context_bar_rect().is_none(),
             "arming a tool clears the way for the next drawing"
         );
     }
@@ -22854,10 +20648,16 @@ crosshair = false
             .drawings
             .set_selected_locked(true);
         run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
-        assert!(app.drawing_delete_confirm, "the confirmation is pending");
+        assert!(
+            app.surfaces.drawing_chrome.delete_confirm(),
+            "the confirmation is pending"
+        );
 
         run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
-        assert!(!app.drawing_delete_confirm, "first Esc cancels the confirm");
+        assert!(
+            !app.surfaces.drawing_chrome.delete_confirm(),
+            "first Esc cancels the confirm"
+        );
         assert!(
             app.active_tab().flow_pane.drawings.selected().is_some(),
             "the selection survives"
@@ -23171,7 +20971,9 @@ crosshair = false
             "the tool-owned tab is offered by name; painted: {texts:?}"
         );
 
-        app.inspector_tab = InspectorTab::Extra;
+        app.surfaces
+            .drawing_chrome
+            .set_inspector_tab(InspectorTab::Extra);
         run_frame(&mut app, &ctx);
         // The level editor is taller than the window. Everything in it must
         // still be *reachable* — which is what the panel's scroll is for, and
@@ -24603,12 +22405,12 @@ crosshair = false
             "and every tab phrases its request that way"
         );
         assert_eq!(
-            app.inspector_pos,
+            app.surfaces.drawing_chrome.inspector_pos(),
             Some(egui::pos2(260.0, 480.0)),
             "the properties popup reopens where the trader parked it"
         );
         assert!(
-            app.inspector_moved,
+            app.surfaces.drawing_chrome.inspector_moved(),
             "and counts as hand-placed, so automatic placement does not undo it"
         );
     }
@@ -24704,6 +22506,107 @@ crosshair = false
         assert_eq!(pane.kind, crate::state::BarKind::Tick);
     }
 
+    /// The paper panel used to keep a toast of its own: same lane along the
+    /// chart's bottom edge, 96px up instead of 44, on a 4-second clock
+    /// against the surface's 8. Two acknowledgements could therefore sit on
+    /// top of each other and disagree about how long one lasts. There is one
+    /// lane now, and a simulator message travels down it.
+    #[test]
+    fn a_paper_acknowledgement_reaches_the_windows_one_toast() {
+        let (mut app, _commands) = app_with_history(50);
+        assert!(app.surfaces.toast.message().is_none());
+
+        app.tabs[0]
+            .paper
+            .show_toast("SIM: dropped at the fill - no bid".to_owned());
+        app.settle_paper_panels(Instant::now());
+
+        assert_eq!(
+            app.surfaces.toast.message(),
+            Some("SIM: dropped at the fill - no bid"),
+            "the panel posts, the window's one toast shows it"
+        );
+        assert!(
+            !app.surfaces.toast.offers_undo(),
+            "a fill cannot be taken back, so no button pretends it can"
+        );
+    }
+
+    /// And the panel keeps nothing back: draining takes the message, so one
+    /// acknowledgement is shown once however many frames pass before the
+    /// next.
+    #[test]
+    fn a_paper_acknowledgement_is_handed_over_once() {
+        let (mut app, _commands) = app_with_history(50);
+        app.tabs[0].paper.show_toast("SIM: flat".to_owned());
+        app.settle_paper_panels(Instant::now());
+        app.surfaces.toast.clear();
+        app.settle_paper_panels(Instant::now());
+        assert!(
+            app.surfaces.toast.message().is_none(),
+            "the outbox was emptied by the first drain"
+        );
+    }
+
+    /// A stop filling on a chart the trader is not looking at is exactly the
+    /// news they most need, and the old per-tab toast dropped it silently —
+    /// it was drawn for the active tab only, on a clock that started when the
+    /// message was raised, so by the time the tab was looked at the toast had
+    /// already expired. It travels now, and it says which market it is about:
+    /// an unlabelled "SIM: dropped at the fill" would read as being about the
+    /// chart on screen.
+    #[test]
+    fn a_background_tabs_acknowledgement_travels_and_names_its_market() {
+        let (mut app, _commands) = app_with_history(50);
+        app.open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
+        assert!(app.tabs.len() >= 2, "a second market is open");
+        let watched = app.active_tab;
+        let background = app
+            .tabs
+            .iter()
+            .position(|tab| tab.symbol != app.tabs[watched].symbol)
+            .expect("the two tabs are on different markets");
+        let symbol = app.tabs[background].symbol.clone();
+
+        app.tabs[background]
+            .paper
+            .show_toast("SIM: stop filled".to_owned());
+        app.settle_paper_panels(Instant::now());
+
+        let toast = app
+            .surfaces
+            .toast
+            .message()
+            .expect("a background tab is still heard");
+        assert!(
+            toast.starts_with(&format!("{symbol} · ")),
+            "it names the market it is about, in the window's own separator, got '{toast}'"
+        );
+        assert!(
+            toast.contains("stop filled"),
+            "and still says what happened"
+        );
+    }
+
+    /// Two tabs speaking on one frame: the slot holds one message, and the
+    /// one the trader is looking at wins it rather than tab order deciding in
+    /// silence.
+    #[test]
+    fn the_watched_market_wins_the_slot() {
+        let (mut app, _commands) = app_with_history(50);
+        app.open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
+        let watched = app.active_tab;
+        for (index, tab) in app.tabs.iter_mut().enumerate() {
+            tab.paper.show_toast(format!("message from tab {index}"));
+        }
+        app.settle_paper_panels(Instant::now());
+        assert_eq!(
+            app.surfaces.toast.message(),
+            Some(format!("message from tab {watched}").as_str()),
+            "the chart on screen is the one whose acknowledgement stays"
+        );
+    }
+
     /// Saving says so. A trader who arranges a cockpit and clicks Save has no
     /// other way to tell it worked than restarting — and it says so through
     /// the acknowledgement channel the window already has, rather than by
@@ -24713,18 +22616,21 @@ crosshair = false
     fn saving_the_workspace_acknowledges_itself() {
         let (mut app, _commands) = app_with_history(50);
         app.ui_state_path = scratch_ui_state("notice");
-        assert!(app.toast.is_none());
+        assert!(app.surfaces.toast.message().is_none());
 
         app.save_workspace("test");
 
-        let toast = app.toast.as_ref().expect("the save reports itself");
+        let toast = app
+            .surfaces
+            .toast
+            .message()
+            .expect("the save reports itself");
         assert!(
-            toast.message.contains("saved"),
-            "the answer has to say what happened, got '{}'",
-            toast.message
+            toast.contains("saved"),
+            "the answer has to say what happened, got '{toast}'"
         );
         assert!(
-            !toast.offers_undo,
+            !app.surfaces.toast.offers_undo(),
             "the file it replaced is gone; an Undo button here would lie"
         );
         assert!(
@@ -24928,13 +22834,17 @@ crosshair = false
         app.tz = TzOffset::new(0);
         // The properties popup is part of an arrangement like the dock and the
         // rail are, so a bookmark carries where it was parked.
-        app.place_inspector_by_hand(egui::pos2(510.0, 240.0));
+        app.surfaces
+            .drawing_chrome
+            .place_inspector_by_hand(egui::pos2(510.0, 240.0));
         app.save_named_workspace("context");
 
         // Drift away from it, then come back.
         app.active_tab_mut().set_layout(CanvasLayout::Single);
         app.tz = TzOffset::new(-180);
-        app.place_inspector_by_hand(egui::pos2(120.0, 640.0));
+        app.surfaces
+            .drawing_chrome
+            .place_inspector_by_hand(egui::pos2(120.0, 640.0));
         run_frame(&mut app, &ctx);
 
         app.open_named_workspace("context");
@@ -24945,7 +22855,7 @@ crosshair = false
         assert_eq!(app.active_tab().layout, CanvasLayout::Time);
         assert_eq!(app.tz.minutes(), 0, "the chrome comes back with it");
         assert_eq!(
-            app.inspector_pos,
+            app.surfaces.drawing_chrome.inspector_pos(),
             Some(egui::pos2(510.0, 240.0)),
             "including where the popup was parked when the bookmark was named"
         );
@@ -25029,9 +22939,10 @@ crosshair = false
             "a refused save must not write the file either"
         );
         assert!(
-            app.toast
-                .as_ref()
-                .is_some_and(|toast| toast.message.contains("needs a name")),
+            app.surfaces
+                .toast
+                .message()
+                .is_some_and(|message| message.contains("needs a name")),
             "and the trader is told why nothing happened"
         );
     }
@@ -27182,8 +25093,11 @@ crosshair = false
     /// the same bookkeeping runs, over channels the test drives.
     fn open_second_tab(app: &mut QuantickApp, ctx: &egui::Context, symbol: &str) -> TabEnds {
         app.apply_tab_action(TabAction::New);
-        assert!(app.source_picker.is_some(), "the + opens the picker");
-        app.source_picker = None;
+        assert!(
+            app.surfaces.source_picker.is_open(),
+            "the + opens the picker"
+        );
+        app.surfaces.source_picker.close();
 
         let (evt_tx, evt_rx) = mpsc::channel(64);
         let (book_tx, book_rx) = mpsc::channel(64);
@@ -27236,12 +25150,10 @@ crosshair = false
         // An edit begun on the time pane: the baseline, then a real change to
         // the object (the store records an entry only if something moved).
         let before = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0].clone();
-        app.inspector_edit_baseline = Some(InspectorEdit {
-            tab: app.active_tab().id,
-            side: PaneSide::Time(0),
-            index: 0,
-            before,
-        });
+        let tab_id = app.active_tab().id;
+        app.surfaces
+            .drawing_chrome
+            .open_edit_gesture(tab_id, PaneSide::Time(0), 0, before);
         app.active_tab_mut()
             .pane_mut(PaneSide::Time(0))
             .drawings
@@ -27257,7 +25169,10 @@ crosshair = false
         let point = pane_point(&app, PaneSide::Flow);
         click_chart(&mut app, &ctx, point);
         assert_eq!(app.active_tab().focused_side(), PaneSide::Flow);
-        app.commit_inspector_gesture();
+        // No hand on the commit: the chrome notices that pointer and keyboard
+        // have let go, hands the baseline back through its response, and the
+        // host records it against the pane the edit named.
+        run_frame(&mut app, &ctx);
 
         assert_eq!(
             app.active_tab()
@@ -27314,7 +25229,11 @@ crosshair = false
         // A fresh egui Area sizes itself on its first frame.
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
-        let undo = app.toast_undo_rect.expect("the toast offers Undo");
+        let undo = app
+            .surfaces
+            .toast
+            .undo_rect()
+            .expect("the toast offers Undo");
         let divider = app
             .active_tab()
             .canvas_divider_rect()
@@ -29645,14 +27564,16 @@ crosshair = false
         // The real dialog: open it, type the contract, press Add.
         app.apply_tab_action(TabAction::New);
         run_frame(&mut app, &ctx);
-        app.source_picker
-            .as_mut()
+        app.surfaces
+            .source_picker
+            .picker_mut()
             .expect("the + opened the picker")
             .set_draft_symbol("  WINQ26 ");
         run_frame(&mut app, &ctx);
         let add = app
+            .surfaces
             .source_picker
-            .as_ref()
+            .picker()
             .expect("still open")
             .add_button_rect()
             .expect("the Add button was laid out");
@@ -29660,7 +27581,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
 
         assert!(
-            app.source_picker.is_none(),
+            !app.surfaces.source_picker.is_open(),
             "adding closes the dialog, because it opened the market"
         );
         assert_eq!(app.tabs.len(), tabs_before + 1);
@@ -29766,14 +27687,19 @@ crosshair = false
         app.apply_tab_action(TabAction::New);
         run_frame(&mut app, &ctx);
         {
-            let picker = app.source_picker.as_mut().expect("the picker is open");
+            let picker = app
+                .surfaces
+                .source_picker
+                .picker_mut()
+                .expect("the picker is open");
             picker.feed_id = "b3".to_string();
             picker.set_draft_symbol("US500");
         }
         run_frame(&mut app, &ctx);
         let add = app
+            .surfaces
             .source_picker
-            .as_ref()
+            .picker()
             .expect("still open")
             .add_button_rect()
             .expect("the Add button was laid out");
@@ -29781,8 +27707,9 @@ crosshair = false
         run_frame(&mut app, &ctx);
 
         let picker = app
+            .surfaces
             .source_picker
-            .as_ref()
+            .picker()
             .expect("the dialog stays open on a refusal");
         assert!(
             picker
@@ -30486,7 +28413,10 @@ crosshair = false
             vec![key_press_with(egui::Key::T, egui::Modifiers::CTRL)],
             egui::Modifiers::CTRL,
         );
-        assert!(app.source_picker.is_some(), "Ctrl+T opens the picker");
+        assert!(
+            app.surfaces.source_picker.is_open(),
+            "Ctrl+T opens the picker"
+        );
     }
 
     /// Provenance follows the active tab (§11): the status bar names the
@@ -32867,7 +30797,7 @@ crosshair = false
         let (mut app, _commands) = app_with_history(8);
         run_frame(&mut app, &ctx);
         // The trader's own: the note hook takes the click path's own door.
-        app.pending_text_note = true;
+        app.surfaces.drawing_chrome.set_pending_text_note(true);
         run_frame(&mut app, &ctx);
         let after_trader = app.active_tab().drawing_pane().drawings.items().len();
         assert_eq!(after_trader, 1, "the trader placed one object");
@@ -32942,7 +30872,11 @@ crosshair = false
             "the label a panel shows names what acted: {}",
             author.label()
         );
-        let popup = app.agent_popup.as_ref().expect("the popup is on screen");
+        let popup = app
+            .surfaces
+            .agent_popup
+            .pending()
+            .expect("the popup is on screen");
         assert_eq!(popup.message, "look at 108k");
         assert!(popup.author.contains("agent"));
     }
@@ -32955,7 +30889,7 @@ crosshair = false
         let ctx = egui::Context::default();
         let (mut app, _commands) = app_with_history(8);
         run_frame(&mut app, &ctx);
-        app.pending_text_note = true;
+        app.surfaces.drawing_chrome.set_pending_text_note(true);
         run_frame(&mut app, &ctx);
         let mine = app.active_tab().drawing_pane().drawings.items()[0].id;
 
@@ -33019,7 +30953,7 @@ crosshair = false
         let ctx = egui::Context::default();
         let (mut app, _commands) = app_with_history(8);
         run_frame(&mut app, &ctx);
-        app.pending_text_note = true;
+        app.surfaces.drawing_chrome.set_pending_text_note(true);
         run_frame(&mut app, &ctx);
         let mine = app.active_tab().drawing_pane().drawings.items()[0].id.0;
 
@@ -35242,7 +33176,7 @@ plot(close)
             test_screenshot(width, height),
         );
         assert!(
-            app.toast.is_some(),
+            app.surfaces.toast.message().is_some(),
             "the trader is told when a picture of their window is taken"
         );
         let manifest = success_result(&response).clone();
@@ -35384,7 +33318,7 @@ plot(close)
         app.config.metatrader.listen_addr = "192.168.7.31:9100".to_owned();
         run_frame(&mut app, &ctx);
         // The trader's own words on the chart.
-        app.pending_text_note = true;
+        app.surfaces.drawing_chrome.set_pending_text_note(true);
         run_frame(&mut app, &ctx);
         {
             let tool = drawings::DRAWING_TOOLS

@@ -155,7 +155,7 @@ Read the neighbouring code before judging any of it. The repo's existing
 pattern is the standard; a change that invents a second way to do something
 already solved is a finding, even when the new way is prettier in isolation.
 
-## The eight dimensions
+## The nine dimensions
 
 ### 1. The docking test — modularity and extensibility
 
@@ -539,6 +539,61 @@ So the reviewer's job in this dimension is the part the guard cannot do:
 Report the guard's verdict and your own separately. "`language_guard` passes"
 is not the same claim as "I read the prose".
 
+### 9. The trunk — where did the registration lines land?
+
+Dimension 1 asks whether a capability *can* dock. This one asks where the
+docking went. The two are not the same question, and the gap between them is
+how this repo acquired a 36,000-line file while every review passed honestly.
+
+A change adds `pointer_compass.rs` — a real new module, a real port question
+answered yes — and then adds a field to `QuantickApp`, an init to
+`new_with_workspace`, a draw call to `draw_frame` and a hotkey to
+`draw_menu_bar`. Four edits, one file, and dimension 1 saw only the new
+module. Repeat sixty-eight times: 133 fields, a 1,149-line constructor, and a
+struct that *is* the registry — implemented as a struct, so the only way to
+extend it is to edit it.
+
+Look for:
+
+- **Growth in the trunk.** `crates/app/tests/size_guard.rs` records a ceiling
+  for every file over 1,500 production lines — every line outside a top-level
+  `#[cfg(test)]` item — and fails when one grows past it. Check what it counts
+  before trusting what it says: the first version of that guard stopped at the
+  first `#[cfg(test)]` of any kind, which scored `control/gateway.rs` at 72
+  lines of its 4,142 and left five of the largest files in the repo untracked.
+  A mechanical half that is blind where the debt is largest is worse than none,
+  because a review cites it and stops looking. That guard is this dimension's mechanical half, as `language_guard.rs`
+  is dimension 8's; the judgement half is yours. Raising a ceiling stays
+  legitimate — it is a visible, signed line in the diff — but it is a finding
+  to argue with, never a silent act. A branch that raises one without saying
+  why in the comment beside it has recorded a decision rather than made one.
+- **A registry that is a closed enum.** An entry that cannot join without a
+  `match` arm is a type switch wearing a registry's name, and dimension 1's
+  first bullet already forbids the shape. Two of the ports `new-extension`
+  recommends are exactly this today: `ChartLayer` carries 21 variants across
+  264 `ChartLayer::` sites in six files, `DockTab` another 64. Adding a layer
+  reopens `app.rs`, `pane.rs`, `tab.rs` and `toolbar.rs`. When a change adds a
+  variant, ask what a trait object in a registry would have cost instead — and
+  when it adds the *second* variant of a kind, that is the moment the port was
+  due.
+- **Blast radius in lines, not only files.** `new-extension` §3 counts files
+  added versus edited, and a change adding one file while pouring 2,000 lines
+  into thirteen others passes that count looking healthy. Count the lines too.
+  Mostly-edits by line is the finding dimension 1 already names, one magnitude
+  louder.
+- **Host or participant?** When a change puts state on the application's root
+  struct, ask whether that struct has any reason to know about it — whether
+  anything *else* reads the field. State a single surface owns belongs to that
+  surface, not to its host. Nine of `app.rs`'s twenty-one `draw_*` surfaces
+  touch one or two fields of `QuantickApp`; those are not entangled designs,
+  they are modules filed in the wrong place, and saying so is cheap while they
+  are still small.
+
+The distinction this dimension turns on: a codebase becomes unmaintainable
+from wiring debt long before it does from design debt, and the two look
+identical in a file listing. Establish which one is in front of you before
+prescribing — an extraction is mechanical and safe, a redesign is neither.
+
 ## Verify before reporting
 
 Reviews are judged on precision, not volume.
@@ -582,7 +637,10 @@ A clean change gets a short review saying it is clean and why. Never pad.
   to do a solved thing; a capability reachable only from a click handler; state
   that exists only as pixels; a capability that registers itself nowhere, or a
   list kept by hand beside the registry; something the trader was meant to vary
-  shipped as a compiled variant.
+  shipped as a compiled variant; a new field on the application root struct for
+  state only one surface reads; a new variant on a registry enum where a trait
+  object would have absorbed it; a `size_guard` ceiling raised with no comment
+  saying why.
 - **Consider** — clarity and structure improvements with no correctness,
   performance or extensibility consequence.
 
@@ -599,7 +657,8 @@ requires there. Chat scrolls away; the PR is where the next reader looks.
 Report findings with the `ReportFindings` tool when it is available, ranked
 most severe first, using categories `correctness` (step 0's, promoted here),
 `modularity`, `performance`, `hardcoded-values`, `test-coverage`,
-`test-layout`, `standardisation`, `agent-surface`, `language`, `readability`.
+`test-layout`, `standardisation`, `agent-surface`, `accumulation`, `language`,
+`readability`.
 Without that tool, write the same list as markdown grouped by severity.
 
 Each finding: `file:line`, what is wrong, why it matters *in this order of
@@ -615,7 +674,7 @@ intent. It happened once on the branch that added this paragraph: the verdict
 was written forty seconds *before* the commit whose marker it justified, and
 only a file mtime caught it.
 
-Close with a verdict in six lines:
+Close with a verdict in seven lines:
 
 - **Correctness** — what the step 0 code review returned, and whether anything
   from it is still open.
@@ -627,6 +686,10 @@ Close with a verdict in six lines:
 - **Proof** — which test would fail if this change regressed, and whether it
   is a unit test (`#[cfg(test)]`, private access) or an integration test
   (`tests/`, public API only).
+- **Accumulation** — did the trunk grow? Name the tracked files the diff
+  moved and by how many production lines, and say whether any `size_guard`
+  ceiling was raised and whether the comment beside it justifies the raise.
+  Say "trunk flat" when nothing tracked moved; never drop the line.
 - **Language** — two claims, not one: whether `language_guard` passed, and
   whether you read the prose, the branch name and the commit messages yourself.
   Say both rather than dropping the line — a silent language verdict is

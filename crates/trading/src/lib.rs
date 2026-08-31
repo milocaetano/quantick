@@ -29,6 +29,7 @@
 
 mod events;
 mod intent;
+mod money;
 mod order;
 mod position;
 mod venue;
@@ -37,6 +38,10 @@ pub mod fake;
 
 pub use events::{CancelReason, ExitReason, Fill, FillRole, RejectReason, VenueEvent};
 pub use intent::{BracketTarget, CloseAmount, OrderIntent};
+pub use money::{
+    Currency, InstrumentMoney, Money, MoneySource, SizeOutcome, SizeRefusal, SizedEntry, risk_at,
+    size_for_risk, stop_distance_per_unit,
+};
 pub use order::{
     Bracket, EntryKind, ExitPart, LadderError, MAX_EXIT_PARTS, OcoId, Order, OrderId, OrderRole,
 };

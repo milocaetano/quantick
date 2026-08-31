@@ -13,7 +13,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
@@ -68,8 +67,6 @@ const PAPER_ORDER_BRACKET_FRACTION: Decimal = Decimal::from_parts(15, 0, 0, fals
 const PAPER_ORDERS_STEP_FRACTION: Decimal = Decimal::from_parts(6, 0, 0, false, 4);
 /// Rungs past this are refused — a capture wants a tag or two, not a book.
 const PAPER_ORDERS_MAX_RUNGS: u8 = 4;
-/// How long a paper toast stays on screen.
-const TOAST_MS: u64 = 4_000;
 /// Grab distance for order lines — the drawings' select radius, so the two
 /// grammars feel identical under the pointer.
 const LINE_GRAB_RADIUS_PX: f32 = 10.0;
@@ -77,9 +74,6 @@ const LINE_GRAB_RADIUS_PX: f32 = 10.0;
 const ORDER_DASH_PX: f32 = 4.0;
 /// Gap between dashes of a pending order's line.
 const ORDER_GAP_PX: f32 = 4.0;
-/// How far above the bottom chrome the paper toast floats — clear of the
-/// drawings toast so the two never overlap.
-const TOAST_LIFT_PX: f32 = 96.0;
 /// Price precision for snapped drags before any print reveals the
 /// instrument's own (two decimals, the crypto-major default).
 const SNAP_FALLBACK_DECIMALS: u32 = 2;
@@ -141,6 +135,15 @@ const STRATEGY_EDITOR_ENV: &str = "QUANTICK_PAPER_STRATEGY_EDITOR";
 /// `1:1` it reads are unreachable from a capture. Pair with
 /// `QUANTICK_CMD_PREVIEW`, which supplies the aim the ruler measures from.
 const RULER_TICKS_ENV: &str = "QUANTICK_PAPER_RULER_TICKS";
+/// Stands the risk per trade up on launch, with the instrument's money.
+///
+/// The risk block is settings a trader fills in by hand, and a scripted run
+/// has no hands - so without this the derived size, the discreet line and
+/// the refusal the lock produces are all unreachable from a capture. Pair
+/// with `QUANTICK_PAPER_RULER_TICKS`, which walks the stop the size is
+/// measured from, and `QUANTICK_CMD_PREVIEW`, which supplies the aim. See
+/// `crate::risk_sizing::parse_hook` for the grammar.
+const PAPER_RISK_ENV: &str = "QUANTICK_PAPER_RISK";
 /// The position's entry line leads the paper lines: it is the one that is
 /// history rather than an order, and it matches the drawings' default width.
 const POSITION_LINE_WIDTH_PX: f32 = 1.5;
@@ -477,12 +480,6 @@ enum PaperControl {
         index: usize,
         leg: Leg,
     },
-}
-
-/// One transient message; rejections double as the tutorial.
-struct Toast {
-    message: String,
-    shown_at: Instant,
 }
 
 /// The scripted demo's only state: how many prints it has seen.
@@ -836,6 +833,11 @@ pub enum TradingTabAction {
     /// changed. App-wide for the same reason: a trader who builds a ladder
     /// in one tab means it everywhere.
     OrderStrategiesChanged,
+    /// The risk per trade, the declared capital or an instrument's money
+    /// changed. App-wide like the rest of the ticket's settings: a ceiling
+    /// set in one tab is meant in all of them, and what a point of an
+    /// instrument is worth does not change because a second tab is looking.
+    RiskSettingsChanged,
 }
 
 /// What the Trades ledger asked of its host.
@@ -1373,6 +1375,39 @@ pub struct PaperTrading {
     /// recorded session must not make a trader relearn their wheel. The
     /// journal is already keyed this way.
     ruler_steps: BTreeMap<String, Decimal>,
+    /// What one trade may lose, and whether an entry over it is refused.
+    ///
+    /// The policy half of risk sizing; the arithmetic belongs to the kernel.
+    /// See [`crate::risk_sizing`].
+    risk: crate::risk_sizing::RiskSettings,
+    /// The practice capital, one amount per currency. Never summed across
+    /// currencies and never converted between them.
+    capital: crate::risk_sizing::Capital,
+    /// What one point of each instrument is worth, by bare symbol. Declared
+    /// by the trader; nothing here derives it from the tape.
+    instrument_money: crate::risk_sizing::InstrumentBook,
+    /// What the trader typed for the fixed risk per trade.
+    risk_amount_text: String,
+    /// What the trader typed for the percentage of capital.
+    risk_percent_text: String,
+    /// What the trader typed for this instrument's point value.
+    point_value_text: String,
+    /// What the trader typed for this instrument's size step.
+    size_step_text: String,
+    /// What the trader typed for this instrument's currency code.
+    currency_text: String,
+    /// Money a launch hook asked for, waiting for the tab to learn which
+    /// symbol it opens on. Spent once, on the first symbol.
+    hook_money: Option<quantick_sim::InstrumentMoney>,
+    /// Whether a launch hook set the risk per trade for this run.
+    ///
+    /// An environment variable is an explicit request for one run, so it
+    /// outranks the sidecar - and the sidecar fan-out that follows
+    /// construction has to be told, or it silently restores the stored
+    /// settings over the ones the run asked for.
+    risk_from_hook: bool,
+    /// What the trader typed for the capital in this instrument's currency.
+    capital_text: String,
     /// Sub-notch wheel travel not yet worth a tick (a trackpad's scroll
     /// arrives in fractions of a notch).
     ruler_travel_px: f32,
@@ -1399,15 +1434,18 @@ pub struct PaperTrading {
     drag_price: Option<f64>,
     /// The working order hovered in the dock this frame — its chart line
     /// lifts, so one hover reads on both surfaces. Cleared after the chart
-    /// consumed it (`draw_toast` runs last in the frame).
+    /// consumed it ([`PaperTrading::settle`] runs last in the frame).
     hovered_order: Option<OrderId>,
-    /// The in-flight export, if any; resolved by `draw_toast`'s poll.
+    /// The in-flight export, if any; resolved by [`PaperTrading::settle`]'s
+    /// poll.
     export_rx: Option<std::sync::mpsc::Receiver<Result<(PathBuf, usize), String>>>,
     /// The in-flight history-folder import, if any; resolved by
-    /// `draw_toast`'s poll. Imports copy — the picked folder keeps its
-    /// files.
+    /// [`PaperTrading::settle`]'s poll. Imports copy — the picked folder
+    /// keeps its files.
     import_rx: Option<std::sync::mpsc::Receiver<Option<PathBuf>>>,
-    toast: Option<Toast>,
+    /// The acknowledgement waiting to be handed to the window's one toast —
+    /// an outbox, not a toast. See [`PaperTrading::take_toast`].
+    pending_toast: Option<String>,
     report_open: bool,
     /// Report symbol filter: `None` is every symbol, `Some` one folder.
     report_symbol: Option<String>,
@@ -1516,6 +1554,24 @@ impl PaperTrading {
     /// environment.
     #[must_use]
     pub fn with_trades_dir(dir: PathBuf) -> Self {
+        // A spec that does not parse is reported and ignored, never
+        // defaulted: a capture run that silently got a different risk than
+        // it asked for photographs the wrong thing and says nothing about
+        // it. The rule `QUANTICK_PAPER_ORDERS` already follows.
+        let hook = std::env::var(PAPER_RISK_ENV).ok().and_then(|value| {
+            crate::risk_sizing::parse_hook(&value).or_else(|| {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "PAPER_RISK_HOOK_REJECTED",
+                    value = %value,
+                    action = "risk_left_off",
+                    "QUANTICK_PAPER_RISK wants `<amount>` or `<percent>%@<capital>`, optionally \
+                     `:<point value>:<size step>:<currency>` and `:unlocked`"
+                );
+                None
+            })
+        });
         Self {
             venue: Box::new(Simulator::new()),
             order_bracket_demo: std::env::var(PAPER_ORDER_BRACKET_ENV)
@@ -1583,6 +1639,25 @@ impl PaperTrading {
                 .map_or(0, |notches| notches.min(RULER_MAX_NOTCHES)),
             ruler_step_text: String::new(),
             ruler_steps: BTreeMap::new(),
+            risk: hook
+                .as_ref()
+                .map_or_else(crate::risk_sizing::RiskSettings::default, |hook| {
+                    hook.settings.clone()
+                }),
+            capital: hook
+                .as_ref()
+                .map_or_else(crate::risk_sizing::Capital::new, |hook| {
+                    hook.capital.clone()
+                }),
+            instrument_money: crate::risk_sizing::InstrumentBook::new(),
+            risk_amount_text: String::new(),
+            risk_percent_text: String::new(),
+            point_value_text: String::new(),
+            size_step_text: String::new(),
+            currency_text: String::new(),
+            capital_text: String::new(),
+            risk_from_hook: hook.is_some(),
+            hook_money: hook.and_then(|hook| hook.money),
             ruler_travel_px: 0.0,
             ruler_rolled: false,
             ruler_notch_px: f32::INFINITY,
@@ -1592,7 +1667,7 @@ impl PaperTrading {
             hovered_order: None,
             export_rx: None,
             import_rx: None,
-            toast: None,
+            pending_toast: None,
             report_open: false,
             report_symbol: None,
             report_period: ReportPeriod::All,
@@ -1712,6 +1787,14 @@ impl PaperTrading {
             // stop and target.
             let arriving = self.symbol.is_empty();
             self.symbol = symbol.to_owned();
+            // Money a launch hook asked for lands on the symbol the tab
+            // opens with, for the same reason the ruler does: the app names
+            // that symbol a frame after construction, so there is nothing to
+            // key it by until now. Spent once - a later switch is a real
+            // switch, and the trader's own book answers for it.
+            if let Some(money) = self.hook_money.take() {
+                self.instrument_money.insert(symbol.to_owned(), money);
+            }
             // The tick is the *instrument's*, and it only ever ratchets
             // finer: carried across a switch it would price the next
             // market's ruler and ladders in a precision that market has
@@ -1918,9 +2001,61 @@ impl PaperTrading {
     /// infer from, and an action whose meaning depends on the market at the
     /// instant it lands is an action nobody can replay.
     pub fn place_intent(&mut self, intent: OrderIntent) -> Vec<VenueEvent> {
+        // The risk per trade is a ceiling on the account, not on the mouse.
+        // A named call is exactly the operator `CLAUDE.md` treats as
+        // first-class, so a lock the ticket enforces and this path does not
+        // would be a ceiling that holds only while a human is clicking.
+        if let Some(refusal) = self.risk_refusal_for(&intent) {
+            // Nothing is fabricated onto the venue's own event stream: the
+            // lock is this application's policy, not a fact the venue
+            // reported, and a `RejectReason` variant for it would put that
+            // policy inside the domain crate. The trader gets the toast; a
+            // named caller gets the same sentence as an error, because
+            // `control::trade` asks this same function first.
+            self.show_toast(format!("SIM: {refusal}"));
+            return Vec::new();
+        }
         let events = self.venue.submit(intent);
         self.handle_events(events.clone());
         events
+    }
+
+    /// Why the lock refuses this intent, when it does.
+    ///
+    /// Reads the intent's *own* protection and quantity rather than the
+    /// ticket's: a named call states what it wants, and the ceiling has to
+    /// be measured against what was actually asked for.
+    pub(crate) fn risk_refusal_for(&self, intent: &OrderIntent) -> Option<String> {
+        if !self.risk.lock || self.risk.basis == crate::risk_sizing::RiskBasis::Off {
+            return None;
+        }
+        let reference = intent
+            .price
+            .or_else(|| self.venue.mark_price())
+            .unwrap_or_default();
+        let risk = crate::risk_sizing::risk_of(
+            &self.instrument_money,
+            &self.symbol,
+            intent.side,
+            reference,
+            &intent.bracket,
+            intent.quantity,
+        )?;
+        let budget = crate::risk_sizing::budget_for(
+            &self.risk,
+            &self.capital,
+            &self.instrument_money.get(&self.symbol)?.currency,
+        )
+        .ok()?;
+        (risk.amount > budget.amount).then(|| {
+            format!(
+                "this order risks {} {} - over your {} {} risk per trade. Raise the risk, or                  turn the lock off.",
+                risk.amount.normalize(),
+                risk.currency.code(),
+                budget.amount.normalize(),
+                budget.currency.code(),
+            )
+        })
     }
 
     /// Replace a working order's protective prices — the chart's drag, said
@@ -2029,17 +2164,18 @@ impl PaperTrading {
 
     /// A toolbar/panel market order using the form's quantity and offsets.
     pub fn market(&mut self, side: Side) {
-        let Some(quantity) = self.parse_quantity() else {
-            return;
-        };
         let reference = self.venue.mark_price().unwrap_or_default();
         let Some(ticket) = self.parse_bracket(side, reference) else {
             return;
         };
         // The same three sources the aim reads, in the same order. A button
         // sitting directly under the Strategy row must not place a bare
-        // order while that row says a ladder is armed.
-        let bracket = self.aim_bracket(side, reference, quantity, ticket);
+        // order while that row says a ladder is armed. The size comes from
+        // the same call, so the risk per trade governs a toolbar press as
+        // much as it governs the aim.
+        let Some((quantity, bracket)) = self.entry_size(side, reference, ticket) else {
+            return;
+        };
         let events = self
             .venue
             .submit(OrderIntent::market(side, quantity).with_bracket(bracket));
@@ -2151,7 +2287,13 @@ impl PaperTrading {
     #[must_use]
     pub fn entry_label(&self, side: Side) -> String {
         let word = side_word_upper(side);
-        let Some(qty) = self.quantity_preview() else {
+        // The size the press would actually send. The risk-derived quantity
+        // is written into the field by the ticket, so a toolbar reading the
+        // field while the dock is closed promised a size the click did not
+        // send - the button naming one number and the order carrying
+        // another is the plainest kind of lie this surface can tell.
+        let derived = self.risk_report().0.derived_quantity();
+        let Some(qty) = derived.or_else(|| self.quantity_preview()) else {
             return word.to_owned();
         };
         let qty_text = fmt_decimal(qty);
@@ -3599,6 +3741,141 @@ impl PaperTrading {
         self.aim_bracket(side, reference, quantity, ticket)
     }
 
+    /// The size the risk per trade gives this entry, and the protection it
+    /// was sized against.
+    ///
+    /// The two-pass resolution lives in
+    /// [`crate::risk_sizing::sized_for_aim`]; what this supplies is the
+    /// ticket's own bracket funnel, so the wheel, the saved ladder and the
+    /// typed offsets all size by one road.
+    pub(crate) fn risk_sized(
+        &self,
+        side: Side,
+        reference: Decimal,
+        ticket: Bracket,
+    ) -> (crate::risk_sizing::RiskState, Bracket) {
+        crate::risk_sizing::sized_for_aim(
+            &crate::risk_sizing::RiskContext {
+                settings: &self.risk,
+                capital: &self.capital,
+                book: &self.instrument_money,
+                symbol: &self.symbol,
+            },
+            side,
+            reference,
+            &|quantity| self.aim_bracket(side, reference, quantity, ticket),
+        )
+    }
+
+    /// What the risk per trade says about the entry the aim is holding.
+    ///
+    /// The reading half: no toast, no side effect, so the ticket's line, the
+    /// chart's chip and the control plane's snapshot all ask the same
+    /// question and get the same answer.
+    #[must_use]
+    pub(crate) fn risk_state(
+        &self,
+        side: Side,
+        reference: Decimal,
+    ) -> crate::risk_sizing::RiskState {
+        let ticket = self
+            .ticket_bracket(side, reference)
+            .unwrap_or_else(|_| Bracket::none());
+        self.risk_sized(side, reference, ticket).0
+    }
+
+    /// What the risk per trade makes of the entry the ticket is holding,
+    /// and whether the lock is refusing it — the pair the session snapshot
+    /// publishes.
+    ///
+    /// Reads at the mark, and for `Side::Buy`, which stands for both: every
+    /// stop the ticket can hold is symmetric in *distance*, so the risk is
+    /// the side-independent half of the answer.
+    #[must_use]
+    pub(crate) fn risk_report(&self) -> (crate::risk_sizing::RiskState, bool) {
+        let reference = self.venue.mark_price().unwrap_or_default();
+        let state = self.risk_state(Side::Buy, reference);
+        let blocks = state.blocks_entry(self.risk.lock);
+        (state, blocks)
+    }
+
+    /// The quantity and protection a click should send, or `None` when it
+    /// must not go out at all.
+    ///
+    /// With the risk per trade off this is the typed quantity and the aim's
+    /// bracket, exactly as it has always been. With it on the quantity is
+    /// derived — and this is the one place the trader's ceiling is
+    /// *enforced* rather than merely reported: an entry over the budget is
+    /// refused while the lock stands, and the toast carries the same
+    /// sentence the ticket is already showing.
+    fn entry_size(
+        &mut self,
+        side: Side,
+        reference: Decimal,
+        ticket: Bracket,
+    ) -> Option<(Decimal, Bracket)> {
+        let (state, resting) = self.risk_sized(side, reference, ticket);
+        if state.blocks_entry(self.risk.lock) {
+            self.show_toast(format!("SIM: {}", state.sentence()));
+            return None;
+        }
+        if let Some(quantity) = state.derived_quantity() {
+            return Some((quantity, resting));
+        }
+        // Off, or nothing to size against: the typed quantity still rules,
+        // and a quantity that does not parse toasts as it always did.
+        let quantity = self.parse_quantity()?;
+        Some((
+            quantity,
+            self.aim_bracket(side, reference, quantity, ticket),
+        ))
+    }
+
+    /// The instrument this ticket is aimed at. Empty before the app names
+    /// the opening symbol.
+    #[must_use]
+    pub(crate) fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    /// Whether a launch hook owns the risk per trade for this run, in which
+    /// case the stored settings must not be fanned back over it.
+    #[must_use]
+    pub(crate) fn risk_from_hook(&self) -> bool {
+        self.risk_from_hook
+    }
+
+    /// What one trade may lose, and whether the lock stands.
+    pub(crate) fn risk_settings(&self) -> &crate::risk_sizing::RiskSettings {
+        &self.risk
+    }
+
+    /// Replace the risk per trade. App-wide, like the ticket's other
+    /// settings: a ceiling a trader sets in one tab is one they mean in all.
+    pub(crate) fn set_risk_settings(&mut self, risk: crate::risk_sizing::RiskSettings) {
+        self.risk = risk;
+    }
+
+    /// The declared practice capital, one amount per currency.
+    pub(crate) fn capital(&self) -> &crate::risk_sizing::Capital {
+        &self.capital
+    }
+
+    /// Replace the declared capital.
+    pub(crate) fn set_capital(&mut self, capital: crate::risk_sizing::Capital) {
+        self.capital = capital;
+    }
+
+    /// What one point of each instrument is worth, by bare symbol.
+    pub(crate) fn instrument_money(&self) -> &crate::risk_sizing::InstrumentBook {
+        &self.instrument_money
+    }
+
+    /// Replace the declared instrument money.
+    pub(crate) fn set_instrument_money(&mut self, book: crate::risk_sizing::InstrumentBook) {
+        self.instrument_money = book;
+    }
+
     /// The strategies the trader keeps, in their own order.
     pub(crate) fn order_strategies(&self) -> &[crate::order_strategies::OrderStrategy] {
         &self.strategies
@@ -3954,14 +4231,13 @@ impl PaperTrading {
     /// Rest a limit/stop entry at `raw_price` with the ticket's quantity
     /// and offsets; returns whether the simulator accepted it.
     fn place_resting(&mut self, side: Side, kind: EntryKind, raw_price: f64) -> bool {
-        let Some(quantity) = self.parse_quantity() else {
-            return false;
-        };
         let price = self.snap(raw_price);
         let Some(ticket) = self.parse_bracket(side, price) else {
             return false;
         };
-        let bracket = self.aim_bracket(side, price, quantity, ticket);
+        let Some((quantity, bracket)) = self.entry_size(side, price, ticket) else {
+            return false;
+        };
         let command = match kind {
             EntryKind::Limit => Command::PlaceLimit {
                 side,
@@ -4080,7 +4356,9 @@ impl PaperTrading {
     pub fn draw_trading_tab(&mut self, ui: &mut egui::Ui) -> Option<TradingTabAction> {
         self.hovered_order = None;
         ui.label(
-            egui::RichText::new("Simulated fills from the tape - no broker, points not currency.")
+            egui::RichText::new(
+                "Simulated fills from the tape - no broker. Results are in points; a currency here is the point value you declared.",
+            )
                 .color(theme::TEXT_MUTED)
                 .small(),
         )
@@ -4106,6 +4384,9 @@ impl PaperTrading {
             }
             if changed.cmd_trading {
                 return Some(TradingTabAction::CmdTradingChanged);
+            }
+            if changed.risk {
+                return Some(TradingTabAction::RiskSettingsChanged);
             }
         }
         action
@@ -4388,8 +4669,30 @@ impl PaperTrading {
 
     fn draw_order_entry(&mut self, ui: &mut egui::Ui) -> OrderEntryChanges {
         ui.label(caption("ORDER"));
+        // What the risk per trade makes of the entry the ticket is holding.
+        // Read once for the whole form: the quantity field, the support line
+        // and the entry pair must all be talking about the same aim.
+        //
+        // Side::Buy stands for both. Every stop this reads is symmetric in
+        // distance - the ruler walks both legs the same number of points,
+        // and a typed offset is a distance rather than a price - so the risk
+        // is the side-independent half of the answer.
+        let risk_reference = self.venue.mark_price().unwrap_or_default();
+        let risk_state = self.risk_state(Side::Buy, risk_reference);
+        let derived_quantity = risk_state.derived_quantity();
+        let risk_blocks = risk_state.blocks_entry(self.risk.lock);
+        if let Some(quantity) = derived_quantity {
+            // The mode writes into the field the whole form already reads,
+            // rather than adding a second number beside it: one quantity on
+            // screen is the quantity that will be sent.
+            let derived = fmt_decimal(quantity);
+            if self.qty_text != derived {
+                self.qty_text = derived;
+            }
+        }
         // Qty: free decimal text (empty must keep meaning "fix me"), with
-        // steppers beside it; Shift steps by ten.
+        // steppers beside it; Shift steps by ten. Derived and read-only
+        // while the risk per trade is deciding it.
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Qty").color(theme::TEXT_MUTED).small());
             let step = if ui.input(|input| input.modifiers.shift) {
@@ -4397,22 +4700,42 @@ impl PaperTrading {
             } else {
                 Decimal::ONE
             };
-            if ui
-                .small_button("−")
-                .on_hover_text("one less (Shift: ten)")
-                .clicked()
-            {
-                self.step_quantity(-step);
-            }
-            ui.add(egui::TextEdit::singleline(&mut self.qty_text).desired_width(56.0));
-            if ui
-                .small_button("+")
-                .on_hover_text("one more (Shift: ten)")
-                .clicked()
-            {
-                self.step_quantity(step);
-            }
+            let typed = derived_quantity.is_none();
+            let hint = self.quantity_step_hint(step);
+            ui.add_enabled_ui(typed, |ui| {
+                if ui
+                    .small_button("−")
+                    .on_hover_text(format!("{hint} less (Shift: ten steps)"))
+                    .clicked()
+                {
+                    self.step_quantity(-step);
+                }
+                ui.add(egui::TextEdit::singleline(&mut self.qty_text).desired_width(56.0));
+                if ui
+                    .small_button("+")
+                    .on_hover_text(format!("{hint} more (Shift: ten steps)"))
+                    .clicked()
+                {
+                    self.step_quantity(step);
+                }
+            })
+            .response
+            .on_disabled_hover_text(
+                "the size is derived from your risk per trade - switch the mode off to type one",
+            );
         });
+        // The discreet line: what the number means, or why there is none.
+        // Small and quiet on purpose - it explains the size without taking
+        // the screen away from the chart.
+        let sentence = risk_state.sentence();
+        if !sentence.is_empty() {
+            let colour = if risk_blocks {
+                theme::WARN
+            } else {
+                theme::TEXT_FAINT
+            };
+            ui.label(egui::RichText::new(sentence).color(colour).small());
+        }
         // Type: three pills. Picking Limit or Stop is a promise of an
         // accent line on the chart, so the selected pill wears the accent.
         ui.horizontal(|ui| {
@@ -4447,13 +4770,34 @@ impl PaperTrading {
             ui.label(egui::RichText::new("pts").color(theme::TEXT_FAINT).small());
         });
         let strategies_changed = self.draw_strategy_row(ui);
+        // The whole risk surface, in its own module: this file already
+        // carries the order form, and a second feature inside it is how the
+        // trunk grew the first time.
+        let risk_changed = crate::risk_sizing::draw_risk_block(
+            ui,
+            crate::risk_sizing::RiskBlock {
+                symbol: &self.symbol,
+                settings: &mut self.risk,
+                capital: &mut self.capital,
+                book: &mut self.instrument_money,
+                amount_text: &mut self.risk_amount_text,
+                percent_text: &mut self.risk_percent_text,
+                capital_text: &mut self.capital_text,
+                point_value_text: &mut self.point_value_text,
+                size_step_text: &mut self.size_step_text,
+                currency_text: &mut self.currency_text,
+            },
+        );
         ui.add_space(4.0);
 
         // The entry pair: the surface where you commit, taller than the
         // toolbar's buttons. An armed side inverts — a mode you are in must
         // be visible on the control that put you there.
         let half = (ui.available_width() - 6.0) / 2.0;
-        let ready = self.ready();
+        // The lock, enforced on the surface as well as at the click: a
+        // ceiling the trader can still press through is one they will press
+        // through by accident on a fast tape.
+        let ready = self.ready() && !risk_blocks;
         let mut fire: Option<Side> = None;
         let mut arm: Option<Side> = None;
         let mut disarm = false;
@@ -4528,6 +4872,7 @@ impl PaperTrading {
         OrderEntryChanges {
             cmd_trading: self.draw_cmd_trading_settings(ui),
             strategies: strategies_changed,
+            risk: risk_changed,
         }
     }
 
@@ -4980,20 +5325,41 @@ impl PaperTrading {
         changed
     }
 
-    /// Step the quantity field by `delta`, never below a positive value;
-    /// an unparseable field steps from one.
-    fn step_quantity(&mut self, delta: Decimal) {
+    /// Walk the typed quantity by `notches` of the instrument's own size
+    /// step.
+    ///
+    /// The step is the instrument's, not one. A hard-coded 1 is already
+    /// wrong on any instrument whose lot is fractional — a press moved a
+    /// crypto size by a hundred thousand steps — and the floor is the
+    /// instrument's minimum rather than "anything above zero", so the
+    /// steppers can only ever land on a size the venue would take.
+    fn step_quantity(&mut self, notches: Decimal) {
+        let (unit, floor) = self
+            .instrument_money
+            .get(&self.symbol)
+            .map_or((Decimal::ONE, Decimal::ONE), |money| {
+                (money.size_step, money.min_size)
+            });
         let current = self
             .qty_text
             .trim()
             .parse::<Decimal>()
             .ok()
             .filter(|quantity| *quantity > Decimal::ZERO)
-            .unwrap_or(Decimal::ONE);
-        let next = current.saturating_add(delta);
-        if next > Decimal::ZERO {
+            .unwrap_or(floor);
+        let next = current.saturating_add(notches.saturating_mul(unit));
+        if next >= floor {
             self.qty_text = fmt_decimal(next);
         }
+    }
+
+    /// The size one stepper press moves, for the hover that promises it.
+    fn quantity_step_hint(&self, notches: Decimal) -> String {
+        let unit = self
+            .instrument_money
+            .get(&self.symbol)
+            .map_or(Decimal::ONE, |money| money.size_step);
+        fmt_decimal(notches.saturating_mul(unit))
     }
 
     /// Cancel every working order (resting and queued), trading nothing.
@@ -6196,44 +6562,51 @@ impl PaperTrading {
     }
 
     // ------------------------------------------------------------------
-    // Toast
+    // End of frame
     // ------------------------------------------------------------------
 
-    /// The transient message slot; newest wins, expires on its own. Runs
-    /// last in the frame, so it also settles the per-frame handshakes: the
-    /// dock-hover link is cleared (the chart already read it) and a
-    /// finished export lands its toast.
-    pub fn draw_toast(&mut self, ctx: &egui::Context, now: Instant) {
+    /// Settle this panel's per-frame handshakes. Runs last in the frame, and
+    /// for **every** tab rather than only the one on screen.
+    ///
+    /// Three things happen here: the dock-hover link is cleared (the chart
+    /// has already read it), and the export and import pickers are polled for
+    /// a background job that finished. Both of those jobs belong to the tab
+    /// that started them, and a trader who starts an export and then looks at
+    /// another chart must not have to come back for it to land — which is
+    /// what running this only for the active tab used to mean.
+    ///
+    /// It no longer draws anything. The message it produces goes to the
+    /// window's one toast, through [`Self::take_toast`].
+    pub fn settle(&mut self) {
         self.hovered_order = None;
         self.poll_export();
         self.poll_import();
-        let Some(toast) = &self.toast else {
-            return;
-        };
-        if now.saturating_duration_since(toast.shown_at) >= Duration::from_millis(TOAST_MS) {
-            self.toast = None;
-            return;
-        }
-        let message = toast.message.clone();
-        egui::Area::new(egui::Id::new("paper_toast"))
-            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -TOAST_LIFT_PX))
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                egui::Frame::none()
-                    .fill(theme::TAG_BG)
-                    .rounding(egui::Rounding::same(4.0))
-                    .inner_margin(egui::Margin::symmetric(10.0, 6.0))
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new(message).color(theme::TEXT_PRIMARY));
-                    });
-            });
     }
 
+    /// Take the acknowledgement waiting to be shown, if there is one.
+    ///
+    /// This panel used to draw its own: the same `CENTER_BOTTOM` anchor as
+    /// the window's `ToastSurface`, 96px up instead of 44, on a 4-second
+    /// clock instead of 8 — so two acknowledgements could sit in one lane, at
+    /// two heights, disagreeing about how long an acknowledgement lasts. It
+    /// posts to an outbox now and the host drains it into the one surface
+    /// that owns the clock and the position.
+    ///
+    /// Newest wins, as the toast it replaces did: a slot, not a queue, since
+    /// a trader reading a stale acknowledgement while the current one waits
+    /// behind it is worse than missing the stale one. Taking rather than
+    /// reading, so one message is handed over once however many frames pass.
+    pub(crate) fn take_toast(&mut self) -> Option<String> {
+        self.pending_toast.take()
+    }
+
+    /// Post an acknowledgement for the window to show. Newest wins.
+    ///
+    /// No clock is read here, unlike the toast this replaces: the surface is
+    /// told the frame's `Instant` by the host, which is what makes an
+    /// acknowledgement's lifetime as testable as the engine's arithmetic.
     pub(crate) fn show_toast(&mut self, message: String) {
-        self.toast = Some(Toast {
-            message,
-            shown_at: Instant::now(),
-        });
+        self.pending_toast = Some(message);
     }
 
     // ------------------------------------------------------------------
@@ -6596,6 +6969,9 @@ impl PaperTrading {
 struct OrderEntryChanges {
     cmd_trading: bool,
     strategies: bool,
+    /// The risk per trade, the capital or an instrument's money moved, so
+    /// the sidecar wants writing and the other tabs want telling.
+    risk: bool,
 }
 
 /// A ladder to start from: one rung covering the whole position, which is
@@ -8014,14 +8390,14 @@ fn kind_short(kind: EntryKind) -> &'static str {
 }
 
 /// Uppercase section caption — the ledger's group labels and column header.
-fn caption(text: &str) -> egui::RichText {
+pub(crate) fn caption(text: &str) -> egui::RichText {
     egui::RichText::new(text)
         .size(10.0)
         .color(theme::TEXT_FAINT)
 }
 
 /// A pill-shaped toggle chip: accent fill while on, quiet control while off.
-fn pill_toggle(ui: &mut egui::Ui, label: &str, on: bool, hover: &str) -> egui::Response {
+pub(crate) fn pill_toggle(ui: &mut egui::Ui, label: &str, on: bool, hover: &str) -> egui::Response {
     let (fill, ink, stroke) = if on {
         (theme::ACCENT, theme::CHIP_INK, egui::Stroke::NONE)
     } else {
@@ -8870,6 +9246,195 @@ fn list_symbol_folders(dir: &Path) -> Vec<String> {
 }
 
 #[cfg(test)]
+mod risk_tests {
+    use super::*;
+
+    fn win_money() -> quantick_sim::InstrumentMoney {
+        quantick_sim::InstrumentMoney {
+            point_value: Decimal::new(20, 2),
+            size_step: Decimal::ONE,
+            min_size: Decimal::ONE,
+            max_size: None,
+            currency: quantick_sim::Currency::new("BRL").expect("BRL"),
+            source: quantick_sim::MoneySource::Declared,
+        }
+    }
+
+    fn book(money: quantick_sim::InstrumentMoney) -> crate::risk_sizing::InstrumentBook {
+        [("WIN$N".to_owned(), money)].into_iter().collect()
+    }
+
+    /// A ticket on WIN$N with the money declared and a fixed risk set.
+    fn armed_ticket(price: i64) -> PaperTrading {
+        let mut paper = PaperTrading::new();
+        paper.set_symbol("WIN$N");
+        paper.seed(&Trade {
+            agg_id: 0,
+            timestamp_ms: 0,
+            price: Decimal::from(price),
+            quantity: Decimal::ONE,
+            side: Side::Buy,
+        });
+        paper.set_instrument_money(book(win_money()));
+        paper.set_risk_settings(crate::risk_sizing::RiskSettings {
+            basis: crate::risk_sizing::RiskBasis::Amount,
+            amount: Decimal::from(100),
+            amount_currency: None,
+            percent: Decimal::ZERO,
+            lock: true,
+        });
+        paper.set_ruler_step(Some(Decimal::ONE));
+        paper
+    }
+
+    /// The wheel and a saved strategy are two ways of saying where the stop
+    /// is, and the size must not depend on which the trader used - that is
+    /// the whole reason both go through `aim_bracket`. Proven by sizing one
+    /// entry each way and comparing, not by reading the funnel.
+    #[test]
+    fn the_wheel_and_a_saved_strategy_size_one_entry_identically() {
+        let stop_points = 10_u32;
+
+        let mut wheel = armed_ticket(140_000);
+        wheel.set_ruler_ticks(stop_points);
+        let by_wheel = wheel.risk_state(Side::Buy, Decimal::from(140_000));
+
+        let mut ladder = armed_ticket(140_000);
+        ladder.set_order_strategies(
+            vec![crate::order_strategies::OrderStrategy {
+                name: "one rung".to_owned(),
+                rows: vec![crate::order_strategies::StrategyRow {
+                    share_percent: Decimal::ONE_HUNDRED,
+                    gain_ticks: Some(stop_points),
+                    loss_ticks: Some(stop_points),
+                }],
+            }],
+            Some("one rung"),
+        );
+        let by_ladder = ladder.risk_state(Side::Buy, Decimal::from(140_000));
+
+        assert_eq!(
+            by_wheel.derived_quantity(),
+            by_ladder.derived_quantity(),
+            "wheel {by_wheel:?} vs ladder {by_ladder:?}"
+        );
+        assert_eq!(by_wheel.code(), by_ladder.code());
+        // 10 points x 0.20 = 2.00 a contract; 100 / 2 = 50.
+        assert_eq!(by_wheel.derived_quantity(), Some(Decimal::from(50)));
+    }
+
+    /// The lock, at the surface. With a risk per trade set there is no entry
+    /// that exceeds it, and the refusal names the number rather than leaving
+    /// a wheel that quietly stopped turning.
+    #[test]
+    fn a_stop_too_wide_for_the_budget_refuses_the_entry_and_says_why() {
+        let mut paper = armed_ticket(140_000);
+        // 4000 points x 0.20 = 800 for one contract, against a budget of 100.
+        // Reached with a coarse step rather than more notches: the ruler
+        // itself stops at `RULER_MAX_NOTCHES`.
+        paper.set_ruler_step(Some(Decimal::from(20)));
+        paper.set_ruler_ticks(200);
+        let (state, blocks) = paper.risk_report();
+        assert_eq!(state.code(), "clamped_at_minimum", "{state:?}");
+        assert!(blocks, "the lock stands");
+        let sentence = state.sentence();
+        assert!(sentence.contains("800 BRL"), "{sentence}");
+        assert!(sentence.contains("raise the risk"), "{sentence}");
+
+        // And it is the *placement* that is refused, not merely the label.
+        paper.market(Side::Buy);
+        assert!(
+            paper.is_flat(),
+            "the lock refused the order rather than only colouring the ticket"
+        );
+    }
+
+    /// The ceiling holds on the named path too. A lock the ticket enforces
+    /// and `place_intent` does not would be a ceiling that stands only while
+    /// a human is clicking - and `CLAUDE.md` makes the other operator
+    /// first-class.
+    #[test]
+    fn the_lock_refuses_a_named_order_the_same_as_a_clicked_one() {
+        let mut paper = armed_ticket(140_000);
+        let intent = quantick_sim::OrderIntent::market(Side::Buy, Decimal::from(10))
+            .with_bracket(Bracket::whole(Some(Decimal::from(136_000)), None));
+        // 4000 points x 0.20 x 10 = 8,000 BRL against a budget of 100.
+        let refusal = paper
+            .risk_refusal_for(&intent)
+            .expect("the ceiling names it");
+        assert!(refusal.contains("8000 BRL"), "{refusal}");
+        assert!(refusal.contains("turn the lock off"), "{refusal}");
+        assert!(
+            paper.place_intent(intent).is_empty(),
+            "a named call must not slip past the ceiling the ticket enforces"
+        );
+        assert!(paper.is_flat(), "nothing was placed");
+    }
+
+    /// With the lock down the same named order goes out - the refusal is the
+    /// trader's setting, not a rule the platform invented.
+    #[test]
+    fn a_named_order_over_budget_goes_out_once_the_lock_is_down() {
+        let mut paper = armed_ticket(140_000);
+        let mut risk = paper.risk_settings().clone();
+        risk.lock = false;
+        paper.set_risk_settings(risk);
+        let intent = quantick_sim::OrderIntent::market(Side::Buy, Decimal::from(10))
+            .with_bracket(Bracket::whole(Some(Decimal::from(136_000)), None));
+        assert!(paper.risk_refusal_for(&intent).is_none());
+    }
+
+    /// Taking the lock down is how a trader takes that entry anyway - a
+    /// deliberate act, never a silent one.
+    #[test]
+    fn taking_the_lock_down_lets_the_over_budget_entry_through() {
+        let mut paper = armed_ticket(140_000);
+        paper.set_ruler_step(Some(Decimal::from(20)));
+        paper.set_ruler_ticks(200);
+        let mut risk = paper.risk_settings().clone();
+        risk.lock = false;
+        paper.set_risk_settings(risk);
+        let (state, blocks) = paper.risk_report();
+        assert_eq!(state.code(), "clamped_at_minimum", "still over budget");
+        assert!(!blocks, "but no longer refused");
+    }
+
+    /// An instrument with no declared money never guesses a size. In
+    /// particular it must not borrow this file's `tick_size`, which is
+    /// derived from the decimal places the tape has printed and says 1 for
+    /// WIN$N where the real step is 5.
+    #[test]
+    fn an_undeclared_instrument_sizes_nothing_and_says_so() {
+        let mut paper = armed_ticket(140_000);
+        paper.set_instrument_money(crate::risk_sizing::InstrumentBook::new());
+        paper.set_ruler_ticks(10);
+        let (state, blocks) = paper.risk_report();
+        assert_eq!(state.code(), "instrument_unknown");
+        assert_eq!(state.derived_quantity(), None);
+        assert!(!blocks, "an unknown instrument is not an over-budget one");
+        assert!(state.sentence().contains("WIN$N"), "{}", state.sentence());
+    }
+
+    /// The steppers walk the instrument's own size step. A hard-coded 1 is
+    /// already wrong on any fractional lot - it moved a crypto size by a
+    /// hundred thousand steps.
+    #[test]
+    fn the_quantity_steppers_walk_the_instruments_own_size_step() {
+        let mut paper = armed_ticket(140_000);
+        paper.set_instrument_money(book(quantick_sim::InstrumentMoney {
+            size_step: Decimal::new(1, 5),
+            min_size: Decimal::new(1, 5),
+            ..win_money()
+        }));
+        paper.qty_text = "0.00002".to_owned();
+        paper.step_quantity(Decimal::ONE);
+        assert_eq!(paper.qty_text, "0.00003");
+        paper.step_quantity(-Decimal::ONE);
+        assert_eq!(paper.qty_text, "0.00002");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -9052,7 +9617,7 @@ mod tests {
             paper.armed.is_none(),
             "an armed click dies with the timeline"
         );
-        assert!(paper.toast.is_some(), "the flatten is never silent");
+        assert!(paper.pending_toast.is_some(), "the flatten is never silent");
         let history = load_history(&dir, Some("RESETX"), &[]);
         assert_eq!(history.rows.len(), 1);
         assert_eq!(
@@ -9100,7 +9665,7 @@ mod tests {
             paper.history_cache.is_none(),
             "the ledger re-reads from the new home"
         );
-        assert!(paper.toast.is_some(), "the switch is never silent");
+        assert!(paper.pending_toast.is_some(), "the switch is never silent");
         assert!(
             dir_a.join("SWITCHX").exists(),
             "files already written stay where they are"
@@ -10186,7 +10751,10 @@ mod tests {
         let mut paper = PaperTrading::new();
         paper.stop_offset_text = "abc".to_owned();
         assert!(paper.parse_bracket(Side::Buy, Decimal::from(100)).is_none());
-        assert!(paper.toast.is_some(), "the refusal teaches, never silent");
+        assert!(
+            paper.pending_toast.is_some(),
+            "the refusal teaches, never silent"
+        );
     }
 
     /// The headline gesture: a working order, hovered, offers labelled
@@ -10358,11 +10926,11 @@ mod tests {
             None,
             "the refusal left the order as it was"
         );
-        let toast = paper.toast.as_ref().expect("the refusal teaches");
+        let toast = paper.pending_toast.as_ref().expect("the refusal teaches");
         assert!(
-            toast.message.contains("stop loss"),
+            toast.contains("stop loss"),
             "and says which leg was wrong: {}",
-            toast.message
+            toast
         );
     }
 
@@ -11498,7 +12066,7 @@ mod tests {
             "the user clicks again after the toast"
         );
         assert!(paper.venue.working_orders().is_empty());
-        assert!(paper.toast.is_some(), "the refusal explains itself");
+        assert!(paper.pending_toast.is_some(), "the refusal explains itself");
     }
 
     /// The lines say what a press would do before it happens (audit M3/M4):

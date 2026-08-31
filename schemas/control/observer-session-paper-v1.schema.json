@@ -238,6 +238,50 @@
           "description": "Where these rows come from, named rather than implied.",
           "type": "string"
         },
+        "risk_amount": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What that size stands to lose at the entry's own stop. Absent for the\nsame reasons as `risk_quantity`."
+        },
+        "risk_blocks_entry": {
+          "description": "Whether the trader's lock is refusing this entry right now.",
+          "type": "boolean"
+        },
+        "risk_currency": {
+          "description": "The currency `risk_amount` is in. Nothing here converts between\ncurrencies, so a reader comparing two tabs must compare these too.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "risk_quantity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The size the risk per trade derived, absent when it derived none —\nthe mode is off, or nothing here could be sized."
+        },
+        "risk_sentence": {
+          "description": "The sentence the ticket is showing, verbatim.\n\nProduced by the same function that renders it on screen rather than a\nsecond wording kept in step by hand: an operator reading this and a\ntrader reading the ticket are looking at one sentence. Absent only\nwhen the mode is off and there is nothing to say.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "risk_state": {
+          "description": "What the risk per trade makes of the entry the ticket is holding:\n`off`, `sized`, `short_of_budget`, `capped_at_max`,\n`clamped_at_minimum`, `instrument_unknown`, `no_budget` or `refused`.\n\nThe state, not the pixels. An operator asked \"why is the size 1\" has\nto be able to read the answer rather than infer it from a number.",
+          "type": "string"
+        },
         "ruler_ticks": {
           "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use. Sticky across aims, so a reader needs it to explain\nwhat the next order would carry.",
           "format": "uint32",
@@ -287,6 +331,8 @@
         "flat",
         "ruler_ticks",
         "tick_size",
+        "risk_state",
+        "risk_blocks_entry",
         "working_orders",
         "working_order_count",
         "working_orders_truncated",

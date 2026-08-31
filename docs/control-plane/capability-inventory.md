@@ -84,6 +84,8 @@ Primary owner: `app.rs`, with state persisted through `ui_state.rs` and
 | `QUANTICK_MENU` | Open the Workspace menu for validation | `ui.menu.open` | `cockpit` | `replace` |
 | `QUANTICK_LAYOUT` | Select flow, time, or split layout | `workspace.layout.set` | `cockpit` | `route` |
 | `QUANTICK_STYLE_PANEL` | Open chart appearance settings | `ui.dialog.open` with `chart.appearance` | `cockpit` | `replace` |
+| `QUANTICK_SOURCE_PICKER` | Open the market dialog | `ui.dialog.open` with `workspace.market` | `cockpit` | `replace` |
+| `QUANTICK_INDICATOR_PREVIEW` | Stage the unapplied-draft watermark | `ui.overlay.set` with `chart.indicator_preview` | `cockpit` | `replace` |
 | `QUANTICK_TOOL_FAVORITES` | Set drawing-tool favorites | `drawing.tool_favorites.set` | `cockpit` | `route` |
 | `QUANTICK_TOOLBOX_DOCK` | Move the drawing rail | `drawing.tool_rail.dock` | `cockpit` | `route` |
 | `QUANTICK_TOOLBAR_SCROLL` | Move the drawing-tool band | `drawing.tool_rail.scroll` | `cockpit` | `route` |

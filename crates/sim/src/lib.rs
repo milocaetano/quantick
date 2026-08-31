@@ -66,11 +66,15 @@
 //! # Honesty
 //!
 //! Everything the simulator reports is *simulated* and labeled so by the
-//! consumer. P&L is reported in **points** (price units × quantity): the
-//! workspace has no per-instrument tick value or currency table, and a
-//! number the simulator cannot compute honestly is a number it does not
-//! show. Simulated positions and pending orders do not survive a session;
-//! only [`ClosedTrade`] history is meant to be persisted (see [`history`]).
+//! consumer. P&L is reported in **points** (price units × quantity), and
+//! stays that way: the simulator is never told what an instrument is worth.
+//! What one point costs is now expressible — [`InstrumentMoney`] carries it
+//! — but it is *declared* by the trader per symbol and held by the surface,
+//! not learned from the tape, so a fill can never carry a currency figure it
+//! could not prove. A number the simulator cannot compute honestly is still
+//! a number it does not show. Simulated positions and pending orders do not
+//! survive a session; only [`ClosedTrade`] history is meant to be persisted
+//! (see [`history`]).
 
 mod simulator;
 mod venue;
@@ -84,9 +88,11 @@ pub mod report;
 // consumer that already talks to the paper simulator should not have to
 // learn where each type happens to live.
 pub use quantick_trading::{
-    Bracket, BracketTarget, CancelReason, CloseAmount, ClosedTrade, EntryKind, ExitPart,
-    ExitReason, Fill, FillRole, LadderError, MAX_EXIT_PARTS, OcoId, Order, OrderId, OrderIntent,
-    OrderRole, Position, RejectReason, TradingVenue, VenueEvent, signed_points,
+    Bracket, BracketTarget, CancelReason, CloseAmount, ClosedTrade, Currency, EntryKind, ExitPart,
+    ExitReason, Fill, FillRole, InstrumentMoney, LadderError, MAX_EXIT_PARTS, Money, MoneySource,
+    OcoId, Order, OrderId, OrderIntent, OrderRole, Position, RejectReason, SizeOutcome,
+    SizeRefusal, SizedEntry, TradingVenue, VenueEvent, risk_at, signed_points, size_for_risk,
+    stop_distance_per_unit,
 };
 pub use report::{PerformanceReport, ReasonReport, SideReport};
 pub use simulator::{Command, QueuedAction, Simulator};

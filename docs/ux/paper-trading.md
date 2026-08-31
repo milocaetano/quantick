@@ -34,10 +34,15 @@ Non-negotiables, inherited from `CLAUDE.md` and the sim crate's contract:
   re-checked against the actual fill: if the tape outran it in between,
   the level is dropped and a toast says so — never kept to fire with a
   lying label.
-- **P&L is shown in points** (price units × quantity), never in currency:
-  the workspace has no per-instrument tick value table. Labels read
-  `+12.5 pts`, not `R$` or `$`. (An instrument table is future work; until
-  it exists a currency number would be an invented number.)
+- **P&L is shown in points** (price units × quantity), and stays that way.
+  Labels read `+12.5 pts`. Money now exists, but only where the trader
+  *declared* it: the risk-per-trade block takes a point value, a size step
+  and a currency per symbol (§3b), and those size the entry before it is
+  placed. Nothing derives them from the tape, and nothing converts between
+  currencies. Results — the ledger, the report, the status cell — stay in
+  points, because a round trip closed before its instrument had a point
+  value was never stamped with one, and re-valuing history at today's number
+  would be the invented number this rule exists to prevent.
 - **What survives:** closed trades, persisted to the history folder.
   **What does not:** open positions and pending orders — they die with the
   session (restart, symbol switch, replay seek) via an explicit, labeled
@@ -314,6 +319,56 @@ Under a ladder the position's own `stop_loss`/`take_profit` answer
 the legs carry the truth and the position declines to pick a rung to stand
 for them all.
 
+### Risk per trade (§3b)
+
+The trader says what one trade may lose; the stop says where the loss ends;
+the size follows. `Qty` stops being something to type and becomes something
+to read.
+
+**The stop is already there.** This sizes an *entry*, so it needs the
+protection the entry will carry, and the ticket already resolves that from
+three sources through one funnel (`aim_bracket`): the wheel's ruler, the
+selected exit ladder, then the typed offsets. All three therefore size, and
+none of them needed a second code path.
+
+**The two facts nothing reports.** A point value (what one point of price is
+worth per unit held) and a size step, per symbol, plus the currency they are
+in. No feed sends them, and nothing here derives them: a wrong row on a
+chart is visible and costs nothing, while a wrong point value is a wrong
+position size and is invisible until it fills. Declared per symbol beside
+the ruler's step and remembered the same way. Half a declaration is no
+declaration — the symbol goes back to unsized rather than being sized off a
+number still being typed.
+
+**The lock is on.** With a risk per trade set, there is no entry that
+exceeds it: the entry pair disables and the click is refused with the same
+sentence. Where even the smallest tradable size loses more than the budget,
+that is what happens — and the way past it is to raise the risk or turn the
+lock off, both deliberate acts. The kernel itself refuses nothing; it
+*reports* the over-budget floor with the real number, and the lock is the
+policy that acts on it. That split is what lets a future account-level
+ceiling reuse the same arithmetic.
+
+**The line is small.** One faint line under `Qty` saying what the number
+means, or why there is none — turning amber only while it is blocking. Not a
+toast, not a modal, not a block of colour in the middle of the ticket: a
+trader reading this is looking at the chart.
+
+**Percent of capital** resolves against a capital the trader declares, keyed
+by currency. A map and not a number from the first commit: charting B3 in
+reais and BTCUSDT in dollars is two capitals, nothing here converts between
+them, so nothing may add them either. The capital is a constant the trader
+types, not a running balance — it does not tick down as trades close, and the
+UI says the percentage does not follow the session's result.
+
+Named calls: `trade.risk.set` and `trade.instrument.set_money`, beside
+`trade.ruler.set`. `session.paper` publishes `risk_state`, `risk_quantity`,
+`risk_amount`, `risk_currency`, `risk_blocks_entry` and `risk_sentence` —
+the last produced by the same function that renders the line on screen, so
+an operator and a trader read one sentence. Launch hook:
+`QUANTICK_PAPER_RISK=<amount>[:<point value>:<size step>:<currency>][:unlocked]`,
+or `<percent>%@<capital>` in place of the amount.
+
 ### Named exit strategies
 
 A ticket row picks a **named exit ladder** — rows of (share of quantity,
@@ -321,9 +376,11 @@ gain in ticks, loss in ticks) — and the aim then projects that ladder, every
 rung of it, before the click. `<None>` rests a bare order the trader
 brackets by hand, which is exactly what the ticket did before this existed.
 
-Ticks only, deliberately: a currency or percentage row needs a tick value
-this workspace does not have, and a number the app cannot compute honestly
-is one it does not show. The shares must add up to 100%; the editor says so
+Ticks only, deliberately, and still: a rung is geometry on the price grid,
+and one stated in money would have to be restated every time the trader
+edited the instrument's point value. Money enters one step earlier instead —
+the risk per trade sizes the entry (§3b), and the ladder divides whatever
+size that produced. The shares must add up to 100%; the editor says so
 beside the fields rather than normalising behind the trader's back, and the
 last rung takes any rounding so no sliver of a position is left naked.
 
@@ -537,7 +594,12 @@ would guard it is already carved out (§9b).
 ## 10. Out of scope (recorded decisions)
 
 - Real order routing of any kind.
-- Fees, margin, multi-account, per-instrument currency P&L.
+- Fees, margin, multi-account.
+- ~~Per-instrument currency P&L.~~ **Half revoked** by the risk-per-trade
+  work: an instrument's point value, size step and currency are now
+  declarable per symbol, and they size an entry before it is placed. What
+  stays out is currency in *results* — the ledger, the report and the CSV
+  journal remain in points, for the reason in §1.
 - ~~Automated strategies (the growth map's bot row remains future work).~~
   **Revoked** by the strategy-anchors work: an armed instance on a chart
   drawing now fires `PlaceMarket` through this same funnel (journal,
