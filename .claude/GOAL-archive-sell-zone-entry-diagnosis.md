@@ -54,6 +54,24 @@ scope the trader added, not scope this mission invented.
   money-moving change could be reviewed alone; the trader chose one PR, and
   the PR body separates the two so a reviewer can still weigh them apart.)
 
+- **D7 — Ship without the cause confirmed.** `delivery-review` found that
+  every fixture on this branch ran the shipped band (1.5–2.5, window 3)
+  while `SellGainAlarm` runs **`window = 20`, `min_factor = 2`,
+  `max_factor = 4.5`** — and the floor is consulted *only inside the band*,
+  so a body under 2× the 20-bar average is `Quiet` and never reaches a floor
+  of either kind. The marked bar may therefore have been held by the **band**,
+  not the floor, in which case **R3**'s change would not have fired it. There
+  is no BTCUSDT recording of that session on disk (only WDOU26 and WINV26), so
+  it cannot be settled here. **Put to the trader with that stated plainly; they
+  chose to ship**, on the reasoning that the badge repair is precisely the
+  instrument the question needed: the next occurrence will name its own gate
+  ("quiet 1.5×", or "2.2× in band · candle 62 under floor"), and the cause can
+  be closed from evidence instead of inference.
+- **D8 — Three deferrals granted.** The trader approved shipping
+  `ruler_refusal()` with no in-app consumer, **G4** without a `main` control
+  run, and **G5** with neither `visual-qa` nor `trader-ux-review` run. See
+  the `## Deferred` section.
+
 ## Assumptions (S)
 
 - **S1** — The marked bar's body is under 100 price units. Read from the
@@ -405,6 +423,39 @@ app instead of only in a doc comment. Rolling back to a build before this
 one still finds no key it knows and falls through to `0`; that direction no
 alias here can reach, and the PR body says so.
 
+## Deferred
+
+Every line here is **granted by the trader** (**D8**, and **D7** for the
+first). Nothing in this section is a deferral the session gave itself — an
+earlier draft of this file listed two that were, and `delivery-review` failed
+the branch for it.
+
+- **A1 / A7 (the half that names the marked bar's gate)** — *granted under
+  D7.* What is delivered: the reporting defect, proven; the floor measuring
+  the candle, proven; and
+  `under_the_traders_own_band_the_floor_is_only_reached_inside_it`, which
+  writes the two regimes down under the trader's real preset. What is **not**
+  delivered: which regime the marked bar was in. It needs the tape, and no
+  BTCUSDT recording of that session exists. The trader chose to ship and read
+  the repaired badge on the next occurrence.
+- **A3 (the machine-readable half's consumer)** — *granted under D8.*
+  `Trigger::refusal()` and `ArmedStrategy::ruler_refusal()` exist, are
+  exhaustively matched and are tested, but no running surface reads them: the
+  control plane's scene does not carry armed instances. Wiring it into
+  `quantick_get_scene` is the follow-up.
+- **G4 (no `main` control run)** — *granted under D8.* The branch build held
+  fps 59–60 / frame_avg 16.64–16.67 ms on a live tape; there is no control
+  run on `main` to compare against. The per-frame path is the shape `main`
+  already had, since the cache that would have changed it was reverted.
+- **G5 (`visual-qa` and `trader-ux-review` not run)** — *granted under D8.*
+  The `ui-harness` hook exists (`QUANTICK_STRATEGY_DEMO`), but no screenshot
+  could be taken: the window opened minimized, `PrintWindow` returns a black
+  raster in that state, and raising it meant intruding on the trader's live
+  session. Two user-visible changes therefore ship un-reviewed by eye — the
+  badge sentence, and the arming form's label (`and body ≥` →
+  `and candle ≥`, with its tooltip rewritten), which the first draft of this
+  file failed to name at all.
+
 ## Closing steps
 
 - **C1** — `delivery-review` returns PASS.
@@ -432,6 +483,21 @@ failure the section exists to prevent.
 > presented — the source of `R3`):**
 >
 > achoq ue esse min body deveria ser min tamanho do candle nao?
+
+Two later answers came through `AskUserQuestion` rather than as free text, so
+they have no verbatim form to quote; they are recorded as the decisions they
+were, with the option the trader selected named exactly:
+
+> **Trader, 2026-08-31 — answering "o piso min_body: como você quer
+> resolver?", having been told that a range floor lets a wick-dominated doji
+> clear a gate its body could not:** selected **"Trocar para tamanho do candle
+> (high-low)"**, and **"Tudo neste mesmo PR"**. That is `D5` and `D6`.
+
+> **Trader, 2026-08-31 — answering the finding that the floor is only reached
+> inside a band their preset sets at 2–4.5, so the marked bar may have been
+> held by the band instead:** selected **"Subir assim: o badge passa a dizer
+> qual porteira segurou"**, and granted the three deferrals above. That is
+> `D7` and `D8`.
 
 The screenshot is part of the request: the badge visible in it reads
 `⚡ SellGainAlarm · last held: the body never cut the region`, and that
