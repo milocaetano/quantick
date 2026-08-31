@@ -4285,7 +4285,7 @@ impl PaperTrading {
         self.hovered_order = None;
         ui.label(
             egui::RichText::new(
-                "Simulated fills from the tape - no broker. Results are in points; any                  currency here is the point value you declared.",
+                "Simulated fills from the tape - no broker. Results are in points; a currency here is the point value you declared.",
             )
                 .color(theme::TEXT_MUTED)
                 .small(),

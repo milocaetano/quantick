@@ -3001,6 +3001,9 @@ impl QuantickApp {
         // that map speaks for every layer, and applying it here would undo the
         // switches of the session mid-flight. Reading the live state is also
         // what the comment below has always promised.
+        let inherited_risk = self.active_tab().paper.risk_settings().clone();
+        let inherited_capital = self.active_tab().paper.capital().clone();
+        let inherited_money = self.active_tab().paper.instrument_money().clone();
         let inherited_layers = self.active_tab().flow_pane.layer_states(&self.style);
         let flow_inverted = self.active_tab().flow_pane.price_view.is_inverted();
         let time_inverted = self
@@ -3015,6 +3018,13 @@ impl QuantickApp {
         tab.paper.set_cmd_trading(cmd_trading);
         tab.paper
             .set_order_strategies(inherited_strategies, inherited_selection.as_deref());
+        // The risk per trade travels with them. It is app-wide like the rest
+        // of the ticket's settings, and a tab that opened without it would
+        // hand the trader a bare quantity field on a market they meant to
+        // size the same way as the one beside it.
+        tab.paper.set_risk_settings(inherited_risk);
+        tab.paper.set_capital(inherited_capital);
+        tab.paper.set_instrument_money(inherited_money);
         tab.flow_pane.layout = inherited_layout;
         self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
