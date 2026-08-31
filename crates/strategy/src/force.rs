@@ -680,7 +680,7 @@ mod tests {
                 );
                 assert!(
                     force.range > force.body * dec("5"),
-                    "the projection is over five times the body that earned it,                      which is the risk consequence of measuring the candle"
+                    "the projection is over five times the body that earned it, which is the risk consequence of measuring the candle"
                 );
             }
             other => panic!("the range floor admits this bar, got {other:?}"),

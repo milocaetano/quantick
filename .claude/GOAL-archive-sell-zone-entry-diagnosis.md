@@ -456,6 +456,34 @@ the branch for it.
   `and candle ≥`, with its tooltip rewritten), which the first draft of this
   file failed to name at all.
 
+## Deferral requested — NOT granted
+
+One finding from the fourth review round has **not** been put to the trader
+and is not covered by **D7** or **D8**. It is here under a heading that says
+so, because a heading is the part that gets skimmed and `## Deferred` would
+claim an approval nobody gave.
+
+- **The Pine input rename silently reinterprets a saved chart calibration.**
+  `min_body_points` became `min_range_points` in
+  `crates/app/scripts/exhaustion_reversal.pine`. Indicator settings persist
+  positionally (`indicators/state_file.rs`) and rebind by position
+  (`indicator_worker.rs`), and the rename keeps both the index and the
+  `Float` type — so a trader who calibrated that floor to `100` reloads with
+  `100` now meaning `high - low` instead of `|close - open|`, a strictly
+  looser gate that paints more force bars. Because the count and types are
+  unchanged, `INDICATOR_INPUTS_REBOUND` never fires and **nothing is
+  logged**. The strategy bank got `STRATEGY_FLOOR_REINTERPRETED` for exactly
+  this situation; the chart the trader calibrates against got silence, which
+  is the data-honesty rule pointing the other way.
+  *Mitigating, but not sufficient:* the input's own title now reads "min
+  force-bar candle range (points, 0 = off)", so a trader who opens the
+  settings dialog sees the new wording, and the shipped default is `0.0`
+  (off), so only a trader who set it is affected.
+  *The decision this needs:* whether to ship it as-is (the same
+  reinterpretation the trader accepted for the bank), to give indicator
+  settings the same load-time notice the bank got, or to leave the script on
+  the body and re-open the chart-versus-kernel divergence.
+
 ## Closing steps
 
 - **C1** — `delivery-review` returns PASS.
