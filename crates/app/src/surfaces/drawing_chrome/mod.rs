@@ -60,7 +60,6 @@ pub(crate) mod manager;
 
 use eframe::egui;
 
-use super::{Surface, SurfaceEnv, SurfaceResponse};
 use crate::bands::BandLabel;
 use crate::drawings::{Drawing, DrawingStyle, PresetHost};
 use crate::pane::PaneSide;
@@ -175,27 +174,21 @@ impl InspectorActions {
     }
 }
 
-/// An inline text edit in flight: which object, on which pane of which tab,
-/// and what it said before the first keystroke.
+/// An edit in flight: which object, on which pane of which tab, and what it
+/// said before the first keystroke or the first drag.
 ///
-/// The tab and the pane, not the index alone: an index identifies nothing
-/// once there are two panes, let alone two tabs. Switching tabs with an
-/// editor open would otherwise record the note's undo entry against whatever
-/// object happened to sit at that index on the tab now in front — swapping an
+/// One record for both kinds of edit — the inline field's and the inspector's
+/// — because they are the same fact and end at the same call. Two identical
+/// structs would be two merge rules and two host branches to keep in step, and
+/// a fix applied to one would not reach the other.
+///
+/// The tab and the pane, not the index alone: an index identifies nothing once
+/// there are two panes, let alone two tabs. Switching tabs with an editor open
+/// would otherwise record the note's undo entry against whatever object
+/// happened to sit at that index on the tab now in front — swapping an
 /// unrelated drawing for a copy of the note on the next Ctrl+Z.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct InlineTextEdit {
-    pub tab: u64,
-    pub side: PaneSide,
-    pub index: usize,
-    pub before: Drawing,
-}
-
-/// The pre-edit copy held while an inspector gesture (a slider, a colour
-/// wheel, a coordinate drag) is in flight, so the whole gesture commits as one
-/// undo entry when pointer and keyboard let go.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct InspectorEdit {
+pub(crate) struct DrawingEdit {
     pub tab: u64,
     pub side: PaneSide,
     pub index: usize,
@@ -292,35 +285,6 @@ impl DrawingEnv<'_> {
     }
 }
 
-#[cfg(test)]
-impl DrawingEnv<'static> {
-    /// A pane with nothing selected and no manager open, for the tests.
-    ///
-    /// Written the way [`super::SurfaceEnv::quiet`] is, and for the same
-    /// reason: a field added here costs one line in this file rather than an
-    /// edit in each of the four surfaces' test modules.
-    pub fn quiet() -> Self {
-        /// A preset bank a test that does not care about presets gets.
-        static QUIET_PRESETS: crate::drawings::NullPresetHost = crate::drawings::NullPresetHost;
-        Self {
-            selected: None,
-            chart_area: None,
-            focused_chart_area: None,
-            lane_divider_x: None,
-            auto_range: None,
-            selected_bbox: None,
-            selected_band: None,
-            tab: 0,
-            side: PaneSide::Flow,
-            drawing_tool_armed: false,
-            toolbox_dock: ToolboxDock::Left,
-            authored_objects: 0,
-            manager_rows: &[],
-            presets: &QUIET_PRESETS,
-        }
-    }
-}
-
 /// One write to the preset bank, recorded rather than performed.
 ///
 /// The bank is host state that persists to disk on every write, so the
@@ -391,6 +355,13 @@ impl PresetWrite {
 /// [`PresetHost::load_custom_preset`] rather than from a copy of the store's
 /// rule, and `recorder_refuses_a_taken_name_exactly_as_the_bank_does` pins
 /// the two together.
+///
+/// **A read sees the writes this frame already made.** The bank is not
+/// mutated until the host replays the list, so consulting it alone would let
+/// one frame delete a preset and then be told the name it just freed is still
+/// taken — and would list a preset the trader deleted a moment ago. Every
+/// name-answering read therefore checks the pending writes first, newest
+/// wins, exactly as replaying them onto the bank would.
 pub(crate) struct RecordingPresetHost<'a> {
     bank: &'a dyn PresetHost,
     writes: Vec<PresetWrite>,
@@ -414,13 +385,69 @@ impl RecordingPresetHost<'_> {
     }
 }
 
+impl RecordingPresetHost<'_> {
+    /// Whether a preset by that name would exist once this frame's writes are
+    /// replayed. The newest pending write about the name wins; with none, the
+    /// bank answers.
+    fn pending_exists(&self, tool_id: &str, name: &str) -> Option<bool> {
+        self.writes.iter().rev().find_map(|write| match write {
+            PresetWrite::Save {
+                tool_id: t,
+                name: n,
+                ..
+            } if t == tool_id && n == name => Some(true),
+            PresetWrite::Delete {
+                tool_id: t,
+                name: n,
+            } if t == tool_id && n == name => Some(false),
+            _ => None,
+        })
+    }
+
+    fn exists(&self, tool_id: &str, name: &str) -> bool {
+        self.pending_exists(tool_id, name)
+            .unwrap_or_else(|| self.bank.load_custom_preset(tool_id, name).is_some())
+    }
+}
+
 impl PresetHost for RecordingPresetHost<'_> {
     fn custom_preset_names(&self, tool_id: &str) -> Vec<String> {
-        self.bank.custom_preset_names(tool_id)
+        let mut names = self.bank.custom_preset_names(tool_id);
+        for write in &self.writes {
+            match write {
+                PresetWrite::Save {
+                    tool_id: t, name, ..
+                } if t == tool_id => {
+                    if !names.contains(name) {
+                        names.push(name.clone());
+                    }
+                }
+                PresetWrite::Delete { tool_id: t, name } if t == tool_id => {
+                    names.retain(|held| held != name);
+                }
+                _ => {}
+            }
+        }
+        // The bank hands these back in `BTreeMap` order; a name appended here
+        // has to land in the same place, or the combo box reorders itself for
+        // one frame after a save.
+        names.sort();
+        names
     }
 
     fn load_custom_preset(&self, tool_id: &str, name: &str) -> Option<toml::Value> {
-        self.bank.load_custom_preset(tool_id, name)
+        match self.pending_exists(tool_id, name) {
+            Some(false) => None,
+            Some(true) => self.writes.iter().rev().find_map(|write| match write {
+                PresetWrite::Save {
+                    tool_id: t,
+                    name: n,
+                    value,
+                } if t == tool_id && n == name => Some(value.clone()),
+                _ => None,
+            }),
+            None => self.bank.load_custom_preset(tool_id, name),
+        }
     }
 
     fn save_custom_preset(
@@ -430,7 +457,7 @@ impl PresetHost for RecordingPresetHost<'_> {
         value: toml::Value,
         overwrite: bool,
     ) -> bool {
-        if !overwrite && self.bank.load_custom_preset(tool_id, name).is_some() {
+        if !overwrite && self.exists(tool_id, name) {
             return false;
         }
         self.writes.push(PresetWrite::Save {
@@ -507,7 +534,7 @@ pub(crate) struct DrawingChromeAsk {
     /// thing that produced it. Boxed for the reason [`Self::edited`] is: a
     /// `Drawing` inline here would be paid for by every surface in the
     /// application, on every frame, in a response returned by value.
-    pub commit_edit_gesture: Option<Box<InspectorEdit>>,
+    pub commit_edit_gesture: Option<Box<DrawingEdit>>,
     /// Hide or show the selection.
     pub toggle_selected_hidden: bool,
     /// Lock or unlock the selection.
@@ -517,6 +544,13 @@ pub(crate) struct DrawingChromeAsk {
     /// Delete the selection even though it is locked — the trader answered
     /// the question.
     pub force_delete: bool,
+    /// The trader answered "no" to that question.
+    ///
+    /// Applied by the host *after* [`Self::request_delete`], not cleared
+    /// surface-side during the draw: a frame that carries both — the bar's
+    /// confirm glyph and the body's Cancel — must end with the prompt gone,
+    /// and a delete request on a locked object raises it again.
+    pub cancel_delete: bool,
     /// Copy the selection, offset so the copy is visibly a copy.
     pub duplicate: bool,
     /// Place a text note in the middle of the pane and open its editor — the
@@ -526,7 +560,7 @@ pub(crate) struct DrawingChromeAsk {
     /// Record this object's pre-edit copy as one undo entry: the inline
     /// editor closed, on the pane the note actually lives on, which is not
     /// necessarily the one in front. Boxed like the two above.
-    pub record_inline_edit: Option<Box<InlineTextEdit>>,
+    pub record_inline_edit: Option<Box<DrawingEdit>>,
     /// The caret moved to a different object, or left the chart. Every pane
     /// has to be told, so exactly one object anywhere stands down; the host
     /// reads the new target back by name.
@@ -574,6 +608,7 @@ impl DrawingChromeAsk {
         self.toggle_selected_locked |= other.toggle_selected_locked;
         self.request_delete |= other.request_delete;
         self.force_delete |= other.force_delete;
+        self.cancel_delete |= other.cancel_delete;
         self.duplicate |= other.duplicate;
         self.place_text_note |= other.place_text_note;
         self.record_inline_edit = self.record_inline_edit.take().or(other.record_inline_edit);
@@ -609,7 +644,7 @@ pub(crate) struct Shared {
     /// A locked object's delete was asked for and is awaiting its answer.
     delete_confirm: bool,
     /// The pre-edit copy held across an in-flight edit gesture.
-    edit_baseline: Option<InspectorEdit>,
+    edit_baseline: Option<DrawingEdit>,
 }
 
 /// The chrome that speaks for the selected drawing: the context bar, the
@@ -685,8 +720,8 @@ impl DrawingChromeSurface {
         self.shared.open = open;
     }
 
-    /// Whether the inspector is open.
-    #[cfg(test)]
+    /// Whether the floating inspector is on screen. Read by the host before
+    /// it formats the band name, which only the inspector's title shows.
     pub fn inspector_open(&self) -> bool {
         self.shared.open
     }
@@ -756,13 +791,13 @@ impl DrawingChromeSurface {
 
     /// Close the editor, if one is open, and hand back what it owes the undo
     /// history.
-    pub fn end_inline_text_edit(&mut self) -> Option<InlineTextEdit> {
+    pub fn end_inline_text_edit(&mut self) -> Option<DrawingEdit> {
         self.inline.end()
     }
 
     /// Park the inspector where a hand put it. The hook that stands in for one
     /// reaches [`inspector::Inspector::place_by_hand`] directly, from
-    /// [`Surface::apply_env_hook`].
+    /// [`super::Surface::apply_env_hook`].
     #[cfg(test)]
     pub fn place_inspector_by_hand(&mut self, position: egui::Pos2) {
         self.inspector.place_by_hand(position);
@@ -903,7 +938,7 @@ impl DrawingChromeSurface {
     /// outlives its selection is committed rather than dropped.
     #[cfg(test)]
     pub fn open_edit_gesture(&mut self, tab: u64, side: PaneSide, index: usize, before: Drawing) {
-        self.shared.edit_baseline = Some(InspectorEdit {
+        self.shared.edit_baseline = Some(DrawingEdit {
             tab,
             side,
             index,
@@ -924,102 +959,6 @@ impl DrawingChromeSurface {
     #[cfg(test)]
     pub fn manager_action_rects(&self) -> &[(usize, &'static str, egui::Rect)] {
         &self.manager.action_rects
-    }
-}
-
-impl Surface for DrawingChromeSurface {
-    fn id(&self) -> &'static str {
-        "drawing-chrome"
-    }
-
-    /// The port's uniform entry, which forwards to [`Self::draw_floating`].
-    ///
-    /// [`Surfaces::draw_all`] deliberately does not call it: this surface is
-    /// anchored to the *chart* rather than floating over the window, so the
-    /// host registers it after the central canvas — both because a Background
-    /// panel drawn afterwards would sit over an `Area` created before it, and
-    /// because the pane geometry every piece here places against
-    /// (`last_chart_area`, `last_auto_range`, the lane divider) is written by
-    /// the canvas as it draws. Reading it a phase early would place the bar
-    /// and the panel against the previous frame's chart.
-    ///
-    /// Kept rather than dropped, and it is a forward rather than a second
-    /// implementation: this surface satisfies exactly the contract its eight
-    /// neighbours do, `apply_env_hook` hangs off the same trait, and if the
-    /// frame is ever reordered so the canvas comes first, adding this member
-    /// to `draw_all` is one line.
-    fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
-        SurfaceResponse {
-            drawing: self.draw_floating(ctx, &env.drawing),
-            ..SurfaceResponse::default()
-        }
-    }
-
-    /// Five `QUANTICK_*` hooks, all of them state this surface owns.
-    ///
-    /// They ran in the constructor before this module existed, which put the
-    /// hook for a surface in a different file from the surface. Here they are
-    /// beside the fields they set, and a hook that stops matching its field
-    /// stops compiling.
-    fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
-        // The on-chart note editor exists only between a placement and the
-        // first click elsewhere, so no click-free launch could photograph it
-        // without a hook — the same gap `QUANTICK_DRAWING_DRAFT` fills for a
-        // half-placed object. The placement itself is the host's, so this
-        // raises the ask rather than making the object.
-        if std::env::var("QUANTICK_TEXT_NOTE").is_ok_and(|value| value == "1") {
-            self.pending_text_note = true;
-        }
-        // The object manager: where the "off series", "other market" and band
-        // badges live, and the only place a mark clamped to an edge can be
-        // found when it is nowhere near the visible window.
-        if std::env::var("QUANTICK_DRAWINGS_MANAGER").is_ok_and(|value| value == "1") {
-            self.manager.open = true;
-        }
-        // The context bar only exists while something is selected, so the
-        // hook that reaches it is a hook that *selects*: pair this with
-        // QUANTICK_DRAWINGS_DEMO_SELECT. This one opens the panel behind the
-        // gear on top, which is the state a screenshot cannot otherwise reach
-        // without a click.
-        if std::env::var("QUANTICK_DRAWING_INSPECTOR").is_ok_and(|value| value == "1") {
-            self.shared.open = true;
-        }
-        // Which tab the panel opens on. The panel is one hook away, but its
-        // tool-owned tab — where a Fib's levels and colours are built, and
-        // where the two default controls sit — is a click deeper, and a
-        // capture has no hand for it.
-        if let Ok(tab) = std::env::var("QUANTICK_DRAWING_INSPECTOR_TAB") {
-            match tab.trim() {
-                "style" => self.inspector.tab = InspectorTab::Style,
-                "extra" => self.inspector.tab = InspectorTab::Extra,
-                "coordinates" => self.inspector.tab = InspectorTab::Coordinates,
-                // Refused rather than guessed: a typo shows the default tab,
-                // never a confident capture of the wrong one.
-                other => tracing::warn!(tab = other, "unknown drawing inspector tab"),
-            }
-        }
-        // The trader's own drag, scripted: `x,y` in screen points parks the
-        // properties popup exactly as a hand on the title bar would, through
-        // that gesture's own function. Without it the remembered position is
-        // unreachable from a launch — a drag is the only way to set one, and
-        // a capture run has no hand. Nonsense is refused rather than guessed,
-        // so a typo photographs automatic placement instead of an invented
-        // pixel.
-        if let Some(position) = std::env::var("QUANTICK_DRAWING_INSPECTOR_POS")
-            .ok()
-            .and_then(|value| parse_point(&value))
-        {
-            self.inspector.place_by_hand(position);
-        }
-        // And the same drag on the context bar, which keeps its position
-        // across selections too. Its own gesture is the grip, and a capture
-        // run has no more hand for that one than for the title bar.
-        if let Some(position) = std::env::var("QUANTICK_CONTEXT_BAR_POS")
-            .ok()
-            .and_then(|value| parse_point(&value))
-        {
-            self.bar.bar.set_manual(position);
-        }
     }
 }
 
@@ -1046,7 +985,7 @@ fn apply_actions(
         && chrome.shared.edit_baseline.is_none()
         && let Some(selected) = env.selected.as_ref()
     {
-        chrome.shared.edit_baseline = Some(InspectorEdit {
+        chrome.shared.edit_baseline = Some(DrawingEdit {
             tab: env.tab,
             side: env.side,
             index,
@@ -1078,9 +1017,7 @@ fn apply_actions(
         }
     }
     ask.request_delete |= actions.delete;
-    if actions.cancel_delete {
-        chrome.shared.delete_confirm = false;
-    }
+    ask.cancel_delete |= actions.cancel_delete;
     if actions.force_delete {
         chrome.shared.delete_confirm = false;
         ask.force_delete = true;
@@ -1100,6 +1037,80 @@ fn apply_actions(
     // Nothing to undo: this changed a preference, not the chart.
     ask.saved_default = actions.saved_default;
     ask
+}
+
+/// Read the five `QUANTICK_*` capture hooks this surface owns.
+///
+/// Called from the constructor, where every launch hook is read — **not**
+/// from [`super::Surface::apply_env_hook`], which the registry applies on the first
+/// *drawn* frame. That is too late for two of these: the demo appliers run
+/// earlier in that same frame, and `QUANTICK_DRAWING_INSPECTOR=1` is a state
+/// they read (`carry_across_selection` asks whether the panel is open before
+/// it places an object and moves the selection). A hook another hook depends
+/// on has to be in place before any frame, and photographing a chart with no
+/// inspector because the order slipped is exactly the silent capture failure
+/// this file's own comments warn about.
+///
+/// Here rather than in `app.rs` because the fields are here: a hook that
+/// stops matching its field stops compiling.
+pub(crate) fn apply_launch_hooks(chrome: &mut DrawingChromeSurface) {
+    // The object manager: where the "off series", "other market" and band
+    // badges live, and the only place a mark clamped to an edge can be found
+    // when it is nowhere near the visible window.
+    if std::env::var("QUANTICK_DRAWINGS_MANAGER").is_ok_and(|value| value == "1") {
+        chrome.manager.open = true;
+    }
+    // The context bar only exists while something is selected, so the hook
+    // that reaches it is a hook that *selects*: pair this with
+    // QUANTICK_DRAWINGS_DEMO_SELECT. This one opens the panel behind the gear
+    // on top, which is the state a screenshot cannot otherwise reach without a
+    // click.
+    if std::env::var("QUANTICK_DRAWING_INSPECTOR").is_ok_and(|value| value == "1") {
+        chrome.shared.open = true;
+    }
+    // The on-chart note editor exists only between a placement and the first
+    // click elsewhere, so no click-free launch could photograph it without a
+    // hook — the same gap `QUANTICK_DRAWING_DRAFT` fills for a half-placed
+    // object. The placement itself is the host's, so this raises the ask
+    // rather than making the object.
+    if std::env::var("QUANTICK_TEXT_NOTE").is_ok_and(|value| value == "1") {
+        chrome.pending_text_note = true;
+    }
+    // Which tab the panel opens on. The panel is one hook away, but its
+    // tool-owned tab — where a Fib's levels and colours are built, and where
+    // the two default controls sit — is a click deeper, and a capture has no
+    // hand for it.
+    if let Ok(tab) = std::env::var("QUANTICK_DRAWING_INSPECTOR_TAB") {
+        match tab.trim() {
+            "style" => chrome.inspector.tab = InspectorTab::Style,
+            "extra" => chrome.inspector.tab = InspectorTab::Extra,
+            "coordinates" => chrome.inspector.tab = InspectorTab::Coordinates,
+            // Refused rather than guessed: a typo shows the default tab, never
+            // a confident capture of the wrong one.
+            other => tracing::warn!(tab = other, "unknown drawing inspector tab"),
+        }
+    }
+    // The trader's own drag, scripted: `x,y` in screen points parks the
+    // properties popup exactly as a hand on the title bar would, through that
+    // gesture's own function. Without it the remembered position is
+    // unreachable from a launch — a drag is the only way to set one, and a
+    // capture run has no hand. Nonsense is refused rather than guessed, so a
+    // typo photographs automatic placement instead of an invented pixel.
+    if let Some(position) = std::env::var("QUANTICK_DRAWING_INSPECTOR_POS")
+        .ok()
+        .and_then(|value| parse_point(&value))
+    {
+        chrome.inspector.place_by_hand(position);
+    }
+    // And the same drag on the context bar, which keeps its position across
+    // selections too. Its own gesture is the grip, and a capture run has no
+    // more hand for that one than for the title bar.
+    if let Some(position) = std::env::var("QUANTICK_CONTEXT_BAR_POS")
+        .ok()
+        .and_then(|value| parse_point(&value))
+    {
+        chrome.bar.bar.set_manual(position);
+    }
 }
 
 /// `x,y` in screen points, or nothing. Refused rather than guessed: a typo
@@ -1218,6 +1229,57 @@ mod tests {
         for raw in ["", "420", "420,", ",200", "left,top", "420x200"] {
             assert_eq!(parse_point(raw), None, "{raw:?} is not a point");
         }
+    }
+
+    /// A frame that deletes a preset and saves under the freed name must not
+    /// be told the name is taken. The bank is not written until the host
+    /// replays the list, so a recorder that consulted it alone would raise the
+    /// "Overwrite?" prompt for a name its own pending delete is about to free.
+    #[test]
+    fn a_read_sees_the_writes_the_same_frame_already_made() {
+        let store = bank("same-frame");
+        let mut recorder = RecordingPresetHost::new(&store);
+        assert!(
+            !recorder.save_custom_preset("fib", "taken", toml::Value::Integer(2), false),
+            "the name is taken and overwrite was not asked for"
+        );
+        recorder.delete_custom_preset("fib", "taken");
+        assert!(
+            recorder.save_custom_preset("fib", "taken", toml::Value::Integer(2), false),
+            "the delete this frame recorded freed the name"
+        );
+        let _ = std::fs::remove_file(store.path());
+    }
+
+    /// And the list the trader picks from is the list the frame's own writes
+    /// leave behind — a combo box that still offers a preset deleted a moment
+    /// ago is offering something that will not load.
+    #[test]
+    fn the_name_list_follows_the_frame_s_own_writes() {
+        let store = bank("name-list");
+        let mut recorder = RecordingPresetHost::new(&store);
+        assert_eq!(
+            recorder.custom_preset_names("fib"),
+            vec!["taken".to_owned()]
+        );
+        recorder.save_custom_preset("fib", "another", toml::Value::Integer(3), false);
+        assert_eq!(
+            recorder.custom_preset_names("fib"),
+            vec!["another".to_owned(), "taken".to_owned()],
+            "a saved name joins the list, in the order the bank would give it back"
+        );
+        assert_eq!(
+            recorder.load_custom_preset("fib", "another"),
+            Some(toml::Value::Integer(3)),
+            "and it loads what was saved rather than nothing"
+        );
+        recorder.delete_custom_preset("fib", "taken");
+        assert_eq!(
+            recorder.custom_preset_names("fib"),
+            vec!["another".to_owned()]
+        );
+        assert_eq!(recorder.load_custom_preset("fib", "taken"), None);
+        let _ = std::fs::remove_file(store.path());
     }
 
     /// The fold keeps a flag set and takes the first valued ask, which is the

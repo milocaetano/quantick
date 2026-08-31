@@ -179,13 +179,10 @@ enum WorkspacePick {
 /// call sites draws the list, and building a row per object for the site that
 /// does not would be a per-frame allocation for a window nobody is looking at.
 fn drawing_env<'a>(
-    tabs: &'a [Tab],
     tab: &'a Tab,
     toolrail: &ToolRail,
     presets: &'a drawings::presets::PresetStore,
-    selected_bbox: Option<egui::Rect>,
-    selected_band: Option<String>,
-    manager_rows: &'a [crate::surfaces::drawing_chrome::ManagerRow],
+    read: DrawingRead<'a>,
 ) -> crate::surfaces::DrawingEnv<'a> {
     let side = tab.drawing_side();
     let pane = tab.pane(side);
@@ -201,22 +198,32 @@ fn drawing_env<'a>(
         focused_chart_area: tab.focused_pane().last_chart_area,
         lane_divider_x: pane.last_lane_divider_x,
         auto_range: pane.last_auto_range,
-        selected_bbox,
-        selected_band,
+        selected_bbox: read.selected_bbox,
+        selected_band: read.selected_band,
         tab: tab.id,
         side,
         drawing_tool_armed: matches!(toolrail.tool(), Tool::Drawing(_)),
         toolbox_dock: toolrail.dock(),
-        // Only worth counting while the window that offers to take them back
-        // is on screen; the walk is over every pane of every tab.
-        authored_objects: if manager_rows.is_empty() {
-            0
-        } else {
-            QuantickApp::authored_object_count(tabs)
-        },
-        manager_rows,
+        authored_objects: read.authored_objects,
+        manager_rows: read.manager_rows,
         presets,
     }
+}
+
+/// The parts of [`drawing_env`] that cost something to work out, gathered by
+/// the caller so each pass pays only for what it draws.
+///
+/// Three fields and three prices. Projecting the selection's painted bounds
+/// walks its anchors through the price scale; naming its band formats a
+/// string; counting an assistant's objects walks every pane of every tab. All
+/// three are per-frame while a selection is on screen, which is why the pass
+/// that only runs the capture hooks gathers none of them and says so.
+#[derive(Default)]
+struct DrawingRead<'a> {
+    selected_bbox: Option<egui::Rect>,
+    selected_band: Option<String>,
+    authored_objects: usize,
+    manager_rows: &'a [crate::surfaces::drawing_chrome::ManagerRow],
 }
 
 /// The chart rectangle a settings dialog is previewing an unapplied draft on,
@@ -1475,6 +1482,13 @@ impl QuantickApp {
                 "partial" => Some(VenueHistoryDemo::Partial),
                 _ => None,
             });
+        // The drawing chrome's five hooks, read here rather than on the first
+        // drawn frame: the demo appliers run earlier in that frame and ask
+        // whether the inspector is open, so a hook another hook depends on has
+        // to be in place before any of them. They live with the fields they
+        // set — see `surfaces::drawing_chrome::apply_launch_hooks`.
+        crate::surfaces::drawing_chrome::apply_launch_hooks(&mut app.surfaces.drawing_chrome);
+
         // Same convenience for the aggression layer (bubbles + the live
         // column's footprint). Same code path as the toolbar toggle.
         if std::env::var("QUANTICK_BUBBLES_AUTOSTART").is_ok_and(|value| value == "1") {
@@ -6922,26 +6936,31 @@ impl QuantickApp {
             .collect()
     }
 
-    /// Where the selected object is painted, and what the band it lives on is
-    /// called: the two answers the chrome cannot work out for itself, because
-    /// both need the viewport and the price scale the host owns.
+    /// Where the selected object is painted, in screen points. The chrome
+    /// cannot work this out for itself: it needs the viewport and the price
+    /// scale the host owns.
     ///
-    /// Nothing is projected and no name is formatted while nothing is selected,
-    /// which is every frame of an ordinary session.
-    fn selected_drawing_geometry(&self) -> (Option<egui::Rect>, Option<String>) {
+    /// Two separate answers rather than one pair, because they cost different
+    /// things and not every pass wants both — this one walks the object's
+    /// anchors through the price scale. Nothing is projected while nothing is
+    /// selected, which is every frame of an ordinary session.
+    fn selected_drawing_bbox(&self) -> Option<egui::Rect> {
         let pane = self.drawing_pane();
-        let Some(index) = pane.drawings.selected() else {
-            return (None, None);
-        };
-        let bbox = pane
-            .last_chart_area
-            .and_then(|chart| self.drawing_bbox_on_screen(chart, index));
-        let band = pane
-            .drawings
-            .items()
-            .get(index)
-            .and_then(|drawing| self.focused_pane().band_label(drawing).chip());
-        (bbox, band)
+        let index = pane.drawings.selected()?;
+        let chart = pane.last_chart_area?;
+        self.drawing_bbox_on_screen(chart, index)
+    }
+
+    /// What the band the selected object lives on is called, for the
+    /// inspector's title. `None` on the price band, where a suffix on every
+    /// object would be noise. Formats a string, so it is asked for only by a
+    /// pass that shows the title.
+    fn selected_drawing_band(&self) -> Option<String> {
+        let pane = self.drawing_pane();
+        let index = pane.drawings.selected()?;
+        self.focused_pane()
+            .band_label(pane.drawings.items().get(index)?)
+            .chip()
     }
 
     /// Carry out what the drawing chrome asked for.
@@ -6985,6 +7004,11 @@ impl QuantickApp {
         }
         if ask.request_delete {
             self.request_delete_selected(now);
+        }
+        if ask.cancel_delete {
+            // After the request, never before: a frame carrying both must end
+            // with the prompt gone, and a delete on a locked object raises it.
+            self.surfaces.drawing_chrome.set_delete_confirm(false);
         }
         if ask.force_delete {
             let doomed = {
@@ -7031,7 +7055,10 @@ impl QuantickApp {
                     .note_with_undo("All drawings deleted.", now);
             }
         }
-        if let Some(index) = ask.manager_select {
+        if let Some(index) = ask
+            .manager_select
+            .filter(|index| *index < self.drawing_pane().drawings.items().len())
+        {
             self.drawing_pane_mut().drawings.select(Some(index));
             // Centre the viewport on the object's bar span.
             let slots = self.drawing_pane().slots();
@@ -7046,17 +7073,31 @@ impl QuantickApp {
                 }
             }
         }
-        if let Some(index) = ask.manager_toggle_hidden {
-            let hidden = self.drawing_pane().drawings.items()[index].hidden;
+        // Through `get`, never `[]`: the rows were snapshotted before any of
+        // the four pieces drew, and a destructive ask applied above — delete
+        // all, the assistant sweep, a confirmed delete — can have shortened
+        // the list under an index that was valid when the row was clicked. The
+        // store's own setters are already bounds-safe; these two reads were
+        // the only raw ones left.
+        if let Some(hidden) = ask.manager_toggle_hidden.and_then(|index| {
+            Some((
+                index,
+                self.drawing_pane().drawings.items().get(index)?.hidden,
+            ))
+        }) {
             self.drawing_pane_mut()
                 .drawings
-                .set_hidden_at(index, !hidden);
+                .set_hidden_at(hidden.0, !hidden.1);
         }
-        if let Some(index) = ask.manager_toggle_locked {
-            let locked = self.drawing_pane().drawings.items()[index].locked;
+        if let Some(locked) = ask.manager_toggle_locked.and_then(|index| {
+            Some((
+                index,
+                self.drawing_pane().drawings.items().get(index)?.locked,
+            ))
+        }) {
             self.drawing_pane_mut()
                 .drawings
-                .set_locked_at(index, !locked);
+                .set_locked_at(locked.0, !locked.1);
         }
         if let Some(index) = ask.manager_bring_to_front {
             self.drawing_pane_mut().drawings.bring_to_front(index);
@@ -7097,31 +7138,60 @@ impl QuantickApp {
         if !self.surfaces.drawing_chrome.inspector_pinned() {
             return;
         }
-        let ask = self.draw_drawing_chrome_part(ctx, false);
+        // No painted bounds: a docked panel has no placement rule to keep
+        // clear of the object, so the projection the floating one needs is not
+        // gathered here. The band still is — it is in the title.
+        let read = DrawingRead {
+            selected_band: self.selected_drawing_band(),
+            ..DrawingRead::default()
+        };
+        let ask = self.draw_chrome_pass(ctx, read, false);
         self.apply_drawing_chrome(ask, now);
     }
 
     /// The four floating pieces, registered after the canvas so they stay in
     /// front of the chart they are anchored to.
     fn draw_drawing_chrome(&mut self, ctx: &egui::Context, now: Instant) {
-        let ask = self.draw_drawing_chrome_part(ctx, true);
-        self.apply_drawing_chrome(ask, now);
-    }
-
-    /// One gather for both call sites. `floating` picks which of the surface's
-    /// two entry points runs; the rows the object manager lists are built only
-    /// for the one that draws it.
-    fn draw_drawing_chrome_part(
-        &mut self,
-        ctx: &egui::Context,
-        floating: bool,
-    ) -> crate::surfaces::drawing_chrome::DrawingChromeAsk {
-        let rows = if floating && self.surfaces.drawing_chrome.manager_open() {
+        let manager_open = self.surfaces.drawing_chrome.manager_open();
+        let rows = if manager_open {
             self.drawing_manager_rows()
         } else {
             Vec::new()
         };
-        let (selected_bbox, selected_band) = self.selected_drawing_geometry();
+        // The band name goes in the inspector's title and nowhere else, so
+        // it is formatted only when one of the two inspector hosts is on
+        // screen. A selection alone raises the context bar, which never shows
+        // it — and `band_label` scans the pane's indicator views and `chip`
+        // allocates, every frame, for a value nothing would read.
+        let inspector_showing = self.surfaces.drawing_chrome.inspector_open()
+            || self.surfaces.drawing_chrome.inspector_pinned();
+        let read = DrawingRead {
+            selected_bbox: self.selected_drawing_bbox(),
+            selected_band: inspector_showing
+                .then(|| self.selected_drawing_band())
+                .flatten(),
+            // Counted only for the window that offers to take them back, and
+            // over every tab: an object an assistant placed on another chart
+            // still belongs in that count.
+            authored_objects: if manager_open {
+                Self::authored_object_count(&self.tabs)
+            } else {
+                0
+            },
+            manager_rows: &rows,
+        };
+        let ask = self.draw_chrome_pass(ctx, read, true);
+        self.apply_drawing_chrome(ask, now);
+    }
+
+    /// One split for both call sites. `floating` picks which of the surface's
+    /// two entry points runs.
+    fn draw_chrome_pass(
+        &mut self,
+        ctx: &egui::Context,
+        read: DrawingRead<'_>,
+        floating: bool,
+    ) -> crate::surfaces::drawing_chrome::DrawingChromeAsk {
         // Split into disjoint borrows, like the surface registry above: the
         // chrome is drawn through `&mut` while what it reads is borrowed from
         // the rest of the application.
@@ -7133,15 +7203,7 @@ impl QuantickApp {
             drawing_presets,
             ..
         } = self;
-        let env = drawing_env(
-            tabs,
-            &tabs[*active_tab],
-            toolrail,
-            drawing_presets,
-            selected_bbox,
-            selected_band,
-            &rows,
-        );
+        let env = drawing_env(&tabs[*active_tab], toolrail, drawing_presets, read);
         if floating {
             surfaces.drawing_chrome.draw_floating(ctx, &env)
         } else {
@@ -8905,10 +8967,6 @@ impl QuantickApp {
         // application. That the compiler insists on the split is the port
         // working — a surface cannot be handed the trunk it is being kept
         // out of.
-        // Projected before the split, because it needs the viewport and the
-        // price scale: where the selected object is painted, and what the band
-        // it lives on is called. Both cost nothing while nothing is selected.
-        let (selected_bbox, selected_band) = self.selected_drawing_geometry();
         let Self {
             surfaces: registry,
             bookmarks,
@@ -8921,8 +8979,6 @@ impl QuantickApp {
             config,
             added_symbols,
             alert_failure,
-            drawing_presets,
-            toolrail,
             ..
         } = self;
         let focused_tab = &tabs[*active_tab];
@@ -8952,18 +9008,6 @@ impl QuantickApp {
                 active_tab: focused_tab.id,
                 counted_bar_sides: &counted_bar_sides,
                 alert_failure: alert_failure.as_deref(),
-                // No rows: the object manager is drawn from its own call site,
-                // after the canvas, and this one only carries the slice so the
-                // capture hooks can read it.
-                drawing: drawing_env(
-                    tabs,
-                    focused_tab,
-                    toolrail,
-                    drawing_presets,
-                    selected_bbox,
-                    selected_band,
-                    &[],
-                ),
             },
         );
         if let Some(name) = surfaces.save_workspace_as {
@@ -18843,6 +18887,52 @@ crosshair = false
             run_frame(&mut app, &ctx);
         }
 
+        assert!(!app.pending_drawing_demo, "the demo has run");
+        assert!(
+            app.drawing_pane().drawings.selected().is_some(),
+            "and left an object selected, which is what closes the panel"
+        );
+        assert!(
+            app.surfaces.drawing_chrome.inspector_open(),
+            "the panel the hook asked for survives the demo's own selection"
+        );
+    }
+
+    /// The same guarantee reached the way a capture run reaches it: through
+    /// the environment variable, not by setting the field first.
+    ///
+    /// The distinction is the whole test. `QUANTICK_DRAWING_INSPECTOR` used to
+    /// be read in the constructor, and when it moved to the surface's own hook
+    /// it landed in the pass the registry applies on the first *drawn* frame —
+    /// which runs after `apply_drawing_demo`, the very code that asks whether
+    /// the panel is open before it moves the selection. The panel then closed
+    /// itself and every capture pairing the two hooks photographed a chart
+    /// with no inspector. Nothing failed: the sibling test above sets the
+    /// field directly, so it could not see the order slip.
+    #[test]
+    fn the_inspector_hook_survives_the_demo_that_runs_before_it() {
+        let ctx = egui::Context::default();
+        // `set_var` is process-wide and the suite is threaded, and this one
+        // is a *real* hook name every `QuantickApp::new` in the suite reads —
+        // so unlike `store_home`'s unique-name trick, a lock is the only way
+        // a neighbour cannot see it.
+        static LAUNCH_HOOK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = LAUNCH_HOOK.lock().unwrap_or_else(|held| held.into_inner());
+        // SAFETY: single-threaded section held by the lock above, and the
+        // variable is removed again before it is released.
+        unsafe { std::env::set_var("QUANTICK_DRAWING_INSPECTOR", "1") };
+        let (mut app, _commands) = app_with_history(500);
+        unsafe { std::env::remove_var("QUANTICK_DRAWING_INSPECTOR") };
+        app.ui_state_path = scratch_ui_state("hook-inspector");
+        app.pending_drawing_demo = true;
+
+        assert!(
+            app.surfaces.drawing_chrome.inspector_open(),
+            "the hook is read at launch, before any frame the demo runs in"
+        );
+        for _ in 0..4 {
+            run_frame(&mut app, &ctx);
+        }
         assert!(!app.pending_drawing_demo, "the demo has run");
         assert!(
             app.drawing_pane().drawings.selected().is_some(),

@@ -8,7 +8,7 @@
 
 use eframe::egui;
 
-use super::{DrawingChromeAsk, DrawingChromeSurface, DrawingEnv, InlineTextEdit};
+use super::{DrawingChromeAsk, DrawingChromeSurface, DrawingEdit, DrawingEnv};
 use crate::drawings::Drawing;
 use crate::pane::PaneSide;
 use crate::theme;
@@ -32,7 +32,7 @@ const INLINE_TEXT_FRAME_PAD_PX: f32 = 10.0;
 /// The editor's state: at most one open edit.
 #[derive(Default)]
 pub(crate) struct InlineEditor {
-    edit: Option<InlineTextEdit>,
+    edit: Option<DrawingEdit>,
 }
 
 impl InlineEditor {
@@ -62,7 +62,7 @@ impl InlineEditor {
         // Typing is one edit: the note as it stands is kept here and recorded
         // when the editor closes, so undo takes back the note, not the last
         // letter of it.
-        self.edit = Some(InlineTextEdit {
+        self.edit = Some(DrawingEdit {
             tab,
             side,
             index,
@@ -74,7 +74,7 @@ impl InlineEditor {
     /// Close the editor, handing back what the undo history is owed — on the
     /// pane the note actually lives on, which is not necessarily the one in
     /// front when it closes.
-    pub fn end(&mut self) -> Option<InlineTextEdit> {
+    pub fn end(&mut self) -> Option<DrawingEdit> {
         self.edit.take()
     }
 }

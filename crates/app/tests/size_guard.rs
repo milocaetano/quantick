@@ -86,12 +86,12 @@ const BASELINE: &[(&str, usize)] = &[
     // The third batch was the drawing chrome: the context bar, the on-chart
     // note editor, the inspector in both its hosts and the object manager,
     // with the title bar, the body, the placement rule and the action applier
-    // they share. 1,592 production lines and twenty-one struct fields, out to
+    // they share. 1,548 production lines and twenty-one struct fields, out to
     // `src/surfaces/drawing_chrome/` as one member — they are one subsystem,
     // and four members would have left the state they share behind. The
     // number below is what that left, not a target: this file is still six
     // times the threshold.
-    ("crates/app/src/app.rs", 9656),
+    ("crates/app/src/app.rs", 9700),
     // The five entries below `pane.rs` were invisible to the first version of
     // this guard, which stopped counting at the first `#[cfg(test)]` of any
     // kind: `gateway.rs` scored 72 lines of its 4,142, `drawings/mod.rs` 221

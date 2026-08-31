@@ -131,14 +131,6 @@ pub(crate) struct SurfaceEnv<'a> {
     /// the alarm controls, so a trader auditioning a clip learns immediately
     /// that the signal would have been silent too.
     pub alert_failure: Option<&'a str>,
-    /// What the drawing chrome reads: the selected object, where it is
-    /// painted, and the pane it lives on.
-    ///
-    /// Nested rather than flattened. That subsystem needs a dozen more
-    /// answers than any other surface, and spreading them here would leave
-    /// this struct holding one subsystem's slice as loose fields — the shape
-    /// `Surfaces` exists to stop `QuantickApp` having.
-    pub drawing: DrawingEnv<'a>,
 }
 
 #[cfg(test)]
@@ -188,7 +180,6 @@ impl SurfaceEnv<'static> {
             active_tab: 0,
             counted_bar_sides: &[],
             alert_failure: None,
-            drawing: DrawingEnv::quiet(),
         }
     }
 }
@@ -228,9 +219,6 @@ pub(crate) struct SurfaceResponse {
     /// A sound was auditioned. The host owns the one speaker every armed
     /// instance shares, so it plays this and reports what happened.
     pub test_alert: Option<crate::audio::Cue>,
-    /// What the drawing chrome asked for. Nested for the reason
-    /// [`SurfaceEnv::drawing`] is: one subsystem, one field here.
-    pub drawing: drawing_chrome::DrawingChromeAsk,
 }
 
 /// Ask the host to arm a strategy instance.
@@ -323,7 +311,6 @@ impl SurfaceResponse {
         self.market = self.market.take().or(other.market);
         self.arm_strategy = self.arm_strategy.take().or(other.arm_strategy);
         self.test_alert = self.test_alert.take().or(other.test_alert);
-        self.drawing.merge(other.drawing);
     }
 }
 
@@ -390,6 +377,18 @@ pub(crate) struct Surfaces {
     /// inline note editor, the inspector in both its hosts, and the object
     /// manager. One member for four pieces of chrome, because they share five
     /// pieces of state — see [`drawing_chrome`] for the table and the reason.
+    ///
+    /// The one member [`Self::draw_all`] does not draw, and the only one that
+    /// does not implement [`Surface`]. It is anchored to the *chart* rather
+    /// than floating over the window, so the host draws it at two specific
+    /// points in the frame — the docked inspector before the central canvas,
+    /// which pays its width, and the floating pieces after it, because every
+    /// one of them places against pane geometry the canvas writes as it draws.
+    /// A uniform `draw` here would have to be handed an environment this pass
+    /// cannot fill and a response this pass does not read; naming the two
+    /// entry points instead is the honest shape, and it is the same
+    /// command-a-member-by-name the host already does for the toast and the
+    /// arming dialog.
     pub drawing_chrome: DrawingChromeSurface,
 }
 
@@ -436,7 +435,6 @@ impl Surfaces {
             self.style_panel.apply_env_hook(env);
             self.toast.apply_env_hook(env);
             self.workspace_name.apply_env_hook(env);
-            self.drawing_chrome.apply_env_hook(env);
         }
         let mut response = SurfaceResponse::default();
         response.merge(self.agent_popup.draw(ctx, env));
@@ -447,10 +445,7 @@ impl Surfaces {
         response.merge(self.style_panel.draw(ctx, env));
         response.merge(self.toast.draw(ctx, env));
         response.merge(self.workspace_name.draw(ctx, env));
-        // Deliberately not `self.drawing_chrome`: it is anchored to the chart
-        // rather than floating over the window, so the host draws it after the
-        // central canvas — see `DrawingChromeSurface::draw`. Its hooks still
-        // run above, because they run once and before any frame.
+        // Deliberately not `self.drawing_chrome` — see the field's own note.
         response
     }
 }
@@ -592,7 +587,6 @@ mod tests {
                 symbol: "SECOND".to_owned(),
             }),
             arm_strategy: None,
-            drawing: drawing_chrome::DrawingChromeAsk::default(),
             test_alert: Some(crate::audio::Cue::new(
                 crate::audio::AlertSound::Critical,
                 None,

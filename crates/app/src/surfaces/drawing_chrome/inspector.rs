@@ -494,7 +494,23 @@ fn settle(
     index: usize,
     env: &DrawingEnv<'_>,
 ) {
-    if actions.edited {
+    // Handed back because it *differs*, not because a flag said so.
+    //
+    // `Tool::draw_extra_tab` returns "did anything change", and its contract
+    // calls that an advisory hint the caller folds into the undo coalescing.
+    // While the tab wrote through a `&mut` into the live store, a tab that
+    // mutated and returned `false` still persisted the mutation. Editing a
+    // copy would quietly promote that hint to a commit flag, and the
+    // sixteenth tool — written from the unchanged doc comment — would lose
+    // every edit it made with no compile error and no failing test. The
+    // comparison costs one `PartialEq` on a copy this frame already made, and
+    // only while a panel is open.
+    if actions.edited
+        || env
+            .selected
+            .as_ref()
+            .is_none_or(|held| *held.drawing != edited)
+    {
         ask.edited = Some(Box::new(edited));
     }
     ask.presets.extend(recorder.into_writes());
