@@ -594,6 +594,11 @@ mod tests {
     /// outright. It is the cost of the trader's decision written down as an
     /// executable fact, so that "the floor is looser now" is a number
     /// somebody can read rather than a worry somebody has.
+    ///
+    /// The comparison is between the two *measurements* on one bar, not
+    /// between two rulers: `ForceParams` has no body-floor mode left to
+    /// build a second window from, and an earlier version of this test
+    /// pretended otherwise by constructing the same window twice.
     #[test]
     fn a_congested_tape_admits_more_than_the_body_floor_did() {
         let params = ForceParams {
@@ -620,20 +625,18 @@ mod tests {
             other => panic!("the range floor admits this bar, got {other:?}"),
         }
 
-        // The very same bar under a floor of the same number read against
-        // the body: refused. This is the whole delta, in one assertion.
-        let mut bodied = ForceWindow::new(params);
-        for bar in &warm {
-            bodied.classify(bar);
-        }
-        let body_floor_would_refuse = (judged.close - judged.open).abs() < dec("100");
+        // The delta, stated honestly: this ruler has no body-floor mode to
+        // compare against any more, so the comparison is between the two
+        // measurements on this bar rather than between two windows. A body
+        // of 25 against a floor of 100 could only ever have been refused;
+        // the candle is what admits it.
+        let body = (judged.close - judged.open).abs();
+        let range = judged.high - judged.low;
+        assert_eq!(body, dec("25"));
+        assert_eq!(range, dec("140"));
         assert!(
-            body_floor_would_refuse,
-            "the fixture must be a bar the old body floor refused, or it              proves nothing"
-        );
-        assert!(
-            matches!(bodied.classify(&judged), BarVerdict::Force(_)),
-            "and the range floor is what admits it now"
+            body < dec("100") && range >= dec("100"),
+            "the fixture is exactly the bar the change is about: refused on              its body, admitted on its candle"
         );
     }
 }

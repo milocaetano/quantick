@@ -88,10 +88,19 @@ pub trait Trigger {
     ///
     /// The names are stable ids, not display text: a surface may phrase
     /// them however it likes, but two builds must agree on the string.
-    /// Same timing contract as [`Self::status`].
-    fn refusal(&self) -> Option<&'static str> {
-        None
-    }
+    ///
+    /// **Required, deliberately.** A default returning `None` would read as
+    /// "this bar fired" for every bar of any ruler that forgot to override
+    /// it — an operator asking why nothing happened would be told the
+    /// ruler passed, which is the wrong-answer class this method exists to
+    /// end, reproduced silently on the next trigger to dock. `status` is
+    /// required for the same reason. A ruler with nothing to report says so
+    /// by returning `Some` with a name of its own.
+    ///
+    /// `None` means **the last judged bar fired**. A ruler that has judged
+    /// nothing yet has not fired either, so it returns a name for that too
+    /// rather than borrowing the one word that means success.
+    fn refusal(&self) -> Option<&'static str>;
 
     /// Forget every bar seen: the series the ruler was measuring no longer
     /// exists (a rebuilt timeline, another bar spec, another market). A
@@ -166,6 +175,8 @@ impl Trigger for ForceTrigger {
         // decide what it is called here rather than inheriting a
         // neighbour's name by falling through.
         match &self.last {
+            // Not a verdict about a bar — there is no bar. It is still not
+            // a fire, and `None` here would claim one.
             None => Some("no bars judged yet"),
             Some(BarVerdict::Warmup { .. }) => Some("ruler still warming up"),
             Some(BarVerdict::FlatAverage) => Some("flat average — no ruler"),
@@ -240,6 +251,22 @@ mod tests {
         Decimal::from_str(s).unwrap()
     }
 
+    /// A bar with explicit wicks, for fixtures whose whole range is
+    /// smaller than the point `bar` pads by.
+    fn tight(open: &str, close: &str, high: &str, low: &str) -> Bar {
+        Bar {
+            open_time: 0,
+            close_time: 0,
+            open: dec(open),
+            high: dec(high),
+            low: dec(low),
+            close: dec(close),
+            buy_volume: Decimal::ONE,
+            sell_volume: Decimal::ONE,
+            trade_count: 2,
+        }
+    }
+
     fn bar(open: &str, close: &str) -> Bar {
         let open = dec(open);
         let close = dec(close);
@@ -289,5 +316,48 @@ mod tests {
         assert_eq!(trigger.status(), "warmup 1/2");
         trigger.on_closed_bar(&bar("100", "101"));
         assert_eq!(trigger.status(), "quiet 1×");
+    }
+
+    /// The one user-visible sentence this change rewrote, pinned.
+    ///
+    /// The arm went from naming the body to naming the candle, and gained a
+    /// `normalize()` whose whole justification is how the number reads on
+    /// instruments of different scale. Neither half was asserted anywhere,
+    /// so a regression to `round_dp(2)` — which prints `candle 0.00` on a
+    /// market whose entire range is thousandths — would have shipped green.
+    #[test]
+    fn the_under_floor_line_names_the_candle_and_reads_at_any_scale() {
+        // Whole numbers: no trailing noise, and the candle, not the body.
+        let mut trigger = ForceTrigger::new(ForceParams {
+            window: 3,
+            min_factor: dec("1.5"),
+            max_factor: dec("2.5"),
+            min_range: dec("1000"),
+        });
+        trigger.on_closed_bar(&bar("100", "110"));
+        trigger.on_closed_bar(&bar("110", "120"));
+        trigger.on_closed_bar(&bar("120", "140"));
+        assert_eq!(
+            trigger.status(),
+            "1.50× in band · candle 22 under floor",
+            "the candle is what the floor measured, and 22 is not 22.00000000"
+        );
+
+        // A market whose whole range is thousandths still gets a number it
+        // can act on, which rounding to two places would have erased.
+        let mut trigger = ForceTrigger::new(ForceParams {
+            window: 3,
+            min_factor: dec("1.5"),
+            max_factor: dec("2.5"),
+            min_range: dec("1"),
+        });
+        trigger.on_closed_bar(&tight("0.100", "0.110", "0.111", "0.099"));
+        trigger.on_closed_bar(&tight("0.110", "0.120", "0.121", "0.109"));
+        trigger.on_closed_bar(&tight("0.120", "0.140", "0.141", "0.119"));
+        let line = trigger.status();
+        assert!(
+            line.contains("candle 0.0") && !line.contains("candle 0.00 "),
+            "a thousandths-wide candle keeps a readable size: {line}"
+        );
     }
 }

@@ -161,8 +161,8 @@ refusal, present-tense-adjacent, with no way to tell.
       whose candle clears it is now **force**, and the marked bar is exactly
       that case.
       *Evidence:* a test over the marked bar's reconstructed geometry
-      asserting `Force` where today it is `UnderFloor`, plus the renamed
-      field carrying the new meaning in its name and docs.
+      asserting `Force` where today it is `UnderFloor`, plus the renamed field
+      (`min_range`, matching `ForceBar.range`) carrying the new meaning.
       → `crates/strategy/src/force.rs` tests. *(R3, D5)*
 - [x] **A8** — A preset saved before this change keeps working, and its
       stored number is carried into the new meaning **visibly**, not
@@ -234,9 +234,9 @@ output or a named test, not a recollection.
 | A2 | met | `pane::tests::the_badge_names_the_rulers_own_refusal_and_not_only_an_older_bars`. Run against the pre-fix badge composition it fails with the reported sentence, verbatim: `⚡ SellGainAlarm · last held: the body never cut the region` — the exact string in the trader's screenshot. |
 | A3 | met | Two halves. Prose: the badge leads with the ruler's reading and its number (`×`). **Value:** `Trigger::refusal()` is a new port method returning a stable name per verdict, handed out by `ArmedStrategy::ruler_refusal()`, so an operator that is not looking at the chart can tell the ruler declined this bar without parsing English. Proven by `every_ruler_verdict_that_declines_a_bar_has_a_readable_name` (one assertion per verdict, no catch-all) and `a_ruler_refused_bar_leaves_the_gates_reason_standing_and_says_so`. **The first version of this branch claimed A3 on the badge text alone; arch-review caught that the machine-readable half named in the criterion had not been written, and it was built rather than the criterion quietly reworded.** |
 | A4 | met | Same test asserts ordering: the current-bar sentence precedes `last held:`, so a standing refusal can no longer stand alone and read as fresh. |
-| A5 | met | `git diff` shows `crates/strategy/src/armed.rs`, `crates/strategy/tests/full_operation.rs`, `crates/backtest/tests/harness.rs` and `crates/app/src/strategy_anchors.rs` are **pure rename** — no non-`min_body`/`min_range` line changed. The state machine and the backtest harness are untouched. One assertion changed for the floor's new semantics (`the_candle_floor_holds_quiet_what_the_band_alone_would_call_force`: `body: 60` → `size: 62`), listed in the PR body. |
+| A5 | met, restated | **The earlier version of this row was wrong and arch-review caught it.** It claimed `crates/strategy/src/armed.rs` was a "pure rename" with "the state machine untouched"; `armed.rs` in fact gained `ruler_refusal()` and its tests. What is true, and checkable: `crates/strategy/tests/full_operation.rs`, `crates/backtest/tests/harness.rs`, `crates/app/src/app.rs` and `crates/app/src/strategy_anchors.rs` are pure rename — no line outside `min_body`/`min_range` changed. In `armed.rs` the *state machine* is untouched: no gate, no transition and no emitted `Command` changed, and every pre-existing command-emission test passes unedited. The additions are one read-only accessor and tests. The branch's only behavioural change is the floor (**A7**), plus one assertion updated for it (`the_candle_floor_holds_quiet_what_the_band_alone_would_call_force`: `body: 60` → `range: 62`). |
 | A6 | met | Reported in the PR body with the WINV26 calibration note quoted and the BTC figure (100 is 0.06% of a 180,000 price). The trader's `quantick-strategies.toml` lives outside the repo and is not written by this branch. |
-| A7 | met | `the_floor_measures_the_whole_candle_not_the_body` passes; `ForceParams::min_range` and `BarVerdict::UnderFloor { size }` carry the new meaning in their names and docs. |
+| A7 | met | `the_floor_measures_the_whole_candle_not_the_body` passes; `ForceParams::min_range` and `BarVerdict::UnderFloor { range }` carry the new meaning in their names and docs. |
 | A8 | met | `strategy_presets::tests::a_bank_written_under_the_old_min_body_key_keeps_its_floor`. The fixture is written by the bank itself and only its key renamed, so it asserts the serde alias rather than a hand-typed schema. |
 | A9 | met | Two tests, because the first one alone was not honest. `a_wick_dominated_candle_clears_the_floor_and_the_band_still_refuses_it` shows the gates composing — but arch-review pointed out it warms with 30-point bodies, so the ratio is 0.16 and the *band* refuses the bar whatever the floor says, which proves nothing about the regime the floor exists for. `a_congested_tape_admits_more_than_the_body_floor_did` is that regime: a shrunken average body, a bar with a 25-point body on a 140-point candle that the old floor refused and this one admits. The cost of **D5** is now a number somebody can read. |
 | G1 | met | `tracked_files_are_written_in_english` passes (4/4 in `language_guard`). |
@@ -314,38 +314,61 @@ sentence *looks* in a chart corner — whether it crowds the drawing at small
 window sizes. That is a real question this branch does not answer, and it
 belongs to `trader-ux-review` and to the trader's own eye.
 
-## Findings carried into the PR rather than fixed
+## What the two review rounds changed, and what is deferred
 
-`arch-review` step 0 ran at **xhigh** and returned 14 findings. Eleven were
-fixed on the branch. Three are deliberate positions, and they are here so a
-reader argues with a decision instead of missing one:
+`arch-review` step 0 ran twice at **xhigh** — once mid-branch (14 findings)
+and again over the finished branch (13). That second pass is why several
+things in this file read differently from how they were first written.
 
-1. **The `trigger_status` cache is kernel state serving a UI cost.** The
-   review's objection is fair: `badge_text_for` allocates a badge `String`
-   every frame anyway, so removing one allocation of several is a small win
-   bought with a derived field in a pure domain crate and a timing
-   precondition on a public trait. Kept, because `Trigger::status()` formats
-   two `Decimal`s and the surrounding `push_str`s do not, and because the
-   invariant is pinned by
-   `the_cached_ruler_reading_never_drifts_from_the_trigger` rather than left
-   to review. The precondition the review asked for is now written on
-   `Trigger::status` itself. The reviewer's alternative — cache the composed
-   badge text in `ChartPane` — is better and is the right follow-up.
-2. **The badge can now chain four clauses (~110 characters) with no
-   truncation.** Real, and this branch cannot answer it: G5's screenshot
-   could not be taken (see above), so how the longer sentence sits in a chart
-   corner is exactly the thing with no evidence behind it. It belongs to
-   `trader-ux-review` and to the trader's eye, not to a reviewer's guess.
-3. **The form still ships `100` as the floor's starting point.** Instrument-
-   blind, and the comment above it now says so. Changing it is a trading
-   decision the trader reserved under **D1**/**A6**; this branch reports the
-   number and does not pick a new one.
+**Two of my own fixes were reverted because the review was right about
+them:**
 
-**One-way migration, stated because nobody should find it in a fill.** A bank
-written by this build says `min_range`. Aliases carry `min_body` and the
-short-lived `min_size` *forward*, but an older build reading `min_range`
-knows no such key and falls through to `0`, switching the floor off. Rolling
-back this build therefore needs the preset's floor re-entered by hand.
+1. **The `trigger_status` cache is gone.** It moved a `format!` off the
+   badge's per-frame path, and both rounds objected. The decisive argument
+   was not the one I had weighed: `crates/backtest` calls `on_closed_bar`
+   for every bar of every recorded session and never reads the cached
+   string, so the cache added an unconditional allocation to a batch loop
+   to save one of several allocations on a paint path that allocates
+   regardless. It also bought a coherence invariant in a pure domain crate
+   and a timing precondition on a public trait. The badge asks the ruler
+   directly again. The real fix — caching the *composed* badge string in
+   `ChartPane`, where the per-frame cost actually is — is a follow-up, not
+   this branch.
+2. **The alarm-only `aside()` on the badge is gone.** It was scope I added
+   from a "consider"-grade note in round one, and it shipped two defects:
+   the branch was not gated on `armed`, and `disarm()` never clears the
+   note, so a disarmed alarm-only instance would have painted its aside
+   forever while the menu said "disarmed" — re-introducing the exact
+   two-surface divergence this branch exists to end. It also stuttered,
+   because `strategy_anchors::badge_text` already emits an "alarm only"
+   clause. Reverted whole.
+
+**Still deferred, deliberately:**
+
+- **The form ships `100` as the floor's starting point.** Instrument-blind,
+  and the comment above it now says so. Picking a new number is a trading
+  decision the trader reserved under **D1**/**A6**.
+- **The badge can chain three clauses with no truncation.** Real, and this
+  branch cannot answer it: G5's screenshot could not be taken, so how the
+  longer sentence sits in a chart corner has no evidence behind it. It
+  belongs to `trader-ux-review`.
+- **`ruler_refusal()` has no production consumer yet.** The stable names it
+  returns are read by tests and by nothing else, because the control
+  plane's scene does not carry armed instances — `badge_text_for`'s own doc
+  already filed that. **A3** asked for the machine-readable half to exist
+  and it does, at the port; wiring it into `quantick_get_scene` is the
+  follow-up that makes it reachable from outside the process.
+
+**Migration, restated after the review.** The `#[serde(alias)]` this file
+first described is gone. An alias is the *same* field to serde, so a bank
+carrying both keys was a duplicate-field error — and `load_from` answers any
+parse error by starting empty, which the next save writes over every preset
+the trader had. A vintage number is now its own optional field, reconciled
+by `resolved_floor()`, and the bank logs `STRATEGY_FLOOR_REINTERPRETED` when
+it carries one forward, so the change of meaning is visible in the running
+app instead of only in a doc comment. Rolling back to a build before this
+one still finds no key it knows and falls through to `0`; that direction no
+alias here can reach, and the PR body says so.
 
 ## Closing steps
 
