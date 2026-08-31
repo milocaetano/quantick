@@ -351,7 +351,9 @@ impl ArmedStrategy {
     /// Handed out as a value, not a sentence, for the same reason
     /// `hold_reason` is: an operator that is not looking at the chart has
     /// to be able to compare a name instead of parsing English. The prose
-    /// with the numbers in it is [`Self::trigger_status`].
+    /// with the numbers in it is the ruler's own
+    /// [`status`](crate::Trigger::status), reachable through
+    /// [`Self::trigger`].
     #[must_use]
     pub fn ruler_refusal(&self) -> Option<&'static str> {
         self.trigger.refusal()

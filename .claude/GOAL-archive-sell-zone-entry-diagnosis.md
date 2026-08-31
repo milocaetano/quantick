@@ -316,9 +316,31 @@ belongs to `trader-ux-review` and to the trader's own eye.
 
 ## What the two review rounds changed, and what is deferred
 
-`arch-review` step 0 ran twice at **xhigh** — once mid-branch (14 findings)
-and again over the finished branch (13). That second pass is why several
-things in this file read differently from how they were first written.
+`arch-review` step 0 ran three times at **xhigh** — once mid-branch (14 findings)
+again over the finished branch (13), and a third time over the result of
+those fixes (13 more). Forty findings; the review rounds are why several
+things in this file read differently from how they were first written, and
+why two of my own changes are no longer in the branch at all.
+
+The third round's sharpest catch was not a bug in the usual sense. The
+floor and the bracket ruler are **the same measurement**: `signal_from`
+projects off `ForceBar::range`, which is the `high - low` this floor now
+reads. So a bar admitted on its candle rather than its body arms a stop
+sized by that candle — the congestion fixture's 25-point push carries
+`sl_mult × 140` of stop. **D5 changes risk per trade, not only how many
+bars fire**, which no paragraph on this branch had said until the review
+asked. It is now in `ForceParams::min_range`'s own doc and pinned by
+`a_bar_admitted_on_its_candle_projects_off_that_candle`, and it is called
+out in the PR body because it is the trader's decision to hold, not mine
+to bury.
+
+That round also found the migration in a shape that would have reproduced
+this branch's own bug one layer down: a `resolved_floor()` resolver that
+`to_kernel` called and the arming form did not, so a vintage preset would
+have shown a floor of `0` in the dialog while the kernel armed 100. The
+resolver is gone. The vintage number is migrated **once, at load**, into
+the single field every reader already uses, compared as a `Decimal` rather
+than as text so `"0"` and `"0.0"` cannot mean opposite things.
 
 **Two of my own fixes were reverted because the review was right about
 them:**
@@ -352,6 +374,13 @@ them:**
   branch cannot answer it: G5's screenshot could not be taken, so how the
   longer sentence sits in a chart corner has no evidence behind it. It
   belongs to `trader-ux-review`.
+- **The body floor is gone rather than joined.** `ForceParams` can no
+  longer express a minimum body at all, so the one calibration that was
+  ever measured (247 → 7 on WINV26) is unreachable by any setting. That is
+  **D5** as the trader chose it — "trocar", replace, not "dois pisos" —
+  and reversing it is theirs to ask for, not mine to decide. The doc says
+  what a second floor would be for, so the next person asking is not
+  starting from nothing.
 - **`ruler_refusal()` has no production consumer yet.** The stable names it
   returns are read by tests and by nothing else, because the control
   plane's scene does not carry armed instances — `badge_text_for`'s own doc

@@ -279,9 +279,9 @@ arm_window = math.max(run_window, cover_window)
 // `not na` guards are what keep the opening stretch unmarked.
 // The ratio and the floor, in that order: the ratio rejects most bars on its
 // own, so the floor is a comparison the short-circuit rarely reaches. A floor
-// of 0 is `body >= 0`, true for every bar including a doji — the ratio is
+// of 0 is `high - low >= 0`, true for every bar including a doji — the ratio is
 // what still decides, exactly as it did before this input existed.
-big_body = not na(avg_body_before) and avg_body_before > 0 and body >= body_factor * avg_body_before and (high - low) >= min_range_points
+big_enough = not na(avg_body_before) and avg_body_before > 0 and body >= body_factor * avg_body_before and (high - low) >= min_range_points
 new_high = not na(high_before) and high >= high_before
 new_low = not na(low_before) and low <= low_before
 
@@ -294,8 +294,8 @@ var int bull_run = 0
 bear_run := bear_bar ? bear_run + 1 : 0
 bull_run := bull_bar ? bull_run + 1 : 0
 
-top_anchor = big_body and new_high and (not need_direction or bull_bar)
-bottom_anchor = big_body and new_low and (not need_direction or bear_bar)
+top_anchor = big_enough and new_high and (not need_direction or bull_bar)
+bottom_anchor = big_enough and new_low and (not need_direction or bear_bar)
 
 // ------------------------------------------------------------------- state
 

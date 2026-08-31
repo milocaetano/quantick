@@ -66,12 +66,18 @@ pub trait Trigger {
     ///
     /// **It may only change when the ruler is advanced or reset** — that
     /// is, inside [`Self::on_closed_bar`] or [`Self::reset`], never on a
-    /// clock and never per print. Consumers cache it: `ArmedStrategy` holds
-    /// the text so the chart badge, which paints every frame, does not
-    /// build a `String` sixty times a second. A ruler whose line moved
-    /// between those calls would be quoted stale, which is the exact defect
-    /// the badge was repaired to end. A ruler with a genuinely live reading
-    /// belongs in [`Self::preview`], which is `&self` and uncached.
+    /// clock and never per print. The chart badge paints it every frame, so
+    /// a line that moved between those calls would flicker against a bar
+    /// that has not changed. A ruler with a genuinely live reading belongs
+    /// in [`Self::preview`], which is `&self` and explicitly provisional.
+    ///
+    /// **Keep it cheap.** It is built on the paint path, once per armed
+    /// instance per frame, so it formats a couple of numbers and returns —
+    /// no scans, no collection. (An earlier version of this branch cached
+    /// the result in `ArmedStrategy` to avoid the allocation; that was
+    /// reverted, because it put the cost on every closed bar of every
+    /// backtest session, which never reads it, to save one allocation of
+    /// several on a paint path that allocates regardless.)
     fn status(&self) -> String;
 
     /// Why this ruler declined the last bar it judged, as a **stable name**
@@ -351,13 +357,17 @@ mod tests {
             max_factor: dec("2.5"),
             min_range: dec("1"),
         });
-        trigger.on_closed_bar(&tight("0.100", "0.110", "0.111", "0.099"));
-        trigger.on_closed_bar(&tight("0.110", "0.120", "0.121", "0.109"));
-        trigger.on_closed_bar(&tight("0.120", "0.140", "0.141", "0.119"));
-        let line = trigger.status();
-        assert!(
-            line.contains("candle 0.0") && !line.contains("candle 0.00 "),
-            "a thousandths-wide candle keeps a readable size: {line}"
+        // The span has to be one that `round_dp(2)` would actually erase,
+        // or the assertion cannot fail for the regression it names: a range
+        // of 0.022 rounds to 0.02 and reads fine, which is why an earlier
+        // version of this test proved nothing.
+        trigger.on_closed_bar(&tight("0.1000", "0.1010", "0.1011", "0.0999"));
+        trigger.on_closed_bar(&tight("0.1010", "0.1020", "0.1021", "0.1009"));
+        trigger.on_closed_bar(&tight("0.1020", "0.1040", "0.1041", "0.1019"));
+        assert_eq!(
+            trigger.status(),
+            "1.50× in band · candle 0.0022 under floor",
+            "a span of 0.0022 survives whole; `round_dp(2)` would print 0.00"
         );
     }
 }

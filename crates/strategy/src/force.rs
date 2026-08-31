@@ -56,6 +56,18 @@ pub struct ForceParams {
     /// neighbours*, the floor refuses one that is small *in price*. A body
     /// of 95 on a candle reaching 140 is a real push held by neither.
     ///
+    /// **The floor also moves risk per trade, not only signal count.** The
+    /// bracket projects off [`ForceBar::range`] — the same `high - low`
+    /// this floor now measures — so a bar admitted on its candle rather
+    /// than its body arms a stop sized by that candle. A 25-point push
+    /// inside a 140-point range is refused by a 100-point *body* floor and
+    /// admitted by a 100-point range floor, and the order it arms carries
+    /// `sl_mult × 140` of stop for a body that travelled 25. That is a
+    /// consequence of the measurement, not a defect in it, and it is
+    /// written here because every other paragraph about this floor talks
+    /// about how many bars it admits and none of them said what those bars
+    /// cost.
+    ///
     /// The cost is named because it is real: a wick-dominated doji reaches
     /// far and closes nowhere, so it clears this floor on reach alone. What
     /// still has to admit it is the ratio band, and a doji's body makes a
@@ -549,7 +561,7 @@ mod tests {
                 assert_eq!(force.side, Side::Sell, "close under open is a push down");
             }
             other => panic!(
-                "a 95-point body on a 140-point candle clears a 100-point candle floor, got                  {other:?}"
+                "a 95-point body on a 140-point candle clears a 100-point candle floor, got {other:?}"
             ),
         }
     }
@@ -636,7 +648,42 @@ mod tests {
         assert_eq!(range, dec("140"));
         assert!(
             body < dec("100") && range >= dec("100"),
-            "the fixture is exactly the bar the change is about: refused on              its body, admitted on its candle"
+            "the fixture is exactly the bar the change is about: refused on its body, admitted on its candle"
         );
+    }
+
+    /// The stop a newly admitted bar arms is sized by its candle.
+    ///
+    /// The floor and the bracket ruler are the same measurement, so
+    /// loosening one moves the other. This pins the arithmetic on the
+    /// branch's own congestion fixture: a body of 25 arming a projection of
+    /// 140. It is not asserting that this is *desirable* — it is asserting
+    /// that it is what happens, so a change to either the floor or the
+    /// projection has to come past a test that states the relationship.
+    #[test]
+    fn a_bar_admitted_on_its_candle_projects_off_that_candle() {
+        let mut ruler = ForceWindow::new(ForceParams {
+            window: 3,
+            min_factor: dec("1.5"),
+            max_factor: dec("2.5"),
+            min_range: dec("100"),
+        });
+        ruler.classify(&bar("100", "110"));
+        ruler.classify(&bar("110", "120"));
+        match ruler.classify(&wicked("180000", "179975", "180100", "179960")) {
+            BarVerdict::Force(force) => {
+                assert_eq!(force.body, dec("25"), "the push the trader saw");
+                assert_eq!(
+                    force.range,
+                    dec("140"),
+                    "and the ruler the bracket will project from"
+                );
+                assert!(
+                    force.range > force.body * dec("5"),
+                    "the projection is over five times the body that earned it,                      which is the risk consequence of measuring the candle"
+                );
+            }
+            other => panic!("the range floor admits this bar, got {other:?}"),
+        }
     }
 }
