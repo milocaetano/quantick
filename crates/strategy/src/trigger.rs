@@ -63,7 +63,35 @@ pub trait Trigger {
 
     /// One human-readable line for badges and tooltips: why the trigger is
     /// or is not firing ("warmup 7/20", "quiet 0.8×", "force 1.9×").
+    ///
+    /// **It may only change when the ruler is advanced or reset** — that
+    /// is, inside [`Self::on_closed_bar`] or [`Self::reset`], never on a
+    /// clock and never per print. Consumers cache it: `ArmedStrategy` holds
+    /// the text so the chart badge, which paints every frame, does not
+    /// build a `String` sixty times a second. A ruler whose line moved
+    /// between those calls would be quoted stale, which is the exact defect
+    /// the badge was repaired to end. A ruler with a genuinely live reading
+    /// belongs in [`Self::preview`], which is `&self` and uncached.
     fn status(&self) -> String;
+
+    /// Why this ruler declined the last bar it judged, as a **stable name**
+    /// rather than a sentence — or `None` when the bar fired.
+    ///
+    /// The twin of [`Self::status`], and the reason it exists separately:
+    /// `status` is prose with numbers in it, written to be read by a
+    /// person in a chart corner. An operator that is not looking at the
+    /// screen — a script, a test, the assistant `CLAUDE.md` plans for —
+    /// needs to know *that the ruler refused this bar* without parsing
+    /// English out of a badge. Without this, "why did nothing happen here?"
+    /// is answerable only by a human reading pixels, which is precisely
+    /// what "operable without a hand" forbids.
+    ///
+    /// The names are stable ids, not display text: a surface may phrase
+    /// them however it likes, but two builds must agree on the string.
+    /// Same timing contract as [`Self::status`].
+    fn refusal(&self) -> Option<&'static str> {
+        None
+    }
 
     /// Forget every bar seen: the series the ruler was measuring no longer
     /// exists (a rebuilt timeline, another bar spec, another market). A
@@ -133,6 +161,22 @@ impl Trigger for ForceTrigger {
         self.window.params().window
     }
 
+    fn refusal(&self) -> Option<&'static str> {
+        // One arm per verdict, and no catch-all: a sixth `BarVerdict` must
+        // decide what it is called here rather than inheriting a
+        // neighbour's name by falling through.
+        match &self.last {
+            None => Some("no bars judged yet"),
+            Some(BarVerdict::Warmup { .. }) => Some("ruler still warming up"),
+            Some(BarVerdict::FlatAverage) => Some("flat average — no ruler"),
+            Some(BarVerdict::NoSide) => Some("doji — no side"),
+            Some(BarVerdict::Quiet { .. }) => Some("body quiet against the average"),
+            Some(BarVerdict::UnderFloor { .. }) => Some("candle under the floor"),
+            Some(BarVerdict::Exhaustion { .. }) => Some("body above the band"),
+            Some(BarVerdict::Force(_)) => None,
+        }
+    }
+
     fn status(&self) -> String {
         match &self.last {
             None => format!("waiting for bars 0/{}", self.window.params().window),
@@ -141,15 +185,23 @@ impl Trigger for ForceTrigger {
             Some(BarVerdict::NoSide) => "doji — no side".to_owned(),
             Some(BarVerdict::Quiet { ratio }) => format!("quiet {}×", round_ratio(*ratio)),
             Some(BarVerdict::Force(force)) => format!("force {}×", round_ratio(force.ratio)),
-            Some(BarVerdict::UnderFloor { ratio, size }) => {
+            Some(BarVerdict::UnderFloor { ratio, range }) => {
                 // The band said force; the absolute floor said no. Saying
                 // "quiet" here would hide the one number the trader needs —
                 // and that number is the candle's size, because size is what
                 // the floor actually measured. Printing the body here would
                 // send the trader to change an input this gate never read.
+                // `normalize` and not `round_dp`: this is a price span and
+                // instruments differ by orders of magnitude. Rounding to two
+                // places would print `candle 0.00` on a market whose whole
+                // range is thousandths — worse than the trailing zeros it
+                // fixes. Subtraction in `rust_decimal` keeps the operands'
+                // scale, so an untouched span reaches the badge as
+                // `0.10000000`.
                 format!(
-                    "{}× in band · candle {size} under floor",
-                    round_ratio(*ratio)
+                    "{}× in band · candle {} under floor",
+                    round_ratio(*ratio),
+                    range.normalize()
                 )
             }
             Some(BarVerdict::Exhaustion { ratio, .. }) => {
@@ -210,7 +262,7 @@ mod tests {
             window: 3,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
-            min_size: Decimal::ZERO,
+            min_range: Decimal::ZERO,
         });
         assert_eq!(trigger.on_closed_bar(&bar("100", "101")), None);
         assert_eq!(trigger.on_closed_bar(&bar("101", "102")), None);
@@ -230,7 +282,7 @@ mod tests {
             window: 2,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
-            min_size: Decimal::ZERO,
+            min_range: Decimal::ZERO,
         });
         assert_eq!(trigger.status(), "waiting for bars 0/2");
         trigger.on_closed_bar(&bar("100", "101"));

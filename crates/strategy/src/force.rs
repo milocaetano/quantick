@@ -28,15 +28,26 @@ pub struct ForceParams {
     /// Upper edge of the band (inclusive). Above it the bar is exhaustion,
     /// not force.
     pub max_factor: Decimal,
-    /// Absolute floor on the candle's **size** — its full `high - low`
-    /// range, wicks included — in price units. Zero disables it.
+    /// Absolute floor on the candle's full `high - low` **range**
+    /// (wicks included), in price units. Zero disables it. Named to match
+    /// [`ForceBar::range`], which is the same measurement on a bar that passed.
     ///
     /// The relative band alone is honest on time candles but promiscuous
     /// on activity-cut bars: a volume bar carries the same volume as every
     /// neighbour by construction, congestion shrinks the average body, and
-    /// a 35-point body reads "1.7× force". Measured on a WINV26 session,
-    /// the bare band marked 247 of 1,355 bars as force; a 100-point floor
-    /// left 7. An elephant has a size, not only a ratio.
+    /// a 35-point body reads "1.7× force". An elephant has a size, not
+    /// only a ratio.
+    ///
+    /// **The measurement that justified this floor was taken against the
+    /// body, not the range.** On a WINV26 session the bare band marked 247
+    /// of 1,355 bars as force and a 100-point *body* floor left 7. That
+    /// figure does not carry over: a range floor admits every bar the body
+    /// floor did and more, because `high - low >= |close - open|` always.
+    /// Quoting 7 for this gate would be an inferred number wearing a
+    /// measured one's clothes. The honest statement is that this floor is
+    /// **looser than the one that was measured**, by an amount nobody has
+    /// measured yet, and `a_congested_tape_admits_more_than_the_body_floor_did`
+    /// shows the shape of the difference.
     ///
     /// **This floor measures the whole candle while the ratio band above
     /// measures the body**, and the mismatch is deliberate — a trader's
@@ -52,7 +63,7 @@ pub struct ForceParams {
     /// read alone. A setup wanting the *body* itself to carry a minimum
     /// size needs a second floor, which this ruler does not ship until
     /// someone asks for it.
-    pub min_size: Decimal,
+    pub min_range: Decimal,
 }
 
 impl ForceParams {
@@ -66,7 +77,7 @@ impl ForceParams {
             window: 20,
             min_factor: Decimal::new(15, 1),
             max_factor: Decimal::new(25, 1),
-            min_size: Decimal::ZERO,
+            min_range: Decimal::ZERO,
         }
     }
 }
@@ -104,19 +115,19 @@ pub enum BarVerdict {
         ratio: Decimal,
     },
     Force(ForceBar),
-    /// Ratio inside the band but the candle's size under the absolute
+    /// Ratio inside the band but the candle's range under the absolute
     /// floor — the bar the *relative* ruler would call force and the
     /// elephant gate holds. Distinct from [`BarVerdict::Quiet`] so the
     /// badge can say which rule held it: "quiet 1.7×" over a bar visibly
     /// inside the band reads as a broken ruler.
     ///
-    /// `size` is the measurement that was refused (`high - low`), so a
+    /// `range` is the measurement that was refused (`high - low`), so a
     /// badge can print the number the trader would have to change. It is
     /// deliberately not the body: reporting a figure the gate did not
     /// consult is how a trader ends up tuning the wrong input.
     UnderFloor {
         ratio: Decimal,
-        size: Decimal,
+        range: Decimal,
     },
     /// Body above the band — too big to chase.
     Exhaustion {
@@ -204,10 +215,10 @@ impl ForceWindow {
     #[must_use]
     pub fn weigh(&self, bar: &Bar) -> BarVerdict {
         let body = (bar.close - bar.open).abs();
-        // The candle's own size, which the absolute floor judges and the
+        // The candle's own range, which the absolute floor judges and the
         // bracket projection rides on. Read once so the gate and the
         // `ForceBar` it builds can never disagree about the same bar.
-        let size = bar.high - bar.low;
+        let range = bar.high - bar.low;
         // What the window would hold with this bar folded in: one body
         // longer, capped at the window, oldest evicted once it is full.
         let filled = (self.bodies.len() + 1).min(self.params.window);
@@ -241,18 +252,18 @@ impl ForceWindow {
             BarVerdict::Exhaustion { side, ratio }
         } else if ratio < min {
             BarVerdict::Quiet { ratio }
-        } else if size >= self.params.min_size {
+        } else if range >= self.params.min_range {
             BarVerdict::Force(ForceBar {
                 side,
                 body,
-                range: size,
+                range,
                 ratio,
             })
         } else {
             // Inside the band but under the absolute floor: a ratio without
             // a size is not an elephant — and the verdict says which rule
             // held it, because "quiet" over a band-clearing bar is a lie.
-            BarVerdict::UnderFloor { ratio, size }
+            BarVerdict::UnderFloor { ratio, range }
         }
     }
 }
@@ -315,7 +326,7 @@ mod tests {
             window: len,
             min_factor: dec(min),
             max_factor: dec(max),
-            min_size: Decimal::ZERO,
+            min_range: Decimal::ZERO,
         })
     }
 
@@ -420,7 +431,9 @@ mod tests {
         }
     }
 
-    /// The absolute floor: a ratio without a size is not an elephant. In
+    /// The absolute floor: a ratio without a size is not an elephant. (The
+    /// 247/1,355 figures below were measured against the *body* floor this
+    /// gate replaced; see [`ForceParams::min_range`].) In
     /// congestion the average body shrinks and modest bars clear the
     /// relative band — measured on a real WINV26 session, the bare band
     /// marked 247 of 1,355 volume bars as force; this gate is what turns
@@ -431,7 +444,7 @@ mod tests {
             window: 3,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
-            min_size: dec("100"),
+            min_range: dec("100"),
         });
         // Bodies 30, 30, then 60: ratio 1.5 — band says force, floor says
         // no, and the verdict names the floor rather than calling it quiet.
@@ -441,7 +454,7 @@ mod tests {
             gated.classify(&bar("160", "220")),
             BarVerdict::UnderFloor {
                 ratio: dec("1.5"),
-                size: dec("62"),
+                range: dec("62"),
             },
             "a 62-point candle is not an elephant under a 100-point floor"
         );
@@ -451,7 +464,7 @@ mod tests {
             window: 3,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
-            min_size: dec("100"),
+            min_range: dec("100"),
         });
         gated.classify(&bar("1000", "1100"));
         gated.classify(&bar("1100", "1200"));
@@ -522,7 +535,7 @@ mod tests {
             window: 3,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
-            min_size: dec("100"),
+            min_range: dec("100"),
         });
         // Two 30-point bodies warm the window, so the average is 30 until
         // the judged bar folds itself in.
@@ -555,7 +568,7 @@ mod tests {
             window: 3,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
-            min_size: dec("100"),
+            min_range: dec("100"),
         });
         gated.classify(&bar("100", "130"));
         gated.classify(&bar("130", "160"));
@@ -568,5 +581,59 @@ mod tests {
             ),
             other => panic!("a 5-point body is not force at any candle size, got {other:?}"),
         }
+    }
+
+    /// What the range floor lets through that the body floor did not, in
+    /// the regime the floor was added for.
+    ///
+    /// The doji test above warms with 30-point bodies, so its ratio is far
+    /// under the band and the *band* refuses the bar whatever the floor
+    /// says — which proves the gates compose, and proves nothing about
+    /// congestion. This one is congestion: a shrunken average body, so the
+    /// ratio clears easily, and a bar whose body would have been refused
+    /// outright. It is the cost of the trader's decision written down as an
+    /// executable fact, so that "the floor is looser now" is a number
+    /// somebody can read rather than a worry somebody has.
+    #[test]
+    fn a_congested_tape_admits_more_than_the_body_floor_did() {
+        let params = ForceParams {
+            window: 3,
+            min_factor: dec("1.5"),
+            max_factor: dec("2.5"),
+            min_range: dec("100"),
+        };
+        // Congestion: two 10-point bodies, so the average is small and a
+        // modest body clears the band with room to spare.
+        let warm = [bar("100", "110"), bar("110", "120")];
+        // Body 25 (ratio 1.67, inside the band) on a 140-point candle.
+        let judged = wicked("180000", "179975", "180100", "179960");
+
+        let mut ranged = ForceWindow::new(params.clone());
+        for bar in &warm {
+            ranged.classify(bar);
+        }
+        match ranged.classify(&judged) {
+            BarVerdict::Force(force) => {
+                assert_eq!(force.body, dec("25"));
+                assert_eq!(force.range, dec("140"));
+            }
+            other => panic!("the range floor admits this bar, got {other:?}"),
+        }
+
+        // The very same bar under a floor of the same number read against
+        // the body: refused. This is the whole delta, in one assertion.
+        let mut bodied = ForceWindow::new(params);
+        for bar in &warm {
+            bodied.classify(bar);
+        }
+        let body_floor_would_refuse = (judged.close - judged.open).abs() < dec("100");
+        assert!(
+            body_floor_would_refuse,
+            "the fixture must be a bar the old body floor refused, or it              proves nothing"
+        );
+        assert!(
+            matches!(bodied.classify(&judged), BarVerdict::Force(_)),
+            "and the range floor is what admits it now"
+        );
     }
 }

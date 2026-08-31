@@ -118,7 +118,18 @@
 // chart would call one. This is measured, not suspected: on a live WINV26
 // session the same bare band marked 247 of 1 355 volume bars as force bars;
 // an absolute floor of 100 points left 7 (see docs/ux/strategy-anchors.md,
-// which is why the strategy kernel's force ruler carries `min_body`).
+// which is why the strategy kernel's force ruler carries a floor at all).
+//
+// NOTE, and read it before calibrating against the bot: this script's floor
+// below measures the BODY (`body >= min_body_points`), while the kernel's
+// `min_range` measures the whole CANDLE (`high - low`). They were the same
+// rule until the kernel's floor was changed on the trader's instruction;
+// this script was deliberately left measuring the body so that the paint on
+// an existing chart did not move under anyone. The consequence is real: the
+// same number in both places is a STRICTER gate here than in the armed
+// instance, so a bar this script leaves unpainted can still fire the bot.
+// Calibrate each against itself, and change this input's meaning here only
+// as a deliberate edit — not by assuming the two agree.
 //
 // So section 5 adds a floor in POINTS, `and`ed with the ratio above: a
 // bar must be big relative to its neighbours AND big in the instrument's own

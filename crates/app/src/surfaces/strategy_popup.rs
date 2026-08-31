@@ -506,7 +506,7 @@ impl Surface for StrategyPopupSurface {
                         ui.horizontal(|ui| {
                             ui.label("and candle ≥");
                             ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.min_size)
+                                egui::TextEdit::singleline(&mut popup.form.min_range)
                                     .desired_width(50.0),
                             );
                             ui.label("pts (0 = off)").on_hover_text(

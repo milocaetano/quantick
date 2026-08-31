@@ -89,17 +89,29 @@ pub struct StoredPreset {
     /// reads clean with the old behaviour, which is why the version does
     /// not move.
     ///
-    /// The `min_body` alias is the key this field was written under when
-    /// the floor measured the body instead. A bank saved then still loads,
-    /// and its number is carried into the new meaning rather than dropped:
-    /// silently defaulting a trader's `100` to `0` would turn their gate
-    /// off, which is the loudest possible way to lose a setting. The
-    /// reinterpretation is real and is not hidden — the same `100` now
+    /// Two aliases, two vintages. `min_body` is the key this field was
+    /// written under while the floor measured the body; `min_size` is the
+    /// name it briefly carried on the branch that changed it, before the
+    /// rename to match `ForceParams::min_range`. A bank saved under either
+    /// still loads and keeps its number, because silently defaulting a
+    /// trader's `100` to `0` would turn their gate *off* — the loudest
+    /// possible way to lose a setting, and invisible until a flood of small
+    /// bars starts firing.
+    ///
+    /// The reinterpretation is real and is not hidden: the same `100` now
     /// admits any candle reaching 100, where before it wanted a 100-point
-    /// body — so the release note says so, and the form's own label names
-    /// what is measured.
-    #[serde(default = "zero_points", alias = "min_body")]
-    pub min_size: String,
+    /// body. The form's label says which is measured, and the badge names
+    /// the gate that refused a bar.
+    ///
+    /// **The migration is one-way.** A bank written by this build says
+    /// `min_range`, and an *older* build reading it finds no key it knows
+    /// and falls through to `0` — the same silent loss, in the one
+    /// direction no alias here can reach, because the alias would have to
+    /// exist in the build being rolled back to. Downgrading turns the floor
+    /// off, and the PR body says so rather than leaving it to be found in a
+    /// fill.
+    #[serde(default = "zero_points", alias = "min_body", alias = "min_size")]
+    pub min_range: String,
     /// Take profit = close + `tp_mult` × range, in the trade's favour;
     /// `0` means no leg.
     pub tp_mult: String,
@@ -115,7 +127,7 @@ pub struct StoredPreset {
     /// a bar that never crossed the edge rests nothing under either value,
     /// and neither does a cut whose projected legs would not clear the
     /// edge — an entry is never armed unprotected.
-    /// Optional for the same vintage reason as `min_size`, which is why
+    /// Optional for the same vintage reason as `min_range`, which is why
     /// the version does not move.
     #[serde(default = "ignore_break")]
     pub on_break: String,
@@ -205,7 +217,7 @@ impl StoredPreset {
             // gates almost everything. It is a starting point for the
             // instrument in front of the trader, not a default that is
             // right anywhere it is not changed.
-            min_size: "100".to_owned(),
+            min_range: "100".to_owned(),
             tp_mult: "1.0".to_owned(),
             sl_mult: "1.0".to_owned(),
             rearm: "one_shot".to_owned(),
@@ -262,8 +274,8 @@ impl StoredPreset {
         if min_factor <= Decimal::ZERO || max_factor <= Decimal::ZERO {
             return None;
         }
-        let min_size = Decimal::from_str(&self.min_size).ok()?;
-        if min_size < Decimal::ZERO {
+        let min_range = Decimal::from_str(&self.min_range).ok()?;
+        if min_range < Decimal::ZERO {
             return None;
         }
         let alarm = self.alarm_to_kernel()?;
@@ -290,7 +302,7 @@ impl StoredPreset {
             window: self.window as usize,
             min_factor,
             max_factor,
-            min_size,
+            min_range,
         };
         Some(CompiledPreset {
             params,
@@ -361,7 +373,7 @@ pub fn side_token(side: Side) -> &'static str {
     side.as_str()
 }
 
-/// Serde default for [`StoredPreset::min_size`]: rows from before the field
+/// Serde default for [`StoredPreset::min_range`]: rows from before the field
 /// existed read as "floor off".
 fn zero_points() -> String {
     "0".to_owned()
@@ -537,7 +549,7 @@ mod tests {
         assert_eq!(params.rearm, Rearm::OneShot);
         assert_eq!(force.window, 20);
         assert_eq!(
-            force.min_size,
+            force.min_range,
             Decimal::from(100),
             "the form's starting point carries the elephant floor"
         );
@@ -569,7 +581,7 @@ mod tests {
         let compiled = preset.to_kernel().expect("and still compiles");
         let (params, force) = (compiled.params, compiled.force);
         assert_eq!(
-            force.min_size,
+            force.min_range,
             Decimal::ZERO,
             "absent floor means off, not refused"
         );
@@ -581,7 +593,7 @@ mod tests {
         std::fs::remove_file(&path).ok();
 
         let mut negative = StoredPreset::starting_point(Side::Buy);
-        negative.min_size = "-5".to_owned();
+        negative.min_range = "-5".to_owned();
         assert!(
             negative.to_kernel().is_none(),
             "a negative floor is refused whole"
@@ -875,9 +887,10 @@ mod tests {
     /// Letting the rename fall through to the `0` default would switch
     /// their elephant gate *off* — the loudest possible way to lose a
     /// setting, and invisible until a flood of small bars started firing.
-    /// The alias keeps the number; the *meaning* is what changed, and that
-    /// is said out loud in the release note rather than discovered from a
-    /// fill.
+    /// The alias keeps the number; the *meaning* is what changed, and the
+    /// field's own doc carries that — there is no release-notes file in
+    /// this repo to defer it to, and a doc comment pointing at a document
+    /// nobody wrote is worse than no promise at all.
     ///
     /// The fixture is written by the bank itself and then has only the key
     /// renamed, so this asserts the alias and not a hand-typed schema that
@@ -893,7 +906,7 @@ mod tests {
         // floor changed what it measures.
         let vintage = std::fs::read_to_string(&path)
             .expect("the bank just wrote it")
-            .replace("min_size = ", "min_body = ");
+            .replace("min_range = ", "min_body = ");
         assert!(
             vintage.contains("min_body = \"100\""),
             "the fixture really is a pre-rename file: {vintage}"
@@ -905,7 +918,7 @@ mod tests {
             .get("SellGainAlarm")
             .expect("a bank from before the rename still loads");
         assert_eq!(
-            preset.min_size, "100",
+            preset.min_range, "100",
             "the trader's own number survives the rename instead of defaulting to 0"
         );
         assert_eq!(
@@ -913,7 +926,7 @@ mod tests {
                 .to_kernel()
                 .expect("and it still compiles to a runnable ruler")
                 .force
-                .min_size,
+                .min_range,
             Decimal::from(100),
             "carried all the way into the kernel's floor"
         );

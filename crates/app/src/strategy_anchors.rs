@@ -423,7 +423,7 @@ mod tests {
                     window: 3,
                     min_factor: "1.5".parse().expect("fixture"),
                     max_factor: "2.5".parse().expect("fixture"),
-                    min_size: Decimal::ZERO,
+                    min_range: Decimal::ZERO,
                 })),
             ),
             alarm: None,
@@ -506,7 +506,7 @@ mod tests {
                     window: 3,
                     min_factor: "1.5".parse().expect("fixture"),
                     max_factor: "2.5".parse().expect("fixture"),
-                    min_size: Decimal::ZERO,
+                    min_range: Decimal::ZERO,
                 })),
             ),
             alarm: None,
@@ -595,7 +595,7 @@ mod tests {
                 window: 3,
                 min_factor: "1.5".parse().expect("fixture"),
                 max_factor: "2.5".parse().expect("fixture"),
-                min_size: Decimal::ZERO,
+                min_range: Decimal::ZERO,
             })),
         );
         instance.alarm = Some(SignalAlarm::new(quantick_strategy::AlarmParams {

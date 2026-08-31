@@ -2403,6 +2403,14 @@ impl ChartPane {
         // This is the whole point of the badge and it was reaching only the
         // right-click menu: the trader watches the chart, and "why did
         // nothing happen" is answerable only where they are already looking.
+        // A remark that is not a refusal still belongs on the badge: it is
+        // about this instance right now, and leaving it to `status_line`
+        // alone is how the two surfaces came to disagree in the first place.
+        if let Some(aside) = instance.armed.aside() {
+            text.push_str(" · ");
+            text.push_str(aside);
+            return text;
+        }
         let held = instance.armed.hold_reason();
         // A gate that refused *this* bar is the whole answer, and it stands
         // alone.
@@ -10413,7 +10421,7 @@ mod tests {
                         window: 3,
                         min_factor: rust_decimal::Decimal::new(15, 1),
                         max_factor: rust_decimal::Decimal::new(25, 1),
-                        min_size: rust_decimal::Decimal::ZERO,
+                        min_range: rust_decimal::Decimal::ZERO,
                     },
                 )),
             ),

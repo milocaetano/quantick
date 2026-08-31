@@ -232,13 +232,13 @@ output or a named test, not a recollection.
 | --- | --- | --- |
 | A1 | met | `force::tests::the_floor_measures_the_whole_candle_not_the_body` names the gate on the marked bar's geometry: body 95, candle 140, ratio ~1.84 inside a 1.5–2.5 band, floor 100. Under the old rule `UnderFloor`; under the new one `Force`. |
 | A2 | met | `pane::tests::the_badge_names_the_rulers_own_refusal_and_not_only_an_older_bars`. Run against the pre-fix badge composition it fails with the reported sentence, verbatim: `⚡ SellGainAlarm · last held: the body never cut the region` — the exact string in the trader's screenshot. |
-| A3 | met | Same test asserts the ruler's reading leads and carries its number (`×`). `ForceTrigger::status` already covered `Warmup`, `FlatAverage`, `NoSide`, `Quiet`, `Force`, `UnderFloor` and `Exhaustion`; the badge now reaches all of them through one call rather than none. |
+| A3 | met | Two halves. Prose: the badge leads with the ruler's reading and its number (`×`). **Value:** `Trigger::refusal()` is a new port method returning a stable name per verdict, handed out by `ArmedStrategy::ruler_refusal()`, so an operator that is not looking at the chart can tell the ruler declined this bar without parsing English. Proven by `every_ruler_verdict_that_declines_a_bar_has_a_readable_name` (one assertion per verdict, no catch-all) and `a_ruler_refused_bar_leaves_the_gates_reason_standing_and_says_so`. **The first version of this branch claimed A3 on the badge text alone; arch-review caught that the machine-readable half named in the criterion had not been written, and it was built rather than the criterion quietly reworded.** |
 | A4 | met | Same test asserts ordering: the current-bar sentence precedes `last held:`, so a standing refusal can no longer stand alone and read as fresh. |
-| A5 | met | `git diff` shows `crates/strategy/src/armed.rs`, `crates/strategy/tests/full_operation.rs`, `crates/backtest/tests/harness.rs` and `crates/app/src/strategy_anchors.rs` are **pure rename** — no non-`min_body`/`min_size` line changed. The state machine and the backtest harness are untouched. One assertion changed for the floor's new semantics (`the_candle_floor_holds_quiet_what_the_band_alone_would_call_force`: `body: 60` → `size: 62`), listed in the PR body. |
+| A5 | met | `git diff` shows `crates/strategy/src/armed.rs`, `crates/strategy/tests/full_operation.rs`, `crates/backtest/tests/harness.rs` and `crates/app/src/strategy_anchors.rs` are **pure rename** — no non-`min_body`/`min_range` line changed. The state machine and the backtest harness are untouched. One assertion changed for the floor's new semantics (`the_candle_floor_holds_quiet_what_the_band_alone_would_call_force`: `body: 60` → `size: 62`), listed in the PR body. |
 | A6 | met | Reported in the PR body with the WINV26 calibration note quoted and the BTC figure (100 is 0.06% of a 180,000 price). The trader's `quantick-strategies.toml` lives outside the repo and is not written by this branch. |
-| A7 | met | `the_floor_measures_the_whole_candle_not_the_body` passes; `ForceParams::min_size` and `BarVerdict::UnderFloor { size }` carry the new meaning in their names and docs. |
+| A7 | met | `the_floor_measures_the_whole_candle_not_the_body` passes; `ForceParams::min_range` and `BarVerdict::UnderFloor { size }` carry the new meaning in their names and docs. |
 | A8 | met | `strategy_presets::tests::a_bank_written_under_the_old_min_body_key_keeps_its_floor`. The fixture is written by the bank itself and only its key renamed, so it asserts the serde alias rather than a hand-typed schema. |
-| A9 | met | `a_wick_dominated_candle_clears_the_floor_and_the_band_still_refuses_it` — the doji **D5** accepts, bounded by the ratio band and pinned so loosening that band fails a test. |
+| A9 | met | Two tests, because the first one alone was not honest. `a_wick_dominated_candle_clears_the_floor_and_the_band_still_refuses_it` shows the gates composing — but arch-review pointed out it warms with 30-point bodies, so the ratio is 0.16 and the *band* refuses the bar whatever the floor says, which proves nothing about the regime the floor exists for. `a_congested_tape_admits_more_than_the_body_floor_did` is that regime: a shrunken average body, a bar with a 25-point body on a 140-point candle that the old floor refused and this one admits. The cost of **D5** is now a number somebody can read. |
 | G1 | met | `tracked_files_are_written_in_english` passes (4/4 in `language_guard`). |
 | G2 | met | Four checks, each run on its own, exit 0: fmt, clippy (`-D warnings`), build, test. One pre-existing environmental failure — see below. |
 | G3 | met | Declared below. |
@@ -313,6 +313,39 @@ string exactly. What is genuinely **not** evidenced is how the longer
 sentence *looks* in a chart corner — whether it crowds the drawing at small
 window sizes. That is a real question this branch does not answer, and it
 belongs to `trader-ux-review` and to the trader's own eye.
+
+## Findings carried into the PR rather than fixed
+
+`arch-review` step 0 ran at **xhigh** and returned 14 findings. Eleven were
+fixed on the branch. Three are deliberate positions, and they are here so a
+reader argues with a decision instead of missing one:
+
+1. **The `trigger_status` cache is kernel state serving a UI cost.** The
+   review's objection is fair: `badge_text_for` allocates a badge `String`
+   every frame anyway, so removing one allocation of several is a small win
+   bought with a derived field in a pure domain crate and a timing
+   precondition on a public trait. Kept, because `Trigger::status()` formats
+   two `Decimal`s and the surrounding `push_str`s do not, and because the
+   invariant is pinned by
+   `the_cached_ruler_reading_never_drifts_from_the_trigger` rather than left
+   to review. The precondition the review asked for is now written on
+   `Trigger::status` itself. The reviewer's alternative — cache the composed
+   badge text in `ChartPane` — is better and is the right follow-up.
+2. **The badge can now chain four clauses (~110 characters) with no
+   truncation.** Real, and this branch cannot answer it: G5's screenshot
+   could not be taken (see above), so how the longer sentence sits in a chart
+   corner is exactly the thing with no evidence behind it. It belongs to
+   `trader-ux-review` and to the trader's eye, not to a reviewer's guess.
+3. **The form still ships `100` as the floor's starting point.** Instrument-
+   blind, and the comment above it now says so. Changing it is a trading
+   decision the trader reserved under **D1**/**A6**; this branch reports the
+   number and does not pick a new one.
+
+**One-way migration, stated because nobody should find it in a fill.** A bank
+written by this build says `min_range`. Aliases carry `min_body` and the
+short-lived `min_size` *forward*, but an older build reading `min_range`
+knows no such key and falls through to `0`, switching the floor off. Rolling
+back this build therefore needs the preset's floor re-entered by hand.
 
 ## Closing steps
 
