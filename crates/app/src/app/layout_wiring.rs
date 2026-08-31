@@ -474,20 +474,12 @@ impl QuantickApp {
     /// than recorded against another set's object. Other panes' edits are
     /// left alone.
     fn leave_pane_gestures(&mut self, tab: u64, side: PaneSide) {
-        if self
-            .inline_text_edit
-            .as_ref()
-            .is_some_and(|edit| edit.tab == tab && edit.side == side)
-        {
+        if self.surfaces.drawing_chrome.inline_edit_is_on(tab, side) {
             self.end_inline_text_edit();
         }
-        if self
-            .inspector_edit_baseline
-            .as_ref()
-            .is_some_and(|edit| edit.tab == tab && edit.side == side)
-        {
-            self.inspector_edit_baseline = None;
-        }
+        self.surfaces
+            .drawing_chrome
+            .drop_edit_baseline_on(tab, side);
     }
 
     /// Whether `side` names a pane the tab has built — `Tab::pane` answers

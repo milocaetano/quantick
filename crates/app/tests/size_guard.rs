@@ -73,7 +73,7 @@ const SLACK: usize = 200;
 /// targets: each entry is debt, and the only direction one should ever move
 /// is down. `app.rs` at the top of the list is the reason the file exists.
 const BASELINE: &[(&str, usize)] = &[
-    // `app.rs` is the reason this file exists. Tightened twice now. The
+    // `app.rs` is the reason this file exists. Tightened three times now. The
     // guard's own change took the agent popup, the acknowledgement toast and
     // the Save-as box out to `src/surfaces/`; the second batch took the
     // indicator-preview watermark, the appearance window, the footprint
@@ -82,7 +82,16 @@ const BASELINE: &[(&str, usize)] = &[
     // the environment the port hands them instead, plus the review's fixes
     // and the `QUANTICK_TOAST=paper` hook that photographs the converged
     // acknowledgement lane.
-    ("crates/app/src/app.rs", 11248),
+    //
+    // The third batch was the drawing chrome: the context bar, the on-chart
+    // note editor, the inspector in both its hosts and the object manager,
+    // with the title bar, the body, the placement rule and the action applier
+    // they share. 1,548 production lines and twenty-one struct fields, out to
+    // `src/surfaces/drawing_chrome/` as one member — they are one subsystem,
+    // and four members would have left the state they share behind. The
+    // number below is what that left, not a target: this file is still six
+    // times the threshold.
+    ("crates/app/src/app.rs", 9700),
     // The five entries below `pane.rs` were invisible to the first version of
     // this guard, which stopped counting at the first `#[cfg(test)]` of any
     // kind: `gateway.rs` scored 72 lines of its 4,142, `drawings/mod.rs` 221
