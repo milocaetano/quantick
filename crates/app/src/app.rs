@@ -248,48 +248,8 @@ const PRICE_DRAG_STEPS: f64 = 200.0;
 const BAR_DRAG_SPEED: f64 = 0.25;
 /// Where the object manager first opens: under the toolbox's home corner.
 const DRAWING_MANAGER_DEFAULT_POSITION: egui::Pos2 = egui::pos2(70.0, 140.0);
-/// How long the delete toast keeps its Undo affordance on screen (UX spec).
-const TOAST_UNDO_MS: u64 = 8_000;
 /// Horizontal offset of a duplicated drawing, so the copy is visibly a copy.
 const DUPLICATE_OFFSET_BARS: f32 = 2.0;
-/// How far below the top edge the assistant's popup opens, clear of the menu
-/// row and the toolbar.
-const AGENT_POPUP_TOP_MARGIN_PX: f32 = 96.0;
-/// Widest the assistant's popup gets, so a long message wraps instead of
-/// covering the chart.
-const AGENT_POPUP_MAX_WIDTH_PX: f32 = 360.0;
-/// Room between the message and the attribution line under it.
-const AGENT_POPUP_SPACING_PX: f32 = 6.0;
-/// Vertical clearance between the toast and the bottom chrome.
-const TOAST_BOTTOM_MARGIN_PX: f32 = 44.0;
-/// Width of the Save-as box, in pixels. Wide enough that a name at the
-/// [`ui_state::MAX_WORKSPACE_NAME`] limit reads in one line.
-const WORKSPACE_NAME_BOX_WIDTH_PX: f32 = 280.0;
-
-/// Transient confirmation that the window did what was asked, with an escape
-/// hatch when the act has one. Undo works from the button for
-/// [`TOAST_UNDO_MS`] and from Ctrl+Z for as long as the history holds.
-///
-/// This is the window's one acknowledgement channel, not the drawings'. It
-/// floats over the chart's bottom edge instead of taking a cell on the status
-/// line, and that is the reason: the status bar's readings live at fixed
-/// positions Rafa's eye returns to without looking, and a cell that appears
-/// for eight seconds and then leaves would slide `bars` and `arrival`
-/// sideways twice per acknowledgement (`statusbar.rs`: "the layout never
-/// moves").
-#[derive(Debug)]
-struct Toast {
-    /// Borrowed for the fixed messages, owned when the act has a count to
-    /// report. Acknowledgements are event-driven and rare — never a frame
-    /// path — so an allocation here costs nothing anyone can see.
-    message: std::borrow::Cow<'static, str>,
-    shown_at: Instant,
-    /// Whether the toast offers Undo. A delete does; the honest clear after
-    /// a bar rebuild does not — its history is gone with the drawings, and
-    /// a dead Undo button would lie. Neither does a workspace save: the file
-    /// it replaced is gone, and `Reset startup layout` is the real way back.
-    offers_undo: bool,
-}
 
 /// Which inspector tab is open. Tabs exist per capability: every tool gets
 /// Style and Coordinates; a tool that brings its own tab (the Fib level
@@ -998,11 +958,10 @@ pub struct QuantickApp {
     // (slider/color/coordinate drag) is in flight; committed as one undo
     // entry once pointer and keyboard let go.
     inspector_edit_baseline: Option<InspectorEdit>,
-    toast: Option<Toast>,
-    /// The assistant's message, waiting to be read and dismissed. Drawn over
-    /// the chart, never modal: a trader mid-tape is never locked out of their
-    /// own window by something an assistant said.
-    agent_popup: Option<crate::control::AgentPopup>,
+    /// Floating chrome that owns the state it draws: the assistant's popup,
+    /// the acknowledgement toast. One field for the whole set, one module
+    /// per surface — see [`crate::surfaces::Surfaces`].
+    surfaces: crate::surfaces::Surfaces,
     // Inspector chrome state: open tab, dock pin, whether the user moved the
     // floating window this session (manual position wins over placement),
     // and the selection the last placement was computed for.
@@ -1164,8 +1123,6 @@ pub struct QuantickApp {
     inspector_pin_rect: Option<egui::Rect>,
     #[cfg(test)]
     context_bar_rect: Option<egui::Rect>,
-    #[cfg(test)]
-    toast_undo_rect: Option<egui::Rect>,
     #[cfg(test)]
     manager_action_rects: Vec<(usize, &'static str, egui::Rect)>,
 
@@ -1363,8 +1320,6 @@ pub struct QuantickApp {
     /// file: capturing the live window and saving it would drop the bookmarks
     /// on the floor if the app did not carry them between load and save.
     bookmarks: Vec<ui_state::NamedArrangement>,
-    /// The Save-as box, while it is open: what has been typed so far.
-    workspace_name_entry: Option<String>,
     /// Whether a workspace is on disk, so the menu can disable Reset without
     /// asking the filesystem. The menu body runs every frame it is open, and a
     /// `Path::exists` there is a syscall at 60 Hz for an answer that changes
@@ -1562,8 +1517,7 @@ impl QuantickApp {
             toolrail: ToolRail::new(),
             drawing_delete_confirm: false,
             inspector_edit_baseline: None,
-            toast: None,
-            agent_popup: None,
+            surfaces: crate::surfaces::Surfaces::default(),
             inspector_tab: InspectorTab::default(),
             inspector_pinned: false,
             inspector_open: false,
@@ -1606,8 +1560,6 @@ impl QuantickApp {
             inspector_pin_rect: None,
             #[cfg(test)]
             context_bar_rect: None,
-            #[cfg(test)]
-            toast_undo_rect: None,
             #[cfg(test)]
             manager_action_rects: Vec::new(),
             chart_layers_path: chart_layers::default_path(),
@@ -1663,7 +1615,6 @@ impl QuantickApp {
             save_on_exit: true,
             favorites_are_staged: false,
             bookmarks: Vec::new(),
-            workspace_name_entry: None,
             workspace_saved: false,
             recent_workspaces: Vec::new(),
             recent_on_disk: Vec::new(),
@@ -2804,45 +2755,6 @@ impl QuantickApp {
         self.active_tab
     }
 
-    /// The assistant's message on screen: a small window over the chart that
-    /// says who is speaking, carries one message and closes on a click.
-    ///
-    /// Deliberately not modal and deliberately not on the status line: a
-    /// trader reading the tape keeps every control they had, and the fixed
-    /// readings never move to make room for something that leaves again.
-    fn draw_agent_popup(&mut self, ctx: &egui::Context) {
-        let Some(popup) = self.agent_popup.clone() else {
-            return;
-        };
-        let mut open = true;
-        let mut dismissed = false;
-        egui::Window::new(&popup.title)
-            .id(egui::Id::new("agent_popup"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(
-                egui::Align2::CENTER_TOP,
-                egui::vec2(0.0, AGENT_POPUP_TOP_MARGIN_PX),
-            )
-            .show(ctx, |ui| {
-                ui.set_max_width(AGENT_POPUP_MAX_WIDTH_PX);
-                ui.label(&popup.message);
-                ui.add_space(AGENT_POPUP_SPACING_PX);
-                ui.label(
-                    egui::RichText::new(format!("Sent by {}", popup.author))
-                        .small()
-                        .color(theme::TEXT_SUPPORT),
-                );
-                if ui.button("Dismiss").clicked() {
-                    dismissed = true;
-                }
-            });
-        if dismissed || !open {
-            self.agent_popup = None;
-        }
-    }
-
     /// Put one Quantick Pine script on the focused pane behind a fresh slot.
     ///
     /// The one door: the script library's click arrives here, and so does an
@@ -2914,18 +2826,14 @@ impl QuantickApp {
     /// the first rather than stacking windows over a chart someone is
     /// trading, and the trader dismisses it.
     pub(crate) fn show_agent_popup(&mut self, popup: crate::control::AgentPopup) {
-        self.agent_popup = Some(popup);
+        self.surfaces.agent_popup.show(popup);
     }
 
     /// Post one line to the window's own acknowledgement lane — the same
     /// channel a delete or a workspace save uses, with no Undo: there is
     /// nothing to take back from having been told something.
     pub(crate) fn show_agent_toast(&mut self, message: String) {
-        self.toast = Some(Toast {
-            message: message.into(),
-            shown_at: Instant::now(),
-            offers_undo: false,
-        });
+        self.surfaces.toast.note(message, Instant::now());
     }
 
     /// Ask for the platform's attention sound, through the same sink the
@@ -5632,73 +5540,6 @@ impl QuantickApp {
         saved
     }
 
-    /// The Save-as box: one text field, Save and Cancel.
-    ///
-    /// A window rather than an inline menu field, because a menu closes the
-    /// moment focus moves and a name is several keystrokes long. Enter saves,
-    /// Escape cancels, and the field takes the keyboard on the frame it opens
-    /// so the trader can type without clicking into it first.
-    fn draw_workspace_name_box(&mut self, ctx: &egui::Context) {
-        let Some(mut entry) = self.workspace_name_entry.take() else {
-            return;
-        };
-        let mut save = false;
-        let mut cancel = false;
-        let mut open = true;
-        egui::Window::new("Save workspace as")
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_min_width(WORKSPACE_NAME_BOX_WIDTH_PX);
-                ui.label("A name you will recognise later.");
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut entry)
-                        .hint_text("scalp WIN")
-                        .char_limit(ui_state::MAX_WORKSPACE_NAME)
-                        .desired_width(f32::INFINITY),
-                );
-                field.request_focus();
-                if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    save = true;
-                }
-                // A name already in use replaces that bookmark. Saying so
-                // before the click is the difference between "save as" and
-                // "lose the arrangement I meant to keep".
-                if let Some(clean) = ui_state::clean_workspace_name(&entry)
-                    && self.bookmarks.iter().any(|held| held.name == clean)
-                {
-                    ui.label(
-                        egui::RichText::new(format!("Replaces the saved \"{clean}\"."))
-                            .color(theme::AMBER),
-                    );
-                }
-                ui.horizontal(|ui| {
-                    let named = ui_state::clean_workspace_name(&entry).is_some();
-                    if ui
-                        .add_enabled(named, egui::Button::new("Save"))
-                        .on_disabled_hover_text("Type a name first")
-                        .clicked()
-                    {
-                        save = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-            });
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            cancel = true;
-        }
-        if save {
-            self.save_named_workspace(&entry);
-        } else if !cancel && open {
-            // Neither settled: keep what has been typed for the next frame.
-            self.workspace_name_entry = Some(entry);
-        }
-    }
-
     /// Write the bookmarks without disturbing the startup arrangement.
     ///
     /// Reads the file back and swaps only the named entries, rather than
@@ -6216,11 +6057,7 @@ impl QuantickApp {
     /// No Undo: the file it replaced is gone, and `Reset startup layout` is
     /// the honest way back rather than a button that pretends otherwise.
     fn note_workspace(&mut self, message: String) {
-        self.toast = Some(Toast {
-            message: message.into(),
-            shown_at: Instant::now(),
-            offers_undo: false,
-        });
+        self.surfaces.toast.note(message, Instant::now());
     }
 
     /// Periodically log a perf summary and warn on threshold breaches.
@@ -7104,7 +6941,7 @@ impl QuantickApp {
                             )
                             .clicked()
                         {
-                            self.workspace_name_entry = Some(String::new());
+                            self.surfaces.workspace_name.open();
                             ui.close_menu();
                         }
                         let mut open: Option<String> = None;
@@ -7316,11 +7153,7 @@ impl QuantickApp {
                     || "Drawing deleted.".to_owned(),
                     |name| format!("{name} deleted."),
                 );
-                self.toast = Some(Toast {
-                    message: message.into(),
-                    shown_at: now,
-                    offers_undo: true,
-                });
+                self.surfaces.toast.note_with_undo(message, now);
             }
             DeleteOutcome::NeedsConfirmation => self.drawing_delete_confirm = true,
             DeleteOutcome::NothingSelected => {}
@@ -7488,67 +7321,6 @@ impl QuantickApp {
             tab.pane_mut(edit.side)
                 .drawings
                 .record_edit_of(edit.index, edit.before);
-        }
-    }
-
-    /// The delete toast: visible for [`TOAST_UNDO_MS`], with an Undo button
-    /// driving the same history as Ctrl+Z.
-    fn draw_toast(&mut self, ctx: &egui::Context, now: Instant) {
-        // Expire first, so the borrow taken below is only ever of a toast that
-        // is still on screen.
-        if self.toast.as_ref().is_some_and(|toast| {
-            now.saturating_duration_since(toast.shown_at) >= Duration::from_millis(TOAST_UNDO_MS)
-        }) {
-            self.toast = None;
-        }
-        let Some(toast) = &self.toast else {
-            return;
-        };
-        // Borrowed, never cloned: the toast is painted on every frame of its
-        // eight seconds, and an owned message copied per frame would be ~500
-        // allocations for a string that never changes.
-        let message: &str = &toast.message;
-        let offers_undo = toast.offers_undo;
-        let mut undo_clicked = false;
-        #[cfg(test)]
-        let mut undo_rect = None;
-        egui::Area::new(egui::Id::new("toast"))
-            .anchor(
-                egui::Align2::CENTER_BOTTOM,
-                egui::vec2(0.0, -TOAST_BOTTOM_MARGIN_PX),
-            )
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                egui::Frame::none()
-                    .fill(theme::TAG_BG)
-                    .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
-                    .rounding(6.0_f32)
-                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(message);
-                            if offers_undo {
-                                let undo = ui.button("Undo");
-                                #[cfg(test)]
-                                {
-                                    undo_rect = Some(undo.rect);
-                                }
-                                undo_clicked = undo.clicked();
-                            }
-                        });
-                    });
-            });
-        #[cfg(test)]
-        {
-            self.toast_undo_rect = undo_rect;
-        }
-        if undo_clicked {
-            let pane = self.drawing_pane_mut();
-            pane.drawings.undo();
-            // Same orphan risk as the keyboard undo: the drawing an armed
-            // instance rides may just have been taken away.
-            pane.sweep_strategy_orphans();
-            self.toast = None;
         }
     }
 
@@ -8027,11 +7799,7 @@ impl QuantickApp {
                 if let Some(id) = doomed {
                     self.drawing_pane_mut().remove_strategy_for_drawing(id);
                 }
-                self.toast = Some(Toast {
-                    message: "Drawing deleted.".into(),
-                    shown_at: now,
-                    offers_undo: true,
-                });
+                self.surfaces.toast.note_with_undo("Drawing deleted.", now);
             }
         }
         if actions.close {
@@ -8048,11 +7816,7 @@ impl QuantickApp {
         }
         if let Some(saved) = actions.saved_default {
             // Nothing to undo: this changed a preference, not the chart.
-            self.toast = Some(Toast {
-                message: saved.message().into(),
-                shown_at: now,
-                offers_undo: false,
-            });
+            self.surfaces.toast.note(saved.message(), now);
         }
     }
 
@@ -9080,11 +8844,9 @@ impl QuantickApp {
         if sweep_authored {
             let removed = self.remove_every_authored_object();
             if removed > 0 {
-                self.toast = Some(Toast {
-                    message: format!("{removed} object(s) placed for you removed.").into(),
-                    shown_at: now,
-                    offers_undo: true,
-                });
+                self.surfaces
+                    .toast
+                    .note_with_undo(format!("{removed} object(s) placed for you removed."), now);
             }
         }
         if delete_all {
@@ -9094,11 +8856,9 @@ impl QuantickApp {
             // them now so no resting bot order outlives its badge.
             pane.sweep_strategy_orphans();
             if deleted > 0 {
-                self.toast = Some(Toast {
-                    message: "All drawings deleted.".into(),
-                    shown_at: now,
-                    offers_undo: true,
-                });
+                self.surfaces
+                    .toast
+                    .note_with_undo("All drawings deleted.", now);
             }
         }
         if let Some(index) = select_row {
@@ -11194,10 +10954,25 @@ impl QuantickApp {
         if let Some(access) = self.control_access.as_mut() {
             access.draw_panel(ctx);
         }
-        self.draw_agent_popup(ctx);
+        let surfaces = self.surfaces.draw_all(
+            ctx,
+            &crate::surfaces::SurfaceEnv {
+                bookmarks: &self.bookmarks,
+                now,
+            },
+        );
+        if let Some(name) = surfaces.save_workspace_as {
+            self.save_named_workspace(&name);
+        }
+        if surfaces.undo_drawing {
+            let pane = self.drawing_pane_mut();
+            pane.drawings.undo();
+            // Same orphan risk as the keyboard undo: the drawing an armed
+            // instance rides may just have been taken away.
+            pane.sweep_strategy_orphans();
+        }
         self.draw_toolbar(ctx);
         self.draw_source_picker(ctx);
-        self.draw_workspace_name_box(ctx);
         // Before the dialog is drawn, so a double click on a pane or a curve
         // opens it on the same frame the gesture happened rather than the next.
         self.open_requested_indicator_settings();
@@ -11590,7 +11365,6 @@ impl QuantickApp {
             tab.apply_strategy_cleanup();
         }
         self.play_pending_alarms();
-        self.draw_toast(ctx, now);
         // Both are window chrome reading the active tab, like the offline
         // corner and the transport strip: they speak for one market at a time.
         let tz = self.tz;
@@ -20472,7 +20246,7 @@ crosshair = false
         app.ui_state_path = scratch_ui_state(name);
         run_frame(app, ctx);
         app.save_workspace("test");
-        app.toast = None;
+        app.surfaces.toast.clear();
         assert!(app.ui_state_path.exists(), "the cockpit is on disk");
     }
 
@@ -20512,9 +20286,10 @@ crosshair = false
             "and nothing else — the drift is not adopted as the startup screen"
         );
         assert!(
-            !app.toast
-                .as_ref()
-                .is_some_and(|toast| toast.message.contains("Workspace saved")),
+            !app.surfaces
+                .toast
+                .message()
+                .is_some_and(|message| message.contains("Workspace saved")),
             "an autosave nobody asked for by name does not talk over the trader"
         );
         let _ = std::fs::remove_file(&app.ui_state_path);
@@ -21471,7 +21246,7 @@ crosshair = false
             "the manager's Delete lands the same command"
         );
         assert!(
-            app.toast.is_some(),
+            app.surfaces.toast.message().is_some(),
             "the manager delete raises the same Undo toast as the keyboard"
         );
         run_frame_with_modifiers(
@@ -24713,18 +24488,21 @@ crosshair = false
     fn saving_the_workspace_acknowledges_itself() {
         let (mut app, _commands) = app_with_history(50);
         app.ui_state_path = scratch_ui_state("notice");
-        assert!(app.toast.is_none());
+        assert!(app.surfaces.toast.message().is_none());
 
         app.save_workspace("test");
 
-        let toast = app.toast.as_ref().expect("the save reports itself");
+        let toast = app
+            .surfaces
+            .toast
+            .message()
+            .expect("the save reports itself");
         assert!(
-            toast.message.contains("saved"),
-            "the answer has to say what happened, got '{}'",
-            toast.message
+            toast.contains("saved"),
+            "the answer has to say what happened, got '{toast}'"
         );
         assert!(
-            !toast.offers_undo,
+            !app.surfaces.toast.offers_undo(),
             "the file it replaced is gone; an Undo button here would lie"
         );
         assert!(
@@ -25029,9 +24807,10 @@ crosshair = false
             "a refused save must not write the file either"
         );
         assert!(
-            app.toast
-                .as_ref()
-                .is_some_and(|toast| toast.message.contains("needs a name")),
+            app.surfaces
+                .toast
+                .message()
+                .is_some_and(|message| message.contains("needs a name")),
             "and the trader is told why nothing happened"
         );
     }
@@ -27314,7 +27093,11 @@ crosshair = false
         // A fresh egui Area sizes itself on its first frame.
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);
-        let undo = app.toast_undo_rect.expect("the toast offers Undo");
+        let undo = app
+            .surfaces
+            .toast
+            .undo_rect()
+            .expect("the toast offers Undo");
         let divider = app
             .active_tab()
             .canvas_divider_rect()
@@ -32942,7 +32725,11 @@ crosshair = false
             "the label a panel shows names what acted: {}",
             author.label()
         );
-        let popup = app.agent_popup.as_ref().expect("the popup is on screen");
+        let popup = app
+            .surfaces
+            .agent_popup
+            .pending()
+            .expect("the popup is on screen");
         assert_eq!(popup.message, "look at 108k");
         assert!(popup.author.contains("agent"));
     }
@@ -35242,7 +35029,7 @@ plot(close)
             test_screenshot(width, height),
         );
         assert!(
-            app.toast.is_some(),
+            app.surfaces.toast.message().is_some(),
             "the trader is told when a picture of their window is taken"
         );
         let manifest = success_result(&response).clone();

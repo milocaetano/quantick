@@ -21,6 +21,7 @@ repo's existing ports:
 | Indicator / kernel | `Indicator` trait (commit/preview + rollback) | `indicators` crate, or a `.pine` script compiled by `pine` |
 | Chart layer / overlay | chart layer registry (`QUANTICK_CHART_LAYERS` set) | new layer module in `app` |
 | Panel / dock tab | dock tab set | new module in `app`, one tab registration |
+| Floating UI surface (popup, toast, overlay box) | `Surface` trait + `SurfaceEnv`/`SurfaceResponse` | new module in `app/src/surfaces/`, one field on `Surfaces` |
 | Look / preset | config file (`bubbles.toml`, drawing presets) | data only — no code |
 | Sim/backtest behaviour | `sim` fill model + metrics | `sim` crate, consumed by chart and runner alike |
 
@@ -30,6 +31,25 @@ dock the feature into it. Never inline the feature and promise the
 abstraction later. If unsure the port is right, state the second concrete
 implementation you can imagine — if you cannot name one, the abstraction is
 speculative; keep the feature local and small instead.
+
+**A UI surface docks through the `Surface` port, never through a new field
+on `QuantickApp`.** Chrome that floats over the chart and owns the state it
+draws — a popup, a toast, a named-entry box — goes in its own module under
+`app/src/surfaces/` and appears in `Surfaces` as one field. What it *reads*
+from the application arrives in `SurfaceEnv`; what it *asks the application
+to do* goes back in `SurfaceResponse`, so it never holds a reference to the
+host and stays testable without one. The old shape — a field, a line in the
+constructor, a call in `draw_frame`, a hotkey in the menu — is what took
+`QuantickApp` to 130 fields and a 1,022-line constructor, and
+`crates/app/tests/size_guard.rs` fails the build when the trunk grows that way
+again — counting every line outside a top-level `#[cfg(test)]` item, so test
+code stays free while production code does not.
+
+Two rows above are honest about being the *old* pattern: `ChartLayer` and
+`DockTab` are closed enums, and a new entry means a variant plus a `match`
+arm at each of hundreds of sites. Use them when extending those existing
+sets, and read `arch-review` dimension 9 before adding the second variant of
+anything new — that is the point where the port was due.
 
 ## 2. Obey the frame
 
@@ -53,8 +73,10 @@ speculative; keep the feature local and small instead.
 - Everything tunable is named config or a unit-suffixed constant from birth
   (`_MS`, `_PX`, `_TICKS`) — retrofitting costs a review round.
 - Measure blast radius before opening the PR: files added vs. files
-  edited. Mostly edits → you missed a port or need to carve one; say which
-  in the PR body.
+  edited, **and lines added vs. lines poured into existing files**. One new
+  file beside 2,000 lines spread across thirteen others counts as edits, not
+  as a package — the file count alone reads healthy and hides it. Mostly
+  edits → you missed a port or need to carve one; say which in the PR body.
 
 ## 4. Performance is part of the port
 

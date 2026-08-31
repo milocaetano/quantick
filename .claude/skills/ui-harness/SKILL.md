@@ -45,6 +45,9 @@ is the source of truth, this table is the index):
 | `QUANTICK_PANE_LAYOUTS=<name,name,name>` | one **layout per pane**, by name, in pane-address order — flow pane first, then the context stack top to bottom (`Layout 1,levels` puts the flow chart on `Layout 1` and the top context chart on `levels`). A name the book lacks is created empty; an empty entry leaves that pane alone. This is the capture of the whole point of per-pane layouts: two charts side by side on two indicator sets, each context header naming its layout and the strip naming the focused pane. Goes through `switch_pane_layout`, the call the strip's click makes for the focused pane |
 | `QUANTICK_LAYOUT_RENAME=1` | the strip's **rename box** open on the active layout on the first frame — the in-place text field a double-click opens. Pair with `QUANTICK_LAYOUT_TAB` to name which tab is being renamed |
 | `QUANTICK_STYLE_PANEL=1` | the appearance dialog open at launch (candle presets, body mode and colours, **the gap between candles**, outline, wicks, canvas). Behind the toolbar's LOOK button, which a scripted run cannot press |
+| `QUANTICK_AGENT_POPUP=1` | the **assistant's popup** on screen at launch. The real one arrives over the control plane from a connected assistant (`quantick_notify`), so a capture with no agent attached cannot raise one, and this is the only way to photograph the window, its attribution line and its Dismiss button. Goes through `AgentPopupSurface::show`, the same call the notification takes |
+| `QUANTICK_TOAST=plain\|undo` | the **acknowledgement toast** on screen: `plain` for an act with no way back (a workspace save), `undo` for one that has (a drawing delete), which is the state that paints the Undo button. Both are answers to something the trader just did, so a run that performs no delete photographs neither. Goes through `note` / `note_with_undo`, the two entry points the application itself uses; an unrecognised value raises nothing rather than guessing, so a typo cannot photograph the wrong state and call it a pass |
+| `QUANTICK_WORKSPACE_NAME_BOX=1` | the **Save-as box** open at launch — the name field, its replace-warning and the disabled Save button. Behind the Workspace menu's *Save as*, which a scripted run cannot click. Goes through `WorkspaceNameSurface::open`, the call the menu entry makes |
 | `QUANTICK_FOOTPRINT_SETTINGS=<toml>` / `QUANTICK_FOOTPRINT_PRESETS=<toml>` | where the footprint's saved knobs and named presets live. **Always point these at scratchpad files.** Without them a validation run reads — and, the moment it touches a knob, overwrites — the trader's real setups, the same rule `QUANTICK_UI_STATE` carries. |
 | `QUANTICK_FOOTPRINT_DEBUG=1` | appends the layer's own inputs to its legend (`[w<candle px> row<base row px> g<capture group> lvl<level> n<ladders>]`). The zoom-boundary bugs were all invisible from outside — this is the chart telling you which number it decided on |
 | `QUANTICK_INDICATORS_AUTOSTART` / `QUANTICK_INDICATOR_SCRIPTS_AUTOSTART` | indicator panes / pine scripts |
@@ -274,6 +277,13 @@ For a screen that represents the user's real setup, enable the trio:
 `QUANTICK_BOOK_AUTOSTART` + `QUANTICK_BUBBLES_AUTOSTART` +
 `QUANTICK_LIVE_STRIP_AUTOSTART`, with a preset from `config/bubbles.toml`
 (never bare defaults).
+
+A hook for a floating surface lives **in that surface's module** under
+`crates/app/src/surfaces/`, as an `apply_env_hook` the registry calls, not
+as another line in `app.rs`. That is the fifth hand-written edit per
+feature the `Surface` port removes — the other four being the field, the
+initialiser, the draw call and the hotkey — and `crates/app/tests/size_guard.rs`
+now fails a branch that adds it to the trunk instead.
 
 ## Launch and capture workflow
 
