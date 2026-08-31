@@ -44,21 +44,20 @@ headless over recorded sessions. Never fork strategy logic per consumer.
   (`min_range`, form default 100; `0` disables). The floor measures
   `high - low`, wicks included, while the band above measures the body:
   the two gates object to different things, one to a bar that is small
-  next to its neighbours and one to a bar that is small in price.
-  (It measured the *body* until the branch that renamed it; a bank saved
-  then still loads, and its number is read as a range floor from that
-  point on.) The relative band alone is honest on time
-  candles but promiscuous on activity-cut bars: measured on a live WINV26
-  session **against the body floor**, the bare band called 247 of 1,355
-  volume bars "force" (a 55-point body at 1.62× fired a real paper
-  entry); the 100-point body floor
-  left 7. **That figure bounded the body
-  floor, not this one**: a range floor admits every bar a body floor of
-  the same number admitted and more, since `high - low >= |close - open|`
-  always. Nobody has re-measured the range floor on that session, so the
-  honest statement is "looser than the gate that produced 7, by an
-  unmeasured amount". An elephant has a size, not only a ratio. A body above the band
-  is **exhaustion and does not fire** — too big to chase, by design.
+  next to its neighbours and one to a bar that is small in price. (It
+  measured the *body* until the branch that renamed it; a bank saved then
+  still loads, and its number is read as a range floor from that point
+  on.) The relative band alone is honest on time candles but promiscuous
+  on activity-cut bars: measured on a live WINV26 session **against the
+  body floor**, the bare band called 247 of 1,355 volume bars "force" (a
+  55-point body at 1.62× fired a real paper entry); the 100-point body
+  floor left 7. **That figure bounded the body floor, not this one**: a
+  range floor admits every bar a body floor of the same number admitted
+  and more, since `high - low >= |close - open|` always. Nobody has
+  re-measured the range floor on that session, so the honest statement is
+  "looser than the gate that produced 7, by an unmeasured amount". An
+  elephant has a size, not only a ratio. A body above the band is
+  **exhaustion and does not fire** — too big to chase, by design.
   Dojis have no side. The window must be full; warmup is a badge state,
   not a silent zero.
 - **Region**: the rectangle's price band, inclusive of its edges, with
