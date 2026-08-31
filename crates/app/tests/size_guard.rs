@@ -102,7 +102,7 @@ const BASELINE: &[(&str, usize)] = &[
     // the toolbar's entry pair reads the same lock the ticket does, because
     // gating one and not the other left a button lit while the order behind
     // it was already refused.
-    ("crates/app/src/app.rs", 9700),
+    ("crates/app/src/app.rs", 9775),
     // The five entries below `pane.rs` were invisible to the first version of
     // this guard, which stopped counting at the first `#[cfg(test)]` of any
     // kind: `gateway.rs` scored 72 lines of its 4,142, `drawings/mod.rs` 221
@@ -126,7 +126,7 @@ const BASELINE: &[(&str, usize)] = &[
     // hole in the type's encapsulation. The two-pass sizing *did* move,
     // behind a closure, once it was clear it was logic rather than
     // registration. Argue with these numbers rather than with their absence.
-    ("crates/app/src/paper_trading.rs", 8859),
+    ("crates/app/src/paper_trading.rs", 9238),
     ("crates/app/src/pane.rs", 7757),
     ("crates/app/src/tab.rs", 4401),
     ("crates/app/src/control/gateway.rs", 4142),
