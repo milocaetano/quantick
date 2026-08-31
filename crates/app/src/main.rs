@@ -65,6 +65,7 @@ mod replay_get_data;
 mod replay_home;
 mod replay_view;
 mod resample;
+mod risk_sizing;
 mod state;
 mod statusbar;
 mod store_home;

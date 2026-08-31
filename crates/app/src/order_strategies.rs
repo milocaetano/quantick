@@ -11,9 +11,13 @@
 //! function — a projection that disagreed with the order it promised would
 //! be the worst kind of bug this surface can have.
 //!
-//! Ticks only, deliberately. A currency or percentage row would need a tick
-//! value the workspace does not have, and a number the app cannot compute
-//! honestly is a number it does not show.
+//! Ticks only, deliberately, and still: a ladder's rungs are geometry on
+//! the price grid, and a rung stated in money would have to be restated
+//! every time the trader edited the instrument's point value. What money
+//! there is enters one step earlier - `crate::risk_sizing` sizes the entry
+//! *from* the risk, and the ladder then divides whatever size that produced.
+//! A number the app cannot compute honestly is still a number it does not
+//! show; a rung in ticks is one it can.
 
 use quantick_engine::Side;
 use quantick_sim::{Bracket, ExitPart, LadderError, MAX_EXIT_PARTS};

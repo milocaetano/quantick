@@ -6762,6 +6762,188 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Records what one point of price is worth per unit held, the smallest tradable size, and the currency - the three facts no feed reports and nothing here derives, without which risk sizing has nothing to size against. Leaving any of them out clears the declaration rather than half-setting it.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "trade",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "trade.instrument.set_money",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "What one point of an instrument is worth, and its smallest tradable size.",
+        "properties": {
+          "currency": {
+            "description": "The currency the point value is in. Never converted.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "point_value": {
+            "description": "What one point of price is worth per unit held, as a decimal string.\nGiven with either of the other two missing, the declaration is\ncleared instead — which returns the instrument to \"nothing here knows\nwhat a point is worth\", the same contract `set_ruler_step` uses.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "size_step": {
+            "description": "The smallest tradable increment of quantity.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "symbol": {
+            "description": "The symbol to declare for. Left out, the chart's own.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "SetInstrumentMoneyInput",
+        "type": "object"
+      },
+      "module": "trade",
+      "output_schema": {
+        "$defs": {
+          "WorkingOrderView": {
+            "description": "One working order, as a caller reads it back.",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "order_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "price": {
+                "description": "Resting price, absent only for an order that has none.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "quantity": {
+                "type": "string"
+              },
+              "side": {
+                "type": "string"
+              },
+              "stop_loss": {
+                "description": "The protective stop riding this order, armed on its fill.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "take_profit": {
+                "description": "The protective target riding this order; see `stop_loss`.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "order_id",
+              "side",
+              "kind",
+              "quantity"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every `trade.*` action answers with.\n\n`accepted` is the one field a caller must read. A refusal is not an\nerror return here for the same reason it is not one in the venue port:\nthe venue's messages are written to teach, and a result that carried\nonly a status code would throw away the sentence that says what to do\ninstead.",
+        "properties": {
+          "accepted": {
+            "description": "Whether the venue took the request.",
+            "type": "boolean"
+          },
+          "mark_price": {
+            "description": "The last price the venue had been shown when this call landed.\n\nEvery refusal in this family is a statement about a price relative to\nthe market, so a caller that got one needs the market to understand\nit — and a caller that got an acceptance needs it to know what its\norder is resting away from. Absent before the first print, which is\nalso when nothing can be placed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "order_id": {
+            "description": "The order this call is about, once the venue has named it.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rejected_because": {
+            "description": "The venue's own words when it did not. Absent when it did.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ruler_ticks": {
+            "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "selected_strategy": {
+            "description": "The named exit ladder the ticket is set to, if any. Every call in\nthis family reports it, because it is what the *next* order will\ncarry and a caller that placed one needs to know which ladder it\njust armed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "simulated": {
+            "description": "A reminder in every result: these fills are simulated.",
+            "type": "boolean"
+          },
+          "working_orders": {
+            "description": "Every order working after the call, so a caller never has to guess\nwhat the account looks like now.",
+            "items": {
+              "$ref": "#/$defs/WorkingOrderView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "accepted",
+          "working_orders",
+          "ruler_ticks",
+          "simulated"
+        ],
+        "title": "TradeResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "trade"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call answers with what the ticket now makes of the entry it is holding, so a caller can see the instrument turn from unknown into sized. It changes nothing that is already working, and it never converts between currencies.",
+      "title": "Declare what an instrument's point is worth",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Replaces the stop and target riding a working order, which arm the moment it fills. Both legs are replaced wholesale: an absent leg is a cleared leg, exactly as dragging one off the chart clears it. The levels are judged against the order's own resting price, not the market.",
       "destructive": false,
       "dry_run_supported": false,
@@ -7311,6 +7493,202 @@
       "risk_reducing": false,
       "stale_input_safety": "Every price is judged against the market at the moment the order lands, not at the moment it was written: a limit that would fill at once, or a stop that would trigger at once, is refused with the reason. A caller working from a stale chart can therefore place an order at a level that has gone stale, but never one the venue would not have accepted from a caller reading the live tape.",
       "title": "Place a simulated order",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Says what one trade may lose - a fixed amount, or a share of the capital declared for the instrument's currency - and whether an entry whose stop risks more than that is refused. Shapes the size the next order would carry; changes no order that exists and never touches an open position.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "trade",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "trade.risk.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "What one trade may lose, and whether an entry over it is refused.",
+        "properties": {
+          "amount": {
+            "description": "The fixed amount one trade may lose, as a decimal string.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "basis": {
+            "description": "`off` leaves the size to whoever types it; `amount` reads `amount`;\n`percent` reads `percent` against the capital declared for the\ninstrument's own currency.",
+            "type": "string"
+          },
+          "capital": {
+            "description": "Declare the capital for `currency`. Both or neither: a capital with\nno currency has nothing to be keyed by, and nothing here converts\nbetween currencies.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "currency": {
+            "description": "The currency `capital` is in.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lock": {
+            "description": "Whether an entry over the risk per trade is refused. Left out, the\nlock stays as it is.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "percent": {
+            "description": "The share of declared capital one trade may lose.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "basis"
+        ],
+        "title": "SetRiskInput",
+        "type": "object"
+      },
+      "module": "trade",
+      "output_schema": {
+        "$defs": {
+          "WorkingOrderView": {
+            "description": "One working order, as a caller reads it back.",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "order_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "price": {
+                "description": "Resting price, absent only for an order that has none.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "quantity": {
+                "type": "string"
+              },
+              "side": {
+                "type": "string"
+              },
+              "stop_loss": {
+                "description": "The protective stop riding this order, armed on its fill.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "take_profit": {
+                "description": "The protective target riding this order; see `stop_loss`.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "order_id",
+              "side",
+              "kind",
+              "quantity"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every `trade.*` action answers with.\n\n`accepted` is the one field a caller must read. A refusal is not an\nerror return here for the same reason it is not one in the venue port:\nthe venue's messages are written to teach, and a result that carried\nonly a status code would throw away the sentence that says what to do\ninstead.",
+        "properties": {
+          "accepted": {
+            "description": "Whether the venue took the request.",
+            "type": "boolean"
+          },
+          "mark_price": {
+            "description": "The last price the venue had been shown when this call landed.\n\nEvery refusal in this family is a statement about a price relative to\nthe market, so a caller that got one needs the market to understand\nit — and a caller that got an acceptance needs it to know what its\norder is resting away from. Absent before the first print, which is\nalso when nothing can be placed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "order_id": {
+            "description": "The order this call is about, once the venue has named it.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rejected_because": {
+            "description": "The venue's own words when it did not. Absent when it did.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ruler_ticks": {
+            "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "selected_strategy": {
+            "description": "The named exit ladder the ticket is set to, if any. Every call in\nthis family reports it, because it is what the *next* order will\ncarry and a caller that placed one needs to know which ladder it\njust armed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "simulated": {
+            "description": "A reminder in every result: these fills are simulated.",
+            "type": "boolean"
+          },
+          "working_orders": {
+            "description": "Every order working after the call, so a caller never has to guess\nwhat the account looks like now.",
+            "items": {
+              "$ref": "#/$defs/WorkingOrderView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "accepted",
+          "working_orders",
+          "ruler_ticks",
+          "simulated"
+        ],
+        "title": "TradeResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "trade"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call answers with the risk that is now set and with what it makes of the entry the ticket is holding, including the reason when it can name no size, so a caller sees the same sentence the trader is reading. It changes nothing that is already working.",
+      "title": "Set the risk per trade",
       "version": 1
     },
     {
@@ -11487,6 +11865,50 @@
                 "description": "Where these rows come from, named rather than implied.",
                 "type": "string"
               },
+              "risk_amount": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "What that size stands to lose at the entry's own stop. Absent for the\nsame reasons as `risk_quantity`."
+              },
+              "risk_blocks_entry": {
+                "description": "Whether the trader's lock is refusing this entry right now.",
+                "type": "boolean"
+              },
+              "risk_currency": {
+                "description": "The currency `risk_amount` is in. Nothing here converts between\ncurrencies, so a reader comparing two tabs must compare these too.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "risk_quantity": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The size the risk per trade derived, absent when it derived none —\nthe mode is off, or nothing here could be sized."
+              },
+              "risk_sentence": {
+                "description": "The sentence the ticket is showing, verbatim.\n\nProduced by the same function that renders it on screen rather than a\nsecond wording kept in step by hand: an operator reading this and a\ntrader reading the ticket are looking at one sentence. Absent only\nwhen the mode is off and there is nothing to say.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "risk_state": {
+                "description": "What the risk per trade makes of the entry the ticket is holding:\n`off`, `sized`, `short_of_budget`, `capped_at_max`,\n`clamped_at_minimum`, `instrument_unknown`, `no_budget` or `refused`.\n\nThe state, not the pixels. An operator asked \"why is the size 1\" has\nto be able to read the answer rather than infer it from a number.",
+                "type": "string"
+              },
               "ruler_ticks": {
                 "description": "How far the aim's ruler stands from an entry, in ticks; zero when it\nis not in use. Sticky across aims, so a reader needs it to explain\nwhat the next order would carry.",
                 "format": "uint32",
@@ -11536,6 +11958,8 @@
               "flat",
               "ruler_ticks",
               "tick_size",
+              "risk_state",
+              "risk_blocks_entry",
               "working_orders",
               "working_order_count",
               "working_orders_truncated",

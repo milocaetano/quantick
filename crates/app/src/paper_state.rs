@@ -49,6 +49,25 @@ pub(crate) struct PaperState {
     /// longer knows selects nothing, which is the honest reading of "the
     /// strategy you chose is gone".
     ///
+    /// How the risk per trade is expressed: `off`, `amount` or `percent`.
+    /// An unknown token falls back to the default at read time.
+    ///
+    /// "Risk per trade", never a bare "risk": the direction is a *pair* of
+    /// ceilings, one for the open position and one for each trade, and the
+    /// day the first arrives this key must not have to be renamed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_per_trade_basis: Option<String>,
+    /// The fixed amount one trade may lose, as a decimal string.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_per_trade_amount: Option<String>,
+    /// The percentage of the declared capital one trade may lose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_per_trade_percent: Option<String>,
+    /// Whether an entry over the risk per trade is refused. `None` has never
+    /// been toggled, and the resolved default is on: a ceiling that can be
+    /// crossed without saying so is not a ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_per_trade_lock: Option<bool>,
     /// Declared before `order_strategies` on purpose: TOML wants a table's
     /// scalars before its tables, and an array of tables emitted first would
     /// make every scalar after it unserialisable. Keep new scalar fields
@@ -65,6 +84,25 @@ pub(crate) struct PaperState {
     /// on every save is a diff nobody can read.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub ruler_steps: std::collections::BTreeMap<String, String>,
+    /// The practice capital, one amount per currency code.
+    ///
+    /// A map and not a number from the first commit. A trader charting B3 in
+    /// reais and BTCUSDT in dollars has two capitals; nothing in this
+    /// workspace converts between currencies, so nothing here may add them
+    /// either. A scalar would have to become this the first time anyone
+    /// asked what it meant on the second instrument.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub paper_capital: std::collections::BTreeMap<String, String>,
+    /// What one point of each instrument is worth, keyed by the bare symbol.
+    ///
+    /// Bare like `ruler_steps` above, and for the same reason: the money
+    /// describes the instrument, not who streams it. Declared by the trader
+    /// — nothing derives it from a price's decimal places or from a symbol's
+    /// name, because a wrong point value is a wrong position size and is
+    /// invisible until it fills.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub instrument_money:
+        std::collections::BTreeMap<String, crate::risk_sizing::InstrumentMoneyRecord>,
     /// The named exit strategies the trader built, in their own order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order_strategies: Option<Vec<crate::order_strategies::OrderStrategy>>,
@@ -235,6 +273,25 @@ mod tests {
             }]),
             selected_order_strategy: Some("halves".to_owned()),
             cmd_entry_kind: Some("limit".to_owned()),
+            risk_per_trade_basis: Some("amount".to_owned()),
+            risk_per_trade_amount: Some("100".to_owned()),
+            risk_per_trade_percent: Some("2".to_owned()),
+            risk_per_trade_lock: Some(false),
+            paper_capital: [("BRL".to_owned(), "10000".to_owned())]
+                .into_iter()
+                .collect(),
+            instrument_money: [(
+                "WIN$N".to_owned(),
+                crate::risk_sizing::InstrumentMoneyRecord {
+                    point_value: "0.20".to_owned(),
+                    size_step: "1".to_owned(),
+                    currency: "BRL".to_owned(),
+                    min_size: Some("1".to_owned()),
+                    max_size: None,
+                },
+            )]
+            .into_iter()
+            .collect(),
         };
         save(&path, &state);
         assert_eq!(load(&path), state);

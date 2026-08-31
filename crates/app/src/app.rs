@@ -1085,6 +1085,24 @@ impl QuantickApp {
                 .filter_map(|(symbol, step)| step.parse().ok().map(|value| (symbol.clone(), value)))
                 .collect(),
         );
+        // The risk per trade, and the money it is measured in. A trader who
+        // never set any of this gets the mode off and an empty book, which
+        // leaves every screen exactly as it was.
+        tab.paper
+            .set_risk_settings(crate::risk_sizing::settings_from_sidecar(
+                paper_state.risk_per_trade_basis.as_deref(),
+                paper_state.risk_per_trade_amount.as_deref(),
+                paper_state.risk_per_trade_percent.as_deref(),
+                paper_state.risk_per_trade_lock,
+            ));
+        tab.paper
+            .set_capital(crate::risk_sizing::capital_from_records(
+                &paper_state.paper_capital,
+            ));
+        tab.paper
+            .set_instrument_money(crate::risk_sizing::book_from_records(
+                &paper_state.instrument_money,
+            ));
         // Resolved once: under test the settings path is a fresh scratch
         // file per call, and the load must read the same file the saves
         // will write.
@@ -2168,6 +2186,37 @@ impl QuantickApp {
     /// named call leaves the same durable trace a click does.
     pub(crate) fn control_persist_order_strategies(&mut self) {
         self.persist_order_strategies();
+    }
+
+    /// Save and fan out the risk per trade after a capability changed it.
+    pub(crate) fn control_persist_risk_settings(&mut self) {
+        self.persist_risk_settings();
+    }
+
+    /// Persist the risk per trade, the declared capital and the instrument
+    /// money, and fan all three out.
+    ///
+    /// App-wide, like the ticket's other settings: a ceiling a trader sets
+    /// in one tab is one they mean everywhere, and what a point of WIN is
+    /// worth does not change because a second tab is looking at it.
+    pub(crate) fn persist_risk_settings(&mut self) {
+        let risk = self.active_tab().paper.risk_settings().clone();
+        let capital = self.active_tab().paper.capital().clone();
+        let book = self.active_tab().paper.instrument_money().clone();
+        for tab in &mut self.tabs {
+            tab.paper.set_risk_settings(risk.clone());
+            tab.paper.set_capital(capital.clone());
+            tab.paper.set_instrument_money(book.clone());
+        }
+        let path = crate::paper_state::default_path();
+        let mut state = crate::paper_state::load(&path);
+        state.risk_per_trade_basis = Some(risk.basis.token().to_owned());
+        state.risk_per_trade_amount = Some(risk.amount.normalize().to_string());
+        state.risk_per_trade_percent = Some(risk.percent.normalize().to_string());
+        state.risk_per_trade_lock = Some(risk.lock);
+        state.paper_capital = crate::risk_sizing::records_from_capital(&capital);
+        state.instrument_money = crate::risk_sizing::records_from_book(&book);
+        crate::paper_state::save(&path, &state);
     }
 
     /// Persist the named exit strategies and the ticket's selection, and fan
@@ -9248,6 +9297,9 @@ impl QuantickApp {
         }
         if dock_response.cmd_trading_changed {
             self.persist_cmd_trading();
+        }
+        if dock_response.risk_settings_changed {
+            self.persist_risk_settings();
         }
         self.poll_trades_dir_picker();
         self.poll_workspace_picker();

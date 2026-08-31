@@ -150,6 +150,9 @@ pub struct DockResponse {
     /// The Trading tab changed the named exit strategies, or which one the
     /// ticket is set to. App-wide for the same reason.
     pub order_strategies_changed: bool,
+    /// The Trading tab changed the risk per trade, the declared capital or
+    /// an instrument's money. App-wide for the same reason.
+    pub risk_settings_changed: bool,
 }
 
 /// The dock's chrome state. Hidden, collapsed to the strip, or open on one
@@ -343,6 +346,9 @@ impl Dock {
                                     }
                                     Some(TradingTabAction::OrderStrategiesChanged) => {
                                         response.order_strategies_changed = true;
+                                    }
+                                    Some(TradingTabAction::RiskSettingsChanged) => {
+                                        response.risk_settings_changed = true;
                                     }
                                     None => {}
                                 });
