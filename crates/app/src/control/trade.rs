@@ -401,10 +401,16 @@ fn place_order(
     } else {
         named
     };
-    let events = app
-        .control_active_paper_mut()
-        .ok_or_else(no_chart_open)?
-        .place_intent(intent.with_bracket(bracket));
+    let intent = intent.with_bracket(bracket);
+    let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
+    // The risk per trade is a ceiling on the account, so it holds on this
+    // path too. Asked of the same function the ticket asks, so an operator
+    // reads the refusal the trader would have read - and gets it as an
+    // error rather than as an empty answer it has to interpret.
+    if let Some(refusal) = paper.risk_refusal_for(&intent) {
+        return Err(ControlError::invalid_request(refusal));
+    }
+    let events = paper.place_intent(intent);
     let result = answer(app, &events);
     journal(access, actor, PLACE_EVENT_KIND, &result, asked);
     to_value(result)
@@ -744,6 +750,17 @@ fn set_risk(
     let amount = decimal("amount", &input.amount)?;
     let percent = decimal("percent", &input.percent)?;
     let capital = decimal("capital", &input.capital)?;
+    // The UI and the launch hook both refuse a non-positive risk; a third
+    // entry point that accepts one would persist it and fan it to every tab,
+    // leaving the ticket saying "set a risk per trade above zero" about a
+    // number the trader never typed - and surviving a restart.
+    for (field, value) in [("amount", amount), ("percent", percent)] {
+        if value.is_some_and(|value| value <= Decimal::ZERO) {
+            return Err(ControlError::invalid_request(format!(
+                "{field} must be above zero"
+            )));
+        }
+    }
     // A capital with no currency has nothing to be keyed by, and a currency
     // with no capital declares nothing. Both or neither.
     let currency = match (&capital, &input.currency) {
@@ -759,10 +776,20 @@ fn set_risk(
         }
     };
     let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
+    // The currency an amount set through this call is denominated in: the one
+    // the call named, or the chart's own instrument. Read before the mutation
+    // so it describes the instrument the caller was looking at.
+    let instrument_currency = paper
+        .instrument_money()
+        .get(paper.symbol())
+        .map(|money| money.currency.clone());
     let mut risk = paper.risk_settings().clone();
     risk.basis = basis;
     if let Some(amount) = amount {
         risk.amount = amount;
+        // Stamped with the currency it was entered in, never left to adopt
+        // whichever instrument a tab happens to be on later.
+        risk.amount_currency = currency.clone().or(instrument_currency);
     }
     if let Some(percent) = percent {
         risk.percent = percent;
@@ -826,11 +853,14 @@ fn set_instrument_money(
             }
             let currency = quantick_sim::Currency::new(currency)
                 .ok_or_else(|| ControlError::invalid_request("currency must not be blank"))?;
+            let existing = book.get(&symbol);
             Some(quantick_sim::InstrumentMoney {
                 point_value,
                 size_step,
-                min_size: size_step,
-                max_size: book.get(&symbol).and_then(|money| money.max_size),
+                // Whatever minimum is already declared is the trader's, the
+                // same as the maximum beside it.
+                min_size: existing.map_or(size_step, |money| money.min_size),
+                max_size: existing.and_then(|money| money.max_size),
                 currency,
                 source: quantick_sim::MoneySource::Declared,
             })

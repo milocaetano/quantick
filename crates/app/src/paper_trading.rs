@@ -1399,6 +1399,13 @@ pub struct PaperTrading {
     /// Money a launch hook asked for, waiting for the tab to learn which
     /// symbol it opens on. Spent once, on the first symbol.
     hook_money: Option<quantick_sim::InstrumentMoney>,
+    /// Whether a launch hook set the risk per trade for this run.
+    ///
+    /// An environment variable is an explicit request for one run, so it
+    /// outranks the sidecar - and the sidecar fan-out that follows
+    /// construction has to be told, or it silently restores the stored
+    /// settings over the ones the run asked for.
+    risk_from_hook: bool,
     /// What the trader typed for the capital in this instrument's currency.
     capital_text: String,
     /// Sub-notch wheel travel not yet worth a tick (a trackpad's scroll
@@ -1649,6 +1656,7 @@ impl PaperTrading {
             size_step_text: String::new(),
             currency_text: String::new(),
             capital_text: String::new(),
+            risk_from_hook: hook.is_some(),
             hook_money: hook.and_then(|hook| hook.money),
             ruler_travel_px: 0.0,
             ruler_rolled: false,
@@ -1993,9 +2001,61 @@ impl PaperTrading {
     /// infer from, and an action whose meaning depends on the market at the
     /// instant it lands is an action nobody can replay.
     pub fn place_intent(&mut self, intent: OrderIntent) -> Vec<VenueEvent> {
+        // The risk per trade is a ceiling on the account, not on the mouse.
+        // A named call is exactly the operator `CLAUDE.md` treats as
+        // first-class, so a lock the ticket enforces and this path does not
+        // would be a ceiling that holds only while a human is clicking.
+        if let Some(refusal) = self.risk_refusal_for(&intent) {
+            // Nothing is fabricated onto the venue's own event stream: the
+            // lock is this application's policy, not a fact the venue
+            // reported, and a `RejectReason` variant for it would put that
+            // policy inside the domain crate. The trader gets the toast; a
+            // named caller gets the same sentence as an error, because
+            // `control::trade` asks this same function first.
+            self.show_toast(format!("SIM: {refusal}"));
+            return Vec::new();
+        }
         let events = self.venue.submit(intent);
         self.handle_events(events.clone());
         events
+    }
+
+    /// Why the lock refuses this intent, when it does.
+    ///
+    /// Reads the intent's *own* protection and quantity rather than the
+    /// ticket's: a named call states what it wants, and the ceiling has to
+    /// be measured against what was actually asked for.
+    pub(crate) fn risk_refusal_for(&self, intent: &OrderIntent) -> Option<String> {
+        if !self.risk.lock || self.risk.basis == crate::risk_sizing::RiskBasis::Off {
+            return None;
+        }
+        let reference = intent
+            .price
+            .or_else(|| self.venue.mark_price())
+            .unwrap_or_default();
+        let risk = crate::risk_sizing::risk_of(
+            &self.instrument_money,
+            &self.symbol,
+            intent.side,
+            reference,
+            &intent.bracket,
+            intent.quantity,
+        )?;
+        let budget = crate::risk_sizing::budget_for(
+            &self.risk,
+            &self.capital,
+            &self.instrument_money.get(&self.symbol)?.currency,
+        )
+        .ok()?;
+        (risk.amount > budget.amount).then(|| {
+            format!(
+                "this order risks {} {} - over your {} {} risk per trade. Raise the risk, or                  turn the lock off.",
+                risk.amount.normalize(),
+                risk.currency.code(),
+                budget.amount.normalize(),
+                budget.currency.code(),
+            )
+        })
     }
 
     /// Replace a working order's protective prices — the chart's drag, said
@@ -2227,7 +2287,13 @@ impl PaperTrading {
     #[must_use]
     pub fn entry_label(&self, side: Side) -> String {
         let word = side_word_upper(side);
-        let Some(qty) = self.quantity_preview() else {
+        // The size the press would actually send. The risk-derived quantity
+        // is written into the field by the ticket, so a toolbar reading the
+        // field while the dock is closed promised a size the click did not
+        // send - the button naming one number and the order carrying
+        // another is the plainest kind of lie this surface can tell.
+        let derived = self.risk_report().0.derived_quantity();
+        let Some(qty) = derived.or_else(|| self.quantity_preview()) else {
             return word.to_owned();
         };
         let qty_text = fmt_decimal(qty);
@@ -3697,7 +3763,6 @@ impl PaperTrading {
             },
             side,
             reference,
-            self.quantity_preview().unwrap_or(Decimal::ONE),
             &|quantity| self.aim_bracket(side, reference, quantity, ticket),
         )
     }
@@ -3771,6 +3836,13 @@ impl PaperTrading {
     #[must_use]
     pub(crate) fn symbol(&self) -> &str {
         &self.symbol
+    }
+
+    /// Whether a launch hook owns the risk per trade for this run, in which
+    /// case the stored settings must not be fanned back over it.
+    #[must_use]
+    pub(crate) fn risk_from_hook(&self) -> bool {
+        self.risk_from_hook
     }
 
     /// What one trade may lose, and whether the lock stands.
@@ -5253,8 +5325,6 @@ impl PaperTrading {
         changed
     }
 
-    /// Step the quantity field by `delta`, never below a positive value;
-    /// an unparseable field steps from one.
     /// Walk the typed quantity by `notches` of the instrument's own size
     /// step.
     ///
@@ -9209,6 +9279,7 @@ mod risk_tests {
         paper.set_risk_settings(crate::risk_sizing::RiskSettings {
             basis: crate::risk_sizing::RiskBasis::Amount,
             amount: Decimal::from(100),
+            amount_currency: None,
             percent: Decimal::ZERO,
             lock: true,
         });
@@ -9276,6 +9347,41 @@ mod risk_tests {
             paper.is_flat(),
             "the lock refused the order rather than only colouring the ticket"
         );
+    }
+
+    /// The ceiling holds on the named path too. A lock the ticket enforces
+    /// and `place_intent` does not would be a ceiling that stands only while
+    /// a human is clicking - and `CLAUDE.md` makes the other operator
+    /// first-class.
+    #[test]
+    fn the_lock_refuses_a_named_order_the_same_as_a_clicked_one() {
+        let mut paper = armed_ticket(140_000);
+        let intent = quantick_sim::OrderIntent::market(Side::Buy, Decimal::from(10))
+            .with_bracket(Bracket::whole(Some(Decimal::from(136_000)), None));
+        // 4000 points x 0.20 x 10 = 8,000 BRL against a budget of 100.
+        let refusal = paper
+            .risk_refusal_for(&intent)
+            .expect("the ceiling names it");
+        assert!(refusal.contains("8000 BRL"), "{refusal}");
+        assert!(refusal.contains("turn the lock off"), "{refusal}");
+        assert!(
+            paper.place_intent(intent).is_empty(),
+            "a named call must not slip past the ceiling the ticket enforces"
+        );
+        assert!(paper.is_flat(), "nothing was placed");
+    }
+
+    /// With the lock down the same named order goes out - the refusal is the
+    /// trader's setting, not a rule the platform invented.
+    #[test]
+    fn a_named_order_over_budget_goes_out_once_the_lock_is_down() {
+        let mut paper = armed_ticket(140_000);
+        let mut risk = paper.risk_settings().clone();
+        risk.lock = false;
+        paper.set_risk_settings(risk);
+        let intent = quantick_sim::OrderIntent::market(Side::Buy, Decimal::from(10))
+            .with_bracket(Bracket::whole(Some(Decimal::from(136_000)), None));
+        assert!(paper.risk_refusal_for(&intent).is_none());
     }
 
     /// Taking the lock down is how a trader takes that entry anyway - a

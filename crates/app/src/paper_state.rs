@@ -45,10 +45,6 @@ pub(crate) struct PaperState {
     /// See [`Self::cmd_buy_modifier`]; the sell side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cmd_sell_modifier: Option<String>,
-    /// Which named exit strategy the ticket is set to. A name this build no
-    /// longer knows selects nothing, which is the honest reading of "the
-    /// strategy you chose is gone".
-    ///
     /// How the risk per trade is expressed: `off`, `amount` or `percent`.
     /// An unknown token falls back to the default at read time.
     ///
@@ -60,6 +56,10 @@ pub(crate) struct PaperState {
     /// The fixed amount one trade may lose, as a decimal string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk_per_trade_amount: Option<String>,
+    /// The currency that amount was entered in. Stored beside it so the
+    /// number cannot come to mean different money on a different tab.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_per_trade_currency: Option<String>,
     /// The percentage of the declared capital one trade may lose.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk_per_trade_percent: Option<String>,
@@ -68,6 +68,10 @@ pub(crate) struct PaperState {
     /// crossed without saying so is not a ceiling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk_per_trade_lock: Option<bool>,
+    /// Which named exit strategy the ticket is set to. A name this build no
+    /// longer knows selects nothing, which is the honest reading of "the
+    /// strategy you chose is gone".
+    ///
     /// Declared before `order_strategies` on purpose: TOML wants a table's
     /// scalars before its tables, and an array of tables emitted first would
     /// make every scalar after it unserialisable. Keep new scalar fields
@@ -275,6 +279,7 @@ mod tests {
             cmd_entry_kind: Some("limit".to_owned()),
             risk_per_trade_basis: Some("amount".to_owned()),
             risk_per_trade_amount: Some("100".to_owned()),
+            risk_per_trade_currency: Some("BRL".to_owned()),
             risk_per_trade_percent: Some("2".to_owned()),
             risk_per_trade_lock: Some(false),
             paper_capital: [("BRL".to_owned(), "10000".to_owned())]

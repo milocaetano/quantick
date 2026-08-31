@@ -84,6 +84,15 @@ pub(crate) struct RiskSettings {
     pub basis: RiskBasis,
     /// The fixed amount, when the basis is [`RiskBasis::Amount`].
     pub amount: Decimal,
+    /// The currency `amount` was entered in.
+    ///
+    /// Carried, never assumed from whatever instrument the tab happens to
+    /// be on. The settings are app-wide, so without this a hundred set on a
+    /// B3 contract in reais became a hundred dollars the moment a tab
+    /// switched to a crypto pair - five times the risk the trader
+    /// authorised, announced by nothing but a changed three-letter label.
+    /// `None` means never set, and adopts the instrument's own currency.
+    pub amount_currency: Option<Currency>,
     /// The percentage, when the basis is [`RiskBasis::PercentOfCapital`].
     pub percent: Decimal,
     /// Refuse an entry whose risk exceeds the budget.
@@ -100,6 +109,7 @@ impl Default for RiskSettings {
         Self {
             basis: RiskBasis::Off,
             amount: Decimal::ZERO,
+            amount_currency: None,
             percent: Decimal::ZERO,
             lock: true,
         }
@@ -133,6 +143,14 @@ pub(crate) enum BudgetRefusal {
     /// Never converted from another currency: there is no exchange rate in
     /// this workspace and a converted capital would be a guess.
     NoCapital(Currency),
+    /// The fixed amount was entered in one currency and this instrument
+    /// trades in another. Nothing here converts, so the amount is refused
+    /// rather than re-stamped with the instrument's currency - which would
+    /// silently change how much money the number means.
+    AmountInAnotherCurrency {
+        amount: Currency,
+        instrument: Currency,
+    },
 }
 
 /// The practice capital, one amount per currency.
@@ -238,6 +256,7 @@ impl InstrumentMoneyRecord {
 pub(crate) fn settings_from_sidecar(
     basis: Option<&str>,
     amount: Option<&str>,
+    amount_currency: Option<&str>,
     percent: Option<&str>,
     lock: Option<bool>,
 ) -> RiskSettings {
@@ -248,6 +267,7 @@ pub(crate) fn settings_from_sidecar(
     RiskSettings {
         basis: basis.and_then(RiskBasis::from_token).unwrap_or_default(),
         amount: decimal(amount),
+        amount_currency: amount_currency.and_then(Currency::new),
         percent: decimal(percent),
         // The lock stands until the trader takes it down. A risk per trade
         // that could be exceeded by default would not be one.
@@ -322,6 +342,14 @@ pub(crate) fn budget_for(
             if settings.amount <= Decimal::ZERO {
                 return Err(BudgetRefusal::AmountNotPositive);
             }
+            if let Some(entered) = &settings.amount_currency
+                && entered != currency
+            {
+                return Err(BudgetRefusal::AmountInAnotherCurrency {
+                    amount: entered.clone(),
+                    instrument: currency.clone(),
+                });
+            }
             Ok(Money::new(settings.amount, currency.clone()))
         }
         RiskBasis::PercentOfCapital => {
@@ -369,6 +397,14 @@ pub(crate) enum RiskState {
         quantity: Decimal,
         risk: Money,
         budget: Money,
+        /// Whether `quantity` is the smallest the instrument can trade.
+        ///
+        /// At the floor there is nothing left to give back and the only
+        /// moves are a tighter stop or a bigger budget. Above it - a ladder
+        /// whose rungs rounded past the budget - reducing the size is also a
+        /// move, and a sentence calling this "the smallest size" would name
+        /// the one thing the trader cannot do.
+        at_minimum: bool,
         /// The widest stop that would fit the budget at this size, in
         /// points, when one can be named.
         fits_within_points: Option<Decimal>,
@@ -455,19 +491,31 @@ impl RiskState {
                 quantity,
                 risk,
                 budget,
+                at_minimum,
                 fits_within_points,
             } => {
                 let tighten = match fits_within_points {
                     Some(points) => format!("Tighten the stop to {} pts, or ", number(*points)),
                     None => "Tighten the stop, or ".to_owned(),
                 };
-                format!(
-                    "the smallest size is {} and this stop risks {} - over your {} risk per \
-                     trade. {tighten}raise the risk.",
-                    number(*quantity),
-                    money(risk),
-                    money(budget)
-                )
+                if *at_minimum {
+                    format!(
+                        "the smallest size is {} and this stop risks {} - over your {} risk \
+                         per trade. {tighten}raise the risk.",
+                        number(*quantity),
+                        money(risk),
+                        money(budget)
+                    )
+                } else {
+                    format!(
+                        "{} at this stop risks {} - over your {} risk per trade, because the \
+                         ladder's rungs round past it. Reduce the size, tighten the stop, or \
+                         raise the risk.",
+                        number(*quantity),
+                        money(risk),
+                        money(budget)
+                    )
+                }
             }
         }
     }
@@ -480,6 +528,12 @@ impl BudgetRefusal {
             Self::NotSet => "set a risk per trade to size the entry from your stop".to_owned(),
             Self::AmountNotPositive => "set a risk per trade above zero".to_owned(),
             Self::PercentNotPositive => "set a risk percentage above zero".to_owned(),
+            Self::AmountInAnotherCurrency { amount, instrument } => format!(
+                "your risk per trade is {} and this instrument trades in {} - nothing here                  converts between currencies. Set a risk in {} to size on it.",
+                amount.code(),
+                instrument.code(),
+                instrument.code()
+            ),
             Self::NoCapital(currency) => format!(
                 "no {} capital declared, so a percentage of it cannot be sized. Declare a {} \
                  capital, or set a fixed amount - nothing here converts between currencies.",
@@ -520,6 +574,7 @@ pub(crate) fn evaluate(
         return RiskState::OverBudget {
             quantity: sized.quantity,
             risk: sized.risk,
+            at_minimum: true,
             fits_within_points: widest_stop_that_fits(&budget, money),
             budget,
         };
@@ -531,6 +586,22 @@ pub(crate) fn evaluate(
         budget,
     }
 }
+
+/// The quantity a ladder's geometry is read at.
+///
+/// Not the trader's. A strategy resolves its rungs *at* a quantity and gives
+/// the last one the rounding remainder, so a rung whose share rounds to zero
+/// is dropped entirely - at a probe of one, a 50/50 ladder collapses to a
+/// single rung and reports the wrong stop distance. Worse, the size that
+/// produced then went into the quantity field, which was the next frame's
+/// probe: the number on the ticket depended on how many frames it had been
+/// on screen.
+///
+/// The per-unit distance is share-weighted and therefore scale-invariant, so
+/// it can be read at any scale. This one is coarse enough that no share a
+/// trader can express rounds away, and fixed, so the answer never depends on
+/// what the field happened to hold.
+const GEOMETRY_PROBE_QUANTITY: i64 = 10_000;
 
 /// The size an aimed entry gets, and the protection it was sized against.
 ///
@@ -547,10 +618,9 @@ pub(crate) fn sized_for_aim(
     context: &RiskContext<'_>,
     side: Side,
     entry: Decimal,
-    probe_quantity: Decimal,
     resolve: &dyn Fn(Decimal) -> Bracket,
 ) -> (RiskState, Bracket) {
-    let probe = resolve(probe_quantity);
+    let probe = resolve(Decimal::from(GEOMETRY_PROBE_QUANTITY));
     let state = evaluate(context, side, entry, &probe);
     let Some(quantity) = state.derived_quantity() else {
         return (state, probe);
@@ -611,6 +681,9 @@ pub(crate) fn with_restated_risk(state: RiskState, restated: Money) -> RiskState
                 RiskState::OverBudget {
                     quantity,
                     risk: restated,
+                    // Restated risk arrives from a size the budget did buy,
+                    // so it is never the floor.
+                    at_minimum: false,
                     fits_within_points: None,
                     budget,
                 }
@@ -626,12 +699,14 @@ pub(crate) fn with_restated_risk(state: RiskState, restated: Money) -> RiskState
         RiskState::OverBudget {
             quantity,
             budget,
+            at_minimum,
             fits_within_points,
             ..
         } => RiskState::OverBudget {
             quantity,
             risk: restated,
             budget,
+            at_minimum,
             fits_within_points,
         },
         other => other,
@@ -713,6 +788,7 @@ pub(crate) fn parse_hook(spec: &str) -> Option<RiskHook> {
         RiskSettings {
             basis: RiskBasis::PercentOfCapital,
             amount: Decimal::ZERO,
+            amount_currency: None,
             percent,
             lock,
         }
@@ -724,6 +800,7 @@ pub(crate) fn parse_hook(spec: &str) -> Option<RiskHook> {
         RiskSettings {
             basis: RiskBasis::Amount,
             amount,
+            amount_currency: None,
             percent: Decimal::ZERO,
             lock,
         }
@@ -942,17 +1019,7 @@ pub(crate) fn draw_risk_block(ui: &mut eframe::egui::Ui, block: RiskBlock<'_>) -
                 .as_ref()
                 .map_or(Decimal::ZERO, |money| money.size_step);
             let step_changed = edit_decimal(ui, block.size_step_text, &mut size_step, 56.0);
-            if !declared.is_some() || block.currency_text.trim().is_empty() {
-                *block.currency_text = currency_code.clone();
-            }
-            let currency_changed = ui
-                .add(
-                    egui::TextEdit::singleline(block.currency_text)
-                        .desired_width(48.0)
-                        .hint_text("BRL"),
-                )
-                .on_hover_text("the currency this point value is in - never converted")
-                .changed();
+            let currency_changed = edit_currency(ui, block.currency_text, &currency_code);
             if point_changed || step_changed || currency_changed {
                 let currency = Currency::new(block.currency_text);
                 match (
@@ -966,7 +1033,13 @@ pub(crate) fn draw_risk_block(ui: &mut eframe::egui::Ui, block: RiskBlock<'_>) -
                             InstrumentMoney {
                                 point_value,
                                 size_step,
-                                min_size: size_step,
+                                // A minimum the trader declared is theirs to
+                                // keep: a venue whose smallest order is not
+                                // one increment exists, and overwriting it
+                                // here made the record's field write-only.
+                                min_size: declared
+                                    .as_ref()
+                                    .map_or(size_step, |money| money.min_size),
                                 max_size: declared.as_ref().and_then(|money| money.max_size),
                                 currency,
                                 source: quantick_sim::MoneySource::Declared,
@@ -995,6 +1068,32 @@ pub(crate) fn draw_risk_block(ui: &mut eframe::egui::Ui, block: RiskBlock<'_>) -
     }
 
     changed
+}
+
+/// The currency field, following the same rule as the decimal ones: while it
+/// does not hold the keyboard, its text is the model's.
+///
+/// Without this the field kept the previous instrument's currency after a
+/// symbol switch, and the next nudge of the point value wrote *that* currency
+/// onto the new instrument - a money value in a currency nobody chose.
+fn edit_currency(ui: &mut eframe::egui::Ui, text: &mut String, declared: &str) -> bool {
+    use eframe::egui;
+
+    let response = ui
+        .add(
+            egui::TextEdit::singleline(text)
+                .desired_width(48.0)
+                .hint_text("BRL"),
+        )
+        .on_hover_text("the currency this point value is in - never converted");
+    if !response.has_focus() && !response.changed() {
+        if text.as_str() != declared {
+            text.clear();
+            text.push_str(declared);
+        }
+        return false;
+    }
+    response.changed()
 }
 
 /// A decimal field that follows the model while the trader is not typing in
@@ -1026,8 +1125,12 @@ fn edit_decimal(
     if !response.changed() {
         return false;
     }
+    // Strictly positive: a half-typed "0." is unparsable and therefore safe,
+    // but a bare "0" parses - and as the first keystroke of a retype it used
+    // to clear the whole instrument declaration, taking the size step and the
+    // currency with it.
     match Decimal::from_str_exact(text.trim()) {
-        Ok(parsed) if parsed >= Decimal::ZERO && parsed != *value => {
+        Ok(parsed) if parsed > Decimal::ZERO && parsed != *value => {
             *value = parsed;
             true
         }
@@ -1038,7 +1141,7 @@ fn edit_decimal(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quantick_sim::MoneySource;
+    use quantick_sim::{ExitPart, MoneySource};
 
     fn d(text: &str) -> Decimal {
         Decimal::from_str_exact(text).expect("test decimal literal")
@@ -1349,6 +1452,116 @@ mod tests {
         ] {
             assert_eq!(parse_hook(spec), None, "spec {spec:?}");
         }
+    }
+
+    /// A ladder's geometry is read at a fixed scale, so a rung whose share
+    /// would round away at the trader's own quantity still counts. Before
+    /// this, probing at one collapsed a 50/50 ladder to its last rung, and
+    /// the size that produced went into the field that was the next frame's
+    /// probe - the number depended on how long the ticket had been open.
+    #[test]
+    fn a_two_rung_ladder_is_read_at_a_scale_where_no_rung_rounds_away() {
+        let settings = fixed("100");
+        let capital = Capital::new();
+        let book = book();
+        let context = ctx(&settings, &capital, &book, "WIN$N");
+        let resolve = |quantity: Decimal| {
+            // A 50/50 ladder, resolved the way `OrderStrategy` resolves one:
+            // each rung takes its share of the quantity, rounded, and a rung
+            // that rounds to nothing is dropped.
+            let half = (quantity / Decimal::TWO).round();
+            if half <= Decimal::ZERO {
+                return Bracket::whole(Some(d("139600")), None);
+            }
+            Bracket::ladder(&[
+                ExitPart {
+                    quantity: Some(half),
+                    stop_loss: Some(d("139800")),
+                    take_profit: None,
+                },
+                ExitPart {
+                    quantity: Some(quantity - half),
+                    stop_loss: Some(d("139600")),
+                    take_profit: None,
+                },
+            ])
+            .expect("ladder")
+        };
+        let (state, _) = sized_for_aim(&context, Side::Buy, d("140000"), &resolve);
+        // Weighted distance is (200 + 400) / 2 = 300 points, so 60.00 a
+        // contract and 100 / 60 = 1. Read at the collapsed single rung it
+        // would have been 400 points, 80.00, and still 1 - but on a wider
+        // budget the two answers diverge, which the next assertion pins.
+        assert_eq!(state.derived_quantity(), Some(Decimal::ONE));
+
+        let settings = fixed("600");
+        let context = ctx(&settings, &capital, &book, "WIN$N");
+        let (state, _) = sized_for_aim(&context, Side::Buy, d("140000"), &resolve);
+        // 600 / 60 = 10 on the true weighted distance; the collapsed rung
+        // would have said 600 / 80 = 7.
+        assert_eq!(
+            state.derived_quantity(),
+            Some(Decimal::TEN),
+            "the ladder was read at its own geometry, not at a probe of one"
+        );
+    }
+
+    /// The same aim, asked twice, answers the same. The old probe read the
+    /// quantity field, which the answer then rewrote.
+    #[test]
+    fn sizing_an_aim_twice_gives_the_same_answer() {
+        let settings = fixed("100");
+        let capital = Capital::new();
+        let book = book();
+        let context = ctx(&settings, &capital, &book, "WIN$N");
+        let resolve = |_: Decimal| Bracket::whole(Some(d("139800")), None);
+        let first = sized_for_aim(&context, Side::Buy, d("140000"), &resolve).0;
+        let second = sized_for_aim(&context, Side::Buy, d("140000"), &resolve).0;
+        assert_eq!(first.derived_quantity(), second.derived_quantity());
+    }
+
+    /// An amount entered in one currency is refused on an instrument that
+    /// trades in another, never re-stamped. Re-stamping turned a hundred
+    /// reais into a hundred dollars on a tab switch.
+    #[test]
+    fn an_amount_entered_in_another_currency_is_refused_not_restamped() {
+        let settings = RiskSettings {
+            basis: RiskBasis::Amount,
+            amount: d("100"),
+            amount_currency: Some(brl()),
+            ..RiskSettings::default()
+        };
+        let usdt = Currency::new("USDT").expect("USDT");
+        let refusal = budget_for(&settings, &Capital::new(), &usdt).expect_err("refuses");
+        assert_eq!(
+            refusal,
+            BudgetRefusal::AmountInAnotherCurrency {
+                amount: brl(),
+                instrument: usdt,
+            }
+        );
+        assert!(refusal.sentence().contains("converts"));
+    }
+
+    /// An over-budget state above the floor must not call itself the floor:
+    /// at five contracts, "the smallest size is 5" names the one move the
+    /// trader cannot make.
+    #[test]
+    fn an_over_budget_state_above_the_floor_says_the_size_can_come_down() {
+        let budget = Money::new(d("100"), brl());
+        let sized = RiskState::Sized {
+            quantity: d("5"),
+            risk: Money::new(d("60"), brl()),
+            outcome: SizeOutcome::RoundedDown,
+            budget,
+        };
+        let state = with_restated_risk(sized, Money::new(d("120"), brl()));
+        let sentence = state.sentence();
+        assert!(
+            !sentence.contains("smallest size"),
+            "five is not the smallest size: {sentence}"
+        );
+        assert!(sentence.contains("Reduce the size"), "{sentence}");
     }
 
     #[test]

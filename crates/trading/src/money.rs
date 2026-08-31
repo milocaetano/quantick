@@ -370,9 +370,19 @@ pub fn size_for_risk(
             .saturating_add(steps.saturating_mul(money.size_step))
     };
 
+    // The cap lands on the grid like every other exit from this function.
+    // A maximum that is not itself `min + k * step` - nothing forces one to
+    // be - would otherwise return a quantity the venue cannot trade.
     let capped = match money.max_size {
         Some(max) if quantity > max => {
-            quantity = max;
+            let steps = max
+                .saturating_sub(money.min_size)
+                .checked_div(money.size_step)
+                .ok_or(SizeRefusal::UnusableSizeGrid)?
+                .floor();
+            quantity = money
+                .min_size
+                .saturating_add(steps.saturating_mul(money.size_step));
             true
         }
         _ => false,

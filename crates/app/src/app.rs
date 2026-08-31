@@ -1088,17 +1088,26 @@ impl QuantickApp {
         // The risk per trade, and the money it is measured in. A trader who
         // never set any of this gets the mode off and an empty book, which
         // leaves every screen exactly as it was.
-        tab.paper
-            .set_risk_settings(crate::risk_sizing::settings_from_sidecar(
-                paper_state.risk_per_trade_basis.as_deref(),
-                paper_state.risk_per_trade_amount.as_deref(),
-                paper_state.risk_per_trade_percent.as_deref(),
-                paper_state.risk_per_trade_lock,
-            ));
-        tab.paper
-            .set_capital(crate::risk_sizing::capital_from_records(
-                &paper_state.paper_capital,
-            ));
+        //
+        // Skipped when a launch hook set the risk for this run: an
+        // environment variable is an explicit request for one run and
+        // outranks the stored settings. Restoring them here left the hook's
+        // whole point - the derived size, the sentence, the lock -
+        // unreachable from a capture.
+        if !tab.paper.risk_from_hook() {
+            tab.paper
+                .set_risk_settings(crate::risk_sizing::settings_from_sidecar(
+                    paper_state.risk_per_trade_basis.as_deref(),
+                    paper_state.risk_per_trade_amount.as_deref(),
+                    paper_state.risk_per_trade_currency.as_deref(),
+                    paper_state.risk_per_trade_percent.as_deref(),
+                    paper_state.risk_per_trade_lock,
+                ));
+            tab.paper
+                .set_capital(crate::risk_sizing::capital_from_records(
+                    &paper_state.paper_capital,
+                ));
+        }
         tab.paper
             .set_instrument_money(crate::risk_sizing::book_from_records(
                 &paper_state.instrument_money,
@@ -3278,7 +3287,11 @@ impl QuantickApp {
             dock_visible,
             appearance_open: show_style,
             paper: toolbar::PaperTradeModel {
-                ready: tab.paper.ready(),
+                // The lock reaches the toolbar too. Gating only the dock's
+                // pair left these lit while the ticket refused, so a fast
+                // click here only toasted - and the doc promises the entry
+                // pair disables.
+                ready: tab.paper.ready() && !tab.paper.risk_report().1,
                 buy_label: tab.paper.entry_label(quantick_engine::Side::Buy),
                 sell_label: tab.paper.entry_label(quantick_engine::Side::Sell),
                 buy_hover: tab.paper.entry_hover(quantick_engine::Side::Buy),
