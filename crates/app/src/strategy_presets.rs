@@ -83,12 +83,23 @@ pub struct StoredPreset {
     pub window: u32,
     pub min_factor: String,
     pub max_factor: String,
-    /// Absolute body floor in price points; `0` disables it. Added after
-    /// the format shipped, so it is optional and defaults to `0` — a bank
-    /// file written before it existed reads clean with the old behaviour,
-    /// which is why the version does not move.
-    #[serde(default = "zero_points")]
-    pub min_body: String,
+    /// Absolute floor on the candle's **size** (`high - low`) in price
+    /// points; `0` disables it. Added after the format shipped, so it is
+    /// optional and defaults to `0` — a bank file written before it existed
+    /// reads clean with the old behaviour, which is why the version does
+    /// not move.
+    ///
+    /// The `min_body` alias is the key this field was written under when
+    /// the floor measured the body instead. A bank saved then still loads,
+    /// and its number is carried into the new meaning rather than dropped:
+    /// silently defaulting a trader's `100` to `0` would turn their gate
+    /// off, which is the loudest possible way to lose a setting. The
+    /// reinterpretation is real and is not hidden — the same `100` now
+    /// admits any candle reaching 100, where before it wanted a 100-point
+    /// body — so the release note says so, and the form's own label names
+    /// what is measured.
+    #[serde(default = "zero_points", alias = "min_body")]
+    pub min_size: String,
     /// Take profit = close + `tp_mult` × range, in the trade's favour;
     /// `0` means no leg.
     pub tp_mult: String,
@@ -104,7 +115,7 @@ pub struct StoredPreset {
     /// a bar that never crossed the edge rests nothing under either value,
     /// and neither does a cut whose projected legs would not clear the
     /// edge — an entry is never armed unprotected.
-    /// Optional for the same vintage reason as `min_body`, which is why
+    /// Optional for the same vintage reason as `min_size`, which is why
     /// the version does not move.
     #[serde(default = "ignore_break")]
     pub on_break: String,
@@ -187,7 +198,14 @@ impl StoredPreset {
             // activity-cut bars (247 "forces" in one measured WIN session;
             // 7 with this floor). Per-instrument, so it lives in the
             // preset the trader edits, not in the kernel's defaults.
-            min_body: "100".to_owned(),
+            //
+            // The number is a WINV26 measurement and it does not travel: on
+            // a market printing around 180,000 the same 100 is 0.06% of
+            // price and gates almost nothing, while on a 5-point tick it
+            // gates almost everything. It is a starting point for the
+            // instrument in front of the trader, not a default that is
+            // right anywhere it is not changed.
+            min_size: "100".to_owned(),
             tp_mult: "1.0".to_owned(),
             sl_mult: "1.0".to_owned(),
             rearm: "one_shot".to_owned(),
@@ -244,8 +262,8 @@ impl StoredPreset {
         if min_factor <= Decimal::ZERO || max_factor <= Decimal::ZERO {
             return None;
         }
-        let min_body = Decimal::from_str(&self.min_body).ok()?;
-        if min_body < Decimal::ZERO {
+        let min_size = Decimal::from_str(&self.min_size).ok()?;
+        if min_size < Decimal::ZERO {
             return None;
         }
         let alarm = self.alarm_to_kernel()?;
@@ -272,7 +290,7 @@ impl StoredPreset {
             window: self.window as usize,
             min_factor,
             max_factor,
-            min_body,
+            min_size,
         };
         Some(CompiledPreset {
             params,
@@ -343,7 +361,7 @@ pub fn side_token(side: Side) -> &'static str {
     side.as_str()
 }
 
-/// Serde default for [`StoredPreset::min_body`]: rows from before the field
+/// Serde default for [`StoredPreset::min_size`]: rows from before the field
 /// existed read as "floor off".
 fn zero_points() -> String {
     "0".to_owned()
@@ -519,7 +537,7 @@ mod tests {
         assert_eq!(params.rearm, Rearm::OneShot);
         assert_eq!(force.window, 20);
         assert_eq!(
-            force.min_body,
+            force.min_size,
             Decimal::from(100),
             "the form's starting point carries the elephant floor"
         );
@@ -551,7 +569,7 @@ mod tests {
         let compiled = preset.to_kernel().expect("and still compiles");
         let (params, force) = (compiled.params, compiled.force);
         assert_eq!(
-            force.min_body,
+            force.min_size,
             Decimal::ZERO,
             "absent floor means off, not refused"
         );
@@ -563,7 +581,7 @@ mod tests {
         std::fs::remove_file(&path).ok();
 
         let mut negative = StoredPreset::starting_point(Side::Buy);
-        negative.min_body = "-5".to_owned();
+        negative.min_size = "-5".to_owned();
         assert!(
             negative.to_kernel().is_none(),
             "a negative floor is refused whole"
@@ -847,5 +865,58 @@ mod tests {
         assert_eq!(alarm.params.when, AlarmWhen::OnClose);
         assert_eq!(alarm.params.repeat, RepeatPolicy::OncePerBar);
         assert_eq!(alarm.cue, Cue::whole(AlertSound::default()));
+    }
+
+    /// A bank saved when the floor measured the body still loads, and its
+    /// number is carried into the new meaning rather than dropped.
+    ///
+    /// This is the trader's own file: `min_body = "100"`, the key every
+    /// build wrote before the floor began measuring the whole candle.
+    /// Letting the rename fall through to the `0` default would switch
+    /// their elephant gate *off* — the loudest possible way to lose a
+    /// setting, and invisible until a flood of small bars started firing.
+    /// The alias keeps the number; the *meaning* is what changed, and that
+    /// is said out loud in the release note rather than discovered from a
+    /// fill.
+    ///
+    /// The fixture is written by the bank itself and then has only the key
+    /// renamed, so this asserts the alias and not a hand-typed schema that
+    /// could drift away from the real one.
+    #[test]
+    fn a_bank_written_under_the_old_min_body_key_keeps_its_floor() {
+        let path = scratch("min_body_alias");
+        let _ = std::fs::remove_file(&path);
+        let mut bank = StrategyBank::load_from(&path);
+        bank.save("SellGainAlarm", StoredPreset::starting_point(Side::Sell));
+
+        // Take the file back to the key it was written under before the
+        // floor changed what it measures.
+        let vintage = std::fs::read_to_string(&path)
+            .expect("the bank just wrote it")
+            .replace("min_size = ", "min_body = ");
+        assert!(
+            vintage.contains("min_body = \"100\""),
+            "the fixture really is a pre-rename file: {vintage}"
+        );
+        std::fs::write(&path, &vintage).unwrap();
+
+        let reloaded = StrategyBank::load_from(&path);
+        let preset = reloaded
+            .get("SellGainAlarm")
+            .expect("a bank from before the rename still loads");
+        assert_eq!(
+            preset.min_size, "100",
+            "the trader's own number survives the rename instead of defaulting to 0"
+        );
+        assert_eq!(
+            preset
+                .to_kernel()
+                .expect("and it still compiles to a runnable ruler")
+                .force
+                .min_size,
+            Decimal::from(100),
+            "carried all the way into the kernel's floor"
+        );
+        std::fs::remove_file(&path).ok();
     }
 }

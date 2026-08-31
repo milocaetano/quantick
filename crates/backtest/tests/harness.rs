@@ -173,7 +173,7 @@ fn the_force_region_kernel_walks_a_full_operation_under_the_harness() {
             window: 3,
             min_factor: "1.5".parse().expect("fixture factor"),
             max_factor: "2.5".parse().expect("fixture factor"),
-            min_body: Decimal::ZERO,
+            min_size: Decimal::ZERO,
         },
     );
     let run = run_session(&session, BarSpec::Tick(2), &mut strategy);
@@ -236,7 +236,7 @@ fn a_body_cut_rests_a_limit_under_the_harness_and_the_retest_fills() {
             window: 3,
             min_factor: "1.5".parse().expect("fixture factor"),
             max_factor: "2.5".parse().expect("fixture factor"),
-            min_body: Decimal::ZERO,
+            min_size: Decimal::ZERO,
         },
     );
     let run = run_session(&session, BarSpec::Tick(3), &mut strategy);
@@ -289,7 +289,7 @@ fn a_body_that_never_cut_the_region_rests_nothing_under_the_harness() {
             window: 3,
             min_factor: "1.5".parse().expect("fixture factor"),
             max_factor: "2.5".parse().expect("fixture factor"),
-            min_body: Decimal::ZERO,
+            min_size: Decimal::ZERO,
         },
     );
     let run = run_session(&session, BarSpec::Tick(3), &mut strategy);

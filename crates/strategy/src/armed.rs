@@ -921,7 +921,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_size: Decimal::ZERO,
             })),
         )
     }
@@ -1115,7 +1115,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_size: Decimal::ZERO,
             })),
         );
         warm_then_force(&mut instance, &region);
@@ -1221,7 +1221,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_size: Decimal::ZERO,
             })),
         );
         let commands = warm_then_force(&mut instance, &region);
@@ -1422,7 +1422,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_size: Decimal::ZERO,
             })),
         )
     }
@@ -1504,7 +1504,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_size: Decimal::ZERO,
             })),
         );
         assert!(warm_then_sell_cut(&mut instance, &region).is_empty());
@@ -1703,7 +1703,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_size: Decimal::ZERO,
             })),
         );
         warm_then_sell_cut(&mut auto, &region);
@@ -1753,7 +1753,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_size: Decimal::ZERO,
             })),
         );
         warm_then_sell_cut(&mut auto, &region);
@@ -1939,7 +1939,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_size: Decimal::ZERO,
             })),
         );
         // SL = 104 + 0.1 × 6 = 104.6, below the 105 edge a short entered
@@ -2019,7 +2019,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_size: Decimal::ZERO,
             })),
         )
     }
@@ -2206,7 +2206,7 @@ mod tests {
             window: 3,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
-            min_body: Decimal::ZERO,
+            min_size: Decimal::ZERO,
         };
         let mut ignoring = ArmedStrategy::new(
             params(Side::Sell),

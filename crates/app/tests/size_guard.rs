@@ -127,7 +127,16 @@ const BASELINE: &[(&str, usize)] = &[
     // behind a closure, once it was clear it was logic rather than
     // registration. Argue with these numbers rather than with their absence.
     ("crates/app/src/paper_trading.rs", 9238),
-    ("crates/app/src/pane.rs", 7757),
+    // Raised by 14 for the strategy badge, and deliberately: not a
+    // capability docking by trunk-edit, but a repair to `badge_text_for`,
+    // which reached only for a *stale* hold reason and so answered "why did
+    // nothing happen here?" with a sentence about an earlier bar. It now
+    // leads with the ruler's reading of the bar actually under the cursor,
+    // the way `ArmedStrategy::status_line` and the right-click menu always
+    // have. The lines are three short branches and the comment saying why
+    // the order matters; there is no new module to carve, because the fix is
+    // that this function was reading one input too few.
+    ("crates/app/src/pane.rs", 7771),
     ("crates/app/src/tab.rs", 4401),
     ("crates/app/src/control/gateway.rs", 4142),
     ("crates/app/src/orderflow_render.rs", 3075),

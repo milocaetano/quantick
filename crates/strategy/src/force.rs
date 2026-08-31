@@ -28,7 +28,8 @@ pub struct ForceParams {
     /// Upper edge of the band (inclusive). Above it the bar is exhaustion,
     /// not force.
     pub max_factor: Decimal,
-    /// Absolute floor on the body, in price units. Zero disables it.
+    /// Absolute floor on the candle's **size** — its full `high - low`
+    /// range, wicks included — in price units. Zero disables it.
     ///
     /// The relative band alone is honest on time candles but promiscuous
     /// on activity-cut bars: a volume bar carries the same volume as every
@@ -36,7 +37,22 @@ pub struct ForceParams {
     /// a 35-point body reads "1.7× force". Measured on a WINV26 session,
     /// the bare band marked 247 of 1,355 bars as force; a 100-point floor
     /// left 7. An elephant has a size, not only a ratio.
-    pub min_body: Decimal,
+    ///
+    /// **This floor measures the whole candle while the ratio band above
+    /// measures the body**, and the mismatch is deliberate — a trader's
+    /// decision, recorded rather than inferred. The two gates object to
+    /// different things: the band refuses a bar that is small *next to its
+    /// neighbours*, the floor refuses one that is small *in price*. A body
+    /// of 95 on a candle reaching 140 is a real push held by neither.
+    ///
+    /// The cost is named because it is real: a wick-dominated doji reaches
+    /// far and closes nowhere, so it clears this floor on reach alone. What
+    /// still has to admit it is the ratio band, and a doji's body makes a
+    /// small ratio, so the two gates in series stay narrower than this one
+    /// read alone. A setup wanting the *body* itself to carry a minimum
+    /// size needs a second floor, which this ruler does not ship until
+    /// someone asks for it.
+    pub min_size: Decimal,
 }
 
 impl ForceParams {
@@ -50,7 +66,7 @@ impl ForceParams {
             window: 20,
             min_factor: Decimal::new(15, 1),
             max_factor: Decimal::new(25, 1),
-            min_body: Decimal::ZERO,
+            min_size: Decimal::ZERO,
         }
     }
 }
@@ -88,14 +104,19 @@ pub enum BarVerdict {
         ratio: Decimal,
     },
     Force(ForceBar),
-    /// Ratio inside the band but body under the absolute floor — the bar
-    /// the *relative* ruler would call force and the elephant gate holds.
-    /// Distinct from [`BarVerdict::Quiet`] so the badge can say which rule
-    /// held it: "quiet 1.7×" over a bar visibly inside the band reads as a
-    /// broken ruler.
+    /// Ratio inside the band but the candle's size under the absolute
+    /// floor — the bar the *relative* ruler would call force and the
+    /// elephant gate holds. Distinct from [`BarVerdict::Quiet`] so the
+    /// badge can say which rule held it: "quiet 1.7×" over a bar visibly
+    /// inside the band reads as a broken ruler.
+    ///
+    /// `size` is the measurement that was refused (`high - low`), so a
+    /// badge can print the number the trader would have to change. It is
+    /// deliberately not the body: reporting a figure the gate did not
+    /// consult is how a trader ends up tuning the wrong input.
     UnderFloor {
         ratio: Decimal,
-        body: Decimal,
+        size: Decimal,
     },
     /// Body above the band — too big to chase.
     Exhaustion {
@@ -183,6 +204,10 @@ impl ForceWindow {
     #[must_use]
     pub fn weigh(&self, bar: &Bar) -> BarVerdict {
         let body = (bar.close - bar.open).abs();
+        // The candle's own size, which the absolute floor judges and the
+        // bracket projection rides on. Read once so the gate and the
+        // `ForceBar` it builds can never disagree about the same bar.
+        let size = bar.high - bar.low;
         // What the window would hold with this bar folded in: one body
         // longer, capped at the window, oldest evicted once it is full.
         let filled = (self.bodies.len() + 1).min(self.params.window);
@@ -216,18 +241,18 @@ impl ForceWindow {
             BarVerdict::Exhaustion { side, ratio }
         } else if ratio < min {
             BarVerdict::Quiet { ratio }
-        } else if body >= self.params.min_body {
+        } else if size >= self.params.min_size {
             BarVerdict::Force(ForceBar {
                 side,
                 body,
-                range: bar.high - bar.low,
+                range: size,
                 ratio,
             })
         } else {
             // Inside the band but under the absolute floor: a ratio without
             // a size is not an elephant — and the verdict says which rule
             // held it, because "quiet" over a band-clearing bar is a lie.
-            BarVerdict::UnderFloor { ratio, body }
+            BarVerdict::UnderFloor { ratio, size }
         }
     }
 }
@@ -269,12 +294,28 @@ mod tests {
         }
     }
 
+    /// A bar whose shadows reach past its body, so a fixture can separate
+    /// the body the ratio band reads from the candle the floor measures.
+    fn wicked(open: &str, close: &str, high: &str, low: &str) -> Bar {
+        Bar {
+            open_time: 0,
+            close_time: 0,
+            open: dec(open),
+            high: dec(high),
+            low: dec(low),
+            close: dec(close),
+            buy_volume: Decimal::ONE,
+            sell_volume: Decimal::ONE,
+            trade_count: 2,
+        }
+    }
+
     fn window(len: usize, min: &str, max: &str) -> ForceWindow {
         ForceWindow::new(ForceParams {
             window: len,
             min_factor: dec(min),
             max_factor: dec(max),
-            min_body: Decimal::ZERO,
+            min_size: Decimal::ZERO,
         })
     }
 
@@ -385,12 +426,12 @@ mod tests {
     /// marked 247 of 1,355 volume bars as force; this gate is what turns
     /// the ruler back into "elephant".
     #[test]
-    fn the_body_floor_holds_quiet_what_the_band_alone_would_call_force() {
+    fn the_candle_floor_holds_quiet_what_the_band_alone_would_call_force() {
         let mut gated = ForceWindow::new(ForceParams {
             window: 3,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
-            min_body: dec("100"),
+            min_size: dec("100"),
         });
         // Bodies 30, 30, then 60: ratio 1.5 — band says force, floor says
         // no, and the verdict names the floor rather than calling it quiet.
@@ -400,9 +441,9 @@ mod tests {
             gated.classify(&bar("160", "220")),
             BarVerdict::UnderFloor {
                 ratio: dec("1.5"),
-                body: dec("60"),
+                size: dec("62"),
             },
-            "60 points of body is not an elephant under a 100-point floor"
+            "a 62-point candle is not an elephant under a 100-point floor"
         );
 
         // Bodies 100, 100, then 200: ratio 1.5 and body 200 — both gates pass.
@@ -410,7 +451,7 @@ mod tests {
             window: 3,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
-            min_body: dec("100"),
+            min_size: dec("100"),
         });
         gated.classify(&bar("1000", "1100"));
         gated.classify(&bar("1100", "1200"));
@@ -464,6 +505,68 @@ mod tests {
                 window.classify(bar),
                 "the two readings of bar {index} disagree"
             );
+        }
+    }
+
+    /// The trader's own rule, and the bar it was written for: the floor
+    /// measures the **candle**, not the body.
+    ///
+    /// A 95-point body sitting inside the band, on a candle reaching 140.
+    /// Under the old body floor of 100 this was `UnderFloor` and no order
+    /// was placed — the setup the trader watched go by at the top of a sell
+    /// zone. The candle is plainly an elephant; the body alone was what
+    /// could not see it.
+    #[test]
+    fn the_floor_measures_the_whole_candle_not_the_body() {
+        let mut gated = ForceWindow::new(ForceParams {
+            window: 3,
+            min_factor: dec("1.5"),
+            max_factor: dec("2.5"),
+            min_size: dec("100"),
+        });
+        // Two 30-point bodies warm the window, so the average is 30 until
+        // the judged bar folds itself in.
+        gated.classify(&bar("100", "130"));
+        gated.classify(&bar("130", "160"));
+        // Body 95 (ratio ~1.84, inside the band) on a 140-point candle.
+        match gated.classify(&wicked("200", "105", "210", "70")) {
+            BarVerdict::Force(force) => {
+                assert_eq!(force.body, dec("95"), "the body the band judged");
+                assert_eq!(force.range, dec("140"), "the candle the floor cleared");
+                assert_eq!(force.side, Side::Sell, "close under open is a push down");
+            }
+            other => panic!(
+                "a 95-point body on a 140-point candle clears a 100-point candle floor, got                  {other:?}"
+            ),
+        }
+    }
+
+    /// The exposure the candle floor takes on, written down as a test so it
+    /// is a known position rather than a surprise.
+    ///
+    /// A bar that reaches far and closes nowhere clears the *floor* on reach
+    /// alone, where a body floor refused it. What still has to admit it is
+    /// the ratio band — and a doji's body makes a small ratio, so the two
+    /// gates in series stay narrower than this one read by itself. This test
+    /// is what would fail first if that second gate were ever loosened.
+    #[test]
+    fn a_wick_dominated_candle_clears_the_floor_and_the_band_still_refuses_it() {
+        let mut gated = ForceWindow::new(ForceParams {
+            window: 3,
+            min_factor: dec("1.5"),
+            max_factor: dec("2.5"),
+            min_size: dec("100"),
+        });
+        gated.classify(&bar("100", "130"));
+        gated.classify(&bar("130", "160"));
+        // Body 5 on a 200-point candle: the floor sees an elephant, the
+        // band sees the doji it is.
+        match gated.classify(&wicked("160", "165", "300", "100")) {
+            BarVerdict::Quiet { ratio } => assert!(
+                ratio < dec("1.5"),
+                "the band is what refuses a candle the size floor let through, got {ratio}"
+            ),
+            other => panic!("a 5-point body is not force at any candle size, got {other:?}"),
         }
     }
 }

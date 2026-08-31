@@ -141,10 +141,16 @@ impl Trigger for ForceTrigger {
             Some(BarVerdict::NoSide) => "doji — no side".to_owned(),
             Some(BarVerdict::Quiet { ratio }) => format!("quiet {}×", round_ratio(*ratio)),
             Some(BarVerdict::Force(force)) => format!("force {}×", round_ratio(force.ratio)),
-            Some(BarVerdict::UnderFloor { ratio, body }) => {
+            Some(BarVerdict::UnderFloor { ratio, size }) => {
                 // The band said force; the absolute floor said no. Saying
-                // "quiet" here would hide the one number the trader needs.
-                format!("{}× in band · body {body} under floor", round_ratio(*ratio))
+                // "quiet" here would hide the one number the trader needs —
+                // and that number is the candle's size, because size is what
+                // the floor actually measured. Printing the body here would
+                // send the trader to change an input this gate never read.
+                format!(
+                    "{}× in band · candle {size} under floor",
+                    round_ratio(*ratio)
+                )
             }
             Some(BarVerdict::Exhaustion { ratio, .. }) => {
                 format!("exhaustion {}×", round_ratio(*ratio))
@@ -204,7 +210,7 @@ mod tests {
             window: 3,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
-            min_body: Decimal::ZERO,
+            min_size: Decimal::ZERO,
         });
         assert_eq!(trigger.on_closed_bar(&bar("100", "101")), None);
         assert_eq!(trigger.on_closed_bar(&bar("101", "102")), None);
@@ -224,7 +230,7 @@ mod tests {
             window: 2,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
-            min_body: Decimal::ZERO,
+            min_size: Decimal::ZERO,
         });
         assert_eq!(trigger.status(), "waiting for bars 0/2");
         trigger.on_closed_bar(&bar("100", "101"));

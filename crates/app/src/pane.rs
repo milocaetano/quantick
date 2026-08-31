@@ -2403,12 +2403,26 @@ impl ChartPane {
         // This is the whole point of the badge and it was reaching only the
         // right-click menu: the trader watches the chart, and "why did
         // nothing happen" is answerable only where they are already looking.
-        if let Some(held) = instance.armed.hold_reason() {
-            text.push_str(if held.fresh {
-                " · "
-            } else {
-                " · last held: "
-            });
+        let held = instance.armed.hold_reason();
+        // A gate that refused *this* bar is the whole answer, and it stands
+        // alone.
+        if let Some(held) = held.filter(|held| held.fresh) {
+            text.push_str(" · ");
+            text.push_str(held.reason);
+            return text;
+        }
+        // Otherwise the ruler is what decided this bar, and its reading is
+        // the only sentence here about the candle in front of the trader.
+        // `status_line` has always led with it and the right-click menu
+        // prints it; this badge did not, so a bar the ruler held showed an
+        // older bar's refusal and nothing about its own — the divergence
+        // `region_pause` above exists to end, found again the same way.
+        if armed {
+            text.push_str(" · ");
+            text.push_str(&instance.armed.trigger().status());
+        }
+        if let Some(held) = held {
+            text.push_str(" · last held: ");
             text.push_str(held.reason);
         }
         text
@@ -10330,6 +10344,135 @@ mod tests {
         assert!(
             !badge.contains("region not active"),
             "and not the general one beside it, which is false here — the              span covers this bar perfectly, the band is hidden: {badge}"
+        );
+    }
+
+    /// A bar with a one-point shadow either side of its body, at sell-zone
+    /// prices.
+    fn zone_bar(open: i64, close: i64) -> quantick_engine::Bar {
+        let open = rust_decimal::Decimal::from(open);
+        let close = rust_decimal::Decimal::from(close);
+        quantick_engine::Bar {
+            open_time: 0,
+            close_time: 0,
+            open,
+            high: open.max(close) + rust_decimal::Decimal::ONE,
+            low: open.min(close) - rust_decimal::Decimal::ONE,
+            close,
+            buy_volume: rust_decimal::Decimal::ONE,
+            sell_volume: rust_decimal::Decimal::ONE,
+            trade_count: 2,
+        }
+    }
+
+    /// The badge must answer about the bar in front of the trader.
+    ///
+    /// This is the bug as reported, reduced: a setup at the top of a sell
+    /// zone did not fire, and the badge read `last held: the body never cut
+    /// the region` — a true sentence about a *different* bar, further down,
+    /// judged earlier. The bar the trader was pointing at had been refused
+    /// by the **ruler**, which produces no signal at all, and the no-signal
+    /// path clears the note and leaves the previous refusal standing.
+    /// `status_line` narrates the ruler in that case and the right-click
+    /// menu shows it; this badge did not, so the chart carried a confident
+    /// answer to a question about another candle.
+    ///
+    /// The assertion that matters is the *order*: what happened on this bar
+    /// leads, and the standing refusal rides behind it, marked as past.
+    #[test]
+    fn the_badge_names_the_rulers_own_refusal_and_not_only_an_older_bars() {
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == drawings::RECTANGLE_TOOL_ID)
+            .expect("the rectangle tool is registered");
+        let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+        pane.drawings
+            .place(rectangle, drawings::ChartPoint::at(0.0, 180_300.0));
+        pane.drawings
+            .place(rectangle, drawings::ChartPoint::at(30.0, 180_430.0));
+        let id = pane.drawings.items()[0].id;
+
+        let mut instance = crate::strategy_anchors::AnchoredInstance {
+            drawing: id,
+            preset: "SellGainAlarm".to_owned(),
+            spec: crate::strategy_presets::StoredPreset::starting_point(
+                quantick_engine::Side::Sell,
+            ),
+            armed: quantick_strategy::ArmedStrategy::new(
+                quantick_strategy::StrategyParams {
+                    side: quantick_engine::Side::Sell,
+                    quantity: rust_decimal::Decimal::ONE,
+                    tp_mult: rust_decimal::Decimal::ONE,
+                    sl_mult: rust_decimal::Decimal::ONE,
+                    rearm: quantick_strategy::Rearm::Auto,
+                    on_break: quantick_strategy::BreakPolicy::Ignore,
+                    execution: quantick_strategy::Execution::Paper,
+                },
+                Box::new(quantick_strategy::ForceTrigger::new(
+                    quantick_strategy::ForceParams {
+                        window: 3,
+                        min_factor: rust_decimal::Decimal::new(15, 1),
+                        max_factor: rust_decimal::Decimal::new(25, 1),
+                        min_size: rust_decimal::Decimal::ZERO,
+                    },
+                )),
+            ),
+            alarm: None,
+            cue: crate::audio::Cue::default(),
+            mark: crate::strategy_anchors::AlarmMark::Quiet,
+        };
+
+        let region = quantick_strategy::Region::new(
+            rust_decimal::Decimal::from(180_300),
+            rust_decimal::Decimal::from(180_430),
+        );
+        // Two quiet bars warm the 3-bar window, well under the zone.
+        for bar in [zone_bar(180_200, 180_170), zone_bar(180_170, 180_140)] {
+            assert!(
+                instance
+                    .armed
+                    .on_closed_bar(&bar, &region, true, true)
+                    .is_empty()
+            );
+        }
+        // A force bar whose body sits entirely below the zone: the region
+        // gate refuses it by name, and that refusal now stands.
+        assert!(
+            instance
+                .armed
+                .on_closed_bar(&zone_bar(180_140, 180_080), &region, true, true)
+                .is_empty()
+        );
+        assert_eq!(
+            instance.armed.hold_reason().map(|held| held.reason),
+            Some("the body never cut the region"),
+            "the older bar's refusal, which is what used to reach the badge alone"
+        );
+        // Now the bar the trader points at: the ruler refuses it outright,
+        // so no signal is produced and no gate records anything.
+        assert!(
+            instance
+                .armed
+                .on_closed_bar(&zone_bar(180_080, 180_075), &region, true, true)
+                .is_empty()
+        );
+
+        assert!(pane.strategies.arm(instance).is_empty());
+        let badge = pane.strategy_badge_text(id);
+
+        let ruler = badge.find("quiet").unwrap_or_else(|| {
+            panic!("the ruler's reading of this bar belongs on the badge: {badge}")
+        });
+        let stale = badge.find("last held:").unwrap_or_else(|| {
+            panic!("the standing refusal is still worth showing, marked as past: {badge}")
+        });
+        assert!(
+            ruler < stale,
+            "what happened on this bar leads; the older refusal rides behind: {badge}"
+        );
+        assert!(
+            badge.contains('×'),
+            "the ruler's number is the one a trader would act on: {badge}"
         );
     }
 }
