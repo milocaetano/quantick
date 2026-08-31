@@ -13,8 +13,6 @@
 //! reference to `QuantickApp`, which is the whole point: the surface stays
 //! testable without an application, and the application keeps the write.
 
-use std::time::Instant;
-
 use eframe::egui;
 
 use super::{Surface, SurfaceEnv, SurfaceResponse};
@@ -63,7 +61,7 @@ impl Surface for WorkspaceNameSurface {
     /// The box is behind the Workspace menu's *Save as*, which a scripted run
     /// cannot click. Goes through [`Self::open`], the call the menu entry
     /// makes.
-    fn apply_env_hook(&mut self, _now: Instant) {
+    fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
         if std::env::var("QUANTICK_WORKSPACE_NAME_BOX").is_ok_and(|value| value == "1") {
             self.open();
         }
@@ -162,13 +160,7 @@ mod tests {
         assert!(surface.entry().is_none());
         let mut response = SurfaceResponse::default();
         let _ = ctx.run(Default::default(), |ctx| {
-            response = surface.draw(
-                ctx,
-                &SurfaceEnv {
-                    now: std::time::Instant::now(),
-                    bookmarks: &[],
-                },
-            );
+            response = surface.draw(ctx, &SurfaceEnv::quiet(std::time::Instant::now()));
         });
         assert_eq!(response, SurfaceResponse::default());
     }
@@ -191,13 +183,7 @@ mod tests {
         let mut surface = WorkspaceNameSurface::default();
         surface.open();
         let _ = ctx.run(Default::default(), |ctx| {
-            surface.draw(
-                ctx,
-                &SurfaceEnv {
-                    now: std::time::Instant::now(),
-                    bookmarks: &[],
-                },
-            );
+            surface.draw(ctx, &SurfaceEnv::quiet(std::time::Instant::now()));
         });
         assert!(
             surface.entry().is_some(),

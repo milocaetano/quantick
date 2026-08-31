@@ -13,7 +13,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
@@ -68,8 +67,6 @@ const PAPER_ORDER_BRACKET_FRACTION: Decimal = Decimal::from_parts(15, 0, 0, fals
 const PAPER_ORDERS_STEP_FRACTION: Decimal = Decimal::from_parts(6, 0, 0, false, 4);
 /// Rungs past this are refused — a capture wants a tag or two, not a book.
 const PAPER_ORDERS_MAX_RUNGS: u8 = 4;
-/// How long a paper toast stays on screen.
-const TOAST_MS: u64 = 4_000;
 /// Grab distance for order lines — the drawings' select radius, so the two
 /// grammars feel identical under the pointer.
 const LINE_GRAB_RADIUS_PX: f32 = 10.0;
@@ -77,9 +74,6 @@ const LINE_GRAB_RADIUS_PX: f32 = 10.0;
 const ORDER_DASH_PX: f32 = 4.0;
 /// Gap between dashes of a pending order's line.
 const ORDER_GAP_PX: f32 = 4.0;
-/// How far above the bottom chrome the paper toast floats — clear of the
-/// drawings toast so the two never overlap.
-const TOAST_LIFT_PX: f32 = 96.0;
 /// Price precision for snapped drags before any print reveals the
 /// instrument's own (two decimals, the crypto-major default).
 const SNAP_FALLBACK_DECIMALS: u32 = 2;
@@ -477,12 +471,6 @@ enum PaperControl {
         index: usize,
         leg: Leg,
     },
-}
-
-/// One transient message; rejections double as the tutorial.
-struct Toast {
-    message: String,
-    shown_at: Instant,
 }
 
 /// The scripted demo's only state: how many prints it has seen.
@@ -1399,15 +1387,18 @@ pub struct PaperTrading {
     drag_price: Option<f64>,
     /// The working order hovered in the dock this frame — its chart line
     /// lifts, so one hover reads on both surfaces. Cleared after the chart
-    /// consumed it (`draw_toast` runs last in the frame).
+    /// consumed it ([`PaperTrading::settle`] runs last in the frame).
     hovered_order: Option<OrderId>,
-    /// The in-flight export, if any; resolved by `draw_toast`'s poll.
+    /// The in-flight export, if any; resolved by [`PaperTrading::settle`]'s
+    /// poll.
     export_rx: Option<std::sync::mpsc::Receiver<Result<(PathBuf, usize), String>>>,
     /// The in-flight history-folder import, if any; resolved by
-    /// `draw_toast`'s poll. Imports copy — the picked folder keeps its
-    /// files.
+    /// [`PaperTrading::settle`]'s poll. Imports copy — the picked folder
+    /// keeps its files.
     import_rx: Option<std::sync::mpsc::Receiver<Option<PathBuf>>>,
-    toast: Option<Toast>,
+    /// The acknowledgement waiting to be handed to the window's one toast —
+    /// an outbox, not a toast. See [`PaperTrading::take_toast`].
+    pending_toast: Option<String>,
     report_open: bool,
     /// Report symbol filter: `None` is every symbol, `Some` one folder.
     report_symbol: Option<String>,
@@ -1592,7 +1583,7 @@ impl PaperTrading {
             hovered_order: None,
             export_rx: None,
             import_rx: None,
-            toast: None,
+            pending_toast: None,
             report_open: false,
             report_symbol: None,
             report_period: ReportPeriod::All,
@@ -6196,44 +6187,51 @@ impl PaperTrading {
     }
 
     // ------------------------------------------------------------------
-    // Toast
+    // End of frame
     // ------------------------------------------------------------------
 
-    /// The transient message slot; newest wins, expires on its own. Runs
-    /// last in the frame, so it also settles the per-frame handshakes: the
-    /// dock-hover link is cleared (the chart already read it) and a
-    /// finished export lands its toast.
-    pub fn draw_toast(&mut self, ctx: &egui::Context, now: Instant) {
+    /// Settle this panel's per-frame handshakes. Runs last in the frame, and
+    /// for **every** tab rather than only the one on screen.
+    ///
+    /// Three things happen here: the dock-hover link is cleared (the chart
+    /// has already read it), and the export and import pickers are polled for
+    /// a background job that finished. Both of those jobs belong to the tab
+    /// that started them, and a trader who starts an export and then looks at
+    /// another chart must not have to come back for it to land — which is
+    /// what running this only for the active tab used to mean.
+    ///
+    /// It no longer draws anything. The message it produces goes to the
+    /// window's one toast, through [`Self::take_toast`].
+    pub fn settle(&mut self) {
         self.hovered_order = None;
         self.poll_export();
         self.poll_import();
-        let Some(toast) = &self.toast else {
-            return;
-        };
-        if now.saturating_duration_since(toast.shown_at) >= Duration::from_millis(TOAST_MS) {
-            self.toast = None;
-            return;
-        }
-        let message = toast.message.clone();
-        egui::Area::new(egui::Id::new("paper_toast"))
-            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -TOAST_LIFT_PX))
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                egui::Frame::none()
-                    .fill(theme::TAG_BG)
-                    .rounding(egui::Rounding::same(4.0))
-                    .inner_margin(egui::Margin::symmetric(10.0, 6.0))
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new(message).color(theme::TEXT_PRIMARY));
-                    });
-            });
     }
 
+    /// Take the acknowledgement waiting to be shown, if there is one.
+    ///
+    /// This panel used to draw its own: the same `CENTER_BOTTOM` anchor as
+    /// the window's `ToastSurface`, 96px up instead of 44, on a 4-second
+    /// clock instead of 8 — so two acknowledgements could sit in one lane, at
+    /// two heights, disagreeing about how long an acknowledgement lasts. It
+    /// posts to an outbox now and the host drains it into the one surface
+    /// that owns the clock and the position.
+    ///
+    /// Newest wins, as the toast it replaces did: a slot, not a queue, since
+    /// a trader reading a stale acknowledgement while the current one waits
+    /// behind it is worse than missing the stale one. Taking rather than
+    /// reading, so one message is handed over once however many frames pass.
+    pub(crate) fn take_toast(&mut self) -> Option<String> {
+        self.pending_toast.take()
+    }
+
+    /// Post an acknowledgement for the window to show. Newest wins.
+    ///
+    /// No clock is read here, unlike the toast this replaces: the surface is
+    /// told the frame's `Instant` by the host, which is what makes an
+    /// acknowledgement's lifetime as testable as the engine's arithmetic.
     pub(crate) fn show_toast(&mut self, message: String) {
-        self.toast = Some(Toast {
-            message,
-            shown_at: Instant::now(),
-        });
+        self.pending_toast = Some(message);
     }
 
     // ------------------------------------------------------------------
@@ -9052,7 +9050,7 @@ mod tests {
             paper.armed.is_none(),
             "an armed click dies with the timeline"
         );
-        assert!(paper.toast.is_some(), "the flatten is never silent");
+        assert!(paper.pending_toast.is_some(), "the flatten is never silent");
         let history = load_history(&dir, Some("RESETX"), &[]);
         assert_eq!(history.rows.len(), 1);
         assert_eq!(
@@ -9100,7 +9098,7 @@ mod tests {
             paper.history_cache.is_none(),
             "the ledger re-reads from the new home"
         );
-        assert!(paper.toast.is_some(), "the switch is never silent");
+        assert!(paper.pending_toast.is_some(), "the switch is never silent");
         assert!(
             dir_a.join("SWITCHX").exists(),
             "files already written stay where they are"
@@ -10186,7 +10184,10 @@ mod tests {
         let mut paper = PaperTrading::new();
         paper.stop_offset_text = "abc".to_owned();
         assert!(paper.parse_bracket(Side::Buy, Decimal::from(100)).is_none());
-        assert!(paper.toast.is_some(), "the refusal teaches, never silent");
+        assert!(
+            paper.pending_toast.is_some(),
+            "the refusal teaches, never silent"
+        );
     }
 
     /// The headline gesture: a working order, hovered, offers labelled
@@ -10358,11 +10359,11 @@ mod tests {
             None,
             "the refusal left the order as it was"
         );
-        let toast = paper.toast.as_ref().expect("the refusal teaches");
+        let toast = paper.pending_toast.as_ref().expect("the refusal teaches");
         assert!(
-            toast.message.contains("stop loss"),
+            toast.contains("stop loss"),
             "and says which leg was wrong: {}",
-            toast.message
+            toast
         );
     }
 
@@ -11498,7 +11499,7 @@ mod tests {
             "the user clicks again after the toast"
         );
         assert!(paper.venue.working_orders().is_empty());
-        assert!(paper.toast.is_some(), "the refusal explains itself");
+        assert!(paper.pending_toast.is_some(), "the refusal explains itself");
     }
 
     /// The lines say what a press would do before it happens (audit M3/M4):

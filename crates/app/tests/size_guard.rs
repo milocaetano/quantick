@@ -73,17 +73,25 @@ const SLACK: usize = 200;
 /// targets: each entry is debt, and the only direction one should ever move
 /// is down. `app.rs` at the top of the list is the reason the file exists.
 const BASELINE: &[(&str, usize)] = &[
-    // `app.rs` is the reason this file exists. Tightened by the change that
-    // added the guard: the agent popup, the acknowledgement toast and the
-    // Save-as box left for `src/surfaces/`, taking 223 production lines and
-    // three struct fields with them, and giving back one for the line that
-    // drives their capture hooks.
-    ("crates/app/src/app.rs", 11651),
+    // `app.rs` is the reason this file exists. Tightened twice now. The
+    // guard's own change took the agent popup, the acknowledgement toast and
+    // the Save-as box out to `src/surfaces/`; the second batch took the
+    // indicator-preview watermark, the appearance window, the footprint
+    // settings window, the market dialog and the arming dialog with its alarm
+    // section — 403 production lines and nine struct fields — and gave back
+    // the environment the port hands them instead, plus the review's fixes
+    // and the `QUANTICK_TOAST=paper` hook that photographs the converged
+    // acknowledgement lane.
+    ("crates/app/src/app.rs", 11248),
     // The five entries below `pane.rs` were invisible to the first version of
     // this guard, which stopped counting at the first `#[cfg(test)]` of any
     // kind: `gateway.rs` scored 72 lines of its 4,142, `drawings/mod.rs` 221
     // of 2,283. They are recorded at today's true size, not at a target.
-    ("crates/app/src/paper_trading.rs", 8861),
+    // `paper_trading.rs` came down two lines when its private toast — a
+    // second acknowledgement lane in the same place on a different clock —
+    // was converged onto the window's `ToastSurface`; what left was mostly
+    // drawing code, and what stayed is the outbox that replaced it.
+    ("crates/app/src/paper_trading.rs", 8859),
     ("crates/app/src/pane.rs", 7757),
     ("crates/app/src/tab.rs", 4401),
     ("crates/app/src/control/gateway.rs", 4142),

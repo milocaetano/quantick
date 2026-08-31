@@ -17,7 +17,6 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use crate::candle_view::draw_style_window;
 use crate::canvas_layout::{MAX_CANVAS_PANES, PaneIdAllocator};
 
 mod layout_wiring;
@@ -47,7 +46,7 @@ use crate::statusbar;
 use crate::style::{CandlePreset, ChartStyle};
 use crate::symbols_file::{self, AddedSymbols};
 use crate::tab::{CanvasChrome, CanvasLayout, LegendFold, Tab};
-use crate::tabstrip::{self, PickerOutcome, SourcePicker, TabAction};
+use crate::tabstrip::{self, TabAction};
 use crate::theme;
 use crate::timezone::TzOffset;
 use crate::toolbar::{self, ToolbarAction};
@@ -101,20 +100,6 @@ const INLINE_TEXT_FALLBACK_PX: f32 = 12.0;
 /// whether it still fits above the anchor.
 const INLINE_TEXT_LINE_FACTOR: f32 = 1.4;
 const INLINE_TEXT_FRAME_PAD_PX: f32 = 10.0;
-/// How much of the viewport's height the arming dialog's scrolling body may
-/// take. The rest pays for the window's own chrome, its Arm/Cancel footer and
-/// the margin that keeps a centred dialog off the chart's edges.
-///
-/// A fraction rather than a fixed height because the form's length is not
-/// fixed either: unfolding the alarm section adds six rows, and on a laptop
-/// that was enough to push **Arm** past the bottom of a window the trader
-/// cannot resize. Sized so the whole dialog — body, footer and chrome — sits
-/// comfortably inside the shortest viewport the app is used on.
-const ARM_DIALOG_BODY_SCREEN_FRACTION: f32 = 0.45;
-/// Floor under that fraction. On a viewport too short for even this the form
-/// scrolls within it rather than collapsing to nothing — a dialog whose Arm
-/// button cannot be reached is worse than one that scrolls.
-const ARM_DIALOG_MIN_BODY_PT: f32 = 200.0;
 /// Frames the `QUANTICK_LOAD_OLDER` hook waits for a chart worth paging from.
 ///
 /// It cannot fire at startup: paging asks for trades older than the ones on
@@ -337,10 +322,34 @@ impl InspectorActions {
     }
 }
 
+/// The chart rectangle a settings dialog is previewing an unapplied draft on,
+/// if one is.
+///
+/// The pane the *dialog* was opened over, not the focused one: a trader can
+/// preview a curve on the left pane and then click the right, and the banner
+/// belongs over the numbers that are actually provisional.
+///
+/// A free function rather than a method because its only caller has already
+/// split `QuantickApp` into disjoint borrows to build the surface
+/// environment, and a method would want the whole of `self` back. Per-frame,
+/// and shaped to leave immediately: no dialog open — the ordinary case — is
+/// one `Option` test before the tab scan is reached.
+fn indicator_preview_area(
+    tabs: &[Tab],
+    dialog: Option<&SettingsDialog>,
+    target: TabSlot,
+) -> Option<egui::Rect> {
+    if !dialog.is_some_and(|dialog| dialog.previewed) {
+        return None;
+    }
+    tabs.iter()
+        .find(|tab| tab.id == target.tab)
+        .map(|tab| tab.pane(target.side))
+        .and_then(|pane| pane.last_chart_area)
+}
+
 /// How often the perf summary is logged (not every frame).
 const SUMMARY_INTERVAL: Duration = Duration::from_secs(2);
-/// Coalesce slider drags into one diagnostic event after the value settles.
-const STYLE_LOG_DEBOUNCE: Duration = Duration::from_millis(350);
 
 /// Split the padded plot area into the candle chart, the indicator panes, the
 /// optional live strip, the right price gutter and the bottom time strip, so
@@ -677,23 +686,6 @@ enum StrategyDemoMode {
     AlarmBadge,
 }
 
-/// The arming dialog's state: which drawing on which pane of which tab,
-/// and the form — the stored-preset shape edited in place, so "form",
-/// "bank row" and "what a future NL layer emits" stay one structure.
-struct StrategyPopup {
-    /// Index of the tab the dialog was opened over. Drawing ids are
-    /// per-pane counters, so the same id on another tab is an unrelated
-    /// object — switching tabs closes the dialog rather than arm it.
-    tab: usize,
-    side: pane::PaneSide,
-    drawing: drawings::DrawingId,
-    form: crate::strategy_presets::StoredPreset,
-    /// The bank preset the form was seeded from, shown on the badge.
-    preset_choice: Option<String>,
-    save_name: String,
-    error: Option<String>,
-}
-
 /// Which pane a scripted right-click should land on.
 ///
 /// The two panes now open different menus, so "open the context menu" is no
@@ -874,8 +866,6 @@ pub struct QuantickApp {
     /// interaction state across the whole window rather than within a tab, so
     /// this may not be per-tab state: two panes sharing an id share a drag.
     pane_ids: PaneIdAllocator,
-    /// The `+` dialog, while it is open.
-    source_picker: Option<SourcePicker>,
     /// The instruments the user added from the picker, already folded into
     /// `config`'s catalog. Kept apart from it so the picker can tell an
     /// addition — which it may take back out — from a shipped entry, which is
@@ -1157,19 +1147,10 @@ pub struct QuantickApp {
     footprint_config: crate::footprint_config::FootprintConfig,
     /// Where those edits persist (see `footprint_config::settings_path`).
     footprint_settings_path: std::path::PathBuf,
-    /// Whether the footprint settings window is open (the layer menu's
-    /// "configure footprint…" entry opens it).
-    show_footprint_settings: bool,
-    /// Named tape-reading setups, and where they live.
-    footprint_presets: crate::footprint_presets::PresetStore,
-    footprint_presets_path: std::path::PathBuf,
-
     // Named input setups per indicator kind, offered by the settings
     // dialog's preset picker.
     indicator_presets: preset_file::PresetStore,
     indicator_presets_path: std::path::PathBuf,
-    /// The settings window's "save preset" field, kept across frames.
-    footprint_preset_draft: String,
     /// The boot hooks' requests, kept so tabs opened later (replay
     /// autostart) get them too: `QUANTICK_FOOTPRINT_AUTOSTART`,
     /// `QUANTICK_CANDLE_WIDTH` and `QUANTICK_PAN_PX`.
@@ -1196,12 +1177,6 @@ pub struct QuantickApp {
     /// frame with no pointer over the canvas would take the compass away
     /// again.
     scripted_pointer: Option<egui::Vec2>,
-    /// The strategy bank: named presets, loaded once and written back on
-    /// every save — the declarative store a future natural-language layer
-    /// would write into.
-    strategy_bank: crate::strategy_presets::StrategyBank,
-    /// The arming dialog, opened by a drawing menu's "Add strategy…".
-    strategy_popup: Option<StrategyPopup>,
     /// Where signal alarms are played. The shipped sink is the platform's
     /// own sounds; a test swaps in a recorder, which is how "the alarm
     /// sounded, once, and it was the sound the preset named" is asserted
@@ -1214,11 +1189,11 @@ pub struct QuantickApp {
     /// `QUANTICK_STRATEGY_DEMO`: rectangle + armed instance (`1`) or the
     /// arming dialog over it (`popup`), for validation runs. Consumed once
     /// the chart has bars enough, like the drawings demo.
+    ///
+    /// The dialog it stages lives in `surfaces::strategy_popup`; this hook
+    /// stays here because it has to place the drawing the dialog arms over
+    /// before it can open anything.
     pending_strategy_demo: Option<StrategyDemoMode>,
-    /// One-shot: the next draw of the arming dialog drops the sound picker
-    /// open. Set by [`StrategyDemoMode::AlarmSounds`], consumed by
-    /// [`Self::draw_alarm_controls`] on the first frame it draws the box.
-    pending_alarm_sound_picker: bool,
     /// Where the scripted press landed, until its release goes out.
     ///
     /// A real right-click spans frames: the button goes down, the app draws,
@@ -1245,12 +1220,11 @@ pub struct QuantickApp {
     /// filled, which no boot-time code can guarantee.
     scripted_indicator_settings: bool,
 
-    // Candle appearance + whether the style panel is open.
+    /// The chart appearance every renderer reads. The window that edits it
+    /// is `surfaces::style_panel`, which hands back a copy rather than
+    /// holding a reference to this one.
     style: ChartStyle,
-    show_style: bool,
     style_revision: u64,
-    style_log_pending: bool,
-    last_style_change: Option<Instant>,
     // Whether the status bar shows the perf readings (View → perf readings).
     show_perf: bool,
     /// Whether venue candle history is asked for in slices, newest first
@@ -1474,7 +1448,6 @@ impl QuantickApp {
         // file per call, and the load must read the same file the saves
         // will write.
         let footprint_settings_path = crate::footprint_config::settings_path();
-        let footprint_presets_path = crate::footprint_presets::default_path();
         let indicator_presets_path = preset_file::default_path();
         let mut app = Self {
             tabs: vec![tab],
@@ -1484,7 +1457,6 @@ impl QuantickApp {
             layout_picker_autostart: std::env::var("QUANTICK_LAYOUT_PICKER")
                 .is_ok_and(|value| value == "1"),
             pane_ids,
-            source_picker: None,
             added_symbols: symbols_file::load(&symbols_file::default_path()),
             symbols_path: symbols_file::default_path(),
             config,
@@ -1571,12 +1543,8 @@ impl QuantickApp {
             layer_actions: chart_layers::LayerActions::default(),
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
             footprint_settings_path,
-            show_footprint_settings: false,
-            footprint_presets: crate::footprint_presets::PresetStore::load(&footprint_presets_path),
-            footprint_presets_path,
             indicator_presets: preset_file::PresetStore::load(&indicator_presets_path),
             indicator_presets_path,
-            footprint_preset_draft: String::new(),
             scripted_footprint: false,
             scripted_menu: None,
             scripted_menu_release: None,
@@ -1584,22 +1552,14 @@ impl QuantickApp {
             scripted_context_menu: None,
             scripted_context_menu_release: None,
             scripted_pointer: None,
-            strategy_bank: crate::strategy_presets::StrategyBank::load_from(
-                crate::strategy_presets::StrategyBank::default_path(),
-            ),
-            strategy_popup: None,
             alerts: Box::new(crate::audio::Speaker::default()),
             alert_failure: None,
             pending_strategy_demo: None,
-            pending_alarm_sound_picker: false,
             scripted_indicator_settings: false,
             scripted_candle_width: None,
             scripted_pan_px: None,
             style: ChartStyle::default(),
-            show_style: false,
             style_revision: 0,
-            style_log_pending: false,
-            last_style_change: None,
             show_perf: true,
             progressive_history: true,
             history_reach: crate::history_reach::HistoryReach::default(),
@@ -2094,11 +2054,6 @@ impl QuantickApp {
             app.scripted_footprint = true;
             app.active_tab_mut().flow_pane.footprint_visible = true;
         }
-        // The settings window too — a validation run reaches every surface
-        // from env alone (ui-harness rule).
-        if std::env::var("QUANTICK_FOOTPRINT_PANEL").is_ok_and(|value| value == "1") {
-            app.show_footprint_settings = true;
-        }
         // Every style by its own id, resolved through the same registry the
         // panel's selector and the TOML read. A style reachable by click but
         // not by name is a style the second operator cannot pick, and one
@@ -2172,9 +2127,6 @@ impl QuantickApp {
         {
             app.scripted_pan_px = Some(px);
         }
-        // The appearance dialog, reachable without a pointer — where the
-        // candle gap and the rest of the candle style are edited.
-        app.show_style = std::env::var("QUANTICK_STYLE_PANEL").is_ok_and(|value| value == "1");
         // Same convenience for indicators: open with the two M1 natives on
         // (EMA overlay + CVD pane), through the same code path the toolbar
         // menu takes, so a scripted validation run needs no clicks.
@@ -2554,6 +2506,22 @@ impl QuantickApp {
         // silent one would look like the app relocated the trader's settings
         // behind their back — and leave them not knowing which folder to back
         // up. Same toast channel the journal's rescue uses.
+        // `QUANTICK_TOAST=paper`: a simulator acknowledgement, posted through
+        // the panel's own `show_toast`.
+        //
+        // The surface's own hook can raise a message *in* the lane; only this
+        // one proves the route to it, which is the half this change built —
+        // the panel's outbox, the drain in `settle_paper_panels`, and the
+        // eight-second clock the surface owns. Without it the paper path is
+        // reachable from a launch only by waiting for a fill and hoping the
+        // shutter lands inside the window: the demo trades within the first
+        // second and the message is gone eight seconds later, so a capture
+        // run photographs an empty lane and cannot tell that from a defect.
+        if std::env::var("QUANTICK_TOAST").is_ok_and(|value| value == "paper") {
+            app.tabs[0]
+                .paper
+                .show_toast("SIM: stop filled at 169 790 — flat.".to_owned());
+        }
         if let Some(notice) = crate::store_home::rescue_notice() {
             app.tabs[0].paper.show_toast(notice);
         }
@@ -3633,7 +3601,7 @@ impl QuantickApp {
             .map(|entry| entry.name.clone())
             .collect();
         let dock_visible = self.dock.visible();
-        let show_style = self.show_style;
+        let show_style = self.surfaces.style_panel.is_open();
         // Read before the tab is borrowed mutably. The reach is the window's
         // standing choice, like the progressive-history switch — a trader who
         // picked "previous session" once means it in the next tab too — so it
@@ -3774,11 +3742,11 @@ impl QuantickApp {
             ToolbarAction::SetFootprint(shown) => {
                 self.focused_pane_mut().footprint_visible = shown;
             }
-            ToolbarAction::OpenFootprintSettings => self.show_footprint_settings = true,
+            ToolbarAction::OpenFootprintSettings => self.surfaces.footprint_settings.open(),
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
             ToolbarAction::SetLayout(preset) => self.apply_layout_preset(preset),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
-            ToolbarAction::ToggleAppearance => self.show_style = !self.show_style,
+            ToolbarAction::ToggleAppearance => self.surfaces.style_panel.toggle(),
             // Every indicator command lands on the focused pane (§11), which
             // is the flow pane whenever the canvas is not split.
             // Adding an indicator by hand is the plainest possible request to
@@ -4190,7 +4158,6 @@ impl QuantickApp {
                 self.note_indicator_edit_at(target.tab, target.side);
             }
         }
-        self.draw_indicator_preview_watermark(ctx);
     }
 
     /// Replace the dialog's draft with a preset (`None` = the declared
@@ -4311,47 +4278,6 @@ impl QuantickApp {
                 dialog.preset_label = None;
             }
         }
-    }
-
-    /// While a preview is live, stamp the pane it paints on: a full SELL
-    /// triangle drawn from a slider mid-drag must never wear the authority
-    /// of a committed signal (trader-ux review). The legend chip says it in
-    /// the corner; this says it where the signals are.
-    fn draw_indicator_preview_watermark(&self, ctx: &egui::Context) {
-        /// Distance below the pane's top edge, in pixels — below the
-        /// top-centre toast lane ("loading venue history"), so the two never
-        /// overprint each other.
-        const WATERMARK_TOP_OFFSET_PX: f32 = 34.0;
-        /// Watermark font size, in pixels: larger than a legend chip, far
-        /// from a headline.
-        const WATERMARK_FONT_PX: f32 = 13.0;
-        let Some(dialog) = self.indicator_settings.as_ref() else {
-            return;
-        };
-        if !dialog.previewed {
-            return;
-        }
-        let target = self.indicator_settings_target;
-        let Some(rect) = self
-            .tabs
-            .iter()
-            .find(|tab| tab.id == target.tab)
-            .map(|tab| tab.pane(target.side))
-            .and_then(|pane| pane.last_chart_area)
-        else {
-            return;
-        };
-        let painter = ctx.layer_painter(egui::LayerId::new(
-            egui::Order::Middle,
-            egui::Id::new("indicator-preview-watermark"),
-        ));
-        painter.text(
-            egui::pos2(rect.center().x, rect.top() + WATERMARK_TOP_OFFSET_PX),
-            egui::Align2::CENTER_TOP,
-            "PREVIEW — settings not applied",
-            egui::FontId::proportional(WATERMARK_FONT_PX),
-            theme::ACCENT,
-        );
     }
 
     /// Send the open dialog's draft to the worker and keep the dialog open
@@ -4485,24 +4411,6 @@ impl QuantickApp {
         }
     }
 
-    /// Draw the modular candle-appearance panel and debounce its diagnostic
-    /// event so dragging a slider cannot flood logs at frame rate.
-    fn draw_style_panel(&mut self, ctx: &egui::Context, now: Instant) {
-        let response = draw_style_window(ctx, &mut self.show_style, &mut self.style);
-        if response.changed {
-            self.style_revision = self.style_revision.saturating_add(1);
-            self.style_log_pending = true;
-            self.last_style_change = Some(now);
-        }
-
-        let settled = self
-            .last_style_change
-            .is_some_and(|changed| now.saturating_duration_since(changed) >= STYLE_LOG_DEBOUNCE);
-        if self.style_log_pending && (settled || !self.show_style) {
-            self.emit_style_changed(response.applied_preset);
-        }
-    }
-
     fn emit_style_changed(&mut self, applied_preset: Option<CandlePreset>) {
         let candles = &self.style.candles;
         let preset = applied_preset
@@ -4526,7 +4434,6 @@ impl QuantickApp {
             action = "redraw_only",
             "candle appearance changed"
         );
-        self.style_log_pending = false;
     }
 
     /// Hot reload: about once a second, compare each file-backed script's
@@ -4661,55 +4568,95 @@ impl QuantickApp {
             crate::footprint_config::save(&self.footprint_settings_path, &self.footprint_config);
         }
         if actions.open_footprint_settings {
-            self.show_footprint_settings = true;
+            self.surfaces.footprint_settings.open();
         }
     }
 
-    /// The footprint settings window, editing the **focused chart's** setup.
+    /// Settle every tab's paper panel and hand its acknowledgement to the
+    /// window's one toast.
     ///
-    /// A chart that has never been configured follows the window's last
-    /// setup, so the first edit anywhere reads like a global preference and
-    /// the second chart only diverges when the trader configures it too.
-    /// Whatever is edited also becomes the window default, which is what a
-    /// chart opened later inherits.
-    fn draw_footprint_settings(&mut self, ctx: &egui::Context) {
-        if !self.show_footprint_settings {
-            return;
+    /// # One lane, and what that cost
+    ///
+    /// The panel used to draw its own toast: the same `CENTER_BOTTOM` anchor
+    /// as `ToastSurface`, 96px up instead of 44, on a 4-second clock instead
+    /// of 8. Two acknowledgements could therefore sit in one lane, at two
+    /// heights, disagreeing about how long an acknowledgement lasts. There is
+    /// one now, and this is where the panel's messages join it.
+    ///
+    /// # Every tab, not just the one on screen
+    ///
+    /// `settle` runs for all of them because the jobs it finishes — an
+    /// export, an import — belong to the tab that started them, and a trader
+    /// who starts an export and then looks at another chart should not have
+    /// to come back for it to land. The acknowledgements follow: a stop
+    /// filling on a chart the trader is not looking at is precisely the news
+    /// they most need, and dropping it silently is what the old per-tab toast
+    /// did.
+    ///
+    /// A message from a background tab is **named**, because an unlabelled
+    /// "SIM: dropped at the fill" would read as being about the chart on
+    /// screen.
+    ///
+    /// # Which message wins a slot that holds one
+    ///
+    /// The watched tab's, always: it carries no prefix and is posted last, so
+    /// it takes the slot from any background message raised on the same
+    /// frame. Among background tabs the **first** in tab order wins and the
+    /// rest of that frame are dropped — the same first-wins rule
+    /// `SurfaceResponse::merge` uses for a request that carries a value, so
+    /// the window has one tie-break rule rather than two. Posting each of
+    /// them in turn would look like it showed them all and would in fact
+    /// show whichever `tabs.iter()` reached last, which is tab order deciding
+    /// in silence.
+    fn settle_paper_panels(&mut self, now: Instant) {
+        let Self {
+            tabs,
+            active_tab,
+            surfaces,
+            ..
+        } = self;
+        let mut watched = None;
+        let mut background = None;
+        for (index, tab) in tabs.iter_mut().enumerate() {
+            tab.paper.settle();
+            let Some(message) = tab.paper.take_toast() else {
+                continue;
+            };
+            if index == *active_tab {
+                watched = Some(message);
+            } else if background.is_none() {
+                // The interpunct is the window's own separator — the status
+                // bar, the tape's axis caption and the layout strip all use
+                // it, and the messages themselves already carry a colon
+                // (`SIM: …`). A second one would read as two labels.
+                background = Some(format!("{} · {message}", tab.symbol));
+            }
         }
+        if let Some(message) = background {
+            surfaces.toast.note(message, now);
+        }
+        if let Some(message) = watched {
+            surfaces.toast.note(message, now);
+        }
+    }
+
+    /// Apply what the footprint settings window settled on.
+    ///
+    /// Whatever is edited also becomes the window default, which is what a
+    /// trader configuring their first chart means; a second chart diverges
+    /// only when they configure it too.
+    fn apply_footprint_change(&mut self, change: crate::surfaces::FootprintChange) {
         let side = self.active_tab().focused_side();
-        let customized = self
-            .active_tab()
-            .focused_pane()
-            .footprint_override
-            .is_some();
-        let mut edited = self
-            .active_tab()
-            .focused_pane()
-            .footprint_config(&self.footprint_config)
-            .clone();
-        let outcome = crate::footprint_panel::draw(
-            ctx,
-            crate::footprint_panel::PanelInput {
-                open: &mut self.show_footprint_settings,
-                config: &mut edited,
-                presets: &mut self.footprint_presets,
-                presets_path: &self.footprint_presets_path,
-                name_draft: &mut self.footprint_preset_draft,
-                target: &format!("{} chart", side.title().to_lowercase()),
-                customized,
-            },
-        );
-        match outcome {
-            crate::footprint_panel::PanelOutcome::Untouched => {}
-            crate::footprint_panel::PanelOutcome::Changed => {
-                self.active_tab_mut().pane_mut(side).footprint_override = Some(edited.clone());
-                self.footprint_config = edited;
+        match change {
+            crate::surfaces::FootprintChange::Applied(edited) => {
+                self.active_tab_mut().pane_mut(side).footprint_override = Some((*edited).clone());
+                self.footprint_config = *edited;
                 crate::footprint_config::save(
                     &self.footprint_settings_path,
                     &self.footprint_config,
                 );
             }
-            crate::footprint_panel::PanelOutcome::ResetToDefault => {
+            crate::surfaces::FootprintChange::ResetToDefault => {
                 self.active_tab_mut().pane_mut(side).footprint_override = None;
             }
         }
@@ -5372,8 +5319,7 @@ impl QuantickApp {
             drawings::presets::PresetStore::default_path(),
         );
         self.footprint_config = crate::footprint_config::load(&self.footprint_settings_path);
-        self.footprint_presets =
-            crate::footprint_presets::PresetStore::load(&self.footprint_presets_path);
+        self.surfaces.footprint_settings.reload_presets();
         self.indicator_presets = preset_file::PresetStore::load(&self.indicator_presets_path);
 
         // The tab strip first, and *before* the indicators: the restore adds
@@ -7067,7 +7013,7 @@ impl QuantickApp {
                     self.workspace_menu_rect = Some(workspace_menu.response.rect);
                     ui.menu_button("Tools", |ui| {
                         if ui.button("Appearance…").clicked() {
-                            self.show_style = true;
+                            self.surfaces.style_panel.open();
                             ui.close_menu();
                         }
                         let access_label = self
@@ -9627,224 +9573,6 @@ impl QuantickApp {
         true
     }
 
-    /// The alarm section of the arming dialog.
-    ///
-    /// Its own function because it is the one part of the form that is
-    /// about hearing rather than trading, and because the fields under the
-    /// checkbox are only meaningful while it is ticked — a shape the rest
-    /// of the dialog does not have.
-    fn draw_alarm_controls(
-        &mut self,
-        ui: &mut egui::Ui,
-        side: pane::PaneSide,
-        form: &mut crate::strategy_presets::StoredPreset,
-    ) {
-        use crate::audio::{AlertSound, Cue, SoundCategory};
-        use crate::strategy_presets as presets;
-
-        ui.checkbox(&mut form.alarm, "alarm on signal bar")
-            .on_hover_text(
-                "play a sound the moment this strategy's signal happens — the trigger \
-                 fires on your side, inside the region. It is the *signal* that alarms, \
-                 not the order: with the share option below, you hear it before the bar \
-                 closes and before any order could be placed, which is the time you need \
-                 to act on another platform.",
-            );
-        if !form.alarm {
-            // The alarm-only mode goes with the alarm: an instance that
-            // neither trades nor alarms does nothing, and the form must not
-            // be able to describe one.
-            form.alarm_only = false;
-            return;
-        }
-
-        // The bar rule the chart is actually running decides whether a
-        // share of the bar means anything. An adaptive rule closes on a
-        // condition, not on a count, so there is no fraction of it to wait
-        // for — and saying so here is cheaper than a trader wondering for a
-        // session why the alarm only ever speaks at the close.
-        // The pane the dialog is arming on, not the focused one: with a
-        // split open, a strategy going onto the time pane must be judged by
-        // the time pane's bar rule. Reading the focused pane would disable
-        // the share gate because the *other* pane runs an adaptive rule.
-        let shares_available = self.active_tab().pane(side).state.progress().is_some();
-
-        ui.horizontal(|ui| {
-            ui.label("when:");
-            let on_close = form.alarm_when != "share";
-            if ui
-                .selectable_label(on_close, "bar closes")
-                .on_hover_text("the same instant the strategy itself judges")
-                .clicked()
-            {
-                form.alarm_when = "on_close".to_owned();
-            }
-            let share_button = ui.add_enabled(
-                shares_available,
-                egui::SelectableLabel::new(!on_close, "part-way through the bar"),
-            );
-            if share_button.clicked() {
-                form.alarm_when = "share".to_owned();
-            }
-            if !shares_available {
-                share_button.on_hover_text(
-                    "this bar rule closes on a condition rather than on a count, so there \
-                     is no share of it to wait for — the alarm speaks at the close",
-                );
-            }
-        });
-        if form.alarm_when == "share" {
-            ui.horizontal(|ui| {
-                ui.label("from");
-                ui.add(
-                    egui::DragValue::new(&mut form.alarm_share_percent)
-                        .range(presets::MIN_ALARM_SHARE_PERCENT..=presets::MAX_ALARM_SHARE_PERCENT),
-                );
-                ui.label("% of the bar onward").on_hover_text(
-                    "on a 2000-tick chart at 70%, the alarm starts judging past tick \
-                     1400. The bar is still moving, so the signal is marked \"preview\" \
-                     — and if it stops qualifying before the close, the chart says so.",
-                );
-            });
-        }
-
-        ui.horizontal(|ui| {
-            ui.label("repeat:");
-            let once = form.alarm_repeat != "cooldown";
-            if ui
-                .selectable_label(once, "once per bar")
-                .on_hover_text("one sound per bar, however many prints agree")
-                .clicked()
-            {
-                form.alarm_repeat = "once_per_bar".to_owned();
-            }
-            if ui.selectable_label(!once, "every").clicked() {
-                form.alarm_repeat = "cooldown".to_owned();
-            }
-            if form.alarm_repeat == "cooldown" {
-                ui.add(
-                    egui::DragValue::new(&mut form.alarm_cooldown_secs)
-                        .range(presets::MIN_ALARM_COOLDOWN_SECS..=presets::MAX_ALARM_COOLDOWN_SECS),
-                );
-                ui.label("s").on_hover_text(
-                    "counted across bars, not reset by one closing — the rule for a \
-                     trader who wants a reminder rather than one notice",
-                );
-            }
-        });
-
-        let current = AlertSound::from_token(&form.alarm_sound).unwrap_or_default();
-        ui.horizontal(|ui| {
-            ui.label("sound");
-            const SOUND_PICKER_ID: &str = "strategy_alarm_sound";
-            /// The shortest the sound list is allowed to be, in points:
-            /// a heading and two names, enough to see that it scrolls.
-            const SOUND_PICKER_MIN_HEIGHT: f32 = 72.0;
-            if std::mem::take(&mut self.pending_alarm_sound_picker) {
-                // The capture hook's one click: open the list the way the
-                // button's own click does. The popup id is the widget id
-                // plus "popup", and the widget id is the salt *as an `Id`*
-                // under this `Ui` — how `ComboBox::from_id_salt` derives
-                // it. The one private detail this hook depends on; a
-                // capture that opens nothing is the symptom if egui moves
-                // it.
-                let button_id = ui.make_persistent_id(egui::Id::new(SOUND_PICKER_ID));
-                ui.memory_mut(|memory| memory.open_popup(button_id.with("popup")));
-            }
-            // The list scrolls inside the room under the button. egui flips
-            // a combo above its button only from the size it remembered
-            // last frame, and a thirty-two-row list opened from the last
-            // rows of a dialog docked at the window's foot otherwise runs
-            // off the screen; a shorter list that scrolls is the honest
-            // answer, and the headings keep the scroll short.
-            let room_below = ui.ctx().screen_rect().bottom()
-                - ui.next_widget_position().y
-                - ui.spacing().interact_size.y
-                - ui.spacing().menu_margin.sum().y;
-            // `min` then `max`, not `clamp`: `clamp` asserts its bounds are
-            // ordered, and a style whose combo height is under the floor
-            // must shorten the list, not crash the dialog.
-            let list_height = room_below
-                .min(ui.spacing().combo_height)
-                .max(SOUND_PICKER_MIN_HEIGHT);
-            egui::ComboBox::from_id_salt(SOUND_PICKER_ID)
-                .selected_text(current.label())
-                .height(list_height)
-                .show_ui(ui, |ui| {
-                    // Grouped under the catalogue's headings: five system
-                    // beeps, then the clips that behave like alarms, then
-                    // the ones that behave like a room. A flat list of
-                    // thirty-two names would make the trader read every
-                    // row to find the phone.
-                    for category in SoundCategory::ALL {
-                        ui.label(egui::RichText::new(category.label()).small().weak());
-                        for sound in AlertSound::in_category(category) {
-                            if ui
-                                .selectable_label(sound == current, sound.label())
-                                .clicked()
-                            {
-                                form.alarm_sound = sound.token().to_owned();
-                            }
-                        }
-                    }
-                });
-            if ui
-                .button("Test")
-                .on_hover_text(
-                    "play it now, cut where the row below says, so the sound is chosen \
-                     with the ears",
-                )
-                .clicked()
-            {
-                // Same door as a real alarm, and the same cue — length
-                // included — so an audition that cannot be heard reports
-                // itself exactly as a missed signal would, and one that can
-                // is what the signal will sound like.
-                let cue = Cue::new(current, form.alarm_play_secs);
-                let outcome = self.alerts.play(&[cue]);
-                self.report_alert_attempt(outcome);
-            }
-        });
-
-        ui.horizontal(|ui| {
-            let mut cut = form.alarm_play_secs.is_some();
-            if ui
-                .checkbox(&mut cut, "stop after")
-                .on_hover_text(
-                    "cut the sound here rather than letting it run to its end — a nature \
-                     clip runs for minutes, and an alarm that outstays its news is one the \
-                     trader learns to talk over. Off, the sound plays whole.",
-                )
-                .changed()
-            {
-                form.alarm_play_secs = cut.then_some(presets::DEFAULT_ALARM_PLAY_SECS);
-            }
-            if let Some(secs) = form.alarm_play_secs.as_mut() {
-                ui.add(
-                    egui::DragValue::new(secs)
-                        .range(presets::MIN_ALARM_PLAY_SECS..=presets::MAX_ALARM_PLAY_SECS),
-                );
-                ui.label("s");
-                if !current.can_be_cut() {
-                    // Honest rather than silent: the cut is stored and
-                    // applies the moment a clip is picked, but this sound
-                    // is one beep the operating system plays whole.
-                    ui.weak("(a system sound is one beep — the cut applies to the clips)");
-                }
-            }
-        });
-
-        ui.checkbox(&mut form.alarm_only, "alarm only — never place an order")
-            .on_hover_text(
-                "the instance watches, judges and alarms, and places nothing. For a \
-                 trader who executes elsewhere: a simulated position they never meant \
-                 to take would occupy the account and silence the next signal.",
-            );
-        if let Some(reason) = &self.alert_failure {
-            ui.colored_label(theme::SELL, format!("no sound was played: {reason}"));
-        }
-    }
-
     /// Play the alarm cues every tab's armed instances asked for this
     /// frame, and empty their queues.
     ///
@@ -10094,236 +9822,6 @@ impl QuantickApp {
         Ok(())
     }
 
-    /// The arming dialog. Drains the panes' menu requests first, so the
-    /// click that chose "Add strategy…" opens the form on this same frame.
-    fn draw_strategy_popup(&mut self, ctx: &egui::Context) {
-        let sides: SmallVec<[pane::PaneSide; MAX_CANVAS_PANES]> =
-            self.active_tab().sides().collect();
-        for side in sides {
-            let request = self
-                .active_tab_mut()
-                .pane_mut(side)
-                .strategy_popup_request
-                .take();
-            if let Some(drawing) = request {
-                self.strategy_popup = Some(StrategyPopup {
-                    tab: self.active_tab,
-                    side,
-                    drawing,
-                    form: crate::strategy_presets::StoredPreset::starting_point(
-                        quantick_engine::Side::Buy,
-                    ),
-                    preset_choice: None,
-                    save_name: String::new(),
-                    error: None,
-                });
-            }
-        }
-        let Some(mut popup) = self.strategy_popup.take() else {
-            return;
-        };
-        // The dialog speaks for one drawing on one tab. Switching tabs
-        // closes it: drawing ids are per-pane counters, and the same id
-        // over there names an unrelated object.
-        if popup.tab != self.active_tab {
-            return;
-        }
-        let mut open = true;
-        let mut done = false;
-        // The form grew past a 900 pt window once the alarm section unfolds,
-        // and an anchored, non-resizable window simply clipped the rows past
-        // the edge — including **Arm**, which makes the dialog unusable at
-        // that height rather than merely cramped. The body scrolls instead,
-        // and its ceiling is read from the viewport rather than fixed, so the
-        // same form fits a laptop and still uses a tall monitor.
-        let max_body = (ctx.screen_rect().height() * ARM_DIALOG_BODY_SCREEN_FRACTION)
-            .max(ARM_DIALOG_MIN_BODY_PT);
-        egui::Window::new("Arm strategy")
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, true])
-                    .max_height(max_body)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label("preset");
-                            let current = popup.preset_choice.as_deref().unwrap_or("custom");
-                            egui::ComboBox::from_id_salt("strategy_preset_pick")
-                                .selected_text(current.to_owned())
-                                .show_ui(ui, |ui| {
-                                    let names: Vec<String> =
-                                        self.strategy_bank.names().map(str::to_owned).collect();
-                                    for name in names {
-                                        let picked =
-                                            popup.preset_choice.as_deref() == Some(name.as_str());
-                                        if ui.selectable_label(picked, &name).clicked()
-                                            && let Some(stored) = self.strategy_bank.get(&name)
-                                        {
-                                            popup.form = stored.clone();
-                                            popup.preset_choice = Some(name.clone());
-                                        }
-                                    }
-                                });
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("side");
-                            let buy = popup.form.side == "buy";
-                            if ui.selectable_label(buy, "BUY").clicked() {
-                                popup.form.side = "buy".to_owned();
-                            }
-                            if ui.selectable_label(!buy, "SELL").clicked() {
-                                popup.form.side = "sell".to_owned();
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("quantity");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.quantity)
-                                    .desired_width(60.0),
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("force band: body between");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.min_factor)
-                                    .desired_width(40.0),
-                            );
-                            ui.label("× and");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.max_factor)
-                                    .desired_width(40.0),
-                            );
-                            ui.label("× the average of");
-                            ui.add(
-                                egui::DragValue::new(&mut popup.form.window)
-                                    .range(1..=crate::strategy_presets::MAX_FORCE_WINDOW),
-                            );
-                            ui.label("bodies");
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("and body ≥");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.min_body)
-                                    .desired_width(50.0),
-                            );
-                            ui.label("pts (0 = off)").on_hover_text(
-                                "the elephant floor: the relative band alone marks dozens of small \
-                         bars as force on activity-cut bars; an elephant has a size",
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("projection: TP");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.tp_mult)
-                                    .desired_width(40.0),
-                            );
-                            ui.label("× range ahead, SL");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.sl_mult)
-                                    .desired_width(40.0),
-                            );
-                            ui.label("× range behind (0 = no leg)");
-                        });
-                        let mut auto = popup.form.rearm == "auto";
-                        if ui
-                            .checkbox(&mut auto, "re-arm automatically after the operation closes")
-                            .on_hover_text("off = one shot per arming, the over-fire guard")
-                            .changed()
-                        {
-                            popup.form.rearm = if auto { "auto" } else { "one_shot" }.to_owned();
-                        }
-                        let mut retest = popup.form.on_break == "retest_limit";
-                        if ui
-                            .checkbox(&mut retest, "on a cut: rest a limit at the region edge")
-                            .on_hover_text(
-                                "a trigger bar whose body cuts the region in the trade's direction \
-                         — it opened on the region's side of that edge and closed beyond it, \
-                         wicks ignored — rests a limit at the edge it cut, the retest entry, \
-                         bracketed off the bar. The order removes itself if the bar's \
-                         projected target trades first; with the TP multiplier at 0 there is \
-                         no such level, so it rests until it fills or you disarm it — the \
-                         badge says which. A bar that closed past an edge its body never \
-                         crossed, one that closed away on the far side, and a cut whose legs \
-                         would not clear the edge all rest nothing. Off = a cut holds fire, \
-                         as before.",
-                            )
-                            .changed()
-                        {
-                            popup.form.on_break =
-                                if retest { "retest_limit" } else { "ignore" }.to_owned();
-                        }
-                        ui.separator();
-                        self.draw_alarm_controls(ui, popup.side, &mut popup.form);
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.save_name)
-                                    .hint_text("preset name")
-                                    .desired_width(140.0),
-                            );
-                            let name = popup.save_name.trim().to_owned();
-                            if ui
-                                .add_enabled(!name.is_empty(), egui::Button::new("Save preset"))
-                                .clicked()
-                            {
-                                self.strategy_bank.save(&name, popup.form.clone());
-                                popup.preset_choice = Some(name);
-                            }
-                            if let Some(chosen) = popup.preset_choice.clone()
-                                && ui
-                                    .button("Delete preset")
-                                    .on_hover_text(
-                                        "remove it from the bank; the form keeps its values",
-                                    )
-                                    .clicked()
-                            {
-                                self.strategy_bank.remove(&chosen);
-                                popup.preset_choice = None;
-                            }
-                        });
-                    });
-                // Outside the scroll: **Arm** is the one control the dialog
-                // exists for, and a form that grows must never be able to
-                // push it off the bottom. Body scrolls, footer stays. The
-                // error goes with it — a refusal the trader has to scroll to
-                // find reads as a dialog that did nothing.
-                if let Some(error) = &popup.error {
-                    ui.colored_label(theme::SELL, error);
-                }
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button("Arm").clicked() {
-                        let label = popup
-                            .preset_choice
-                            .clone()
-                            .or_else(|| {
-                                let name = popup.save_name.trim();
-                                (!name.is_empty()).then(|| name.to_owned())
-                            })
-                            .unwrap_or_else(|| "custom".to_owned());
-                        match self.arm_strategy_instance(
-                            popup.side,
-                            popup.drawing,
-                            &popup.form.clone(),
-                            label,
-                        ) {
-                            Ok(()) => done = true,
-                            Err(error) => popup.error = Some(error),
-                        }
-                    }
-                    if ui.button("Cancel").clicked() {
-                        done = true;
-                    }
-                });
-            });
-        if !done && open {
-            self.strategy_popup = Some(popup);
-        }
-    }
-
     /// The `QUANTICK_REPLAY_RESTART_AFTER` hook: press the transport's own
     /// Restart once the session has closed that many round trips.
     ///
@@ -10527,16 +10025,13 @@ impl QuantickApp {
             StrategyDemoMode::Popup
             | StrategyDemoMode::AlarmPopup
             | StrategyDemoMode::AlarmSounds => {
-                self.pending_alarm_sound_picker = mode == StrategyDemoMode::AlarmSounds;
-                self.strategy_popup = Some(StrategyPopup {
-                    tab: self.active_tab,
-                    side: pane::PaneSide::Flow,
-                    drawing: drawing_id,
-                    form,
-                    preset_choice: None,
-                    save_name: String::new(),
-                    error: None,
-                });
+                if mode == StrategyDemoMode::AlarmSounds {
+                    self.surfaces.strategy_popup.stage_sound_picker();
+                }
+                let tab = self.active_tab().id;
+                self.surfaces
+                    .strategy_popup
+                    .open(tab, pane::PaneSide::Flow, drawing_id, form);
             }
         }
         // This demo places its rectangle, which selects it, which closes a
@@ -10954,15 +10449,159 @@ impl QuantickApp {
         if let Some(access) = self.control_access.as_mut() {
             access.draw_panel(ctx);
         }
-        let surfaces = self.surfaces.draw_all(
+        self.draw_toolbar(ctx);
+        // Before the dialog is drawn, so a double click on a pane or a curve
+        // opens it on the same frame the gesture happened rather than the next.
+        self.open_requested_indicator_settings();
+        self.draw_indicator_settings(ctx);
+        self.draw_indicator_legends(ctx);
+        // **After** the dialogs above, and that placement is load-bearing.
+        // The preview watermark reads whether a settings dialog is previewing
+        // an unapplied draft, and `draw_indicator_settings` is what sets that
+        // — so an environment built before it would put the banner on screen
+        // a frame after the legend chip that says the same thing, and take it
+        // off a frame later too. Two surfaces the trader reads as one is this
+        // repo's own bug class; sixteen milliseconds of it is still one
+        // frame a capture can photograph.
+        //
+        // It is also where the windows this pass drew used to sit: the
+        // appearance and footprint panels ran after the toolbar that toggles
+        // them, so a click on LOOK opens the panel on the same frame rather
+        // than the next.
+        // A pane's right-click asked to arm one of its drawings. Drained
+        // here, into the surface that owns the dialog: the click happens
+        // while the canvas draws, which is later in this frame than the
+        // surfaces are, so the dialog opens on the next one — a frame the
+        // trader cannot see, and the price of the dialog no longer living in
+        // the trunk.
+        let sides: SmallVec<[pane::PaneSide; MAX_CANVAS_PANES]> =
+            self.active_tab().sides().collect();
+        for side in sides {
+            let request = self
+                .active_tab_mut()
+                .pane_mut(side)
+                .strategy_popup_request
+                .take();
+            if let Some(drawing) = request {
+                let form = crate::strategy_presets::StoredPreset::starting_point(
+                    quantick_engine::Side::Buy,
+                );
+                let tab = self.active_tab().id;
+                self.surfaces.strategy_popup.open(tab, side, drawing, form);
+            }
+        }
+        // The bar rules the arming dialog's alarm section reads: a share of
+        // the bar only means something where the rule closes on a count.
+        // Built only while that dialog is open, like the open markets below.
+        // `hooks_pending` is the frame a capture hook opens a surface from
+        // inside `draw_all`: it is not open yet when this runs, but it is
+        // about to be, and it must not draw its first frame against an empty
+        // environment.
+        let staging = self.surfaces.hooks_pending();
+        let counted_bar_sides: SmallVec<[pane::PaneSide; MAX_CANVAS_PANES]> =
+            if staging || self.surfaces.strategy_popup.is_open() {
+                let tab = self.active_tab();
+                tab.sides()
+                    .filter(|side| tab.pane(*side).state.progress().is_some())
+                    .collect()
+            } else {
+                SmallVec::new()
+            };
+        // The markets tabs are showing: the dialog greys out removing one of
+        // those, because a tab left on a symbol the catalog no longer offers
+        // gets silently retargeted by the next SOURCE correction. Built only
+        // while the dialog is open — it is a `String` pair per tab, and no
+        // frame should pay for it to be thrown away.
+        let open_markets: Vec<(String, String)> =
+            if staging || self.surfaces.source_picker.is_open() {
+                self.tabs
+                    .iter()
+                    .map(|tab| (tab.feed_id.clone(), tab.symbol.clone()))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        // Split into disjoint borrows: the surfaces are drawn through `&mut`
+        // while the environment they read is borrowed from the rest of the
+        // application. That the compiler insists on the split is the port
+        // working — a surface cannot be handed the trunk it is being kept
+        // out of.
+        let Self {
+            surfaces: registry,
+            bookmarks,
+            style,
+            footprint_config,
+            tabs,
+            active_tab,
+            indicator_settings,
+            indicator_settings_target,
+            config,
+            added_symbols,
+            alert_failure,
+            ..
+        } = self;
+        let focused_tab = &tabs[*active_tab];
+        // Read once. `focused_pane` resolves the same side internally, and
+        // the answer is not a field lookup — it reads the layout, because
+        // focus on a collapsed pane is focus on nothing.
+        let focused_side = focused_tab.focused_side();
+        let focused_pane = focused_tab.pane(focused_side);
+        let surfaces = registry.draw_all(
             ctx,
             &crate::surfaces::SurfaceEnv {
-                bookmarks: &self.bookmarks,
+                bookmarks,
                 now,
+                indicator_preview_area: indicator_preview_area(
+                    tabs,
+                    indicator_settings.as_ref(),
+                    *indicator_settings_target,
+                ),
+                focused_chart_area: focused_pane.last_chart_area,
+                style,
+                footprint: focused_pane.footprint_config(footprint_config),
+                footprint_customized: focused_pane.footprint_override.is_some(),
+                focused_side,
+                config,
+                added_symbols,
+                open_markets: &open_markets,
+                active_tab: focused_tab.id,
+                counted_bar_sides: &counted_bar_sides,
+                alert_failure: alert_failure.as_deref(),
             },
         );
         if let Some(name) = surfaces.save_workspace_as {
             self.save_named_workspace(&name);
+        }
+        if let Some(style) = surfaces.style {
+            self.style = style;
+            self.style_revision = self.style_revision.saturating_add(1);
+        }
+        // After the assignment, never before: the log line reports the
+        // appearance that is now in force, and the revision it landed on.
+        if let Some(request) = surfaces.log_style_change {
+            self.emit_style_changed(request.applied_preset);
+        }
+        // The audition goes through the one speaker every armed instance
+        // shares, and reports a sound that could not be heard exactly as a
+        // missed signal would.
+        if let Some(cue) = surfaces.test_alert {
+            let outcome = self.alerts.play(&[cue]);
+            self.report_alert_attempt(outcome);
+        }
+        if let Some(request) = surfaces.arm_strategy {
+            let outcome = self.arm_strategy_instance(
+                request.side,
+                request.drawing,
+                &request.form,
+                request.label,
+            );
+            self.surfaces.strategy_popup.settle_arm(outcome);
+        }
+        if let Some(request) = surfaces.market {
+            self.apply_market_request(request);
+        }
+        if let Some(change) = surfaces.footprint {
+            self.apply_footprint_change(change);
         }
         if surfaces.undo_drawing {
             let pane = self.drawing_pane_mut();
@@ -10971,13 +10610,6 @@ impl QuantickApp {
             // instance rides may just have been taken away.
             pane.sweep_strategy_orphans();
         }
-        self.draw_toolbar(ctx);
-        self.draw_source_picker(ctx);
-        // Before the dialog is drawn, so a double click on a pane or a curve
-        // opens it on the same frame the gesture happened rather than the next.
-        self.open_requested_indicator_settings();
-        self.draw_indicator_settings(ctx);
-        self.draw_indicator_legends(ctx);
         self.poll_script_files();
         self.maintain_indicator_state();
         self.maintain_chart_layers();
@@ -11197,8 +10829,6 @@ impl QuantickApp {
         // drawings before anything paints them.
         self.maintain_layouts();
         self.active_tab_mut().apply_spec_changes();
-        self.draw_style_panel(ctx, now);
-        self.draw_footprint_settings(ctx);
         // Waits owned by other components, mirrored level-style each frame so
         // the overlay needs no push notifications from either.
         let replay_loading = self.replay_view.is_loading();
@@ -11354,7 +10984,6 @@ impl QuantickApp {
         self.draw_inline_text_editor(ctx);
         self.draw_drawing_inspector(ctx, now);
         self.draw_drawing_manager(ctx, now);
-        self.draw_strategy_popup(ctx);
         // The menus above may have disarmed a bot over a resting retest
         // limit; its cancel goes to the simulator on this same frame, not
         // on the next print. Every tab, not just the active one: a menu
@@ -11369,7 +10998,7 @@ impl QuantickApp {
         // corner and the transport strip: they speak for one market at a time.
         let tz = self.tz;
         self.active_tab_mut().paper.draw_report_window(ctx, tz);
-        self.active_tab_mut().paper.draw_toast(ctx, now);
+        self.settle_paper_panels(now);
         // Both controls go through the tab's own methods, which are also what
         // the registered control-plane actions call: a click and a named call
         // must be able to disagree about nothing.
@@ -11463,7 +11092,7 @@ impl QuantickApp {
             )
         });
         if new_tab {
-            self.source_picker = Some(SourcePicker::new(&self.config));
+            self.surfaces.source_picker.open(&self.config);
         }
         if close_tab {
             self.close_tab(self.active_tab);
@@ -11476,51 +11105,22 @@ impl QuantickApp {
         }
     }
 
-    /// The `+` dialog, while it is open.
-    fn draw_source_picker(&mut self, ctx: &egui::Context) {
-        if self.source_picker.is_none() {
-            return;
-        }
-        // The markets tabs are showing: the picker greys out removing one of
-        // those, because a tab left on a symbol the catalog no longer offers
-        // gets silently retargeted by the next SOURCE correction.
-        let open_symbols: Vec<(String, String)> = self
-            .tabs
-            .iter()
-            .map(|tab| (tab.feed_id.clone(), tab.symbol.clone()))
-            .collect();
-        let outcome = {
-            let Self {
-                source_picker,
-                config,
-                added_symbols,
-                ..
-            } = self;
-            let picker = source_picker.as_mut().expect("checked above");
-            picker.draw(ctx, config, added_symbols, &open_symbols)
-        };
-        match outcome {
-            PickerOutcome::Open => {}
-            PickerOutcome::Cancel => self.source_picker = None,
-            PickerOutcome::Chosen(feed_id, symbol) => {
-                self.source_picker = None;
-                self.open_tab(feed_id, symbol, None);
-            }
-            PickerOutcome::Added { feed_id, symbol } => match self.add_symbol(&feed_id, &symbol) {
+    /// Do what the "Open market" dialog settled on.
+    fn apply_market_request(&mut self, request: crate::surfaces::MarketRequest) {
+        use crate::surfaces::MarketRequest;
+        match request {
+            MarketRequest::Open { feed_id, symbol } => self.open_tab(feed_id, symbol, None),
+            MarketRequest::Add { feed_id, symbol } => match self.add_symbol(&feed_id, &symbol) {
                 Ok(()) => {
-                    self.source_picker = None;
+                    self.surfaces.source_picker.close();
                     self.open_tab(feed_id, symbol, None);
                 }
                 // The dialog stays open carrying the reason: the user is one
                 // keystroke from a symbol that does fit, and closing would
                 // make the refusal look like a crash.
-                Err(reason) => {
-                    if let Some(picker) = self.source_picker.as_mut() {
-                        picker.refuse(reason);
-                    }
-                }
+                Err(reason) => self.surfaces.source_picker.refuse(reason),
             },
-            PickerOutcome::Removed { feed_id, symbol } => self.remove_symbol(&feed_id, &symbol),
+            MarketRequest::Remove { feed_id, symbol } => self.remove_symbol(&feed_id, &symbol),
         }
     }
 
@@ -11616,7 +11216,7 @@ impl QuantickApp {
                 }
             }
             TabAction::Close(index) => self.close_tab(index),
-            TabAction::New => self.source_picker = Some(SourcePicker::new(&self.config)),
+            TabAction::New => self.surfaces.source_picker.open(&self.config),
         }
     }
 }
@@ -24479,6 +24079,107 @@ crosshair = false
         assert_eq!(pane.kind, crate::state::BarKind::Tick);
     }
 
+    /// The paper panel used to keep a toast of its own: same lane along the
+    /// chart's bottom edge, 96px up instead of 44, on a 4-second clock
+    /// against the surface's 8. Two acknowledgements could therefore sit on
+    /// top of each other and disagree about how long one lasts. There is one
+    /// lane now, and a simulator message travels down it.
+    #[test]
+    fn a_paper_acknowledgement_reaches_the_windows_one_toast() {
+        let (mut app, _commands) = app_with_history(50);
+        assert!(app.surfaces.toast.message().is_none());
+
+        app.tabs[0]
+            .paper
+            .show_toast("SIM: dropped at the fill - no bid".to_owned());
+        app.settle_paper_panels(Instant::now());
+
+        assert_eq!(
+            app.surfaces.toast.message(),
+            Some("SIM: dropped at the fill - no bid"),
+            "the panel posts, the window's one toast shows it"
+        );
+        assert!(
+            !app.surfaces.toast.offers_undo(),
+            "a fill cannot be taken back, so no button pretends it can"
+        );
+    }
+
+    /// And the panel keeps nothing back: draining takes the message, so one
+    /// acknowledgement is shown once however many frames pass before the
+    /// next.
+    #[test]
+    fn a_paper_acknowledgement_is_handed_over_once() {
+        let (mut app, _commands) = app_with_history(50);
+        app.tabs[0].paper.show_toast("SIM: flat".to_owned());
+        app.settle_paper_panels(Instant::now());
+        app.surfaces.toast.clear();
+        app.settle_paper_panels(Instant::now());
+        assert!(
+            app.surfaces.toast.message().is_none(),
+            "the outbox was emptied by the first drain"
+        );
+    }
+
+    /// A stop filling on a chart the trader is not looking at is exactly the
+    /// news they most need, and the old per-tab toast dropped it silently —
+    /// it was drawn for the active tab only, on a clock that started when the
+    /// message was raised, so by the time the tab was looked at the toast had
+    /// already expired. It travels now, and it says which market it is about:
+    /// an unlabelled "SIM: dropped at the fill" would read as being about the
+    /// chart on screen.
+    #[test]
+    fn a_background_tabs_acknowledgement_travels_and_names_its_market() {
+        let (mut app, _commands) = app_with_history(50);
+        app.open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
+        assert!(app.tabs.len() >= 2, "a second market is open");
+        let watched = app.active_tab;
+        let background = app
+            .tabs
+            .iter()
+            .position(|tab| tab.symbol != app.tabs[watched].symbol)
+            .expect("the two tabs are on different markets");
+        let symbol = app.tabs[background].symbol.clone();
+
+        app.tabs[background]
+            .paper
+            .show_toast("SIM: stop filled".to_owned());
+        app.settle_paper_panels(Instant::now());
+
+        let toast = app
+            .surfaces
+            .toast
+            .message()
+            .expect("a background tab is still heard");
+        assert!(
+            toast.starts_with(&format!("{symbol} · ")),
+            "it names the market it is about, in the window's own separator, got '{toast}'"
+        );
+        assert!(
+            toast.contains("stop filled"),
+            "and still says what happened"
+        );
+    }
+
+    /// Two tabs speaking on one frame: the slot holds one message, and the
+    /// one the trader is looking at wins it rather than tab order deciding in
+    /// silence.
+    #[test]
+    fn the_watched_market_wins_the_slot() {
+        let (mut app, _commands) = app_with_history(50);
+        app.open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
+        let watched = app.active_tab;
+        for (index, tab) in app.tabs.iter_mut().enumerate() {
+            tab.paper.show_toast(format!("message from tab {index}"));
+        }
+        app.settle_paper_panels(Instant::now());
+        assert_eq!(
+            app.surfaces.toast.message(),
+            Some(format!("message from tab {watched}").as_str()),
+            "the chart on screen is the one whose acknowledgement stays"
+        );
+    }
+
     /// Saving says so. A trader who arranges a cockpit and clicks Save has no
     /// other way to tell it worked than restarting — and it says so through
     /// the acknowledgement channel the window already has, rather than by
@@ -26961,8 +26662,11 @@ crosshair = false
     /// the same bookkeeping runs, over channels the test drives.
     fn open_second_tab(app: &mut QuantickApp, ctx: &egui::Context, symbol: &str) -> TabEnds {
         app.apply_tab_action(TabAction::New);
-        assert!(app.source_picker.is_some(), "the + opens the picker");
-        app.source_picker = None;
+        assert!(
+            app.surfaces.source_picker.is_open(),
+            "the + opens the picker"
+        );
+        app.surfaces.source_picker.close();
 
         let (evt_tx, evt_rx) = mpsc::channel(64);
         let (book_tx, book_rx) = mpsc::channel(64);
@@ -29428,14 +29132,16 @@ crosshair = false
         // The real dialog: open it, type the contract, press Add.
         app.apply_tab_action(TabAction::New);
         run_frame(&mut app, &ctx);
-        app.source_picker
-            .as_mut()
+        app.surfaces
+            .source_picker
+            .picker_mut()
             .expect("the + opened the picker")
             .set_draft_symbol("  WINQ26 ");
         run_frame(&mut app, &ctx);
         let add = app
+            .surfaces
             .source_picker
-            .as_ref()
+            .picker()
             .expect("still open")
             .add_button_rect()
             .expect("the Add button was laid out");
@@ -29443,7 +29149,7 @@ crosshair = false
         run_frame(&mut app, &ctx);
 
         assert!(
-            app.source_picker.is_none(),
+            !app.surfaces.source_picker.is_open(),
             "adding closes the dialog, because it opened the market"
         );
         assert_eq!(app.tabs.len(), tabs_before + 1);
@@ -29549,14 +29255,19 @@ crosshair = false
         app.apply_tab_action(TabAction::New);
         run_frame(&mut app, &ctx);
         {
-            let picker = app.source_picker.as_mut().expect("the picker is open");
+            let picker = app
+                .surfaces
+                .source_picker
+                .picker_mut()
+                .expect("the picker is open");
             picker.feed_id = "b3".to_string();
             picker.set_draft_symbol("US500");
         }
         run_frame(&mut app, &ctx);
         let add = app
+            .surfaces
             .source_picker
-            .as_ref()
+            .picker()
             .expect("still open")
             .add_button_rect()
             .expect("the Add button was laid out");
@@ -29564,8 +29275,9 @@ crosshair = false
         run_frame(&mut app, &ctx);
 
         let picker = app
+            .surfaces
             .source_picker
-            .as_ref()
+            .picker()
             .expect("the dialog stays open on a refusal");
         assert!(
             picker
@@ -30269,7 +29981,10 @@ crosshair = false
             vec![key_press_with(egui::Key::T, egui::Modifiers::CTRL)],
             egui::Modifiers::CTRL,
         );
-        assert!(app.source_picker.is_some(), "Ctrl+T opens the picker");
+        assert!(
+            app.surfaces.source_picker.is_open(),
+            "Ctrl+T opens the picker"
+        );
     }
 
     /// Provenance follows the active tab (§11): the status bar names the
