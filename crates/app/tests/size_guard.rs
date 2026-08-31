@@ -78,11 +78,11 @@ const BASELINE: &[(&str, usize)] = &[
     // the Save-as box out to `src/surfaces/`; the second batch took the
     // indicator-preview watermark, the appearance window, the footprint
     // settings window, the market dialog and the arming dialog with its alarm
-    // section — 407 production lines and nine struct fields — and gave back
+    // section — 403 production lines and nine struct fields — and gave back
     // the environment the port hands them instead, plus the review's fixes
     // and the `QUANTICK_TOAST=paper` hook that photographs the converged
     // acknowledgement lane.
-    ("crates/app/src/app.rs", 11244),
+    ("crates/app/src/app.rs", 11248),
     // The five entries below `pane.rs` were invisible to the first version of
     // this guard, which stopped counting at the first `#[cfg(test)]` of any
     // kind: `gateway.rs` scored 72 lines of its 4,142, `drawings/mod.rs` 221

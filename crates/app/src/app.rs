@@ -4625,7 +4625,11 @@ impl QuantickApp {
             if index == *active_tab {
                 watched = Some(message);
             } else if background.is_none() {
-                background = Some(format!("{}: {message}", tab.symbol));
+                // The interpunct is the window's own separator — the status
+                // bar, the tape's axis caption and the layout strip all use
+                // it, and the messages themselves already carry a colon
+                // (`SIM: …`). A second one would read as two labels.
+                background = Some(format!("{} · {message}", tab.symbol));
             }
         }
         if let Some(message) = background {
@@ -24148,8 +24152,8 @@ crosshair = false
             .message()
             .expect("a background tab is still heard");
         assert!(
-            toast.contains(&symbol),
-            "it names the market it is about, got '{toast}'"
+            toast.starts_with(&format!("{symbol} · ")),
+            "it names the market it is about, in the window's own separator, got '{toast}'"
         );
         assert!(
             toast.contains("stop filled"),
