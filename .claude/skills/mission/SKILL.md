@@ -11,14 +11,24 @@ axis labels overlap at low zoom`, or `/mission make the heatmap render at
 anything else.
 
 **The tier is the first word, and only when that word is one of `small`,
-`medium`, `high` or `max`.** Anything else is objective text and the objective
-keeps every word of it. With no tier given, the mission runs at **`medium`**.
+`medium`, `high` or `max`** — bare (`/mission small …`) or flagged
+(`/mission --small …`), the two being the same instruction. Anything else is
+objective text and the objective keeps every word of it. With no tier given,
+the mission runs at **`medium`**.
 
-That rule misreads an objective genuinely opening with one of the four words:
-`/mission small fonts are unreadable on the axis` parses as tier `small`. The
-mitigation is step 1, which echoes the tier it parsed and the objective it
-kept — so a misparse costs one correction in the first turn instead of
-surfacing as a missing gate at the PR.
+The bare form misreads an objective that genuinely opens with one of those
+words: `/mission small fonts are unreadable on the axis`, `/mission high CPU on
+the heatmap`. For three of the four tiers a misparse costs nothing anyone
+notices. For `small` it costs the interrogation, most of the gate table and
+`delivery-review` — a skipped gate, from a typo-shaped ambiguity.
+
+Two things hold it, and neither pretends to be a parser. Step 1's echo **names
+what the tier drops**, not merely the word it read, so the expensive misparse is
+the one that announces itself loudest to the person reading the first turn. And
+the flagged form is there for exactly the objective a bare word would guess
+wrong on — use it when the sentence reads naturally with the tier word as an
+adjective. This is a residual the design accepts openly rather than one it
+claims to have closed.
 
 The mission is the orchestrator: it decides which of the other skills are part
 of *done* so the user never has to list them. One session, one mission, one
@@ -108,6 +118,13 @@ a review. `.claude/hooks/README.md` owns the rest of the mechanism.
    the only cheap moment to catch the leading-word misread described under
    *Argument*, and a tier nobody intended silently decides which gates the
    branch will ever face.
+
+   **At `small`, the echo also names what the tier drops** — no interrogation,
+   no `delivery-review`, gates injected only where the diff reaches them:
+   `tier: small (no interrogation, no delivery-review) | objective: …`. A
+   trader skimming one line will not catch a misparsed word, but they will
+   catch a mission announcing it is about to skip a review they wanted. The
+   word is what got parsed; the consequence is what gets noticed.
 
 2. **Build the request ledger.** Before deriving a single criterion, decompose
    the request into atomic asks, numbered `R1`…`Rn`.

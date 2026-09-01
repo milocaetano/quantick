@@ -173,9 +173,11 @@ written down in CLAUDE.md.
 
 ## The `small` mission exemption
 
-`mission` declares a tier for a branch by writing one word into `mission-tier`,
-beside the two markers in the worktree's own git dir — so it is per-branch,
-never committed, and discovered exactly the way the markers are:
+`mission` declares a tier for a branch by writing **the branch's own name and
+the tier** into `mission-tier`, beside the two markers in the worktree's own git
+dir — so it is per-branch, never committed, and discovered exactly the way the
+markers are. Both fields are required, and a one-field file is refused; the
+paragraph below the snippet says why:
 
 ```sh
 WT=/path/to/worktree

@@ -56,7 +56,7 @@ fi
 # --- fixture ----------------------------------------------------------------
 
 root=$(mktemp -d)
-trap 'git -C "$root/mainco" worktree remove --force "$root/wt" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/big" >/dev/null 2>&1; rm -rf "$root"' EXIT
+trap 'git -C "$root/mainco" worktree remove --force "$root/wt" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/big" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/binary" >/dev/null 2>&1; rm -rf "$root"' EXIT
 
 git init -b main -q "$root/mainco"
 git -C "$root/mainco" config user.email t@t
@@ -106,6 +106,21 @@ big_changed=$((small_ceiling + 1))
 # is the louder half, because it names which fixture went missing.
 if [ -z "$big_git_dir" ]; then
     printf 'FAIL the over-ceiling fixture worktree was not created\n'
+    failed=$((failed + 1))
+fi
+
+# A small branch carrying a binary file. numstat reports `-` for both counts,
+# and reading that as "unmeasurable" made a single icon void the exemption and
+# blame a broken git for it. The text edit stays well under the ceiling.
+git -C "$root/mainco" worktree add -q -b feat/binary "$root/binary"
+printf 'changed\n' > "$root/binary/src/a.txt"
+printf 'PNG\000\001\002binary\000payload\n' > "$root/binary/src/logo.png"
+git -C "$root/binary" add -A
+git -C "$root/binary" commit -qm "a fix and an icon"
+binary_sha=$(git -C "$root/binary" rev-parse HEAD)
+binary_git_dir=$(git -C "$root/binary" rev-parse --absolute-git-dir)
+if [ -z "$binary_git_dir" ]; then
+    printf 'FAIL the binary-asset fixture worktree was not created\n'
     failed=$((failed + 1))
 fi
 
@@ -421,6 +436,25 @@ run "a small mission that outgrew the ceiling pays in full" \
 run "and is told the measured size that cost it the exemption" \
     pr-gate "$(json_bash "$root/big" "gh pr create --fill")" deny "carries $big_changed"
 
+# A binary file has no lines, which is not the same as a diff that cannot be
+# read. Without this, every `small` mission shipping an icon, a font or a
+# captured screenshot paid the full delivery-review and was told its size could
+# not be measured - pointing at an absent remote it does have.
+set_tier "$root/binary" small
+set_marker_in "$binary_git_dir" arch-review-ok "$binary_sha"
+set_marker_in "$binary_git_dir" delivery-review-ok ""
+
+run "a binary file does not cost a small mission its exemption" \
+    pr-gate "$(json_bash "$root/binary" "gh pr create --fill")" silent
+
+# Asserted on the phrase only the *within-ceiling* reminder carries. "the
+# exemption from" appears in the unmeasurable message too, so it passed under
+# the mutation this case exists to catch - a case that cannot fail is worse
+# than no case, because the suite then reports the behaviour as proven.
+run "and the reminder does not tell it to raise the tier" \
+    commit-reminder "$(json_bash "$root/binary" "git commit -m x")" \
+    context "of the $small_ceiling changed lines"
+
 # Fail-closed, where the size cannot be measured at all. Without this the
 # git-error branch of `changed_lines` could be 'simplified' to return 0 - which
 # looks harmless next to the empty-diff case that legitimately yields 0 - and
@@ -480,8 +514,12 @@ case "$untiered" in
     *'"permissionDecision":"deny"'*) ;;
     *) teaches=" (no denial to inspect)" ;;
 esac
+# Every word that would give the mechanism away, not just two. A denial reading
+# "see the reduced-ceremony path", or naming `medium`, or saying `exemption`,
+# contains neither `mission-tier` nor `small` and would have reported green
+# while the gate did the one thing the README says it must never do.
 if [ -z "$teaches" ]; then
-    for secret in $tier_file_name small; do
+    for secret in $tier_file_name $tiers tier exemption; do
         case "$untiered" in
             *"$secret"*) teaches="$teaches $secret" ;;
         esac
@@ -503,6 +541,18 @@ fi
 set_tier "$root/wt" small
 run "the reminder at the small tier names the exemption it runs under" \
     commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "exemption"
+
+# The other direction. Only `small` changes what the reminder says, and without
+# this a widened condition (`small*`, or a prefix match) would start telling
+# `medium` branches they are exempt with every case still green. The reminder is
+# the surface an agent reads most often, so a wrong one there shapes behaviour
+# more than a wrong denial does.
+for tier in $tiers; do
+    [ "$tier" != "small" ] || continue
+    set_tier "$root/wt" "$tier"
+    run "the reminder at the $tier tier still names both markers" \
+        commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "delivery-review-ok"
+done
 
 # Cleared before anything else runs: every case from here on predates tiers and
 # assumes no declaration, and a leftover file would quietly change what they
@@ -613,19 +663,21 @@ done
 
 for doc in $review_skills; do
     skill=$(basename "$(dirname "$doc")")
-    written=$(grep -o -- 'absolute-git-dir)/[A-Za-z0-9._-]*' "$repo_root/$doc" | sed 's|.*/||' | sort -u)
+    # The tier file is *read* by a review skill and never recorded by one, so
+    # it is dropped from the set here rather than excused inside the loop.
+    # Excusing it there left `written` non-empty on a skill that had lost its
+    # own recording snippet, so the emptiness check below stopped firing and
+    # the drift this block exists to catch went green.
+    written=$(grep -o -- 'absolute-git-dir)/[A-Za-z0-9._-]*' "$repo_root/$doc" |
+        sed 's|.*/||' |
+        grep -vxF -- "$tier_file_name" |
+        sort -u)
     if [ -z "$written" ]; then
         printf 'FAIL %s carries no marker-recording command of its own\n' "$doc"
         failed=$((failed + 1))
         continue
     fi
     for name in $written; do
-        # The tier file is read by a review skill, never recorded by one, so it
-        # is not expected to carry that skill's name.
-        if [ "$name" = "$tier_file_name" ]; then
-            passed=$((passed + 1))
-            continue
-        fi
         case "$name" in
             "$skill"-*) passed=$((passed + 1)) ;;
             *)
@@ -690,6 +742,28 @@ for tier in $tiers; do
         passed=$((passed + 1))
     else
         printf 'FAIL the mission skill never names the `%s` tier, which the gate accepts\n' "$tier"
+        failed=$((failed + 1))
+    fi
+done
+
+# --- the two copies of the tier-recording snippet must agree ----------------
+#
+# `mission/SKILL.md` writes the file and `README.md` documents it, and both
+# carry the command because an agent executing the skill needs it inline. Two
+# copies of a format the gate parses is the drift this suite exists to catch:
+# change one to `<tier> <branch>`, or add a field, and the other keeps telling
+# agents to write a shape `declared_tier` refuses - with every case green.
+# Anchored on the branch-reading half, which is the part that was missing in
+# the first version and the part a careless edit drops first.
+snippet='printf '"'"'%s %s\n'"'"' "$(git rev-parse --abbrev-ref HEAD)"'
+for doc in .claude/hooks/README.md .claude/skills/mission/SKILL.md; do
+    if [ ! -f "$repo_root/$doc" ]; then
+        printf 'FAIL %s is checked for the tier-recording snippet but does not exist\n' "$doc"
+        failed=$((failed + 1))
+    elif grep -qF -- "$snippet" "$repo_root/$doc"; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL %s does not write the tier file in the branch-pinned format the gate parses\n' "$doc"
         failed=$((failed + 1))
     fi
 done

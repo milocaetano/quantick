@@ -169,7 +169,7 @@ Recorded 2026-08-31, on `feat/mission-tiers` at commit `7b01b04`.
 | A9 | *A tier goes up, never down* in the skill; and in `guardrails.sh`, the over-ceiling denial says so in the message it hands back. |
 | A10 | Named in `.claude/hooks/README.md` (new section *The `small` mission exemption*, plus both table rows), `CLAUDE.md` (new **One mission, one tier** bullet and two amended ones), `.claude/skills/ship/SKILL.md` step 4, `.claude/skills/delivery-review/SKILL.md` (new *When this skill does not run*), and `docs/agentic-development.md` (three passages). |
 | G2 | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo build --workspace`, `cargo test --workspace` — each run on its own, all exit 0. Two reds appeared and both are recorded flakes of this machine, not of this branch, which touches no Rust: one `quantick-app` bin test that passed on rerun, and `quantick-feed-mt5 --test bridge_paging`, whose Python was then run directly (`python bridge/mt5/tests/test_paging.py` — 31 checks, all passed). |
-| G3 | `sh .claude/hooks/guardrails_test.sh` → **58 passed, 0 failed**. Neutered to `exit 0` → **18 passed, 30 failed**, with the tier cases among the reds and the suite still running to completion, then restored from git and re-run green. |
+| G3 | `sh .claude/hooks/guardrails_test.sh` → **72 passed, 0 failed** (39 before this branch). Neutered to `exit 0` → **18 passed, 30 failed**, the suite still running to completion, then restored and re-run green. Six mutation runs besides, each reintroducing one defect a review found: every one turns red exactly the case written for it and no other — the branch-identity check, the unmeasurable size, the binary skip (two cases), the drift check that had stopped firing, the absence vocabulary, and the snippet format. |
 
 **G1 and G4 are open here on purpose.** Both are verdicts of the `arch-review`
 that runs immediately after this commit, so neither can exist while this file is
@@ -209,6 +209,38 @@ the absence check could pass on an empty string when the gate had stopped
 denying at all; the tier-vocabulary drift check matched bare substrings, so
 `max` was satisfied by "maximum"; and the over-ceiling fixture would have
 written at the filesystem root had its `worktree add` failed silently.
+
+**arch-review round 2**, step 0 at `xhigh`: 15 findings, all confirmed, all
+fixed. Two reproduced against the hook again, and both were the first round's
+fix overshooting:
+
+1. **A binary file voided the exemption.** `--numstat` prints `-` for both
+   counts on a binary, and round 1 read any non-numeric count as *unmeasurable*
+   — so a `small` mission shipping an icon, a font or a screenshot paid the full
+   review and was told its size could not be measured, a message that points at
+   an absent remote it does have. A binary contributes no lines because it has
+   none; only an unparseable numstat is still fail-closed.
+2. **The reminder told a two-line branch it had outgrown its tier.** The
+   unmeasurable case was folded into the "outgrown" message, whose remedy is to
+   raise the tier — a move this very branch makes deliberately irreversible.
+   Three situations now get three messages, which the comment above them was
+   already arguing for.
+
+The rest were a drift check that had quietly stopped firing (the tier file kept
+`written` non-empty, so a review skill could lose its own recording snippet with
+the suite green), a comment promising a two-field check the code did not make,
+an absence check with a two-word vocabulary, a duplicated snippet nothing
+compared, and four documents the tier had left contradicting the gate —
+including `CLAUDE.md` counting "the three rules above" with four bullets above
+it, and the hooks README opening with the one-field format the hook refuses.
+
+**On the leading-word parse.** Round 2 argued that `/mission small fonts are
+unreadable` silently buys a skipped gate, and that a self-issued echo is a weak
+mitigation for it. That is fair and it is not fully closed: `--small` is now
+accepted for an ambiguous objective, and the echo names *what the tier drops*
+rather than only the word it read, so the expensive misparse is the loudest one.
+A parser that could tell an adjective from a tier was judged more machinery than
+the failure warrants. Recorded here as a residual the trader can revisit.
 
 ## The request as received
 

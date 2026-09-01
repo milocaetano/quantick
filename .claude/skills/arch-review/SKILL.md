@@ -50,11 +50,16 @@ WT=/path/to/worktree
 cd "$WT" && cat "$(git rev-parse --absolute-git-dir)/mission-tier"
 ```
 
-It holds `<branch> <tier>`, and a declaration naming another branch is not this
-branch's. No file, or one naming a different branch, means no tier: take the
-defaults above. **Name the level in the header either way**, with where it came
-from, so a short pass is never mistaken for a thorough one — and say so when
-the file and the goal file disagree, because that is a finding in itself.
+`.claude/hooks/README.md` owns that file's format and the rules the hook
+applies to it; do not re-derive them here, because a third statement of a
+format is a third thing to keep true. All this step needs from it: no file, or
+a tier the hook would not honour for this branch, means **no tier** — take the
+defaults above rather than guessing at a middle level.
+
+**Name the level in the header either way**, with where it came from, so a
+short pass is never mistaken for a thorough one — and say so when this file and
+the goal file's `**Tier:**` line disagree. Two surfaces disagreeing about one
+branch is a finding in itself, and this review is what sees it.
 
 **Check the scope it comes back with.** When the target does not pin a range
 the skill derives one, so it can end up reviewing another branch's merged work

@@ -14,7 +14,9 @@
 #                     ungraded against what was asked for"). A mission
 #                     that declared the `small` tier is exempt from the
 #                     second one, but only while the branch stays small
-#                     enough to have earned the word - see `declared_tier`.
+#                     enough to have earned the word: `declared_tier` reads
+#                     the declaration, `changed_lines` and
+#                     `SMALL_TIER_MAX_CHANGED_LINES` are the bound on it.
 #   commit-reminder   PostToolUse on Bash. Cannot block (the commit
 #                     already landed); says the gate is coming and how to
 #                     satisfy it.
@@ -81,14 +83,14 @@ DELIVERY_MARKER_NAME="delivery-review-ok"
 # decoration: the two markers above hold a sha, so they go stale the moment the
 # branch moves, while a bare tier word would outlive the mission that wrote it.
 # A worktree reused for a second branch then inherits an exemption it never
-# asked for and ships with no delivery-review - reproduced against the first
+# asked for and ships with no delivery-review — reproduced against the first
 # version of this feature, which stored the word alone.
 TIER_FILE_NAME="mission-tier"
 # Every tier `mission` may declare, in the order they cost. A file holding
 # anything else is treated as no declaration at all: an unrecognised word must
 # never be the difference between a graded branch and an ungraded one.
 TIERS="small medium high max"
-# Changed lines - insertions plus deletions against origin/main - a `small`
+# Changed lines — insertions plus deletions against origin/main — a `small`
 # branch may carry and keep its exemption. A fix, a tweak or a paragraph of
 # prose sits well under it; past it a branch carries enough separate asks that
 # a ledger is worth grading, which is exactly when delivery-review earns its
@@ -185,10 +187,15 @@ declared_tier() {
         tr '\t' ' ' |
         sed 's/^ *//; s/ *$//; s/  */ /g')
 
-    # Exactly two fields. One field is the format this file used before it
-    # carried a branch, and reading it as a tier would restore the inheritance
-    # bug the format exists to close - so it is refused rather than migrated.
+    # Exactly two fields, and the code says so rather than approximating it.
+    # One field is the format this file used before it carried a branch, and
+    # reading it as a tier would restore the inheritance bug the format exists
+    # to close, so it is refused rather than migrated. Three fields is a typo,
+    # and it is refused here rather than incidentally by the branch compare
+    # below — a later edit that relaxes that compare must not quietly start
+    # accepting a shape this comment promises is rejected.
     case "$tier_line" in
+        *' '*' '*) return 1 ;;
         *' '*) ;;
         *) return 1 ;;
     esac
@@ -200,6 +207,14 @@ declared_tier() {
     # matches no branch name, so it grants nothing either.
     [ "$tier_for" = "$tier_branch" ] || return 1
 
+    # Validated against every tier, though both callers currently compare only
+    # against `small`, so returning `medium` and returning nothing behave
+    # identically today. That is deliberate and worth stating, because the loop
+    # looks inert: this function answers "what did the mission declare", not
+    # "is this branch exempt", and `TIERS` is the single place the vocabulary
+    # lives — the suite and the mission skill are both checked against it. A
+    # second exempt tier should not have to reintroduce validation that was
+    # deleted for looking unused.
     for tier_known in $TIERS; do
         if [ "$tier" = "$tier_known" ]; then
             printf '%s' "$tier"
@@ -210,7 +225,7 @@ declared_tier() {
 }
 
 # Insertions plus deletions on worktree `$1` against origin/<main>, or nothing
-# when that cannot be measured: an absent remote ref, a git that errors.
+# when that cannot be measured — an absent remote ref, a git that errors.
 #
 # The caller reads "cannot measure" as "no exemption". This is the one place in
 # the script that fails *closed*, and deliberately against the file's own
@@ -218,13 +233,13 @@ declared_tier() {
 # prompt, while here it would cost an ungraded branch.
 #
 # Digits only, always. The result reaches `deny`'s JSON, where a stray quote
-# emits a payload the harness cannot parse - and a lost deny decision switches
+# emits a payload the harness cannot parse — and a lost deny decision switches
 # the gate off rather than tripping it.
 #
 # `--numstat` under `LC_ALL=C`, never `--shortstat`. Shortstat is prose, and
 # git translates it: under a localised install the counts sit inside words like
 # `inserções`, an English pattern matches nothing, and a sum of two empty
-# strings is 0 - which reads as an empty diff and grants the exemption to a
+# strings is 0 — which reads as an empty diff and grants the exemption to a
 # branch of any size. That is failing open in the one function that must not.
 # Numstat is `added<TAB>deleted<TAB>path` in every locale.
 changed_lines() {
@@ -233,8 +248,15 @@ changed_lines() {
     lines_total=0
     for lines_n in $(printf '%s\n' "$lines_raw" | cut -f1,2); do
         case "$lines_n" in
-            # A binary file reports `-` for both counts. Unmeasurable is not
-            # zero: the caller must not read an unreadable diff as a small one.
+            # `-` for both counts is how numstat reports a binary file. It
+            # contributes nothing because it *has* no lines, and this metric
+            # counts lines — an added icon, font or screenshot is not an
+            # unreadable diff, and refusing the branch over one would blame a
+            # broken git for a normal asset. The ceiling is a proxy for how
+            # many separate asks a branch carries, and a binary carries none.
+            '-') continue ;;
+            # Anything else non-numeric means numstat itself was not
+            # understood, which is the fail-closed case: no exemption.
             *[!0-9]*) return 1 ;;
             *) lines_total=$((lines_total + lines_n)) ;;
         esac
@@ -369,9 +391,9 @@ pr_gate() {
         fi
 
         if [ -z "$small_size" ]; then
-            delivery_how="This branch declares the \`small\` tier, whose exemption from this review is granted only where its size against origin/$MAIN_BRANCH can be measured, and here it cannot. $delivery_how"
+            delivery_how="This branch declares the \`small\` tier, whose exemption from this review is granted only where its size against origin/$MAIN_BRANCH can be measured, and here it cannot — which is about the measurement, not the size of the work. $delivery_how"
         else
-            delivery_how="This branch declares the \`small\` tier, whose exemption from this review stops at $SMALL_TIER_MAX_CHANGED_LINES changed lines against origin/$MAIN_BRANCH; it carries $small_size, so the work has outgrown the word. Raise the tier in the goal file - a tier goes up, never down. $delivery_how"
+            delivery_how="This branch declares the \`small\` tier, whose exemption from this review stops at $SMALL_TIER_MAX_CHANGED_LINES changed lines against origin/$MAIN_BRANCH; it carries $small_size, so the work has outgrown the word. Raise the tier in the goal file — a tier goes up, never down. $delivery_how"
         fi
     fi
 
@@ -401,20 +423,26 @@ commit_reminder() {
     # the two-marker line at every tier would send it off to run the review its
     # own tier exempts it from, which is the saving the tier exists to buy. It
     # would also make this the place an agent first learns the exemption exists
-    # - the thing pr-gate's denial is careful never to be. Here that is safe:
+    # the thing pr-gate's denial is careful never to be. Here that is safe:
     # the branch has already declared the tier, so nothing is being taught.
     if [ "$(declared_tier "$dir")" = "small" ]; then
         small_size=$(changed_lines "$dir")
 
-        # Two messages, because there are two situations and the branch is
-        # already measured here. One message opening with the exempt case and
-        # walking it back two sentences later states a falsehood first, and the
-        # first clause is the one an agent acts on.
-        if [ -n "$small_size" ] && [ "$small_size" -le "$SMALL_TIER_MAX_CHANGED_LINES" ]; then
-            context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH at the \`small\` tier, so \`gh pr create\` wants \`$ARCH_MARKER_NAME\` alone - recorded for the exact HEAD being shipped, which any later commit stales. It carries $small_size of the $SMALL_TIER_MAX_CHANGED_LINES changed lines the exemption from \`$DELIVERY_MARKER_NAME\` allows.\""
+        # Three situations, three messages, because the branch is already
+        # measured here and a message that opens with the wrong one states a
+        # falsehood in the clause an agent acts on. Folding "cannot measure"
+        # into "outgrown" was the worst of them: it told a two-line branch it
+        # had outgrown its tier and to raise it — a move the mission skill makes
+        # deliberately irreversible.
+        if [ -z "$small_size" ]; then
+            context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH at the \`small\` tier, but its size against origin/$MAIN_BRANCH cannot be measured here — so the exemption from \`$DELIVERY_MARKER_NAME\` does not apply and \`gh pr create\` wants both markers. This is about the measurement, not the size of the work: check that origin/$MAIN_BRANCH exists in this checkout before raising the tier.\""
         fi
 
-        context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH and has outgrown its \`small\` tier: it carries ${small_size:-an unmeasurable number of} changed lines against the $SMALL_TIER_MAX_CHANGED_LINES the exemption allows, so \`gh pr create\` now wants both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recorded for the exact HEAD being shipped. Raise the tier in the goal file and run both reviews.\""
+        if [ "$small_size" -le "$SMALL_TIER_MAX_CHANGED_LINES" ]; then
+            context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH at the \`small\` tier, so \`gh pr create\` wants \`$ARCH_MARKER_NAME\` alone — recorded for the exact HEAD being shipped, which any later commit stales. It carries $small_size of the $SMALL_TIER_MAX_CHANGED_LINES changed lines the exemption from \`$DELIVERY_MARKER_NAME\` allows.\""
+        fi
+
+        context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH and has outgrown its \`small\` tier: it carries $small_size changed lines against the $SMALL_TIER_MAX_CHANGED_LINES the exemption allows, so \`gh pr create\` now wants both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recorded for the exact HEAD being shipped. Raise the tier in the goal file and run both reviews.\""
     fi
 
     context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH. \`gh pr create\` is gated on both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recording the exact HEAD being shipped, so run arch-review and then delivery-review once the branch is final — a commit after either one makes its marker stale.\""
