@@ -71,3 +71,37 @@ each was answered:
   messages myself. All English. The archived goal file quotes the trader's
   Portuguese in one marked, attributed section, which is the exemption
   `CLAUDE.md` grants and which its own preamble claims openly.
+
+---
+
+## Round 2 — over the delivery-review correction
+
+`delivery-review` returned **FAIL** on `A1` at `c3287c6`, and the fix commit
+`ad4bbed` stales both markers by design. This section covers that delta.
+
+**Step 0 did not re-run, and that is stated rather than implied.** The delta is
+two markdown files in which four figures change and one paragraph is rewritten.
+There is no executable code in it — `git diff c3287c6..ad4bbed --stat` touches
+`.claude/evidence/leaner-agentic-flow/diagnosis.md` and
+`.claude/GOAL-archive-leaner-agentic-flow.md` and nothing else — so a bug pass
+has nothing to read that it did not already read at `fb57687`, where it ran at
+xhigh and returned fifteen findings, all resolved. The skill's rule is that a
+level which already ran clean is not re-run; this is the adjacent case, a level
+whose findings are closed over a delta it cannot reach, and the honest move is
+to say so here rather than to spend a pass proving prose has no race condition.
+A reader who disagrees has the sha to run it against.
+
+**The shape pass did re-run over the delta**, and found the change sound:
+
+- **Dimension 8** — the new prose is English. The corrected paragraph and the
+  new preamble read clean; the language guard is green.
+- **Dimension 6** — the correction *names itself*. Both edits leave a sentence
+  saying what the earlier number was and that a review caught it, rather than
+  silently swapping digits. A figure that changes with no trace is
+  indistinguishable from one that was always right, and this document's whole
+  claim is reproducibility.
+- **Dimension 9** — trunk still flat. No `.rs` file moved, no ceiling changed,
+  the baseline still sums to its own `!budget`.
+
+**Verdict unchanged: pass.** Nothing from round 1 reopened, nothing new found,
+nothing deferred.
