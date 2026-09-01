@@ -484,6 +484,9 @@ pub struct Tab {
     /// setting, and a trader who picked it once must not have to pick it again
     /// in the next tab.
     pub history_reach: HistoryReach,
+    /// Minutes of traded time one press of [`HistoryReach::Span`] pulls,
+    /// mirrored from the window so every tab presses the way the trader said.
+    pub history_reach_span_minutes: u32,
     /// The run of requests a reach beyond one page started, or `None` when
     /// nothing is paging.
     ///
@@ -894,6 +897,7 @@ impl Tab {
             history_step: 2000,
             history_trades: 0,
             history_reach: HistoryReach::default(),
+            history_reach_span_minutes: crate::history_reach::DEFAULT_REACH_SPAN_MS as u32 / 60_000,
             campaign: None,
             history_note: None,
             venue_lead_in: false,
@@ -2209,8 +2213,16 @@ impl Tab {
             // the single request above is the whole of this press: the next
             // one, with a tape under it, starts the run.
             let held = self.flow_pane.state.trades().len();
-            let bounds = config.history.reach_bounds();
-            self.campaign = anchor_ms.map(|anchor| Campaign::new(anchor, held, bounds));
+            // The trader's live choice outranks the config seed: the toolbar
+            // and the control plane both write the window's value, and a run
+            // started after that must reach what they asked for rather than
+            // what the file said at startup.
+            let bounds = crate::history_reach::ReachBounds {
+                span_ms: i64::from(self.history_reach_span_minutes) * 60_000,
+                ..config.history.reach_bounds()
+            };
+            self.campaign =
+                anchor_ms.map(|anchor| Campaign::new(anchor, held, bounds, self.history_reach));
         }
     }
 

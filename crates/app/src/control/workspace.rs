@@ -38,6 +38,12 @@ pub(crate) struct WorkspaceSnapshot {
     /// built before the field existed.
     #[serde(default)]
     pub history_reach: String,
+    /// Minutes of *traded* time one press of the `span` reach pulls.
+    ///
+    /// Beside the reach because the two are one choice: an operator that
+    /// can read back `by time` but not how much time cannot tell what the
+    /// next press will do.
+    pub history_reach_span_minutes: WireU64,
     /// Whether a run of *load older* requests is in flight on the active tab.
     ///
     /// The setting above says what a press will do; this says whether one is
@@ -142,6 +148,7 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
         performance_readings_visible,
         progressive_venue_history,
         history_reach: history_reach.token().to_owned(),
+        history_reach_span_minutes: WireU64::new(app.control_history_reach_span_minutes().into()),
         history_reach_running,
         venue_lead_in,
         replay_day_before: app.control_replay_day_before(),

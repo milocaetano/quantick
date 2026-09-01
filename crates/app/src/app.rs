@@ -902,6 +902,16 @@ pub struct QuantickApp {
     /// wants to see yesterday wants it in the tab they open next too. Mirrored
     /// onto every tab each frame, which is where the press is actually served.
     history_reach: crate::history_reach::HistoryReach,
+    /// Minutes of *traded* time one press of the `by time` reach pulls.
+    ///
+    /// On the window beside the reach it belongs to, and mirrored onto every
+    /// tab by `drain_tabs`, exactly as the reach itself is: the two are one
+    /// choice, and a tab opened after the trader set it must press the way
+    /// they said. Seeded from `[history] reach_span_minutes` and editable
+    /// afterwards, because it is the trader's own answer to "how much more
+    /// tape per press" and that differs between a contract printing a million
+    /// times a day and one printing a thousand.
+    history_reach_span_minutes: u32,
     /// Whether a chart *not* cut by time may carry the venue's own candles in
     /// front of its bars.
     ///
@@ -1047,6 +1057,9 @@ impl QuantickApp {
         workspace: ui_state::Workspace,
     ) -> Self {
         let state_path = crate::paper_state::default_path();
+        // Read before `config` is moved into the struct below: this seeds the
+        // window's own copy of the span, which the trader then edits.
+        let reach_span_minutes = config.history.reach_span_minutes;
         let paper_state = crate::paper_state::load(&state_path);
         let cmd_trading = crate::paper_trading::CmdTradingSettings::from_state(&paper_state);
         let (trades_dir, consolidated) = crate::paper_home::startup_home(
@@ -1205,6 +1218,7 @@ impl QuantickApp {
             show_perf: true,
             progressive_history: true,
             history_reach: crate::history_reach::HistoryReach::default(),
+            history_reach_span_minutes: reach_span_minutes,
             venue_lead_in: false,
             feed_chip_rect: None,
             // The hook stands in for a click on the opening tab's chip, which
@@ -1471,6 +1485,22 @@ impl QuantickApp {
                     token = %token,
                     action = "keep_current_reach",
                     "QUANTICK_HISTORY_REACH names no reach this build has"
+                ),
+            }
+        }
+        if let Ok(raw) = std::env::var("QUANTICK_HISTORY_REACH_SPAN_MINUTES") {
+            // Beside `QUANTICK_HISTORY_REACH`, because the reach and how far it
+            // goes are one choice: a hook that could pick `by time` but not say
+            // how much time would leave the operator setting half of it.
+            match raw.trim().parse::<u32>() {
+                Ok(minutes) => app.set_history_reach_span_minutes(minutes),
+                Err(_) => tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "HISTORY_REACH_SPAN_HOOK_UNREADABLE",
+                    value = %raw,
+                    action = "keep_current_span",
+                    "QUANTICK_HISTORY_REACH_SPAN_MINUTES is not a whole number of minutes"
                 ),
             }
         }
@@ -2532,6 +2562,24 @@ impl QuantickApp {
         self.history_reach = reach;
     }
 
+    /// How far back one press of the `by time` reach pulls, in minutes of
+    /// traded time.
+    ///
+    /// Clamped rather than refused: a span of zero is a press that asks for
+    /// nothing, and the operator that sent it meant *some* history. The
+    /// ceiling is the campaign's own span cap, past which no run can reach
+    /// anyway, so accepting a larger number would be promising a reach the
+    /// budgets forbid.
+    pub(crate) fn set_history_reach_span_minutes(&mut self, minutes: u32) {
+        let ceiling = (crate::history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000) as u32;
+        self.history_reach_span_minutes = minutes.clamp(1, ceiling);
+    }
+
+    /// What that span is now, for an operator reading back what it set.
+    pub(crate) fn control_history_reach_span_minutes(&self) -> u32 {
+        self.history_reach_span_minutes
+    }
+
     /// How far the window's *load older* press reaches, and whether a chart
     /// cut by trades carries the venue's candles.
     ///
@@ -3241,6 +3289,7 @@ impl QuantickApp {
         // is split off and written back the way the layout picker's flags are.
         let history_reach_running = self.active_tab().history_reach_running();
         let mut history_reach = self.history_reach;
+        let mut history_reach_span_minutes = self.history_reach_span_minutes;
         // The SOURCE group writes straight into the active tab: a feed or
         // symbol change is that tab's market switch. The BARS group writes
         // into the *focused pane* — the pane the status bar reads and every
@@ -3277,6 +3326,7 @@ impl QuantickApp {
             imbalance_target: &mut pane.imbalance_target,
             imbalance_unit: &mut pane.imbalance_unit,
             history_step: &mut tab.history_step,
+            history_reach_span_minutes: &mut history_reach_span_minutes,
             history_reach: &mut history_reach,
             history_reach_running,
             history_trades: tab.history_trades,
@@ -3307,6 +3357,9 @@ impl QuantickApp {
         drop(model);
         self.layout_picker_open = layout_picker_open;
         self.set_history_reach(history_reach);
+        // Through the setter, so a value dragged past the campaign's own span
+        // cap is clamped in the one place that knows the cap.
+        self.set_history_reach_span_minutes(history_reach_span_minutes);
         // A newly picked feed may not offer the current symbol. Never during
         // a replay: the recorded instrument belongs to no live feed's menu,
         // and snapping it away would relabel the whole session — the status
@@ -9564,6 +9617,7 @@ impl QuantickApp {
         let config = &self.config;
         let progressive_history = self.progressive_history;
         let history_reach = self.history_reach;
+        let history_reach_span_minutes = self.history_reach_span_minutes;
         let venue_lead_in = self.venue_lead_in;
         let mut trades = 0_u64;
         for tab in &mut self.tabs {
@@ -9590,6 +9644,7 @@ impl QuantickApp {
             // said, including one opened after the choice was made.
             tab.progressive_history = progressive_history;
             tab.history_reach = history_reach;
+            tab.history_reach_span_minutes = history_reach_span_minutes;
             // Through the setter, not the field: flipping the lead-in refolds
             // the prefix, and a tab that only had the field written would keep
             // drawing the answer to the previous choice until the next candle

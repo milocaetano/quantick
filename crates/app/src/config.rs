@@ -590,6 +590,15 @@ pub struct HistorySettings {
     /// going, so the day before is on screen to compare against rather than
     /// merely touched. Minutes.
     pub previous_session_lead_minutes: u32,
+    /// How far back one press of the *by time* reach pulls, in minutes of
+    /// **traded** time: nights and weekends are crossed to find them, never
+    /// counted toward them.
+    ///
+    /// Here rather than as a `const` for the same reason as the two above, and
+    /// more so: this one is the trader's own answer to "how much more tape do
+    /// I want per press", and it differs between a contract printing a million
+    /// times a day and one printing a thousand.
+    pub reach_span_minutes: u32,
 }
 
 impl Default for HistorySettings {
@@ -598,21 +607,30 @@ impl Default for HistorySettings {
             session_gap_minutes: (crate::history_reach::SESSION_GAP_MS / 60_000) as u32,
             previous_session_lead_minutes: (crate::history_reach::PREVIOUS_SESSION_LEAD_MS / 60_000)
                 as u32,
+            reach_span_minutes: (crate::history_reach::DEFAULT_REACH_SPAN_MS / 60_000) as u32,
         }
     }
 }
 
 impl HistorySettings {
-    /// The two settings as the reach reads them: milliseconds.
+    /// The settings as the reach reads them: milliseconds.
     #[must_use]
     pub fn reach_bounds(&self) -> crate::history_reach::ReachBounds {
         crate::history_reach::ReachBounds {
             session_gap_ms: i64::from(self.session_gap_minutes) * 60_000,
             previous_session_lead_ms: i64::from(self.previous_session_lead_minutes) * 60_000,
+            span_ms: i64::from(self.reach_span_minutes) * 60_000,
         }
     }
 
     fn validate(&self) -> Result<(), String> {
+        if self.reach_span_minutes == 0 {
+            return Err(
+                "history.reach_span_minutes must be at least 1 - a span of zero \
+                 would make the 'by time' reach a press that asks for nothing"
+                    .to_string(),
+            );
+        }
         if self.session_gap_minutes == 0 {
             return Err(
                 "history.session_gap_minutes must be at least 1 - a gap of zero \

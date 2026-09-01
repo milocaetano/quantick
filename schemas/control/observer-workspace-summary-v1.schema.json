@@ -151,6 +151,10 @@
       "description": "Whether a run of *load older* requests is in flight on the active tab.\n\nThe setting above says what a press will do; this says whether one is\nstill doing it. Without it an operator that started a reach has no way\nto tell a finished run from a running one except by polling bar counts\nand guessing.",
       "type": "boolean"
     },
+    "history_reach_span_minutes": {
+      "$ref": "#/$defs/WireU64",
+      "description": "Minutes of *traded* time one press of the `span` reach pulls.\n\nBeside the reach because the two are one choice: an operator that\ncan read back `by time` but not how much time cannot tell what the\nnext press will do."
+    },
     "layouts": {
       "default": [],
       "description": "The layout strip: every layout, and which is active. Additive.",
@@ -200,6 +204,7 @@
     "save_on_exit",
     "performance_readings_visible",
     "progressive_venue_history",
+    "history_reach_span_minutes",
     "tabs"
   ],
   "title": "WorkspaceSnapshot",
