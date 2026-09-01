@@ -63,6 +63,15 @@ gate, instead of an off-the-books one.
   (`low`/`low`/`medium`/`high`), because three `xhigh` passes on a docs branch
   is what prompted this. A fast path nobody selects is a fast path that does
   not exist, so it became the one you get by default.
+- **D9** — **`delivery-review-ok` is recorded on the trader's authorisation,
+  not on a PASS verdict.** Three rounds ran; the third returned FAIL on a single
+  line, which was fixed. Asked whether to spend a fourth round or to authorise
+  the marker, the trader chose to authorise it, with the alternatives stated
+  (a fourth round, or stopping without a PR). Recorded here and in the PR body
+  because the marker cannot say this for itself: `pr-gate` compares a value and
+  nothing else, so a marker written under this decision is indistinguishable
+  from one written after a PASS unless the record says which it was. This one
+  was the former.
 - **D5** — **`max` does not gain a gate**: it tells the trader that
   `/code-review ultra` exists and stops there. Raised because `high` and `max`
   otherwise run an identical bug pass — the harness reserves `ultra` for the
@@ -419,6 +428,29 @@ Round 3 also caught this file's own Evidence table pinned four commits behind,
 with row A2 still asserting the `medium` default that A2 exists to have
 corrected. The same "one file, two answers" class, inside the branch's own
 archive. The header no longer pins a commit; the rows are kept current.
+
+## Deferred — granted by the trader
+
+**A `delivery-review` PASS verdict.** Three rounds ran and none returned PASS;
+the count of failing lines fell 6 → 2 → 1, and round 3's single finding (a
+paragraph in `docs/agentic-development.md` still calling the marker a commit
+sha) was fixed and pinned by a new prose-drift guard before this deferral was
+requested. What is deferred is therefore not a known gap in the work — it is
+the *confirmation* that no gap remains, which only a fourth round could give.
+
+**Granted by the trader**, explicitly, after being shown the alternatives: run
+the fourth round (~13 minutes, in the background), authorise the marker, or
+stop without a PR. The reason is on the record and is the same one that
+produced D8 — the pipeline had become slower than the work it guards.
+
+What that costs, stated plainly rather than minimised: the last two commits on
+this branch have been graded by no reviewer, and the branch changes the gate
+itself, which is the worst case for shipping on an authorisation. Against that:
+the suite is at 88 cases from 39, every one of the eleven defects the three
+arch-review rounds and three delivery-review rounds found is fixed and pinned
+by a case that fails without the fix, and the four checks are green. A reader
+who wants the confirmation this deferral skipped should run
+`Skill(delivery-review)` over the merge commit.
 
 ## The request as received
 
