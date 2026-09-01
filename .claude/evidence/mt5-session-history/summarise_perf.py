@@ -97,16 +97,14 @@ def count(path, needle):
 
 
 def trades(path):
-    found = re.search(
-        r'MT5_HISTORY_READY.*?count=(\d+)',
-        path.read_text(encoding="utf-8", errors="replace"),
+    """The opening block plus every slice that followed it."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    opened = re.search(r"MT5_HISTORY_READY.*?count=(\d+)", text)
+    slices = sum(
+        int(found.group(1))
+        for found in re.finditer(r"MT5_OPENING_PAGE_READY.*?count=(\d+)", text)
     )
-    total = 0
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        page = re.search(r"MT5_OPENING_PAGE_READY.*?count=(\d+)", line)
-        if page:
-            total += int(page.group(1))
-    return (int(found.group(1)) if found else 0) + total
+    return (int(opened.group(1)) if opened else 0) + slices
 
 
 def report(name, path):
@@ -115,7 +113,7 @@ def report(name, path):
     print()
     print(f"Fill window: `{opened}` to `{closed}`; {len(load)} health summaries inside it.")
     print(f"Trades charted (backfill + slices): **{trades(path):,}**".replace(",", " "))
-    print(f"`APP_SLOW_FRAMES` inside the fill: **{sum(1 for _ in [1] if False) + slow_in(path, opened, closed)}**")
+    print(f"`APP_SLOW_FRAMES` inside the fill: **{slow_in(path, opened, closed)}**")
     print()
     print("```")
     for row in load:

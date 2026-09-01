@@ -201,6 +201,7 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
       Blocker and Should-fix resolved, or deferred with the trader's approval
       recorded here and in the PR body. *Evidence:* the review verdict. → PR
       body.
+      → **MET.** [`.claude/evidence/mt5-session-history/arch-review.md`](.claude/evidence/mt5-session-history/arch-review.md) — two agent passes at xhigh (13 then 14 findings, all confirmed) plus a self-review of the delta after them; all fixed or deferred with reasons recorded below. Graded over the head this file is committed at, which is what `arch-review-ok` holds.
 
 ### Not applicable, and why
 
