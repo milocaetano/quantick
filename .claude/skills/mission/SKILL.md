@@ -53,7 +53,7 @@ ceremony **on the record**, with a gate that knows it did.
 | --- | --- | --- | --- | --- |
 | **2** — request ledger | required, terse | required | required | required |
 | **3** — interrogation | skipped; every doubt becomes an `S` assumption, bar the one exception below | at most two questions, and only where a wrong guess throws work away | the full round, at most four | the full round, re-checked against the plan before code is written |
-| **4** — injected gates | English, and the four checks. Every other row applies only where the diff actually reaches that territory | the full table | the full table | the full table, and the UI rows apply to a surface touched even indirectly |
+| **4** — injected gates | English, and *Any code change* whole. Every other row applies only where the diff actually reaches that territory | the full table | the full table | the full table, and the UI rows apply to a surface touched even indirectly |
 | **5** — `GOAL.md` | short form: objective, ledger, `S`, criteria, verbatim request | full | full | full |
 | **8** — bug pass (`arch-review` step 0) | `code-review` at `low` | at `medium` | at `high` | at `high`, and the trader is told `/code-review ultra` exists |
 | **8** — shape pass | only the dimensions the diff touches; **8 always** | full | full | full |
@@ -200,12 +200,18 @@ a review. `.claude/hooks/README.md` owns the rest of the mechanism.
    criteria from the ledger — every `R` discharged — then add the gates for its
    kind:
 
-   At `small`, only the first two rows are injected outright — English, and the
-   four checks — and every other row applies solely where the diff genuinely
-   reaches that territory. That is a narrower reading of the same table, never
-   a different table: a `small` mission that touches a hot path still owes the
-   measurement, and one that adds a surface still owes the harness hook. If a
-   row keeps applying anyway, the mission is not `small`.
+   At `small`, two rows are injected outright: *Any mission at all*, and the
+   whole of *Any code change* — the four checks, **the declared performance
+   impact**, and `arch-review` with its findings resolved. Not the four checks
+   alone: classifying a touched path by rate costs a sentence in the plan, and
+   it is the cheap half of the row rather than the skippable one. Every
+   remaining row applies solely where the diff genuinely reaches that
+   territory.
+
+   That is a narrower reading of the same table, never a different table: a
+   `small` mission that touches a hot path still owes the measurement, and one
+   that adds a surface still owes the harness hook. If a row keeps applying
+   anyway, the mission is not `small`.
 
    | The mission… | Injected acceptance criteria |
    | --- | --- |
@@ -216,7 +222,7 @@ a review. `.claude/hooks/README.md` owns the rest of the mechanism.
    | Adds a capability (feed, bar type, indicator, layer, panel, crate) | follow `new-extension`: port named, registration-only edits, defaults preserve today's behaviour, fake second implementation tested, blast radius (added vs. edited files) stated in the PR body |
    | Adds something a trader *does* (an action, a tool, a trade, a lock) | drivable without a mouse — read `arch-review`'s *The second operator* and take its act/read/discover criteria from there, rather than from a summary that drifts. Where the capability class has no registry yet (there is none today for actions like a trade or a platform lock), carving one is part of the work, per `new-extension`'s carve-the-port rule — name it in the plan or state why the capability stays local |
    | Engine / determinism territory | test-first: fixture + expected output written before the code; golden test guards determinism |
-   | Docs/skills only | four checks still run (they are cheap when nothing compiled changed); `arch-review`'s shape dimensions 1–7 and 9 waived — **dimension 8 (English) is not**, since docs are exactly where a foreign-language line hides, and neither is its step 0 bug pass; `pr-gate` still wants both markers, so both review skills run and report what they found. The waiver covers prose. A shell script, a config file or a test shipping alongside the prose is not prose — it takes the full shape pass |
+   | Docs/skills only | four checks still run (they are cheap when nothing compiled changed); `arch-review`'s shape dimensions 1–7 and 9 waived — **dimension 8 (English) is not**, since docs are exactly where a foreign-language line hides, and neither is its step 0 bug pass; `pr-gate` wants whichever markers the tier owes — both, or `arch-review-ok` alone at `small` — and every review that does run reports what it found. The waiver covers prose. A shell script, a config file or a test shipping alongside the prose is not prose — it takes the full shape pass |
 
    Write down what is **not applicable and why**, too. A gate silently omitted
    and a gate deliberately excluded look identical to the next reader, and only
@@ -226,7 +232,12 @@ a review. `.claude/hooks/README.md` owns the rest of the mechanism.
 
    Two things finish every mission and **neither is an `A` or a `G`**:
    `delivery-review` returns PASS, and the PR is open. List them separately, as
-   `C1`…`Cn` under a **Closing steps** heading. Archiving `GOAL.md` is *not*
+   `C1`…`Cn` under a **Closing steps** heading. **At `small` the first is not
+   listed at all** — that review does not run there, and a closing step the
+   mission is exempt from is not a step it owes. Writing it down anyway leaves
+   the archive permanently recording an obligation nothing will ever discharge,
+   which is worse than silence: the next reader cannot tell it apart from one
+   that was skipped. Archiving `GOAL.md` is *not*
    among them — step 8 puts it before the reviews, as the branch's last commit,
    and listing it here would send a reader to do it afterwards and stale both
    markers.
@@ -337,14 +348,25 @@ a review. `.claude/hooks/README.md` owns the rest of the mechanism.
 
    ```sh
    WT=/path/to/worktree
-   TIER=small                  # small | medium | high | max
-   cd "$WT" && printf '%s\n' "$TIER" > "$(git rev-parse --absolute-git-dir)/mission-tier"
+   TIER=medium                 # small | medium | high | max
+   cd "$WT" &&
+     printf '%s %s\n' "$(git rev-parse --abbrev-ref HEAD)" "$TIER" \
+       > "$(git rev-parse --absolute-git-dir)/mission-tier"
    ```
 
-   `pr-gate` reads that file. A tier declared only in `GOAL.md` changes nothing
-   at the gate, and a `small` mission that never writes it pays the full price
-   at the PR — which is the safe direction to fail, and still a wasted review.
-   Rewrite the file, same command, whenever the tier is raised.
+   **The branch name is half the record, not decoration.** The two review
+   markers hold a sha, so they go stale the moment the branch moves; a bare
+   tier word would outlive the mission that wrote it, and the next branch
+   checked out in that worktree would inherit an exemption it never asked for
+   and ship ungraded. That was measured on the first version of this feature,
+   not imagined. `guardrails.sh` refuses a declaration naming any other branch,
+   and refuses the one-field format outright rather than guessing.
+
+   `pr-gate` reads that file and nothing else. A tier declared only in
+   `GOAL.md` changes nothing at the gate, and a `small` mission that never
+   writes it pays the full price at the PR — the safe direction to fail, and
+   still a wasted review. Rewrite the file with the same command whenever the
+   tier is raised.
 
 7. **Stay on track**: refuse scope creep. A necessary detour is stated
    explicitly and tied back to the mission (or taken to the user). Keep the

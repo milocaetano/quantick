@@ -179,14 +179,29 @@ never committed, and discovered exactly the way the markers are:
 
 ```sh
 WT=/path/to/worktree
-cd "$WT" && printf 'small\n' > "$(git rev-parse --absolute-git-dir)/mission-tier"
+TIER=medium                     # small | medium | high | max
+cd "$WT" &&
+  printf '%s %s\n' "$(git rev-parse --abbrev-ref HEAD)" "$TIER" \
+    > "$(git rev-parse --absolute-git-dir)/mission-tier"
 ```
+
+`TIER` is a variable and defaults to `medium` here on purpose. This section is
+where both skills forward a reader looking for the mechanism, and a snippet
+whose literal value is the one word that switches the gate off is a snippet
+someone pastes verbatim onto a branch that never declared it.
+
+The file holds **`<branch> <tier>`**, and the branch half is load-bearing: the
+two markers above hold a sha and go stale when the branch moves, while a bare
+tier word would outlive its mission. A worktree reused for a second branch then
+inherits an exemption it never asked for — measured, not imagined, on the first
+version of this feature. A declaration naming another branch grants nothing,
+and so does the one-field format that caused it.
 
 The tiers are `small`, `medium`, `high` and `max`, and only `small` changes
 what this gate requires: that branch opens its PR on `arch-review-ok` alone.
-Every other tier, an unrecognised word, and an absent file all leave the
-two-marker gate exactly as it was — which is every branch that existed before
-this file did.
+Every other tier, an unrecognised word, a declaration for another branch, and
+an absent file all leave the two-marker gate exactly as it was — which is every
+branch that existed before this file did.
 
 That is a hole in a gate deliberately built without an override, so it is worth
 being exact about why it is not the skip file that got reverted.
@@ -208,9 +223,12 @@ being exact about why it is not the skip file that got reverted.
   one, and three lines is a perfectly good size for a crash.
 - **It fails closed.** When the branch's size cannot be measured — no
   `origin/main`, a `git` that errors — there is no exemption. This is the one
-  place in `guardrails.sh` that deliberately breaks the fail-open rule below:
-  everywhere else an undetermined answer costs a permission prompt, and here it
-  would cost an ungraded branch.
+  place in `guardrails.sh` that deliberately breaks the *Fail-open by design*
+  rule stated above: everywhere else an undetermined answer costs a permission
+  prompt, and here it would cost an ungraded branch. It is why the size is read
+  from `git diff --numstat` under `LC_ALL=C` rather than from `--shortstat`,
+  whose prose git translates — an English pattern over a localised line matches
+  nothing, sums to zero, and reads as an empty diff.
 
 What is **not** claimed: nothing stops an agent from declaring `small` on a
 branch that was small and still deserved grading, and nothing here could. The

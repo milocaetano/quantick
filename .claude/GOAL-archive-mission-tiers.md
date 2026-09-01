@@ -4,7 +4,7 @@
 that scales the ceremony to the size of the task, and make `small` genuinely
 cheap by exempting it from `delivery-review` at the `pr-gate` hook.
 
-**Tier of this mission:** `high`. It edits the gate that guards every other
+**Tier:** `high`. It edits the gate that guards every other
 branch; the shape pass and both reviews apply in full.
 
 **Why it matters.** Today every mission pays the same price: an interrogation
@@ -62,7 +62,11 @@ gate, instead of an off-the-books one.
   it, so `max` runs `high` and *tells the trader* the ultra option exists.
 - **S5** — the tier file is `mission-tier` in the worktree's own git dir, beside
   the two markers: per-branch, never committed, same lifetime and same discovery
-  path as the mechanism it modifies.
+  path as the mechanism it modifies. It holds **`<branch> <tier>`**. The branch
+  half was not in the first draft and the arch-review found why it had to be:
+  the markers hold a sha and go stale when the branch moves, while a bare tier
+  word outlives its mission, so a worktree reused for a second branch inherited
+  the exemption and opened a PR ungraded. Reproduced, then closed.
 - **S6** *(wanted to ask)* — whether `small` should also skip the four-check
   verification loop. Went with **no**: fmt/clippy/build/test are cheap when
   nothing compiled changed, and they are the only thing left standing between a
@@ -178,6 +182,33 @@ be graded when the grading happens, and it is named rather than ticked.
 right: 555 insertions and 27 deletions, 582 changed lines against a `small`
 ceiling of 300. Had it declared `small`, the hook it adds would itself have
 refused the exemption.
+
+## Review rounds
+
+**arch-review round 1**, step 0 (`code-review`) at `xhigh`: 15 findings, all
+confirmed on re-reading, all fixed on this branch. Two were reproduced against
+the branch's own hook rather than inferred, and both were the same class of
+mistake — a mechanism that *looked* fail-closed and was not:
+
+1. **The tier file carried no branch identity.** A worktree reused for a second
+   branch inherited a `small` declaration and opened its PR with no
+   delivery-review, in a live run. Fixed by the `<branch> <tier>` format; the
+   one-field format is refused rather than migrated. Pinned by *a second branch
+   in the same worktree does not inherit the tier*, and by a mutation run that
+   removes the branch check and turns exactly that case red.
+2. **`changed_lines` failed open, not closed.** It parsed `git diff
+   --shortstat`, which git translates: under a localised install the English
+   pattern matches nothing, the sum is 0, and 0 reads as an empty diff — the
+   exemption granted to a branch of any size. Fixed by `LC_ALL=C git diff
+   --numstat`, with an unparseable count refused outright. Pinned by *a small
+   mission whose size cannot be measured pays in full*, and by the second
+   mutation.
+
+The rest were doc contradictions the tier introduced and three test defects:
+the absence check could pass on an empty string when the gate had stopped
+denying at all; the tier-vocabulary drift check matched bare substrings, so
+`max` was satisfied by "maximum"; and the over-ceiling fixture would have
+written at the filesystem root had its `worktree add` failed silently.
 
 ## The request as received
 

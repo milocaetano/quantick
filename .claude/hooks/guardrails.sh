@@ -75,6 +75,14 @@ DELIVERY_MARKER_NAME="delivery-review-ok"
 #      under the ceiling below, so declaring `small` dishonestly at PR time
 #      buys it only on branches where declaring it honestly would have been
 #      allowed anyway. That is the argument the skip file could not make.
+#
+# The file names the branch it was declared for, `<branch> <tier>`, and a
+# declaration for any other branch is no declaration at all. That is not
+# decoration: the two markers above hold a sha, so they go stale the moment the
+# branch moves, while a bare tier word would outlive the mission that wrote it.
+# A worktree reused for a second branch then inherits an exemption it never
+# asked for and ships with no delivery-review - reproduced against the first
+# version of this feature, which stored the word alone.
 TIER_FILE_NAME="mission-tier"
 # Every tier `mission` may declare, in the order they cost. A file holding
 # anything else is treated as no declaration at all: an unrecognised word must
@@ -169,10 +177,28 @@ declared_tier() {
     tier_file=$(marker_path "$1" "$TIER_FILE_NAME") || return 1
     [ -f "$tier_file" ] || return 1
 
-    tier=$(head -n 1 "$tier_file" 2>/dev/null |
+    tier_branch=$(git -C "$1" rev-parse --abbrev-ref HEAD 2>/dev/null) || return 1
+    [ -n "$tier_branch" ] || return 1
+
+    tier_line=$(head -n 1 "$tier_file" 2>/dev/null |
         tr -d '\r' |
-        sed 's/^[[:space:]]*//; s/[[:space:]]*$//' |
-        tr 'A-Z' 'a-z')
+        tr '\t' ' ' |
+        sed 's/^ *//; s/ *$//; s/  */ /g')
+
+    # Exactly two fields. One field is the format this file used before it
+    # carried a branch, and reading it as a tier would restore the inheritance
+    # bug the format exists to close - so it is refused rather than migrated.
+    case "$tier_line" in
+        *' '*) ;;
+        *) return 1 ;;
+    esac
+
+    tier_for=${tier_line% *}
+    tier=$(printf '%s' "${tier_line##* }" | tr 'A-Z' 'a-z')
+
+    # A declaration belongs to one branch. Detached HEAD reports `HEAD`, which
+    # matches no branch name, so it grants nothing either.
+    [ "$tier_for" = "$tier_branch" ] || return 1
 
     for tier_known in $TIERS; do
         if [ "$tier" = "$tier_known" ]; then
@@ -194,12 +220,27 @@ declared_tier() {
 # Digits only, always. The result reaches `deny`'s JSON, where a stray quote
 # emits a payload the harness cannot parse - and a lost deny decision switches
 # the gate off rather than tripping it.
+#
+# `--numstat` under `LC_ALL=C`, never `--shortstat`. Shortstat is prose, and
+# git translates it: under a localised install the counts sit inside words like
+# `inserções`, an English pattern matches nothing, and a sum of two empty
+# strings is 0 - which reads as an empty diff and grants the exemption to a
+# branch of any size. That is failing open in the one function that must not.
+# Numstat is `added<TAB>deleted<TAB>path` in every locale.
 changed_lines() {
-    lines_stat=$(git -C "$1" diff --shortstat "origin/$MAIN_BRANCH...HEAD" 2>/dev/null) || return 1
+    lines_raw=$(LC_ALL=C git -C "$1" diff --numstat "origin/$MAIN_BRANCH...HEAD" 2>/dev/null) || return 1
 
-    lines_ins=$(printf '%s' "$lines_stat" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) insertion.*/\1/p')
-    lines_del=$(printf '%s' "$lines_stat" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) deletion.*/\1/p')
-    printf '%s' "$((${lines_ins:-0} + ${lines_del:-0}))"
+    lines_total=0
+    for lines_n in $(printf '%s\n' "$lines_raw" | cut -f1,2); do
+        case "$lines_n" in
+            # A binary file reports `-` for both counts. Unmeasurable is not
+            # zero: the caller must not read an unreadable diff as a small one.
+            *[!0-9]*) return 1 ;;
+            *) lines_total=$((lines_total + lines_n)) ;;
+        esac
+    done
+
+    printf '%s' "$lines_total"
 }
 
 # Deny unless marker `$3` in worktree `$1` records exactly the commit `$2`
@@ -364,7 +405,16 @@ commit_reminder() {
     # the branch has already declared the tier, so nothing is being taught.
     if [ "$(declared_tier "$dir")" = "small" ]; then
         small_size=$(changed_lines "$dir")
-        context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH at the \`small\` tier, so \`gh pr create\` wants \`$ARCH_MARKER_NAME\` alone - recorded for the exact HEAD being shipped, which any later commit stales. The exemption from \`$DELIVERY_MARKER_NAME\` holds while the branch stays within $SMALL_TIER_MAX_CHANGED_LINES changed lines against origin/$MAIN_BRANCH, and it carries ${small_size:-an unmeasurable number} now. Past that the tier has to be raised and both reviews run.\""
+
+        # Two messages, because there are two situations and the branch is
+        # already measured here. One message opening with the exempt case and
+        # walking it back two sentences later states a falsehood first, and the
+        # first clause is the one an agent acts on.
+        if [ -n "$small_size" ] && [ "$small_size" -le "$SMALL_TIER_MAX_CHANGED_LINES" ]; then
+            context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH at the \`small\` tier, so \`gh pr create\` wants \`$ARCH_MARKER_NAME\` alone - recorded for the exact HEAD being shipped, which any later commit stales. It carries $small_size of the $SMALL_TIER_MAX_CHANGED_LINES changed lines the exemption from \`$DELIVERY_MARKER_NAME\` allows.\""
+        fi
+
+        context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH and has outgrown its \`small\` tier: it carries ${small_size:-an unmeasurable number of} changed lines against the $SMALL_TIER_MAX_CHANGED_LINES the exemption allows, so \`gh pr create\` now wants both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recorded for the exact HEAD being shipped. Raise the tier in the goal file and run both reviews.\""
     fi
 
     context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH. \`gh pr create\` is gated on both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recording the exact HEAD being shipped, so run arch-review and then delivery-review once the branch is final — a commit after either one makes its marker stale.\""

@@ -36,15 +36,21 @@ small_ceiling=$(sed -n 's/^SMALL_TIER_MAX_CHANGED_LINES=\([0-9][0-9]*\).*/\1/p' 
 # rename broke behind one line of output, and the whole suite reporting a
 # single failure reads like a small problem. The substitutes below are chosen
 # to keep every later case running and failing honestly: a file name nothing
-# will ever match, one tier, and a usable ceiling. `set_tier` must never be
+# will ever match, one tier, and a ceiling of 1. `set_tier` must never be
 # handed an empty name - it would build a path ending in a bare slash.
+#
+# The ceiling substitute is deliberately not the real default. Writing 300 here
+# would put a second copy of a value this file exists to read from one place,
+# and it would go stale the first time the real one moved - while looking, to
+# the next reader, like the authority. All this path needs is a number the
+# fixture can build a branch around.
 if [ -z "$tier_file_name" ] || [ -z "$tiers" ] || [ -z "$small_ceiling" ]; then
     printf 'FAIL the tier constants are not readable from guardrails.sh\n'
     printf '  file=%s tiers=%s ceiling=%s\n' "$tier_file_name" "$tiers" "$small_ceiling"
     failed=$((failed + 1))
     tier_file_name="mission-tier-unreadable"
     tiers="small"
-    small_ceiling=300
+    small_ceiling=1
 fi
 
 # --- fixture ----------------------------------------------------------------
@@ -81,7 +87,7 @@ wt_git_dir=$(git -C "$root/wt" rev-parse --absolute-git-dir)
 # than a number the suite asserts about itself. Sized from the script's own
 # constant: a hardcoded 400 here would go quietly vacuous the day the ceiling
 # moved past it, and a ceiling case that cannot fail is worse than none.
-git -C "$root/mainco" worktree add -q -b feat/big "$root/big" >/dev/null 2>&1
+git -C "$root/mainco" worktree add -q -b feat/big "$root/big"
 big_line=0
 : > "$root/big/src/big.txt"
 while [ "$big_line" -le "$small_ceiling" ]; do
@@ -93,6 +99,33 @@ git -C "$root/big" commit -qm "over the ceiling"
 big_sha=$(git -C "$root/big" rev-parse HEAD)
 big_git_dir=$(git -C "$root/big" rev-parse --absolute-git-dir)
 big_changed=$((small_ceiling + 1))
+
+# A failed `worktree add` leaves this empty, and an empty git dir turns every
+# helper below into a write at the filesystem root - `> "/mission-tier"`,
+# `rm -f "/arch-review-ok"`. The helpers refuse an empty argument as well; this
+# is the louder half, because it names which fixture went missing.
+if [ -z "$big_git_dir" ]; then
+    printf 'FAIL the over-ceiling fixture worktree was not created\n'
+    failed=$((failed + 1))
+fi
+
+# A repository with no `origin/main` at all, for the fail-closed path: the one
+# place guardrails.sh deliberately breaks its own fail-open rule, and until now
+# the only branch of `changed_lines` no case reached.
+git init -b main -q "$root/noremote"
+git -C "$root/noremote" config user.email t@t
+git -C "$root/noremote" config user.name t
+git -C "$root/noremote" config core.autocrlf false
+git -C "$root/noremote" config core.safecrlf false
+echo one > "$root/noremote/a.txt"
+git -C "$root/noremote" add -A
+git -C "$root/noremote" commit -qm "first"
+git -C "$root/noremote" checkout -q -b feat/unmeasurable
+echo two > "$root/noremote/a.txt"
+git -C "$root/noremote" add -A
+git -C "$root/noremote" commit -qm "second"
+noremote_sha=$(git -C "$root/noremote" rev-parse HEAD)
+noremote_git_dir=$(git -C "$root/noremote" rev-parse --absolute-git-dir)
 
 # --- harness ----------------------------------------------------------------
 
@@ -173,6 +206,11 @@ run() {
 
 # set_marker_in <git-dir> <marker-name> <sha, or empty to remove it>
 set_marker_in() {
+    if [ -z "$1" ]; then
+        printf 'FAIL set_marker_in called with no git dir, which would write at the filesystem root\n'
+        failed=$((failed + 1))
+        return
+    fi
     if [ -z "$3" ]; then
         rm -f "$1/$2"
     else
@@ -184,14 +222,24 @@ set_marker_in() {
 # worktree. Every pre-existing case speaks through this one.
 set_marker() { set_marker_in "$wt_git_dir" "$1" "$2"; }
 
-# set_tier <git-dir> <tier, or empty to remove the declaration>. The file name
+# set_tier <worktree> <tier, or empty to remove the declaration>. Takes the
+# worktree rather than its git dir, because the declaration now names the
+# branch it belongs to and only the worktree knows which that is. The file name
 # comes from the script, so a rename there fails the suite here rather than
 # leaving it testing a file nothing reads.
 set_tier() {
+    set_tier_git_dir=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null)
+    if [ -z "$set_tier_git_dir" ]; then
+        printf 'FAIL set_tier could not resolve a git dir for %s\n' "$1"
+        failed=$((failed + 1))
+        return
+    fi
+
     if [ -z "$2" ]; then
-        rm -f "$1/$tier_file_name"
+        rm -f "$set_tier_git_dir/$tier_file_name"
     else
-        printf '%s\n' "$2" > "$1/$tier_file_name"
+        printf '%s %s\n' "$(git -C "$1" rev-parse --abbrev-ref HEAD)" "$2" \
+            > "$set_tier_git_dir/$tier_file_name"
     fi
 }
 
@@ -331,7 +379,7 @@ run "the script judges the payload, not the tool that produced it" \
 set_marker arch-review-ok "$head_sha"
 set_marker delivery-review-ok ""
 
-set_tier "$wt_git_dir" small
+set_tier "$root/wt" small
 run "a small mission opens its PR on arch-review alone" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
 
@@ -348,14 +396,14 @@ set_marker arch-review-ok "$head_sha"
 # it is added rather than the day someone remembers this file exists.
 for tier in $tiers; do
     [ "$tier" != "small" ] || continue
-    set_tier "$wt_git_dir" "$tier"
+    set_tier "$root/wt" "$tier"
     run "the $tier tier still requires delivery-review" \
         pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
 done
 
 # A word the script does not know is not a tier. Read as `small` instead, the
 # gate would open for anything at all written into that file.
-set_tier "$wt_git_dir" "smallish"
+set_tier "$root/wt" "smallish"
 run "an unrecognised tier grants nothing" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
 
@@ -365,7 +413,7 @@ run "an unrecognised tier grants nothing" \
 # recognising `small` at all would pass the first and look correct.
 set_marker_in "$big_git_dir" arch-review-ok "$big_sha"
 set_marker_in "$big_git_dir" delivery-review-ok ""
-set_tier "$big_git_dir" small
+set_tier "$root/big" small
 
 run "a small mission that outgrew the ceiling pays in full" \
     pr-gate "$(json_bash "$root/big" "gh pr create --fill")" deny "delivery-review-ok"
@@ -373,20 +421,72 @@ run "a small mission that outgrew the ceiling pays in full" \
 run "and is told the measured size that cost it the exemption" \
     pr-gate "$(json_bash "$root/big" "gh pr create --fill")" deny "carries $big_changed"
 
+# Fail-closed, where the size cannot be measured at all. Without this the
+# git-error branch of `changed_lines` could be 'simplified' to return 0 - which
+# looks harmless next to the empty-diff case that legitimately yields 0 - and
+# every small branch in a checkout without origin/main would ship ungraded at
+# any size, with all other cases still green.
+set_tier "$root/noremote" small
+set_marker_in "$noremote_git_dir" arch-review-ok "$noremote_sha"
+set_marker_in "$noremote_git_dir" delivery-review-ok ""
+
+run "a small mission whose size cannot be measured pays in full" \
+    pr-gate "$(json_bash "$root/noremote" "gh pr create --fill")" deny "delivery-review-ok"
+
+run "and is told the size is what it could not measure" \
+    pr-gate "$(json_bash "$root/noremote" "gh pr create --fill")" deny "can be measured"
+
+# A declaration belongs to the branch that made it. The first version of this
+# feature stored the tier word alone, and a worktree reused for a second branch
+# inherited the exemption: a live run opened a PR for an undeclared branch with
+# no delivery-review at all. Both halves are pinned - the stale declaration
+# grants nothing, and the one-field format that caused it is refused outright.
+set_tier "$root/wt" small
+git -C "$root/wt" checkout -q -b feat/inherits
+echo three > "$root/wt/src/a.txt"
+git -C "$root/wt" add -A
+git -C "$root/wt" commit -qm "a different mission, same worktree"
+set_marker arch-review-ok "$(git -C "$root/wt" rev-parse HEAD)"
+set_marker delivery-review-ok ""
+
+run "a second branch in the same worktree does not inherit the tier" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
+
+git -C "$root/wt" checkout -q feat/x
+
+printf 'small\n' > "$wt_git_dir/$tier_file_name"
+set_marker arch-review-ok "$head_sha"
+run "a tier file naming no branch grants nothing" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
+
 # The property the exemption rests on, and the reason the earlier skip file was
 # reverted: an agent that has merely forgotten the review must not learn from
 # the denial that a way around it exists. `run` can only assert a string is
 # present, so absence is checked here.
-set_tier "$wt_git_dir" ""
+set_tier "$root/wt" ""
 set_marker arch-review-ok "$head_sha"
 set_marker delivery-review-ok ""
+
+# The denial itself first, through `run`, so the absence check below cannot
+# pass on an empty string. A regression that stops the gate denying at all
+# produces no output, contains none of the words, and would otherwise report
+# this case green at exactly the moment the gate is off.
+run "an untiered branch is still denied for delivery-review" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
+
 untiered=$(printf '%s' "$(json_bash "$root/wt" "gh pr create --fill")" | sh "$GUARDRAILS" pr-gate 2>&1)
 teaches=""
-for secret in $tier_file_name small; do
-    case "$untiered" in
-        *"$secret"*) teaches="$teaches $secret" ;;
-    esac
-done
+case "$untiered" in
+    *'"permissionDecision":"deny"'*) ;;
+    *) teaches=" (no denial to inspect)" ;;
+esac
+if [ -z "$teaches" ]; then
+    for secret in $tier_file_name small; do
+        case "$untiered" in
+            *"$secret"*) teaches="$teaches $secret" ;;
+        esac
+    done
+fi
 if [ -z "$teaches" ]; then
     passed=$((passed + 1))
 else
@@ -400,14 +500,14 @@ fi
 # At the `small` tier the reminder has to name the gate that branch actually
 # faces. Sending it to run the review its own tier exempts it from would spend
 # exactly the saving the tier exists to buy.
-set_tier "$wt_git_dir" small
+set_tier "$root/wt" small
 run "the reminder at the small tier names the exemption it runs under" \
     commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "exemption"
 
 # Cleared before anything else runs: every case from here on predates tiers and
 # assumes no declaration, and a leftover file would quietly change what they
 # test rather than fail them.
-set_tier "$wt_git_dir" ""
+set_tier "$root/wt" ""
 
 run "the untiered reminder still names both markers" \
     commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "delivery-review-ok"
@@ -520,6 +620,12 @@ for doc in $review_skills; do
         continue
     fi
     for name in $written; do
+        # The tier file is read by a review skill, never recorded by one, so it
+        # is not expected to carry that skill's name.
+        if [ "$name" = "$tier_file_name" ]; then
+            passed=$((passed + 1))
+            continue
+        fi
         case "$name" in
             "$skill"-*) passed=$((passed + 1)) ;;
             *)
@@ -574,11 +680,16 @@ for doc in $tier_docs; do
     fi
 done
 
+# Backticked, not bare. A plain substring match makes this check very nearly
+# vacuous: `max` is in "maximum", `high` in "higher", `small` in "smallest",
+# `medium` in "medium-effort" - so the whole tier table could be deleted and
+# every tier would still be "named" by incidental prose. The skill writes each
+# tier as code, which is a boundary a rename cannot fake.
 for tier in $tiers; do
-    if grep -qF -- "$tier" "$repo_root/.claude/skills/mission/SKILL.md"; then
+    if grep -qF -- "\`$tier\`" "$repo_root/.claude/skills/mission/SKILL.md"; then
         passed=$((passed + 1))
     else
-        printf 'FAIL the mission skill never names the %s tier, which the gate accepts\n' "$tier"
+        printf 'FAIL the mission skill never names the `%s` tier, which the gate accepts\n' "$tier"
         failed=$((failed + 1))
     fi
 done

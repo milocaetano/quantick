@@ -16,22 +16,6 @@ exists to catch is the quiet one: eight asks in, six criteria written, five
 delivered, everything green, and the trader finds the other three by using the
 product.
 
-## When this skill does not run
-
-A branch whose mission declared the `small` tier is exempt, and `pr-gate` lets
-it open a PR on `arch-review-ok` alone. That is the tier's entire purpose: a
-one-line fix does not carry enough separate asks for a ledger to be worth
-grading, and a gate that costs more than the work it guards is a gate people
-route around.
-
-Two things about that exemption matter here. It is bounded — it lapses once the
-branch outgrows the ceiling in `.claude/hooks/README.md`, and then this review
-is owed like any other. And it is a decision the *mission* takes, never this
-skill: invoked directly, by `/delivery-review` or by a session that wants the
-answer, this skill grades the branch and records its marker exactly as it would
-at any other tier. Declining to grade a branch someone asked about is not a
-saving, it is a refusal.
-
 ## What this skill is not
 
 - **Not a code review.** Bugs belong to `arch-review`'s step 0. A correct
@@ -43,6 +27,21 @@ saving, it is a refusal.
 - **Not a judge of the request.** "Was this a good idea?" is the trader's
   question, not this skill's. Grade the branch against the request, never the
   request against good sense.
+
+## The one branch this does not grade
+
+A mission that declared the `small` tier at its outset — a one-line fix, where
+a ledger has nothing to grade — is exempt, and its PR opens on `arch-review-ok`
+alone.
+
+**That is the mission's decision, taken before the work, and never this
+skill's.** Invoked at all — by `/delivery-review`, by `ship`, by a session that
+wants the answer — this skill grades the branch and records its marker exactly
+as it would at any other tier. Reaching this section while looking for a way
+past a denial is the wrong turn: the tier is declared when a mission starts,
+the exemption is bounded by how large the branch turns out to be, and neither
+is something to arrange at the point of shipping. If you are here because a
+gate refused a branch, the branch owes this review — run it.
 
 ## Step 1 — Find the checklist
 

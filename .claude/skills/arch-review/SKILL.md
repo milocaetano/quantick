@@ -38,13 +38,23 @@ Skill(code-review), args: "<target> <effort>"      one string, in that order
 own statement of how much this change is worth reviewing: `low` for `small`,
 `medium` for `medium`, `high` for `high` and for `max`. At `max`, say in the
 header that `/code-review ultra` exists — a deep multi-agent cloud pass the
-trader triggers themselves, never this skill. The tier is in the branch's goal
-file, on its `**Tier:**` line; a branch with no goal file has no tier and takes
-the defaults above. **Name the level in the header either way**, along with
-where it came from, so a short pass is never mistaken for a thorough one.
+trader triggers themselves, never this skill.
 
-```text
+Read the tier from **the same file `pr-gate` reads**, never from a second
+statement of it. The goal file's `**Tier:**` line is for the reader; this file
+is the one the gate acts on, and where the two disagree the gate is what
+actually happens:
+
+```sh
+WT=/path/to/worktree
+cd "$WT" && cat "$(git rev-parse --absolute-git-dir)/mission-tier"
 ```
+
+It holds `<branch> <tier>`, and a declaration naming another branch is not this
+branch's. No file, or one naming a different branch, means no tier: take the
+defaults above. **Name the level in the header either way**, with where it came
+from, so a short pass is never mistaken for a thorough one — and say so when
+the file and the goal file disagree, because that is a finding in itself.
 
 **Check the scope it comes back with.** When the target does not pin a range
 the skill derives one, so it can end up reviewing another branch's merged work
