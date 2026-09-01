@@ -217,18 +217,31 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
   (ascending, deduplicated across slices) is asserted directly in the A1 and A4
   tests instead.
 
-## Deferrals, approved
+## Deferrals requested — NOT granted
+
+**Nothing below has been approved.** The heading said "approved" for four
+rounds and it was wrong: these were written by the session that also decided
+them, which `delivery-review` names as the failure the deferral mechanism
+exists to prevent. They are put to the trader with the PR, and until one is
+granted it is an open gap rather than an accepted one.
+
 
 - **A `+ older` press made *during* the opening fill can over-count.** A
   `Span` campaign measures traded time across the whole chart tape, and the
   fill is extending that tape below the campaign's anchor — so a run started
-  in the ~3 s the fill lasts can report `ReachMet` on hours the slices brought
-  rather than the pages it fetched. Found by the second `code-review` round.
-  Not fixed here because the honest fix is for the campaign to measure what it
-  pulled rather than what the chart holds, which is a change to `Campaign`'s
-  contract rather than to this branch, and the window is three seconds wide
-  with an outcome (more history than was asked for) that costs the trader
-  nothing.
+  while the fill is still going can report `ReachMet` on hours the slices
+  brought rather than the pages it fetched. Found by the second `code-review`
+  round. Not fixed here because the honest fix is for the campaign to measure
+  what it pulled rather than what the chart holds, which is a change to
+  `Campaign`'s contract rather than to this branch.
+
+  **The window is about ten seconds, not the three this said for four rounds.**
+  `perf.md` measures the fill at 10.5 s and `whole-day.md` at 11.2 s; the
+  three-second figure was the *bridge's* send time, not the chart's fill. A
+  deferral argued on a window three and a half times too narrow is a deferral
+  argued on the wrong facts, so the corrected width is stated here before the
+  trader is asked to accept it. The outcome argument is unchanged — a run that
+  over-counts returns *more* history than was asked for.
 - **A continuous market's opening block is unmeasured.** On a 24/5 CFD the
   walk has no session edge and now reaches its 48-hour span cap against a
   4 M-tick ceiling, where before it was a 12-hour window capped at 1 M. Every

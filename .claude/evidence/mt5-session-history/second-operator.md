@@ -58,10 +58,14 @@ What neither covers is the one-line copy between them in
 test-covered, and saying so is cheaper than implying otherwise.
 
 **What is not proven, and why — stated rather than implied.** I tried five
-times to catch the value live over the control plane and could not. The fill is
-now shorter than one client round trip: with the slice at its default the whole
-session lands in about three seconds, and spawning `quantick-mcp` and getting
-an answer costs more than that, so every read returned the settled state
+times to catch the value live over the control plane and could not. Each read
+costs a `quantick-mcp` process spawn, and every attempt landed either before
+the first slice or after the last: the reads that came back settled did so at
+`history_trade_count = 1 525 571`, the finished figure. (An earlier revision of
+this paragraph said the fill "lands in about three seconds" — that was the
+bridge's send time, not the chart's fill, which `perf.md` measures at 10.5 s.
+The mis-sizing is corrected here and in the deferral it was used to argue.) So
+every read returned the settled state
 (`history_trade_count = 1 525 571`, field absent — correct, and not the
 transient I was after). Reducing the slice to 20 000 to lengthen the window did
 not help; the fill still finished first. The reads are in

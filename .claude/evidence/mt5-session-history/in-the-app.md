@@ -34,9 +34,14 @@ which resolves against the app's working directory — not the worktree — so t
 **branch's app ran against the main checkout's bridge**. Same binary, same
 window, same tape: only the opening block differs.
 
+The trade counts are deliberately not repeated here — they belong to a
+particular pair of runs, and a second hand-written copy of a measured number is
+how this evidence went stale three times. [`perf.md`](perf.md) generates them
+from the logs committed beside it.
+
 | | main's bridge | this branch's bridge |
 | --- | --- | --- |
-| trades charted | **375 262** | **1 525 621** |
+| trades charted | see [`perf.md`](perf.md) | see [`perf.md`](perf.md) |
 | bars at tick(50) | ~7 500 | **30 510** |
 | oldest print | the clock window | **09:03** (the session) |
 
