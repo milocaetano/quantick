@@ -20,6 +20,7 @@ the delta after them. Stated separately because they are different in kind.
 | 1 | whole branch @ `9d08e3a`…`8981b27` | 13, all confirmed | 13 fixed |
 | 2 | whole branch @ `7bdef1a` | 14, all confirmed | 6 fixed, 3 deferred with reasons, 5 doc/claim corrections |
 | 3 | the delta after pass 2, by me | 2 | 2 fixed |
+| 4 | the delta after round 4 of `delivery-review`, by me | 1 | 1 fixed |
 
 The three that could have reached the trader, all from the agent passes:
 
@@ -38,9 +39,13 @@ Every one of those is now covered by a test **run red against the un-fixed
 code** before being accepted: the cursor, the buffer drop, the dropped slices,
 the in-window session edge, and the zero cap.
 
-My own pass over the delta found the floor check I had just widened costing
-**1109 ms on every open**, on the path this branch exists to make fast, and a
-docstring with two ideas jammed into one line. Both fixed.
+My own passes over the deltas found three things the agent passes could not
+have seen, because they were in code written after them: the floor check I had
+just widened costing **1109 ms on every open** — on the path this branch exists
+to make fast — a docstring with two ideas jammed into one line, and a
+wire-contract guard that split on the wrong `required` array and so could not
+have failed for the reason it stated. That last one was proved by marking the
+field required in the shipped schema and watching the test go red.
 
 **A third adversarial pass was deliberately not run.** Rounds one and two
 returned 13 then 14 — flat, with several findings inside the previous round's
