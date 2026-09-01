@@ -1,0 +1,198 @@
+# Where this repository's agentic flow actually spends
+
+Measured on 2026-09-01 against `origin/main` at `4e12f8b`, in a fresh worktree.
+Every number below is reproducible with the command beside it.
+
+## 1. Review rounds: what the predecessor found, and where it was wrong
+
+`refactor/mission-review-throughput` (#272) reported that ordinary code
+branches average **~1 review-fix commit** and that the branches burning six
+rounds are the ones with **zero production lines** — meta-work on the workflow
+itself. Re-measured over the last 20 merged PRs, counting a "round" as a commit
+whose subject names a review or a finding, and sizing each branch by lines
+touched in `.rs`, `.py` and `.mq5`:
+
+```sh
+git log --merges -20 --format='%H %s' origin/main | grep 'Merge pull request' |
+  while read -r h rest; do
+    cnt=$(git log --oneline "$h^1..$h^2" | grep -icE 'review|finding')
+    prod=$(git diff --numstat "$h^1" "$h^2" | awk '$3 ~ /\.rs$|\.py$|\.mq5$/ {s+=$1+$2} END{print s+0}')
+    echo "$cnt rounds  $prod prod-lines  $rest"
+  done
+```
+
+| | branches | mean rounds | worst |
+| --- | --- | --- | --- |
+| Zero production lines (meta-work) | 4 | **3.0** | 6 (#263) |
+| Production code | 14 | **1.8** | **8 (#271)** |
+
+**The direction holds and the headline does not.** Meta-work really is twice as
+expensive per branch. But ordinary code averages 1.8 rounds rather than ~1, and
+the single worst branch in the window — eight rounds, #271 — is the *largest
+production branch measured*, not a meta one. "The gate is not what is slow for
+coding" was a fair reading of a smaller sample; it is not safe to build on.
+
+Round count does not track diff size either, in either direction: #260 shipped
+11,987 production lines in **one** round, while #268 took **three** for 1,369.
+Whatever drives the chain, it is not how much code is in it.
+
+### What actually let a chain reach eight
+
+Nothing bounded it. Before this branch:
+
+- `arch-review` **step 0** (the bug pass) was bounded at two passes.
+- `delivery-review`'s fix loop was bounded at three rounds — *its own* three.
+- The **nine-dimension shape pass**, the expensive half of `arch-review`, had
+  **no bound at all**.
+- Nothing summed them.
+
+And the markers make each fix cost double. Answering either review is a commit;
+a commit stales both `arch-review-ok` and `delivery-review-ok` by design; so
+every fix re-runs *both* reviews. Two independent budgets over a doubling loop
+with an unbounded pass in the middle is how eight rounds arrive without anyone
+deciding on eight.
+
+**Fixed by** the chain budget in `CLAUDE.md` — three rounds per branch across
+both reviews together, then the remainder ships as recorded PR follow-ups, with
+an open Blocker as the one thing that never defers. `arch-review` and
+`delivery-review` now point at that one owner instead of carrying numbers of
+their own.
+
+## 2. Tokens: the single largest item was a data table
+
+Bytes of every artifact an invocation reads in full:
+
+```sh
+for f in CLAUDE.md AGENTS.md .claude/hooks/README.md .claude/skills/*/SKILL.md; do
+  printf '%7d  %s\n' "$(wc -c < "$f")" "$f"
+done | sort -rn
+```
+
+`ui-harness/SKILL.md` was **76,459 bytes — larger than the next two skills
+combined**, and 61,483 of those bytes were one table: the hook registry, 118
+rows of `| QUANTICK_… | what it reaches |`. It is *data*, consulted one row at a
+time by a capture run that drives one or two surfaces, and it was loaded whole
+on every invocation of `ui-harness`, `visual-qa` and `trader-ux-review`.
+
+**Fixed by** moving it verbatim to `references/hook-registry.md`, with the skill
+pointing at it and telling the reader to `grep` for the surface they need. No
+row was dropped, and reading it whole is still available for the rare case that
+wants it — taking inventory, auditing coverage — which now costs what it always
+did instead of being charged to every run.
+
+| | before | after |
+| --- | --- | --- |
+| `ui-harness/SKILL.md` | 76,459 | **16,316** (−79%) |
+| all ten `SKILL.md` together | 203,402 | **146,576** (−28%) |
+
+### Be honest about the other direction
+
+The rules this branch adds **cost** bytes, and pretending otherwise would be the
+kind of accounting this repository files as a finding:
+
+| | change |
+| --- | --- |
+| `CLAUDE.md` (chain budget + model routing) | +2,573 |
+| `delivery-review/SKILL.md` (cheap start, escalation) | +2,785 |
+| `arch-review/SKILL.md` (points at the chain budget) | +532 |
+| **spent** | **+5,890** |
+| **recovered from the registry move** | **−60,143** |
+| **net across every always-read artifact** | **−54,253** |
+
+So the saving is one structural move, not a diet. Roughly 13,500 tokens per
+invocation that touches the harness, and nothing at all on a run that does not.
+
+## 3. Models: every subagent was billed at open-judgement rates
+
+`grep -rn 'model' .claude/skills/*/SKILL.md` returned **no routing at all**.
+Every dispatched agent inherited the caller's model, including the largest one
+in the pipeline: `delivery-review`'s reviewer, a `general-purpose` agent that
+reads a diff and applies a checklist somebody else already wrote.
+
+**Fixed by** the routing rule in `CLAUDE.md` — retrieval on `haiku`,
+checklist-application on `sonnet`, open judgement on the strong model — and by
+`delivery-review` naming `sonnet` in its dispatch, with a second dispatch on the
+strong model carrying **only** the lines the first graded as other than
+`DELIVERED`. The strong pass is now paid per disputed line rather than per
+branch, and a clean branch never pays it.
+
+**The exception is the point.** `arch-review` step 0 stays on the strong model
+and now says so. `code-review` finds real defects partly by being one;
+downgrading a bug pass is where quality actually falls, while downgrading the
+fan-out around it costs nothing anyone can measure.
+
+## 4. The `delivery-review` criterion #272 withdrew
+
+#272's `A3` — start that review at its cheapest shape — was written, reverted,
+and carried forward undischarged. The reason it was reverted is the important
+part: grading from `branch.stat` plus the files as they stand lets a reviewer
+quote a sentence that was **already on `origin/main`** and mark the criterion
+`DELIVERED`. A false pass, with nothing downstream able to catch it.
+
+This branch discharges it while keeping that hole shut, by cutting a different
+thing. The reviewer keeps the **full diff** — the only input that distinguishes
+what a branch did from what it inherited, and not the expensive part. What gets
+cut is the model and the escalation scope, per §3. Cheaper input was the wrong
+saving; a cheaper *reader* is the right one.
+
+## 5. Modularity: what the shorter review gave up, and what now carries it
+
+This is the section `R7` is graded on. Every reduction, and the mechanism that
+absorbed it:
+
+| Given up | What carries it now |
+| --- | --- |
+| Shape-pass rounds beyond the third | The chain budget defers rather than discards — the remainder ships as a PR follow-up with its severity, visible and arguable. An open Blocker never defers. |
+| A strong model grading every `A`/`G` line | A `sonnet` first pass, with the strong model re-grading every line that is not `DELIVERED`. The judgement is bought where the disagreement is. |
+| A reviewer reading the whole registry | 118 rows still there, greppable. Nothing was deleted. |
+| Reviewer attention on file growth | **The debt budget** — mechanical, ~1s, at edit time. See below. |
+
+### The debt this repository already carries
+
+```sh
+for d in crates/*/; do echo "$(find "$d" -name '*.rs' -not -path '*/target/*' | xargs cat | wc -l) $d"; done | sort -rn
+```
+
+`crates/app` is **192,800 of 266,968 lines — 72% of the repository in one
+crate**, with `app.rs` alone at 33,954 lines. The thing `CLAUDE.md` forbids has
+already happened, so a cheaper review could not simply be taken on trust.
+
+The per-file ratchet forbids *invisible* growth and permits *signed* growth.
+That is the right rule for one file and no rule at all for eighteen: #272 itself
+raised `app.rs` from 9,775 to 9,890 production lines, with a comment explaining
+why, extracted nothing in return, and every check in the repository stayed
+green. Eighteen entries each raised "for this branch" read as eighteen
+reasonable decisions and one lost trunk.
+
+**Fixed by** the `!budget` directive — a cap on the *sum* of every recorded
+ceiling, seeded at the 61,467 lines currently signed for. Raising one ceiling
+now requires lowering another in the same change; extract a surface into its own
+module and both numbers fall together.
+
+Nothing is blocked, which was the trader's specific worry. Raising the budget
+line itself is still allowed and is the escape hatch **on purpose** — it is one
+number, in one place, that a reviewer watches move, which a +115 buried among
+eighteen entries never was. Three properties stop the hatch becoming a bypass,
+each with a test: `--tighten` follows the ceilings down and never up; a missing
+directive is a finding naming the uncapped total; and a stale entry keeps
+spending its ceiling so a deleted file cannot finance the next raise.
+
+Evidence, including the +115 reproduced and caught: `debt-budget.md`.
+
+## 6. Performance impact (G3)
+
+The only compiled change is `crates/guards`. Classified by the `arch-review`
+rate table:
+
+- `size::budget_verdict` — **rare**. Once per `check`, and once per
+  `check_file`, and it is arithmetic over ~18 parsed entries with no file I/O of
+  its own: the baseline was already read.
+- `size::remedies` — **rare**. Two scans of the findings list, only when a guard
+  has already failed.
+- `check_file(BASELINE_FILE)` — **rare**, and it is a new path rather than a
+  slower one: it parses the baseline and walks no files.
+
+No per-trade, per-depth or per-frame path is touched. Measured: `cargo test -p
+quantick-guards` runs 26 unit tests in **0.13s**, and the whole crate's five
+binaries in about a second — unchanged, because the added work is a sum over
+eighteen integers.

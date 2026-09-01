@@ -68,6 +68,37 @@ answer it about its own ledger without much room to flatter itself. "Is `A7`
 delivered?" is a judgement about work you just did, which is why that one keeps
 the stranger. Say plainly that the weaker mode ran; do not imply the stronger.
 
+### What the full mode starts at, and what it escalates for
+
+Full mode used to begin at its most expensive shape and stay there. It now
+starts cheap and buys the expensive pass only for the lines that need it:
+
+1. **The reviewer is dispatched on `sonnet`.** It applies a checklist somebody
+   else wrote, against a diff, citing `file:line` — the middle kind in
+   `CLAUDE.md`'s routing rule, and the largest single subagent in this whole
+   pipeline. Name the model in the `Agent` call.
+2. **Any line it returns as other than `DELIVERED` is re-graded on the strong
+   model**, in a second dispatch carrying only those lines and the same
+   dossier. That is where the judgement actually is: a `PARTIAL` is a
+   disagreement about whether shipped work counts, and it is the grade a weaker
+   reviewer is likeliest to get wrong in *either* direction. So the strong pass
+   is paid for per disputed line rather than per branch, and a clean branch
+   never pays it at all.
+3. **A verdict is FAIL if either pass says so.** The escalation exists to
+   overturn a false `PARTIAL`, never to launder a real one into a pass: a line
+   the strong pass also refuses stays refused, and the verdict records both
+   readings when they differ.
+
+**What does not get cheaper, and why the last attempt to make it cheaper was
+reverted.** The reviewer keeps the **full diff**. The obvious saving — hand it
+`branch.stat` and let it read the files as they stand — opens a false pass with
+no floor under it: a reviewer grading from the current files can quote a
+sentence that was already on `origin/main` and mark the criterion `DELIVERED`,
+and *nothing downstream can catch that*, because the whole gate rests on this
+being the pass that did not take the work on trust. The diff is the only input
+that distinguishes what this branch did from what it inherited. It is also not
+the expensive part — the model and the whole-repo reading are. Cut those.
+
 ## Step 1 — Find the checklist
 
 In order of preference. Say which source was used; the answer changes how much
@@ -161,6 +192,11 @@ Dispatch with the `Agent` tool.
 
 - **Never `fork`.** A fork inherits this session's context, which is exactly
   the contamination this skill exists to remove. This one *is* structural.
+- **Pass `model: "sonnet"`** on the first dispatch, and the strong model on the
+  escalation for disputed lines only. `CLAUDE.md`'s routing rule owns why; what
+  matters here is that omitting the field is not neutral — it inherits the
+  caller's model, so the largest subagent in the pipeline silently bills every
+  grade at open-judgement rates.
 - **Pick the type that can read whole files.** `general-purpose`, with the
   read-only instruction written into the prompt. The obvious alternative is a
   search-shaped type whose tools exclude `Edit` and `Write` — but those types
@@ -330,11 +366,18 @@ trader is not the one who closes these gaps either. The session is.
 - **Fix everything the review reported, then re-run** — a fresh dossier and a
   fresh subagent, because a reviewer that has already seen the branch is no
   longer a stranger to it.
-- **Three rounds, then tell the trader** — report the surviving gaps and what
-  was tried on each, and let them decide whether to keep going. The bound
-  exists so a stuck loop ends, not so a productive one does, and the
-  difference between those two is a judgement the trader should get to make
-  with the findings in front of them.
+- **Spend from the chain's budget, not from a second one of this skill's own.**
+  `CLAUDE.md`'s *review chain has a budget* is the owner: three rounds per
+  branch across **both** reviews together, then the remainder ships as recorded
+  PR follow-ups. This skill used to carry its own three, which is how a branch
+  reached six — `arch-review` spent its rounds, every fix commit staled both
+  markers and re-ran both reviews, and no number covered the sum. Count the
+  rounds this branch has already spent before opening another.
+
+  When the budget is out, report the surviving gaps and what was tried on each,
+  and let the trader decide whether to keep going. The bound exists so a stuck
+  loop ends, not so a productive one does, and that difference is a judgement
+  the trader should get to make with the findings in front of them.
 
   Say which it looks like. A round whose findings are smaller and fewer than
   the last is converging; a round still returning Blockers, especially in code

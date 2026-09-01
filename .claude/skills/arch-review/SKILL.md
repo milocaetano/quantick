@@ -43,9 +43,19 @@ moved down rather than the gate removed. At `max`, say in the header that
 `/code-review ultra` exists — a deep multi-agent cloud pass the trader triggers
 themselves, never this skill, and never a level this step selects.
 
-**Never re-run a level that already ran clean.** Two rounds is this repo's
-budget; a third is for a branch whose second round found Blockers. Beyond that,
-report the remainder as PR follow-ups rather than spending another pass.
+**Never re-run a level that already ran clean.** Two passes of *this step* is
+its own budget; a third is for a branch whose second found Blockers.
+
+That budget sits inside a larger one. `CLAUDE.md`'s *review chain has a budget*
+bounds the whole chain — both reviews, counted together — and owns the rules
+for spending it and for deferring what will not fit. Read it there. The line
+above is scoped deliberately to the bug pass and is not the total; a second
+statement of a number is a second number to keep true.
+
+**The bug pass is open judgement, so it keeps the strong model.** `code-review`
+finds real defects partly by being one, and this is the exception
+`CLAUDE.md`'s routing rule exists to protect. Nothing in this step is
+downgraded to buy tokens.
 
 Read the tier from **the same file `pr-gate` reads**, never from a second
 statement of it. The goal file's `**Tier:**` line is for the reader; this file
