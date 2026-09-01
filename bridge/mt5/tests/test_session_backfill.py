@@ -418,8 +418,7 @@ def test_a_session_larger_than_a_slice_opens_on_its_newest_part():
     term = FakeTerminal(0, now_s)
     term.ticks = session_between(at(OPEN_H, OPEN_M), at(CLOSE_H, CLOSE_M), step_s=10)
     bridge = load_bridge(term)
-    bridge.OPENING_SLICE_TICKS = 500
-    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session = session_at(bridge, term, now_s, backfill_minutes=720, opening_slice_ticks=500)
     session.backfill()
 
     opened = block_ticks(session)
@@ -443,8 +442,7 @@ def test_the_parked_slices_rebuild_the_session_exactly():
     term = FakeTerminal(0, now_s)
     term.ticks = session_between(at(OPEN_H, OPEN_M), at(CLOSE_H, CLOSE_M), step_s=10)
     bridge = load_bridge(term)
-    bridge.OPENING_SLICE_TICKS = 500
-    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session = session_at(bridge, term, now_s, backfill_minutes=720, opening_slice_ticks=500)
     session.backfill()
     opened = [m["time_ms"] for m in block_ticks(session)]
 
@@ -479,8 +477,7 @@ def test_each_slice_is_marked_and_counts_down():
     term = FakeTerminal(0, now_s)
     term.ticks = session_between(at(OPEN_H, OPEN_M), at(CLOSE_H, CLOSE_M), step_s=10)
     bridge = load_bridge(term)
-    bridge.OPENING_SLICE_TICKS = 500
-    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session = session_at(bridge, term, now_s, backfill_minutes=720, opening_slice_ticks=500)
     session.backfill()
 
     starts, ends = [], []

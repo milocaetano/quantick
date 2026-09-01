@@ -132,11 +132,13 @@ class FakeArgs:
         rates_months=3,
         backfill_minutes=720,
         backfill_max_ticks=1_000_000,
+        opening_slice_ticks=50_000,
     ):
         self.rates_max_bars = rates_max_bars
         self.rates_months = rates_months
         self.backfill_minutes = backfill_minutes
         self.backfill_max_ticks = backfill_max_ticks
+        self.opening_slice_ticks = opening_slice_ticks
 
 
 def session_for(bridge, terminal, **args):

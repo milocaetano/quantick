@@ -231,7 +231,7 @@ SESSION_WALK_MAX_SPAN_MS = 48 * 60 * 60 * 1000
 # work: small enough that the first one is on the chart immediately and that a
 # live print never waits long behind one, large enough that a full session is
 # thirty-odd slices rather than hundreds of round trips.
-OPENING_SLICE_TICKS = 50_000
+DEFAULT_OPENING_SLICE_TICKS = 50_000
 
 # Windows one opening walk may spend: the span above, in gap-wide steps.
 # Derived rather than chosen, so raising the span cannot leave a budget behind
@@ -693,11 +693,12 @@ class Session:
         # The newest slice opens the chart; the rest is parked for the loop.
         # `pending_opening` holds slices oldest-last, so `pop()` takes the next
         # one to go out -- newest-first, each older than the last.
-        opening = ticks[-OPENING_SLICE_TICKS:] if len(ticks) else ticks
-        rest = ticks[: -OPENING_SLICE_TICKS] if len(ticks) > OPENING_SLICE_TICKS else []
+        slice_ticks = max(1, self.args.opening_slice_ticks)
+        opening = ticks[-slice_ticks:] if len(ticks) else ticks
+        rest = ticks[:-slice_ticks] if len(ticks) > slice_ticks else []
         self.pending_opening = [
-            rest[max(0, start - OPENING_SLICE_TICKS) : start]
-            for start in range(len(rest), 0, -OPENING_SLICE_TICKS)
+            rest[max(0, start - slice_ticks) : start]
+            for start in range(len(rest), 0, -slice_ticks)
         ]
         if self.pending_opening:
             log(
@@ -706,7 +707,7 @@ class Session:
                 total=len(ticks),
                 opening_now=len(opening),
                 slices_to_follow=len(self.pending_opening),
-                slice_ticks=OPENING_SLICE_TICKS,
+                slice_ticks=slice_ticks,
             )
         self.send_backfill(opening)
 
@@ -1741,6 +1742,15 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--opening-slice-ticks",
+        type=int,
+        default=DEFAULT_OPENING_SLICE_TICKS,
+        help=(
+            "ticks per slice of the opening block; the first slice is what the "
+            "chart paints on and the rest follow it while the tape runs"
+        ),
+    )
+    parser.add_argument(
         "--rates-months",
         type=int,
         default=3,
@@ -1802,6 +1812,7 @@ def main() -> int:
         port=args.port,
         backfill_minutes=args.backfill_minutes,
         backfill_max_ticks=args.backfill_max_ticks,
+        opening_slice_ticks=args.opening_slice_ticks,
         stream_book=args.book,
     )
     try:

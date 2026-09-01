@@ -48,6 +48,8 @@ Options worth knowing:
 `--port` (default 9100), `--backfill-minutes` (720 — the width of the opening
 block's *first* ask, not its reach), `--backfill-max-ticks` (4 000 000, a bound
 on memory rather than on the span; the newest win and the bridge says so),
+`--opening-slice-ticks` (50 000 — the first slice is what the chart paints on,
+and the rest of the session follows it while the tape runs),
 `--no-book`, `--book-poll-ms` (5), `--utc-offset-s`.
 
 **Where the opening block starts.** The session the tape is in, from its own
