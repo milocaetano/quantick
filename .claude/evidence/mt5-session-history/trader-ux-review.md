@@ -7,9 +7,12 @@ progressively; and a third `+ older` reach, *by time*.
 
 **Rafa (scalper).** Presses nothing. The chart has bars in about a second
 instead of eleven, and the morning arrives behind him while the tape runs.
-Frame cost measured under the real 1.5 M-print load: fps 59, frame_cpu 2.04 ms
-against 2.01 ms on the control — no hitch to break a read
-([`in-the-app.md`](in-the-app.md)).
+Frame cost measured under the real 1.5 M-print load: the floor is 54 fps for
+about eight seconds against the control's 58, with no `APP_SLOW_FRAMES` on
+either side ([`perf.md`](perf.md)). Rafa reads flow from motion, so that dip is
+the one thing here he would feel — it is at open, before he is reading, and it
+recovers to 59. An earlier slice size made it 43 fps with three slow-frame
+warnings, which would have been a FAIL of this review.
 
 **Marina (context).** Gets what she actually asked for: the day from 09:03 on
 a tick chart, 30 510 bars, rather than a window whose left edge moved with the
@@ -75,8 +78,10 @@ progress language gets born. Deferred to the PR body.
 
 ## Verdicts
 
-- **Rafa can trade through it.** No new gesture, no focus theft, no frame cost:
-  59 fps under a 2.8× heavier opening block.
+- **Rafa can trade through it.** No new gesture and no focus theft. The one
+  cost he could feel is an eight-second dip to 54 fps while four times the
+  session arrives — at open, before he is reading, and clear of the app's own
+  slow-frame threshold.
 - **Marina keeps her workspace.** The reach and its span are persisted, the two
   existing reaches are unchanged, and the config seed is documented.
 - **Duda can figure it out alone.** Words not numbers, a hover that states the

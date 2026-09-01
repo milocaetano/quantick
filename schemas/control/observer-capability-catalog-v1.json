@@ -9358,6 +9358,17 @@
               "notice": {
                 "$ref": "#/$defs/FeedNoticeSnapshot"
               },
+              "opening_slices_remaining": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Slices of the opening session still to arrive, while a source is\nfilling the chart in behind what it first painted.\n\nAbsent when nothing is filling, which is the steady state — so an\noperator can tell \"this chart is still arriving\" from \"this is all\nthere is\", which `history_trade_count` alone cannot say: it rises with\nno denominator."
+              },
               "provenance": {
                 "$ref": "#/$defs/MarketDataProvenance"
               },

@@ -127,7 +127,7 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
       protocol tests for the sliced block, plus a `visual-qa` screenshot series
       showing a populated chart with the fill still running. →
       `.claude/evidence/mt5-session-history/progressive/`. *(R3)*
-      → **MET.** [`.claude/evidence/mt5-session-history/in-the-app.md`](.claude/evidence/mt5-session-history/in-the-app.md) — the chart paints at **0.94 s** on 50 000 prints with **30** slices behind it, `remaining` counting to zero; protocol tests in `crates/feed-mt5` and slice tests in `test_session_backfill.py`. Screenshots under `.claude/evidence/mt5-session-history/shots/`.
+      → **MET.** Protocol tests in `crates/feed-mt5` and slice tests in `test_session_backfill.py`; the chart caught mid-fill at `7999+0 bars` with six slices still to come in [`.claude/evidence/mt5-session-history/progressive/mt5-mid-fill.png`](.claude/evidence/mt5-session-history/progressive/mt5-mid-fill.png), against `30510+0 bars` complete. The on-screen countdown is the approved deferral below.
 
 - [x] **A5** — One `+ older` press reaches a trader-chosen time span, as a new
       `HistoryReach` variant with its control; the existing reaches keep
@@ -174,7 +174,7 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
       fps/frame_avg under the full-day load against a `main` control run.
       *Evidence:* both summaries. →
       `.claude/evidence/mt5-session-history/perf.md`.
-      → **MET.** [`.claude/evidence/mt5-session-history/in-the-app.md`](.claude/evidence/mt5-session-history/in-the-app.md) — 59 fps / 2.043 ms frame CPU under the 1 525 621-print open, against 60 fps / 2.010 ms on a control run of the same binary against the old bridge.
+      → **MET.** [`.claude/evidence/mt5-session-history/perf.md`](.claude/evidence/mt5-session-history/perf.md) — both runs' health lines in full, measured *under* the load: fps floor 58 → 54, frame_cpu peak 2.16 → 3.99 ms, zero `APP_SLOW_FRAMES` on either side, for 4.1× the trades. An earlier draft of this evidence quoted the recovery frame as the load; `delivery-review` caught it and the slice size was resized from 50 000 to 200 000 in response, taking the floor from 43 to 54.
 
 - [x] **G5** — User-visible surfaces follow `ui-harness`: every new or changed
       surface reachable by an env hook added in this change; `visual-qa` with
@@ -195,7 +195,7 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
       plane, not by mouse alone. *Evidence:* the `quantick_invoke` /
       `quantick_get_snapshot` transcript. →
       `.claude/evidence/mt5-session-history/second-operator.md`.
-      → **MET.** `QUANTICK_HISTORY_REACH=span` + `QUANTICK_HISTORY_REACH_SPAN_MINUTES=240` set with no mouse, read back over the control plane as `history_reach=span`, `history_reach_span_minutes=240`.
+      → **MET.** [`.claude/evidence/mt5-session-history/second-operator.md`](.claude/evidence/mt5-session-history/second-operator.md) — the reach and its span set by hook and read back over the control plane; the fill's progress exposed as `feed.status`'s `opening_slices_remaining`, asserted by `an_opening_slice_draws_without_answering_the_traders_press`. The file states plainly which half is a live transcript and which is a unit test, and why a three-second transient could not be sampled.
 
 - [x] **G8** — `arch-review` run over `git diff origin/main...HEAD` with every
       Blocker and Should-fix resolved, or deferred with the trader's approval
@@ -217,6 +217,15 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
   tests instead.
 
 ## Deferrals, approved
+
+- **The reconnect re-sends the opening block over the wire.** After a
+  reconnect the bridge re-runs its whole opening block, and the app now
+  refuses those slices in one branch rather than mapping and discarding each
+  (`crates/app/src/feed/metatrader.rs`, `MT5_OPENING_PAGE_AFTER_RESUME`). What
+  is *not* avoided is the send itself: the bridge cannot know where the chart
+  already reaches without a new message telling it. Recorded here because the
+  code comment claims a deferral, and a deferral the goal file does not carry
+  is not one.
 
 - **The fill is not counted down on screen.** The bridge reports how many
   opening slices remain and the app logs it, but nothing on the chart says

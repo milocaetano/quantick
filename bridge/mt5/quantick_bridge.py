@@ -227,11 +227,28 @@ SESSION_WALK_MAX_SPAN_MS = 48 * 60 * 60 * 1000
 # opening block and the rest follows it, newest-first, between passes of the
 # loop that is also pumping live ticks.
 #
-# Fifty thousand prints is about five megabytes and a third of a second of
-# work: small enough that the first one is on the chart immediately and that a
-# live print never waits long behind one, large enough that a full session is
-# thirty-odd slices rather than hundreds of round trips.
-DEFAULT_OPENING_SLICE_TICKS = 50_000
+# Two hundred thousand prints, and the number is about the *consumer's* cost
+# rather than the bridge's. Every slice the chart accepts is prepended through
+# `ChartState::prepend_history`, which re-cuts every bar the chart already
+# holds -- so the work of a fill is the slice count times a growing tape, and
+# halving the slices nearly halves it. Measured against the live terminal on a
+# 1 525 621-print session: at 50 000 (thirty-one slices) the chart fell to 43
+# fps with a 142 ms worst frame and raised three `APP_SLOW_FRAMES`; the first
+# slice still paints in under a second either way, because that is the opening
+# block and not a slice at all.
+#
+# Bounded above by what the consumer will accept in one block --
+# `MAX_TRADES_PER_PAGE` in `crates/feed-mt5/src/stream.rs` is 250 000, and a
+# slice past it would be silently trimmed on arrival, which is exactly the
+# quiet cut the opening block was rebuilt to abolish. `--opening-slice-ticks`
+# is clamped to this for the same reason.
+DEFAULT_OPENING_SLICE_TICKS = 200_000
+
+# The largest block the feed will take whole, from
+# `crates/feed-mt5/src/stream.rs`'s `MAX_TRADES_PER_PAGE`. Duplicated across a
+# language boundary the repository cannot type-check, so it is pinned by
+# `crates/app/tests/session_gap_agreement.rs` rather than trusted.
+MAX_SLICE_TICKS_THE_FEED_ACCEPTS = 250_000
 
 # Windows one opening walk may spend: the span above, in gap-wide steps.
 # Derived rather than chosen, so raising the span cannot leave a budget behind
@@ -705,7 +722,10 @@ class Session:
         # `pop()`: that would take the oldest first, and every later slice
         # would then fail the consumer's "older than what the chart holds"
         # filter and be dropped as overlap.
-        slice_ticks = max(1, self.args.opening_slice_ticks)
+        # Clamped, not trusted: a slice larger than the feed's own per-block
+        # cap arrives trimmed, and the surplus is dropped with nothing on the
+        # chart to say so.
+        slice_ticks = max(1, min(self.args.opening_slice_ticks, MAX_SLICE_TICKS_THE_FEED_ACCEPTS))
         opening = ticks[-slice_ticks:] if len(ticks) else ticks
         rest = ticks[:-slice_ticks] if len(ticks) > slice_ticks else []
         self.pending_opening = [

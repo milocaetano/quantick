@@ -28,27 +28,22 @@ check this capture would show an empty chart.
 
 ## The control run, and what it cost
 
-The first attempt at this capture accidentally became the control, and a
-better one than a `main` build would have been. `bridge_command` was a relative
-path, which resolves against the app's working directory — not the worktree —
-so the **branch's app ran against the main checkout's bridge**. Same binary,
-same window, same tape: only the opening block differs.
+The first attempt at this capture accidentally became the control, and a better
+one than a `main` build would have been. `bridge_command` was a relative path,
+which resolves against the app's working directory — not the worktree — so the
+**branch's app ran against the main checkout's bridge**. Same binary, same
+window, same tape: only the opening block differs.
 
 | | main's bridge | this branch's bridge |
 | --- | --- | --- |
-| trades charted | **545 095** | **1 525 621** |
-| bars at tick(50) | ~10 900 | **30 510** |
-| oldest print | 12:36 (the clock window) | **09:03** (the session) |
-| fps | 60 | 59 |
-| frame_avg_ms | 16.666 | 16.668 |
-| frame_cpu_ms | 2.010 | 2.043 |
-| frame_worst_ms | 17.16 | 16.97 |
-| `APP_SLOW_FRAMES` reports | 0 | 3 |
+| trades charted | **375 262** | **1 525 621** |
+| bars at tick(50) | ~7 500 | **30 510** |
+| oldest print | the clock window | **09:03** (the session) |
 
-**2.8× the trades for 0.03 ms of frame CPU.** The three slow-frame reports are
-the prepends: each opening slice re-cuts the bars the chart holds, which is one
-frame's work thirty times, and the worst frame recorded is still under 17 ms.
-That is the performance claim G4 asks for, measured rather than assumed.
+The frame cost of that is measured, and measured *under the load* rather than
+after it: see [`perf.md`](perf.md), which carries both runs' health lines in
+full. Summary — fps floor 58 → 54, `frame_cpu` peak 2.16 → 3.99 ms, zero
+`APP_SLOW_FRAMES` on either side.
 
 It is also worth recording *why* the control exists: the first run of this
 capture photographed the old behaviour and would have been reported as a pass.

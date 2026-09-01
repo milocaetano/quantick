@@ -48,6 +48,15 @@ pub(crate) struct FeedTabSnapshot {
     /// a build with no reach campaigns was in fact reporting.
     #[serde(default)]
     pub history_reach_running: bool,
+    /// Slices of the opening session still to arrive, while a source is
+    /// filling the chart in behind what it first painted.
+    ///
+    /// Absent when nothing is filling, which is the steady state — so an
+    /// operator can tell "this chart is still arriving" from "this is all
+    /// there is", which `history_trade_count` alone cannot say: it rises with
+    /// no denominator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opening_slices_remaining: Option<WireU64>,
     /// What the last *load older* press had to say, while it is still on
     /// screen — the exact sentence the trader reads in the loading lane.
     ///
@@ -240,6 +249,7 @@ fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
                         u64::try_from(tab.history_trades).unwrap_or(u64::MAX),
                     ),
                     history_reach_running: tab.history_reach_running(),
+                    opening_slices_remaining: tab.opening_slices_remaining().map(WireU64::new),
                     history_reach_note: tab.history_note().map(str::to_owned),
                     live_trade_count: WireU64::new(tab.live_trades),
                     latest_trade_unix_ms: tab.latest_trade_ms,

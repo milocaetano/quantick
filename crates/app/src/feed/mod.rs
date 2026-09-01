@@ -119,7 +119,14 @@ pub enum FeedEvent {
     ///
     /// A feed that fills a chart in behind the trader must therefore be able
     /// to say so, and this is that word.
-    OpeningPrepended(Vec<Trade>),
+    OpeningPrepended {
+        /// The older trades, ascending.
+        trades: Vec<Trade>,
+        /// Slices still to come after this one, when the source said. `None`
+        /// from a source that does not count them; never a promise, since a
+        /// session can end mid-fill.
+        remaining: Option<u64>,
+    },
     /// One live trade.
     Live(Trade),
     /// Several live trades received or released together.

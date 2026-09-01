@@ -487,6 +487,9 @@ pub struct Tab {
     /// Minutes of traded time one press of [`HistoryReach::Span`] pulls,
     /// mirrored from the window so every tab presses the way the trader said.
     pub history_reach_span_minutes: u32,
+    /// Slices of the opening session still to arrive, while one is filling in
+    /// behind the chart. `None` when nothing is filling.
+    opening_slices_remaining: Option<u64>,
     /// The run of requests a reach beyond one page started, or `None` when
     /// nothing is paging.
     ///
@@ -897,6 +900,7 @@ impl Tab {
             history_step: 2000,
             history_trades: 0,
             history_reach: HistoryReach::default(),
+            opening_slices_remaining: None,
             // Overwritten by `drain_tabs` on the first frame from the
             // window's own value; this is only what a tab holds before that.
             history_reach_span_minutes: (crate::history_reach::DEFAULT_REACH_SPAN_MS / 60_000)
@@ -2258,6 +2262,18 @@ impl Tab {
         }
     }
 
+    /// Slices of the opening session still to arrive, or `None` when the chart
+    /// is not being filled in behind.
+    ///
+    /// Read by the control plane so an operator without a mouse can tell a
+    /// chart that is still arriving from one that has everything it is going
+    /// to get — the same question the trader answers by watching the bars
+    /// grow leftward.
+    #[must_use]
+    pub const fn opening_slices_remaining(&self) -> Option<u64> {
+        self.opening_slices_remaining
+    }
+
     /// The oldest print this tab still holds.
     ///
     /// Read off the flow pane: every pane is fed the same tape and cuts it its
@@ -3056,7 +3072,17 @@ impl Tab {
                     // trader can actually see.
                     self.settle_history_page(trades.len());
                 }
-                Ok(FeedEvent::OpeningPrepended(trades)) => {
+                Ok(FeedEvent::OpeningPrepended { trades, remaining }) => {
+                    // What is left of the fill, so the chart and an operator
+                    // reading the control plane can both say how much of the
+                    // session is still arriving instead of watching a number
+                    // rise with no denominator. Cleared at zero: the field
+                    // means "a fill is running", and a stale count would keep
+                    // saying so after the last slice landed.
+                    self.opening_slices_remaining = match remaining {
+                        Some(0) | None => None,
+                        some => some,
+                    };
                     // The rest of the opening session, drawn but not counted.
                     // Everything the reply path does *except* the two things
                     // that belong to a request: the loading indicator a press
@@ -4688,7 +4714,10 @@ mod move_pane_tests {
 
         let slice: Vec<_> = (0..8).map(|i| older_trade(1_000 + i)).collect();
         feed_tx
-            .try_send(FeedEvent::OpeningPrepended(slice.clone()))
+            .try_send(FeedEvent::OpeningPrepended {
+                trades: slice.clone(),
+                remaining: Some(4),
+            })
             .expect("the test channel has room");
         tab.drain_feed();
 
@@ -4701,6 +4730,11 @@ mod move_pane_tests {
             tab.history_trades,
             slice.len(),
             "and it is still charted and counted — it is the trader's morning"
+        );
+        assert_eq!(
+            tab.opening_slices_remaining(),
+            Some(4),
+            "and how much of the session is still arriving is readable, not              only loggable: an operator has to be able to tell a chart that is              still filling from one that has all it will get"
         );
     }
 

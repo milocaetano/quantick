@@ -427,6 +427,58 @@ async fn an_opening_slice_is_prepended_although_nobody_asked_for_it() {
 }
 
 #[tokio::test]
+async fn the_first_session_keeps_its_own_opening_slices() {
+    // The regression that broke the whole feature once: the reconnect guard
+    // was armed by the *first* backfill block rather than by a second one, so
+    // a normal open dropped every slice of its own session as a repeat. The
+    // trader saw the 200 000-print opening block and nothing behind it.
+    let (addr, mut rx) = start_server("WIN$N").await;
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    sock.write_all(hello_that_pages("WIN$N").as_bytes())
+        .await
+        .unwrap();
+    let _connected = next_event(&mut rx).await;
+
+    // The opening block, exactly as a first connection sends it.
+    let mut script = String::from(
+        "{\"type\":\"backfill_start\",\"count_hint\":3}
+",
+    );
+    script.push_str(&tick_at(1, 1_784_824_290_000, "177795", 3));
+    script.push_str(&tick_at(2, 1_784_824_291_000, "177800", 1));
+    script.push_str(&tick_at(3, 1_784_824_292_000, "177790", 2));
+    script.push_str(
+        "{\"type\":\"backfill_end\"}
+",
+    );
+    sock.write_all(script.as_bytes()).await.unwrap();
+    let Mt5Event::Backfilled(batch) = next_event(&mut rx).await else {
+        panic!("expected the opening block");
+    };
+    assert!(!batch.is_empty(), "the opening block is charted");
+
+    // ...and the slice that fills the session in behind it must survive.
+    let mut slice = String::from(
+        "{\"type\":\"history_start\",\"count_hint\":3,\"opening\":true}
+",
+    );
+    slice.push_str(&tick_at(4, 1_784_824_200_000, "177700", 5));
+    slice.push_str(&tick_at(5, 1_784_824_201_000, "177710", 5));
+    slice.push_str(&tick_at(6, 1_784_824_202_000, "177690", 5));
+    slice.push_str(
+        "{\"type\":\"history_end\",\"opening\":true,\"remaining\":2}
+",
+    );
+    sock.write_all(slice.as_bytes()).await.unwrap();
+
+    let Mt5Event::OpeningPage { trades, remaining } = next_event(&mut rx).await else {
+        panic!("the first session's own slices must not be read as a reconnect's");
+    };
+    assert_eq!(trades.len(), 2, "the slice is charted, not discarded");
+    assert_eq!(remaining, Some(2));
+}
+
+#[tokio::test]
 async fn an_opening_slice_does_not_answer_a_click() {
     // The reason opening slices are a separate event. A trader who presses
     // *+ older* while the morning is still filling in is owed one reply to
