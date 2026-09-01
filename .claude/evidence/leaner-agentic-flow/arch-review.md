@@ -105,3 +105,49 @@ A reader who disagrees has the sha to run it against.
 
 **Verdict unchanged: pass.** Nothing from round 1 reopened, nothing new found,
 nothing deferred.
+
+---
+
+## Round 3 — over the second delivery-review correction
+
+`delivery-review` returned **FAIL** on `A1` again at `ed72a10`, on four further
+figures. Fixed in `32ceacd`.
+
+**Step 0 did not re-run, for the same reason and one more.** The delta is
+`diagnosis.md`, the goal archive, `checks.log`, and a two-line comment in
+`crates/guards/size-baseline.txt` — a comment, so the guard's parser strips it
+and no behaviour changes. `cargo test -p quantick-guards` and
+`cargo run -p quantick-guards` were re-run anyway to prove exactly that, and
+both are green with the eighteen entries still summing to their own `!budget`.
+
+**The shape pass re-ran over the delta:**
+
+- **Dimension 3** — the baseline comment now names `2dcf062` and `#271`. That is
+  a fact in a comment, not a configuration value, so no constant is called for.
+- **Dimension 6** — every corrected figure now ships the command that produces
+  it, and each correction says what it used to say. The document's claim is
+  reproducibility, so a figure without its command was the defect whatever its
+  value.
+- **Dimension 8** — English throughout; guard green.
+- **Dimension 9** — trunk flat; no `.rs` file and no ceiling moved.
+
+**Verdict unchanged: pass.**
+
+## Note for the PR: where the rounds went
+
+Three rounds, and the chain budget this branch introduces is now spent. Worth
+recording because the shape of it is the finding:
+
+| Round | Reviewer | Findings | Kind |
+| --- | --- | --- | --- |
+| 1 | `arch-review` step 0 | 15 | instructions that contradicted themselves, and a guard that classified findings by sniffing its own prose |
+| 2 | `delivery-review` | 2 | figures that did not reproduce |
+| 3 | `delivery-review` | 4 | figures that did not reproduce |
+
+Converging by severity, not by count. Every round-2 and round-3 finding is the
+same defect: a number measured once, never re-executed, that **still supported
+the argument it was written for**. Two readings and a shape pass missed all six;
+re-running the command caught every one. That is an argument for the
+`delivery-review` this branch just made cheaper, not against it — the pass that
+re-runs is the pass that earns its cost, and it is exactly the one kept on the
+strong model.
