@@ -339,6 +339,67 @@ def test_a_session_beyond_the_cap_keeps_the_newest_and_says_so():
     )
 
 
+def test_a_terminal_that_misreports_its_oldest_tick_is_not_believed():
+    """The failure that shipped an empty chart on a 1 525 621-print day.
+
+    `copy_ticks_from(symbol, 0, 1, COPY_TICKS_ALL)` is documented as the oldest
+    tick the terminal holds. A real MT5 answered 19:30 *that evening* for
+    WINV26 on 2026-08-31, while holding — and serving range queries about —
+    the whole session below it. Believed, that floor stops the search one step
+    in: it looked at 19:03, compared against 19:30, concluded the symbol had no
+    history and sent `backfill_start`/`backfill_end` with nothing between them.
+
+    This is the case that makes the whole branch worth having, because it fails
+    the way the trader's chart failed: not with an error, but with an empty
+    chart that looks exactly like a market nobody traded.
+    """
+    now_s = at(22, 10)
+    term = FakeTerminal(0, now_s)
+    term.ticks = b3_day()
+    bridge = load_bridge(term)
+    bogus_ms = at(19, 30) * 1000
+    bridge.mt5.copy_ticks_from = lambda _symbol, _from, _count, _flags: [tick_at(bogus_ms)]
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.backfill()
+
+    check(
+        "a floor with the session underneath it does not empty the chart",
+        len(block_ticks(session)) == len(term.ticks),
+        len(block_ticks(session)),
+    )
+    check(
+        "and the block still starts at the open",
+        first_tick_ms(session) == at(OPEN_H, OPEN_M) * 1000,
+        first_tick_ms(session),
+    )
+
+
+def test_a_real_floor_is_still_honoured():
+    """The check falsifies a claim; it does not throw the floor away.
+
+    A terminal whose oldest tick really is its oldest tick must still stop the
+    walk there, or every symbol with a short history spends the whole window
+    budget proving the same thing.
+    """
+    now_s = at(11, 0)
+    term = FakeTerminal(0, now_s)
+    term.ticks = session_between(at(9, 3), now_s)
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.backfill()
+
+    check(
+        "the honest floor is believed",
+        session.earliest_ms == at(9, 3) * 1000,
+        session.earliest_ms,
+    )
+    check(
+        "and the walk stops on it rather than on its budget",
+        len(block_ticks(session)) == len(term.ticks),
+        len(block_ticks(session)),
+    )
+
+
 def main() -> int:
     return run_tests(globals())
 

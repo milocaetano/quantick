@@ -247,7 +247,7 @@ def test_an_empty_stretch_widens_the_window_and_still_reports_its_reach():
         scanned_to_ms < cursor,
         (scanned_to_ms, cursor),
     )
-    widths = [to_s - from_s for from_s, to_s, _ in term.tick_calls]
+    widths = [to_s - from_s for from_s, to_s, _ in walk_calls(term)]
     check("the windows widened", widths[-1] > widths[0], widths[:3])
     check(
         "up to the documented ceiling",
@@ -270,7 +270,7 @@ def test_a_trades_tape_asks_the_terminal_for_trades_only():
     trades, _, _, _ = session.walk_back(100, cursor)
     check(
         "a trades tape asks for trades",
-        all(flags == COPY_TICKS_TRADE for _, _, flags in term.tick_calls),
+        all(flags == COPY_TICKS_TRADE for _, _, flags in walk_calls(term)),
         term.tick_calls[:2],
     )
     check("and every tick it gets is one", all(t["is_trade"] for t in trades))
@@ -291,9 +291,14 @@ def test_a_failed_window_answers_with_what_is_in_hand():
     term = FakeTerminal(0, NOW)
     cursor = NOW * 1000
     term.ticks = [tick_at(cursor - offset) for offset in range(600_000, 0, -100)]
-    term.tick_fail_on = {1}
     bridge = load_bridge(term)
     session = session_for(bridge, term)
+    # Settle the tick floor first and reset the counter, so the injected
+    # failure lands on the walk's own first window rather than on the one-off
+    # probe that checks whether the terminal's claimed floor is real.
+    session.earliest_tick_ms()
+    term.tick_calls.clear()
+    term.tick_fail_on = {1}
 
     ticks, exhausted, _, calls = session.walk_back(2_000, cursor)
     check("a failure ends the walk", calls == 1, calls)
@@ -617,6 +622,17 @@ def test_a_closed_market_opens_on_the_last_session():
     )
 
 
+def walk_calls(term):
+    """The calls the search and the walk made, without the floor probe.
+
+    `earliest_tick_ms` falsifies the terminal's claimed oldest tick by asking
+    for the window below it, which is one `copy_ticks_range` with
+    `COPY_TICKS_ALL` and no part of the backwards walk. On a trades tape the
+    flags tell them apart; these fixtures are all trades tapes.
+    """
+    return [call for call in term.tick_calls if call[2] == COPY_TICKS_TRADE]
+
+
 def test_a_closed_market_sends_a_session_and_not_a_window_width():
     """What replaced "the re-anchored window keeps its width".
 
@@ -651,10 +667,11 @@ def test_a_closed_market_sends_a_session_and_not_a_window_width():
         == (CLOSED_SESSION_TICKS - 1) * CLOSED_SESSION_STEP_MS,
         sent[-1]["time_ms"] - sent[0]["time_ms"],
     )
+    first = walk_calls(term)[0]
     check(
         "the search for the last print leads, not a clock window",
-        term.tick_calls[0][1] == now_s and term.tick_calls[0][0] > now_s - 720 * 60,
-        term.tick_calls[0],
+        first[1] == now_s and first[0] > now_s - 720 * 60,
+        first,
     )
 
 
@@ -702,8 +719,8 @@ def test_the_reach_crosses_a_weekend():
     )
     check(
         "and crossing it costs a handful of calls, not a budget",
-        len(term.tick_calls) <= 1 + 62 // 4 + 1,
-        len(term.tick_calls),
+        len(walk_calls(term)) <= 1 + 62 // 4 + 1,
+        walk_calls(term),
     )
 
 
@@ -793,16 +810,17 @@ def test_no_interval_is_scanned_twice_on_the_way_back():
     session = session_at(bridge, term, now_s, backfill_minutes=720)
     session.backfill()
 
-    tops = [to_s for _, to_s, _ in term.tick_calls]
+    walk = walk_calls(term)
+    tops = [to_s for _, to_s, _ in walk]
     check(
         "every step looks further back than the last",
         all(later >= earlier for later, earlier in zip(tops, tops[1:])),
-        term.tick_calls,
+        walk,
     )
     check(
         "no window is asked for twice",
-        len({(f, t) for f, t, _ in term.tick_calls}) == len(term.tick_calls),
-        term.tick_calls,
+        len({(f, t) for f, t, _ in walk}) == len(walk),
+        walk,
     )
 
 

@@ -156,6 +156,10 @@ def session_for(bridge, terminal, **args):
     session.earliest_ms = None
     session.earliest_known = False
     session.inbox = b""
+    # `send` is replaced below, so nothing is ever queued here — but `flush`
+    # is called on the paths under test and must find an empty buffer rather
+    # than no buffer at all.
+    session.outbox = bytearray()
     session.last_heartbeat = 0.0
     session.cursor_msc = 0
     session.sent_at_cursor = 0

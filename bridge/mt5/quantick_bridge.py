@@ -222,6 +222,17 @@ SESSION_WALK_MAX_SPAN_MS = 48 * 60 * 60 * 1000
 # that silently stops the walk before it.
 SESSION_WALK_MAX_WINDOWS = SESSION_WALK_MAX_SPAN_MS // SESSION_GAP_MS
 
+# Bytes queued before the outbound buffer is handed to the socket without
+# waiting for the loop's own flush.
+#
+# The buffer exists because one `sendall` per tick costs more than everything
+# else the opening block does put together (47 s of 62 s over a real WINV26
+# session). This bounds how much of it is held: a quarter of a megabyte is
+# about 2 500 ticks, small enough that a live print is never sitting in memory
+# for a noticeable time and large enough that the syscall count drops by three
+# orders of magnitude.
+SEND_BUFFER_BYTES = 256 * 1024
+
 # Bytes read from the socket per pass. The inbound direction carries one short
 # JSON object per trader click, so this is never the constraint — it is sized
 # like any read buffer, not like the traffic.
@@ -418,6 +429,9 @@ class Session:
 
     def __init__(self, sock: socket.socket, symbol: str, args: argparse.Namespace) -> None:
         self.sock = sock
+        # Outbound bytes waiting for `flush`. A bytearray rather than a list of
+        # lines: the socket wants one buffer and this is already it.
+        self.outbox = bytearray()
         self.symbol = symbol
         self.args = args
         self.seq = 0
@@ -452,8 +466,36 @@ class Session:
     # -- framing ----------------------------------------------------------
 
     def send(self, message: dict) -> None:
-        line = json.dumps(message, separators=(",", ":")) + "\n"
-        self.sock.sendall(line.encode("utf-8"))
+        """Queue one line. The socket is written by `flush`.
+
+        This used to be a `sendall` per message, which is a syscall per tick.
+        On the opening block that is not a rounding error: measured over one
+        real WINV26 session of 1 525 621 prints, the per-tick writes cost 47 s
+        of the 62 s the whole block took, against 0.08 s for the same 207 MB
+        handed over in one piece. A trader watching an empty chart for a minute
+        was watching the kernel being asked the same question a million times.
+
+        Buffering only moves *when* bytes leave, never whether they do: every
+        path that can block or wait flushes first, and the loop flushes at the
+        bottom of every pass.
+        """
+        self.outbox += json.dumps(message, separators=(",", ":")).encode("utf-8")
+        self.outbox += b"\n"
+        if len(self.outbox) >= SEND_BUFFER_BYTES:
+            self.flush()
+
+    def flush(self) -> None:
+        """Hand whatever is queued to the socket.
+
+        Empty is the common case and costs nothing. Clearing the buffer before
+        the write would lose a block to a failed send; clearing it after would
+        re-send one to a partial write that raised. `sendall` is all-or-raise,
+        so the buffer is dropped exactly when the bytes are gone.
+        """
+        if not self.outbox:
+            return
+        self.sock.sendall(bytes(self.outbox))
+        self.outbox.clear()
 
     def price(self, value: float) -> str:
         return f"{value:.{self.digits}f}"
@@ -540,6 +582,11 @@ class Session:
                     hint="this symbol may have no Depth of Market; ticks still stream",
                 )
         self.send(hello)
+        # Out now, not at the bottom of the loop. The feed treats a silent
+        # socket as a bridge that failed to start, and everything after this
+        # line -- the session walk, then a block of a million prints -- takes
+        # long enough for that to be the wrong conclusion.
+        self.flush()
 
         self.backfill()
         if self.args.rates_months > 0:
@@ -642,6 +689,7 @@ class Session:
         for tick in ticks:
             self.send_tick(tick, backfill_sent_ms)
         self.send({"type": "backfill_end"})
+        self.flush()
 
         if len(ticks):
             self.cursor_msc = int(ticks[-1]["time_msc"])
@@ -1032,9 +1080,29 @@ class Session:
     def earliest_tick_ms(self) -> int | None:
         """The oldest tick the terminal holds for this symbol, or None.
 
-        Asked once per session and cached, the failure included: a terminal that
-        cannot answer will not start answering mid-session, and the walk asks on
-        every request.
+        Asked once per session and cached, the failure included: a terminal
+        that cannot answer will not start answering mid-session, and the walk
+        asks on every request.
+
+        **The answer is checked before it is believed.** `copy_ticks_from(sym,
+        0, 1, COPY_TICKS_ALL)` is documented as the oldest tick and does not
+        always return it: on 2026-08-31 it answered 19:30 *that evening* for a
+        WINV26 whose history the same terminal held back to 2024-12-23 and had
+        served range queries about seconds earlier. The terminal appears to
+        answer from whatever it has paged in rather than from the record.
+
+        That answer is not a small error, because the floor is what stops every
+        backwards walk. Believed, it made `last_print_before` give up one step
+        in — the search stepped to 19:03, compared against a floor of 19:30 and
+        concluded the symbol had no history — so the opening block went out
+        empty on a day with 1.5 M prints in it. An empty chart that looks like
+        a quiet market is the exact class of failure this branch exists to end.
+
+        So the claim is falsified rather than trusted: ask for the window
+        immediately below it, and if anything comes back, the claim was not a
+        floor. That costs one terminal call per session and is decisive in the
+        case that matters — below a bogus "19:30 today" sits the whole session,
+        while below a real floor there is nothing at all.
         """
         if self.earliest_known:
             return self.earliest_ms
@@ -1048,7 +1116,23 @@ class Session:
                 note="paging still works; it just never claims to have reached the end",
             )
             return None
-        self.earliest_ms = int(found[0]["time_msc"])
+        claimed = int(found[0]["time_msc"])
+        to_s = claimed // 1000
+        from_s = max(0, to_s - OPENING_REACH_WINDOW_S)
+        below = mt5.copy_ticks_range(self.symbol, from_s, to_s, mt5.COPY_TICKS_ALL)
+        older = 0 if below is None else sum(1 for t in below if int(t["time_msc"]) < claimed)
+        if older:
+            log(
+                "BRIDGE_TICK_FLOOR_IMPLAUSIBLE",
+                symbol=self.symbol,
+                claimed_ms=claimed,
+                found_below=older,
+                action="ignore_the_floor",
+                note="the terminal named an oldest tick with ticks underneath it; "
+                "walking back is not stopped by it",
+            )
+            return None
+        self.earliest_ms = claimed
         log("BRIDGE_TICK_FLOOR", symbol=self.symbol, earliest_ms=self.earliest_ms)
         return self.earliest_ms
 
@@ -1486,6 +1570,12 @@ class Session:
                 "server_utc_offset_s": self.offset_s,
             }
         )
+        # A heartbeat that waits in a buffer is not a heartbeat. Its whole job
+        # is to prove the bridge is alive during work that does not return to
+        # the loop for seconds at a time -- `walk_back` calls this from inside
+        # its own search -- and the loop's flush is exactly the thing that is
+        # not running then.
+        self.flush()
         if self.book_subscribed:
             log(
                 "BRIDGE_BOOK_STATS",
@@ -1500,6 +1590,7 @@ class Session:
             self.book_subscribed = False
         try:
             self.send({"type": "bye", "reason": reason})
+            self.flush()
         except OSError:
             pass
 
@@ -1538,6 +1629,11 @@ def run_session(args: argparse.Namespace, offset_s: int) -> None:
                 # on the next poll interval to start.
                 session.pump_commands()
                 session.maybe_heartbeat()
+                # Everything this pass produced leaves before the loop waits.
+                # The buffer's size cap bounds memory; this bounds *latency*,
+                # and without it a quiet tape could hold a print until enough
+                # others arrived to fill a quarter of a megabyte.
+                session.flush()
                 # Sleep to the nearest due deadline instead of spinning: the
                 # terminal reads cost microseconds, the waiting is the loop.
                 idle = min(next_tick, next_book) - time.monotonic()
