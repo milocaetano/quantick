@@ -372,15 +372,8 @@ a review. `.claude/hooks/README.md` owns the rest of the mechanism.
    it is *performed* first, so the goal file lands on the branch that will
    carry it.
 
-   **Arm the worktree before the first edit.** A fresh worktree has no
-   `target/`, so `target/debug/quantick-guards` does not exist — and the
-   `guard-watch` hook is silent when it is missing. Silent, not clean: the size
-   ratchet, the language scan and the encoding check report *nothing* for the
-   whole mission, and the news they exist to deliver early arrives at the
-   review instead. Measured across eighteen worktrees in this repo: the binary
-   was absent from all of them. Two commands, seconds each, and they are the
-   difference between a crossed ceiling reported at the edit that caused it and
-   one reported after the code is written:
+   **Arm the worktree before the first edit**, with both commands, in the new
+   worktree:
 
    ```sh
    cd "$WT" &&
@@ -388,10 +381,13 @@ a review. `.claude/hooks/README.md` owns the rest of the mechanism.
      cargo check -p <the crate you will edit> --all-targets
    ```
 
-   The second primes the incremental cache, so the first `cargo check` *after*
-   an edit is incremental rather than a cold build of the dependency graph.
-   `CLAUDE.md`'s *Verification loop* owns the distinction between that loop and
-   the four checks at the gate; do not restate it here.
+   `CLAUDE.md`'s *Verification loop* owns why — what the hook's silence costs,
+   and why the edit loop is not the four checks. It is not repeated here: a
+   measurement kept in two files is one that disagrees with itself on the first
+   edit, which is the failure this repo files against a duplicated constant.
+   What belongs here is only that the two commands run **before the first
+   edit**, since a guard armed afterwards has already missed the edit worth
+   reporting.
 
    **Record the tier here**, in the new worktree, before the first line of
    work. It goes beside the two review markers, in that worktree's own git dir,
