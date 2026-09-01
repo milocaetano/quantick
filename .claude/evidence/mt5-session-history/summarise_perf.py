@@ -22,6 +22,10 @@ HERE = Path(__file__).resolve().parent
 FILL_OPENS = "MT5_BACKFILL_START"
 FILL_CLOSES = ("BRIDGE_OPENING_COMPLETE", "MT5_BACKFILL_END")
 
+#: The app says this once, when the chart first holds bars -- the instant the
+#: trader stops looking at an empty canvas, and so the one worth timing.
+FIRST_BARS = "MT5_HISTORY_READY"
+
 HEALTH = re.compile(
     r"APP_HEALTH_SUMMARY.*?fps=(\d+) frame_avg_ms=([\d.]+) frame_cpu_ms=([\d.]+) "
     r"frame_worst_ms=([\d.]+)"
@@ -34,7 +38,7 @@ def stamp_of(line):
     return found.group(1) if found else None
 
 
-def parse(stamp):
+def instant_of(stamp):
     """The log's own stamp format, as an instant."""
     return dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
 
@@ -120,13 +124,13 @@ def report(name, path):
     print(f"Fill window: `{opened}` to `{closed}`; {len(load)} health summaries inside it.")
     print(f"Trades charted (backfill + slices): **{trades(path):,}**".replace(",", " "))
     print(f"`APP_SLOW_FRAMES` inside the fill: **{slow_in(path, opened, closed)}**")
-    launch, start, ready = first_paint(path)
-    if ready and start and launch:
-        after_start = (parse(ready) - parse(start)).total_seconds()
-        after_launch = (parse(ready) - parse(launch)).total_seconds()
+    first_line, start, ready = first_paint(path)
+    if ready and start and first_line:
+        after_start = (instant_of(ready) - instant_of(start)).total_seconds()
+        after_first = (instant_of(ready) - instant_of(first_line)).total_seconds()
         print(
             f"First bars on the chart: **{after_start:.2f} s** after "
-            f"`{FILL_OPENS}`, **{after_launch:.2f} s** after process launch."
+            f"`{FILL_OPENS}`, **{after_first:.2f} s** after this log's first line."
         )
     print()
     print("```")
@@ -146,23 +150,29 @@ def report(name, path):
 
 
 def first_paint(path):
-    """Launch, the backfill's start, and the instant the chart first had bars.
+    """The log's first line, the backfill's start, and the chart's first bars.
 
     Hand-computing this is what put a figure from one log under a sentence
     naming another, so it is read off the log like everything else here.
+
+    The first stamped line is *not* process launch, and the caller says so: it
+    is the earliest moment this log can see, which lands after the process has
+    started and its subscriber is up. It is the honest anchor available from a
+    log file, and calling it "launch" would be the same overstatement this
+    directory keeps having to retract.
     """
-    launch = start = ready = None
+    first_line = start = ready = None
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         at = stamp_of(line)
         if at is None:
             continue
-        if launch is None:
-            launch = at
+        if first_line is None:
+            first_line = at
         if start is None and FILL_OPENS in line:
             start = at
-        if ready is None and "MT5_HISTORY_READY" in line:
+        if ready is None and FIRST_BARS in line:
             ready = at
-    return launch, start, ready
+    return first_line, start, ready
 
 
 def slow_in(path, opened, closed):
