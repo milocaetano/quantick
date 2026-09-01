@@ -47,11 +47,17 @@ jobs:
         # it exists, rather than when someone remembers to name it here. It is
         # also what `cargo test -p quantick-feed-mt5 --test bridge_paging`
         # does, so the two cannot disagree about which suites are covered.
+        #
+        # Every suite runs and the step fails if any did, rather than reporting
+        # whichever ran last: a loop whose exit code is its final command turns
+        # a red suite green the moment another one is added after it.
         run: |
+          failed=0
           for suite in bridge/mt5/tests/test_*.py; do
             echo "== $suite"
-            python3 "$suite"
+            python3 "$suite" || failed=1
           done
+          exit "$failed"
       - name: Install desktop GUI dependencies
         # quantick-app (egui/eframe + winit) needs these to build/link on Linux.
         run: |
