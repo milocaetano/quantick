@@ -183,6 +183,92 @@ LOAD_OLDER_WINDOW_GROWTH = 4
 OPENING_REACH_WINDOW_S = 4 * 60 * 60
 OPENING_REACH_MAX_CALLS = 48
 
+# A stretch with no prints longer than this reads as the market having been
+# closed rather than as a quiet patch, and the print on its newer side is a
+# session's first.
+#
+# One hour, and deliberately the *same* hour as the app's
+# `history_reach::SESSION_GAP_MS`. Both ends of one tape decide where a day
+# began, and two constants that merely happen to agree today would drift the
+# first time either was tuned; `crates/guards/tests/session_gap_agreement.rs`
+# fails when they do. A venue with a real lunch break longer than this reads
+# that break as a close, which costs the trader one extra press and never
+# invents data.
+SESSION_GAP_MS = 60 * 60 * 1000
+
+# What `--backfill-max-ticks` defaults to, and why it is not a span.
+#
+# The opening block is a *session* now, so the number of prints in it is the
+# market's business rather than quantick's. This bounds the memory that costs,
+# nothing else: it exists so a pathological day cannot take the terminal, the
+# bridge and the chart down together, not to decide how much of the day the
+# trader is allowed to see. Sized against the real thing — WINV26 printed
+# 1 525 621 trades on 2026-08-31, and B3's mini index is the densest tape this
+# bridge serves — which leaves this a little over two and a half times the
+# busiest session measured. When it does bite, the newest prints win and the
+# bridge says so; it never trims in silence.
+DEFAULT_BACKFILL_MAX_TICKS = 4_000_000
+
+# How far the opening walk may reach when the tape shows no close at all.
+#
+# The answer for a market that never closes: a 24/5 CFD has no overnight gap,
+# so the walk would otherwise step back until its call budget ran out. Two days
+# is past any "previous session" a continuous market has — the same span, and
+# for the same reason, as the app's `history_reach::MAX_CAMPAIGN_SPAN_MS`.
+SESSION_WALK_MAX_SPAN_MS = 48 * 60 * 60 * 1000
+
+# Ticks in one slice of the opening block.
+#
+# The session is fetched in one go -- the terminal returns a whole day in about
+# 350 ms -- but it cannot be *sent* in one go. Serialising and writing a real
+# WINV26 session takes about eleven seconds, and sent as a single block that is
+# eleven seconds with nothing on the chart, which a trader cannot tell apart
+# from a bridge that failed to start. So the newest slice goes out as the
+# opening block and the rest follows it, newest-first, between passes of the
+# loop that is also pumping live ticks.
+#
+# Two hundred thousand prints, and the number is about the *consumer's* cost
+# rather than the bridge's. Every slice the chart accepts is prepended through
+# `ChartState::prepend_history`, which re-cuts every bar the chart already
+# holds -- so the work of a fill is the slice count times a growing tape, and
+# halving the slices nearly halves it. Measured against the live terminal on a
+# 1 525 621-print session: at 50 000 (thirty-one slices) the chart fell to 43
+# fps with a 142 ms worst frame and raised three `APP_SLOW_FRAMES`; the first
+# slice still paints in under a second either way, because that is the opening
+# block and not a slice at all.
+#
+# Bounded above by what the consumer will accept in one block --
+# `MAX_TRADES_PER_PAGE` in `crates/feed-mt5/src/stream.rs` is 250 000, and a
+# slice past it would be silently trimmed on arrival, which is exactly the
+# quiet cut the opening block was rebuilt to abolish. `--opening-slice-ticks`
+# is clamped to this for the same reason.
+DEFAULT_OPENING_SLICE_TICKS = 200_000
+
+# The largest block the feed will take whole, from
+# `crates/feed-mt5/src/stream.rs`'s `MAX_TRADES_PER_PAGE`. Duplicated across a
+# language boundary the repository cannot type-check, so it is pinned by
+# `crates/guards/tests/session_gap_agreement.rs`'s
+# `the_slice_cap_matches_what_the_feed_will_accept` rather than trusted: a
+# slice past the feed's cap is trimmed on arrival and the surplus dropped with
+# only a warn line, which is the quiet cut this block was rebuilt to abolish.
+MAX_SLICE_TICKS_THE_FEED_ACCEPTS = 250_000
+
+# Windows one opening walk may spend: the span above, in gap-wide steps.
+# Derived rather than chosen, so raising the span cannot leave a budget behind
+# that silently stops the walk before it.
+SESSION_WALK_MAX_WINDOWS = SESSION_WALK_MAX_SPAN_MS // SESSION_GAP_MS
+
+# Bytes queued before the outbound buffer is handed to the socket without
+# waiting for the loop's own flush.
+#
+# The buffer exists because one `sendall` per tick costs more than everything
+# else the opening block does put together (47 s of 62 s over a real WINV26
+# session). This bounds how much of it is held: a quarter of a megabyte is
+# about 2 500 ticks, small enough that a live print is never sitting in memory
+# for a noticeable time and large enough that the syscall count drops by three
+# orders of magnitude.
+SEND_BUFFER_BYTES = 256 * 1024
+
 # Bytes read from the socket per pass. The inbound direction carries one short
 # JSON object per trader click, so this is never the constraint — it is sized
 # like any read buffer, not like the traffic.
@@ -379,6 +465,12 @@ class Session:
 
     def __init__(self, sock: socket.socket, symbol: str, args: argparse.Namespace) -> None:
         self.sock = sock
+        # Slices of the opening session still to go out, newest first. Drained
+        # one per loop pass by `pump_opening`.
+        self.pending_opening: list = []
+        # Outbound bytes waiting for `flush`. A bytearray rather than a list of
+        # lines: the socket wants one buffer and this is already it.
+        self.outbox = bytearray()
         self.symbol = symbol
         self.args = args
         self.seq = 0
@@ -413,8 +505,45 @@ class Session:
     # -- framing ----------------------------------------------------------
 
     def send(self, message: dict) -> None:
-        line = json.dumps(message, separators=(",", ":")) + "\n"
-        self.sock.sendall(line.encode("utf-8"))
+        """Queue one line. The socket is written by `flush`.
+
+        This used to be a `sendall` per message, which is a syscall per tick.
+        On the opening block that is not a rounding error: measured over one
+        real WINV26 session of 1 525 621 prints, the per-tick writes cost 47 s
+        of the 62 s the whole block took, against 0.08 s for the same 207 MB
+        handed over in one piece. A trader watching an empty chart for a minute
+        was watching the kernel being asked the same question a million times.
+
+        Buffering only moves *when* bytes leave, never whether they do: every
+        path that can block or wait flushes first, and the loop flushes at the
+        bottom of every pass.
+        """
+        self.outbox += json.dumps(message, separators=(",", ":")).encode("utf-8")
+        self.outbox += b"\n"
+        if len(self.outbox) >= SEND_BUFFER_BYTES:
+            self.flush()
+
+    def flush(self) -> None:
+        """Hand whatever is queued to the socket.
+
+        Empty is the common case and costs nothing.
+
+        The buffer is dropped **whether or not the write succeeded**, and that
+        is deliberate. This socket carries a connect timeout, which puts it in
+        timeout mode, and `sendall` there is documented as not saying how much
+        it managed to write before raising — so after a failure there is no
+        honest way to know what the peer already has. Keeping the bytes to
+        retry them is the tempting choice and the wrong one: `close` sends a
+        `bye` and flushes, which would splice a repeat of up to a quarter of a
+        megabyte of ticks onto whatever half-line the peer received, and the
+        feed would chart the duplicates. Losing a block to a dying session is
+        recoverable; silently doubling prints on the tape is not.
+        """
+        if not self.outbox:
+            return
+        payload = bytes(self.outbox)
+        self.outbox.clear()
+        self.sock.sendall(payload)
 
     def price(self, value: float) -> str:
         return f"{value:.{self.digits}f}"
@@ -501,6 +630,11 @@ class Session:
                     hint="this symbol may have no Depth of Market; ticks still stream",
                 )
         self.send(hello)
+        # Out now, not at the bottom of the loop. The feed treats a silent
+        # socket as a bridge that failed to start, and everything after this
+        # line -- the session walk, then a block of a million prints -- takes
+        # long enough for that to be the wrong conclusion.
+        self.flush()
 
         self.backfill()
         if self.args.rates_months > 0:
@@ -515,143 +649,351 @@ class Session:
         )
 
     def backfill(self) -> None:
-        """The trading day, so the chart opens on the session rather than on a
-        sliver of it — and on the *last* session when today has none.
+        """The session the tape is in, whole, whatever the clock reads.
 
-        The terminal keeps the whole session (and weeks behind it) on disk and
-        returns a day in a fraction of a second, so the window is generous. The
-        cap is about what happens *after*: every tick becomes a JSON line on the
-        socket and a bar on the chart, and a full B3 day of the mini index is
-        around a million of them — sized to hold one, because a trader opening
-        at 15:00 means the whole day, not the last twenty minutes of it.
+        This used to be a rolling clock window — `now - backfill_minutes`, 720
+        of them by default — and both its own docstring and the README called
+        that "a whole B3 session". It only was while the clock happened to read
+        between roughly 18:25 and 21:00. Measured against a live terminal on
+        2026-08-31 at 22:10 local, WINV26 had printed 09:03:00 to 18:31:23 and
+        the 720-minute window returned its oldest tick at 13:10: four hours of
+        the trader's day missing, with nothing on screen to say so. Opening
+        half an hour earlier cut it at 09:30, which is the report this was
+        rebuilt for.
 
-        It is still a cap, and a busy day can exceed it. When it does the newest
-        ticks win, the log says how many were left behind, and what was left
-        behind is reachable: `load_older` pages back into exactly that history
-        (`serve_load_older`). Before the back-channel existed the truncation was
-        permanent for the session, which is what made a low cap expensive.
+        The anchor is the tape instead. `last_print_before` finds the newest
+        print the terminal holds — the same step that already handled a market
+        shut for the weekend — and `session_ticks` walks back from it until the
+        prints stop. What arrives is the session that print belongs to, from
+        its own first trade, and it is the same block whether the chart is
+        opened at 11:00, at 22:10 or on a Sunday.
 
-        The window's *anchor* is the second half of the answer, and it used to
-        be `now` unconditionally. That is the right anchor while a market is
-        trading and the wrong one every other hour of the week: at 07:00 on a
-        Monday `now − 12 h` is Sunday evening, B3 last printed on Friday, and
-        the block went out empty onto a chart with nothing else to show. So an
-        empty window is not the end of the question — see
-        `reach_last_session`.
+        `--backfill-minutes` no longer decides where the day starts, because a
+        span in hours cannot: the same six hours land mid-session on one
+        instrument and inside a weekend on another. It survives as the width of
+        the *first* window only, which is what makes the common case one
+        terminal call rather than a walk.
         """
         now_s = int(time.time() + self.offset_s)
-        window_s = self.args.backfill_minutes * 60
-        ticks = mt5.copy_ticks_range(
-            self.symbol, now_s - window_s, now_s, self.tick_flags()
-        )
-        if ticks is None:
-            log("BRIDGE_BACKFILL_FAILED", mt5_error=str(mt5.last_error()))
-            ticks = []
-        elif not len(ticks):
-            # Nothing in the window the clock names, which is not the same
-            # thing as nothing to send. The anchor moves to the tape.
-            ticks = self.reach_last_session(now_s, window_s)
+        newest_ms, searched = self.last_print_before(now_s)
+        if newest_ms is None:
+            log(
+                "BRIDGE_BACKFILL_NO_HISTORY",
+                symbol=self.symbol,
+                searched_calls=searched,
+                note="the terminal holds no ticks for this symbol; sending an empty block",
+            )
+            # `send_backfill` parks the cursor for an empty block; doing it
+            # again here would be a second owner of the same invariant.
+            self.send_backfill([])
+            return
+
+        ticks, windows, stopped_on = self.session_ticks(newest_ms)
         available = len(ticks)
-        if available > self.args.backfill_max_ticks:
-            ticks = ticks[-self.args.backfill_max_ticks :]
+        # Clamped like the slice knob beside it: `ticks[-0:]` is the whole
+        # block, so an unclamped zero would send everything while telling the
+        # trader through `bridge_log` that their session was cut.
+        cap = max(1, self.args.backfill_max_ticks)
+        if available > cap:
+            # The cap is a bound on *memory*, never on the span: the walk above
+            # already stopped at the session's own edge. When it does bite, the
+            # newest win — that is what the trader is looking at — and it is
+            # said out loud. A silent amputation is the same defect as the
+            # clock window one layer down: the chart would open on a partial
+            # day looking exactly like a complete one.
+            ticks = ticks[-cap:]
             log(
                 "BRIDGE_BACKFILL_TRUNCATED",
                 symbol=self.symbol,
-                available=available,
+                found=available,
                 sending=len(ticks),
-                dropped_oldest=available - len(ticks),
                 action="keep_newest",
+                stopped_on=stopped_on,
                 recoverable="load_older",
             )
-        count = len(ticks)
+        log(
+            "BRIDGE_BACKFILL_SESSION",
+            symbol=self.symbol,
+            count=len(ticks),
+            first_ms=int(ticks[0]["time_msc"]) if len(ticks) else None,
+            last_ms=int(ticks[-1]["time_msc"]) if len(ticks) else None,
+            behind_s=now_s - newest_ms // 1000,
+            windows=windows,
+            searched_calls=searched,
+            stopped_on=stopped_on,
+        )
+        # The newest slice opens the chart; the rest is parked for the loop.
+        # `pending_opening` holds the slices newest-first, so `pop(0)` takes the
+        # next one to go out and each is older than the one before it. Not
+        # `pop()`: that would take the oldest first, and every later slice
+        # would then fail the consumer's "older than what the chart holds"
+        # filter and be dropped as overlap.
+        # Clamped, not trusted: a slice larger than the feed's own per-block
+        # cap arrives trimmed, and the surplus is dropped with nothing on the
+        # chart to say so.
+        slice_ticks = max(1, min(self.args.opening_slice_ticks, MAX_SLICE_TICKS_THE_FEED_ACCEPTS))
+        opening = ticks[-slice_ticks:] if len(ticks) else ticks
+        rest = ticks[:-slice_ticks] if len(ticks) > slice_ticks else []
+        self.pending_opening = [
+            rest[max(0, start - slice_ticks) : start]
+            for start in range(len(rest), 0, -slice_ticks)
+        ]
+        if self.pending_opening:
+            log(
+                "BRIDGE_OPENING_SLICED",
+                symbol=self.symbol,
+                total=len(ticks),
+                opening_now=len(opening),
+                slices_to_follow=len(self.pending_opening),
+                slice_ticks=slice_ticks,
+            )
+        self.send_backfill(opening)
 
-        # An empty block still gets both markers: backfill_end is the
-        # "history is done" signal quantick's loader waits on.
-        self.send({"type": "backfill_start", "count_hint": count})
+    def pump_opening(self) -> None:
+        """Send one parked slice of the opening session, if any is left.
+
+        One per pass, deliberately. The loop this returns to is the one pumping
+        live ticks and answering clicks, and a slice costs a third of a second;
+        draining the queue here would hand the trader a chart that fills in
+        quickly and a tape that stopped while it did.
+        """
+        if not self.pending_opening:
+            return
+        slice_ticks = self.pending_opening.pop(0)
+        remaining = len(self.pending_opening)
+        self.send(
+            {
+                "type": "history_start",
+                "count_hint": len(slice_ticks),
+                "opening": True,
+            }
+        )
+        sent_ms = self.server_now_ms()
+        for tick in slice_ticks:
+            self.send_tick(tick, sent_ms)
+        self.send({"type": "history_end", "opening": True, "remaining": remaining})
+        self.flush()
+        if not remaining:
+            log("BRIDGE_OPENING_COMPLETE", symbol=self.symbol)
+
+    def send_backfill(self, ticks: list) -> None:
+        """Put one block on the wire and leave the live cursor after it.
+
+        An empty block still gets both markers: `backfill_end` is the "history
+        is done" signal quantick's loader waits on, so swallowing it would be a
+        spinner that never stops.
+        """
+        self.send({"type": "backfill_start", "count_hint": len(ticks)})
         # History is stamped like anything else: `sent_ms` says when the bridge
-        # handed the line over, which for a backfill tick is minutes after the
+        # handed the line over, which for a backfilled tick is hours after the
         # print happened. The feed measures latency from live prints only, so
         # the stamp here is a true statement nobody draws a lag from.
         backfill_sent_ms = self.server_now_ms()
         for tick in ticks:
             self.send_tick(tick, backfill_sent_ms)
         self.send({"type": "backfill_end"})
+        self.flush()
 
-        if count:
+        if len(ticks):
             self.cursor_msc = int(ticks[-1]["time_msc"])
             self.sent_at_cursor = sum(
                 1 for t in ticks if int(t["time_msc"]) == self.cursor_msc
             )
-        else:
-            self.cursor_msc = now_s * 1000
+        elif not self.cursor_msc:
+            # An empty block still has to park the cursor, and this is the only
+            # place that can: leaving it at zero makes the live pump's first
+            # `copy_ticks_from(symbol, 0, ...)` ask for the *oldest* ticks the
+            # terminal holds and forward years-old prints as live trades, four
+            # thousand at a time, for the life of the session.
+            #
+            # Reachable whenever the walk comes back empty after the search
+            # found a print — a terminal that fails mid-walk
+            # (`stopped_on="terminal_error"`) is exactly that, and this branch
+            # added the report for it. `now` is the honest anchor: nothing was
+            # sent, so the live tape starts from here.
+            self.cursor_msc = int(time.time() + self.offset_s) * 1000
             self.sent_at_cursor = 0
+    @staticmethod
+    def older_than(found, cursor_ms: int):
+        """The part of a terminal answer strictly older than `cursor_ms`.
 
-    def reach_last_session(self, now_s: int, window_s: int) -> list:
-        """The newest session the terminal holds, when the clock's window is
-        empty.
+        `copy_ticks_range` answers with a numpy structured array, where this is
+        one vectorised pass rather than a million Python objects. Boolean-mask
+        indexing *copies*, so the window is briefly resident twice -- which is
+        why the tick cap bounds roughly two to three times its own number in
+        peak memory rather than exactly it.
 
-        Seeing no data at all is worse than not being connected: a trader
-        opening the chart before the open, over a weekend or on a holiday is
-        preparing, and the session they want to read is already on the
-        terminal's disk. Nothing was missing but the question.
+        The fake terminal the tests run against answers with a list, which only
+        a comprehension can filter.
 
-        So the anchor moves from the clock to the tape. `last_print_before`
-        steps back over the dead time between now and the last session, and the
-        *same* window is asked for again, ending on the print it found instead
-        of ending at `now`. One extra concept, and the trader's
-        `--backfill-minutes` keeps meaning what it says.
-
-        The search starts where the clock's window ended rather than at `now`:
-        that interval has just been reported empty, and re-scanning it would
-        spend the reach's first steps proving the same thing twice.
-
-        Nothing here invents data. An instrument the terminal has never held
-        returns an empty block, as it did before; what changed is that a
-        closed market no longer looks like one.
+        The difference is not academic: measured against the live terminal over
+        one WINV26 session (1 525 621 prints) the comprehension cost ~840 ms and
+        the mask ~10 ms, and every millisecond of it lands on the frame where
+        the trader is waiting for their chart.
         """
-        last_ms, calls = self.last_print_before(now_s - window_s)
-        if last_ms is None:
-            log(
-                "BRIDGE_BACKFILL_NO_HISTORY",
-                symbol=self.symbol,
-                searched_calls=calls,
-                note="the terminal holds no ticks for this symbol; sending an empty block",
-            )
-            return []
-        # Rounded outward: `copy_ticks_range` takes whole seconds, and rounding
-        # the other way would drop the very print the anchor was found by.
-        to_s = -(-last_ms // 1000)
-        from_s = max(0, to_s - window_s)
-        found = mt5.copy_ticks_range(self.symbol, from_s, to_s, self.tick_flags())
+        if hasattr(found, "dtype"):
+            return found[found["time_msc"] < cursor_ms]
+        return [tick for tick in found if int(tick["time_msc"]) < cursor_ms]
+
+    @staticmethod
+    def any_older_than(found, cursor_ms: int) -> bool:
+        """Whether `found` holds any tick strictly older than `cursor_ms`.
+
+        The yes/no half of `older_than`. Kept apart because the caller that
+        wants a bit should not pay for an array: on the startup path this is
+        asked of a two-day window, where building the filtered copy is megabytes
+        thrown away one line later.
+        """
         if found is None or not len(found):
-            # The wide ask failed where the search succeeded, so fall back to
-            # the one second the print is known to be in. A chart holding a
-            # handful of prints is a poor chart and an honest one; an empty
-            # block here would throw away the only thing that is known.
-            narrow = mt5.copy_ticks_range(
-                self.symbol, max(0, to_s - 1), to_s, self.tick_flags()
-            )
-            log(
-                "BRIDGE_BACKFILL_REANCHOR_FAILED",
-                symbol=self.symbol,
-                from_s=from_s,
-                to_s=to_s,
-                mt5_error=str(mt5.last_error()),
-                recovered=0 if narrow is None else len(narrow),
-                action="send_the_second_the_print_is_in",
-            )
-            return [] if narrow is None else list(narrow)
-        log(
-            "BRIDGE_BACKFILL_REANCHORED",
-            symbol=self.symbol,
-            last_print_ms=last_ms,
-            behind_s=now_s - to_s,
-            from_s=from_s,
-            to_s=to_s,
-            count=len(found),
-            searched_calls=calls,
-        )
-        return list(found)
+            return False
+        if hasattr(found, "dtype"):
+            return bool((found["time_msc"] < cursor_ms).any())
+        return any(int(tick["time_msc"]) < cursor_ms for tick in found)
+
+    @staticmethod
+    def session_edge_in(found, gap_ms: int) -> int:
+        """Index of the first print after the newest gap of `gap_ms` in `found`,
+        or 0 when the block holds no such gap.
+
+        The walk stops when a whole window comes back empty, and that alone is
+        not enough: the *first* window is `--backfill-minutes` wide -- twelve
+        hours by default -- so a close shorter than that never produces an
+        empty window and the previous session's tail is swept into today's.
+        An instrument with a maintenance break, or any symbol whose last
+        session ended less than twelve hours ago, would open on a chart whose
+        left edge the app's own `history_reach` does not recognise as a session
+        edge: exactly the divergence `session_gap_agreement.rs` exists to stop.
+
+        So each block is cut here too, and the two rules are the same rule.
+        """
+        if len(found) < 2:
+            return 0
+        if hasattr(found, "dtype"):
+            import numpy  # noqa: PLC0415  (only on the terminal's own arrays)
+
+            stamps = found["time_msc"].astype("int64")
+            breaks = numpy.nonzero(numpy.diff(stamps) >= gap_ms)[0]
+            return int(breaks[-1]) + 1 if len(breaks) else 0
+        edge = 0
+        for index in range(1, len(found)):
+            if int(found[index]["time_msc"]) - int(found[index - 1]["time_msc"]) >= gap_ms:
+                edge = index
+        return edge
+
+    @staticmethod
+    def join_windows(windows: list):
+        """One block, oldest window first, without copying when there is nothing
+        to join.
+
+        The common case by far is a single window: a market that is trading
+        answers the whole session in the first ask, and the walk's second ask
+        only proves where it began. Returning that array untouched is what keeps
+        the opening block free of a second pass over a million and a half prints.
+        """
+        if not windows:
+            return []
+        if len(windows) == 1:
+            return windows[0]
+        if hasattr(windows[0], "dtype"):
+            import numpy  # noqa: PLC0415  (only on the multi-window path)
+
+            return numpy.concatenate(list(reversed(windows)))
+        return [tick for window in reversed(windows) for tick in window]
+
+    def session_ticks(self, newest_ms: int) -> tuple[list, int, str]:
+        """Every print of the session `newest_ms` belongs to, ascending.
+
+        Steps back from that print in [`SESSION_GAP_MS`]-wide windows and stops
+        at the first one holding nothing. That emptiness is the whole rule: the
+        walk has already fetched every print newer than the window, so a window
+        of its width with nothing in it means the oldest print in hand has no
+        neighbour within a gap — which is the market having been closed rather
+        than a quiet patch.
+
+        Where the session's open comes from is therefore the tape, never a
+        calendar. quantick has no venue session table and inventing one here
+        would be a second source of truth about every exchange's hours, wrong
+        the first time a holiday moved — and wrong immediately for the CFDs
+        this same bridge serves. The app already reads a session boundary this
+        way in `crate::history_reach`; this is that rule applied one hop
+        earlier, so the two ends of one tape cannot disagree about where a day
+        began.
+
+        Returns the ticks, how many windows it spent, and what stopped it.
+        """
+        flags = self.tick_flags()
+        floor_ms = self.earliest_tick_ms(newest_ms)
+        cap = max(1, self.args.backfill_max_ticks)
+        # The first window is the trader's own `--backfill-minutes`, which on a
+        # market that is trading covers the whole session in a single call. The
+        # walk then confirms the edge with one more.
+        width_s = max(self.args.backfill_minutes * 60, SESSION_GAP_MS // 1000)
+        windows: list[list] = []
+        held = 0
+        # Exclusive upper bound, so the newest print itself falls inside the
+        # first window rather than one millisecond above it.
+        cursor_ms = newest_ms + 1
+        # The walk may not reach past this however it steps. The bound is on
+        # the *span* rather than on the number of windows because that is what
+        # the constant means: widening the first window must not buy the walk
+        # another twelve hours of a continuous tape.
+        span_floor_ms = newest_ms - SESSION_WALK_MAX_SPAN_MS
+        stopped_on = "budget"
+        spent = 0
+        for _ in range(SESSION_WALK_MAX_WINDOWS + 1):
+            if cursor_ms <= 0:
+                stopped_on = "epoch"
+                break
+            if cursor_ms <= span_floor_ms:
+                stopped_on = "span"
+                break
+            if floor_ms is not None and cursor_ms <= floor_ms:
+                stopped_on = "terminal_floor"
+                break
+            # Whole seconds is all `copy_ticks_range` takes, so the range is
+            # rounded outward and the surplus filtered below. Rounding the
+            # other way would drop every tick sharing the cursor's second.
+            to_s = -(-cursor_ms // 1000)
+            from_s = max(0, cursor_ms // 1000 - width_s, span_floor_ms // 1000)
+            found = mt5.copy_ticks_range(self.symbol, from_s, to_s, flags)
+            spent += 1
+            if found is None:
+                log(
+                    "BRIDGE_BACKFILL_WALK_FAILED",
+                    symbol=self.symbol,
+                    from_s=from_s,
+                    to_s=to_s,
+                    mt5_error=str(mt5.last_error()),
+                    action="answer_with_what_is_in_hand",
+                )
+                stopped_on = "terminal_error"
+                break
+            fresh = self.older_than(found, cursor_ms)
+            if not len(fresh):
+                # A whole window with no prints in it: the session started
+                # after this point, and what is in hand is all of it.
+                stopped_on = "session_edge"
+                break
+            edge = self.session_edge_in(fresh, SESSION_GAP_MS)
+            if edge:
+                # The session began inside this window. Keep the part above the
+                # break and stop -- everything below it is the day before.
+                windows.append(fresh[edge:])
+                stopped_on = "session_edge"
+                break
+            windows.append(fresh)
+            held += len(fresh)
+            cursor_ms = from_s * 1000
+            # Every window after the first is a gap wide. The first is only
+            # wider so that a trading market answers in one call.
+            width_s = SESSION_GAP_MS // 1000
+            if held >= cap:
+                # The memory bound, reached before the session's edge was
+                # found. Stopping here is what the bound is *for*; the caller
+                # trims to the cap and says what it did.
+                stopped_on = "cap"
+                break
+        return self.join_windows(windows), spent, stopped_on
 
     def last_print_before(self, before_s: int) -> tuple[int | None, int]:
         """When this instrument last printed at or before `before_s`.
@@ -672,7 +1014,15 @@ class Session:
         Silent on the socket by construction: it runs before `backfill_start`,
         where the session shape in PROTOCOL.md has no heartbeat.
         """
-        floor_ms = self.earliest_tick_ms()
+        # Deliberately not consulted here. This is the function a
+        # misreported floor burns: believing a claimed oldest tick of
+        # "19:30 today" made it give up one step in and bracket an empty
+        # block on a day with 1.5 M prints in it. It has no reference print
+        # to judge such a claim against -- it is looking for that print --
+        # so instead of judging one it does not ask. `OPENING_REACH_MAX_CALLS`
+        # is the bound that keeps a symbol with no history from searching
+        # forever, and an empty range is cheap.
+        floor_ms = None
         flags = self.tick_flags()
         cursor_s = before_s
         for call in range(1, OPENING_REACH_MAX_CALLS + 1):
@@ -788,6 +1138,11 @@ class Session:
         # No count_hint: it is optional precisely so a bridge that has not
         # counted yet can still frame the block.
         self.send({"type": "history_start"})
+        # Out now, not at the bottom of the loop: the docstring above promises
+        # this marker precedes the walk, and the walk can take seconds. Left in
+        # the buffer it would wait for a heartbeat or for the walk to finish,
+        # which is the silence the promise exists to prevent.
+        self.flush()
         ticks, exhausted, scanned_to_ms, calls = self.walk_back(wanted, before_ms)
         page_sent_ms = self.server_now_ms()
         for tick in ticks:
@@ -907,12 +1262,32 @@ class Session:
             scanned_to_ms = cursor_ms
         return ticks, exhausted, scanned_to_ms, calls
 
-    def earliest_tick_ms(self) -> int | None:
+    def earliest_tick_ms(self, newest_ms: int | None = None) -> int | None:
         """The oldest tick the terminal holds for this symbol, or None.
 
-        Asked once per session and cached, the failure included: a terminal that
-        cannot answer will not start answering mid-session, and the walk asks on
-        every request.
+        Asked once per session and cached, the failure included: a terminal
+        that cannot answer will not start answering mid-session, and the walk
+        asks on every request.
+
+        **The answer is checked before it is believed.** `copy_ticks_from(sym,
+        0, 1, COPY_TICKS_ALL)` is documented as the oldest tick and does not
+        always return it: on 2026-08-31 it answered 19:30 *that evening* for a
+        WINV26 whose history the same terminal held back to 2024-12-23 and had
+        served range queries about seconds earlier. The terminal appears to
+        answer from whatever it has paged in rather than from the record.
+
+        That answer is not a small error, because the floor is what stops every
+        backwards walk. Believed, it made `last_print_before` give up one step
+        in — the search stepped to 19:03, compared against a floor of 19:30 and
+        concluded the symbol had no history — so the opening block went out
+        empty on a day with 1.5 M prints in it. An empty chart that looks like
+        a quiet market is the exact class of failure this branch exists to end.
+
+        So the claim is falsified rather than trusted: ask for the window
+        immediately below it, and if anything comes back, the claim was not a
+        floor. That costs one terminal call per session and is decisive in the
+        case that matters — below a bogus "19:30 today" sits the whole session,
+        while below a real floor there is nothing at all.
         """
         if self.earliest_known:
             return self.earliest_ms
@@ -926,7 +1301,42 @@ class Session:
                 note="paging still works; it just never claims to have reached the end",
             )
             return None
-        self.earliest_ms = int(found[0]["time_msc"])
+        claimed = int(found[0]["time_msc"])
+        if newest_ms is not None and newest_ms - claimed > SESSION_WALK_MAX_SPAN_MS:
+            # Two days or more below the newest print this symbol has: whatever
+            # else that is, it is not the failure this check exists for, which
+            # is a terminal naming a tick from *inside* recent data as its
+            # oldest. Believing it costs nothing, and the alternative is a
+            # two-day range fetch on the startup path -- measured at 1.1 s on
+            # WINV26, against 0 ms for this comparison.
+            self.earliest_ms = claimed
+            log("BRIDGE_TICK_FLOOR", symbol=self.symbol, earliest_ms=claimed, checked="unnecessary")
+            return claimed
+        to_s = claimed // 1000
+        # Wide enough to see through dead time, which a four-hour look is not:
+        # a terminal that named a *session's open* as its oldest tick would be
+        # believed, because the hours directly below it are the night before
+        # and legitimately empty. Two days clears any overnight gap and most
+        # weekends, and it is one call on a range the terminal answers from
+        # disk.
+        from_s = max(0, to_s - SESSION_WALK_MAX_SPAN_MS // 1000)
+        below = mt5.copy_ticks_range(self.symbol, from_s, to_s, mt5.COPY_TICKS_ALL)
+        # Only *whether any* exist is needed, so this asks that and nothing
+        # more: `older_than` would build a filtered copy of a two-day window on
+        # the startup path, and the answer is one bit.
+        older = self.any_older_than(below, claimed)
+        if older:
+            log(
+                "BRIDGE_TICK_FLOOR_IMPLAUSIBLE",
+                symbol=self.symbol,
+                claimed_ms=claimed,
+                found_below=older,
+                action="ignore_the_floor",
+                note="the terminal named an oldest tick with ticks underneath it; "
+                "walking back is not stopped by it",
+            )
+            return None
+        self.earliest_ms = claimed
         log("BRIDGE_TICK_FLOOR", symbol=self.symbol, earliest_ms=self.earliest_ms)
         return self.earliest_ms
 
@@ -1364,6 +1774,12 @@ class Session:
                 "server_utc_offset_s": self.offset_s,
             }
         )
+        # A heartbeat that waits in a buffer is not a heartbeat. Its whole job
+        # is to prove the bridge is alive during work that does not return to
+        # the loop for seconds at a time -- `walk_back` calls this from inside
+        # its own search -- and the loop's flush is exactly the thing that is
+        # not running then.
+        self.flush()
         if self.book_subscribed:
             log(
                 "BRIDGE_BOOK_STATS",
@@ -1378,6 +1794,7 @@ class Session:
             self.book_subscribed = False
         try:
             self.send({"type": "bye", "reason": reason})
+            self.flush()
         except OSError:
             pass
 
@@ -1415,11 +1832,22 @@ def run_session(args: argparse.Namespace, offset_s: int) -> None:
                 # arrives when a trader clicks, and the answer should not wait
                 # on the next poll interval to start.
                 session.pump_commands()
+                # After the pumps and the commands: a trader's click and a live
+                # print both outrank filling in this morning's history.
+                session.pump_opening()
                 session.maybe_heartbeat()
+                # Everything this pass produced leaves before the loop waits.
+                # The buffer's size cap bounds memory; this bounds *latency*,
+                # and without it a quiet tape could hold a print until enough
+                # others arrived to fill a quarter of a megabyte.
+                session.flush()
                 # Sleep to the nearest due deadline instead of spinning: the
                 # terminal reads cost microseconds, the waiting is the loop.
                 idle = min(next_tick, next_book) - time.monotonic()
-                if idle > 0:
+                # Not while the opening session is still going out: there is
+                # work in hand, and sleeping on it would stretch a fill that
+                # takes ten seconds into one that takes minutes.
+                if idle > 0 and not session.pending_opening:
                     time.sleep(min(idle, 0.05))
         except KeyboardInterrupt:
             session.close("interrupted")
@@ -1438,15 +1866,27 @@ def main() -> int:
         "--backfill-minutes",
         type=int,
         default=720,
-        help="history window to send on connect (default covers a whole B3 session)",
+        help=(
+            "width of the opening block's first ask; the block itself reaches "
+            "the session's first print however long that takes"
+        ),
     )
     parser.add_argument(
         "--backfill-max-ticks",
         type=int,
-        default=1_000_000,
+        default=DEFAULT_BACKFILL_MAX_TICKS,
         help=(
-            "hard cap on backfilled ticks; the newest ones win and the rest "
-            "stays one 'load older' away"
+            "bound on how many opening ticks are held in memory at once; the "
+            "newest win and the rest stays one 'load older' away"
+        ),
+    )
+    parser.add_argument(
+        "--opening-slice-ticks",
+        type=int,
+        default=DEFAULT_OPENING_SLICE_TICKS,
+        help=(
+            "ticks per slice of the opening block; the first slice is what the "
+            "chart paints on and the rest follow it while the tape runs"
         ),
     )
     parser.add_argument(
@@ -1511,6 +1951,7 @@ def main() -> int:
         port=args.port,
         backfill_minutes=args.backfill_minutes,
         backfill_max_ticks=args.backfill_max_ticks,
+        opening_slice_ticks=args.opening_slice_ticks,
         stream_book=args.book,
     )
     try:

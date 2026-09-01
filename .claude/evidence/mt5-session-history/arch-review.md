@@ -1,0 +1,144 @@
+# arch-review — evidence for G8 and G1
+
+Graded over `git diff origin/main...HEAD` for `feat/mt5-session-history`. The
+`arch-review-ok` marker holds the sha this file names; if the two disagree, the
+marker is stale and this file is the record of what was actually reviewed.
+
+**Graded head: the commit that lands this file.** An earlier verdict lived only
+in a scratchpad and named `92f8ac9`, two commits behind what shipped —
+`delivery-review` graded G8 UNPROVEN for exactly that, and it was right: the
+README/code mismatch it also caught lived in the commits that verdict never
+covered. Hence this file, in the repository, beside the evidence it cites.
+
+## Step 0 — the bug pass
+
+Two `code-review` passes at **xhigh** over the branch, plus three self-reviews
+of the deltas after them. Stated separately because they are different in kind.
+
+**No agent pass ran for rounds 3, 4 or 5, and that is the skill's own rule
+rather than a shortcut.** Two rounds is this repo's budget, a third is for a
+branch whose second round found Blockers, and past that the instruction is to
+report the remainder as PR follow-ups instead of spending another pass. Rounds
+1 and 2 were both spent and both closed. Each later delta is small and its bug
+pass is mine, which is said here so a short pass is never read as a thorough
+one. This branch has no tier file and no `**Tier:**` line, so the default
+level for a branch — `high` — is what rounds 1 and 2 would have used; they ran
+above it, at `xhigh`.
+
+| Pass | Scope | Findings | Outcome |
+| --- | --- | --- | --- |
+| 1 | whole branch @ `9d08e3a`…`8981b27` | 13, all confirmed | 13 fixed |
+| 2 | whole branch @ `7bdef1a` | 14, all confirmed | 6 fixed, 3 deferred with reasons, 5 doc/claim corrections |
+| 3 | the delta after pass 2, by me | 2 | 2 fixed |
+| 4 | the delta after round 4 of `delivery-review`, by me | 1 | 1 fixed |
+| 5 | the delta after round 7 of `delivery-review`, by me | 3 | 3 fixed |
+| 6 | the delta after round 8 of `delivery-review`, by me | 0 new | — |
+
+The three that could have reached the trader, all from the agent passes:
+
+1. **An empty opening block left the live cursor at zero**, so the pump asked
+   the terminal for its *oldest* ticks and forwarded 2024 prints as live
+   trades, 4 096 a pass, for the life of the session.
+2. **`flush` retried a partial write.** The socket carries a timeout, so
+   `sendall` can write part of a buffer and raise; `close` then re-sent up to
+   256 KB, duplicating prints on the tape.
+3. **The reconnect guard was armed by the *first* opening block**, so a normal
+   open discarded every slice of its own session — the trader would have seen
+   the block the chart paints on and nothing behind it. Found by re-measuring,
+   not by reading.
+
+Every one of those is now covered by a test **run red against the un-fixed
+code** before being accepted: the cursor, the buffer drop, the dropped slices,
+the in-window session edge, and the zero cap.
+
+Round 6 found nothing of its own: that delta is prose, and its whole content
+is round 8's findings, listed there rather than duplicated here.
+
+Round 5's three, on the perf summariser this directory generates itself from:
+its first return value was called `launch` and the sentence it printed said
+"after process launch", when it is the first stamped line *in the log* — after
+the process starts, after its subscriber is up. Small, free to avoid, and
+exactly the shape of overstatement this file keeps retracting, so it is
+`first_line` now and the sentence says so. Beside it, `"MT5_HISTORY_READY"`
+inline in a module that keeps its two other log-event names as constants, and
+a function called `parse` in a module that names `stamp_of` after what it
+reads.
+
+My own passes over the deltas found three things the agent passes could not
+have seen, because they were in code written after them: the floor check I had
+just widened costing **about a second on every open** — on the path this branch
+exists to make fast, and the reason it now skips itself when the claim sits far
+enough below the newest print — a docstring with two ideas jammed into one
+line, and a
+wire-contract guard that split on the wrong `required` array and so could not
+have failed for the reason it stated. That last one was proved by marking the
+field required in the shipped schema and watching the test go red.
+
+**A third adversarial pass was deliberately not run.** Rounds one and two
+returned 13 then 14 — flat, with several findings inside the previous round's
+own fixes. That shape means triage and record deferrals, not iterate; five
+deferrals are written into the goal file with their reasoning. This is a
+visible decision to argue with rather than a skipped gate.
+
+## Verdict
+
+- **Correctness** — 29 findings across three passes; all fixed or deferred with
+  a recorded reason. None open.
+- **Docking** — yes. `HistoryReach::Span` is a variant plus its arms, reached
+  by the toolbar, the env hook and the control plane through `ALL` and
+  `from_token` with no edit of their own;
+  `every_reach_is_reachable_by_its_token_and_says_what_it_does` fails for a
+  reach added without a token, label or hover. `ScriptedMenu` replaced a string
+  equality against one literal with the same shape.
+- **Performance** — every figure here now has a file under it, which three of
+  them did not until this round.
+
+  *On the wire*, measured on a live 816 334-tick session and committed as
+  [`send-cost.md`](send-cost.md): **20.01 s → 5.50 s**, the socket's own share
+  **14.54 s → 0.03 s** — one bulk write moves the whole 110 MB in 0.03 s. An
+  earlier revision of this bullet said "62 s → ~11 s, 47 s of it `sendall`",
+  from a development run whose output was never committed. The shape held; the
+  seconds are not recoverable, so they are gone rather than restated.
+
+  *The walk*, from [`terminal-probe-raw.txt`](terminal-probe-raw.txt): the
+  session costs **344 ms** against the clock window's 125 ms fetch, and buys
+  **5.01 h and 1 139 448 prints**. The bullet said "984 → 219 ms", which reads
+  as a before and an after; 219 ms is the *difference* between those two, and
+  no run measured a 984 ms walk.
+
+  *The floor check* costs nothing on the common path — the probe's
+  `find + walk : 0 ms + 344 ms`, and `send-cost-raw.txt` catches the skip
+  deciding for itself with `"checked":"unnecessary"`. The 1109 ms it replaced
+  comes from the same uncommitted run as the wire figure and goes for the same
+  reason.
+
+  *Under the fill*: fps floor 54 against a control's 57, no `APP_SLOW_FRAMES`
+  on either side, for eight times the trades — and the chart draws its first
+  bars **sooner** than the control's, 1.31 s against 3.45 s from
+  `MT5_BACKFILL_START`, which is what the opening block is for. Generated, not
+  transcribed — [`perf.md`](perf.md) and
+  [`summarise_perf.py`](summarise_perf.py), which reads those two marks off
+  each log rather than having them typed under it. Per-trade and per-depth
+  paths are untouched.
+- **Operability** — `QUANTICK_MENU=history` and
+  `QUANTICK_HISTORY_REACH_SPAN_MINUTES`, both in the `ui-harness` registry; the
+  reach and its span read back over the control plane
+  ([`second-operator-reach-readback.txt`](second-operator-reach-readback.txt)),
+  and the fill's progress is on the wire with a schema test holding it optional.
+- **Proof** — unit: the cursor, the buffer drop, the in-window session edge,
+  the zero cap, the formatter/parser round trip, a hostile count, the span
+  campaign's five stop conditions, the tab's fill-progress reader. Integration:
+  `session_gap_agreement.rs` (5 tests), `bridge_server.rs`'s three opening-slice
+  tests, `metatrader.rs`'s first-session test, and three Python suites now
+  discovered automatically so a fourth cannot be forgotten.
+- **Accumulation** — trunk moved: `app.rs` +115, `tab.rs` +173, `toolbar.rs`
+  +124, `metatrader.rs` +171, `stream.rs` +55. Three `size_guard` ceilings
+  raised — `app.rs` 9775 → 9890, `tab.rs` 4401 → 4470, `stream.rs` 2142 → 2200
+  — each with the reason recorded beside the number in the diff.
+- **Language** — `cargo test -p quantick-guards --test guards` passes, its
+  `tracked_files_are_written_in_english` among the four, **and** I read the
+  prose, the branch
+  name and every commit message myself. English throughout; the only
+  non-English text is the trader's request quoted verbatim in the archived goal
+  file, which `CLAUDE.md` exempts as a marked, attributed quotation and which
+  that file claims openly in its own preamble.

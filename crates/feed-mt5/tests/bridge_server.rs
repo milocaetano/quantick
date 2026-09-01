@@ -386,6 +386,151 @@ async fn a_session_that_dies_holding_a_request_still_answers_it() {
 }
 
 #[tokio::test]
+async fn an_opening_slice_is_prepended_although_nobody_asked_for_it() {
+    // The opposite of the test below, and the distinction the `opening` flag
+    // exists to draw. A block nobody asked for is normally dropped, because
+    // charting history at the front of the live tape is worse than losing it.
+    // A block *marked* as part of the opening session is the bridge filling in
+    // the morning behind the slice the chart opened on, and dropping that
+    // would be dropping the trader's session.
+    let (addr, mut rx) = start_server("WIN$N").await;
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    sock.write_all(hello_that_pages("WIN$N").as_bytes())
+        .await
+        .unwrap();
+    let _connected = next_event(&mut rx).await;
+
+    let mut script = String::new();
+    script.push_str("{\"type\":\"history_start\",\"count_hint\":3,\"opening\":true}\n");
+    // Three ticks: the first has no tick-rule context and is dropped by the
+    // mapper, exactly as in any other block. An opening slice is classified
+    // against itself like a paged one, which is the point of it arriving as a
+    // block at all rather than as a run of live prints.
+    script.push_str(&tick_at(9, 1_784_824_200_000, "177700", 5));
+    script.push_str(&tick_at(10, 1_784_824_201_000, "177710", 5));
+    script.push_str(&tick_at(11, 1_784_824_202_000, "177690", 5));
+    script.push_str("{\"type\":\"history_end\",\"opening\":true,\"remaining\":3}\n");
+    sock.write_all(script.as_bytes()).await.unwrap();
+
+    let Mt5Event::OpeningPage { trades, remaining } = next_event(&mut rx).await else {
+        panic!("an opening slice must arrive as its own event, not be dropped");
+    };
+    assert_eq!(trades.len(), 2, "the slice is delivered, not discarded");
+    assert_eq!(trades[0].side, Side::Buy, "uptick, read within the slice");
+    assert_eq!(trades[1].side, Side::Sell, "downtick");
+    assert_eq!(
+        remaining,
+        Some(3),
+        "and it says how much of the session is still coming, so the chart can \
+         show a count instead of a spinner of unknown length"
+    );
+}
+
+#[tokio::test]
+async fn the_first_session_keeps_its_own_opening_slices() {
+    // The regression that broke the whole feature once: the reconnect guard
+    // was armed by the *first* backfill block rather than by a second one, so
+    // a normal open dropped every slice of its own session as a repeat. The
+    // trader saw the 200 000-print opening block and nothing behind it.
+    let (addr, mut rx) = start_server("WIN$N").await;
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    sock.write_all(hello_that_pages("WIN$N").as_bytes())
+        .await
+        .unwrap();
+    let _connected = next_event(&mut rx).await;
+
+    // The opening block, exactly as a first connection sends it.
+    let mut script = String::from(
+        "{\"type\":\"backfill_start\",\"count_hint\":3}
+",
+    );
+    script.push_str(&tick_at(1, 1_784_824_290_000, "177795", 3));
+    script.push_str(&tick_at(2, 1_784_824_291_000, "177800", 1));
+    script.push_str(&tick_at(3, 1_784_824_292_000, "177790", 2));
+    script.push_str(
+        "{\"type\":\"backfill_end\"}
+",
+    );
+    sock.write_all(script.as_bytes()).await.unwrap();
+    let Mt5Event::Backfilled(batch) = next_event(&mut rx).await else {
+        panic!("expected the opening block");
+    };
+    assert!(!batch.is_empty(), "the opening block is charted");
+
+    // ...and the slice that fills the session in behind it must survive.
+    let mut slice = String::from(
+        "{\"type\":\"history_start\",\"count_hint\":3,\"opening\":true}
+",
+    );
+    slice.push_str(&tick_at(4, 1_784_824_200_000, "177700", 5));
+    slice.push_str(&tick_at(5, 1_784_824_201_000, "177710", 5));
+    slice.push_str(&tick_at(6, 1_784_824_202_000, "177690", 5));
+    slice.push_str(
+        "{\"type\":\"history_end\",\"opening\":true,\"remaining\":2}
+",
+    );
+    sock.write_all(slice.as_bytes()).await.unwrap();
+
+    let Mt5Event::OpeningPage { trades, remaining } = next_event(&mut rx).await else {
+        panic!("the first session's own slices must not be read as a reconnect's");
+    };
+    assert_eq!(trades.len(), 2, "the slice is charted, not discarded");
+    assert_eq!(remaining, Some(2));
+}
+
+#[tokio::test]
+async fn an_opening_slice_does_not_answer_a_click() {
+    // The reason opening slices are a separate event. A trader who presses
+    // *+ older* while the morning is still filling in is owed one reply to
+    // *that* press; if a slice settled it, the spinner would stop on history
+    // the trader did not ask for and the real answer would arrive as a page
+    // nobody was waiting for.
+    let config = test_config("WIN$N");
+    let pager = config.history_pager.clone();
+    let (addr, mut rx) = start_server_from(config).await;
+
+    let mut sock = TcpStream::connect(&addr).await.unwrap();
+    sock.write_all(hello_that_pages("WIN$N").as_bytes())
+        .await
+        .unwrap();
+    let _connected = next_event(&mut rx).await;
+
+    assert!(pager.request(2_000, 1_784_835_100_000));
+    let _request = read_line(&mut sock).await;
+
+    // An opening slice lands while that request is in flight.
+    let mut script = String::new();
+    script.push_str("{\"type\":\"history_start\",\"opening\":true}\n");
+    script.push_str(&tick_at(9, 1_784_824_200_000, "177700", 5));
+    script.push_str("{\"type\":\"history_end\",\"opening\":true,\"remaining\":0}\n");
+    sock.write_all(script.as_bytes()).await.unwrap();
+    let Mt5Event::OpeningPage { .. } = next_event(&mut rx).await else {
+        panic!("expected the opening slice");
+    };
+
+    // The click is still owed its own answer, so a second request must still
+    // be refused -- the first one has not been settled by the slice.
+    assert!(
+        !pager.request(2_000, 1_784_835_100_000),
+        "the click is still in flight; an opening slice must not have settled it"
+    );
+
+    // And when the real answer arrives, it settles it.
+    sock.write_all(
+        b"{\"type\":\"history_start\"}\n{\"type\":\"history_end\",\"exhausted\":false}\n",
+    )
+    .await
+    .unwrap();
+    let Mt5Event::HistoryPage { .. } = next_event(&mut rx).await else {
+        panic!("expected the answer to the click");
+    };
+    assert!(
+        pager.request(2_000, 1_784_835_000_000),
+        "with the click answered, the button works again"
+    );
+}
+
+#[tokio::test]
 async fn one_request_at_a_time_and_a_page_nobody_asked_for_is_dropped() {
     let config = test_config("WIN$N");
     let pager = config.history_pager.clone();

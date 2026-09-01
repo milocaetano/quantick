@@ -241,8 +241,18 @@ pub struct ToolbarModel<'a> {
     /// What θ accumulates for [`BarKind::Imbalance`]: trades, volume or
     /// dollar (López de Prado's TIB/VIB/DIB).
     pub imbalance_unit: &'a mut ImbalanceUnit,
+    /// Where the history menu's own button ended up, written back by the draw.
+    ///
+    /// Published for the same reason the Workspace menu's rect is: a menu is a
+    /// popup egui owns, so the only honest way to open one from a hook is to
+    /// deliver a click on the button's real rectangle. Guessing a pixel would
+    /// photograph whatever happens to be there.
+    pub history_menu_rect: &'a mut Option<egui::Rect>,
     /// Trades pulled per "+ older" click.
     pub history_step: &'a mut usize,
+    /// Minutes of traded time one "+ older" click pulls under the `by time`
+    /// reach. Written straight through like the page size beside it.
+    pub history_reach_span_minutes: &'a mut u32,
     /// How far one "+ older" press reaches: one page, or the previous session
     /// with a lead into it. Written straight through, as the page size is —
     /// the reach is a stored choice, not an event.
@@ -692,11 +702,14 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
     if load.clicked() {
         actions.push(ToolbarAction::LoadOlder);
     }
-    ui.add_enabled_ui(menu, |ui| {
+    let caret = ui.add_enabled_ui(menu, |ui| {
         ui.menu_button(icons::CARET_DOWN, |ui| {
             draw_history_menu(ui, model, actions);
-        });
+        })
+        .response
+        .rect
     });
+    *model.history_menu_rect = menu.then_some(caret.inner);
 }
 
 /// What one press of the load button promises right now: the reach's own
@@ -831,6 +844,48 @@ fn history_disabled_hover(model: &ToolbarModel) -> &'static str {
     .map_or("", HistoryPagingOff::hover)
 }
 
+/// A span of traded time in the words the box shows: whole hours, else hours
+/// and minutes.
+fn format_tape_span(minutes: i64) -> String {
+    if minutes % 60 == 0 {
+        format!("{} h", minutes / 60)
+    } else {
+        format!("{} h {:02} m", minutes / 60, minutes % 60)
+    }
+}
+
+/// Read a span back from what [`format_tape_span`] writes, in minutes.
+///
+/// Accepts what the box shows (`3 h`, `2 h 30 m`) and what a trader is likely
+/// to type instead (`3`, `2.5`, `90m`). A bare number is **hours**, because
+/// hours is the unit the box is displaying when the caret arrives — reading it
+/// as minutes is the exact confusion this parser exists to prevent.
+fn parse_tape_span(text: &str) -> Option<f64> {
+    let text = text.trim().to_ascii_lowercase();
+    if text.is_empty() {
+        return None;
+    }
+    let (hours_part, minutes_part) = match text.split_once('h') {
+        Some((hours, rest)) => (hours.trim(), rest.trim_end_matches('m').trim()),
+        None => match text.strip_suffix('m') {
+            // An explicit `m` is the one way to mean minutes.
+            Some(minutes) => return minutes.trim().parse::<f64>().ok(),
+            None => (text.as_str(), ""),
+        },
+    };
+    let hours: f64 = if hours_part.is_empty() {
+        0.0
+    } else {
+        hours_part.parse().ok()?
+    };
+    let minutes: f64 = if minutes_part.is_empty() {
+        0.0
+    } else {
+        minutes_part.parse().ok()?
+    };
+    Some(hours * 60.0 + minutes)
+}
+
 /// Whether the history menu has anything in it — trade paging, candle reach,
 /// or both.
 ///
@@ -871,6 +926,30 @@ fn draw_history_menu(
             };
             ui.selectable_value(model.history_reach, reach, reach.label())
                 .on_hover_text(hover);
+        }
+        if *model.history_reach == crate::history_reach::HistoryReach::Span {
+            // Shown only under the reach that reads it. A duration sitting
+            // beside a reach that ignores it is a control that looks broken:
+            // the trader sets it, presses, and nothing about the press changes.
+            ui.label("tape per press");
+            ui.add(
+                egui::DragValue::new(model.history_reach_span_minutes)
+                    .range(1.0..=(crate::history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000) as f64)
+                    .speed(15.0)
+                    .custom_formatter(|minutes, _| format_tape_span(minutes as i64))
+                    // egui seeds keyboard editing from the formatter's own
+                    // output, so a box that renders "2 h" and parses only bare
+                    // numbers is a trap: the trader sees hours, types 4 meaning
+                    // four hours, and gets four minutes. The parser reads back
+                    // exactly what the formatter writes, and a bare number is
+                    // read as hours for the same reason — that is the unit on
+                    // screen.
+                    .custom_parser(parse_tape_span),
+            )
+            .on_hover_text(
+                "traded time, not clock time: a night or a weekend is crossed \
+                 to find these hours and adds nothing to them",
+            );
         }
         ui.label("page size (trades per load)");
         ui.add(
@@ -1337,6 +1416,33 @@ fn draw_overflow(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_span_box_reads_back_exactly_what_it_prints() {
+        // The trap this pair exists to close: egui seeds keyboard editing from
+        // the formatter, so a box showing "2 h" that parses only bare numbers
+        // turns a trader typing 4 (meaning four hours) into four minutes.
+        for minutes in [1_i64, 59, 60, 90, 120, 210, 2880] {
+            let shown = format_tape_span(minutes);
+            assert_eq!(
+                parse_tape_span(&shown).map(|value| value as i64),
+                Some(minutes),
+                "{minutes} minutes rendered as {shown:?} and did not survive the round trip"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bare_number_in_the_span_box_is_hours() {
+        // Hours is the unit on screen when the caret arrives, so a bare number
+        // means hours. Minutes need saying.
+        assert_eq!(parse_tape_span("4"), Some(240.0));
+        assert_eq!(parse_tape_span("2.5"), Some(150.0));
+        assert_eq!(parse_tape_span("90m"), Some(90.0));
+        assert_eq!(parse_tape_span("2 h 30 m"), Some(150.0));
+        assert_eq!(parse_tape_span(""), None);
+        assert_eq!(parse_tape_span("later"), None);
+    }
     /// Unblocked lamps from their on/off flags, in [`LayerToggle::ALL`]
     /// order. A fixture that wants a blocked lamp builds the array itself.
     fn layer_states(on: [bool; LayerToggle::COUNT]) -> [LayerToggleState; LayerToggle::COUNT] {
@@ -1524,6 +1630,8 @@ mod tests {
         let mut imbalance_target = 100_u64;
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
+        let mut span_minutes = 120_u32;
+        let mut history_menu_rect = None;
         let mut history_reach = crate::history_reach::HistoryReach::default();
         for replaying in [false, true] {
             for _ in 0..2 {
@@ -1550,6 +1658,8 @@ mod tests {
                         imbalance_target: &mut imbalance_target,
                         imbalance_unit: &mut imbalance_unit,
                         history_step: &mut history_step,
+                        history_reach_span_minutes: &mut span_minutes,
+                        history_menu_rect: &mut history_menu_rect,
                         history_reach: &mut history_reach,
                         history_reach_running: false,
                         history_trades: 1_000,
@@ -1612,6 +1722,8 @@ mod tests {
         let mut imbalance_target = 100_u64;
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
+        let mut span_minutes = 120_u32;
+        let mut history_menu_rect = None;
         let mut history_reach = crate::history_reach::HistoryReach::default();
         // Wide enough that the §6 plan folds nothing — the point is the
         // inline chip row, not the overflow menu.
@@ -1644,6 +1756,8 @@ mod tests {
                     imbalance_target: &mut imbalance_target,
                     imbalance_unit: &mut imbalance_unit,
                     history_step: &mut history_step,
+                    history_reach_span_minutes: &mut span_minutes,
+                    history_menu_rect: &mut history_menu_rect,
                     history_reach: &mut history_reach,
                     history_reach_running: false,
                     history_trades: 1_000,
@@ -1699,6 +1813,8 @@ mod tests {
         let mut imbalance_target = 100_u64;
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
+        let mut span_minutes = 120_u32;
+        let mut history_menu_rect = None;
         let mut history_reach = crate::history_reach::HistoryReach::default();
         // Every kind, including the two the feed cannot back: selecting one is
         // still possible from config or a previous session, and the toolbar
@@ -1725,6 +1841,8 @@ mod tests {
                         imbalance_target: &mut imbalance_target,
                         imbalance_unit: &mut imbalance_unit,
                         history_step: &mut history_step,
+                        history_reach_span_minutes: &mut span_minutes,
+                        history_menu_rect: &mut history_menu_rect,
                         history_reach: &mut history_reach,
                         history_reach_running: false,
                         history_trades: 200_000,
@@ -1769,6 +1887,8 @@ mod tests {
         let mut imbalance_target = 100_u64;
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
+        let mut span_minutes = 120_u32;
+        let mut history_menu_rect = None;
         let mut history_reach = crate::history_reach::HistoryReach::default();
         let mut painted = String::new();
         // Wide enough that the §6 plan folds nothing — the point is the
@@ -1801,6 +1921,8 @@ mod tests {
                     imbalance_target: &mut imbalance_target,
                     imbalance_unit: &mut imbalance_unit,
                     history_step: &mut history_step,
+                    history_reach_span_minutes: &mut span_minutes,
+                    history_menu_rect: &mut history_menu_rect,
                     history_reach: &mut history_reach,
                     history_reach_running: false,
                     history_trades: 1_000,

@@ -1,0 +1,19 @@
+{"event_code":"BRIDGE_TICK_FLOOR","symbol":"WINV26","earliest_ms":1734933603326}
+symbol            : WINV26
+host clock        : 2026-08-31T23:03:26 local
+
+BEFORE - the rolling 720-minute clock window
+  ticks           : 386173
+  oldest          : 2026-08-31 14:03:26.016
+  newest          : 2026-08-31 18:31:23.324
+  fetch           : 125 ms
+
+AFTER - the session the tape is in
+  ticks           : 1525621
+  oldest          : 2026-08-31 09:03:00.233
+  newest          : 2026-08-31 18:31:23.324
+  windows walked  : 2 (search took 2)
+  stopped on      : session_edge
+  find + walk     : 0 ms + 344 ms
+
+  RECOVERED       : 5.01 h of the session, 1139448 extra prints

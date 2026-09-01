@@ -45,9 +45,25 @@ python bridge/mt5/quantick_bridge.py --symbol WINQ26
 ```
 
 Options worth knowing:
-`--port` (default 9100), `--backfill-minutes` (720 — a whole B3 session),
-`--backfill-max-ticks` (1 000 000; the newest win and the log says how many were
-left behind), `--no-book`, `--book-poll-ms` (5), `--utc-offset-s`.
+`--port` (default 9100), `--backfill-minutes` (720 — the width of the opening
+block's *first* ask, not its reach), `--backfill-max-ticks` (4 000 000, a bound
+on memory rather than on the span; the newest win and the bridge says so),
+`--opening-slice-ticks` (200 000 — the first slice is what the chart paints
+on, and the rest of the session follows it while the tape runs; sized against
+what prepending each slice costs the chart, not against the bridge),
+`--no-book`, `--book-poll-ms` (5), `--utc-offset-s`.
+
+**Where the opening block starts.** The session the tape is in, from its own
+first print — not a window measured back from the clock. That distinction is
+the whole of a bug that survived four attempts: a rolling twelve-hour window
+covers a 09:00 session only while the clock reads between about 18:25 and
+21:00, so a chart opened at 21:30 began at 09:30 and one opened at 22:10 began
+at 13:10, each looking exactly as complete as a full day. The bridge now finds
+the newest print, walks back until the prints stop for longer than an hour, and
+sends from there; a stretch that quiet is the market having been shut, which is
+read off the tape rather than from a calendar quantick does not have. The same
+rule decides a session edge at the other end of the wire, in the chart's *load
+older* campaign, and a test fails if the two values ever drift apart.
 
 The terminal keeps far more history than you would guess — a probe on
 2026-07-24 found 1.25 M ticks for that day alone and 36 M over 30 days, with a

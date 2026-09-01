@@ -20,6 +20,15 @@ const MODULE_ID: &str = "workspace";
 const SCHEMA_VERSION: u32 = 1;
 const SPLIT_FRACTION_DECIMAL_PLACES: u32 = 6;
 
+/// What `history_reach_span_minutes` reads as when a snapshot predates it.
+///
+/// Zero, which no running build ever reports — the setter clamps to at least
+/// one minute — so a consumer can tell "this build did not say" from any real
+/// span rather than being handed a plausible-looking two hours.
+fn no_span_reported() -> WireU64 {
+    WireU64::new(0)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct WorkspaceSnapshot {
     pub active_tab_index: WireU64,
@@ -38,6 +47,18 @@ pub(crate) struct WorkspaceSnapshot {
     /// built before the field existed.
     #[serde(default)]
     pub history_reach: String,
+    /// Minutes of *traded* time one press of the `span` reach pulls.
+    ///
+    /// Beside the reach because the two are one choice: an operator that
+    /// can read back `by time` but not how much time cannot tell what the
+    /// next press will do.
+    ///
+    /// `serde(default)` like every optional neighbour: v1 is frozen, and a
+    /// snapshot from a build that predates this field must still validate
+    /// against the shipped schema. A new *required* key is a breaking change
+    /// wearing an additive diff.
+    #[serde(default = "no_span_reported")]
+    pub history_reach_span_minutes: WireU64,
     /// Whether a run of *load older* requests is in flight on the active tab.
     ///
     /// The setting above says what a press will do; this says whether one is
@@ -142,6 +163,7 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
         performance_readings_visible,
         progressive_venue_history,
         history_reach: history_reach.token().to_owned(),
+        history_reach_span_minutes: WireU64::new(app.control_history_reach_span_minutes().into()),
         history_reach_running,
         venue_lead_in,
         replay_day_before: app.control_replay_day_before(),

@@ -146,6 +146,26 @@ pub enum BridgeMsg {
         /// How many ticks the bridge intends to send, if it knows.
         #[serde(default)]
         count_hint: Option<u64>,
+        /// Whether this block is part of the *opening* history rather than the
+        /// answer to a click.
+        ///
+        /// The opening block is a whole trading session — on B3's mini index, a
+        /// million and a half prints and a couple of hundred megabytes. Sent as
+        /// one `backfill_start`/`backfill_end` pair that is eleven seconds
+        /// during which the chart has nothing on it at all, which a trader
+        /// cannot tell apart from a bridge that failed to start. So the newest
+        /// slice goes out as the backfill and the rest of the session follows
+        /// it, newest-first, in blocks carrying this flag.
+        ///
+        /// It matters because the two kinds of block answer to different
+        /// contracts. A page the consumer *asked* for owes it exactly one
+        /// reply, and settling that debt is what stops a spinner; a block
+        /// nobody asked for must settle nothing, or one opening slice would
+        /// silently answer a click the trader made while the session was still
+        /// filling in. `#[serde(default)]` keeps a bridge that predates the
+        /// field meaning what it always did: not opening, therefore a reply.
+        #[serde(default)]
+        opening: bool,
     },
     /// End of the paged block; the ticks between the markers are complete.
     HistoryEnd {
@@ -164,6 +184,20 @@ pub enum BridgeMsg {
         /// retire the button over a transient.
         #[serde(default)]
         exhausted: bool,
+        /// Blocks of opening history still to come after this one, when the
+        /// bridge is sending a session in slices.
+        ///
+        /// Only meaningful on a block whose start carried
+        /// [`BridgeMsg::HistoryStart::opening`]; absent on the answer to a
+        /// click, which is one block and has no successor to count. It exists
+        /// so the chart can say "filling in the morning, four slices to go"
+        /// instead of showing a spinner of unknown length — the difference
+        /// between a trader who waits and one who reconnects.
+        ///
+        /// Never a promise. A session can end mid-fill, and the count is what
+        /// the bridge believed when the block left.
+        #[serde(default)]
+        remaining: Option<u64>,
         /// The oldest instant the walk actually reached, in **server time** —
         /// not the oldest tick sent, the oldest point searched.
         ///
@@ -489,16 +523,23 @@ mod tests {
         // Verbatim from PROTOCOL.md. The markers bracket ordinary `tick`
         // messages — the block is distinguished by what encloses it, not by a
         // different tick shape, so the mapper stays one code path.
-        let BridgeMsg::HistoryStart { count_hint } =
-            parse_line(r#"{"type":"history_start","count_hint":2000}"#).expect("start parses")
+        let BridgeMsg::HistoryStart {
+            count_hint,
+            opening,
+        } = parse_line(r#"{"type":"history_start","count_hint":2000}"#).expect("start parses")
         else {
             panic!("expected history_start");
         };
         assert_eq!(count_hint, Some(2000));
+        assert!(
+            !opening,
+            "the answer to a click is not part of the opening block"
+        );
 
         let BridgeMsg::HistoryEnd {
             exhausted,
             scanned_to_ms,
+            remaining,
         } = parse_line(r#"{"type":"history_end","exhausted":true,"scanned_to_ms":1784824200000}"#)
             .expect("end parses")
         else {
@@ -506,6 +547,42 @@ mod tests {
         };
         assert!(exhausted, "the bridge said the terminal has nothing older");
         assert_eq!(scanned_to_ms, Some(1_784_824_200_000));
+        assert_eq!(
+            remaining, None,
+            "a click's answer has no successor to count"
+        );
+    }
+
+    #[test]
+    fn an_opening_slice_is_marked_at_both_ends_and_counts_down() {
+        // The bridge sends the session in slices behind the block the chart
+        // opened on. Both markers carry the flag because only the start says
+        // which kind of block this is and only the end can act on it.
+        let BridgeMsg::HistoryStart {
+            count_hint,
+            opening,
+        } = parse_line(r#"{"type":"history_start","count_hint":50000,"opening":true}"#)
+            .expect("start parses")
+        else {
+            panic!("expected history_start");
+        };
+        assert_eq!(count_hint, Some(50_000));
+        assert!(opening, "this block answers no request");
+
+        let BridgeMsg::HistoryEnd {
+            exhausted,
+            remaining,
+            ..
+        } = parse_line(r#"{"type":"history_end","opening":true,"remaining":29}"#)
+            .expect("end parses")
+        else {
+            panic!("expected history_end");
+        };
+        assert_eq!(remaining, Some(29), "the chart can say how much is left");
+        assert!(
+            !exhausted,
+            "a slice of the opening block says nothing about the end of the tape"
+        );
     }
 
     #[test]
@@ -515,20 +592,30 @@ mod tests {
         // The defaults are the cautious ones: no count promised, and the tape
         // is *not* declared finished — retiring the button on a bridge that
         // never said "that is all" would strand history the terminal has.
-        let BridgeMsg::HistoryStart { count_hint } =
-            parse_line(r#"{"type":"history_start"}"#).expect("bare start parses")
+        let BridgeMsg::HistoryStart {
+            count_hint,
+            opening,
+        } = parse_line(r#"{"type":"history_start"}"#).expect("bare start parses")
         else {
             panic!("expected history_start");
         };
         assert_eq!(count_hint, None);
+        assert!(
+            !opening,
+            "a bridge predating the field means what it always did: a reply, \
+             not a slice of the opening session. Defaulting the other way would \
+             make an old bridge's page settle nothing and hang the spinner."
+        );
 
         let BridgeMsg::HistoryEnd {
             exhausted,
             scanned_to_ms,
+            remaining,
         } = parse_line(r#"{"type":"history_end"}"#).expect("bare end parses")
         else {
             panic!("expected history_end");
         };
+        assert_eq!(remaining, None);
         assert!(!exhausted, "absent must not read as 'nothing older exists'");
         assert_eq!(
             scanned_to_ms, None,

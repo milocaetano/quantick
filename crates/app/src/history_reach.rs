@@ -101,6 +101,19 @@ pub const MAX_CAMPAIGN_SPAN_MS: i64 = 48 * 60 * 60 * 1_000;
 /// that a record is spent, so this sentence claims less than that one does.
 pub const EMPTY_PAGE_NOTICE: &str = "no older trades came back from that request";
 
+/// What [`HistoryReach::Span`] reaches back by until the trader says otherwise.
+///
+/// Two hours of traded time. Long enough to be worth a press on a contract
+/// printing a million and a half times a day — where the old fixed page of
+/// 2 000 prints is a couple of minutes — and short enough that one press is
+/// not most of a session, which is what [`HistoryReach::PreviousSession`] is
+/// already for. A trader who wants the day before should ask for the day
+/// before by name; this is the reach for "a bit more than I have".
+///
+/// The ceiling is [`MAX_CAMPAIGN_SPAN_MS`]: a run cannot reach past it, so a
+/// larger value would promise a reach the budgets forbid.
+pub const DEFAULT_REACH_SPAN_MS: i64 = 2 * 60 * 60 * 1_000;
+
 /// What a press is told when its request could not even be queued.
 ///
 /// A closed command channel is a feed that has gone; a full one is a frame so
@@ -120,6 +133,8 @@ pub struct ReachBounds {
     pub session_gap_ms: i64,
     /// See [`PREVIOUS_SESSION_LEAD_MS`].
     pub previous_session_lead_ms: i64,
+    /// See [`DEFAULT_REACH_SPAN_MS`]. Only read by [`HistoryReach::Span`].
+    pub span_ms: i64,
 }
 
 impl Default for ReachBounds {
@@ -127,6 +142,7 @@ impl Default for ReachBounds {
         Self {
             session_gap_ms: SESSION_GAP_MS,
             previous_session_lead_ms: PREVIOUS_SESSION_LEAD_MS,
+            span_ms: DEFAULT_REACH_SPAN_MS,
         }
     }
 }
@@ -148,11 +164,30 @@ pub enum HistoryReach {
     /// one the chart already reaches, then a further
     /// [`PREVIOUS_SESSION_LEAD_MS`] into it.
     PreviousSession,
+    /// Keep paging until the chart reaches [`ReachBounds::span_ms`] further
+    /// back in *traded* time.
+    ///
+    /// The duration lives beside the reach rather than inside it, the way the
+    /// page size already does: the reach names what a press means and the
+    /// setting says how much, so both are one value in a saved workspace and
+    /// neither has to be re-encoded when the other changes.
+    ///
+    /// **Traded time, not clock time.** The doc on [`HistoryReach`] argues
+    /// against a free-form duration, and it is right about the thing it
+    /// describes: six hours counted on the clock lands mid-morning yesterday
+    /// on one instrument and inside a weekend on another, which is not a
+    /// reach a trader can predict. What makes this variant answerable is that
+    /// dead time is *crossed rather than counted* — a stretch with no prints
+    /// wider than [`ReachBounds::session_gap_ms`] adds nothing to the total,
+    /// so "two more hours" means two more hours of tape wherever the run has
+    /// to go to find them, and a press that lands in an overnight gap
+    /// continues into the previous session instead of stopping in the void.
+    Span,
 }
 
 impl HistoryReach {
     /// Every reach, in the order the menu offers them.
-    pub const ALL: [Self; 2] = [Self::Page, Self::PreviousSession];
+    pub const ALL: [Self; 3] = [Self::Page, Self::PreviousSession, Self::Span];
 
     /// The label on the control.
     #[must_use]
@@ -160,6 +195,7 @@ impl HistoryReach {
         match self {
             Self::Page => "one page",
             Self::PreviousSession => "previous session",
+            Self::Span => "by time",
         }
     }
 
@@ -176,6 +212,11 @@ impl HistoryReach {
                  last close, plus a few hours of the session before it, so \
                  yesterday is on screen to compare against"
             }
+            Self::Span => {
+                "keep asking until the chart holds the span below in traded \
+                 time — nights and weekends are crossed, not counted, so the \
+                 hours you ask for are hours the market was open"
+            }
         }
     }
 
@@ -188,6 +229,7 @@ impl HistoryReach {
         match self {
             Self::Page => "page",
             Self::PreviousSession => "previous-session",
+            Self::Span => "span",
         }
     }
 
@@ -203,7 +245,7 @@ impl HistoryReach {
     pub const fn runs_a_campaign(self) -> bool {
         match self {
             Self::Page => false,
-            Self::PreviousSession => true,
+            Self::PreviousSession | Self::Span => true,
         }
     }
 
@@ -359,6 +401,13 @@ pub struct Campaign {
     /// latched because a single empty page is ordinary — a bridge crossing a
     /// weekend finds no trades in hours of searching and is still advancing.
     idle_pages: u32,
+    /// Which reach this run is serving, and therefore what "arrived" means.
+    ///
+    /// Held rather than passed to [`Campaign::advance`] because it is a
+    /// property of the press, not of the page: a trader who changes the reach
+    /// mid-run is calling that run off — `tab.rs` drops the campaign — rather
+    /// than redirecting it at a goal it has already spent pages against.
+    reach: HistoryReach,
 }
 
 impl Campaign {
@@ -367,7 +416,12 @@ impl Campaign {
     ///
     /// The first request is the trader's press, so the budget opens at one.
     #[must_use]
-    pub const fn new(anchor_ms: i64, prints_at_start: usize, bounds: ReachBounds) -> Self {
+    pub const fn new(
+        anchor_ms: i64,
+        prints_at_start: usize,
+        bounds: ReachBounds,
+        reach: HistoryReach,
+    ) -> Self {
         Self {
             anchor_ms,
             pages_spent: 1,
@@ -375,6 +429,7 @@ impl Campaign {
             prints_seen: prints_at_start,
             idle_pages: 0,
             bounds,
+            reach,
         }
     }
 
@@ -409,18 +464,46 @@ impl Campaign {
         let Some(oldest) = trades.first().map(|trade| trade.timestamp_ms) else {
             return CampaignStep::Stop(CampaignEnd::NothingCharted);
         };
-        match last_close_before(trades, self.anchor_ms, self.bounds.session_gap_ms) {
-            Some(close) => {
-                if oldest <= close.saturating_sub(self.bounds.previous_session_lead_ms) {
+        match self.reach {
+            // Not a campaign at all; `tab.rs` never builds one for it. Answered
+            // rather than ignored so that a reach added later, which forgets to
+            // say whether it runs, stops after one page instead of spending a
+            // budget nobody asked it to.
+            HistoryReach::Page => return CampaignStep::Stop(CampaignEnd::ReachMet),
+            HistoryReach::Span => {
+                let covered = traded_span_before(
+                    trades,
+                    self.anchor_ms,
+                    self.bounds.session_gap_ms,
+                    self.bounds.span_ms,
+                );
+                if covered >= self.bounds.span_ms {
                     return CampaignStep::Stop(CampaignEnd::ReachMet);
                 }
-                // A close is in sight and the lead is not covered yet. The span
-                // cap deliberately does not pre-empt this: see its own doc.
+                // The overall cap still applies: a tape whose dead time is
+                // never crossed — a symbol that stopped printing for good — must
+                // not page until its budgets run out looking for hours that do
+                // not exist.
+                if self.anchor_ms.saturating_sub(oldest) >= MAX_CAMPAIGN_SPAN_MS {
+                    return CampaignStep::Stop(CampaignEnd::SpanCovered);
+                }
             }
-            None if self.anchor_ms.saturating_sub(oldest) >= MAX_CAMPAIGN_SPAN_MS => {
-                return CampaignStep::Stop(CampaignEnd::SpanCovered);
+            HistoryReach::PreviousSession => {
+                match last_close_before(trades, self.anchor_ms, self.bounds.session_gap_ms) {
+                    Some(close) => {
+                        if oldest <= close.saturating_sub(self.bounds.previous_session_lead_ms) {
+                            return CampaignStep::Stop(CampaignEnd::ReachMet);
+                        }
+                        // A close is in sight and the lead is not covered yet.
+                        // The span cap deliberately does not pre-empt this: see
+                        // its own doc.
+                    }
+                    None if self.anchor_ms.saturating_sub(oldest) >= MAX_CAMPAIGN_SPAN_MS => {
+                        return CampaignStep::Stop(CampaignEnd::SpanCovered);
+                    }
+                    None => {}
+                }
             }
-            None => {}
         }
         // Did that page bring anything? A venue with nothing left to give does
         // not always say so — only the MetaTrader bridge withdraws its paging
@@ -446,6 +529,50 @@ impl Campaign {
         self.pages_spent = self.pages_spent.saturating_add(1);
         CampaignStep::Ask
     }
+}
+
+/// How much **traded** time the chart holds behind `anchor_ms`, up to `want_ms`.
+///
+/// Walks backwards from the anchor adding the distance between adjacent prints,
+/// and adds nothing for a distance wider than `session_gap_ms` — that stretch
+/// is the market having been closed, so it is crossed rather than counted.
+/// This is what makes [`HistoryReach::Span`] answerable: "two more hours" is
+/// two more hours of tape wherever the run has to go to find them, instead of
+/// two hours on a clock that may land inside a weekend.
+///
+/// Stops as soon as `want_ms` is reached, and returns at most that. The early
+/// exit is not an optimisation detail, it is what keeps the cost of a run
+/// linear in the pages it fetched rather than quadratic: without it every
+/// reply would re-walk the whole tape, and a run of sixty-four pages would
+/// walk it sixty-four times. The anchor's own position is found by binary
+/// search, as [`last_close_before`] does, so the prints newer than the press
+/// cost nothing at all.
+///
+/// Rate: **rare** — once per history reply.
+#[must_use]
+pub fn traded_span_before(
+    trades: &[Trade],
+    anchor_ms: i64,
+    session_gap_ms: i64,
+    want_ms: i64,
+) -> i64 {
+    // The first print at or after the anchor; everything below it is what this
+    // campaign pulled in.
+    let end = trades.partition_point(|trade| trade.timestamp_ms < anchor_ms);
+    let mut covered: i64 = 0;
+    let mut newer = anchor_ms;
+    for trade in trades[..end].iter().rev() {
+        let older = trade.timestamp_ms;
+        let step = newer.saturating_sub(older);
+        if step < session_gap_ms {
+            covered = covered.saturating_add(step);
+            if covered >= want_ms {
+                return want_ms;
+            }
+        }
+        newer = older;
+    }
+    covered
 }
 
 /// The last print of the newest session that closed strictly before `anchor_ms`
@@ -572,7 +699,12 @@ mod tests {
     fn a_campaign_keeps_asking_while_the_tape_is_still_inside_one_session() {
         let mut tape = session(120);
         let anchor = tape.first().unwrap().timestamp_ms;
-        let mut campaign = Campaign::new(anchor, tape.len(), ReachBounds::default());
+        let mut campaign = Campaign::new(
+            anchor,
+            tape.len(),
+            ReachBounds::default(),
+            HistoryReach::PreviousSession,
+        );
         // One page arrives, still inside the same session.
         let mut older = run(anchor - 60 * MINUTE, MINUTE, 60);
         older.append(&mut tape);
@@ -589,7 +721,12 @@ mod tests {
         // Today's session, and the anchor at its first print.
         let today = run(20 * HOUR, MINUTE, 60);
         let anchor = today.first().unwrap().timestamp_ms;
-        let mut campaign = Campaign::new(anchor, today.len(), ReachBounds::default());
+        let mut campaign = Campaign::new(
+            anchor,
+            today.len(),
+            ReachBounds::default(),
+            HistoryReach::PreviousSession,
+        );
 
         // Yesterday arrives, but only its last hour: short of the lead.
         let close = anchor - 14 * HOUR;
@@ -620,7 +757,12 @@ mod tests {
         let monday_open = 100 * 24 * HOUR;
         let today = run(monday_open, MINUTE, 30);
         let anchor = today.first().unwrap().timestamp_ms;
-        let mut campaign = Campaign::new(anchor, today.len(), ReachBounds::default());
+        let mut campaign = Campaign::new(
+            anchor,
+            today.len(),
+            ReachBounds::default(),
+            HistoryReach::PreviousSession,
+        );
 
         // Friday's last print, a weekend and a half-session behind.
         let friday_close = anchor - 63 * HOUR;
@@ -645,6 +787,134 @@ mod tests {
         );
     }
 
+    /// Bounds whose span reach is `minutes` of traded time.
+    fn span_bounds(minutes: i64) -> ReachBounds {
+        ReachBounds {
+            span_ms: minutes * MINUTE,
+            ..ReachBounds::default()
+        }
+    }
+
+    /// Prints one a minute from `first_ms` to `last_ms` inclusive.
+    fn minutes_of_tape(first_ms: i64, last_ms: i64) -> Vec<Trade> {
+        let count = ((last_ms - first_ms) / MINUTE + 1) as usize;
+        run(first_ms, MINUTE, count)
+    }
+
+    #[test]
+    fn the_span_reach_stops_once_it_holds_the_hours_it_was_asked_for() {
+        // Three hours of unbroken tape, a press wanting two of them.
+        let tape = minutes_of_tape(0, 3 * 60 * MINUTE);
+        let anchor = tape.last().unwrap().timestamp_ms;
+        let mut campaign = Campaign::new(anchor, 1, span_bounds(120), HistoryReach::Span);
+        assert_eq!(
+            campaign.advance(&tape, true),
+            CampaignStep::Stop(CampaignEnd::ReachMet),
+            "the chart already holds three hours behind the press"
+        );
+    }
+
+    #[test]
+    fn the_span_reach_keeps_asking_until_it_does() {
+        // Only half an hour behind the press; two were asked for.
+        let tape = minutes_of_tape(0, 30 * MINUTE);
+        let anchor = tape.last().unwrap().timestamp_ms;
+        let mut campaign = Campaign::new(anchor, 1, span_bounds(120), HistoryReach::Span);
+        assert_eq!(
+            campaign.advance(&tape, true),
+            CampaignStep::Ask,
+            "half an hour is not two hours, so the run continues"
+        );
+    }
+
+    #[test]
+    fn a_night_is_crossed_rather_than_counted_toward_the_span() {
+        // The case the reach's whole design rests on, and the objection the
+        // two-value reach was written against: a span counted on the clock
+        // would be "met" by a chart holding ten minutes of today and a gap.
+        // Counted in traded time it is not met until the tape itself adds up.
+        let session_gap = ReachBounds::default().session_gap_ms;
+        let yesterday = minutes_of_tape(0, 90 * MINUTE);
+        let overnight = yesterday.last().unwrap().timestamp_ms + 14 * 60 * MINUTE;
+        let today = minutes_of_tape(overnight, overnight + 10 * MINUTE);
+        let anchor = today.last().unwrap().timestamp_ms;
+        let tape: Vec<Trade> = yesterday.iter().chain(today.iter()).cloned().collect();
+
+        assert!(
+            14 * 60 * MINUTE > session_gap,
+            "the fixture's night has to read as a close for this to test anything"
+        );
+        // Ten minutes of today plus ninety of yesterday: a hundred of tape,
+        // across a night that adds nothing.
+        assert_eq!(
+            traded_span_before(&tape, anchor, session_gap, 10 * 60 * MINUTE),
+            100 * MINUTE,
+            "the night between the two sessions is crossed, not counted"
+        );
+
+        // Asked for two hours, the run continues even though the *clock* span
+        // is more than fifteen.
+        let mut campaign = Campaign::new(anchor, 1, span_bounds(120), HistoryReach::Span);
+        assert_eq!(campaign.advance(&tape, true), CampaignStep::Ask);
+
+        // Asked for ninety minutes, it is met.
+        let mut met = Campaign::new(anchor, 1, span_bounds(90), HistoryReach::Span);
+        assert_eq!(
+            met.advance(&tape, true),
+            CampaignStep::Stop(CampaignEnd::ReachMet)
+        );
+    }
+
+    #[test]
+    fn the_span_measure_stops_counting_once_it_has_enough() {
+        // The early exit is what keeps a run linear in the pages it fetched
+        // rather than quadratic, so it is asserted rather than assumed: the
+        // answer is capped at what was wanted even on a much longer tape.
+        let tape = minutes_of_tape(0, 10 * 60 * MINUTE);
+        let anchor = tape.last().unwrap().timestamp_ms;
+        let want = 30 * MINUTE;
+        assert_eq!(
+            traded_span_before(&tape, anchor, ReachBounds::default().session_gap_ms, want),
+            want
+        );
+    }
+
+    #[test]
+    fn a_span_run_still_stops_on_a_tape_that_cannot_reach_it() {
+        // A contract that stopped printing for good: the span will never be
+        // met, and the run must end on the overall cap rather than spending
+        // every page looking for hours that do not exist.
+        let tape = minutes_of_tape(0, 5 * MINUTE);
+        let anchor = tape.last().unwrap().timestamp_ms + MAX_CAMPAIGN_SPAN_MS;
+        let mut campaign = Campaign::new(anchor, 1, span_bounds(600), HistoryReach::Span);
+        assert_eq!(
+            campaign.advance(&tape, true),
+            CampaignStep::Stop(CampaignEnd::SpanCovered)
+        );
+    }
+
+    #[test]
+    fn every_reach_is_reachable_by_its_token_and_says_what_it_does() {
+        // The registry test: a reach added without a token, a label or a
+        // hover is one a saved workspace cannot restore and a menu cannot
+        // explain. Cheaper to assert than to notice.
+        for reach in HistoryReach::ALL {
+            assert_eq!(
+                HistoryReach::from_token(reach.token()),
+                Some(reach),
+                "{} does not survive a round trip through its token",
+                reach.label()
+            );
+            assert!(!reach.label().is_empty(), "{:?} has no label", reach);
+            assert!(!reach.hover().is_empty(), "{:?} has no hover", reach);
+        }
+        assert_eq!(
+            HistoryReach::from_token("span"),
+            Some(HistoryReach::Span),
+            "the token a saved workspace holds"
+        );
+    }
+
     #[test]
     fn a_feed_that_has_run_out_stops_the_campaign_rather_than_being_asked_again() {
         let tape = session(10);
@@ -652,6 +922,7 @@ mod tests {
             tape.first().unwrap().timestamp_ms,
             tape.len(),
             ReachBounds::default(),
+            HistoryReach::PreviousSession,
         );
         assert_eq!(
             campaign.advance(&tape, false),
@@ -666,7 +937,12 @@ mod tests {
         // ever appear, so the span is the only thing that can stop this.
         let anchor = MAX_CAMPAIGN_SPAN_MS + 10 * MINUTE;
         let tape = run(0, 10 * MINUTE, (anchor / (10 * MINUTE)) as usize + 1);
-        let mut campaign = Campaign::new(anchor, 1, ReachBounds::default());
+        let mut campaign = Campaign::new(
+            anchor,
+            1,
+            ReachBounds::default(),
+            HistoryReach::PreviousSession,
+        );
         assert_eq!(
             campaign.advance(&tape, true),
             CampaignStep::Stop(CampaignEnd::SpanCovered),
@@ -689,6 +965,7 @@ mod tests {
             tape.first().unwrap().timestamp_ms,
             tape.len(),
             ReachBounds::default(),
+            HistoryReach::PreviousSession,
         );
         for page in 1..MAX_IDLE_PAGES {
             assert_eq!(
@@ -715,7 +992,12 @@ mod tests {
     fn a_single_empty_page_does_not_end_a_run_crossing_dead_time() {
         let today = session(60);
         let anchor = today.first().unwrap().timestamp_ms;
-        let mut campaign = Campaign::new(anchor, today.len(), ReachBounds::default());
+        let mut campaign = Campaign::new(
+            anchor,
+            today.len(),
+            ReachBounds::default(),
+            HistoryReach::PreviousSession,
+        );
         assert_eq!(
             campaign.advance(&today, true),
             CampaignStep::Ask,
@@ -737,7 +1019,12 @@ mod tests {
     fn the_print_budget_bounds_the_work_one_press_causes() {
         let today = session(10);
         let anchor = today.first().unwrap().timestamp_ms;
-        let mut campaign = Campaign::new(anchor, today.len(), ReachBounds::default());
+        let mut campaign = Campaign::new(
+            anchor,
+            today.len(),
+            ReachBounds::default(),
+            HistoryReach::PreviousSession,
+        );
         // One enormous page, inside a session that never breaks: nothing but
         // this budget can stop it before the span cap, and the tape is far
         // newer than that.
@@ -754,7 +1041,12 @@ mod tests {
     fn the_page_budget_bounds_a_run_that_keeps_making_progress() {
         let today = session(10);
         let anchor = today.first().unwrap().timestamp_ms;
-        let mut campaign = Campaign::new(anchor, today.len(), ReachBounds::default());
+        let mut campaign = Campaign::new(
+            anchor,
+            today.len(),
+            ReachBounds::default(),
+            HistoryReach::PreviousSession,
+        );
         // Every page brings one more print and never a break, so neither the
         // idle count nor the reach can end this. The prints stay far inside
         // both the span cap and the print budget.
@@ -778,7 +1070,8 @@ mod tests {
 
     #[test]
     fn a_chart_emptied_under_a_running_campaign_stops_it() {
-        let mut campaign = Campaign::new(0, 1, ReachBounds::default());
+        let mut campaign =
+            Campaign::new(0, 1, ReachBounds::default(), HistoryReach::PreviousSession);
         assert_eq!(
             campaign.advance(&[], true),
             CampaignStep::Stop(CampaignEnd::NothingCharted),

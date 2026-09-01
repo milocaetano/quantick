@@ -208,8 +208,17 @@ US30 = 9103
 # in-session minute is nowhere near one. A market that never closes has no such
 # gap at all, and a press there reaches back two days and stops.
 #
+# `reach_span_minutes` is the third, and the only one of them a trader is
+# likely to change often: it is how far one press of the *by time* reach pulls,
+# in minutes of **traded** time. Nights and weekends are crossed to find those
+# minutes and add nothing to them, so "120" means two hours of tape wherever
+# the run has to go to reach them — which is what makes a reach in time
+# answerable at all. It seeds the toolbar's own box, so this is the value the
+# window opens on rather than a ceiling on it.
+#
 # The section is optional; absent, the defaults below apply.
 #
 # [history]
 # session_gap_minutes = 60
 # previous_session_lead_minutes = 180
+# reach_span_minutes = 120

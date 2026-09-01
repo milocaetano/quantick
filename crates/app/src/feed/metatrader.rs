@@ -348,6 +348,11 @@ async fn feed_task(
     // Whether any trade reached the UI yet: the first non-empty history block
     // may be prepended only into an empty chart (see module docs).
     let mut forwarded_any = false;
+    // Whether the bridge has re-sent an opening block, which only a reconnect
+    // does. Set where the reconnect is already detected, never on the first
+    // block: setting it there made the session's *own* slices look like a
+    // repeat and dropped every one of them.
+    let mut opening_block_resent = false;
     // Newest trade timestamp forwarded to the UI. Reconnect history overlaps
     // what was already streamed live; only strictly-newer trades pass.
     let mut last_forwarded_ms = i64::MIN;
@@ -482,7 +487,12 @@ async fn feed_task(
                         }
                         if forwarded_any {
                             // Reconnect history: forward only what the UI has
-                            // not already seen. Labelled, not hidden.
+                            // not already seen. Labelled, not hidden. The
+                            // opening slices that follow this block cover a
+                            // session the chart already holds, so they are
+                            // refused rather than mapped and dropped one at a
+                            // time.
+                            opening_block_resent = true;
                             let resent = batch.len();
                             let fresh: Vec<_> = batch
                                 .into_iter()
@@ -529,6 +539,79 @@ async fn feed_task(
                             if tx.send(FeedEvent::HistoryPrepended(batch)).await.is_err() {
                                 break;
                             }
+                        }
+                    }
+                    Some(Mt5Event::OpeningPage { trades, remaining }) => {
+                        if opening_block_resent {
+                            // A reconnect re-runs the bridge's whole opening
+                            // block, so these slices cover a session the chart
+                            // already holds. Every trade in them would fail
+                            // the older-than filter below and be dropped one
+                            // at a time, thirty times, after being mapped --
+                            // so they are refused here instead, once, out
+                            // loud. The wire cost is the bridge's to avoid and
+                            // it cannot know where the chart reaches; that is
+                            // recorded as a deferral rather than hidden.
+                            info!(
+                                target: "quantick::app",
+                                schema_version = 1_u8,
+                                event_code = "MT5_OPENING_PAGE_AFTER_RESUME",
+                                symbol = %symbol,
+                                count = trades.len(),
+                                remaining = ?remaining,
+                                action = "drop",
+                                "an opening slice arrived for a session the chart already holds"
+                            );
+                            continue;
+                        }
+                        // The rest of the trading session, arriving behind the
+                        // slice the chart opened on. Nobody asked for it, so
+                        // `page_outstanding` is deliberately left alone: a
+                        // trader who pressed *+ older* while the morning was
+                        // still filling in is still owed the answer to *that*.
+                        //
+                        // Everything else is the paged path's reasoning
+                        // unchanged -- only trades strictly older than what the
+                        // chart holds pass, because the bridge answers on whole
+                        // seconds and a slice can carry the far side of the
+                        // boundary's own millisecond.
+                        let served = trades.len();
+                        let floor = oldest_forwarded_ms.unwrap_or(i64::MAX);
+                        let older: Vec<_> = trades
+                            .into_iter()
+                            .filter(|t| t.timestamp_ms < floor)
+                            .collect();
+                        info!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "MT5_OPENING_PAGE_READY",
+                            symbol = %symbol,
+                            count = older.len(),
+                            overlap_dropped = served - older.len(),
+                            remaining = ?remaining,
+                            "a slice of the opening session is ready to prepend"
+                        );
+                        oldest_forwarded_ms = earlier(
+                            oldest_forwarded_ms,
+                            older.iter().map(|t| t.timestamp_ms).min(),
+                        );
+                        // The next *+ older* press starts below the whole
+                        // opening block, not below the slice the chart first
+                        // painted -- otherwise the first press would re-fetch
+                        // the morning that just arrived.
+                        paging_floor_ms = earlier(paging_floor_ms, oldest_forwarded_ms);
+                        // `OpeningPrepended`, never `HistoryPrepended`: the
+                        // chart must draw these and must not read them as the
+                        // answer to a press.
+                        if tx
+                            .send(FeedEvent::OpeningPrepended {
+                                trades: older,
+                                remaining,
+                            })
+                            .await
+                            .is_err()
+                        {
+                            break;
                         }
                     }
                     Some(Mt5Event::HistoryPage {
@@ -1755,6 +1838,93 @@ mod tests {
         let caps = *feed.capabilities.borrow();
         assert!(!caps.traded_volume, "nothing here was ever traded");
         assert!(!caps.book_capture, "this symbol publishes no book");
+    }
+
+    #[tokio::test]
+    async fn a_first_session_keeps_the_slices_that_fill_it_in() {
+        // The regression that broke the whole feature once. The reconnect
+        // guard was armed by the *first* opening block instead of by a re-sent
+        // one, so a normal open discarded every slice of its own session as
+        // though it were a repeat: the trader got the block the chart paints
+        // on and nothing behind it, and the only trace was
+        // `MT5_OPENING_PAGE_AFTER_RESUME` in a log.
+        //
+        // Deliberately at this layer. `crates/feed-mt5` emits
+        // `Mt5Event::OpeningPage` and knows nothing about reconnects; the guard
+        // lives here, so a test one crate down passes while this is broken --
+        // which is exactly what happened when it was first written.
+        let settings = MetaTraderSettings {
+            listen_addr: "127.0.0.1:19231".to_string(),
+            side_source: Mt5SideSource::TickRule,
+            bridge_autostart: false,
+            ..MetaTraderSettings::default()
+        };
+        let mut feed = spawn("WIN$N", &settings);
+        let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
+            panic!("expected the immediate empty backfill");
+        };
+
+        async fn connect() -> tokio::net::TcpStream {
+            for _ in 0..50 {
+                match tokio::net::TcpStream::connect("127.0.0.1:19231").await {
+                    Ok(s) => return s,
+                    Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+                }
+            }
+            panic!("could not reach the feed listener");
+        }
+
+        fn tick(seq: u64, time_ms: i64, last: &str) -> String {
+            format!(
+                "{{\"type\":\"tick\",\"seq\":{seq},\"time_ms\":{time_ms},\"bid\":\"0\",\
+                 \"ask\":\"0\",\"last\":\"{last}\",\"volume\":1,\"flags\":1080}}\n"
+            )
+        }
+        const HELLO: &str = concat!(
+            "{\"type\":\"hello\",\"schema\":1,\"bridge\":\"test\",\"bridge_version\":\"0\",",
+            "\"symbol\":\"WIN$N\",\"broker_symbol\":\"WINQ26\",\"digits\":0,",
+            "\"server_utc_offset_s\":0,\"history_paging\":true}\n",
+        );
+
+        let mut sock = connect().await;
+        let mut script = String::from(HELLO);
+        script.push_str("{\"type\":\"backfill_start\"}\n");
+        script.push_str(&tick(1, 5_000, "100"));
+        script.push_str(&tick(2, 5_001, "101"));
+        script.push_str("{\"type\":\"backfill_end\"}\n");
+        sock.write_all(script.as_bytes()).await.unwrap();
+        sock.flush().await.unwrap();
+        let Some(FeedEvent::HistoryPrepended(_)) =
+            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+                .await
+                .expect("timed out waiting for the opening block")
+        else {
+            panic!("expected the opening block");
+        };
+
+        // ...and the slice that fills the session in behind it must survive.
+        let mut slice =
+            String::from("{\"type\":\"history_start\",\"count_hint\":3,\"opening\":true}\n");
+        slice.push_str(&tick(3, 1_000, "90"));
+        slice.push_str(&tick(4, 1_001, "91"));
+        slice.push_str(&tick(5, 1_002, "89"));
+        slice.push_str("{\"type\":\"history_end\",\"opening\":true,\"remaining\":2}\n");
+        sock.write_all(slice.as_bytes()).await.unwrap();
+        sock.flush().await.unwrap();
+
+        let Some(FeedEvent::OpeningPrepended { trades, remaining }) =
+            tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+                .await
+                .expect("the first session's own slice was dropped as a reconnect's")
+        else {
+            panic!("expected the opening slice, not another event");
+        };
+        assert_eq!(trades.len(), 2, "the slice is charted, not discarded");
+        assert_eq!(
+            remaining,
+            Some(2),
+            "and it says how much of the session is still coming"
+        );
     }
 
     /// One NDJSON line the feed wrote back to the fake bridge.

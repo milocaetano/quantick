@@ -107,6 +107,26 @@ pub enum FeedEvent {
     /// history, or the fetch failed) — the reply itself is the signal that
     /// loading ended.
     HistoryPrepended(Vec<Trade>),
+    /// Older trades the chart never asked for: the rest of the opening session,
+    /// arriving behind the slice the chart first painted.
+    ///
+    /// Prepended exactly like [`HistoryPrepended`](Self::HistoryPrepended) and
+    /// deliberately **not** it, because that event is a *reply*. Arriving as
+    /// one, an opening slice would stop the loading indicator a `+ older`
+    /// press raised and hand the trader's own history campaign a page it did
+    /// not fetch — the run would spend its budget on work it never asked for
+    /// and could declare itself finished on tape it did not pull.
+    ///
+    /// A feed that fills a chart in behind the trader must therefore be able
+    /// to say so, and this is that word.
+    OpeningPrepended {
+        /// The older trades, ascending.
+        trades: Vec<Trade>,
+        /// Slices still to come after this one, when the source said. `None`
+        /// from a source that does not count them; never a promise, since a
+        /// session can end mid-fill.
+        remaining: Option<u64>,
+    },
     /// One live trade.
     Live(Trade),
     /// Several live trades received or released together.

@@ -151,6 +151,11 @@
       "description": "Whether a run of *load older* requests is in flight on the active tab.\n\nThe setting above says what a press will do; this says whether one is\nstill doing it. Without it an operator that started a reach has no way\nto tell a finished run from a running one except by polling bar counts\nand guessing.",
       "type": "boolean"
     },
+    "history_reach_span_minutes": {
+      "$ref": "#/$defs/WireU64",
+      "default": "0",
+      "description": "Minutes of *traded* time one press of the `span` reach pulls.\n\nBeside the reach because the two are one choice: an operator that\ncan read back `by time` but not how much time cannot tell what the\nnext press will do.\n\n`serde(default)` like every optional neighbour: v1 is frozen, and a\nsnapshot from a build that predates this field must still validate\nagainst the shipped schema. A new *required* key is a breaking change\nwearing an additive diff."
+    },
     "layouts": {
       "default": [],
       "description": "The layout strip: every layout, and which is active. Additive.",

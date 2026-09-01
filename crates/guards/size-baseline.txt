@@ -38,7 +38,11 @@
 # last of them came out of that branch's own review: the toolbar's entry pair
 # reads the same lock the ticket does, because gating one and not the other
 # left a button lit while the order behind it was already refused.
-crates/app/src/app.rs 9775
+# Raised for the MT5 session-history branch: one window-level setting (the
+# `by time` reach's span) in the six places such settings live, plus the
+# `ScriptedMenu` registry that replaced a string equality so a capture can
+# open the history menu at all.
+crates/app/src/app.rs 9890
 
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
@@ -73,13 +77,21 @@ crates/app/src/paper_trading.rs 9238
 # the comment saying why the order matters; there is no new module to carve,
 # because the fix is that this function was reading one input too few.
 crates/app/src/pane.rs 7771
-crates/app/src/tab.rs 4401
+# Raised for the same branch: the opening block's own arm in `drain_feed`,
+# which is deliberately not the reply path with a flag -- the two differ in
+# the two lines that matter, and a branch inside the reply arm is how a
+# slice ends up answering a press the trader made.
+crates/app/src/tab.rs 4470
 crates/app/src/control/gateway.rs 4142
 crates/app/src/orderflow_render.rs 3075
 crates/app/src/orderflow_view.rs 2485
 crates/app/src/drawings/mod.rs 2283
 crates/app/src/footprint_render.rs 2234
-crates/feed-mt5/src/stream.rs 2142
+# Raised for the same branch: an `Mt5Event::OpeningPage` variant and one
+# branch in the block state machine deciding whether a block settles a
+# request. The session loop is the only place that knows what a
+# `history_start` opened; the slicing itself lives in the bridge.
+crates/feed-mt5/src/stream.rs 2200
 crates/app/src/toolrail.rs 2114
 crates/app/src/orderflow/projection.rs 1850
 crates/app/src/control/contract.rs 1718

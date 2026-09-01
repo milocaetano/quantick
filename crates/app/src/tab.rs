@@ -484,6 +484,18 @@ pub struct Tab {
     /// setting, and a trader who picked it once must not have to pick it again
     /// in the next tab.
     pub history_reach: HistoryReach,
+    /// Minutes of traded time one press of [`HistoryReach::Span`] pulls,
+    /// mirrored from the window so every tab presses the way the trader said.
+    pub history_reach_span_minutes: u32,
+    /// Slices of the opening session still to arrive, while one is filling in
+    /// behind the chart. `None` when nothing is filling.
+    ///
+    /// Cleared by every way a fill can *end*, not only by the last slice
+    /// saying zero. A bridge that dies mid-fill sends no final slice, and a
+    /// count frozen at twelve would go on telling an operator the chart was
+    /// still arriving for the life of the tab — which is the one question this
+    /// field exists to answer.
+    opening_slices_remaining: Option<u64>,
     /// The run of requests a reach beyond one page started, or `None` when
     /// nothing is paging.
     ///
@@ -894,6 +906,11 @@ impl Tab {
             history_step: 2000,
             history_trades: 0,
             history_reach: HistoryReach::default(),
+            opening_slices_remaining: None,
+            // Overwritten by `drain_tabs` on the first frame from the
+            // window's own value; this is only what a tab holds before that.
+            history_reach_span_minutes: (crate::history_reach::DEFAULT_REACH_SPAN_MS / 60_000)
+                as u32,
             campaign: None,
             history_note: None,
             venue_lead_in: false,
@@ -2209,8 +2226,16 @@ impl Tab {
             // the single request above is the whole of this press: the next
             // one, with a tape under it, starts the run.
             let held = self.flow_pane.state.trades().len();
-            let bounds = config.history.reach_bounds();
-            self.campaign = anchor_ms.map(|anchor| Campaign::new(anchor, held, bounds));
+            // The trader's live choice outranks the config seed: the toolbar
+            // and the control plane both write the window's value, and a run
+            // started after that must reach what they asked for rather than
+            // what the file said at startup.
+            let bounds = crate::history_reach::ReachBounds {
+                span_ms: i64::from(self.history_reach_span_minutes) * 60_000,
+                ..config.history.reach_bounds()
+            };
+            self.campaign =
+                anchor_ms.map(|anchor| Campaign::new(anchor, held, bounds, self.history_reach));
         }
     }
 
@@ -2241,6 +2266,18 @@ impl Tab {
                 false
             }
         }
+    }
+
+    /// Slices of the opening session still to arrive, or `None` when the chart
+    /// is not being filled in behind.
+    ///
+    /// Read by the control plane so an operator without a mouse can tell a
+    /// chart that is still arriving from one that has everything it is going
+    /// to get — the same question the trader answers by watching the bars
+    /// grow leftward.
+    #[must_use]
+    pub const fn opening_slices_remaining(&self) -> Option<u64> {
+        self.opening_slices_remaining
     }
 
     /// The oldest print this tab still holds.
@@ -2615,6 +2652,7 @@ impl Tab {
         self.history_trades = 0;
         // The old feed's unanswered loads died with its channel; the new feed
         // opens with exactly one backfill in flight.
+        self.opening_slices_remaining = None;
         self.loading.restart(LoadingTask::History);
         self.latest_trade_latency_ms = None;
         let symbol = self.symbol.clone();
@@ -3041,6 +3079,32 @@ impl Tab {
                     // trader can actually see.
                     self.settle_history_page(trades.len());
                 }
+                Ok(FeedEvent::OpeningPrepended { trades, remaining }) => {
+                    // What is left of the fill, so the chart and an operator
+                    // reading the control plane can both say how much of the
+                    // session is still arriving instead of watching a number
+                    // rise with no denominator. Cleared at zero: the field
+                    // means "a fill is running", and a stale count would keep
+                    // saying so after the last slice landed.
+                    self.opening_slices_remaining = match remaining {
+                        Some(0) | None => None,
+                        some => some,
+                    };
+                    // The rest of the opening session, drawn but not counted.
+                    // Everything the reply path does *except* the two things
+                    // that belong to a request: the loading indicator a press
+                    // raised stays up, and the campaign that press started is
+                    // not handed a page it did not fetch.
+                    if self.resume_floor_ms.is_some() {
+                        live |= self.ingest_resumed(&trades);
+                        continue;
+                    }
+                    self.history_trades += trades.len();
+                    for pane in self.panes_mut() {
+                        pane.prepend_history(&trades);
+                    }
+                    self.refold_history_prefix();
+                }
                 Ok(FeedEvent::Live(trade)) => {
                     if self.resume_floor_ms.is_some() {
                         live |= self.ingest_resumed(std::slice::from_ref(&trade));
@@ -3447,6 +3511,7 @@ impl Tab {
         // The refill arrives as one backfill batch; keep the loading indicator
         // up until it lands. Requests sent to the source before the reset will
         // never be answered, so the count restarts rather than accumulates.
+        self.opening_slices_remaining = None;
         self.loading.restart(LoadingTask::History);
         let symbol = self.symbol.clone();
         self.tape_mut().reset_for_symbol(symbol);
@@ -4592,6 +4657,112 @@ mod move_pane_tests {
     use tokio::sync::mpsc;
 
     static NEXT_DIR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1000);
+
+    /// One trade at `ms`, cheap enough to build a block from.
+    fn older_trade(ms: i64) -> quantick_engine::Trade {
+        quantick_engine::Trade {
+            agg_id: ms as u64,
+            timestamp_ms: ms,
+            price: rust_decimal::Decimal::new(1000, 1),
+            quantity: rust_decimal::Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        }
+    }
+
+    /// A tab whose feed channel is still held, so a test can post events onto
+    /// it and drain them the way a frame does.
+    fn tab_with_feed() -> (Tab, mpsc::Sender<FeedEvent>) {
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (_book_tx, book_rx) = mpsc::channel(8);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(8);
+        let tab = Tab::new(
+            0,
+            0,
+            "binance".to_owned(),
+            "BTCUSDT".to_owned(),
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(
+                    crate::config::ProviderKind::Binance.capabilities(),
+                ),
+                latency: feed::unsplit_latency(),
+                commands: cmd_tx,
+                replay: None,
+            },
+            std::env::temp_dir().join(format!(
+                "quantick-opening-test-{}",
+                NEXT_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            )),
+        );
+        (tab, evt_tx)
+    }
+
+    #[test]
+    fn an_opening_slice_draws_without_answering_the_traders_press() {
+        // The defect the trader-ux review caught, and the reason the opening
+        // block has an event of its own rather than reusing the reply.
+        //
+        // The bridge fills the session in behind the chart in thirty-odd
+        // slices. A trader who presses `+ older` while that is happening has
+        // raised a loading indicator and started a campaign; if a slice
+        // arrived as `HistoryPrepended` it would stop that indicator on
+        // history the trader did not ask for, and hand the campaign a page it
+        // did not fetch — so a run could spend its budget, or declare itself
+        // finished, on tape it never pulled.
+        let (mut tab, feed_tx) = tab_with_feed();
+        // The tab already has its own opening request in flight, so the count
+        // is asserted as a delta rather than against zero: what matters is
+        // that an opening slice answers nothing, whatever else is outstanding.
+        tab.loading.begin(LoadingTask::History);
+        let before = tab.loading.count(LoadingTask::History);
+        assert!(before > 0, "the press raised an indicator to begin with");
+
+        let slice: Vec<_> = (0..8).map(|i| older_trade(1_000 + i)).collect();
+        feed_tx
+            .try_send(FeedEvent::OpeningPrepended {
+                trades: slice.clone(),
+                remaining: Some(4),
+            })
+            .expect("the test channel has room");
+        tab.drain_feed();
+
+        assert_eq!(
+            tab.loading.count(LoadingTask::History),
+            before,
+            "an opening slice must leave the trader's own loading indicator up"
+        );
+        assert_eq!(
+            tab.history_trades,
+            slice.len(),
+            "and it is still charted and counted — it is the trader's morning"
+        );
+        assert_eq!(
+            tab.opening_slices_remaining(),
+            Some(4),
+            "and how much of the session is still arriving is readable, not              only loggable: an operator has to be able to tell a chart that is              still filling from one that has all it will get"
+        );
+    }
+
+    #[test]
+    fn a_page_the_trader_asked_for_still_answers_the_press() {
+        // The other half, so the test above cannot pass by the reply path
+        // having quietly stopped working.
+        let (mut tab, feed_tx) = tab_with_feed();
+        tab.loading.begin(LoadingTask::History);
+        let before = tab.loading.count(LoadingTask::History);
+        feed_tx
+            .try_send(FeedEvent::HistoryPrepended(vec![older_trade(1_000)]))
+            .expect("the test channel has room");
+        tab.drain_feed();
+        assert_eq!(
+            tab.loading.count(LoadingTask::History),
+            before - 1,
+            "a reply settles exactly the one press that asked for it"
+        );
+    }
 
     fn tab_with(context: usize) -> Tab {
         let (_evt_tx, evt_rx) = mpsc::channel(8);

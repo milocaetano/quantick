@@ -35,3 +35,7 @@ indicator-presets.toml
 
 # Session scratch: the investigation record before it becomes an archive.
 .claude/laudo-scratch.md
+
+# Evidence logs are the point of the evidence folder: a measurement whose log
+# is ignored is a claim with a dead link under it.
+!.claude/evidence/**/*.log

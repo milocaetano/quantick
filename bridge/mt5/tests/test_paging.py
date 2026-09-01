@@ -1,220 +1,38 @@
-"""Tests for the bridge's candle paging, without a terminal.
+"""Tests for the bridge's candle paging and its load-older walk.
 
-The bridge imports `MetaTrader5`, which exists only on Windows next to an
-installed terminal — so CI can never import the real thing. This stubs the
-module in `sys.modules` before importing the bridge, with the documented
-`copy_rates_from` semantics *including* the refusal that caused the bug these
-tests exist for: the terminal validates a request's bar count against its
-"Max bars in chart" setting and returns `(-2, 'Terminal: Invalid params')`
-rather than truncating.
+The fake terminal, the bridge loader and the session builders live in
+`harness.py`, which `test_session_backfill.py` shares. What stays here is the
+behaviour being asserted.
 
 Run directly (`python bridge/mt5/tests/test_paging.py`) or through
-`cargo test -p quantick-feed-mt5 --test bridge_paging`, which shells out to
-exactly this file so the four checks cover it.
+`cargo test -p quantick-feed-mt5 --test bridge_paging`, which discovers and
+runs every suite in this folder so the four checks cover them.
 """
 
 from __future__ import annotations
 
 import sys
-import time
-import types
-from pathlib import Path
 
-BRIDGE_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 
-# Bars the fake terminal will serve, newest last.
-M1 = 60
-
-
-#: Aggressor/kind flags, as the real module exposes them. Only the bit the
-#: bridge passes through matters here.
-COPY_TICKS_ALL = 0
-COPY_TICKS_TRADE = 1
-
-
-class FakeTerminal:
-    """The subset of the MetaTrader5 API the candle path touches."""
-
-    TIMEFRAME_M1 = 1
-
-    def __init__(self, available: int, newest_s: int, maxbars: int = 100_000) -> None:
-        self.times = [newest_s - i * M1 for i in range(available)][::-1]
-        self.maxbars = maxbars
-        self.calls: list[tuple[int, int]] = []
-        self.error = (0, "ok")
-        # Pages that should fail outright, by 1-based call index.
-        self.fail_on: set[int] = set()
-        # Ticks the terminal holds, ascending by time_msc. Empty unless a test
-        # gives it some; the candle tests never touch this half.
-        self.ticks: list[dict] = []
-        # Every (from_s, to_s, flags) the walk asked for.
-        self.tick_calls: list[tuple[int, int, int]] = []
-        # Every (from_s, count, flags) the live pump asked for.
-        self.from_calls: list[tuple[int, int, int]] = []
-        # Ranges answered with a failure, by 1-based call index.
-        self.tick_fail_on: set[int] = set()
-
-    def copy_ticks_range(self, _symbol, from_s, to_s, flags):
-        self.tick_calls.append((int(from_s), int(to_s), int(flags)))
-        if len(self.tick_calls) in self.tick_fail_on:
-            self.error = (-1, "Terminal: no history")
-            return None
-        self.error = (0, "ok")
-        lo, hi = int(from_s) * 1000, int(to_s) * 1000
-        return [
-            tick
-            for tick in self.ticks
-            if lo <= tick["time_msc"] <= hi
-            and (flags != COPY_TICKS_TRADE or tick.get("is_trade", True))
-        ]
-
-    def copy_ticks_from(self, _symbol, from_s, count, flags):
-        """The oldest tick held, and the live pump's own request."""
-        self.error = (0, "ok")
-        self.from_calls.append((int(from_s), int(count), int(flags)))
-        lo = int(from_s) * 1000
-        return [
-            tick
-            for tick in self.ticks
-            if tick["time_msc"] >= lo
-            and (flags != COPY_TICKS_TRADE or tick.get("is_trade", True))
-        ][: int(count)]
-
-    def copy_rates_from(self, _symbol, _timeframe, anchor, count):
-        self.calls.append((int(anchor), int(count)))
-        if len(self.calls) in self.fail_on:
-            self.error = (-1, "Terminal: some other failure")
-            return None
-        if count > self.maxbars:
-            # The bug: refused on the size of the request, not on the data.
-            self.error = (-2, "Terminal: Invalid params")
-            return None
-        self.error = (0, "ok")
-        upto = [t for t in self.times if t <= anchor]
-        return [
-            {
-                "time": t,
-                "open": 100.0,
-                "high": 101.0,
-                "low": 99.0,
-                "close": 100.5,
-                "tick_volume": 7,
-                "real_volume": 3,
-            }
-            for t in upto[-count:]
-        ]
-
-    def last_error(self):
-        return self.error
-
-
-def load_bridge(terminal: FakeTerminal):
-    """Import the bridge against `terminal`, fresh each time."""
-    module = types.ModuleType("MetaTrader5")
-    module.TIMEFRAME_M1 = FakeTerminal.TIMEFRAME_M1
-    module.copy_rates_from = terminal.copy_rates_from
-    module.copy_ticks_range = terminal.copy_ticks_range
-    module.copy_ticks_from = terminal.copy_ticks_from
-    module.COPY_TICKS_ALL = COPY_TICKS_ALL
-    module.COPY_TICKS_TRADE = COPY_TICKS_TRADE
-    module.last_error = terminal.last_error
-    sys.modules["MetaTrader5"] = module
-    sys.path.insert(0, str(BRIDGE_DIR))
-    sys.modules.pop("quantick_bridge", None)
-    import quantick_bridge  # noqa: PLC0415  (deliberately late, after the stub)
-
-    return quantick_bridge
-
-
-class FakeArgs:
-    def __init__(
-        self,
-        rates_max_bars=200_000,
-        rates_months=3,
-        backfill_minutes=720,
-        backfill_max_ticks=1_000_000,
-    ):
-        self.rates_max_bars = rates_max_bars
-        self.rates_months = rates_months
-        self.backfill_minutes = backfill_minutes
-        self.backfill_max_ticks = backfill_max_ticks
-
-
-def session_for(bridge, terminal, **args):
-    """A Session wired to `terminal`, bypassing __init__'s socket."""
-    session = object.__new__(bridge.Session)
-    session.symbol = "WINQ26"
-    session.args = FakeArgs(**args)
-    session.offset_s = 0
-    session.digits = 0
-    session.tape = "trades"
-    session.sent: list[dict] = []
-    session.send = session.sent.append
-    # The tick half's own state, which `__init__` would have set.
-    session.seq = 0
-    session.ticks_sent = 0
-    session.pump_round_limits = 0
-    session.earliest_ms = None
-    session.earliest_known = False
-    session.inbox = b""
-    session.last_heartbeat = 0.0
-    session.cursor_msc = 0
-    session.sent_at_cursor = 0
-    session.maybe_heartbeat = lambda: None
-    return session
-
-
-def session_at(bridge, terminal, now_s: int, **args):
-    """A session whose server clock reads exactly `now_s`.
-
-    The clock is frozen rather than offset. Deriving the offset from one
-    `time.time()` while the code under test takes another leaves the two in
-    different seconds whenever the first read lands late enough in one, and
-    the failure surfaces as an off-by-one assertion inside the bridge — which
-    is the wrong place to go looking for a flaky helper. `monotonic` is passed
-    through: the heartbeat and the load-older walk measure elapsed time with
-    it, and freezing that would be a different lie.
-    """
-    session = session_for(bridge, terminal, **args)
-    bridge.time = types.SimpleNamespace(
-        time=lambda: float(now_s), monotonic=time.monotonic
-    )
-    session.offset_s = 0
-    return session
-
-
-def block_ticks(session) -> list[dict]:
-    """The tick lines of the backfill block a session just sent."""
-    return [msg for msg in session.sent if msg["type"] == "tick"]
-
-
-def tick_at(time_msc: int, last: float = 100.0, is_trade: bool = True) -> dict:
-    """One terminal tick. `is_trade` decides whether COPY_TICKS_TRADE sees it."""
-    return {
-        "time_msc": time_msc,
-        "bid": 99.0,
-        "ask": 101.0,
-        "last": last if is_trade else 0.0,
-        "volume": 1 if is_trade else 0,
-        "flags": 1080 if is_trade else 6,
-        "is_trade": is_trade,
-    }
-
-
-NOW = 1_784_824_260
-SPAN = 93 * 86_400
-FROM = NOW - SPAN
-
-FAILURES: list[str] = []
-
-
-def check(name, condition, detail=""):
-    if condition:
-        print(f"  ok   {name}")
-    else:
-        FAILURES.append(f"{name}: {detail}")
-        print(f"  FAIL {name}: {detail}")
-
+from harness import (  # noqa: E402  (deliberately after the path insert)
+    CLOSED_SESSION_STEP_MS,
+    COPY_TICKS_ALL,
+    COPY_TICKS_TRADE,
+    CLOSED_SESSION_TICKS,
+    FROM,
+    NOW,
+    M1,
+    FakeTerminal,
+    block_ticks,
+    check,
+    load_bridge,
+    run_tests,
+    session_at,
+    session_ending_at,
+    session_for,
+    tick_at,
+)
 
 def test_young_contract_stops_on_the_short_page():
     """The probed WINQ26 case: 38 723 bars exist, 93 days were asked for."""
@@ -429,7 +247,7 @@ def test_an_empty_stretch_widens_the_window_and_still_reports_its_reach():
         scanned_to_ms < cursor,
         (scanned_to_ms, cursor),
     )
-    widths = [to_s - from_s for from_s, to_s, _ in term.tick_calls]
+    widths = [to_s - from_s for from_s, to_s, _ in walk_calls(term)]
     check("the windows widened", widths[-1] > widths[0], widths[:3])
     check(
         "up to the documented ceiling",
@@ -452,7 +270,7 @@ def test_a_trades_tape_asks_the_terminal_for_trades_only():
     trades, _, _, _ = session.walk_back(100, cursor)
     check(
         "a trades tape asks for trades",
-        all(flags == COPY_TICKS_TRADE for _, _, flags in term.tick_calls),
+        all(flags == COPY_TICKS_TRADE for _, _, flags in walk_calls(term)),
         term.tick_calls[:2],
     )
     check("and every tick it gets is one", all(t["is_trade"] for t in trades))
@@ -473,9 +291,14 @@ def test_a_failed_window_answers_with_what_is_in_hand():
     term = FakeTerminal(0, NOW)
     cursor = NOW * 1000
     term.ticks = [tick_at(cursor - offset) for offset in range(600_000, 0, -100)]
-    term.tick_fail_on = {1}
     bridge = load_bridge(term)
     session = session_for(bridge, term)
+    # Settle the tick floor first and reset the counter, so the injected
+    # failure lands on the walk's own first window rather than on the one-off
+    # probe that checks whether the terminal's claimed floor is real.
+    session.earliest_tick_ms()
+    term.tick_calls.clear()
+    term.tick_fail_on = {1}
 
     ticks, exhausted, _, calls = session.walk_back(2_000, cursor)
     check("a failure ends the walk", calls == 1, calls)
@@ -759,19 +582,6 @@ def test_the_live_pump_asks_only_for_prints():
 # case the trader hit: a chart opened outside the session, on a terminal that
 # holds that session on disk and was never asked for it.
 
-#: A session's worth of prints, one every two seconds for twenty minutes.
-CLOSED_SESSION_TICKS = 600
-CLOSED_SESSION_STEP_MS = 2_000
-
-
-def session_ending_at(last_s: int) -> list[dict]:
-    """Prints ending at `last_s`, ascending, as the terminal would hold them."""
-    last_ms = last_s * 1000
-    return [
-        tick_at(last_ms - (CLOSED_SESSION_TICKS - 1 - i) * CLOSED_SESSION_STEP_MS)
-        for i in range(CLOSED_SESSION_TICKS)
-    ]
-
 
 def test_a_closed_market_opens_on_the_last_session():
     """B3 shut fourteen hours ago; the clock's window covers twelve of them."""
@@ -812,8 +622,26 @@ def test_a_closed_market_opens_on_the_last_session():
     )
 
 
-def test_the_reanchored_window_keeps_the_width_it_was_asked_for():
-    """`--backfill-minutes` still means what it says; only its end moves."""
+def walk_calls(term):
+    """The calls the search and the walk made, without the floor probe.
+
+    `earliest_tick_ms` falsifies the terminal's claimed oldest tick by asking
+    for the window below it, which is one `copy_ticks_range` with
+    `COPY_TICKS_ALL` and no part of the backwards walk. On a trades tape the
+    flags tell them apart; these fixtures are all trades tapes.
+    """
+    return [call for call in term.tick_calls if call[2] == COPY_TICKS_TRADE]
+
+
+def test_a_closed_market_sends_a_session_and_not_a_window_width():
+    """What replaced "the re-anchored window keeps its width".
+
+    That contract was the defect: a block whose width came from
+    `--backfill-minutes` is a block whose left edge is wherever the clock
+    happened to leave it. The block is now the session the last print belongs
+    to, so it starts on that session's own first trade and its width is
+    whatever the market did that day.
+    """
     now_s = NOW
     close_s = now_s - 14 * 3600
     term = FakeTerminal(0, now_s)
@@ -822,26 +650,39 @@ def test_the_reanchored_window_keeps_the_width_it_was_asked_for():
     session = session_at(bridge, term, now_s, backfill_minutes=720)
     session.backfill()
 
-    served = term.tick_calls[-1]
+    sent = block_ticks(session)
     check(
-        "the re-anchored window ends on the last print",
-        served[1] == close_s,
-        (served, close_s),
+        "the block starts on the session's first print",
+        sent[0]["time_ms"] == term.ticks[0]["time_msc"],
+        (sent[0]["time_ms"], term.ticks[0]["time_msc"]),
     )
     check(
-        "and is exactly as wide as it was asked to be",
-        served[1] - served[0] == 720 * 60,
-        served,
+        "the block ends on its last",
+        sent[-1]["time_ms"] == close_s * 1000,
+        sent[-1]["time_ms"],
     )
     check(
-        "the clock's own window was asked for first",
-        term.tick_calls[0] == (now_s - 720 * 60, now_s, COPY_TICKS_TRADE),
-        term.tick_calls[0],
+        "its width is the session's, not the flag's",
+        sent[-1]["time_ms"] - sent[0]["time_ms"]
+        == (CLOSED_SESSION_TICKS - 1) * CLOSED_SESSION_STEP_MS,
+        sent[-1]["time_ms"] - sent[0]["time_ms"],
+    )
+    first = walk_calls(term)[0]
+    check(
+        "the search for the last print leads, not a clock window",
+        first[1] == now_s and first[0] > now_s - 720 * 60,
+        first,
     )
 
 
-def test_a_trading_market_is_never_re_anchored():
-    """The reach costs nothing on the path that was always fine."""
+def test_a_trading_market_costs_a_handful_of_calls():
+    """The walk must stay cheap on the path that was always fine.
+
+    A market that is printing answers its first window immediately, so the
+    whole opening block is that window plus the one that proves where the
+    session began. This is the ceiling that keeps "walk back until the prints
+    stop" from becoming a per-hour crawl on the common case.
+    """
     now_s = NOW
     term = FakeTerminal(0, now_s)
     term.ticks = session_ending_at(now_s - 5)
@@ -850,8 +691,8 @@ def test_a_trading_market_is_never_re_anchored():
     session.backfill()
 
     check(
-        "a window with prints in it asks once and stops",
-        len(term.tick_calls) == 1,
+        "a printing market is answered in a handful of calls",
+        len(term.tick_calls) <= 4,
         term.tick_calls,
     )
     check(
@@ -878,8 +719,8 @@ def test_the_reach_crosses_a_weekend():
     )
     check(
         "and crossing it costs a handful of calls, not a budget",
-        len(term.tick_calls) <= 1 + 62 // 4 + 1,
-        len(term.tick_calls),
+        len(walk_calls(term)) <= 1 + 62 // 4 + 1,
+        walk_calls(term),
     )
 
 
@@ -951,8 +792,16 @@ def test_the_reach_crosses_a_four_day_holiday():
     )
 
 
-def test_the_reach_starts_where_the_clock_window_ended():
-    """The interval the clock already proved empty is not searched twice."""
+def test_no_interval_is_scanned_twice_on_the_way_back():
+    """The search and the walk share one cursor, which only ever moves back.
+
+    Both halves step backwards over the same tape — the search for the newest
+    print, then the walk for that session's first — and an interval either one
+    has already covered is one neither may pay for again. On a market shut for
+    fourteen hours that is the difference between a handful of calls and a
+    crawl, and it is the invariant that replaced "the reach starts where the
+    clock window ended" when the clock stopped deciding anything.
+    """
     now_s = NOW
     close_s = now_s - 14 * 3600
     term = FakeTerminal(0, now_s)
@@ -961,21 +810,17 @@ def test_the_reach_starts_where_the_clock_window_ended():
     session = session_at(bridge, term, now_s, backfill_minutes=720)
     session.backfill()
 
-    clock_from, clock_to, _ = term.tick_calls[0]
+    walk = walk_calls(term)
+    tops = [to_s for _, to_s, _ in walk]
     check(
-        "the clock's window is asked for once",
-        (clock_from, clock_to) == (now_s - 720 * 60, now_s),
-        term.tick_calls[0],
+        "every step looks further back than the last",
+        all(later >= earlier for later, earlier in zip(tops, tops[1:])),
+        walk,
     )
     check(
-        "and the search picks up where it ended",
-        term.tick_calls[1][1] == clock_from,
-        term.tick_calls[1],
-    )
-    check(
-        "so no step re-scans it",
-        all(call[0] >= 0 and call[1] <= clock_from for call in term.tick_calls[1:-1]),
-        term.tick_calls[1:-1],
+        "no window is asked for twice",
+        len({(f, t) for f, t, _ in walk}) == len(walk),
+        walk,
     )
 
 
@@ -1025,18 +870,9 @@ def test_the_reach_says_nothing_on_the_socket_while_it_searches():
     )
 
 
+
 def main() -> int:
-    tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
-    for test in tests:
-        print(f"{test.__name__}:")
-        test()
-    if FAILURES:
-        print(f"\n{len(FAILURES)} check(s) failed:")
-        for failure in FAILURES:
-            print(f"  - {failure}")
-        return 1
-    print(f"\nall checks passed across {len(tests)} tests")
-    return 0
+    return run_tests(globals())
 
 
 if __name__ == "__main__":
