@@ -48,8 +48,16 @@ than restated.
 `{"event_code":"BRIDGE_TICK_FLOOR", "earliest_ms":1734933603326,
 "checked":"unnecessary"}` — the floor probe **skipped itself**. The claim
 (2024-12-23) sits more than 48 hours below the newest print, so there is
-nothing a falsification could change; that skip is the 1109 ms → 0 ms saving on
-the common path, here on a real terminal rather than in a bench.
+nothing a falsification could change, so the probe is not made. The saving is
+the whole cost of that probe, and this run is the evidence that it is skipped
+on the common path against a real terminal rather than a bench. `live_probe.py`
+records what remains: `find + walk : 0 ms + 344 ms`, the find being this check.
+
+(An earlier revision put a figure here — "1109 ms → 0 ms" — carried over from
+the same uncommitted development run as the retired wire number.
+[`arch-review.md`](arch-review.md) retracted it in the round before this one
+and this file went on asserting it, which is the worse of the two failures: one
+committed file arguing with another.)
 
 And the terminal answered its own oldest-tick question **correctly** this time.
 The bogus "19:30 today" floor in [`whole-day.md`](whole-day.md) is intermittent,

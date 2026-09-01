@@ -169,7 +169,7 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
 - [x] **G3** — Performance impact declared: every touched path classified by
       rate (per-trade / per-depth / per-frame / rare) in the plan, not in the
       review. *Evidence:* the classification table. → PR body.
-      → **MET.** Classified in the PR body: the walk and the slicing are **rare** (once per connect), the prepend is **per-frame** for as many frames as there are slices (eight on a WINV26 session at the shipped slice size), and nothing per-trade or per-depth changed.
+      → **MET.** Classified in the PR body: the walk and the slicing are **rare** (once per connect), the prepend is **per-frame** for as many frames as there are slices (`slices_to_follow: 7` on a WINV26 session at the shipped size — the opening block is charted, not prepended, so eight blocks means seven prepends), and nothing per-trade or per-depth changed.
 
 - [x] **G4** — Hot-path evidence, because the opening burst is 1.5 M trades and
       the progressive fill runs against the frame loop: `APP_HEALTH_SUMMARY`

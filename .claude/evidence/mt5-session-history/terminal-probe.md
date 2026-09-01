@@ -28,7 +28,7 @@ Raw capture: [`terminal-probe-raw.txt`](terminal-probe-raw.txt).
 | newest tick | 18:31:23.324 | 18:31:23.324 |
 | ticks | 386 173 | **1 525 621** |
 | stopped because | the clock said so | `session_edge` — the prints ran out |
-| terminal calls | 1 | 2 (1 search + 2 windows) |
+| terminal calls | 1 | 4 (2 search + 2 windows) |
 | time | 125 ms | 344 ms |
 
 **Recovered: 5.01 hours of the session and 1 139 448 prints.**
@@ -54,15 +54,24 @@ answer no longer depends on when the trader happened to open the chart.
 
 ## What it cost
 
-The walk is two terminal calls: one window wide enough to hold a session
+The walk is two windows: one wide enough to hold a session
 (`--backfill-minutes`, still 720 by default) and one more to prove the prints
-stop before it. 344 ms for a million and a half prints, against 125 ms for the
-third of them the old window returned — so the extra 4x of tape costs about
-220 ms, once, on connect.
+stop before it. Finding the newest print first takes two calls of its own, so
+the connect costs **four** where the clock window cost one — `windows walked :
+2 (search took 2)` in the raw. 344 ms for a million and a half prints, against
+125 ms for the **quarter** of them the old window returned (386 173 of
+1 525 621) — so four times the tape costs about 220 ms more, once, on
+connect.
 
-An earlier revision of the walk cost **1 390 ms** because it rebuilt the
-terminal's answer as a Python list. `Session.older_than` and
-`Session.join_windows` keep the numpy structured array the terminal returns, and
-return it untouched in the single-window case that a trading market always hits.
-That is the difference between 984 ms and 219 ms of walk on the same data, and
-all of it lands on the frame where the trader is waiting for their chart.
+An earlier revision of the walk was **substantially slower** because it
+rebuilt the terminal's answer as a Python list. `Session.older_than` and
+`Session.join_windows` keep the numpy structured array the terminal returns,
+and return it untouched in the single-window case that a trading market always
+hits — which is why the walk above costs what it costs, and all of it lands on
+the frame where the trader is waiting for their chart.
+
+(Three figures stood here — 1 390 ms, and "the difference between 984 ms and
+219 ms" — from a development run whose output was never committed. None of them
+appears in `terminal-probe-raw.txt`, and 219 ms is not a walk time at all: it
+is this file's own 344 − 125. They are gone rather than restated, for the same
+reason the wire figure went. What is measured is the 344 ms above.)

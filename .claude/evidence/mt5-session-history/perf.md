@@ -108,8 +108,8 @@ two would read as the branch being *faster* rather than as noise.
 
 ## What an earlier slice size cost
 
-The branch first sliced at **50 000** prints, which is 31 slices for a WINV26
-session. Every slice is prepended through `ChartState::prepend_history`, which
+The branch first sliced at **50 000** prints, which is `slices_to_follow: 30`
+for a WINV26 session — 31 blocks, 30 of them prepended. Every slice is prepended through `ChartState::prepend_history`, which
 re-cuts every bar the chart already holds, so a fill costs the slice count
 times a growing tape. At that size the floor was **43 fps** with three
 `APP_SLOW_FRAMES` — a real regression against the control, and `visual-qa`'s

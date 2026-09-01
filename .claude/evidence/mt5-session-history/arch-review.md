@@ -131,7 +131,9 @@ visible decision to argue with rather than a skipped gate.
   +124, `metatrader.rs` +171, `stream.rs` +55. Three `size_guard` ceilings
   raised — `app.rs` 9775 → 9890, `tab.rs` 4401 → 4470, `stream.rs` 2142 → 2200
   — each with the reason recorded beside the number in the diff.
-- **Language** — `language_guard` passes, **and** I read the prose, the branch
+- **Language** — `cargo test -p quantick-guards --test guards` passes, its
+  `tracked_files_are_written_in_english` among the four, **and** I read the
+  prose, the branch
   name and every commit message myself. English throughout; the only
   non-English text is the trader's request quoted verbatim in the archived goal
   file, which `CLAUDE.md` exempts as a marked, attributed quotation and which
