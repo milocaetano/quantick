@@ -394,29 +394,41 @@ impl StoredPreset {
     /// number is superseded, and a superseded value that stays in the
     /// struct is one a future save would write back out.
     fn adopt_vintage_floor(&mut self) -> bool {
-        let Some(vintage) = self.min_body.clone() else {
+        let Some(vintage) = self.min_body.as_deref() else {
             return false;
         };
-        // Decide first, clear afterwards. Taking the value up front dropped
-        // the trader's older number on the two paths that return `false` — a
-        // row carrying both keys, and one whose current key will not parse —
-        // and those paths report nothing, so the number vanished from memory
-        // and from the next save with no line anywhere saying it had.
-        self.min_body = None;
         // Compared as numbers, not as text. `"0"`, `"0.0"` and `"0.00"` all
-        // mean the floor is off, and a string sentinel would make them
-        // behave differently — one spelling adopting the vintage number and
-        // another discarding it, decided by how the trader happened to type
-        // a zero. An unparsable field is not a decision either way; it
-        // reaches `to_kernel`, which refuses the whole preset.
-        let current = Decimal::from_str(&self.min_range).ok();
-        let vintage_value = Decimal::from_str(&vintage).ok();
-        let current_says_nothing = current == Some(Decimal::ZERO);
-        let vintage_says_something = vintage_value.is_some_and(|v| v > Decimal::ZERO);
-        if !current_says_nothing || !vintage_says_something {
+        // mean the floor is off, and a string sentinel would make them behave
+        // differently — one spelling adopting the vintage number and another
+        // discarding it, decided by how the trader happened to type a zero.
+        let vintage_value = Decimal::from_str(vintage).ok();
+        let Some(current) = Decimal::from_str(&self.min_range).ok() else {
+            // The current key will not parse, so `to_kernel` refuses this
+            // preset and the trader has to repair the row by hand. **Leave
+            // the vintage number exactly where it is**: it is the value they
+            // would repair it *with*, and an earlier version of this cleared
+            // it on the way past, which is how a broken row became a broken
+            // row with no clue in it.
+            return false;
+        };
+        if current != Decimal::ZERO {
+            // Both keys, and the current one is the authority. The vintage
+            // number is superseded, so it goes — leaving it would write both
+            // keys back on the next save and re-announce the migration on
+            // every launch forever. Not silent: the loader names every row
+            // whose vintage key it consumed and counts these separately from
+            // the ones it carried forward.
+            self.min_body = None;
             return false;
         }
-        self.min_range = vintage;
+        if !vintage_value.is_some_and(|v| v > Decimal::ZERO) {
+            // A vintage zero is a floor that was already off; nothing to
+            // carry, and nothing worth keeping the key for.
+            self.min_body = None;
+            return false;
+        }
+        self.min_range = vintage.to_owned();
+        self.min_body = None;
         true
     }
 }
@@ -477,9 +489,6 @@ struct StoreFile {
 pub struct StrategyBank {
     path: PathBuf,
     presets: BTreeMap<String, StoredPreset>,
-    /// Whether this load folded a vintage floor key forward, so the file is
-    /// rewritten once instead of being migrated again on every launch.
-    migrated_floor: bool,
 }
 
 impl StrategyBank {
@@ -498,7 +507,6 @@ impl StrategyBank {
     #[must_use]
     pub fn load_from(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
-        let mut migrated_floor = false;
         let presets = match std::fs::read_to_string(&path) {
             Ok(text) => match toml::from_str::<StoreFile>(&text) {
                 Ok(file) if file.version == STORE_FORMAT_VERSION => {
@@ -523,7 +531,6 @@ impl StrategyBank {
                             name.clone()
                         })
                         .collect();
-                    migrated_floor = carried > 0;
                     if !vintage.is_empty() {
                         tracing::warn!(
                             target: "quantick::app",
@@ -563,21 +570,7 @@ impl StrategyBank {
             },
             Err(_) => BTreeMap::new(),
         };
-        let bank = Self {
-            path,
-            presets,
-            migrated_floor,
-        };
-        // The migration is a one-time event or it is not a migration: left in
-        // memory only, the file keeps stating a floor this build no longer
-        // honours and the warning fires on every launch forever. Writing it
-        // back makes the next load ordinary. It reaches disk here rather than
-        // waiting for an unrelated `save` to carry it — which is what the
-        // re-save test had to stage to observe it happening at all.
-        if bank.migrated_floor {
-            bank.write_back();
-        }
-        bank
+        Self { path, presets }
     }
 
     pub fn names(&self) -> impl Iterator<Item = &str> {
@@ -1108,12 +1101,15 @@ mod tests {
              rearm = \"one_shot\"\n",
         )
         .unwrap();
-        // No save is staged: loading is what migrates, and the migration
-        // writes itself back. An earlier version of this test had to save an
-        // unrelated preset to observe the change reach disk, which was the
-        // tell that it never reached disk on its own.
-        let _bank = StrategyBank::load_from(&path);
-        let written = std::fs::read_to_string(&path).expect("the load rewrote it");
+        // Loading migrates in memory; the file changes on the next save.
+        // Writing it back at load time was tried and reverted: it turned a
+        // read into a non-atomic write that re-serialises every row through
+        // this build's `StoredPreset`, which would strip an optional field a
+        // newer build had added — a startup that silently edits the trader's
+        // bank to cure a repeated log line is a bad trade.
+        let mut bank = StrategyBank::load_from(&path);
+        bank.save("Other", StoredPreset::starting_point(Side::Buy));
+        let written = std::fs::read_to_string(&path).expect("the bank wrote it");
         assert!(
             !written.contains("min_body"),
             "the vintage key must not survive a save: {written}"
@@ -1128,10 +1124,6 @@ mod tests {
         let preset = reloaded.get("Vintage").expect("still there");
         assert_eq!(preset.min_range, "100");
         assert!(preset.min_body.is_none());
-        assert!(
-            !reloaded.migrated_floor,
-            "the second load has nothing to migrate"
-        );
         std::fs::remove_file(&path).ok();
     }
 
@@ -1169,10 +1161,9 @@ mod tests {
         let bank = StrategyBank::load_from(&path);
         let preset = bank.get("Both").expect("the row survives");
         assert_eq!(preset.min_range, "250", "the current key is the authority");
-        assert!(preset.min_body.is_none(), "the superseded one is gone");
         assert!(
-            !bank.migrated_floor,
-            "nothing was carried forward, so nothing needed rewriting"
+            preset.min_body.is_none(),
+            "the superseded one is gone, and the loader counted it as superseded"
         );
         std::fs::remove_file(&path).ok();
     }
@@ -1210,6 +1201,11 @@ mod tests {
         assert!(
             preset.to_kernel().is_none(),
             "an unparsable floor still voids the preset"
+        );
+        assert_eq!(
+            preset.min_body.as_deref(),
+            Some("100"),
+            "and the number the trader would repair it with is still there —              asserting only that the preset is void proves nothing about that,              which is what an earlier version of this test did"
         );
         std::fs::remove_file(&path).ok();
     }

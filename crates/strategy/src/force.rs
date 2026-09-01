@@ -227,10 +227,7 @@ impl ForceWindow {
     #[must_use]
     pub fn weigh(&self, bar: &Bar) -> BarVerdict {
         let body = (bar.close - bar.open).abs();
-        // The candle's own range, which the absolute floor judges and the
-        // bracket projection rides on. Read once so the gate and the
-        // `ForceBar` it builds can never disagree about the same bar.
-        let range = bar.high - bar.low;
+
         // What the window would hold with this bar folded in: one body
         // longer, capped at the window, oldest evicted once it is full.
         let filled = (self.bodies.len() + 1).min(self.params.window);
@@ -264,18 +261,28 @@ impl ForceWindow {
             BarVerdict::Exhaustion { side, ratio }
         } else if ratio < min {
             BarVerdict::Quiet { ratio }
-        } else if range >= self.params.min_range {
+        } else if bar.high.saturating_sub(bar.low) >= self.params.min_range {
             BarVerdict::Force(ForceBar {
                 side,
                 body,
-                range,
+                // The candle's own range, which the floor just judged and the
+                // bracket projection rides on. Computed here rather than at
+                // the top of `weigh`: every bar the ruler sees passes through
+                // this method, warmup and quiet ones included, and they do not
+                // need it. `saturating_sub` for the same reason the running
+                // sum below saturates — an extreme bar should produce a
+                // verdict, not abort the kernel.
+                range: bar.high.saturating_sub(bar.low),
                 ratio,
             })
         } else {
             // Inside the band but under the absolute floor: a ratio without
             // a size is not an elephant — and the verdict says which rule
             // held it, because "quiet" over a band-clearing bar is a lie.
-            BarVerdict::UnderFloor { ratio, range }
+            BarVerdict::UnderFloor {
+                ratio,
+                range: bar.high.saturating_sub(bar.low),
+            }
         }
     }
 }
@@ -320,6 +327,17 @@ mod tests {
     /// A bar whose shadows reach past its body, so a fixture can separate
     /// the body the ratio band reads from the candle the floor measures.
     fn wicked(open: &str, close: &str, high: &str, low: &str) -> Bar {
+        // A real bar satisfies `low <= open, close <= high`. Two fixtures on
+        // this branch did not — a close *under* the low — and they were
+        // carrying the diagnosis the whole mission turned on, asserting a
+        // range the geometry could never have produced. Nothing in the engine
+        // rejects such a bar, so the guard belongs where the fixture is
+        // written.
+        let (o, c, h, l) = (dec(open), dec(close), dec(high), dec(low));
+        assert!(
+            l <= o && o <= h && l <= c && c <= h,
+            "not a bar a tape can print: open {o}, close {c} outside {l}..{h}"
+        );
         Bar {
             open_time: 0,
             close_time: 0,
@@ -728,7 +746,7 @@ mod tests {
         for b in &warm {
             ruler.classify(b);
         }
-        match ruler.classify(&wicked("180000", "179940", "180100", "179960")) {
+        match ruler.classify(&wicked("180000", "179940", "180010", "179930")) {
             BarVerdict::Quiet { ratio } => assert!(
                 ratio < dec("2"),
                 "under the band, so the floor is never consulted: {ratio}"
@@ -742,7 +760,7 @@ mod tests {
         for b in &warm {
             ruler.classify(b);
         }
-        match ruler.classify(&wicked("180000", "179905", "180100", "179960")) {
+        match ruler.classify(&wicked("180000", "179905", "180030", "179890")) {
             BarVerdict::Force(force) => {
                 assert_eq!(force.body, dec("95"));
                 assert_eq!(force.range, dec("140"));
