@@ -132,6 +132,9 @@ async fn tcp_replay_equals_the_pure_mapper() {
             // Only one client ever dials this listener.
             Mt5Event::SessionBusy { peer, .. } => panic!("unexpected second client: {peer}"),
             Mt5Event::HistoryPage { .. } => panic!("nothing asked this fixture for older ticks"),
+            // The fixture's opening block is one `backfill_start`/`backfill_end`
+            // pair; it is small enough that the bridge never slices it.
+            Mt5Event::OpeningPage { .. } => panic!("this fixture sends no opening slices"),
             // A recorded session carries no `sent_ms`, so the split is
             // reported unavailable; the fixture is about bars, not lag.
             Mt5Event::Latency(_) => {}

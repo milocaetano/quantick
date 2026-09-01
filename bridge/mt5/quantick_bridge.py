@@ -217,6 +217,22 @@ DEFAULT_BACKFILL_MAX_TICKS = 4_000_000
 # for the same reason, as the app's `history_reach::MAX_CAMPAIGN_SPAN_MS`.
 SESSION_WALK_MAX_SPAN_MS = 48 * 60 * 60 * 1000
 
+# Ticks in one slice of the opening block.
+#
+# The session is fetched in one go -- the terminal returns a whole day in about
+# 350 ms -- but it cannot be *sent* in one go. Serialising and writing a real
+# WINV26 session takes about eleven seconds, and sent as a single block that is
+# eleven seconds with nothing on the chart, which a trader cannot tell apart
+# from a bridge that failed to start. So the newest slice goes out as the
+# opening block and the rest follows it, newest-first, between passes of the
+# loop that is also pumping live ticks.
+#
+# Fifty thousand prints is about five megabytes and a third of a second of
+# work: small enough that the first one is on the chart immediately and that a
+# live print never waits long behind one, large enough that a full session is
+# thirty-odd slices rather than hundreds of round trips.
+OPENING_SLICE_TICKS = 50_000
+
 # Windows one opening walk may spend: the span above, in gap-wide steps.
 # Derived rather than chosen, so raising the span cannot leave a budget behind
 # that silently stops the walk before it.
@@ -429,6 +445,9 @@ class Session:
 
     def __init__(self, sock: socket.socket, symbol: str, args: argparse.Namespace) -> None:
         self.sock = sock
+        # Slices of the opening session still to go out, newest first. Drained
+        # one per loop pass by `pump_opening`.
+        self.pending_opening: list = []
         # Outbound bytes waiting for `flush`. A bytearray rather than a list of
         # lines: the socket wants one buffer and this is already it.
         self.outbox = bytearray()
@@ -671,7 +690,52 @@ class Session:
             searched_calls=searched,
             stopped_on=stopped_on,
         )
-        self.send_backfill(ticks)
+        # The newest slice opens the chart; the rest is parked for the loop.
+        # `pending_opening` holds slices oldest-last, so `pop()` takes the next
+        # one to go out -- newest-first, each older than the last.
+        opening = ticks[-OPENING_SLICE_TICKS:] if len(ticks) else ticks
+        rest = ticks[: -OPENING_SLICE_TICKS] if len(ticks) > OPENING_SLICE_TICKS else []
+        self.pending_opening = [
+            rest[max(0, start - OPENING_SLICE_TICKS) : start]
+            for start in range(len(rest), 0, -OPENING_SLICE_TICKS)
+        ]
+        if self.pending_opening:
+            log(
+                "BRIDGE_OPENING_SLICED",
+                symbol=self.symbol,
+                total=len(ticks),
+                opening_now=len(opening),
+                slices_to_follow=len(self.pending_opening),
+                slice_ticks=OPENING_SLICE_TICKS,
+            )
+        self.send_backfill(opening)
+
+    def pump_opening(self) -> None:
+        """Send one parked slice of the opening session, if any is left.
+
+        One per pass, deliberately. The loop this returns to is the one pumping
+        live ticks and answering clicks, and a slice costs a third of a second;
+        draining the queue here would hand the trader a chart that fills in
+        quickly and a tape that stopped while it did.
+        """
+        if not self.pending_opening:
+            return
+        slice_ticks = self.pending_opening.pop(0)
+        remaining = len(self.pending_opening)
+        self.send(
+            {
+                "type": "history_start",
+                "count_hint": len(slice_ticks),
+                "opening": True,
+            }
+        )
+        sent_ms = self.server_now_ms()
+        for tick in slice_ticks:
+            self.send_tick(tick, sent_ms)
+        self.send({"type": "history_end", "opening": True, "remaining": remaining})
+        self.flush()
+        if not remaining:
+            log("BRIDGE_OPENING_COMPLETE", symbol=self.symbol)
 
     def send_backfill(self, ticks: list) -> None:
         """Put one block on the wire and leave the live cursor after it.
@@ -1628,6 +1692,9 @@ def run_session(args: argparse.Namespace, offset_s: int) -> None:
                 # arrives when a trader clicks, and the answer should not wait
                 # on the next poll interval to start.
                 session.pump_commands()
+                # After the pumps and the commands: a trader's click and a live
+                # print both outrank filling in this morning's history.
+                session.pump_opening()
                 session.maybe_heartbeat()
                 # Everything this pass produced leaves before the loop waits.
                 # The buffer's size cap bounds memory; this bounds *latency*,
@@ -1637,7 +1704,10 @@ def run_session(args: argparse.Namespace, offset_s: int) -> None:
                 # Sleep to the nearest due deadline instead of spinning: the
                 # terminal reads cost microseconds, the waiting is the loop.
                 idle = min(next_tick, next_book) - time.monotonic()
-                if idle > 0:
+                # Not while the opening session is still going out: there is
+                # work in hand, and sleeping on it would stretch a fill that
+                # takes ten seconds into one that takes minutes.
+                if idle > 0 and not session.pending_opening:
                     time.sleep(min(idle, 0.05))
         except KeyboardInterrupt:
             session.close("interrupted")

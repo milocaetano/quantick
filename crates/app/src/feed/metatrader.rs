@@ -531,6 +531,47 @@ async fn feed_task(
                             }
                         }
                     }
+                    Some(Mt5Event::OpeningPage { trades, remaining }) => {
+                        // The rest of the trading session, arriving behind the
+                        // slice the chart opened on. Nobody asked for it, so
+                        // `page_outstanding` is deliberately left alone: a
+                        // trader who pressed *+ older* while the morning was
+                        // still filling in is still owed the answer to *that*.
+                        //
+                        // Everything else is the paged path's reasoning
+                        // unchanged -- only trades strictly older than what the
+                        // chart holds pass, because the bridge answers on whole
+                        // seconds and a slice can carry the far side of the
+                        // boundary's own millisecond.
+                        let served = trades.len();
+                        let floor = oldest_forwarded_ms.unwrap_or(i64::MAX);
+                        let older: Vec<_> = trades
+                            .into_iter()
+                            .filter(|t| t.timestamp_ms < floor)
+                            .collect();
+                        info!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "MT5_OPENING_PAGE_READY",
+                            symbol = %symbol,
+                            count = older.len(),
+                            overlap_dropped = served - older.len(),
+                            remaining = ?remaining,
+                            "a slice of the opening session is ready to prepend"
+                        );
+                        oldest_forwarded_ms = earlier(
+                            oldest_forwarded_ms,
+                            older.iter().map(|t| t.timestamp_ms).min(),
+                        );
+                        // The next *+ older* press starts below the whole
+                        // opening block, not below the slice the chart first
+                        // painted -- otherwise the first press would re-fetch
+                        // the morning that just arrived.
+                        paging_floor_ms = earlier(paging_floor_ms, oldest_forwarded_ms);
+                        if tx.send(FeedEvent::HistoryPrepended(older)).await.is_err() {
+                            break;
+                        }
+                    }
                     Some(Mt5Event::HistoryPage {
                         trades,
                         exhausted,

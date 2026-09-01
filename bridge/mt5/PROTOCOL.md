@@ -292,12 +292,31 @@ its read timeout (default 30 s) presumes the bridge dead.
 Bracket the historical block. An empty block still sends both markers —
 `backfill_end` is the "history is done" signal.
 
-**What the block covers is the bridge's business, not the feed's.** Both
-bridges send a window of the width their operator asked for
-(`--backfill-minutes`, `InpBackfillMinutes`), and both move that window's *end*
-from the clock to the tape when the clock's own window holds nothing: outside a
-session, `now` names hours in which nothing printed, while the terminal still
-holds the last session on disk. The block is then the newest session there is,
+**What the block covers is the bridge's business, not the feed's.** The two
+bridges answer this differently, and the hello does not say which — a consumer
+must read the block it gets rather than assume a width.
+
+`quantick_bridge.py` sends **the trading session the tape is in, from its first
+print**, whatever the clock reads. It finds the newest print the terminal holds
+and walks back until the prints stop for longer than an hour; a stretch that
+quiet is the market having been closed, read off the tape rather than from a
+session calendar. `--backfill-minutes` is the width of the *first* ask only, so
+a trading market answers in one call; it no longer decides where the day
+starts, because a span in hours cannot — the same twelve hours cover a whole
+session at 18:30 and cut five hours off it at 22:10.
+
+On a liquid contract that block is too large to arrive at once: a real B3 mini
+index session is 1 525 621 prints and 227 MB. So the bridge sends the **newest
+slice** as `backfill_start`/`backfill_end` — the chart has bars within a second
+— and the rest of the session follows it in `history_start` blocks marked
+`"opening": true`, newest-first, while the live tape keeps flowing between
+them. See *history_start / tick / history_end* below.
+
+`QuantickBridge.mq5` still sends a window of `InpBackfillMinutes` (30 by
+default), moving that window's *end* from the clock to the tape when the
+clock's own window holds nothing: outside a session, `now` names hours in which
+nothing printed, while the terminal still holds the last session on disk. The
+block is then the newest session there is,
 and the feed charts it exactly as it charts any other backfill — the ticks
 carry their real timestamps, so how far behind they are is something the chart
 reads off them rather than something this protocol has to say. A symbol the
@@ -341,6 +360,39 @@ The answer to one `load_older`. The ticks between the markers are ordinary
 `tick` messages — same shape, same `seq` counter, continuing monotonically — so
 the mapping stays one code path. They are *history*, and the markers are the
 only thing that says so.
+
+#### The opening variant
+
+```json
+{"type":"history_start","count_hint":50000,"opening":true}
+{"type":"history_end","opening":true,"remaining":29}
+```
+
+The same block, sent for a different reason: not the answer to a click, but the
+rest of the trading session arriving behind the slice the chart opened on.
+`opening` is absent-means-false, so a bridge predating it keeps meaning what it
+always did.
+
+The distinction is not cosmetic, because the two settle different debts. A
+block the consumer **asked** for owes it exactly one reply, and settling that
+is what stops a spinner. A block marked `opening` answers no request and must
+settle nothing — otherwise a trader who pressed *load older* while the morning
+was still filling in would have their press answered by history they never
+asked for, and the real answer would arrive with nobody waiting for it.
+
+`remaining` counts the opening blocks still to come, so a chart can say how
+much of the session is left instead of showing a spinner of unknown length. It
+is never a promise: a session can end mid-fill. `exhausted` and `scanned_to_ms`
+are meaningless on an opening block and are not sent — it searched nothing, the
+ticks were already in hand.
+
+**An older feed degrades rather than breaks.** The bridge cannot know which
+version it is talking to, so it slices unconditionally. A feed that does not
+know the flag sees each slice as a page nobody asked for and drops it, which is
+what it has always done with those — so the chart opens on the newest slice and
+simply does not fill in behind it. The trader gets less history than they
+should and reaches the rest with *load older*; nothing is mis-charted, and no
+spinner is left running, because those blocks settle nothing either way.
 
 Deliberately **not** `backfill_start`/`backfill_end`. That block is the session's
 opening window: it arrives unasked, exactly once, and lands at the front of an

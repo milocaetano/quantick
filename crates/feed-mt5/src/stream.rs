@@ -442,6 +442,27 @@ pub enum Mt5Event {
         /// all. See [`protocol::BridgeMsg::HistoryEnd::scanned_to_ms`].
         scanned_to_utc_ms: Option<i64>,
     },
+    /// A slice of the *opening* history: older than everything sent so far, and
+    /// asked for by nobody.
+    ///
+    /// The bridge opens a chart on the whole trading session, which on a liquid
+    /// contract is far too much to arrive in one block. The newest slice goes
+    /// out as [`Mt5Event::Backfilled`] so there is something to look at within
+    /// a second, and the rest of the session follows in these, newest-first,
+    /// while the live tape keeps flowing between them.
+    ///
+    /// Deliberately **not** a [`Mt5Event::HistoryPage`]. That event's contract
+    /// is one reply per request and a consumer's spinner depends on it; these
+    /// answer no request and must settle no debt, or a click made during the
+    /// fill would be answered by a slice that has nothing to do with it.
+    OpeningPage {
+        /// The older trades, ascending. Empty is legitimate: a slice can map to
+        /// no trades at all.
+        trades: Vec<Trade>,
+        /// Slices still to come after this one, when the bridge said. For
+        /// showing progress; never a promise, since a session can end mid-fill.
+        remaining: Option<u64>,
+    },
 }
 
 /// A fatal server error (the non-fatal ones are events/logs).
@@ -803,6 +824,10 @@ struct PagedBlock {
     /// once at the end rather than per tick, so a runaway bridge cannot turn
     /// the log into the second denial of service.
     over_cap: u64,
+    /// Whether this block is a slice of the opening session rather than the
+    /// answer to a click. Carried from the start marker to the end one because
+    /// only the start says which kind it is, and only the end can act on it.
+    opening: bool,
 }
 
 /// What woke the session loop: something the bridge said, or something the
@@ -1349,8 +1374,11 @@ async fn serve_connection(
                     break ConnEnd::UiGone;
                 }
             }
-            Ok(BridgeMsg::HistoryStart { count_hint }) => {
-                if !config.history_pager.is_in_flight() {
+            Ok(BridgeMsg::HistoryStart {
+                count_hint,
+                opening,
+            }) => {
+                if !opening && !config.history_pager.is_in_flight() {
                     // Nobody asked. Collect it anyway rather than letting its
                     // ticks fall through as live prints — the block is history,
                     // and charting it at the front of the tape is the one
@@ -1386,16 +1414,19 @@ async fn serve_connection(
                     trades: Vec::new(),
                     resume: mapper.take_price_context(),
                     over_cap: 0,
+                    opening,
                 });
             }
             Ok(BridgeMsg::HistoryEnd {
                 exhausted,
                 scanned_to_ms,
+                remaining,
             }) => {
                 let Some(PagedBlock {
                     trades,
                     resume,
                     over_cap,
+                    opening,
                 }) = page.take()
                 else {
                     // The start went missing — an undecodable line ahead of it
@@ -1437,6 +1468,28 @@ async fn serve_connection(
                         dropped = over_cap,
                         "a page exceeded the per-block cap; the surplus was dropped"
                     );
+                }
+                if opening {
+                    // Nobody asked for this, so nothing is settled: a click
+                    // made while the session is still filling in stays owed its
+                    // own reply. The slice is still prepended — it is the
+                    // trader's morning.
+                    info!(
+                        target: "quantick::feed",
+                        schema_version = 1_u8,
+                        event_code = "MT5_OPENING_PAGE",
+                        trades = trades.len(),
+                        remaining = ?remaining,
+                        "a slice of the opening session is ready to prepend"
+                    );
+                    if tx
+                        .send(Mt5Event::OpeningPage { trades, remaining })
+                        .await
+                        .is_err()
+                    {
+                        break ConnEnd::UiGone;
+                    }
+                    continue;
                 }
                 if !config.history_pager.settle_owed() {
                     warn!(

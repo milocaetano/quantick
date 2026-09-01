@@ -400,6 +400,128 @@ def test_a_real_floor_is_still_honoured():
     )
 
 
+def drain_opening(session) -> list[list[dict]]:
+    """Every parked slice, in the order the loop would send them."""
+    session.sent.clear()
+    blocks: list[list[dict]] = []
+    while session.pending_opening:
+        session.sent.clear()
+        session.pump_opening()
+        blocks.append([m for m in session.sent if m["type"] == "tick"])
+    return blocks
+
+
+def test_a_session_larger_than_a_slice_opens_on_its_newest_part():
+    """D2: the chart paints on the newest slice rather than waiting for the
+    whole session, which on a real contract is eleven seconds of nothing."""
+    now_s = at(22, 10)
+    term = FakeTerminal(0, now_s)
+    term.ticks = session_between(at(OPEN_H, OPEN_M), at(CLOSE_H, CLOSE_M), step_s=10)
+    bridge = load_bridge(term)
+    bridge.OPENING_SLICE_TICKS = 500
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.backfill()
+
+    opened = block_ticks(session)
+    check("the opening block is one slice", len(opened) == 500, len(opened))
+    check(
+        "and it is the newest end of the session",
+        opened[-1]["time_ms"] == at(CLOSE_H, CLOSE_M) * 1000,
+        opened[-1]["time_ms"],
+    )
+    check(
+        "the rest is parked, not dropped",
+        sum(len(s) for s in session.pending_opening) == len(term.ticks) - 500,
+        sum(len(s) for s in session.pending_opening),
+    )
+
+
+def test_the_parked_slices_rebuild_the_session_exactly():
+    """Nothing lost, nothing doubled, nothing out of order — the whole point of
+    slicing is that it is invisible in the result."""
+    now_s = at(22, 10)
+    term = FakeTerminal(0, now_s)
+    term.ticks = session_between(at(OPEN_H, OPEN_M), at(CLOSE_H, CLOSE_M), step_s=10)
+    bridge = load_bridge(term)
+    bridge.OPENING_SLICE_TICKS = 500
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.backfill()
+    opened = [m["time_ms"] for m in block_ticks(session)]
+
+    blocks = drain_opening(session)
+    older = [m["time_ms"] for block in blocks for m in block]
+    rebuilt = sorted(older + opened)
+    expected = [t["time_msc"] for t in term.ticks]
+
+    check("every print arrives exactly once", rebuilt == expected, len(rebuilt))
+    check(
+        "each slice is older than the one before it",
+        all(
+            max(m["time_ms"] for m in blocks[i])
+            < min(m["time_ms"] for m in blocks[i - 1])
+            for i in range(1, len(blocks))
+            if blocks[i] and blocks[i - 1]
+        ),
+        "slices out of order",
+    )
+    check(
+        "and the first parked slice is older than what opened the chart",
+        max(m["time_ms"] for m in blocks[0]) < min(opened),
+        (max(m["time_ms"] for m in blocks[0]), min(opened)),
+    )
+
+
+def test_each_slice_is_marked_and_counts_down():
+    """The app must be able to tell an opening slice from the answer to a
+    click — they settle different debts — and the chart wants a number to show
+    rather than a spinner of unknown length."""
+    now_s = at(22, 10)
+    term = FakeTerminal(0, now_s)
+    term.ticks = session_between(at(OPEN_H, OPEN_M), at(CLOSE_H, CLOSE_M), step_s=10)
+    bridge = load_bridge(term)
+    bridge.OPENING_SLICE_TICKS = 500
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.backfill()
+
+    starts, ends = [], []
+    while session.pending_opening:
+        session.sent.clear()
+        session.pump_opening()
+        starts += [m for m in session.sent if m["type"] == "history_start"]
+        ends += [m for m in session.sent if m["type"] == "history_end"]
+
+    check("every slice is announced as opening", all(m["opening"] for m in starts), starts[:2])
+    check("and closed as one", all(m["opening"] for m in ends), ends[:2])
+    check(
+        "the countdown ends at zero",
+        [m["remaining"] for m in ends][-1] == 0,
+        [m["remaining"] for m in ends][-3:],
+    )
+    check(
+        "and never goes up",
+        all(a > b for a, b in zip([m["remaining"] for m in ends], [m["remaining"] for m in ends][1:])),
+        [m["remaining"] for m in ends][:4],
+    )
+
+
+def test_a_session_inside_one_slice_parks_nothing():
+    """The common case on a quiet contract: one block, no slices, no change in
+    behaviour at all."""
+    now_s = at(22, 10)
+    term = FakeTerminal(0, now_s)
+    term.ticks = b3_day()
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.backfill()
+
+    check("nothing is parked", session.pending_opening == [], session.pending_opening)
+    check(
+        "and the whole session opened the chart",
+        len(block_ticks(session)) == len(term.ticks),
+        len(block_ticks(session)),
+    )
+
+
 def main() -> int:
     return run_tests(globals())
 
