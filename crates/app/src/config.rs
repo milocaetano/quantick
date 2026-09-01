@@ -631,6 +631,20 @@ impl HistorySettings {
                     .to_string(),
             );
         }
+        // The campaign cannot reach past its own span cap, so a larger value
+        // here is a promise no press can keep: every run would end on
+        // `SpanCovered` or a budget and never on `ReachMet`. Refused at load
+        // with the number that would work, the way every other config error
+        // is, rather than silently clamped somewhere the trader cannot see.
+        let ceiling = crate::history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000;
+        if i64::from(self.reach_span_minutes) > ceiling {
+            return Err(format!(
+                "history.reach_span_minutes is {} but one run can reach at most \
+                 {ceiling} minutes back - a larger span is a press that can never \
+                 report having arrived",
+                self.reach_span_minutes
+            ));
+        }
         if self.session_gap_minutes == 0 {
             return Err(
                 "history.session_gap_minutes must be at least 1 - a gap of zero \

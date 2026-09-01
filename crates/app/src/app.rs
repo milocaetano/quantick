@@ -4610,6 +4610,11 @@ impl QuantickApp {
         {
             self.history_reach = reach;
         }
+        // Through the setter, so a hand-edited workspace cannot restore a span
+        // the campaign could never reach.
+        if let Some(minutes) = chrome.history_reach_span_minutes {
+            self.set_history_reach_span_minutes(minutes);
+        }
         self.venue_lead_in = chrome.venue_lead_in;
         self.surfaces
             .drawing_chrome
@@ -4673,6 +4678,11 @@ impl QuantickApp {
             // The default writes no key: a workspace that says nothing about
             // the reach restores the press the button has always had, which is
             // exactly what the default is.
+            // Written whenever it differs from what the config seeds, so a
+            // workspace only carries an opinion its owner actually formed.
+            history_reach_span_minutes: (self.history_reach_span_minutes
+                != self.config.history.reach_span_minutes)
+                .then_some(self.history_reach_span_minutes),
             history_reach: (self.history_reach != crate::history_reach::HistoryReach::default())
                 .then(|| self.history_reach.token().to_owned()),
             venue_lead_in: self.venue_lead_in,
@@ -18162,6 +18172,7 @@ crosshair = false
             legacy_favorite_tools: Vec::new(),
             progressive_history: true,
             history_reach: None,
+            history_reach_span_minutes: None,
             venue_lead_in: false,
             inspector_position: position,
         }
@@ -22460,6 +22471,7 @@ crosshair = false
                 legacy_favorite_tools: Vec::new(),
                 progressive_history: false,
                 history_reach: None,
+                history_reach_span_minutes: None,
                 venue_lead_in: false,
                 inspector_position: Some([260.0, 480.0]),
             }),

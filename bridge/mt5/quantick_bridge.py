@@ -506,15 +506,24 @@ class Session:
     def flush(self) -> None:
         """Hand whatever is queued to the socket.
 
-        Empty is the common case and costs nothing. Clearing the buffer before
-        the write would lose a block to a failed send; clearing it after would
-        re-send one to a partial write that raised. `sendall` is all-or-raise,
-        so the buffer is dropped exactly when the bytes are gone.
+        Empty is the common case and costs nothing.
+
+        The buffer is dropped **whether or not the write succeeded**, and that
+        is deliberate. This socket carries a connect timeout, which puts it in
+        timeout mode, and `sendall` there is documented as not saying how much
+        it managed to write before raising — so after a failure there is no
+        honest way to know what the peer already has. Keeping the bytes to
+        retry them is the tempting choice and the wrong one: `close` sends a
+        `bye` and flushes, which would splice a repeat of up to a quarter of a
+        megabyte of ticks onto whatever half-line the peer received, and the
+        feed would chart the duplicates. Losing a block to a dying session is
+        recoverable; silently doubling prints on the tape is not.
         """
         if not self.outbox:
             return
-        self.sock.sendall(bytes(self.outbox))
+        payload = bytes(self.outbox)
         self.outbox.clear()
+        self.sock.sendall(payload)
 
     def price(self, value: float) -> str:
         return f"{value:.{self.digits}f}"
@@ -691,8 +700,11 @@ class Session:
             stopped_on=stopped_on,
         )
         # The newest slice opens the chart; the rest is parked for the loop.
-        # `pending_opening` holds slices oldest-last, so `pop()` takes the next
-        # one to go out -- newest-first, each older than the last.
+        # `pending_opening` holds the slices newest-first, so `pop(0)` takes the
+        # next one to go out and each is older than the one before it. Not
+        # `pop()`: that would take the oldest first, and every later slice
+        # would then fail the consumer's "older than what the chart holds"
+        # filter and be dropped as overlap.
         slice_ticks = max(1, self.args.opening_slice_ticks)
         opening = ticks[-slice_ticks:] if len(ticks) else ticks
         rest = ticks[:-slice_ticks] if len(ticks) > slice_ticks else []
@@ -761,7 +773,20 @@ class Session:
             self.sent_at_cursor = sum(
                 1 for t in ticks if int(t["time_msc"]) == self.cursor_msc
             )
-
+        elif not self.cursor_msc:
+            # An empty block still has to park the cursor, and this is the only
+            # place that can: leaving it at zero makes the live pump's first
+            # `copy_ticks_from(symbol, 0, ...)` ask for the *oldest* ticks the
+            # terminal holds and forward years-old prints as live trades, four
+            # thousand at a time, for the life of the session.
+            #
+            # Reachable whenever the walk comes back empty after the search
+            # found a print — a terminal that fails mid-walk
+            # (`stopped_on="terminal_error"`) is exactly that, and this branch
+            # added the report for it. `now` is the honest anchor: nothing was
+            # sent, so the live tape starts from here.
+            self.cursor_msc = int(time.time() + self.offset_s) * 1000
+            self.sent_at_cursor = 0
     @staticmethod
     def older_than(found, cursor_ms: int):
         """The part of a terminal answer strictly older than `cursor_ms`.
@@ -1023,6 +1048,11 @@ class Session:
         # No count_hint: it is optional precisely so a bridge that has not
         # counted yet can still frame the block.
         self.send({"type": "history_start"})
+        # Out now, not at the bottom of the loop: the docstring above promises
+        # this marker precedes the walk, and the walk can take seconds. Left in
+        # the buffer it would wait for a heartbeat or for the walk to finish,
+        # which is the silence the promise exists to prevent.
+        self.flush()
         ticks, exhausted, scanned_to_ms, calls = self.walk_back(wanted, before_ms)
         page_sent_ms = self.server_now_ms()
         for tick in ticks:
@@ -1185,7 +1215,12 @@ class Session:
         to_s = claimed // 1000
         from_s = max(0, to_s - OPENING_REACH_WINDOW_S)
         below = mt5.copy_ticks_range(self.symbol, from_s, to_s, mt5.COPY_TICKS_ALL)
-        older = 0 if below is None else sum(1 for t in below if int(t["time_msc"]) < claimed)
+        # Only *whether any* exist is needed, and this runs before the first
+        # tick reaches the chart — so it takes the vectorised path for the same
+        # reason `older_than` does. Counting them one boxed row at a time cost
+        # 840 ms per 1.5 M rows when measured, all of it on the frame the
+        # trader is waiting through.
+        older = 0 if below is None else len(self.older_than(below, claimed))
         if older:
             log(
                 "BRIDGE_TICK_FLOOR_IMPLAUSIBLE",

@@ -99,6 +99,8 @@ pub const MAX_CAMPAIGN_SPAN_MS: i64 = 48 * 60 * 60 * 1_000;
 /// Separate from [`CampaignEnd::NothingComingBack`], which is a *run* giving
 /// up after several such replies in a row: one empty answer is not evidence
 /// that a record is spent, so this sentence claims less than that one does.
+pub const EMPTY_PAGE_NOTICE: &str = "no older trades came back from that request";
+
 /// What [`HistoryReach::Span`] reaches back by until the trader says otherwise.
 ///
 /// Two hours of traded time. Long enough to be worth a press on a contract
@@ -107,9 +109,10 @@ pub const MAX_CAMPAIGN_SPAN_MS: i64 = 48 * 60 * 60 * 1_000;
 /// not most of a session, which is what [`HistoryReach::PreviousSession`] is
 /// already for. A trader who wants the day before should ask for the day
 /// before by name; this is the reach for "a bit more than I have".
+///
+/// The ceiling is [`MAX_CAMPAIGN_SPAN_MS`]: a run cannot reach past it, so a
+/// larger value would promise a reach the budgets forbid.
 pub const DEFAULT_REACH_SPAN_MS: i64 = 2 * 60 * 60 * 1_000;
-
-pub const EMPTY_PAGE_NOTICE: &str = "no older trades came back from that request";
 
 /// What a press is told when its request could not even be queued.
 ///

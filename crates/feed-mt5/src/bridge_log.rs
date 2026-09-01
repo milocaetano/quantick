@@ -104,7 +104,12 @@ pub fn event_code_of(line: &str) -> Option<String> {
 /// have to count the digits of. This is the only place the bridge's structured
 /// fields become prose, so it is the place that owes them a readable shape.
 fn grouped(value: i64) -> String {
-    let digits = value.abs().to_string();
+    // `unsigned_abs`, not `abs`: this number comes off a bridge's stderr as
+    // untrusted JSON, and `i64::MIN.abs()` panics. `report_for_line` exists to
+    // survive a garbled line — `noise_reports_nothing_and_never_panics` is the
+    // test that says so — and a formatter that can panic on one is a hole in
+    // exactly that promise.
+    let digits = value.unsigned_abs().to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
     if value < 0 {
         out.push('-');
@@ -349,6 +354,21 @@ mod tests {
                 .expect("a user-visible report");
         assert!(
             report.headline.contains("larger than quantick opens with"),
+            "headline was: {}",
+            report.headline
+        );
+    }
+
+    #[test]
+    fn a_hostile_count_is_grouped_rather_than_panicked_on() {
+        // The bound the formatter reads is untrusted: `i64::MIN.abs()` panics,
+        // and this line is the shape a garbled bridge stderr takes.
+        let report = report_for_line(
+            r#"{"event_code":"BRIDGE_BACKFILL_TRUNCATED","symbol":"X","sending":-9223372036854775808}"#,
+        )
+        .expect("a user-visible report");
+        assert!(
+            report.headline.contains('X'),
             "headline was: {}",
             report.headline
         );

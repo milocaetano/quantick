@@ -16,6 +16,16 @@
 //! forget: an edit to either side that does not touch the other turns this red
 //! with a message naming both.
 //!
+//! **What it does not cover, and should say so.** The chart reads its gap from
+//! `[history] session_gap_minutes` at runtime, not from the constant — the
+//! constant is only that setting's default. So these tests pin the constants
+//! and the shipped default to each other, and a trader who overrides the
+//! setting in their own config still moves the chart's definition of a session
+//! without moving the bridge's. Closing that needs the app to pass its gap to
+//! the bridge it launches; recording it here is the honest interim, because a
+//! guard believed to cover more than it does is worse than one whose limits
+//! are written down.
+//!
 //! Why a test rather than a comment on each: the repository has been through
 //! this exact failure. `QuantickBridge.mq5` sends 30 minutes of opening history
 //! and `quantick_bridge.py` sent 720, and the two drifted apart quietly enough
@@ -164,6 +174,51 @@ fn the_bridge_and_the_app_measure_a_session_the_same_way() {
         "the MetaTrader bridge and the chart no longer measure a session the same way:\n{}\n\
          Change both, or neither.",
         broken.join("\n")
+    );
+}
+
+#[test]
+fn the_shipped_config_default_agrees_with_the_bridge_too() {
+    // The constants agreeing is necessary and not sufficient. At runtime the
+    // chart does not read `SESSION_GAP_MS` at all: `HistorySettings::
+    // reach_bounds` builds the gap from `[history] session_gap_minutes`, whose
+    // default is derived from that constant but whose *shipped* value lives in
+    // `crates/app/config/feeds.toml`. A default edited there and nowhere else
+    // would leave the two ends of the tape measuring a session differently
+    // with the test above still green.
+    //
+    // What is still deliberately not covered, because nothing here can: a
+    // trader who overrides `session_gap_minutes` in their own config moves the
+    // chart's definition and not the bridge's. The honest fix is for the app
+    // to pass its gap to the bridge it launches; until then this is a known
+    // and recorded divergence rather than an assumed impossibility.
+    let root = repo_root();
+    let source = std::fs::read_to_string(root.join("bridge/mt5/quantick_bridge.py"))
+        .expect("the MetaTrader bridge is part of this repository");
+    let bridge_gap_ms = python_constant(&source, "SESSION_GAP_MS");
+
+    let config = std::fs::read_to_string(root.join("crates/app/config/feeds.toml"))
+        .expect("the shipped feed config is part of this repository");
+    // The key ships commented out, as the whole `[history]` section does, so
+    // the value read here is the documented default a trader would uncomment.
+    let shipped_minutes = config
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .trim_start_matches('#')
+                .trim()
+                .strip_prefix("session_gap_minutes")
+        })
+        .filter_map(|rest| rest.trim().strip_prefix('='))
+        .filter_map(|value| value.trim().parse::<i64>().ok())
+        .next()
+        .expect("feeds.toml documents session_gap_minutes");
+
+    assert_eq!(
+        shipped_minutes * 60_000,
+        bridge_gap_ms,
+        "the config default the trader reads ({shipped_minutes} min) and the gap the \
+         bridge walks by ({bridge_gap_ms} ms) disagree; change both, or neither"
     );
 }
 

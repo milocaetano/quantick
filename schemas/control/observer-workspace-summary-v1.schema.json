@@ -153,7 +153,8 @@
     },
     "history_reach_span_minutes": {
       "$ref": "#/$defs/WireU64",
-      "description": "Minutes of *traded* time one press of the `span` reach pulls.\n\nBeside the reach because the two are one choice: an operator that\ncan read back `by time` but not how much time cannot tell what the\nnext press will do."
+      "default": "0",
+      "description": "Minutes of *traded* time one press of the `span` reach pulls.\n\nBeside the reach because the two are one choice: an operator that\ncan read back `by time` but not how much time cannot tell what the\nnext press will do.\n\n`serde(default)` like every optional neighbour: v1 is frozen, and a\nsnapshot from a build that predates this field must still validate\nagainst the shipped schema. A new *required* key is a breaking change\nwearing an additive diff."
     },
     "layouts": {
       "default": [],
@@ -204,7 +205,6 @@
     "save_on_exit",
     "performance_readings_visible",
     "progressive_venue_history",
-    "history_reach_span_minutes",
     "tabs"
   ],
   "title": "WorkspaceSnapshot",

@@ -897,7 +897,10 @@ impl Tab {
             history_step: 2000,
             history_trades: 0,
             history_reach: HistoryReach::default(),
-            history_reach_span_minutes: crate::history_reach::DEFAULT_REACH_SPAN_MS as u32 / 60_000,
+            // Overwritten by `drain_tabs` on the first frame from the
+            // window's own value; this is only what a tab holds before that.
+            history_reach_span_minutes: (crate::history_reach::DEFAULT_REACH_SPAN_MS / 60_000)
+                as u32,
             campaign: None,
             history_note: None,
             venue_lead_in: false,

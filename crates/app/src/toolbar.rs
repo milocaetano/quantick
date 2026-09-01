@@ -844,6 +844,48 @@ fn history_disabled_hover(model: &ToolbarModel) -> &'static str {
     .map_or("", HistoryPagingOff::hover)
 }
 
+/// A span of traded time in the words the box shows: whole hours, else hours
+/// and minutes.
+fn format_tape_span(minutes: i64) -> String {
+    if minutes % 60 == 0 {
+        format!("{} h", minutes / 60)
+    } else {
+        format!("{} h {:02} m", minutes / 60, minutes % 60)
+    }
+}
+
+/// Read a span back from what [`format_tape_span`] writes, in minutes.
+///
+/// Accepts what the box shows (`3 h`, `2 h 30 m`) and what a trader is likely
+/// to type instead (`3`, `2.5`, `90m`). A bare number is **hours**, because
+/// hours is the unit the box is displaying when the caret arrives — reading it
+/// as minutes is the exact confusion this parser exists to prevent.
+fn parse_tape_span(text: &str) -> Option<f64> {
+    let text = text.trim().to_ascii_lowercase();
+    if text.is_empty() {
+        return None;
+    }
+    let (hours_part, minutes_part) = match text.split_once('h') {
+        Some((hours, rest)) => (hours.trim(), rest.trim_end_matches('m').trim()),
+        None => match text.strip_suffix('m') {
+            // An explicit `m` is the one way to mean minutes.
+            Some(minutes) => return minutes.trim().parse::<f64>().ok(),
+            None => (text.as_str(), ""),
+        },
+    };
+    let hours: f64 = if hours_part.is_empty() {
+        0.0
+    } else {
+        hours_part.parse().ok()?
+    };
+    let minutes: f64 = if minutes_part.is_empty() {
+        0.0
+    } else {
+        minutes_part.parse().ok()?
+    };
+    Some(hours * 60.0 + minutes)
+}
+
 /// Whether the history menu has anything in it — trade paging, candle reach,
 /// or both.
 ///
@@ -889,19 +931,20 @@ fn draw_history_menu(
             // Shown only under the reach that reads it. A duration sitting
             // beside a reach that ignores it is a control that looks broken:
             // the trader sets it, presses, and nothing about the press changes.
-            ui.label("hours of tape per press");
+            ui.label("tape per press");
             ui.add(
                 egui::DragValue::new(model.history_reach_span_minutes)
                     .range(1.0..=(crate::history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000) as f64)
                     .speed(15.0)
-                    .custom_formatter(|minutes, _| {
-                        let minutes = minutes as i64;
-                        if minutes % 60 == 0 {
-                            format!("{} h", minutes / 60)
-                        } else {
-                            format!("{} h {:02} m", minutes / 60, minutes % 60)
-                        }
-                    }),
+                    .custom_formatter(|minutes, _| format_tape_span(minutes as i64))
+                    // egui seeds keyboard editing from the formatter's own
+                    // output, so a box that renders "2 h" and parses only bare
+                    // numbers is a trap: the trader sees hours, types 4 meaning
+                    // four hours, and gets four minutes. The parser reads back
+                    // exactly what the formatter writes, and a bare number is
+                    // read as hours for the same reason — that is the unit on
+                    // screen.
+                    .custom_parser(parse_tape_span),
             )
             .on_hover_text(
                 "traded time, not clock time: a night or a weekend is crossed \
@@ -1373,6 +1416,33 @@ fn draw_overflow(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_span_box_reads_back_exactly_what_it_prints() {
+        // The trap this pair exists to close: egui seeds keyboard editing from
+        // the formatter, so a box showing "2 h" that parses only bare numbers
+        // turns a trader typing 4 (meaning four hours) into four minutes.
+        for minutes in [1_i64, 59, 60, 90, 120, 210, 2880] {
+            let shown = format_tape_span(minutes);
+            assert_eq!(
+                parse_tape_span(&shown).map(|value| value as i64),
+                Some(minutes),
+                "{minutes} minutes rendered as {shown:?} and did not survive the round trip"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bare_number_in_the_span_box_is_hours() {
+        // Hours is the unit on screen when the caret arrives, so a bare number
+        // means hours. Minutes need saying.
+        assert_eq!(parse_tape_span("4"), Some(240.0));
+        assert_eq!(parse_tape_span("2.5"), Some(150.0));
+        assert_eq!(parse_tape_span("90m"), Some(90.0));
+        assert_eq!(parse_tape_span("2 h 30 m"), Some(150.0));
+        assert_eq!(parse_tape_span(""), None);
+        assert_eq!(parse_tape_span("later"), None);
+    }
     /// Unblocked lamps from their on/off flags, in [`LayerToggle::ALL`]
     /// order. A fixture that wants a blocked lamp builds the array itself.
     fn layer_states(on: [bool; LayerToggle::COUNT]) -> [LayerToggleState; LayerToggle::COUNT] {

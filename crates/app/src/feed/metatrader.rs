@@ -348,6 +348,9 @@ async fn feed_task(
     // Whether any trade reached the UI yet: the first non-empty history block
     // may be prepended only into an empty chart (see module docs).
     let mut forwarded_any = false;
+    // Whether this session has already charted an opening block, so a second
+    // one -- which a reconnect always produces -- is recognised as a repeat.
+    let mut charted_opening = false;
     // Newest trade timestamp forwarded to the UI. Reconnect history overlaps
     // what was already streamed live; only strictly-newer trades pass.
     let mut last_forwarded_ms = i64::MIN;
@@ -508,6 +511,7 @@ async fn feed_task(
                             }
                         } else {
                             forwarded_any = true;
+                            charted_opening = true;
                             last_forwarded_ms = batch
                                 .iter()
                                 .map(|t| t.timestamp_ms)
@@ -532,6 +536,28 @@ async fn feed_task(
                         }
                     }
                     Some(Mt5Event::OpeningPage { trades, remaining }) => {
+                        if charted_opening {
+                            // A reconnect re-runs the bridge's whole opening
+                            // block, so these slices cover a session the chart
+                            // already holds. Every trade in them would fail
+                            // the older-than filter below and be dropped one
+                            // at a time, thirty times, after being mapped --
+                            // so they are refused here instead, once, out
+                            // loud. The wire cost is the bridge's to avoid and
+                            // it cannot know where the chart reaches; that is
+                            // recorded as a deferral rather than hidden.
+                            info!(
+                                target: "quantick::app",
+                                schema_version = 1_u8,
+                                event_code = "MT5_OPENING_PAGE_AFTER_RESUME",
+                                symbol = %symbol,
+                                count = trades.len(),
+                                remaining = ?remaining,
+                                action = "drop",
+                                "an opening slice arrived for a session the chart already holds"
+                            );
+                            continue;
+                        }
                         // The rest of the trading session, arriving behind the
                         // slice the chart opened on. Nobody asked for it, so
                         // `page_outstanding` is deliberately left alone: a

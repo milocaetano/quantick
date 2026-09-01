@@ -519,6 +519,55 @@ def test_a_session_inside_one_slice_parks_nothing():
     )
 
 
+def test_an_empty_block_still_parks_the_live_cursor():
+    """The worst thing the walk can do quietly.
+
+    When the search finds a print but the walk then fails — a terminal that
+    stops answering mid-session, which this branch added a report for — the
+    block goes out empty. If nothing parks the cursor it stays at zero, and
+    the live pump's first `copy_ticks_from(symbol, 0, ...)` asks for the
+    *oldest* ticks the terminal holds: years-old prints forwarded as live
+    trades, four thousand a pass, for the life of the session. The chart would
+    show a market that is not happening.
+    """
+    now_s = at(22, 10)
+    term = FakeTerminal(0, now_s)
+    term.ticks = b3_day()
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.cursor_msc = 0
+    logged: list[str] = []
+    bridge.log = lambda code, **fields: logged.append(code)
+    # Settle the floor and the search first, then fail the walk's own next
+    # window: the point is the path where a print *was* found and the block is
+    # still empty, not the no-history path, which parks the cursor already.
+    session.earliest_tick_ms()
+    newest, _ = session.last_print_before(now_s)
+    check("the search did find a print", newest is not None, newest)
+    term.tick_calls.clear()
+    # With the floor cached, backfill spends call 1 on the search and call 2 on
+    # the walk's first window. Failing the second is the state under test.
+    term.tick_fail_on = {2}
+    session.backfill()
+
+    check(
+        "the walk ran rather than the no-history path",
+        "BRIDGE_BACKFILL_SESSION" in logged and "BRIDGE_BACKFILL_NO_HISTORY" not in logged,
+        logged,
+    )
+    check("the block is empty, as the terminal left it", block_ticks(session) == [], "ticks sent")
+    check(
+        "but the live cursor is parked in the present",
+        session.cursor_msc >= at(9, 3) * 1000,
+        session.cursor_msc,
+    )
+    check(
+        "so the pump never asks for the oldest ticks the terminal holds",
+        session.cursor_msc != 0,
+        session.cursor_msc,
+    )
+
+
 def main() -> int:
     return run_tests(globals())
 

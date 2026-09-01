@@ -321,6 +321,17 @@ pub struct SavedChrome {
     /// answer that is never a surprise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history_reach: Option<String>,
+    /// How far one press of the *by time* reach pulls, in minutes of traded
+    /// time.
+    ///
+    /// Saved beside the reach because the two are one choice: a workspace that
+    /// restored `by time` without its span put the menu and the press out of
+    /// step — the chip read what the trader picked while the span had silently
+    /// gone back to the config seed, and nothing on screen said so. Absent
+    /// means a file written before this existed, and restores the configured
+    /// default rather than a number nobody chose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_reach_span_minutes: Option<u32>,
     /// Whether a chart cut by trades carried the venue's candles in front of
     /// its bars.
     ///
@@ -1083,6 +1094,7 @@ mod tests {
                 legacy_favorite_tools: Vec::new(),
                 progressive_history: false,
                 history_reach: None,
+                history_reach_span_minutes: None,
                 venue_lead_in: false,
                 inspector_position: Some([412.5, 640.0]),
             }),

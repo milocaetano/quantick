@@ -144,9 +144,20 @@ def test_an_empty_flush_never_touches_the_socket():
     check("an idle loop writes nothing", sock.writes == [], sock.writes)
 
 
-def test_a_failed_write_does_not_lose_the_buffer_twice():
-    """`sendall` is all-or-raise. The buffer is dropped when the bytes are
-    gone, so a raise leaves them queued rather than silently discarded."""
+def test_a_failed_write_drops_the_buffer_rather_than_retrying_it():
+    """A partial write must never be re-sent.
+
+    This socket carries a connect timeout, so `sendall` is *not* all-or-raise:
+    in timeout mode it may write part of the buffer and raise without saying
+    how much went. Keeping the bytes to retry them is the tempting choice --
+    an earlier revision of this test asserted exactly that -- and it is how the
+    tape gets duplicated prints: `close` sends a `bye` and flushes, splicing a
+    repeat of up to a quarter of a megabyte of ticks onto whatever half-line
+    the peer already received.
+
+    Losing a block to a session that is ending is recoverable. Silently
+    doubling prints on the chart is not.
+    """
     term = FakeTerminal(0, NOW)
     bridge = load_bridge(term)
     session, sock = wired(bridge, term, NOW)
@@ -163,8 +174,8 @@ def test_a_failed_write_does_not_lose_the_buffer_twice():
         raised = True
     check("the failure is not swallowed", raised, raised)
     check(
-        "and the line is still queued rather than lost",
-        b'"seq":1' in bytes(session.outbox),
+        "and the buffer is dropped rather than left to be re-sent",
+        bytes(session.outbox) == b"",
         bytes(session.outbox),
     )
 
