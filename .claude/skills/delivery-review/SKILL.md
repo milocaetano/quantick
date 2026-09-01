@@ -28,6 +28,46 @@ product.
   question, not this skill's. Grade the branch against the request, never the
   request against good sense.
 
+## The one branch this does not grade
+
+A mission that declared the `small` tier at its outset — a one-line fix, where
+a ledger has nothing to grade — is exempt, and its PR opens on `arch-review-ok`
+alone.
+
+**That is the mission's decision, taken before the work, and never this
+skill's.** Invoked at all — by `/delivery-review`, by `ship`, by a session that
+wants the answer — this skill grades the branch and records its marker exactly
+as it would at any other tier. Reaching this section while looking for a way
+past a denial is the wrong turn: the tier is declared when a mission starts,
+the exemption is bounded by how large the branch turns out to be, and neither
+is something to arrange at the point of shipping. If you are here because a
+gate refused a branch, the branch owes this review — run it.
+
+## Two modes, and the tier picks one
+
+**Full** (`high`, `max`, and any direct invocation): everything below — the
+dossier, the fresh subagent, all three passes, every `A` and `G` graded.
+
+**Completeness-only** (`medium`): step 1, then the **completeness pass alone**,
+run inline in the calling session. No dossier, no subagent, no criteria pass.
+Read the verbatim request at the foot of the goal file, derive the atomic asks
+from it, and compare against the ledger. PASS when nothing is `UNLEDGERED`;
+record the marker on PASS, and **say in the verdict which mode ran** — a marker
+from a completeness pass must never read as one from a full review.
+
+Why that is the half worth keeping when only one is affordable: the
+completeness pass is the only check in the entire pipeline that can see an ask
+which never became a criterion, and it costs reading two blocks of text. The
+criteria pass is what needs the dossier and the stranger, because grading
+"is this outcome really in the branch" against the author's own account is
+exactly what a self-grading session gets wrong.
+
+And it is the half that survives being run inline. "Does every ask in the
+request appear as a numbered line?" is close to mechanical; a session can
+answer it about its own ledger without much room to flatter itself. "Is `A7`
+delivered?" is a judgement about work you just did, which is why that one keeps
+the stranger. Say plainly that the weaker mode ran; do not imply the stronger.
+
 ## Step 1 — Find the checklist
 
 In order of preference. Say which source was used; the answer changes how much
@@ -334,12 +374,14 @@ On **PASS** only:
 
 ```sh
 WT=/path/to/worktree
-cd "$WT" && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
+cd "$WT" &&
+  git diff origin/main...HEAD |
+    git hash-object --stdin > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
 ```
 
-`pr-gate` denies `gh pr create` until this file holds the exact HEAD being
-shipped, alongside `arch-review-ok`. Recording it on a FAIL, or before the last
-commit, is lying to the gate — and since the marker stores a sha, the second
+`pr-gate` denies `gh pr create` until this file holds the hash of the exact
+change being shipped, alongside `arch-review-ok`. Recording it on a FAIL, or before the last
+edit, is lying to the gate — and since the marker stores a hash of the change, the second
 one is caught automatically and the first one is not caught by anything but
 you.
 

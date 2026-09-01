@@ -1,0 +1,469 @@
+# Mission — mission tiers
+
+**Objective.** Give `/mission` a tier parameter (`small | medium | high | max`)
+that scales the ceremony to the size of the task, and make `small` genuinely
+cheap by exempting it from `delivery-review` at the `pr-gate` hook.
+
+**Tier:** `high`. It edits the gate that guards every other
+branch; the shape pass and both reviews apply in full.
+
+**Why it matters.** Today every mission pays the same price: an interrogation
+round, a full gate table, a `high`-effort bug pass and a fresh-context
+conformance review. That price is right for a feature and absurd for a one-line
+fix, so the flow gets skipped rather than scaled — and a skipped flow protects
+nothing. A tier makes the cheap path an *official* path with its own recorded
+gate, instead of an off-the-books one.
+
+## Request ledger
+
+| # | Ask | Source |
+| --- | --- | --- |
+| R1 | `/mission` accepts a tier as a parameter, with exactly the four names the trader gave: `small`, `medium`, `high`, `max`. | *"aceitar small medium high max como parmetro"* |
+| R2 | The tier reduces the processing a mission costs — a lever on work done, not a label. | *"para evitar menor processamento e tudo"* |
+| R3 | `small` does not run a long code review. | *"nao precisa de um code review lonog"* |
+| R4 | `small` does not run `delivery-review` at all. | *"nem emsmo confirmar com um delivery review"* |
+| R5 | **(purpose — judges the rest)** smaller tasks reach delivery quickly through a leaner flow. | *"algo mais enxuto para tarefas menores serem entregues logo"* |
+| R6 | *(discharged by **A5**, and bounded by **D4**)* **The `small` tier must be true of the work it is claimed for** — it is *for* small tasks, not a word a mission may apply to any branch. Added by the delivery review, which found it in the request and nowhere in this ledger. | *"Tipo small é para tarefas pequeans"* |
+
+## Decisions taken by the trader
+
+- **D1** — `small` skips `delivery-review` outright, which requires changing
+  `pr-gate` in `.claude/hooks/guardrails.sh` to read a tier declaration.
+  Presented against two alternatives that left the hook intact (a cheap inline
+  delivery-review, or a `small` that never opens a PR); the trader chose the
+  hook change knowingly, with the cost stated.
+- **D2** — the default tier, when `/mission` is called with no level, is
+  `medium`. The rigour of today's flow becomes an explicit `/mission high`.
+- **D3** — this change ships the normal way: worktree, branch, both reviews, PR.
+- **D4** — **the exemption is capped at 300 changed lines**, and the cap is the
+  trader's decision rather than the mission's. Put to them after the delivery
+  review found that D1 had approved the exemption as unconditional (*"skips
+  delivery-review outright"*) while the branch shipped it bounded, and that the
+  number itself had never been offered for a decision. They chose to keep the
+  bound at 300, against the alternatives of removing it entirely and of
+  tightening it to 150. R4 is therefore discharged as the trader wants it, not
+  as the ledger first read it.
+- **D6** — **`medium` runs only `delivery-review`'s completeness pass**, inline,
+  and the full graded review is reserved for `high` and `max`. The trader took
+  the measurement to its conclusion: the completeness pass is the only check in
+  the pipeline that can see an ask which never became a criterion, and it costs
+  reading two blocks of text; the criteria pass is what needs a dossier and a
+  stranger. Buy the half that catches what nothing else can.
+- **D7** — **a marker records the change reviewed, not the commit carrying it.**
+  Keyed on a hash of `git diff origin/main...HEAD` instead of `rev-parse HEAD`,
+  so a rebase, an amend or a reword no longer stales a review that is still
+  valid — the cascade that made this branch pay for five review rounds. It is
+  strictly *stricter* in one case the sha form missed: a rebase that lands the
+  branch on top of upstream edits to the very files it changes now stales the
+  marker, which is the case most deserving of a second look.
+- **D8** — **the default tier is `small`, not `medium`.** This supersedes D2,
+  and the trader's reason is on the record: *"antes do delivery review
+  funcionava bem 80% bem… depois que adicionei ficou super lento e pra mim não
+  compensa ficar lento assim"*. The bug pass ladder moved down a notch with it
+  (`low`/`low`/`medium`/`high`), because three `xhigh` passes on a docs branch
+  is what prompted this. A fast path nobody selects is a fast path that does
+  not exist, so it became the one you get by default.
+- **D9** — **`delivery-review-ok` is recorded on the trader's authorisation,
+  not on a PASS verdict.** Three rounds ran; the third returned FAIL on a single
+  line, which was fixed. Asked whether to spend a fourth round or to authorise
+  the marker, the trader chose to authorise it, with the alternatives stated
+  (a fourth round, or stopping without a PR). Recorded here and in the PR body
+  because the marker cannot say this for itself: `pr-gate` compares a value and
+  nothing else, so a marker written under this decision is indistinguishable
+  from one written after a PASS unless the record says which it was. This one
+  was the former.
+- **D5** — **`max` does not gain a gate**: it tells the trader that
+  `/code-review ultra` exists and stops there. Raised because `high` and `max`
+  otherwise run an identical bug pass — the harness reserves `ultra` for the
+  trader to trigger and bills it to them — so the trader was asked whether
+  `max` should refuse to close without it. They chose the notice. The two top
+  tiers stay close, and now that is a decision on the record rather than a
+  limitation nobody mentioned.
+
+## Assumptions
+
+- **S1** — ~~the exemption is bounded by the shipped diff, at 300 changed
+  lines, and this was *not asked*~~. **Struck: the premise was false and the
+  handling followed it into the wrong bucket.** The trader did speak to this
+  dimension — *"Tipo small é para tarefas pequenas"*, now R6 — so binding the
+  word to a measurable property was discharging an ask, not inventing scope.
+  What was genuinely never put to them is **the number**, and that is precisely
+  `mission` step 3's *"a number nobody chose"*, which earns a question rather
+  than an assumption. It became one: see **D4**. Recorded here rather than
+  quietly rewritten, because the failure is the interesting part — a mission
+  that mislabels an ask as its own invention will reason about it as scope to
+  defend instead of a requirement to discharge.
+
+  The engineering the assumption produced stands unchanged: the bound fails
+  closed, lives in one constant the suite reads rather than restates, and is
+  proven by two mutations. Only its provenance was wrong.
+- **S2** — the tier is the **leading token** of the argument, so
+  `/mission small fix the axis labels` parses as tier `small`. An objective that
+  genuinely begins with one of the four words is misread by this rule; the
+  mitigation is that step 1 echoes the parsed tier and the kept objective in one
+  line, making a misparse visible in the first turn rather than at the PR.
+- **S3** — a tier may be **raised** mid-mission and never **lowered**. Lowering
+  is the escape hatch D1 must not accidentally build; raising is what an honest
+  mission does when the work turns out bigger than it looked.
+- **S4** — `max` does not launch `code-review ultra` itself. The harness states
+  that ultra is user-triggered and billed and that the agent must not attempt
+  it, so `max` runs `high` and *tells the trader* the ultra option exists.
+- **S5** — the tier file is `mission-tier` in the worktree's own git dir, beside
+  the two markers: per-branch, never committed, same lifetime and same discovery
+  path as the mechanism it modifies. It holds **`<branch> <tier>`**. The branch
+  half was not in the first draft and the arch-review found why it had to be:
+  the markers hold a sha and go stale when the branch moves, while a bare tier
+  word outlives its mission, so a worktree reused for a second branch inherited
+  the exemption and opened a PR ungraded. Reproduced, then closed.
+- **S6** *(wanted to ask)* — whether `small` should also skip the four-check
+  verification loop. Went with **no**: fmt/clippy/build/test are cheap when
+  nothing compiled changed, and they are the only thing left standing between a
+  `small` branch and `main` once `delivery-review` is gone.
+
+## Acceptance criteria
+
+- [x] **A1** — `/mission` accepts `small`, `medium`, `high` and `max` as the
+      leading argument, and the skill states what each one changes.
+      *Evidence:* the tier table in the skill, one row per step that scales, one
+      column per tier. → `.claude/skills/mission/SKILL.md`. *(R1, R2)*
+- [x] **A2** — with no tier given the mission runs at the default, and the skill
+      says so where the argument is defined **and in the tier table**, which are
+      the two places a reader looks. The default is **`small`** per **D8**,
+      which supersedes D2's `medium`.
+      *Evidence:* *"With no tier given, the mission runs at **`small`**."* in the
+      argument section, and the table header column reading ``small`` (default).
+      Both were checked after D8: the prose was updated and the table was not,
+      so one file stated two different defaults three lines apart — found by
+      delivery-review round 2, which is exactly the divergence class this repo
+      treats as its own bug.
+      → `.claude/skills/mission/SKILL.md`. *(R1)*
+- [x] **A3** — `small` runs the bug pass at `low` effort and limits the shape
+      pass to the dimensions the diff touches, dimension 8 always included.
+      *Evidence:* the tier-aware effort rule in step 0 and the shape-scope rule.
+      → `.claude/skills/arch-review/SKILL.md`. *(R3)*
+- [x] **A4** — a `small` mission opens its PR with **no** `delivery-review-ok`
+      marker, and every other tier still cannot.
+      *Evidence:* passing cases in the hook suite asserting both directions.
+      → `.claude/hooks/guardrails_test.sh`. *(R4)*
+- [x] **A5** — the `small` exemption cannot be taken by a branch that is not
+      small: over the ceiling the full gate applies again.
+      *Evidence:* a suite case whose branch exceeds the ceiling and is denied
+      naming `delivery-review-ok`, plus a case pinning that a branch pushed over
+      the ceiling **by its own goal archive** keeps the exemption — the size
+      measurement excludes `.claude/GOAL*.md`, while the review key deliberately
+      does not.
+      → `.claude/hooks/guardrails_test.sh`. *(R4, R6, D4)*
+- [x] **A6** — the denial an agent sees when it has simply not run
+      `delivery-review` is **unchanged**: it never names the tier file, the tier
+      words, or any way to create them.
+      *Evidence:* a suite case asserting that denial carries neither the file
+      name nor the word `small`. → `.claude/hooks/guardrails_test.sh`. *(R4)*
+- [x] **A7** — the tier is recorded where it cannot silently drift: the tier
+      file the gate reads, a `**Tier:**` line in `GOAL.md`, and the PR body.
+      *Evidence:* step 6 records the file and step 8.4 requires the PR body to
+      name the tier — the third site, added after the delivery review found no
+      shipped line asking for it; `ship` step 6 says the same. Plus the drift
+      checks pinning that `guardrails.sh` and `mission/SKILL.md` agree on the
+      file name, the four words and the recording snippet's format.
+      → `.claude/skills/mission/SKILL.md`, `.claude/skills/ship/SKILL.md`,
+      `.claude/hooks/guardrails_test.sh`. *(R1, S5)*
+- [x] **A8** — `small` also drops the interrogation round, the injected gate
+      rows the diff does not touch, and the `/goal` handover, so the saving is
+      real rather than a renamed review.
+      *Evidence:* those rows in the tier table, each naming what is skipped.
+      → `.claude/skills/mission/SKILL.md`. *(R2, R5)*
+- [x] **A9** — a tier can be raised mid-mission and never lowered, and a `small`
+      mission whose diff crosses the ceiling is told to raise it.
+      *Evidence:* the stated rule, and the denial text for that case.
+      → `.claude/skills/mission/SKILL.md`, `.claude/hooks/guardrails.sh`. *(S3)*
+- [x] **A10** — every document describing this flow to a reader carries the
+      tier: the hooks README, `CLAUDE.md`, `ship`, `delivery-review` and
+      `docs/agentic-development.md`. A gate described in five places and changed
+      in one is the drift this repo already has a test for.
+      *Evidence:* the tier named in each file. → those five files. *(R1, R4)*
+
+## Injected gates
+
+- [x] **G1** — every artifact in English (`CLAUDE.md` owns the rule and its
+      exemptions). *Evidence:* the `arch-review` verdict, written to a file
+      before the PR exists rather than recalled while writing it, plus
+      `language_guard` 4/4. One real dimension-8 finding: the delivery review
+      caught a Portuguese word inside an English comment in `guardrails.sh` —
+      a line this diff *authors*, which `CLAUDE.md`'s exemptions do not cover
+      and which `language_guard` cannot see because it does not scan `.sh`.
+      Rewritten to make the point without the word.
+      → `delivery-review/arch-review-verdict.md`, quoted in the PR body.
+- [x] **G2** — the four checks green after rebasing on latest `main`.
+      *Evidence:* four exit-0 runs. → the PR body.
+- [x] **G3** — `sh .claude/hooks/guardrails_test.sh` reports zero failures, and
+      reports failures when `guardrails.sh` is neutered to `exit 0`.
+      *Evidence:* both run outputs. → the PR body.
+- [x] **G4** — `arch-review` run with every Blocker and Should-fix resolved, or
+      deferred in the PR body. *Evidence:* the verdict as an artifact — two step
+      0 rounds at `xhigh`, 30 findings, 30 confirmed, 30 fixed, 0 deferred, with
+      the resolutions named. A marker proves a review was *recorded*, never that
+      it was good, so the verdict is written down rather than inferred from the
+      marker. → `delivery-review/arch-review-verdict.md`, quoted in the PR body.
+
+## Closing steps
+
+- **C1** — `delivery-review` returns PASS.
+- **C2** — the PR is open.
+
+## Not applicable, and why
+
+- **`visual-qa` and `trader-ux-review`** — nothing user-visible changes. This
+  branch touches skills, hooks and docs; the desktop app is not compiled
+  differently by any line of it.
+- **`new-extension`** — no capability is added. The change modifies an existing
+  gate rather than docking a new module at a port.
+- **Hot-path performance evidence** — no shipped code path is touched. The hook
+  runs once per `gh pr create`, and the two `git` calls the exemption adds run
+  only on a branch that declared a tier.
+- **The docs/skills shape waiver** — *deliberately not claimed in full*.
+  `mission` waives shape dimensions 1–7 and 9 for prose, but says a shell script
+  or a test shipping alongside the prose takes the full shape pass, and the
+  substance of this branch is exactly that.
+
+## Evidence
+
+Recorded on `feat/mission-tiers`, refreshed at each review round and last at
+the commit this table now describes. A dated snapshot is honest; a stale one
+that still asserts what a later round corrected is the "one file, two answers"
+failure this branch spent a round fixing, so the rows below are kept current
+rather than left as history.
+
+| # | Where it landed |
+| --- | --- |
+| A1, A8 | `## Tiers` in `.claude/skills/mission/SKILL.md`: an eight-row table, one row per step that scales, one column per tier. `small` reads *skipped* for the interrogation and the `/goal` line, *not run* for `delivery-review`, and narrows the injected gates to English plus the four checks. |
+| A2 | Two surfaces, and they now agree — which they did not until delivery-review round 2 caught it. *Argument* section: *"With no tier given, the mission runs at **`small`**."* Tier table header: `` | | `small` (default) | `medium` | `high` | `max` | ``. Echoed in `CLAUDE.md` and `docs/agentic-development.md`, both *"`small` (the default)"*. The default is `small` per **D8**, which supersedes D2. |
+| A3 | `.claude/skills/arch-review/SKILL.md`, step 0: the tier overrides the effort default (`low` for `small`), and *The mission's tier scopes the shape pass* limits the dimensions read, keeping 8 and step 0 always. |
+| A4 | `guardrails_test.sh`: *a small mission opens its PR on arch-review alone* (silent), *a small mission still cannot skip arch-review* (deny), and a loop over the tiers the script declares asserting *the `<tier>` tier still requires delivery-review* for each of `medium`, `high`, `max`. Plus *an unrecognised tier grants nothing*. |
+| A5 | `guardrails_test.sh`: a second worktree built one line over `SMALL_TIER_MAX_CHANGED_LINES`, read from the script rather than hardcoded. Two cases — *a small mission that outgrew the ceiling pays in full*, and *is told the measured size that cost it the exemption*, which asserts the exact figure so a `declared_tier` that stopped recognising `small` cannot pass the first. |
+| A6 | `guardrails_test.sh`, the block after the ceiling cases: it runs the gate on an untiered branch and fails if the denial contains the tier file name or the word `small`. Absence, checked directly, because `run` can only assert presence. |
+| A7 | `mission` step 6 records the file; step 5 requires the `**Tier:**` line; the drift check at the foot of `guardrails_test.sh` fails unless `guardrails.sh` and the skill agree on the file name and on all four tier words, and the pre-existing check that every `absolute-git-dir)/…` name in the prose is one the gate reads was widened to cover it. |
+| A9 | *A tier goes up, never down* in the skill; and in `guardrails.sh`, the over-ceiling denial says so in the message it hands back. |
+| A10 | Named in `.claude/hooks/README.md` (new section *The `small` mission exemption*, plus both table rows), `CLAUDE.md` (new **One mission, one tier** bullet and two amended ones), `.claude/skills/ship/SKILL.md` step 4, `.claude/skills/delivery-review/SKILL.md` (new *When this skill does not run*), and `docs/agentic-development.md` (three passages). |
+| G2 | **Rebased onto latest `origin/main` first.** The criterion says *after* rebasing, and the first version of this line was written 13 commits behind — the delivery review caught it. Post-rebase, each check run on its own: `cargo fmt --all -- --check` **exit 0**, `cargo clippy --workspace --all-targets -- -D warnings` **exit 0**, `cargo build --workspace` **exit 0**, `cargo test -p quantick-app --test language_guard` **exit 0** (4/4). `cargo test --workspace` **exits 101**, on one test and the same one in all three runs: `quantick-feed-mt5 --test bridge_paging`, whose failure text is `Python was not found; run without arguments to install from the Microsoft Store` — this box resolves `python3` to the Store alias stub. Run directly, `python bridge/mt5/tests/test_paging.py` passes **31 checks, exit 0**. The diff contains **zero** `.rs` files and zero cargo manifests, so no Rust test result can be caused by it; CI, which has a real `python3`, is where the fourth check goes green without an asterisk. Two things seen and not hidden: an earlier version of this line claimed "all exit 0" over "one bin test" when the artifacts showed exit 101 and three, and the first post-rebase run failed to link with `LNK1181` on a build-script `resource.res` — target-directory contention right after a rebase invalidated the cache, gone on a clean re-run and unrelated to the diff. |
+| G3 | `sh .claude/hooks/guardrails_test.sh` → **88 passed, 0 failed** (39 before this branch). Neutered to `exit 0` → the suite runs to completion with most cases red, then restores and re-runs green. Nine mutation runs besides, each reintroducing exactly one defect a review found and each turning red exactly the case written for it and no other: the branch-identity check, the unmeasurable size, the binary skip (two cases), the drift check that had stopped firing, the absence vocabulary, the tier-snippet format, `SIZE_EXCLUDES`, a recording command reverted to the commit-sha form (two cases), and the prose-drift guard. One case that did *not* discriminate was found this way and strengthened. |
+
+**G1 and G4 are open here on purpose.** Both are verdicts of the `arch-review`
+that runs immediately after this commit, so neither can exist while this file is
+being written — the same reason `mission` keeps `delivery-review` and the PR out
+of the criteria entirely. Their evidence is the review's own output, quoted in
+the PR body. This is the closest thing on this branch to a criterion that cannot
+be graded when the grading happens, and it is named rather than ticked.
+
+**A note on the tier this branch ran at.** `high`, and the diff proves it was
+right: 1,153 insertions and 30 deletions, 1,183 changed lines against a `small`
+ceiling of 300 — nearly four times over. Had it declared `small`, the hook it
+adds would itself have refused it the exemption.
+
+## Review rounds
+
+**arch-review round 1**, step 0 (`code-review`) at `xhigh`: 15 findings, all
+confirmed on re-reading, all fixed on this branch. Two were reproduced against
+the branch's own hook rather than inferred, and both were the same class of
+mistake — a mechanism that *looked* fail-closed and was not:
+
+1. **The tier file carried no branch identity.** A worktree reused for a second
+   branch inherited a `small` declaration and opened its PR with no
+   delivery-review, in a live run. Fixed by the `<branch> <tier>` format; the
+   one-field format is refused rather than migrated. Pinned by *a second branch
+   in the same worktree does not inherit the tier*, and by a mutation run that
+   removes the branch check and turns exactly that case red.
+2. **`changed_lines` failed open, not closed.** It parsed `git diff
+   --shortstat`, which git translates: under a localised install the English
+   pattern matches nothing, the sum is 0, and 0 reads as an empty diff — the
+   exemption granted to a branch of any size. Fixed by `LC_ALL=C git diff
+   --numstat`, with an unparseable count refused outright. Pinned by *a small
+   mission whose size cannot be measured pays in full*, and by the second
+   mutation.
+
+The rest were doc contradictions the tier introduced and three test defects:
+the absence check could pass on an empty string when the gate had stopped
+denying at all; the tier-vocabulary drift check matched bare substrings, so
+`max` was satisfied by "maximum"; and the over-ceiling fixture would have
+written at the filesystem root had its `worktree add` failed silently.
+
+**arch-review round 2**, step 0 at `xhigh`: 15 findings, all confirmed, all
+fixed. Two reproduced against the hook again, and both were the first round's
+fix overshooting:
+
+1. **A binary file voided the exemption.** `--numstat` prints `-` for both
+   counts on a binary, and round 1 read any non-numeric count as *unmeasurable*
+   — so a `small` mission shipping an icon, a font or a screenshot paid the full
+   review and was told its size could not be measured, a message that points at
+   an absent remote it does have. A binary contributes no lines because it has
+   none; only an unparseable numstat is still fail-closed.
+2. **The reminder told a two-line branch it had outgrown its tier.** The
+   unmeasurable case was folded into the "outgrown" message, whose remedy is to
+   raise the tier — a move this very branch makes deliberately irreversible.
+   Three situations now get three messages, which the comment above them was
+   already arguing for.
+
+The rest were a drift check that had quietly stopped firing (the tier file kept
+`written` non-empty, so a review skill could lose its own recording snippet with
+the suite green), a comment promising a two-field check the code did not make,
+an absence check with a two-word vocabulary, a duplicated snippet nothing
+compared, and four documents the tier had left contradicting the gate —
+including `CLAUDE.md` counting "the three rules above" with four bullets above
+it, and the hooks README opening with the one-field format the hook refuses.
+
+**On the leading-word parse.** Round 2 argued that `/mission small fonts are
+unreadable` silently buys a skipped gate, and that a self-issued echo is a weak
+mitigation for it. That is fair and it is not fully closed: `--small` is now
+accepted for an ambiguous objective, and the echo names *what the tier drops*
+rather than only the word it read, so the expensive misparse is the loudest one.
+A parser that could tell an adjective from a tier was judged more machinery than
+the failure warrants. Recorded here as a residual the trader can revisit.
+
+**delivery-review round 1: FAIL**, and it earned the verdict. One
+**UNLEDGERED** ask (R6 above), R4 `PARTLY COVERED`, A7 and G2 `PARTIAL`, G1 and
+G4 `UNPROVEN`. What it caught that two `arch-review` rounds structurally could
+not:
+
+- **an ask that never reached the ledger.** Both shape rounds took the change
+  as given; neither opens the request. This is the failure the gate exists for,
+  and it found one on the first branch that tried to weaken it.
+- **S1 asserting its own innocence.** "Not asked" was false, and the mission had
+  reasoned from it for the whole branch.
+- **the branch never rebased.** G2 says *after rebasing on latest `main`*; it
+  was 13 commits behind, and every check had run against a stale base.
+- **an evidence line that overstated its own artifacts** — "all exit 0" over
+  "one bin test", where the recorded runs show exit 101 and three.
+- **a criterion no shipped line implemented.** A7 claimed three recording
+  sites; nothing anywhere asked for the third.
+- **a Portuguese word in an English comment**, in the one file extension
+  `language_guard` does not scan.
+
+Two of its findings were escalated rather than closed by the mission, because
+they were the trader's: D4 and D5 above.
+
+**arch-review round 3: 12 findings, all confirmed, all fixed.** Two more
+reproduced against the hook, and the first was the ugliest of the branch:
+
+- **A tier declared while HEAD is detached recorded the literal string `HEAD`**
+  — because the snippet that writes the file uses `rev-parse --abbrev-ref`,
+  which prints exactly that when detached — and then matched *every* future
+  detached checkout in that worktree. The `<branch> <tier>` format added in
+  round 1 to close the inheritance bug had a second door in it, and the comment
+  two lines above claimed detached heads "grant nothing". Now they do.
+- **The ceiling counted the mission's own paperwork.** The goal archive is
+  required as the branch's last commit, and this file alone is larger than the
+  entire 300-line ceiling — so a genuinely small mission could be pushed out of
+  its own tier by the artifact the tier obliged it to write, with the denial
+  telling it to make an irreversible escalation. The size measurement now
+  excludes `.claude/GOAL*.md`. The review key deliberately does *not*: both
+  reviews read that file.
+
+The rest were three fragile `if`s that were mutually exclusive only because a
+helper happened to call `exit`; a reminder whose remedy ("check that
+origin/main exists") is unreachable when origin/main is missing; a secrecy
+check that scanned the `mktemp` path and so failed at random on a correct hook;
+a binary-asset case that could pass vacuously; and a `$WT` used without being
+defined.
+
+**Two of my own were caught before any reviewer saw them**, both in D7's first
+draft: the recording command piped the raw diff while `review_key` captured it
+in `$( )` first, so the two hashed different bytes and the gate would have been
+impossible to satisfy; and `review_key` returning empty made `pr-gate` fail
+*open* where `origin/main` is missing, weaker than the sha form it replaced.
+Fixed with a precondition check and a fallback to the commit.
+
+**No fourth automated round was run**, at the trader's instruction and with the
+reason recorded in D8. The final delta — D6, D7, D8 and the round-3 fixes — was
+verified by the suite (75 cases, 0 failures, up from 39 before this branch),
+the four checks, and a shape read by hand. That is stated rather than implied:
+the `arch-review-ok` marker on this branch covers three `xhigh` step-0 rounds
+over earlier heads plus a manual pass over the last commit, and a reader should
+know which is which.
+
+**delivery-review round 2: FAIL**, and it found a Blocker this branch had
+authored between the rounds — the strongest argument available against the
+"no fourth automated round" call recorded above, and it is left standing rather
+than softened:
+
+- **D7 changed the marker's key and every documented recording command kept
+  writing the old one.** `review_key` hashes the branch's diff; the four
+  snippets in the README, `arch-review`, `delivery-review` and the prose in
+  `CLAUDE.md` still said `git rev-parse HEAD`. Following the repo's own
+  instructions produced a marker the gate rejects. The reviewer proved it by
+  running this branch's own `pr-gate` against this branch. The suite could not
+  see it: its drift checks assert that a doc *names* a marker file, never what
+  it writes into it. Both halves are now pinned, and a mutation confirms a doc
+  reverted to the sha form turns exactly those two cases red.
+- **`A2` was MISSING.** D8 moved the default to `small`, the prose was updated
+  and the tier table was not — one file stating two defaults three lines apart.
+- **`SIZE_EXCLUDES` had no case at all**, so deleting the exclusion shipped
+  green while every small mission was thrown out of its tier by its own goal
+  file. Now pinned by a fixture that is over the ceiling by paperwork and under
+  it by work, so it can only pass through the exclusion.
+- The verdict artifact described two rounds and 72 cases when three rounds and
+  75 had happened. Rewritten from the branch as shipped.
+
+**A note on this branch's own markers.** They hold **commit shas**, not the new
+diff hashes, and that is correct rather than an oversight: `.claude/settings.json`
+invokes the hook at `${CLAUDE_PROJECT_DIR}`, which is the main checkout, so this
+branch is gated by `main`'s copy of `guardrails.sh` — the version it is
+replacing. The README already documents that a branch cannot test its own gate
+through the hook. Branches cut after this merges will hold diff hashes.
+
+**delivery-review round 3: FAIL on one line, and the convergence is the
+finding.** Six failing lines in round 1, two in round 2, one in round 3 — a
+single stale paragraph in `docs/agentic-development.md`, the fifth of the five
+sites A10 names, still describing the marker as holding a commit sha after all
+four command sites had been corrected. It was the passage introducing that
+marker as *"the one design decision that makes the gate honest"*, which is
+precisely where a stale rule does the most damage.
+
+Fixed, and the class is now pinned rather than the instance: the suite gained a
+**prose-drift** guard over all five documents, separate from the command-drift
+guard added in round 2. The two are different failures — a wrong command hands
+an agent a marker the gate rejects, a wrong sentence teaches the next reader a
+rule that stopped being true — and only the first was covered. A mutation
+confirms reverting that paragraph turns exactly the new case red.
+
+Round 3 also caught this file's own Evidence table pinned four commits behind,
+with row A2 still asserting the `medium` default that A2 exists to have
+corrected. The same "one file, two answers" class, inside the branch's own
+archive. The header no longer pins a commit; the rows are kept current.
+
+## Deferred — granted by the trader
+
+**A `delivery-review` PASS verdict.** Three rounds ran and none returned PASS;
+the count of failing lines fell 6 → 2 → 1, and round 3's single finding (a
+paragraph in `docs/agentic-development.md` still calling the marker a commit
+sha) was fixed and pinned by a new prose-drift guard before this deferral was
+requested. What is deferred is therefore not a known gap in the work — it is
+the *confirmation* that no gap remains, which only a fourth round could give.
+
+**Granted by the trader**, explicitly, after being shown the alternatives: run
+the fourth round (~13 minutes, in the background), authorise the marker, or
+stop without a PR. The reason is on the record and is the same one that
+produced D8 — the pipeline had become slower than the work it guards.
+
+What that costs, stated plainly rather than minimised: the last two commits on
+this branch have been graded by no reviewer, and the branch changes the gate
+itself, which is the worst case for shipping on an authorisation. Against that:
+the suite is at 88 cases from 39, every one of the eleven defects the three
+arch-review rounds and three delivery-review rounds found is fixed and pinned
+by a case that fails without the fix, and the four checks are green. A reader
+who wants the confirmation this deferral skipped should run
+`Skill(delivery-review)` over the merge commit.
+
+## The request as received
+
+Quoted verbatim, in the trader's own words and untranslated, under `CLAUDE.md`'s
+exemption for a marked and attributed quotation. It is left in the original
+because `delivery-review` re-derives the asks from *this* text and grades the
+ledger above against it; a translation would put the mission's own reading of
+the request into the reviewer's evidence, which is the one thing the section
+exists to prevent.
+
+> **Source:** the trader, session of 2026-08-31.
+>
+> alterar o /mission para aceitar small medium high max  como parmetro para
+> evitar menor processamento e tudo. Tipo small é para tarefas pequeans que nao
+> precisa de um code review lonog e tal e nem emsmo confirmar com um delivery
+> review. Quero algo mais enxuto para tarefas menores serem entregues logo

@@ -32,7 +32,7 @@ name as a slash command.
 
 | Skill | What it owns |
 | --- | --- |
-| `mission` | The orchestrator. Captures the session objective in English, classifies it, and derives the acceptance criteria — including which of the gates below are part of *done* for this kind of work, so the maintainer never has to list them. One session, one mission. |
+| `mission` | The orchestrator. Captures the session objective in English, classifies it, and derives the acceptance criteria — including which of the gates below are part of *done* for this kind of work, so the maintainer never has to list them. It also takes a **tier** — `small` (the default), `medium`, `high`, `max` — which scales all of that to the size of the change, down to how hard the bug pass looks and whether the conformance review runs at all. One session, one mission. |
 | `new-task` | Starts work from a GitHub issue: reads it, branches from updated `main` with the right prefix, moves the board card. |
 | `new-extension` | The build-time twin of the review question below. `arch-review` asks after the fact whether a feature could have been a new file plus one registration line; this skill designs it that way from the start. |
 | `arch-review` | The pre-PR review. Step 0 runs a correctness pass; then it grades *shape* — does the change dock like a module, does it declare its performance impact, do its tests stay out of the shipped binary, is it drivable without a mouse, does it hide anything behind a magic number, is it English throughout. |
@@ -79,10 +79,21 @@ receives artifacts rather than the implementing session's story. It passes only
 when nothing is MISSING, PARTIAL or UNPROVEN, and a gap ships only as a
 deferral the trader approved.
 
+This is the one gate a mission can buy its way out of, and only at the `small`
+tier — the one-line fix, where a ledger has nothing to grade and the review
+costs more than the change. The exemption is bounded rather than trusted: it
+lapses the moment the branch grows past a ceiling measured against
+`origin/main`, so the word has to be true of the branch that ships and not
+merely of the one that was planned. The hook never mentions the exemption to a
+branch that did not declare it, which is what keeps the gate from teaching its
+own way around itself.
+
 **The review gates the work actually earns.** `mission` decides which apply:
 a change a trader touches mid-session gets `trader-ux-review`; anything
 visual gets `visual-qa`; a docs-only change gets neither, but never skips the
-English check or the correctness pass.
+English check or the correctness pass. The tier decides how hard the ones that
+do apply look — and nothing, at any tier, skips the four checks or the bug
+pass. A cheap review is a real one done briefly; it is never an absent one.
 
 ## The hooks that make the gates real
 
@@ -96,10 +107,20 @@ three modes, what each denies, the overrides and why they fail open — and is
 not repeated here. What is worth pulling out for an outside reader is the one
 design decision that makes the gate honest rather than decorative:
 
-> Each marker `pr-gate` reads holds **the commit sha the review covered**, not
-> a timestamp or a boolean. Commit again after reviewing and the sha no longer
-> matches, so the gate denies and names both shas. There are two of them, one
-> per review, because a branch that passed one has not passed the other.
+> Each marker `pr-gate` reads holds **a hash of the change the review
+> covered** — `git diff origin/main...HEAD` — not a timestamp, not a boolean,
+> and not the sha of whichever commit happened to carry it. Edit a tracked file
+> after reviewing and the hash no longer matches, so the gate denies and names
+> both values. There are two markers, one per review, because a branch that
+> passed one has not passed the other.
+
+Keying on the change rather than the commit is the second version of that
+decision, and it was bought with real pain: the branch that introduced tiers
+paid for five review rounds, several of which re-graded a diff nothing had
+touched, because a rebase or an amend moved a sha the reviews did not care
+about. It is also *stricter* in the case the sha form missed — a rebase that
+lands a branch on top of upstream edits to the very files it changes now stales
+the marker, which is exactly when a second look is worth most.
 
 A marker that only recorded "a review happened" would pass while the newest
 three commits went unreviewed — which is the failure this repository
