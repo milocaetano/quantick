@@ -10,6 +10,7 @@ the diff showing it.
     python .claude/evidence/mt5-session-history/summarise_perf.py
 """
 
+import datetime as dt
 import re
 import sys
 from pathlib import Path
@@ -31,6 +32,11 @@ STAMP = re.compile(r"^(\d{4}-\d\d-\d\dT[\d:.]+Z)")
 def stamp_of(line):
     found = STAMP.match(line)
     return found.group(1) if found else None
+
+
+def parse(stamp):
+    """The log's own stamp format, as an instant."""
+    return dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
 
 
 def rows(path):
@@ -114,6 +120,14 @@ def report(name, path):
     print(f"Fill window: `{opened}` to `{closed}`; {len(load)} health summaries inside it.")
     print(f"Trades charted (backfill + slices): **{trades(path):,}**".replace(",", " "))
     print(f"`APP_SLOW_FRAMES` inside the fill: **{slow_in(path, opened, closed)}**")
+    launch, start, ready = first_paint(path)
+    if ready and start and launch:
+        after_start = (parse(ready) - parse(start)).total_seconds()
+        after_launch = (parse(ready) - parse(launch)).total_seconds()
+        print(
+            f"First bars on the chart: **{after_start:.2f} s** after "
+            f"`{FILL_OPENS}`, **{after_launch:.2f} s** after process launch."
+        )
     print()
     print("```")
     for row in load:
@@ -129,6 +143,26 @@ def report(name, path):
         print(f"- frame_cpu peak **{max(r['cpu'] for r in load):.2f} ms**")
         print(f"- worst single frame **{max(r['worst'] for r in load):.2f} ms**")
     print()
+
+
+def first_paint(path):
+    """Launch, the backfill's start, and the instant the chart first had bars.
+
+    Hand-computing this is what put a figure from one log under a sentence
+    naming another, so it is read off the log like everything else here.
+    """
+    launch = start = ready = None
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        at = stamp_of(line)
+        if at is None:
+            continue
+        if launch is None:
+            launch = at
+        if start is None and FILL_OPENS in line:
+            start = at
+        if ready is None and "MT5_HISTORY_READY" in line:
+            ready = at
+    return launch, start, ready
 
 
 def slow_in(path, opened, closed):

@@ -1,0 +1,14 @@
+{"event_code":"BRIDGE_TICK_FLOOR","symbol":"WINV26","earliest_ms":1734933603326,"checked":"unnecessary"}
+session: 816334 ticks
+  build dicts        :   3.25 s
+  json.dumps each    :   2.22 s  (110 MB)
+  per-tick sendall   :   3.56 s for 200000  ->  14.54 s extrapolated
+  one bulk sendall   :   0.03 s for the whole 110 MB
+
+  TODAY  (per-tick)  :  20.01 s to put the session on the wire
+  BUFFERED           :   5.50 s
+
+[The probe's `drain` thread then raced the interpreter's shutdown and printed a
+`_enter_buffered_busy` traceback. It happens after every number above is
+printed, in a helper that only counts received bytes, and it is left out here
+rather than pretended away: re-running the probe reproduces both.]

@@ -41,8 +41,10 @@ the in-window session edge, and the zero cap.
 
 My own passes over the deltas found three things the agent passes could not
 have seen, because they were in code written after them: the floor check I had
-just widened costing **1109 ms on every open** — on the path this branch exists
-to make fast — a docstring with two ideas jammed into one line, and a
+just widened costing **about a second on every open** — on the path this branch
+exists to make fast, and the reason it now skips itself when the claim sits far
+enough below the newest print — a docstring with two ideas jammed into one
+line, and a
 wire-contract guard that split on the wrong `required` array and so could not
 have failed for the reason it stated. That last one was proved by marking the
 field required in the shipped schema and watching the test go red.
@@ -63,13 +65,32 @@ visible decision to argue with rather than a skipped gate.
   `every_reach_is_reachable_by_its_token_and_says_what_it_does` fails for a
   reach added without a token, label or hover. `ScriptedMenu` replaced a string
   equality against one literal with the same shape.
-- **Performance** — 62 s → ~11 s to put a session on the wire (47 s of it was
-  one `sendall` per tick); the session walk 984 → 219 ms; the floor check
-  1109 → 0 ms on the common path. Under the fill: fps floor 54 against a
-  control's 57, no `APP_SLOW_FRAMES` on either side, for eight times the
-  trades. Generated, not transcribed — [`perf.md`](perf.md) and
-  [`summarise_perf.py`](summarise_perf.py). Per-trade and per-depth paths
-  untouched.
+- **Performance** — every figure here now has a file under it, which three of
+  them did not until this round.
+
+  *On the wire*, measured on a live 816 334-tick session and committed as
+  [`send-cost.md`](send-cost.md): **20.01 s → 5.50 s**, the socket's own share
+  **14.54 s → 0.03 s** — one bulk write moves the whole 110 MB in 0.03 s. An
+  earlier revision of this bullet said "62 s → ~11 s, 47 s of it `sendall`",
+  from a development run whose output was never committed. The shape held; the
+  seconds are not recoverable, so they are gone rather than restated.
+
+  *The walk*, from [`terminal-probe-raw.txt`](terminal-probe-raw.txt): the
+  session costs **344 ms** against the clock window's 125 ms fetch, and buys
+  **5.01 h and 1 139 448 prints**. The bullet said "984 → 219 ms", which reads
+  as a before and an after; 219 ms is the *difference* between those two, and
+  no run measured a 984 ms walk.
+
+  *The floor check* costs nothing on the common path — the probe's
+  `find + walk : 0 ms + 344 ms`, and `send-cost-raw.txt` catches the skip
+  deciding for itself with `"checked":"unnecessary"`. The 1109 ms it replaced
+  comes from the same uncommitted run as the wire figure and goes for the same
+  reason.
+
+  *Under the fill*: fps floor 54 against a control's 57, no `APP_SLOW_FRAMES`
+  on either side, for eight times the trades. Generated, not transcribed —
+  [`perf.md`](perf.md) and [`summarise_perf.py`](summarise_perf.py).
+  Per-trade and per-depth paths are untouched.
 - **Operability** — `QUANTICK_MENU=history` and
   `QUANTICK_HISTORY_REACH_SPAN_MINUTES`, both in the `ui-harness` registry; the
   reach and its span read back over the control plane

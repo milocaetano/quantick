@@ -112,7 +112,7 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
 
 - [x] **A2** — Against the live terminal, a bridge started outside trading
       hours delivers WINV26 from 09:03, not 13:10 and not 09:30. *Evidence:*
-      captured bridge stderr plus the app's `MT5_HISTORY_READY` line naming the
+      captured bridge stderr plus the bridge's `BRIDGE_BACKFILL_SESSION` line, whose `first_ms` carries the instant (`MT5_HISTORY_READY` logs only a symbol and a count), naming the
       oldest instant, before and after. →
       `.claude/evidence/mt5-session-history/whole-day.md`. *(R2, R3)*
       → **MET.** [`.claude/evidence/mt5-session-history/whole-day.md`](.claude/evidence/mt5-session-history/whole-day.md) — a real bridge process onto a real socket delivering 1 525 621 ticks from **09:03:00.233**, and [`.claude/evidence/mt5-session-history/in-the-app.md`](.claude/evidence/mt5-session-history/in-the-app.md) — the desktop app holding 30 510 bars of it.
@@ -136,7 +136,7 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
       today's behaviour. *Evidence:* campaign stop-condition unit tests for the
       span reach, and a screenshot of the control. →
       `crates/app/src/history_reach.rs` tests +
-      `.claude/evidence/mt5-session-history/older-span.png`. *(R1, R4)*
+      `.claude/evidence/mt5-session-history/shots/older-span.png`. *(R1, R4)*
       → **MET.** `HistoryReach::Span` with campaign tests over traded time, a night crossed not counted, the early exit and the unreachable-span stop; the control in `.claude/evidence/mt5-session-history/shots/older-span-menu.png`, absent under another reach in `.claude/evidence/mt5-session-history/shots/reach-previous-session-menu.png`.
 
 - [x] **A6** — The fix is proven against the trader's own terminal, not only
@@ -156,9 +156,9 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
 
 - [x] **G1** — Every artifact this branch authors is English, per `CLAUDE.md`,
       whose exemptions this file's closing quotation claims openly. *Evidence:*
-      `cargo test -p quantick-app --test language_guard` green and
+      `cargo test -p quantick-guards --test guards` green and
       `arch-review` dimension 8 clean. → PR body.
-      → **MET.** `cargo test -p quantick-app --test language_guard` green in the full run.
+      → **MET.** `cargo test -p quantick-guards --test guards` green (4 tests, `tracked_files_are_written_in_english` among them). The criterion named `-p quantick-app --test language_guard` for six rounds; that target stopped existing when the guards were carved out of `app`, so the line reported a green for a command that answers `no test target named `language_guard``. Nobody re-ran it, which is the whole argument for a reviewer who re-runs rather than reads.
 
 - [x] **G2** — The four checks green, each run on its own, after rebasing on
       latest `main`; plus `python bridge/mt5/tests/test_paging.py` and
