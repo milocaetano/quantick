@@ -612,7 +612,7 @@ Reviews are judged on precision, not volume.
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
-cargo test --workspace          # includes language_guard, dimension 8's half
+cargo test --workspace          # includes the quantick-guards language scan, dimension 8's half
 ```
 
 A clean change gets a short review saying it is clean and why. Never pad.

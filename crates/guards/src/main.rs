@@ -20,31 +20,53 @@ use std::process::ExitCode;
 
 use quantick_guards::{GUARDS, size, workspace_root};
 
+// The modes are alternatives, not composable flags, and the usage says so.
+// Written as an optional-flag grammar it read as though `--file x --tighten`
+// would do both, while only the first argument was ever honoured — a mistyped
+// invocation exiting 0 having done half of what was asked.
 const USAGE: &str = "\
-usage: quantick-guards [--file <path>] [--tighten]
+usage: quantick-guards (--file <path> | --tighten)
 
   (no arguments)   run every guard over the repository
   --file <path>    run every guard over one workspace-relative path
   --tighten        lower any size-baseline entry whose file has shrunk
 
+The two modes are alternatives; they cannot be combined.
 Exit code 1 means a guard found something.";
 
 fn main() -> ExitCode {
+    // A set-but-empty variable is not a root. `var_os` hands back
+    // `Some("")` for it, which resolves every later `join` against the
+    // process working directory instead — the baseline read then fails while
+    // two of the three guards report clean.
     let root = std::env::var_os("QUANTICK_GUARDS_ROOT")
+        .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(workspace_root);
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     match args.first().map(String::as_str) {
         None => report(&root, None),
-        Some("--tighten") => tighten(&root),
-        Some("--file") => match args.get(1) {
-            Some(path) => report(&root, Some(path.replace('\\', "/"))),
-            None => {
-                eprintln!("--file needs a path\n\n{USAGE}");
-                ExitCode::FAILURE
-            }
-        },
+        Some("--tighten") if args.len() == 1 => tighten(&root),
+        Some("--file") if args.len() == 2 => report(&root, Some(args[1].replace('\\', "/"))),
+        Some("--file") if args.len() < 2 => {
+            eprintln!("--file needs a path\n\n{USAGE}");
+            ExitCode::FAILURE
+        }
+        // Everything left over is refused rather than ignored. Silently
+        // dropping a trailing argument is how a caller ends up trusting a
+        // clean exit for a run that never did what they asked.
+        Some(mode @ ("--file" | "--tighten")) => {
+            // `--file` consumes the path beside it; `--tighten` consumes
+            // nothing. Naming only what is actually unconsumed keeps the
+            // message from accusing the caller of the argument they got right.
+            let consumed = if mode == "--file" { 2 } else { 1 };
+            eprintln!(
+                "unexpected extra arguments: {}\n\n{USAGE}",
+                args[consumed..].join(" ")
+            );
+            ExitCode::FAILURE
+        }
         Some(other) => {
             eprintln!("unrecognised argument `{other}`\n\n{USAGE}");
             ExitCode::FAILURE

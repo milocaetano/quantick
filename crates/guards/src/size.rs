@@ -178,40 +178,85 @@ pub fn production_lines(source: &str) -> usize {
     production
 }
 
+/// Whether a workspace-relative path is one this guard tracks.
+///
+/// The single owner of that question, called by the walker below *and* by
+/// [`check_file`], because those are the two surfaces the edit-time hook
+/// trusts to say the same thing. `tests/` is out of scope because test code
+/// is asked for rather than rationed; `target/` because it holds build output
+/// and vendored sources, and asking an author to record a generated file in
+/// the ratchet is how a guard becomes noise. The sibling guards skip
+/// `target/` too — this one did not, until a review pointed at the
+/// divergence.
+fn tracked(relative: &str) -> bool {
+    relative.starts_with("crates/")
+        && relative.ends_with(".rs")
+        && !relative
+            .split('/')
+            .any(|part| part == "tests" || part == "target")
+}
+
+/// What a walk of `crates/` found.
+pub struct Measured {
+    /// Production-line counts by workspace-relative path, sorted.
+    pub counts: Vec<(String, usize)>,
+    /// Paths that exist and could not be read at all. Reported rather than
+    /// skipped: a file the guard cannot open is not a file it has cleared,
+    /// and silence there is indistinguishable from a clean result.
+    pub unreadable: Vec<String>,
+}
+
 /// Every tracked `.rs` file under `crates`, as workspace-relative paths with
 /// forward slashes so baseline entries read the same on every platform.
-/// `tests/` is skipped whole: test code is asked for, not rationed.
-fn scan(dir: &Path, root: &Path, found: &mut Vec<(String, usize)>) {
+fn scan(dir: &Path, root: &Path, found: &mut Measured) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
     for entry in entries {
         let path = entry.expect("dir entry is readable").path();
-        if path.is_dir() {
-            if path.file_name().is_some_and(|name| name == "tests") {
-                continue;
-            }
-            scan(&path, root, found);
-            continue;
-        }
-        if path.extension().is_none_or(|ext| ext != "rs") {
-            continue;
-        }
-        let source = fs::read_to_string(&path).expect("source file is readable UTF-8");
         let relative = path
             .strip_prefix(root)
             .expect("scanned path sits under the workspace root")
             .to_string_lossy()
             .replace('\\', "/");
-        found.push((relative, production_lines(&source)));
+        if path.is_dir() {
+            if matches!(
+                path.file_name().and_then(|n| n.to_str()),
+                Some("tests" | "target")
+            ) {
+                continue;
+            }
+            scan(&path, root, found);
+            continue;
+        }
+        if !tracked(&relative) {
+            continue;
+        }
+        match fs::read(&path) {
+            // Not valid UTF-8 is the encoding guard's finding, not this
+            // one's, and it is skipped here rather than reported twice.
+            // This used to be an `.expect`, which aborted the whole process
+            // on the one input the encoding guard exists for — so the guard
+            // that would have explained the file never got to run.
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(source) => found.counts.push((relative, production_lines(&source))),
+                Err(_) => continue,
+            },
+            Err(e) => found
+                .unreadable
+                .push(format!("  {relative}: could not be read: {e}")),
+        }
     }
 }
 
 /// Production-line counts for every scanned file, sorted by path.
-pub fn measure(root: &Path) -> Vec<(String, usize)> {
-    let mut found = Vec::new();
+pub fn measure(root: &Path) -> Measured {
+    let mut found = Measured {
+        counts: Vec::new(),
+        unreadable: Vec::new(),
+    };
     scan(&root.join("crates"), root, &mut found);
-    found.sort();
+    found.counts.sort();
     found
 }
 
@@ -240,20 +285,37 @@ fn verdict(entry: Option<&Entry>, path: &str, actual: usize) -> Option<String> {
 
 /// Every way the recorded baseline and the files on disk disagree.
 pub fn check(root: &Path) -> Vec<String> {
+    // Checked before anything is measured, because an unreadable `crates/`
+    // measures as *empty* — and an empty measurement makes every baseline
+    // entry look stale. The guard would then print eighteen findings whose
+    // stated remedy is to delete the entries, which is the one edit that
+    // switches the ratchet off on every large file in the repo.
+    let sources = root.join("crates");
+    if !sources.is_dir() {
+        return vec![format!(
+            "  {} is not a readable directory — there is nothing to measure, and every baseline \
+             entry would otherwise be reported stale",
+            sources.display()
+        )];
+    }
     let entries = match baseline(root) {
         Ok(entries) => entries,
         Err(problem) => return vec![format!("  {problem}")],
     };
     let found = measure(root);
-    let mut violations = Vec::new();
+    let mut violations = found.unreadable.clone();
 
-    for (path, actual) in &found {
+    for (path, actual) in &found.counts {
         let entry = entries.iter().find(|entry| &entry.path == path);
         violations.extend(verdict(entry, path, *actual));
     }
 
     for entry in &entries {
-        if !found.iter().any(|(scanned, _)| scanned == &entry.path) {
+        if !found
+            .counts
+            .iter()
+            .any(|(scanned, _)| scanned == &entry.path)
+        {
             violations.push(format!(
                 "  {}: in the baseline but no longer scanned — drop the stale entry",
                 entry.path
@@ -268,16 +330,21 @@ pub fn check(root: &Path) -> Vec<String> {
 /// edit-time hook calls: it reads one source file and the baseline, so it
 /// answers in milliseconds rather than in the seconds a full scan takes.
 ///
-/// A path outside `crates/`, or under a `tests/` directory, is not tracked
-/// and reports nothing — the same silence [`check`] gives it.
+/// A path [`tracked`] rejects reports nothing — the same silence [`check`]
+/// gives it. A tracked path that cannot be read reports *that*, rather than
+/// nothing: the hook prints whatever comes back, and an empty result is what
+/// an author reads as an all-clear.
 pub fn check_file(root: &Path, relative: &str) -> Vec<String> {
-    if !relative.starts_with("crates/")
-        || !relative.ends_with(".rs")
-        || relative.split('/').any(|part| part == "tests")
-    {
+    if !tracked(relative) {
         return Vec::new();
     }
-    let Ok(source) = fs::read_to_string(root.join(relative)) else {
+    let bytes = match fs::read(root.join(relative)) {
+        Ok(bytes) => bytes,
+        Err(e) => return vec![format!("  {relative}: could not be read: {e}")],
+    };
+    // Not valid UTF-8 belongs to the encoding guard, which runs beside this
+    // one over the same file and words it better.
+    let Ok(source) = String::from_utf8(bytes) else {
         return Vec::new();
     };
     let entries = match baseline(root) {
@@ -305,13 +372,25 @@ pub fn tighten(root: &Path) -> Result<Vec<String>, String> {
     let mut applied = Vec::new();
 
     for entry in &entries {
-        let Some((_, actual)) = found.iter().find(|(path, _)| path == &entry.path) else {
+        let Some((_, actual)) = found.counts.iter().find(|(path, _)| path == &entry.path) else {
             continue;
         };
         if entry.ceiling.saturating_sub(*actual) <= SLACK {
             continue;
         }
-        lines[entry.line] = format!("{} {actual}", entry.path);
+        // A trailing comment is carried across. The file header advertises
+        // `#` and the parser honours it anywhere on the line, so an author
+        // may well have written the justification for a ceiling *beside* it —
+        // and that justification is the whole doctrine of this guard. A
+        // rewrite that dropped it would delete the signed decision while
+        // reporting only that a number went down.
+        let trailing = lines[entry.line]
+            .find('#')
+            .map(|at| lines[entry.line][at..].to_owned());
+        lines[entry.line] = match trailing {
+            Some(comment) => format!("{} {actual}  {comment}", entry.path),
+            None => format!("{} {actual}", entry.path),
+        };
         applied.push(format!("  {}: {} -> {actual}", entry.path, entry.ceiling));
     }
 
@@ -349,6 +428,58 @@ mod tests {
         assert_eq!(production_lines(source), 4);
     }
 
+    /// The same hole in its other spelling: a `#[cfg(test)]` helper *function*
+    /// above the test module, which is what hid 1,250 production lines of
+    /// `paper_trading.rs` behind a ceiling of 7,611.
+    #[test]
+    fn production_lines_counts_past_a_cfg_test_helper() {
+        let source = concat!(
+            "fn ship() {}\n",
+            "#[cfg(test)]\n",
+            "fn helper() {\n",
+            "    let _ = 1;\n",
+            "}\n",
+            "fn ships_too() {}\n",
+            "#[cfg(test)]\n",
+            "mod tests {\n",
+            "    fn t() {}\n",
+            "}\n",
+        );
+        assert_eq!(production_lines(source), 2);
+    }
+
+    /// An attribute stack above the test item must not swallow the item itself.
+    #[test]
+    fn production_lines_steps_over_stacked_attributes() {
+        let source = concat!(
+            "fn ship() {}\n",
+            "#[cfg(test)]\n",
+            "#[allow(clippy::pedantic)]\n",
+            "mod tests {\n",
+            "    fn t() {}\n",
+            "}\n",
+        );
+        assert_eq!(production_lines(source), 1);
+    }
+
+    /// A `#[cfg(test)]` on a field or method *inside* an item is indented, and
+    /// `app.rs` carries dozens of them. They govern something already inside a
+    /// counted item, so only column-0 attributes are considered.
+    #[test]
+    fn production_lines_ignores_an_indented_cfg_test() {
+        let source =
+            "struct App {\n    #[cfg(test)]\n    probe: bool,\n}\n\n#[cfg(test)]\nmod tests {\n}\n";
+        assert_eq!(production_lines(source), 5);
+    }
+
+    /// A file with no test module counts whole.
+    ///
+    /// The trailing newline is a terminator, not a line: `str::lines` yields
+    /// three items here, and a baseline generated by a script that splits on
+    /// `\n` instead would sit one line high on exactly the files that have no
+    /// test module — a line of unearned headroom, granted quietly. That
+    /// happened while this guard was being written, to `layout_wiring.rs` and
+    /// `compile.rs`, and this case is what caught it.
     #[test]
     fn production_lines_counts_every_line_when_there_is_no_test_module() {
         assert_eq!(production_lines("a\nb\nc\n"), 3);
@@ -382,5 +513,165 @@ mod tests {
             seen.len(),
             "the baseline lists a path more than once"
         );
+    }
+
+    /// A throwaway workspace: a baseline naming one source file, and that
+    /// file. Named after its test rather than after the process id, because
+    /// a reused pid leaves a populated directory behind and the test then
+    /// fails on the previous run's contents.
+    fn scratch(test: &str, ceiling: usize, lines: usize) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("quantick-guards-{test}"));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
+        fs::create_dir_all(root.join("crates/probe/src")).expect("scratch dirs are creatable");
+        fs::write(
+            root.join(BASELINE_FILE),
+            format!(
+                "# an own-line comment the rewrite must not eat\n\
+                 crates/probe/src/big.rs {ceiling}  # and a trailing one, raised on purpose\n"
+            ),
+        )
+        .expect("scratch baseline is writable");
+        fs::write(root.join("crates/probe/src/big.rs"), "x\n".repeat(lines))
+            .expect("scratch source is writable");
+        root
+    }
+
+    /// The direction that needs no argument, applied. The ceiling comes down
+    /// to the size the file actually is, and the comment above it survives —
+    /// the rewrite works line by line precisely so the rationale a reviewer
+    /// left behind is not the price of a tightening.
+    #[test]
+    fn tighten_lowers_a_ceiling_and_keeps_the_comments() {
+        let root = scratch("tighten-lowers", 5_000, 100);
+        let applied = tighten(&root).expect("the scratch baseline parses");
+
+        assert_eq!(applied.len(), 1, "one entry was over the slack");
+        let written = fs::read_to_string(root.join(BASELINE_FILE)).expect("baseline is readable");
+        assert!(
+            written.contains("crates/probe/src/big.rs 100"),
+            "the ceiling was not lowered to the measured size: {written}"
+        );
+        assert!(
+            written.contains("# an own-line comment the rewrite must not eat"),
+            "the rewrite dropped an own-line comment: {written}"
+        );
+        // The case the first version lost: the parser accepts a comment
+        // *beside* an entry, so the rewrite has to put it back. Testing only
+        // the own-line spelling passed while this one silently deleted the
+        // justification a reviewer had signed.
+        assert!(
+            written.contains("# and a trailing one, raised on purpose"),
+            "the rewrite dropped a trailing comment: {written}"
+        );
+        assert!(check(&root).is_empty(), "the scratch tree is clean after");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Growth is never automated. A file over its ceiling is the decision a
+    /// reviewer has to be able to argue with, so `--tighten` must leave it
+    /// exactly where it is rather than quietly writing the bigger number —
+    /// which would hand back the invisibility the ratchet exists to remove.
+    #[test]
+    fn tighten_never_raises_a_ceiling() {
+        let root = scratch("tighten-never-raises", 10, 100);
+        let applied = tighten(&root).expect("the scratch baseline parses");
+
+        assert!(
+            applied.is_empty(),
+            "growth must not be applied: {applied:?}"
+        );
+        let written = fs::read_to_string(root.join(BASELINE_FILE)).expect("baseline is readable");
+        assert!(
+            written.contains("crates/probe/src/big.rs 10"),
+            "the ceiling moved: {written}"
+        );
+        assert_eq!(check(&root).len(), 1, "the violation is still reported");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The two surfaces that must never disagree. `check` walks the repo and
+    /// `check_file` reads one file, and the edit-time hook trusts the second
+    /// to say what the suite would have said. A file the hook calls clean
+    /// while the suite calls it over its ceiling is worse than no hook: it
+    /// reports an all-clear the author then acts on.
+    #[test]
+    fn check_file_agrees_with_the_whole_repo_scan() {
+        let root = workspace_root();
+        // Scanned once, outside the loop. The first draft called `check`
+        // per file and took 13.7s, which would have made `cargo test -p
+        // quantick-guards` slower than the thing this crate exists to speed
+        // up — a test that quietly spends the win it is meant to protect.
+        let whole = check(&root);
+        for (path, _) in measure(&root).counts {
+            let from_scan: Vec<String> = whole
+                .iter()
+                .filter(|line| line.contains(&path))
+                .cloned()
+                .collect();
+            assert_eq!(
+                check_file(&root, &path),
+                from_scan,
+                "the single-file check and the repository scan disagree about {path}"
+            );
+        }
+    }
+
+    /// What the hook hands the binary is whatever path was just written, and
+    /// most of them are not tracked. Each must come back silent rather than
+    /// panicking on a missing file or scoring a test module. `target/` is in
+    /// the list because the walker skips it, and a hook that reported a
+    /// vendored source would be reporting something the suite never will.
+    #[test]
+    fn check_file_ignores_what_the_guard_does_not_track() {
+        let root = workspace_root();
+        for path in [
+            "docs/README.md",
+            "crates/guards/tests/guards.rs",
+            "crates/app/target/debug/build/probe/src/vendored.rs",
+            "Cargo.toml",
+        ] {
+            assert!(
+                check_file(&root, path).is_empty(),
+                "{path} is not tracked by the size guard and must report nothing"
+            );
+        }
+    }
+
+    /// A tracked path the guard cannot open is not a path it has cleared.
+    /// The hook prints whatever comes back and nothing else, so returning an
+    /// empty list here would put an all-clear in front of an author over a
+    /// file that was never read — a root or path mismatch reading exactly
+    /// like a clean result.
+    #[test]
+    fn check_file_says_so_when_a_tracked_path_cannot_be_read() {
+        let findings = check_file(&workspace_root(), "crates/app/src/does_not_exist.rs");
+        assert_eq!(findings.len(), 1, "expected one finding, got {findings:?}");
+        assert!(
+            findings[0].contains("could not be read"),
+            "the finding must say the file was unreadable: {findings:?}"
+        );
+    }
+
+    /// A root with no `crates/` measures as empty, and an empty measurement
+    /// makes every baseline entry look stale. The guard must say what is
+    /// actually wrong instead of printing eighteen findings whose remedy —
+    /// delete the entries — would switch the ratchet off repo-wide.
+    #[test]
+    fn a_missing_sources_directory_is_named_rather_than_read_as_stale_entries() {
+        let root = std::env::temp_dir().join("quantick-guards-missing-sources");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
+        fs::write(root.join(BASELINE_FILE), "crates/probe/src/big.rs 1600\n")
+            .expect("scratch baseline is writable");
+        fs::remove_dir_all(root.join("crates")).expect("the sources directory is removable");
+
+        let findings = check(&root);
+        assert_eq!(findings.len(), 1, "expected one finding, got {findings:?}");
+        assert!(
+            findings[0].contains("nothing to measure"),
+            "the finding must name the missing directory: {findings:?}"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 }

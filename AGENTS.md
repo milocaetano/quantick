@@ -110,6 +110,7 @@ graph TD
     app["app<br/>desktop chart"]
     backtest["backtest<br/>headless runner"]
     mcp["mcp<br/>MCP adapter"]
+    guards["guards<br/>repository guards<br/>no edges either way"]
   end
 
   app --> pine

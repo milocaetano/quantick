@@ -315,9 +315,23 @@ run "guard-watch: passes a workspace-relative path" \
 run "guard-watch: escapes quotes in the report" \
     guard-watch "$(json_path "$root/wt/src/a.rs")" context 'quoted'
 
-# An extension no guard reads costs nothing: the mode returns before it looks
-# for a repository, let alone a binary.
-run "guard-watch: ignores an extension no guard scans" \
+# The property the whole design rests on, and the one no other case pinned:
+# a binary that exits 0 produces no output at all. Every other stubbed case
+# uses a stub that exits 1, so dropping the `&& exit 0` on the findings line
+# would make the hook emit a context block after every clean edit — the noise
+# that gets a hook switched off — while the suite stayed green.
+{
+    echo '#!/bin/sh'
+    echo 'exit 0'
+} > "$stub"
+chmod +x "$stub"
+
+run "guard-watch: silent when the guards find nothing" \
+    guard-watch "$(json_path "$root/wt/src/a.rs")" silent
+
+# A path the guards do not read reaches the binary now that the hook keeps no
+# extension list of its own, and must still come back silent.
+run "guard-watch: silent for a file no guard reads" \
     guard-watch "$(json_path "$root/wt/src/a.txt")" silent
 
 # A file outside any git repository cannot be made relative to a workspace

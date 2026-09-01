@@ -123,19 +123,32 @@ fn scan(dir: &Path, root: &Path, violations: &mut Vec<String>) {
             scan(&path, root, violations);
             continue;
         }
-        if path
-            .extension()
-            .is_none_or(|e| !SCANNED_EXTS.iter().any(|ext| e == *ext))
-        {
-            continue;
-        }
         let relative = path
             .strip_prefix(root)
             .unwrap_or(&path)
             .to_string_lossy()
             .replace('\\', "/");
+        if !in_scope(&relative) {
+            continue;
+        }
         inspect(&path, &relative, violations);
     }
+}
+
+/// Whether a workspace-relative path is one this guard reads. The single
+/// owner of that question, called by the walker and by [`check_file`], so the
+/// suite and the edit-time hook can never disagree about what is in scope —
+/// the hook used to report Portuguese inside `target/`, which the whole-repo
+/// scan skips as build output, leaving an author an advisory that running the
+/// suite could not clear.
+fn in_scope(relative: &str) -> bool {
+    SCANNED_DIRS
+        .iter()
+        .any(|dir| relative.starts_with(&format!("{dir}/")))
+        && !relative.split('/').any(|part| part == "target")
+        && relative
+            .rsplit_once('.')
+            .is_some_and(|(_, ext)| SCANNED_EXTS.contains(&ext))
 }
 
 /// The per-file half of the scan, shared with [`check_file`] so the
@@ -178,13 +191,7 @@ pub fn check(root: &Path) -> Vec<String> {
 /// The same check for one file. A path outside the scanned directories, or
 /// with an extension the guard does not read, reports nothing.
 pub fn check_file(root: &Path, relative: &str) -> Vec<String> {
-    let in_scope = SCANNED_DIRS
-        .iter()
-        .any(|dir| relative.starts_with(&format!("{dir}/")));
-    let readable = relative
-        .rsplit_once('.')
-        .is_some_and(|(_, ext)| SCANNED_EXTS.contains(&ext));
-    if !in_scope || !readable {
+    if !in_scope(relative) {
         return Vec::new();
     }
     let mut violations = Vec::new();

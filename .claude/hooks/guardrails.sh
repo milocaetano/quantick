@@ -1,8 +1,10 @@
 #!/bin/sh
 # Agent guardrails for quantick. See .claude/hooks/README.md.
 #
-# Four CLAUDE.md rules were enforceable only by an agent remembering them.
-# These make the harness enforce them instead:
+# Three CLAUDE.md rules were enforceable only by an agent remembering them.
+# The first three modes make the harness enforce them instead. The fourth
+# enforces nothing and is not a gate: it carries news from a check that
+# already exists, and says so where it is defined.
 #
 #   worktree-guard    PreToolUse on Edit|Write|NotebookEdit. Denies a write
 #                     that lands in the main checkout while it sits on the
@@ -15,9 +17,11 @@
 #   commit-reminder   PostToolUse on Bash. Cannot block (the commit
 #                     already landed); says the gate is coming and how to
 #                     satisfy it.
-#   guard-watch       PostToolUse on Edit|Write. Runs the repository
-#                     guards over the file just written, using the
-#                     already-built binary. Advisory only.
+#   guard-watch       PostToolUse on Edit|Write. Not a gate: runs the
+#                     repository guards over the file just written, using
+#                     the already-built binary, and reports. It never
+#                     denies and never blocks; `cargo test --workspace`
+#                     remains the thing that enforces those guards.
 #
 # What `runs_command` can and cannot see is a known, bounded limitation, and it
 # is deliberately left as it was rather than deepened. It splits on `&&`, `||`
@@ -283,11 +287,14 @@ commit_reminder() {
 guard_watch() {
     file=$(normalize_path "$(json_string_field file_path)")
     [ -n "$file" ] || exit 0
-    case "$file" in
-        *.rs|*.pine|*.md|*.html|*.toml) ;;
-        *) exit 0 ;;
-    esac
 
+    # No extension filter here on purpose. One lived here and was a third
+    # hand-kept copy of a list the two Rust guards already own; adding an
+    # extension there while forgetting it here would have left the suite
+    # seeing a file the edit-time hook silently did not — an all-clear that
+    # reads exactly like a clean file. Each guard's `check_file` already
+    # returns nothing for a path it does not read, so the filter bought a
+    # process spawn and cost a drift.
     dir=$(dirname "$file")
     [ -d "$dir" ] || exit 0
     root=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || exit 0
