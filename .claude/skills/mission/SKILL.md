@@ -372,6 +372,35 @@ a review. `.claude/hooks/README.md` owns the rest of the mechanism.
    it is *performed* first, so the goal file lands on the branch that will
    carry it.
 
+   **Arm the worktree before the first edit**, with both commands, in the new
+   worktree:
+
+   ```sh
+   WT=/path/to/worktree
+   CRATE=quantick-app          # the crate you are about to edit
+   cd "$WT" &&
+     cargo build -p quantick-guards &&   # arms guard-watch; no dependencies
+     cargo check -p "$CRATE" --all-targets
+   ```
+
+   Both assignments are inside the fence on purpose, and the second is a
+   variable rather than an angle-bracket placeholder. `WT` does not survive
+   between tool calls, so a block opening on `cd "$WT"` with nothing assigning
+   it aborts the whole `&&` chain and the guards binary is never built — the
+   failure this step exists to prevent, produced by the step itself. And
+   `<the crate you will edit>` is not a placeholder to `sh`: it is two
+   redirections, which would read a file named `the` and create one named
+   `--all-targets`. `delivery-review` step 2 already carries this warning; it
+   is repeated here because a snippet is pasted, not read.
+
+   `CLAUDE.md`'s *Verification loop* owns why — what the hook's silence costs,
+   and why the edit loop is not the four checks. It is not repeated here: a
+   measurement kept in two files is one that disagrees with itself on the first
+   edit, which is the failure this repo files against a duplicated constant.
+   What belongs here is only that the two commands run **before the first
+   edit**, since a guard armed afterwards has already missed the edit worth
+   reporting.
+
    **Record the tier here**, in the new worktree, before the first line of
    work. It goes beside the two review markers, in that worktree's own git dir,
    so it is per-branch and never committed:
