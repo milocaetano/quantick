@@ -4420,3 +4420,33 @@ $ sh .claude/hooks/guardrails_test.sh
 
 96 passed, 0 failed
 ```
+
+## Re-run after the review-round edits, and one flake
+
+The four were re-run after `size.rs` gained two agreement tests and a module-doc
+section. `fmt`, `clippy` and `build` came back 0 again. The first `cargo test
+--workspace` of that round reported **one** failure:
+
+```
+test paper_trading::tests::a_close_refreshes_an_open_report_by_itself ... FAILED
+test result: FAILED. 2166 passed; 1 failed; 6 ignored
+```
+
+It is the known temp-directory flake, not this branch. Two things establish that,
+and both are recorded rather than asserted:
+
+1. It passes on its own —
+   `cargo test -p quantick-app --bin quantick-app a_close_refreshes_an_open_report_by_itself`
+   → `test result: ok. 1 passed; 0 failed`.
+2. The branch cannot reach it. Every compiled file it touches is in `crates/guards`,
+   which nothing depends on:
+
+```
+crates/guards/size-baseline.txt
+crates/guards/src/lib.rs
+crates/guards/src/main.rs
+crates/guards/src/size.rs
+crates/guards/tests/guards.rs
+```
+
+The full suite was then re-run and came back green with no FAILED line.

@@ -54,6 +54,29 @@
 //! legitimate: a reviewer sees a one-line diff saying "this file is allowed
 //! to be bigger now" and can argue with it, which is precisely what a silent
 //! +400 lines inside a 36,000-line file never let anyone do.
+//!
+//! # And the total is capped, because signed raises still lose ground
+//!
+//! A signed raise is arguable, and it was still not enough. One branch raised
+//! `app.rs` from 9,775 to 9,890 with a comment explaining why, extracted
+//! nothing in return, and every check in the repository stayed green — as it
+//! should have, by the rule above. Eighteen entries each raised "for this
+//! branch" read as eighteen reasonable decisions and one lost trunk, and no
+//! per-file rule can see that, because the question is about the sum.
+//!
+//! So [`BUDGET_DIRECTIVE`] caps the total of every recorded ceiling. Raising
+//! one now means lowering another in the same change: growth is pay-as-you-go,
+//! and an extraction lowers both numbers on its own. Nothing is blocked —
+//! raising the budget line is still allowed, and is the escape hatch on
+//! purpose, since it is one number in one place that a reviewer watches move.
+//!
+//! Three properties keep that hatch from becoming a bypass, and each has a
+//! test. [`tighten`] follows the ceilings down and never up, or the command
+//! the failure message recommends would sign the raise a person was supposed
+//! to sign. A missing directive is a finding naming the uncapped total, since
+//! defaulting to "no budget" would make deletion the cheapest way past. And a
+//! stale entry keeps spending its ceiling, so a deleted file cannot finance
+//! the next raise.
 
 use std::fs;
 use std::path::Path;
@@ -1137,6 +1160,53 @@ mod tests {
         assert!(
             written.contains(&format!("{BUDGET_DIRECTIVE} 3700")),
             "the vanished file's ceiling was refunded into the budget: {written}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The same invariant as `check_file_agrees_with_the_whole_repo_scan`, for
+    /// the one path that scan cannot reach. It iterates the files `measure`
+    /// walked, and the baseline is not a source file — so the surface the
+    /// edit-time hook now answers with was the only one in the guard with no
+    /// agreement test behind it.
+    ///
+    /// Asserted over a tree that is genuinely over budget, because agreement on
+    /// two empty lists proves nothing: the failure worth catching is the hook
+    /// calling a raise clean while the suite calls it a violation, and only a
+    /// tree with a violation in it can catch that.
+    #[test]
+    fn check_file_agrees_with_the_scan_about_the_baseline() {
+        let root = scratch_pair("budget-agree", 2_100, 1_600, 3_600);
+        let prefix = format!("  {BASELINE_FILE}:");
+        let from_scan: Vec<String> = check(&root)
+            .into_iter()
+            .filter(|line| line.starts_with(&prefix))
+            .collect();
+
+        assert_eq!(from_scan.len(), 1, "the scratch tree is over budget");
+        assert_eq!(
+            check_file(&root, BASELINE_FILE),
+            from_scan,
+            "the hook and the suite disagree about the baseline"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A baseline the hook can read but not parse must say so rather than come
+    /// back silent. The hook prints what it is given and nothing else, so an
+    /// empty result is what an author reads as an all-clear — the same reason
+    /// `check_file` reports an unreadable source file instead of skipping it.
+    #[test]
+    fn check_file_says_so_when_the_baseline_does_not_parse() {
+        let root = scratch_pair("budget-unparseable", 2_100, 1_600, 3_700);
+        fs::write(root.join(BASELINE_FILE), "!budget not-a-number\n")
+            .expect("baseline is writable");
+
+        let findings = check_file(&root, BASELINE_FILE);
+        assert_eq!(findings.len(), 1, "expected one finding: {findings:?}");
+        assert!(
+            findings[0].contains("is not a count"),
+            "the finding must name the parse failure: {findings:?}"
         );
         let _ = fs::remove_dir_all(&root);
     }
