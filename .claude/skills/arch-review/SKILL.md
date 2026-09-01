@@ -34,6 +34,40 @@ Skill(code-review), args: "<target> <effort>"      one string, in that order
              level it used.
 ```
 
+**A mission's tier overrides that default**, because the tier is the trader's
+own statement of how much this change is worth reviewing: **`low` for `small`
+and for `medium`, `medium` for `high`, `high` for `max`** — one notch below
+what the tier is named, deliberately. The trader measured three `xhigh` passes
+on a single docs branch and called the slowness not worth it, so the ladder was
+moved down rather than the gate removed. At `max`, say in the header that
+`/code-review ultra` exists — a deep multi-agent cloud pass the trader triggers
+themselves, never this skill, and never a level this step selects.
+
+**Never re-run a level that already ran clean.** Two rounds is this repo's
+budget; a third is for a branch whose second round found Blockers. Beyond that,
+report the remainder as PR follow-ups rather than spending another pass.
+
+Read the tier from **the same file `pr-gate` reads**, never from a second
+statement of it. The goal file's `**Tier:**` line is for the reader; this file
+is the one the gate acts on, and where the two disagree the gate is what
+actually happens:
+
+```sh
+WT=/path/to/worktree
+cd "$WT" && cat "$(git rev-parse --absolute-git-dir)/mission-tier"
+```
+
+`.claude/hooks/README.md` owns that file's format and the rules the hook
+applies to it; do not re-derive them here, because a third statement of a
+format is a third thing to keep true. All this step needs from it: no file, or
+a tier the hook would not honour for this branch, means **no tier** — take the
+defaults above rather than guessing at a middle level.
+
+**Name the level in the header either way**, with where it came from, so a
+short pass is never mistaken for a thorough one — and say so when this file and
+the goal file's `**Tier:**` line disagree. Two surfaces disagreeing about one
+branch is a finding in itself, and this review is what sees it.
+
 **Check the scope it comes back with.** When the target does not pin a range
 the skill derives one, so it can end up reviewing another branch's merged work
 (local `main` behind `origin/main`) or nothing at all (a pushed branch whose
@@ -77,14 +111,17 @@ findings through it. The bug pass is not the waived part.
 ## Record the marker when the review closes
 
 A branch cannot open a PR until this review is recorded against the exact
-commit being shipped. Recording it belongs here, in the skill that knows
+change being shipped — a hash of the branch's diff, so a rebase or an amend
+does not invalidate it but an edit to a tracked file does. Recording it belongs here, in the skill that knows
 whether the review actually closed — not to whichever caller happened to
 invoke it. Once every Blocker and Should-fix is resolved or deferred in the PR
 body, and the branch has no further commits coming:
 
 ```sh
 WT=/path/to/worktree
-cd "$WT" && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
+cd "$WT" &&
+  git diff origin/main...HEAD |
+    git hash-object --stdin > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
 ```
 
 The `cd` matters: both `git` calls resolve against the shell's cwd, which for
@@ -154,6 +191,24 @@ fixes the local ref too, and is worth doing before a review either way.
 Read the neighbouring code before judging any of it. The repo's existing
 pattern is the standard; a change that invents a second way to do something
 already solved is a finding, even when the new way is prettier in isolation.
+
+### The mission's tier scopes the shape pass
+
+At the `small` tier, read only the dimensions the diff actually reaches —
+**dimension 8 always**, since a foreign-language line is exactly what a hurried
+change leaves behind, and step 0 always in full. This is a smaller *reading*,
+never a lower bar: a dimension that applies still applies, and a finding is
+still a Blocker at the severity it earns. If three or more dimensions turn out
+to apply, say so in the header — the branch has outgrown its tier, and the
+mission's job is to raise it rather than to have it graded cheaply.
+
+Every other tier reads all nine. The tier is a claim about the change's size,
+and this is the review that can see whether the claim held.
+
+**Ignore the narrowing when the claim is false.** If the branch is over the
+`small` ceiling in `guardrails.sh`, read all nine whatever the tier file says —
+otherwise the one unverified word that bought the exemption also cuts the
+budget of the pass most likely to notice it was unearned.
 
 ## The nine dimensions
 
