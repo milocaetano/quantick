@@ -107,10 +107,20 @@ three modes, what each denies, the overrides and why they fail open — and is
 not repeated here. What is worth pulling out for an outside reader is the one
 design decision that makes the gate honest rather than decorative:
 
-> Each marker `pr-gate` reads holds **the commit sha the review covered**, not
-> a timestamp or a boolean. Commit again after reviewing and the sha no longer
-> matches, so the gate denies and names both shas. There are two of them, one
-> per review, because a branch that passed one has not passed the other.
+> Each marker `pr-gate` reads holds **a hash of the change the review
+> covered** — `git diff origin/main...HEAD` — not a timestamp, not a boolean,
+> and not the sha of whichever commit happened to carry it. Edit a tracked file
+> after reviewing and the hash no longer matches, so the gate denies and names
+> both values. There are two markers, one per review, because a branch that
+> passed one has not passed the other.
+
+Keying on the change rather than the commit is the second version of that
+decision, and it was bought with real pain: the branch that introduced tiers
+paid for five review rounds, several of which re-graded a diff nothing had
+touched, because a rebase or an amend moved a sha the reviews did not care
+about. It is also *stricter* in the case the sha form missed — a rebase that
+lands a branch on top of upstream edits to the very files it changes now stales
+the marker, which is exactly when a second look is worth most.
 
 A marker that only recorded "a review happened" would pass while the newest
 three commits went unreviewed — which is the failure this repository

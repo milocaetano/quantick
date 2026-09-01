@@ -218,12 +218,16 @@ gate, instead of an off-the-books one.
 
 ## Evidence
 
-Recorded 2026-08-31, on `feat/mission-tiers` at commit `7b01b04`.
+Recorded on `feat/mission-tiers`, refreshed at each review round and last at
+the commit this table now describes. A dated snapshot is honest; a stale one
+that still asserts what a later round corrected is the "one file, two answers"
+failure this branch spent a round fixing, so the rows below are kept current
+rather than left as history.
 
 | # | Where it landed |
 | --- | --- |
 | A1, A8 | `## Tiers` in `.claude/skills/mission/SKILL.md`: an eight-row table, one row per step that scales, one column per tier. `small` reads *skipped* for the interrogation and the `/goal` line, *not run* for `delivery-review`, and narrows the injected gates to English plus the four checks. |
-| A2 | *Argument* section of the same file: "With no tier given, the mission runs at **`medium`**." |
+| A2 | Two surfaces, and they now agree — which they did not until delivery-review round 2 caught it. *Argument* section: *"With no tier given, the mission runs at **`small`**."* Tier table header: `` | | `small` (default) | `medium` | `high` | `max` | ``. Echoed in `CLAUDE.md` and `docs/agentic-development.md`, both *"`small` (the default)"*. The default is `small` per **D8**, which supersedes D2. |
 | A3 | `.claude/skills/arch-review/SKILL.md`, step 0: the tier overrides the effort default (`low` for `small`), and *The mission's tier scopes the shape pass* limits the dimensions read, keeping 8 and step 0 always. |
 | A4 | `guardrails_test.sh`: *a small mission opens its PR on arch-review alone* (silent), *a small mission still cannot skip arch-review* (deny), and a loop over the tiers the script declares asserting *the `<tier>` tier still requires delivery-review* for each of `medium`, `high`, `max`. Plus *an unrecognised tier grants nothing*. |
 | A5 | `guardrails_test.sh`: a second worktree built one line over `SMALL_TIER_MAX_CHANGED_LINES`, read from the script rather than hardcoded. Two cases — *a small mission that outgrew the ceiling pays in full*, and *is told the measured size that cost it the exemption*, which asserts the exact figure so a `declared_tier` that stopped recognising `small` cannot pass the first. |
@@ -232,7 +236,7 @@ Recorded 2026-08-31, on `feat/mission-tiers` at commit `7b01b04`.
 | A9 | *A tier goes up, never down* in the skill; and in `guardrails.sh`, the over-ceiling denial says so in the message it hands back. |
 | A10 | Named in `.claude/hooks/README.md` (new section *The `small` mission exemption*, plus both table rows), `CLAUDE.md` (new **One mission, one tier** bullet and two amended ones), `.claude/skills/ship/SKILL.md` step 4, `.claude/skills/delivery-review/SKILL.md` (new *When this skill does not run*), and `docs/agentic-development.md` (three passages). |
 | G2 | **Rebased onto latest `origin/main` first.** The criterion says *after* rebasing, and the first version of this line was written 13 commits behind — the delivery review caught it. Post-rebase, each check run on its own: `cargo fmt --all -- --check` **exit 0**, `cargo clippy --workspace --all-targets -- -D warnings` **exit 0**, `cargo build --workspace` **exit 0**, `cargo test -p quantick-app --test language_guard` **exit 0** (4/4). `cargo test --workspace` **exits 101**, on one test and the same one in all three runs: `quantick-feed-mt5 --test bridge_paging`, whose failure text is `Python was not found; run without arguments to install from the Microsoft Store` — this box resolves `python3` to the Store alias stub. Run directly, `python bridge/mt5/tests/test_paging.py` passes **31 checks, exit 0**. The diff contains **zero** `.rs` files and zero cargo manifests, so no Rust test result can be caused by it; CI, which has a real `python3`, is where the fourth check goes green without an asterisk. Two things seen and not hidden: an earlier version of this line claimed "all exit 0" over "one bin test" when the artifacts showed exit 101 and three, and the first post-rebase run failed to link with `LNK1181` on a build-script `resource.res` — target-directory contention right after a rebase invalidated the cache, gone on a clean re-run and unrelated to the diff. |
-| G3 | `sh .claude/hooks/guardrails_test.sh` → **75 passed, 0 failed** (39 before this branch). Neutered to `exit 0` → **18 passed, 30 failed**, the suite still running to completion, then restored and re-run green. Six mutation runs besides, each reintroducing one defect a review found: every one turns red exactly the case written for it and no other — the branch-identity check, the unmeasurable size, the binary skip (two cases), the drift check that had stopped firing, the absence vocabulary, and the snippet format. |
+| G3 | `sh .claude/hooks/guardrails_test.sh` → **88 passed, 0 failed** (39 before this branch). Neutered to `exit 0` → the suite runs to completion with most cases red, then restores and re-runs green. Nine mutation runs besides, each reintroducing exactly one defect a review found and each turning red exactly the case written for it and no other: the branch-identity check, the unmeasurable size, the binary skip (two cases), the drift check that had stopped firing, the absence vocabulary, the tier-snippet format, `SIZE_EXCLUDES`, a recording command reverted to the commit-sha form (two cases), and the prose-drift guard. One case that did *not* discriminate was found this way and strengthened. |
 
 **G1 and G4 are open here on purpose.** Both are verdicts of the `arch-review`
 that runs immediately after this commit, so neither can exist while this file is
@@ -395,6 +399,26 @@ invokes the hook at `${CLAUDE_PROJECT_DIR}`, which is the main checkout, so this
 branch is gated by `main`'s copy of `guardrails.sh` — the version it is
 replacing. The README already documents that a branch cannot test its own gate
 through the hook. Branches cut after this merges will hold diff hashes.
+
+**delivery-review round 3: FAIL on one line, and the convergence is the
+finding.** Six failing lines in round 1, two in round 2, one in round 3 — a
+single stale paragraph in `docs/agentic-development.md`, the fifth of the five
+sites A10 names, still describing the marker as holding a commit sha after all
+four command sites had been corrected. It was the passage introducing that
+marker as *"the one design decision that makes the gate honest"*, which is
+precisely where a stale rule does the most damage.
+
+Fixed, and the class is now pinned rather than the instance: the suite gained a
+**prose-drift** guard over all five documents, separate from the command-drift
+guard added in round 2. The two are different failures — a wrong command hands
+an agent a marker the gate rejects, a wrong sentence teaches the next reader a
+rule that stopped being true — and only the first was covered. A mutation
+confirms reverting that paragraph turns exactly the new case red.
+
+Round 3 also caught this file's own Evidence table pinned four commits behind,
+with row A2 still asserting the `medium` default that A2 exists to have
+corrected. The same "one file, two answers" class, inside the branch's own
+archive. The header no longer pins a commit; the rows are kept current.
 
 ## The request as received
 

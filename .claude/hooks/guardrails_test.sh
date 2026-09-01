@@ -913,7 +913,24 @@ for doc in .claude/hooks/README.md .claude/skills/arch-review/SKILL.md \
     fi
 done
 
-# And none of them may still tell an agent to write a bare commit id.
+# And no document that describes the gate may still say a marker holds a
+# commit sha. Command drift and prose drift are different failures: the first
+# hands an agent a marker the gate rejects, the second teaches the next reader
+# a rule that stopped being true. Round 3 of this branch's own delivery review
+# found the second one surviving in `docs/agentic-development.md` after all
+# four command sites had been fixed - in the passage that introduces the
+# marker as "the one design decision that makes the gate honest".
+for doc in .claude/hooks/README.md .claude/skills/arch-review/SKILL.md \
+    .claude/skills/delivery-review/SKILL.md CLAUDE.md docs/agentic-development.md; do
+    if [ -f "$repo_root/$doc" ] &&
+        grep -qiE 'marker[^.]*(holds|holding|stores|storing|records|recording)[^.]*(commit sha|sha of|exact commit)' "$repo_root/$doc"; then
+        printf 'FAIL %s still describes a marker as holding a commit sha\n' "$doc"
+        failed=$((failed + 1))
+    else
+        passed=$((passed + 1))
+    fi
+done
+
 for doc in .claude/hooks/README.md .claude/skills/arch-review/SKILL.md \
     .claude/skills/delivery-review/SKILL.md; do
     if [ -f "$repo_root/$doc" ] &&
