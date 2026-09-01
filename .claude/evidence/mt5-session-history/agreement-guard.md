@@ -3,7 +3,7 @@
 Criterion **A7**. A guard is worth nothing until it has been seen to fail, so
 this records it failing.
 
-The test is `crates/app/tests/session_gap_agreement.rs`. It reads
+The test is `crates/guards/tests/session_gap_agreement.rs`. It reads
 `SESSION_GAP_MS` and `SESSION_WALK_MAX_SPAN_MS` out of
 `bridge/mt5/quantick_bridge.py`, reads `SESSION_GAP_MS` and
 `MAX_CAMPAIGN_SPAN_MS` out of `crates/app/src/history_reach.rs`, and compares
@@ -13,35 +13,47 @@ that gets linked.
 
 ## Green, as shipped
 
-```
-running 2 tests
-test the_walk_budget_is_derived_from_the_span_it_bounds ... ok
-test the_bridge_and_the_app_measure_a_session_the_same_way ... ok
+`cargo test -p quantick-guards --test session_gap_agreement` — and it lives in
+`crates/guards` now, beside the repository's other guards, because `main`
+carved that crate precisely so a question like this costs a second rather than
+a full app link:
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 ```
+running 5 tests
+test the_fill_progress_is_on_the_wire_and_is_optional ... ok
+test the_walk_budget_is_derived_from_the_span_it_bounds ... ok
+test the_shipped_config_default_agrees_with_the_bridge_too ... ok
+test the_bridge_and_the_app_measure_a_session_the_same_way ... ok
+test the_slice_cap_matches_what_the_feed_will_accept ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+It grew from two guards to five across the review rounds — the shipped config
+default, the slice cap against the feed's own per-block cap, and the fill
+progress being on the wire *and optional*. Each was added because a review
+found a claim nothing held to account.
 
 ## Red, on purpose
 
-`SESSION_GAP_MS` in the bridge was changed from `60 * 60 * 1000` to
-`45 * 60 * 1000` and the test run again:
+`SESSION_GAP_MS` in the bridge changed from `60 * 60 * 1000` to
+`45 * 60 * 1000`, and the suite re-run:
 
 ```
 thread 'the_bridge_and_the_app_measure_a_session_the_same_way' panicked at
-crates\app\tests\session_gap_agreement.rs:162:5:
-the MetaTrader bridge and the chart no longer measure a session the same way:
+crates/guards/tests/session_gap_agreement.rs:179:5:
   bridge SESSION_GAP_MS = 2700000 but chart SESSION_GAP_MS = 3600000
-    the bridge stops the opening block at a gap this wide, and the app decides
-    a load-older campaign reached a session edge at the same one. Different
-    values mean the chart opens on a block whose edge the campaign does not
-    recognise.
 Change both, or neither.
 
-test result: FAILED. 1 passed; 1 failed
+thread 'the_shipped_config_default_agrees_with_the_bridge_too' panicked at
+crates/guards/tests/session_gap_agreement.rs:224:5
+
+test result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out
 ```
 
-The 45-minute value was reverted immediately; `git diff` on this branch shows
-`SESSION_GAP_MS = 60 * 60 * 1000`.
+**Two** guards catch it, not one: the constants disagree, and so do the bridge
+and the shipped `feeds.toml` default. The 45-minute value was reverted
+immediately; `git diff` on this branch shows `SESSION_GAP_MS = 60 * 60 * 1000`.
 
 ## Why this guard and not a comment
 

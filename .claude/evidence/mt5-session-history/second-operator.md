@@ -48,7 +48,7 @@ separately:
   (`crates/app/src/tab.rs`), which drives a real slice through `drain_feed` and
   checks `opening_slices_remaining() == Some(4)`.
 - The wire contract is asserted by `the_fill_progress_is_on_the_wire_and_is_optional`
-  (`crates/app/tests/session_gap_agreement.rs`), which checks the shipped
+  (`crates/guards/tests/session_gap_agreement.rs`), which checks the shipped
   feed-status schema carries the field **and does not require it** — absent is
   the steady state, so a required field would make every idle snapshot fail its
   own schema.
@@ -73,7 +73,8 @@ not help; the fill still finished first. The reads are in
 back.
 
 So the claim here is the narrow one: the field is wired end to end and unit
-tested, and a live sample of a three-second transient is beyond this client.
+tested, and a live sample of a transient this short is beyond a client that
+pays a process spawn per read.
 The corroborating artifact that the state exists at all is
 [`progressive/mt5-mid-fill.png`](progressive/mt5-mid-fill.png) — the chart
 caught mid-fill at `7999+0 bars` with six slices still to come, against

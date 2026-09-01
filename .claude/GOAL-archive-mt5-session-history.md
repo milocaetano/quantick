@@ -50,8 +50,10 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
   a session-anchored window measured in hours.
 - **D2 — The chart opens immediately and fills backwards.** The newest slice
   paints first; older slices land behind it with progress shown. Chosen over
-  waiting 15–30 s for one complete block, given the measured 157 MB / ~7 s
-  serialize cost of a full WIN day.
+  waiting for one complete block, given how much a full WIN day costs to
+  serialise and send. (The figure quoted here when the decision was taken
+  was an estimate; the measured cost is in `perf.md` and `whole-day.md`,
+  and it was worse than the estimate, not better.)
 - **D3 — The Python bridge only.** `quantick_bridge.py` is what the app
   autostarts, so it is the real path. `QuantickBridge.mq5` keeps its 30-minute
   `InpBackfillMinutes` and is left declaring honestly what it delivers.
@@ -106,7 +108,7 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
       sequences (an overnight gap, a weekend, a market that never closes, a
       terminal holding less than one session) asserting the chosen `from`
       instant. → `bridge/mt5/tests/test_session_backfill.py`. *(R1, R2)*
-      → **MET.** `bridge/mt5/tests/test_session_backfill.py` — 17 checks over an evening open, a mid-session open, a pre-open, a weekend, two sessions on disk, a never-closing market, a young contract, an unheld symbol, ordering, the cursor, the cap, and a terminal misreporting its own floor.
+      → **MET.** `bridge/mt5/tests/test_session_backfill.py` — the suite's own line is `all checks passed across N tests`; the scenarios are an evening open, a mid-session open, a pre-open, a weekend, two sessions on disk, a never-closing market, a young contract, an unheld symbol, ordering, the cursor, the cap, and a terminal misreporting its own floor.
 
 - [x] **A2** — Against the live terminal, a bridge started outside trading
       hours delivers WINV26 from 09:03, not 13:10 and not 09:30. *Evidence:*
@@ -146,11 +148,11 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
 - [x] **A7** — The bridge and the app cannot drift about where a session
       starts: one owner for the gap threshold, guarded by a test that fails if
       the Python and Rust values diverge. *Evidence:* the guard test, run red
-      once by changing one side. → `crates/app/tests/` guard +
+      once by changing one side. → `crates/guards/tests/` guard +
       `.claude/evidence/mt5-session-history/agreement-guard.md`. *(R1, R5)*
 
 ### Injected gates
-      → **MET.** [`.claude/evidence/mt5-session-history/agreement-guard.md`](.claude/evidence/mt5-session-history/agreement-guard.md) — `crates/app/tests/session_gap_agreement.rs`, shown failing on a deliberate 45-minute drift and reverted.
+      → **MET.** [`.claude/evidence/mt5-session-history/agreement-guard.md`](.claude/evidence/mt5-session-history/agreement-guard.md) — `crates/guards/tests/session_gap_agreement.rs`, shown failing on a deliberate 45-minute drift and reverted.
 
 - [x] **G1** — Every artifact this branch authors is English, per `CLAUDE.md`,
       whose exemptions this file's closing quotation claims openly. *Evidence:*
@@ -167,7 +169,7 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
 - [x] **G3** — Performance impact declared: every touched path classified by
       rate (per-trade / per-depth / per-frame / rare) in the plan, not in the
       review. *Evidence:* the classification table. → PR body.
-      → **MET.** Classified in the PR body: the walk and the slicing are **rare** (once per connect), the prepend is **per-frame** for thirty frames, and nothing per-trade or per-depth changed.
+      → **MET.** Classified in the PR body: the walk and the slicing are **rare** (once per connect), the prepend is **per-frame** for as many frames as there are slices (eight on a WINV26 session at the shipped slice size), and nothing per-trade or per-depth changed.
 
 - [x] **G4** — Hot-path evidence, because the opening burst is 1.5 M trades and
       the progressive fill runs against the frame loop: `APP_HEALTH_SUMMARY`
@@ -195,7 +197,7 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
       plane, not by mouse alone. *Evidence:* the `quantick_invoke` /
       `quantick_get_snapshot` transcript. →
       `.claude/evidence/mt5-session-history/second-operator.md`.
-      → **MET.** [`.claude/evidence/mt5-session-history/second-operator.md`](.claude/evidence/mt5-session-history/second-operator.md) — the reach and its span set by hook and read back over the control plane; the fill's progress exposed as `feed.status`'s `opening_slices_remaining`, asserted by `an_opening_slice_draws_without_answering_the_traders_press`. The file states plainly which half is a live transcript and which is a unit test, and why a three-second transient could not be sampled.
+      → **MET.** [`.claude/evidence/mt5-session-history/second-operator.md`](.claude/evidence/mt5-session-history/second-operator.md) — the reach and its span set by hook and read back over the control plane; the fill's progress exposed as `feed.status`'s `opening_slices_remaining`, asserted by `an_opening_slice_draws_without_answering_the_traders_press`. The file states plainly which half is a live transcript and which is a unit test, and why a transient this short could not be sampled with a client that pays a process spawn per read.
 
 - [x] **G8** — `arch-review` run over `git diff origin/main...HEAD` with every
       Blocker and Should-fix resolved, or deferred with the trader's approval

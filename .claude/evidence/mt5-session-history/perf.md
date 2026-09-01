@@ -78,8 +78,12 @@ fps=54  avg= 18.33 cpu= 3.73 worst= 127.67
 
 **Eight times the trades for three fps, and no slow-frame warning on either
 side.** The dip is about ten seconds, once, at open, and the chart is fully
-interactive throughout: the first 200 000 prints are on screen within a second
-of launch (see [`in-the-app.md`](in-the-app.md)).
+interactive throughout: the opening block is charted before the first slice
+arrives — in `perf-branch.log`, `MT5_HISTORY_READY` lands 1.31 s after
+`MT5_BACKFILL_START`, and the fill runs for the ten seconds after that. (An
+earlier revision said "within a second of launch" and cited a run whose slice
+size was 50 000; measured from process launch that same log says 5.92 s, most
+of it the window opening and the terminal answering.)
 
 **The worst-frame row is deliberately absent from that comparison.** Both runs
 peak at a single spike near the first paint — 134 ms on the control, 128 ms on

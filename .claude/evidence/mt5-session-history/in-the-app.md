@@ -42,7 +42,7 @@ from the logs committed beside it.
 | | main's bridge | this branch's bridge |
 | --- | --- | --- |
 | trades charted | see [`perf.md`](perf.md) | see [`perf.md`](perf.md) |
-| bars at tick(50) | ~7 500 | **30 510** |
+| bars at tick(50) | see [`perf.md`](perf.md) | **30 510** |
 | oldest print | the clock window | **09:03** (the session) |
 
 The frame cost is measured separately and mechanically: see

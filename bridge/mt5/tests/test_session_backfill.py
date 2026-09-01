@@ -12,7 +12,7 @@ The anchor is now the *tape*: the walk steps back from the newest print in
 windows and stops at the first one holding nothing, because a stretch with no
 prints longer than `SESSION_GAP_MS` is the market having been closed. That is
 the same rule the app already applies in `crate::history_reach`, and
-`crates/app/tests/session_gap_agreement.rs` fails if the two values drift.
+`crates/guards/tests/session_gap_agreement.rs` fails if the two values drift.
 
 Run directly (`python bridge/mt5/tests/test_session_backfill.py`) or through
 `cargo test -p quantick-feed-mt5 --test bridge_paging`, which discovers and
@@ -598,11 +598,6 @@ def test_a_close_shorter_than_the_first_window_still_cuts_the_session():
         "and holds only today",
         len(block_ticks(session)) == len(today),
         (len(block_ticks(session)), len(today)),
-    )
-    check(
-        "the walk says the tape stopped it, not a budget",
-        True,
-        "session_edge",
     )
 
 

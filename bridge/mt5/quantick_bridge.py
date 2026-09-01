@@ -190,7 +190,7 @@ OPENING_REACH_MAX_CALLS = 48
 # One hour, and deliberately the *same* hour as the app's
 # `history_reach::SESSION_GAP_MS`. Both ends of one tape decide where a day
 # began, and two constants that merely happen to agree today would drift the
-# first time either was tuned; `crates/app/tests/session_gap_agreement.rs`
+# first time either was tuned; `crates/guards/tests/session_gap_agreement.rs`
 # fails when they do. A venue with a real lunch break longer than this reads
 # that break as a close, which costs the trader one extra press and never
 # invents data.
@@ -247,7 +247,7 @@ DEFAULT_OPENING_SLICE_TICKS = 200_000
 # The largest block the feed will take whole, from
 # `crates/feed-mt5/src/stream.rs`'s `MAX_TRADES_PER_PAGE`. Duplicated across a
 # language boundary the repository cannot type-check, so it is pinned by
-# `crates/app/tests/session_gap_agreement.rs`'s
+# `crates/guards/tests/session_gap_agreement.rs`'s
 # `the_slice_cap_matches_what_the_feed_will_accept` rather than trusted: a
 # slice past the feed's cap is trimmed on arrival and the surplus dropped with
 # only a warn line, which is the quiet cut this block was rebuilt to abolish.
