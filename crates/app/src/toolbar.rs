@@ -241,6 +241,13 @@ pub struct ToolbarModel<'a> {
     /// What θ accumulates for [`BarKind::Imbalance`]: trades, volume or
     /// dollar (López de Prado's TIB/VIB/DIB).
     pub imbalance_unit: &'a mut ImbalanceUnit,
+    /// Where the history menu's own button ended up, written back by the draw.
+    ///
+    /// Published for the same reason the Workspace menu's rect is: a menu is a
+    /// popup egui owns, so the only honest way to open one from a hook is to
+    /// deliver a click on the button's real rectangle. Guessing a pixel would
+    /// photograph whatever happens to be there.
+    pub history_menu_rect: &'a mut Option<egui::Rect>,
     /// Trades pulled per "+ older" click.
     pub history_step: &'a mut usize,
     /// Minutes of traded time one "+ older" click pulls under the `by time`
@@ -695,11 +702,14 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
     if load.clicked() {
         actions.push(ToolbarAction::LoadOlder);
     }
-    ui.add_enabled_ui(menu, |ui| {
+    let caret = ui.add_enabled_ui(menu, |ui| {
         ui.menu_button(icons::CARET_DOWN, |ui| {
             draw_history_menu(ui, model, actions);
-        });
+        })
+        .response
+        .rect
     });
+    *model.history_menu_rect = menu.then_some(caret.inner);
 }
 
 /// What one press of the load button promises right now: the reach's own
@@ -1551,6 +1561,7 @@ mod tests {
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
         let mut span_minutes = 120_u32;
+        let mut history_menu_rect = None;
         let mut history_reach = crate::history_reach::HistoryReach::default();
         for replaying in [false, true] {
             for _ in 0..2 {
@@ -1578,6 +1589,7 @@ mod tests {
                         imbalance_unit: &mut imbalance_unit,
                         history_step: &mut history_step,
                         history_reach_span_minutes: &mut span_minutes,
+                        history_menu_rect: &mut history_menu_rect,
                         history_reach: &mut history_reach,
                         history_reach_running: false,
                         history_trades: 1_000,
@@ -1641,6 +1653,7 @@ mod tests {
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
         let mut span_minutes = 120_u32;
+        let mut history_menu_rect = None;
         let mut history_reach = crate::history_reach::HistoryReach::default();
         // Wide enough that the §6 plan folds nothing — the point is the
         // inline chip row, not the overflow menu.
@@ -1674,6 +1687,7 @@ mod tests {
                     imbalance_unit: &mut imbalance_unit,
                     history_step: &mut history_step,
                     history_reach_span_minutes: &mut span_minutes,
+                    history_menu_rect: &mut history_menu_rect,
                     history_reach: &mut history_reach,
                     history_reach_running: false,
                     history_trades: 1_000,
@@ -1730,6 +1744,7 @@ mod tests {
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
         let mut span_minutes = 120_u32;
+        let mut history_menu_rect = None;
         let mut history_reach = crate::history_reach::HistoryReach::default();
         // Every kind, including the two the feed cannot back: selecting one is
         // still possible from config or a previous session, and the toolbar
@@ -1757,6 +1772,7 @@ mod tests {
                         imbalance_unit: &mut imbalance_unit,
                         history_step: &mut history_step,
                         history_reach_span_minutes: &mut span_minutes,
+                        history_menu_rect: &mut history_menu_rect,
                         history_reach: &mut history_reach,
                         history_reach_running: false,
                         history_trades: 200_000,
@@ -1802,6 +1818,7 @@ mod tests {
         let mut imbalance_unit = ImbalanceUnit::Trades;
         let mut history_step = 2_000_usize;
         let mut span_minutes = 120_u32;
+        let mut history_menu_rect = None;
         let mut history_reach = crate::history_reach::HistoryReach::default();
         let mut painted = String::new();
         // Wide enough that the §6 plan folds nothing — the point is the
@@ -1835,6 +1852,7 @@ mod tests {
                     imbalance_unit: &mut imbalance_unit,
                     history_step: &mut history_step,
                     history_reach_span_minutes: &mut span_minutes,
+                    history_menu_rect: &mut history_menu_rect,
                     history_reach: &mut history_reach,
                     history_reach_running: false,
                     history_trades: 1_000,

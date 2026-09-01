@@ -568,7 +568,10 @@ async fn feed_task(
                         // painted -- otherwise the first press would re-fetch
                         // the morning that just arrived.
                         paging_floor_ms = earlier(paging_floor_ms, oldest_forwarded_ms);
-                        if tx.send(FeedEvent::HistoryPrepended(older)).await.is_err() {
+                        // `OpeningPrepended`, never `HistoryPrepended`: the
+                        // chart must draw these and must not read them as the
+                        // answer to a press.
+                        if tx.send(FeedEvent::OpeningPrepended(older)).await.is_err() {
                             break;
                         }
                     }

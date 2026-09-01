@@ -1,0 +1,31 @@
+# Scratch config for the MT5 session-open capture.
+#
+# A listener on 9100 would fight the trader's own bridge, so this run binds
+# 9137 instead, and the autostarted bridge is told the server clock explicitly
+# because the market is shut and it refuses to guess one.
+#
+# The script path is absolute on purpose. A relative one resolves against the
+# app's working directory, which for a Start-Process launch is not the worktree
+# -- the first run of this capture silently exercised the main checkout's
+# bridge and photographed the old clock window as though it were the fix.
+
+default_feed = "metatrader-b3"
+default_symbol = "WINV26"
+
+[[feeds]]
+id = "metatrader-b3"
+name = "MetaTrader 5 — B3"
+provider = "metatrader"
+symbols = ["WINV26"]
+default_bars = "tick:50"
+
+[metatrader]
+listen_addr = "127.0.0.1:9137"
+bridge_autostart = true
+bridge_command = [
+    "python",
+    "C:/src/quantick-worktrees/feat-mt5-session-history/bridge/mt5/quantick_bridge.py",
+    "--utc-offset-s",
+    "-10800",
+    "--no-book",
+]

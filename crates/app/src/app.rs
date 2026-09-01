@@ -534,6 +534,38 @@ pub(crate) struct ControlFrameMetrics {
 
 /// The quantick chart window.
 ///
+/// Which menu `QUANTICK_MENU` presses open.
+///
+/// A menu bar button is not something a scripted run can click, and every
+/// entry behind one is therefore invisible to a capture without a hook. The
+/// hook delivers a real click on the button's own published rectangle rather
+/// than reaching into egui's popup state, so what opens is exactly what a
+/// trader's click opens.
+///
+/// A token this build does not know opens nothing rather than the wrong menu:
+/// a capture of the wrong surface that passes is worse than one that fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScriptedMenu {
+    /// The Workspace menu — the only door to save, export, open and locate.
+    Workspace,
+    /// The toolbar's history caret — the reach chips, the span the `by time`
+    /// reach pulls, the page size and the candle reach.
+    History,
+}
+
+impl ScriptedMenu {
+    /// Every menu this hook can open, by the token that names it.
+    const ALL: [(&'static str, Self); 2] =
+        [("workspace", Self::Workspace), ("history", Self::History)];
+
+    fn from_token(token: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(token))
+            .map(|(_, menu)| menu)
+    }
+}
+
 /// One workspace: N open markets ([`Tab`]) and the chrome around them. The
 /// chrome is what is single-instance by nature — one menu bar, one toolbox,
 /// one dock, one appearance, one status line — plus the indicator persistence
@@ -818,12 +850,16 @@ pub struct QuantickApp {
     /// (`QUANTICK_MENU=workspace`). A menu is a popup egui owns, so a capture
     /// reaches it by clicking the button, not by setting state — see
     /// [`Self::raw_input_hook`].
-    scripted_menu: Option<()>,
+    scripted_menu: Option<ScriptedMenu>,
     /// The press's matching release, on the frame after it.
     scripted_menu_release: Option<egui::Pos2>,
     /// Where the Workspace button was drawn, published by the menu bar so the
     /// hook can click it rather than guess at a coordinate.
     workspace_menu_rect: Option<egui::Rect>,
+    /// Where the toolbar's history caret is, published by the draw. `None`
+    /// while the menu is unreachable — a feed that pages nothing has no menu
+    /// to open, and a hook must photograph that rather than force it.
+    history_menu_rect: Option<egui::Rect>,
     scripted_context_menu: Option<ContextMenuPane>,
     /// Where `QUANTICK_POINTER` parks the mouse, as a fraction of the focused
     /// pane's candle area. Re-delivered every frame, because a pointer is a
@@ -1204,6 +1240,7 @@ impl QuantickApp {
             scripted_menu: None,
             scripted_menu_release: None,
             workspace_menu_rect: None,
+            history_menu_rect: None,
             scripted_context_menu: None,
             scripted_context_menu_release: None,
             scripted_pointer: None,
@@ -1616,8 +1653,7 @@ impl QuantickApp {
         // Anything but `workspace` opens nothing rather than the wrong menu.
         app.scripted_menu = std::env::var("QUANTICK_MENU")
             .ok()
-            .filter(|value| value.trim().eq_ignore_ascii_case("workspace"))
-            .map(|_| ());
+            .and_then(|value| ScriptedMenu::from_token(value.trim()));
 
         // The tape switch in the canvas's top-right corner — the one control
         // that decides whether there is a band at all. Same setter the chip
@@ -3290,6 +3326,7 @@ impl QuantickApp {
         let history_reach_running = self.active_tab().history_reach_running();
         let mut history_reach = self.history_reach;
         let mut history_reach_span_minutes = self.history_reach_span_minutes;
+        let mut history_menu_rect = self.history_menu_rect;
         // The SOURCE group writes straight into the active tab: a feed or
         // symbol change is that tab's market switch. The BARS group writes
         // into the *focused pane* — the pane the status bar reads and every
@@ -3326,6 +3363,7 @@ impl QuantickApp {
             imbalance_target: &mut pane.imbalance_target,
             imbalance_unit: &mut pane.imbalance_unit,
             history_step: &mut tab.history_step,
+            history_menu_rect: &mut history_menu_rect,
             history_reach_span_minutes: &mut history_reach_span_minutes,
             history_reach: &mut history_reach,
             history_reach_running,
@@ -3360,6 +3398,7 @@ impl QuantickApp {
         // Through the setter, so a value dragged past the campaign's own span
         // cap is clamped in the one place that knows the cap.
         self.set_history_reach_span_minutes(history_reach_span_minutes);
+        self.history_menu_rect = history_menu_rect;
         // A newly picked feed may not offer the current symbol. Never during
         // a replay: the recorded instrument belongs to no live feed's menu,
         // and snapping it away would relabel the whole session — the status
@@ -7568,8 +7607,12 @@ impl eframe::App for QuantickApp {
             });
             return;
         }
-        if self.scripted_menu.is_some()
-            && let Some(position) = self.workspace_menu_rect.map(|rect| rect.center())
+        if let Some(menu) = self.scripted_menu
+            && let Some(position) = match menu {
+                ScriptedMenu::Workspace => self.workspace_menu_rect,
+                ScriptedMenu::History => self.history_menu_rect,
+            }
+            .map(|rect| rect.center())
         {
             self.scripted_menu = None;
             self.scripted_menu_release = Some(position);

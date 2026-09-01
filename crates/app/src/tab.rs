@@ -3053,6 +3053,22 @@ impl Tab {
                     // trader can actually see.
                     self.settle_history_page(trades.len());
                 }
+                Ok(FeedEvent::OpeningPrepended(trades)) => {
+                    // The rest of the opening session, drawn but not counted.
+                    // Everything the reply path does *except* the two things
+                    // that belong to a request: the loading indicator a press
+                    // raised stays up, and the campaign that press started is
+                    // not handed a page it did not fetch.
+                    if self.resume_floor_ms.is_some() {
+                        live |= self.ingest_resumed(&trades);
+                        continue;
+                    }
+                    self.history_trades += trades.len();
+                    for pane in self.panes_mut() {
+                        pane.prepend_history(&trades);
+                    }
+                    self.refold_history_prefix();
+                }
                 Ok(FeedEvent::Live(trade)) => {
                     if self.resume_floor_ms.is_some() {
                         live |= self.ingest_resumed(std::slice::from_ref(&trade));
@@ -4604,6 +4620,104 @@ mod move_pane_tests {
     use tokio::sync::mpsc;
 
     static NEXT_DIR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1000);
+
+    /// One trade at `ms`, cheap enough to build a block from.
+    fn older_trade(ms: i64) -> quantick_engine::Trade {
+        quantick_engine::Trade {
+            agg_id: ms as u64,
+            timestamp_ms: ms,
+            price: rust_decimal::Decimal::new(1000, 1),
+            quantity: rust_decimal::Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        }
+    }
+
+    /// A tab whose feed channel is still held, so a test can post events onto
+    /// it and drain them the way a frame does.
+    fn tab_with_feed() -> (Tab, mpsc::Sender<FeedEvent>) {
+        let (evt_tx, evt_rx) = mpsc::channel(64);
+        let (_book_tx, book_rx) = mpsc::channel(8);
+        let (cmd_tx, _cmd_rx) = mpsc::channel(8);
+        let tab = Tab::new(
+            0,
+            0,
+            "binance".to_owned(),
+            "BTCUSDT".to_owned(),
+            BarSpec::Tick(50),
+            FeedHandle {
+                events: evt_rx,
+                book_events: book_rx,
+                notices: feed::silent_notices(),
+                capabilities: feed::fixed_capabilities(
+                    crate::config::ProviderKind::Binance.capabilities(),
+                ),
+                latency: feed::unsplit_latency(),
+                commands: cmd_tx,
+                replay: None,
+            },
+            std::env::temp_dir().join(format!(
+                "quantick-opening-test-{}",
+                NEXT_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            )),
+        );
+        (tab, evt_tx)
+    }
+
+    #[test]
+    fn an_opening_slice_draws_without_answering_the_traders_press() {
+        // The defect the trader-ux review caught, and the reason the opening
+        // block has an event of its own rather than reusing the reply.
+        //
+        // The bridge fills the session in behind the chart in thirty-odd
+        // slices. A trader who presses `+ older` while that is happening has
+        // raised a loading indicator and started a campaign; if a slice
+        // arrived as `HistoryPrepended` it would stop that indicator on
+        // history the trader did not ask for, and hand the campaign a page it
+        // did not fetch — so a run could spend its budget, or declare itself
+        // finished, on tape it never pulled.
+        let (mut tab, feed_tx) = tab_with_feed();
+        // The tab already has its own opening request in flight, so the count
+        // is asserted as a delta rather than against zero: what matters is
+        // that an opening slice answers nothing, whatever else is outstanding.
+        tab.loading.begin(LoadingTask::History);
+        let before = tab.loading.count(LoadingTask::History);
+        assert!(before > 0, "the press raised an indicator to begin with");
+
+        let slice: Vec<_> = (0..8).map(|i| older_trade(1_000 + i)).collect();
+        feed_tx
+            .try_send(FeedEvent::OpeningPrepended(slice.clone()))
+            .expect("the test channel has room");
+        tab.drain_feed();
+
+        assert_eq!(
+            tab.loading.count(LoadingTask::History),
+            before,
+            "an opening slice must leave the trader's own loading indicator up"
+        );
+        assert_eq!(
+            tab.history_trades,
+            slice.len(),
+            "and it is still charted and counted — it is the trader's morning"
+        );
+    }
+
+    #[test]
+    fn a_page_the_trader_asked_for_still_answers_the_press() {
+        // The other half, so the test above cannot pass by the reply path
+        // having quietly stopped working.
+        let (mut tab, feed_tx) = tab_with_feed();
+        tab.loading.begin(LoadingTask::History);
+        let before = tab.loading.count(LoadingTask::History);
+        feed_tx
+            .try_send(FeedEvent::HistoryPrepended(vec![older_trade(1_000)]))
+            .expect("the test channel has room");
+        tab.drain_feed();
+        assert_eq!(
+            tab.loading.count(LoadingTask::History),
+            before - 1,
+            "a reply settles exactly the one press that asked for it"
+        );
+    }
 
     fn tab_with(context: usize) -> Tab {
         let (_evt_tx, evt_rx) = mpsc::channel(8);
