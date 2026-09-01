@@ -60,7 +60,14 @@ const KEYWORDS: &[&str] = &[
 const SCANNED_DIRS: &[&str] = &["crates", "docs", ".claude/skills", ".claude/hooks"];
 
 /// Extensions worth scanning inside those directories.
-const SCANNED_EXTS: &[&str] = &["rs", "pine", "md", "html", "toml"];
+///
+/// `.txt` is here because of `crates/guards/size-baseline.txt`. Sixty lines of
+/// hand-written rationale moved into it when the size ceilings left Rust for a
+/// data file, and those comments are the signed justifications the whole
+/// ratchet doctrine rests on — exactly the "comments inside config files"
+/// `CLAUDE.md` names. Without this the branch that wrote them put them
+/// somewhere no guard opens.
+const SCANNED_EXTS: &[&str] = &["rs", "pine", "md", "html", "toml", "txt"];
 
 /// Paths that already carried non-English prose when this guard was written.
 /// Grandfathered by `CLAUDE.md`'s rule, which grades the lines a diff authors.

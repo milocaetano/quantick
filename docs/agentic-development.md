@@ -92,8 +92,9 @@ remembering them. They are now walls the
 harness puts up, in `.claude/hooks/guardrails.sh`.
 
 [`.claude/hooks/README.md`](../.claude/hooks/README.md) owns the details — the
-three modes, what each denies, the overrides and why they fail open — and is
-not repeated here. What is worth pulling out for an outside reader is the one
+four modes, what each denies (the fourth denies nothing — it only reports),
+the overrides and why they fail open — and is not repeated here. What is
+worth pulling out for an outside reader is the one
 design decision that makes the gate honest rather than decorative:
 
 > Each marker `pr-gate` reads holds **the commit sha the review covered**, not

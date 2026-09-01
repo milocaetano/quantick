@@ -9,6 +9,16 @@
 
 use quantick_guards::{GUARDS, workspace_root};
 
+/// The guards this file tests, in the order the tests below declare them.
+///
+/// Indexed by the tests rather than written beside them, so the drift check
+/// cannot be satisfied by appending a name. A contributor who adds a guard and
+/// only edits this list gets a compile error at the index that has no test,
+/// instead of a green suite over a guard CI never runs — which is the failure
+/// the check exists to prevent, and which a hand-kept list of names invites by
+/// making "add the string" the obvious fix.
+const TESTED: [&str; 3] = ["size", "language", "encoding"];
+
 /// Run one named guard and fail with everything it found.
 fn assert_clean(name: &str) {
     let guard = GUARDS
@@ -27,17 +37,17 @@ fn assert_clean(name: &str) {
 
 #[test]
 fn no_tracked_file_grows_past_its_recorded_ceiling() {
-    assert_clean("size");
+    assert_clean(TESTED[0]);
 }
 
 #[test]
 fn tracked_files_are_written_in_english() {
-    assert_clean("language");
+    assert_clean(TESTED[1]);
 }
 
 #[test]
 fn sources_are_utf8_without_a_bom_or_mojibake() {
-    assert_clean("encoding");
+    assert_clean(TESTED[2]);
 }
 
 /// The registry is what the binary and these tests share; a guard added to
@@ -45,15 +55,15 @@ fn sources_are_utf8_without_a_bom_or_mojibake() {
 /// which is the failure mode that looks green.
 #[test]
 fn every_guard_in_the_registry_has_a_test_here() {
-    let tested = ["size", "language", "encoding"];
     let missing: Vec<&str> = GUARDS
         .iter()
         .map(|guard| guard.name)
-        .filter(|name| !tested.contains(name))
+        .filter(|name| !TESTED.contains(name))
         .collect();
     assert!(
         missing.is_empty(),
         "guards with no test in this file: {missing:?} — each would run in the binary and never \
-         in CI"
+         in CI. Widening TESTED alone will not do: its length is fixed and every slot is indexed \
+         by a #[test] above, so a fourth guard needs a fourth test."
     );
 }

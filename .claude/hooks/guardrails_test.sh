@@ -320,19 +320,35 @@ run "guard-watch: escapes quotes in the report" \
 # uses a stub that exits 1, so dropping the `&& exit 0` on the findings line
 # would make the hook emit a context block after every clean edit — the noise
 # that gets a hook switched off — while the suite stayed green.
+#
+# The stub discriminates on the path it is handed rather than exiting 0 for
+# everything. A stub that ignored its argument made the `.txt` case below
+# vacuous: it would have stayed green through a re-grown extension filter, a
+# mangled `$relative`, or an absolute path being passed — none of which is
+# what it claims to pin.
 {
     echo '#!/bin/sh'
-    echo 'exit 0'
+    echo 'case "$2" in'
+    echo '    *.rs) echo "size: 1 finding(s)"; echo "  $2: 9999 production lines"; exit 1 ;;'
+    echo '    *) exit 0 ;;'
+    echo 'esac'
 } > "$stub"
 chmod +x "$stub"
 
-run "guard-watch: silent when the guards find nothing" \
-    guard-watch "$(json_path "$root/wt/src/a.rs")" silent
+run "guard-watch: reports when the binary exits non-zero" \
+    guard-watch "$(json_path "$root/wt/src/a.rs")" context "9999"
 
 # A path the guards do not read reaches the binary now that the hook keeps no
-# extension list of its own, and must still come back silent.
+# extension list of its own, and must come back silent because of the path —
+# not because the stub is silent for everything.
 run "guard-watch: silent for a file no guard reads" \
     guard-watch "$(json_path "$root/wt/src/a.txt")" silent
+
+# A relative `file_path` would make `dirname` answer `.`, and the git queries
+# would then resolve against the hook's own working directory — reporting on
+# a same-named file in a checkout the author is not editing.
+run "guard-watch: silent for a relative path" \
+    guard-watch '{"tool_name":"Write","tool_input":{"file_path":"src/a.rs"}}' silent
 
 # A file outside any git repository cannot be made relative to a workspace
 # root, and the mode fails open rather than guessing.

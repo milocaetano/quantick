@@ -209,7 +209,7 @@ written down in CLAUDE.md.
 sh .claude/hooks/guardrails_test.sh
 ```
 
-Builds throwaway git repos under a temp dir, exercises all three modes
+Builds throwaway git repos under a temp dir, exercises all four modes
 including the fail-open paths, and cleans up after itself. CI runs it as its
 own step. Intact, it reports zero failures.
 

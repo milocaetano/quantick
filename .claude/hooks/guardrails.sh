@@ -295,10 +295,27 @@ guard_watch() {
     # reads exactly like a clean file. Each guard's `check_file` already
     # returns nothing for a path it does not read, so the filter bought a
     # process spawn and cost a drift.
+    # An absolute path or nothing. A relative `file_path` would make `dirname`
+    # answer `.`, and both git queries below would then resolve against this
+    # hook process's own working directory — the main checkout — so the guards
+    # would run over a same-named file in a tree the author is not editing
+    # while the file they did edit went unchecked.
+    case "$file" in
+        /* | ?:/*) ;;
+        *) exit 0 ;;
+    esac
+
     dir=$(dirname "$file")
     [ -d "$dir" ] || exit 0
-    root=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || exit 0
-    root=$(normalize_path "$root")
+
+    # Both answers from one process. `--show-toplevel` and `--show-prefix`
+    # were two spawns for what one call prints on two lines, and on Windows a
+    # spawn costs tens of milliseconds — against a binary that answers in 27.
+    # This mode fires on every write in the session, so the shell plumbing had
+    # become the dominant cost of the thing built to be cheap.
+    location=$(git -C "$dir" rev-parse --show-toplevel --show-prefix 2>/dev/null) || exit 0
+    root=$(normalize_path "$(printf '%s\n' "$location" | sed -n '1p')")
+    prefix=$(printf '%s\n' "$location" | sed -n '2p')
 
     # The binary the branch already built, under either name this platform
     # gives it. Absent is the ordinary case on a fresh worktree, and silence
@@ -308,14 +325,13 @@ guard_watch() {
     [ -x "$binary" ] || exit 0
 
     # Workspace-relative, forward slashes: the spelling the baseline uses.
-    # Computed by git rather than by subtracting the root from the absolute
-    # path, because the two are not spelled alike here — the payload carries
-    # the path the way the host writes it and `--show-toplevel` answers the
-    # way git does, so under Git Bash `/tmp/x/src/a.rs` and
-    # `C:/Users/.../Temp/x` describe the same tree and share no prefix. The
-    # subtraction silently produced no match, which reads exactly like a
-    # clean file.
-    prefix=$(git -C "$dir" rev-parse --show-prefix 2>/dev/null) || exit 0
+    # `$prefix` above comes from git rather than from subtracting the root out
+    # of the absolute path, because the two are not spelled alike here — the
+    # payload carries the path the way the host writes it and
+    # `--show-toplevel` answers the way git does, so under Git Bash
+    # `/tmp/x/src/a.rs` and `C:/Users/.../Temp/x` describe the same tree and
+    # share no prefix. The subtraction silently produced no match, which reads
+    # exactly like a clean file.
     relative="$prefix$(basename "$file")"
 
     # The binary is told which root to read, because the one compiled into it
@@ -331,7 +347,14 @@ guard_watch() {
     escaped=$(printf '%s' "$findings" |
         sed -e 's|\\|\\\\|g' -e 's|"|\\"|g' |
         awk 'BEGIN { ORS = "" } { if (NR > 1) printf "\\n"; print }')
-    context "\"Repository guards on \`$relative\`:\n$escaped\n\nThis is advisory and blocks nothing; \`cargo test --workspace\` is still the gate. Fix it now while the edit is in hand, or run \`cargo run -p quantick-guards -- --tighten\` if a size entry only needs lowering.\""
+    # `$relative` gets the same treatment. It is derived from a filename, so a
+    # quote in it would close the JSON string early and the harness would drop
+    # the whole payload — leaving the author with the silence that reads as a
+    # clean file. Escaping the findings and interpolating the path raw was the
+    # same defect `require_marker` goes to some length to avoid on the deny
+    # path.
+    escaped_path=$(printf '%s' "$relative" | sed -e 's|\\|\\\\|g' -e 's|"|\\"|g')
+    context "\"Repository guards on \`$escaped_path\`:\n$escaped\n\nThis is advisory and blocks nothing; \`cargo test --workspace\` is still the gate. Fix it now while the edit is in hand, or run \`cargo run -p quantick-guards -- --tighten\` if a size entry only needs lowering.\""
 }
 
 case "$mode" in

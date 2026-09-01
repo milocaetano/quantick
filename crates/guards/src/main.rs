@@ -15,10 +15,42 @@
 //! reviewer must be able to argue with, and a tool that raised it silently
 //! would give back exactly the invisibility the guard exists to remove.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use quantick_guards::{GUARDS, size, workspace_root};
+
+/// Turn whatever the caller typed into the workspace-relative spelling with
+/// forward slashes that every guard is keyed on.
+///
+/// Without this, `--file ./crates/app/src/app.rs` and an absolute path — both
+/// of which a shell tab-completes — fell out of scope in all three guards and
+/// exited 0 with no output. That is the silent all-clear this crate's own doc
+/// comments spend paragraphs forbidding: a developer asks about a real file
+/// and is told nothing, which reads exactly like clean.
+///
+/// A path that cannot be made relative is an error rather than a silence.
+fn relative_to(root: &Path, argument: &str) -> Result<String, String> {
+    let normalised = argument.replace('\\', "/");
+    let trimmed = normalised.trim_start_matches("./").trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err("--file was given an empty path".to_owned());
+    }
+    let candidate = Path::new(trimmed);
+    if !candidate.is_absolute() {
+        return Ok(trimmed.to_owned());
+    }
+    candidate
+        .strip_prefix(root)
+        .map(|rest| rest.to_string_lossy().replace('\\', "/"))
+        .map_err(|_| {
+            format!(
+                "{argument} is not inside {} — the guards can only speak about files in the \
+                 workspace they were pointed at",
+                root.display()
+            )
+        })
+}
 
 // The modes are alternatives, not composable flags, and the usage says so.
 // Written as an optional-flag grammar it read as though `--file x --tighten`
@@ -48,7 +80,13 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         None => report(&root, None),
         Some("--tighten") if args.len() == 1 => tighten(&root),
-        Some("--file") if args.len() == 2 => report(&root, Some(args[1].replace('\\', "/"))),
+        Some("--file") if args.len() == 2 => match relative_to(&root, &args[1]) {
+            Ok(relative) => report(&root, Some(relative)),
+            Err(problem) => {
+                eprintln!("{problem}\n\n{USAGE}");
+                ExitCode::FAILURE
+            }
+        },
         Some("--file") if args.len() < 2 => {
             eprintln!("--file needs a path\n\n{USAGE}");
             ExitCode::FAILURE
@@ -112,10 +150,16 @@ fn tighten(root: &std::path::Path) -> ExitCode {
             ExitCode::SUCCESS
         }
         Ok(applied) => {
+            // The resolved absolute path, not the relative spelling. The root
+            // is compiled in from whichever worktree built this binary, and
+            // this repo runs many at once — a relative path in the success
+            // line reads as the caller's own tree while the edit landed in
+            // someone else's, whose `git status` then carries a change nobody
+            // made on purpose.
             println!(
                 "tightened {} entr(ies) in {}:",
                 applied.len(),
-                size::BASELINE_FILE
+                root.join(size::BASELINE_FILE).display()
             );
             for line in &applied {
                 println!("{line}");

@@ -204,13 +204,39 @@ pub struct Measured {
     /// skipped: a file the guard cannot open is not a file it has cleared,
     /// and silence there is indistinguishable from a clean result.
     pub unreadable: Vec<String>,
+    /// Tracked paths that were read but do not decode as UTF-8. Counted as
+    /// *seen* even though they carry no line count, because the alternative
+    /// is worse than useless: a file missing from [`Measured::counts`] looks
+    /// to the stale-entry check like a file that no longer exists, and the
+    /// remedy that check prints is "drop the stale entry" — which deletes the
+    /// ceiling, after which the file is re-added at whatever size it has since
+    /// grown to. The ratchet would have laundered a raise through its own
+    /// instructions. The encoding guard reports what is actually wrong with
+    /// these; this guard only has to avoid lying about them.
+    pub undecodable: Vec<String>,
 }
 
 /// Every tracked `.rs` file under `crates`, as workspace-relative paths with
 /// forward slashes so baseline entries read the same on every platform.
 fn scan(dir: &Path, root: &Path, found: &mut Measured) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        // A directory that cannot be listed is not a directory that came back
+        // clean. The original guard panicked here; returning quietly would
+        // let a permission error or a locked tree produce a green run over
+        // sources nobody looked at, which is the outcome this whole family of
+        // guards exists to make impossible.
+        Err(e) => {
+            let relative = dir
+                .strip_prefix(root)
+                .unwrap_or(dir)
+                .to_string_lossy()
+                .replace('\\', "/");
+            found
+                .unreadable
+                .push(format!("  {relative}/: directory could not be listed: {e}"));
+            return;
+        }
     };
     for entry in entries {
         let path = entry.expect("dir entry is readable").path();
@@ -240,7 +266,7 @@ fn scan(dir: &Path, root: &Path, found: &mut Measured) {
             // that would have explained the file never got to run.
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(source) => found.counts.push((relative, production_lines(&source))),
-                Err(_) => continue,
+                Err(_) => found.undecodable.push(relative),
             },
             Err(e) => found
                 .unreadable
@@ -254,6 +280,7 @@ pub fn measure(root: &Path) -> Measured {
     let mut found = Measured {
         counts: Vec::new(),
         unreadable: Vec::new(),
+        undecodable: Vec::new(),
     };
     scan(&root.join("crates"), root, &mut found);
     found.counts.sort();
@@ -311,11 +338,21 @@ pub fn check(root: &Path) -> Vec<String> {
     }
 
     for entry in &entries {
-        if !found
+        // "Seen" is wider than "counted". A file that was found but could not
+        // be decoded or opened is present, not gone, and telling the author to
+        // drop its entry would delete a ceiling over a file that still
+        // exists — after which it is re-added at whatever size it has grown
+        // to, laundering a raise through the guard's own instructions.
+        let seen = found
             .counts
             .iter()
             .any(|(scanned, _)| scanned == &entry.path)
-        {
+            || found.undecodable.contains(&entry.path)
+            || found
+                .unreadable
+                .iter()
+                .any(|line| line.contains(entry.path.as_str()));
+        if !seen {
             violations.push(format!(
                 "  {}: in the baseline but no longer scanned — drop the stale entry",
                 entry.path
@@ -603,10 +640,24 @@ mod tests {
         // quantick-guards` slower than the thing this crate exists to speed
         // up — a test that quietly spends the win it is meant to protect.
         let whole = check(&root);
-        for (path, _) in measure(&root).counts {
+        // Every path the walk *saw*, not only the ones it could count. The
+        // first version iterated `counts`, which by construction excludes the
+        // files the two surfaces could actually disagree about — it proved
+        // the invariant everywhere except where it had broken.
+        let measured = measure(&root);
+        let seen = measured
+            .counts
+            .iter()
+            .map(|(path, _)| path.clone())
+            .chain(measured.undecodable.iter().cloned());
+        for path in seen {
+            // Anchored on the finding's own `"  {path}: "` prefix rather than
+            // matched as a substring: one tracked path being a substring of
+            // another would otherwise attribute the wrong file's violation.
+            let prefix = format!("  {path}: ");
             let from_scan: Vec<String> = whole
                 .iter()
-                .filter(|line| line.contains(&path))
+                .filter(|line| line.starts_with(&prefix))
                 .cloned()
                 .collect();
             assert_eq!(
@@ -651,6 +702,40 @@ mod tests {
             findings[0].contains("could not be read"),
             "the finding must say the file was unreadable: {findings:?}"
         );
+    }
+
+    /// A tracked file the guard cannot decode is *present*, and must never be
+    /// reported as a stale baseline entry. The remedy that finding prints is
+    /// "drop the stale entry", and an author who follows it deletes the
+    /// ceiling, fixes the encoding, and gets the file re-added at whatever
+    /// size it has since grown to — the ratchet laundering a raise through
+    /// its own instructions.
+    #[test]
+    fn a_file_that_does_not_decode_is_not_reported_as_a_stale_entry() {
+        let root = std::env::temp_dir().join("quantick-guards-undecodable");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
+        fs::create_dir_all(root.join("crates/probe/src")).expect("scratch dirs are creatable");
+        fs::write(root.join(BASELINE_FILE), "crates/probe/src/big.rs 1600\n")
+            .expect("scratch baseline is writable");
+        // Latin-1, so it is legal bytes and illegal UTF-8.
+        fs::write(root.join("crates/probe/src/big.rs"), b"// caf\xe9\n")
+            .expect("scratch source is writable");
+
+        let measured = measure(&root);
+        assert!(
+            measured
+                .undecodable
+                .contains(&"crates/probe/src/big.rs".to_owned()),
+            "the file should be recorded as seen-but-undecodable: {:?}",
+            measured.undecodable
+        );
+        let findings = check(&root);
+        assert!(
+            !findings.iter().any(|line| line.contains("stale entry")),
+            "an undecodable file must not be called a stale entry: {findings:?}"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     /// A root with no `crates/` measures as empty, and an empty measurement

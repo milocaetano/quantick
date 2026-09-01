@@ -43,7 +43,7 @@ The generated wire schemas live outside this tree, in
 | --- | --- |
 | [`agentic-development.md`](agentic-development.md) | The skills, the review gates and the hooks that enforce them — how work actually moves from objective to merged PR here |
 | [`../CLAUDE.md`](../CLAUDE.md) | The working rules, authoritative for any agent changing this repository |
-| [`../.claude/hooks/README.md`](../.claude/hooks/README.md) | The guardrail hooks — the three modes, why they fail open, and how to override them |
+| [`../.claude/hooks/README.md`](../.claude/hooks/README.md) | The guardrail hooks — the four modes, which three are gates and which one only reports, why they fail open, and how to override them |
 
 ## Scripting and indicators
 

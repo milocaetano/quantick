@@ -45,7 +45,11 @@ const MOJIBAKE: &[&str] = &["Â", "Ã", "â€", "âœ", "â†", "Ð"];
 /// folder-wide rewrite mangles a script and its byte-identical corpus copy
 /// together, so the pin test that compares the two stays green while the
 /// dialog fills with `Ã—`.
-const SCANNED: &[&str] = &["rs", "pine"];
+/// `.txt` earns its place for one file: `crates/guards/size-baseline.txt`,
+/// which `--tighten` rewrites by machine. A rewrite is precisely how a
+/// codepage round-trip enters a file, and the em dashes in its rationale are
+/// precisely what such a round-trip mangles.
+const SCANNED: &[&str] = &["rs", "pine", "txt"];
 
 /// The UTF-8 byte-order mark. Legal UTF-8, but nothing in this repo carries
 /// one, and a tool that adds one has usually changed the encoding too.
@@ -63,8 +67,21 @@ const ALLOWED: &[&str] = &[
 ];
 
 fn scan(dir: &Path, root: &Path, violations: &mut Vec<String>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        // Reported, not skipped. The guard this replaced panicked here; a
+        // quiet return would let a permission error or a locked tree produce
+        // a green encoding verdict over sources nobody opened, which is the
+        // one outcome this guard family exists to make impossible.
+        Err(e) => {
+            let relative = dir
+                .strip_prefix(root)
+                .unwrap_or(dir)
+                .to_string_lossy()
+                .replace('\\', "/");
+            violations.push(format!("{relative}/: directory could not be listed: {e}"));
+            return;
+        }
     };
     for entry in entries {
         let path = entry.expect("dir entry is readable").path();
@@ -113,6 +130,11 @@ fn inspect(path: &Path, relative: &str, violations: &mut Vec<String>) {
         violations.push(format!("{relative}: is not valid UTF-8"));
         return;
     };
+    // Hoisted out of the loop: the answer cannot change within a file, and
+    // asking per line was ~a million redundant slice scans across the repo.
+    // It also puts the exemption where its scope is legible — mojibake only,
+    // never the BOM or the welded-join check below.
+    let exempt_from_mojibake = ALLOWED.contains(&relative);
     for (line_no, line) in text.lines().enumerate() {
         if welded_doc_comments(line) {
             violations.push(format!(
@@ -126,7 +148,7 @@ fn inspect(path: &Path, relative: &str, violations: &mut Vec<String>) {
         // a reason to stop checking them for a BOM or a welded join, and the
         // file most likely to be edited by the scripted tooling this guard
         // polices is this one.
-        if ALLOWED.contains(&relative) {
+        if exempt_from_mojibake {
             continue;
         }
         for pattern in MOJIBAKE {
