@@ -15,8 +15,8 @@ review would have carried with a mechanical guard that costs a second.
 
 ## Why it matters
 
-`crates/app` is 192,800 of the repository's 266,968 lines — **72% of the code
-in one crate**, with `app.rs` alone at 33,954 lines. The thing `CLAUDE.md`
+`crates/app` is 193,762 of the repository's 268,703 lines — **72% of the code
+in one crate**, with `app.rs` alone at 34,064 lines. The thing `CLAUDE.md`
 forbids has already happened. So the flow cannot simply be made cheaper: the
 discipline meant to stop that number growing has to move somewhere cheaper *at
 the same time*, or the saving is paid for out of the one property the trader
@@ -98,6 +98,23 @@ trader's question made concrete.
   `size-baseline.txt`, not to every file in the repository. A file under the
   threshold has no debt to pay down. *Safe to assume:* the baseline is already
   the repository's own list of debt files.
+
+## What the delivery review found about these assumptions
+
+Reported here because rule 7 of that review asks whether an assumption turned
+out to *drive* the design. Two did, and both should have been step-3 questions
+rather than `S` lines. This is a finding for the trader to read, not a criterion
+failure, and it is recorded rather than quietly absorbed.
+
+- **S3 drove the design.** "Defer, never discard" is the load-bearing half of
+  the chain budget, and it is now repeated in `CLAUDE.md`, `arch-review` and
+  `ship`. "Three rounds then defer" is a policy the trader lives with on every
+  future branch, so it belonged in the interrogation round. It was marked
+  *wanted to ask* and ranked below four others; the ranking was wrong.
+- **S4 drove the design.** Scoping pay-as-you-go to the files already recorded
+  in `size-baseline.txt` is exactly what `Baseline::recorded` implements. The
+  justification holds, but it is a design decision that was presented as an
+  assumption.
 
 ## Acceptance criteria
 

@@ -3,6 +3,14 @@
 Measured on 2026-09-01 against `origin/main` at `4e12f8b`, in a fresh worktree.
 Every number below is reproducible with the command beside it.
 
+**Run them in a worktree checked out at that commit, not in the main checkout.**
+The first draft of the crate/file table was measured in a main checkout sitting
+several commits behind, and reported `crates/app` at 192,800 lines against the
+193,762 the named commit actually holds. `delivery-review` caught it by re-running
+the command. The 72% conclusion was unaffected, which is exactly why the error
+survived a reading — a stale measurement that still supports its argument is the
+kind only re-execution finds.
+
 ## 1. Review rounds: what the predecessor found, and where it was wrong
 
 `refactor/mission-review-throughput` (#272) reported that ordinary code
@@ -28,13 +36,21 @@ git log --merges -20 --format='%H %s' origin/main | grep 'Merge pull request' |
 
 **The direction holds and the headline does not.** Meta-work really is twice as
 expensive per branch. But ordinary code averages 1.8 rounds rather than ~1, and
-the single worst branch in the window — eight rounds, #271 — is the *largest
-production branch measured*, not a meta one. "The gate is not what is slow for
-coding" was a fair reading of a smaller sample; it is not safe to build on.
+the single worst branch in the window — eight rounds, #271 — is a *production*
+branch, not a meta one. "The gate is not what is slow for coding" was a fair
+reading of a smaller sample; it is not safe to build on.
 
-Round count does not track diff size either, in either direction: #260 shipped
-11,987 production lines in **one** round, while #268 took **three** for 1,369.
-Whatever drives the chain, it is not how much code is in it.
+And #271 is **mid-sized**: 4,528 production lines, against #260's 11,987 and
+#258's 11,489. That is the sharper point, because those two spent **one** round
+and **two**. Round count does not track diff size in either direction — #268
+took **three** rounds for 1,369 lines. Whatever drives the chain, it is not how
+much code is in it.
+
+> An earlier draft of this section called #271 "the largest production branch
+> measured", which its own table above contradicts. Corrected after
+> `delivery-review` caught it. The correction strengthens the finding rather
+> than weakening it: a mid-sized branch burning eight rounds is worse news for
+> the old arrangement than a huge one doing so.
 
 ### What actually let a chain reach eight
 
@@ -177,8 +193,8 @@ absorbed it:
 for d in crates/*/; do echo "$(find "$d" -name '*.rs' -not -path '*/target/*' | xargs cat | wc -l) $d"; done | sort -rn
 ```
 
-`crates/app` is **192,800 of 266,968 lines — 72% of the repository in one
-crate**, with `app.rs` alone at 33,954 lines. The thing `CLAUDE.md` forbids has
+`crates/app` is **193,762 of 268,703 lines — 72% of the repository in one
+crate**, with `app.rs` alone at 34,064 lines. The thing `CLAUDE.md` forbids has
 already happened, so a cheaper review could not simply be taken on trust.
 
 The per-file ratchet forbids *invisible* growth and permits *signed* growth.
@@ -217,6 +233,6 @@ rate table:
   slower one: it parses the baseline and walks no files.
 
 No per-trade, per-depth or per-frame path is touched. Measured: `cargo test -p
-quantick-guards` runs 26 unit tests in **0.13s**, and the whole crate's five
+quantick-guards` runs 31 unit tests in **0.15s**, and the whole crate's five
 binaries in about a second — unchanged, because the added work is a sum over
 eighteen integers.
