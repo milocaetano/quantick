@@ -83,12 +83,35 @@ pub struct StoredPreset {
     pub window: u32,
     pub min_factor: String,
     pub max_factor: String,
-    /// Absolute body floor in price points; `0` disables it. Added after
-    /// the format shipped, so it is optional and defaults to `0` — a bank
-    /// file written before it existed reads clean with the old behaviour,
-    /// which is why the version does not move.
+    /// Absolute floor on the candle's **range** (`high - low`) in price
+    /// points; `0` disables it. Optional, defaulting to `0`, so a bank
+    /// written before the floor existed reads clean with the old
+    /// behaviour — which is why the format version does not move.
     #[serde(default = "zero_points")]
-    pub min_body: String,
+    pub min_range: String,
+    /// The key this floor was stored under while it measured the **body**
+    /// (`|close - open|`), kept as its own optional field rather than as
+    /// `#[serde(alias)]`.
+    ///
+    /// An alias would have been one line, and wrong three ways. Serde
+    /// treats an alias as the *same* field, so a bank carrying both keys —
+    /// hand-edited, merged from two banks, or half-migrated — is a
+    /// duplicate-field error; [`StrategyBank::load_from`] answers any parse
+    /// error by starting empty, and the next save writes that emptiness
+    /// over every preset the trader had. A silent reinterpretation is bad;
+    /// losing the whole bank to fix it is worse.
+    ///
+    /// Read separately, the number can also be *reported* instead of
+    /// swallowed. The floor now measures the whole candle, so the same
+    /// `100` admits every bar it used to and more;
+    /// [`Self::adopt_vintage_floor`] folds it into [`Self::min_range`] once,
+    /// at load — defaulting it to `0` would switch the trader's gate off,
+    /// the loudest possible way to lose a setting — and the bank logs
+    /// `STRATEGY_FLOOR_REINTERPRETED` and rewrites the file, so the change
+    /// is visible in the running app and the migration happens once rather
+    /// than on every launch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_body: Option<String>,
     /// Take profit = close + `tp_mult` × range, in the trade's favour;
     /// `0` means no leg.
     pub tp_mult: String,
@@ -104,7 +127,7 @@ pub struct StoredPreset {
     /// a bar that never crossed the edge rests nothing under either value,
     /// and neither does a cut whose projected legs would not clear the
     /// edge — an entry is never armed unprotected.
-    /// Optional for the same vintage reason as `min_body`, which is why
+    /// Optional for the same vintage reason as `min_range`, which is why
     /// the version does not move.
     #[serde(default = "ignore_break")]
     pub on_break: String,
@@ -187,7 +210,16 @@ impl StoredPreset {
             // activity-cut bars (247 "forces" in one measured WIN session;
             // 7 with this floor). Per-instrument, so it lives in the
             // preset the trader edits, not in the kernel's defaults.
-            min_body: "100".to_owned(),
+            //
+            // The number is a WINV26 measurement and it does not travel: on
+            // a market printing around 180,000 the same 100 is 0.06% of
+            // price and gates almost nothing, while on a 5-point tick it
+            // gates almost everything. It is a starting point for the
+            // instrument in front of the trader, not a default that is
+            // right anywhere it is not changed.
+            min_range: "100".to_owned(),
+            // A freshly authored preset has no vintage number to reconcile.
+            min_body: None,
             tp_mult: "1.0".to_owned(),
             sl_mult: "1.0".to_owned(),
             rearm: "one_shot".to_owned(),
@@ -244,8 +276,8 @@ impl StoredPreset {
         if min_factor <= Decimal::ZERO || max_factor <= Decimal::ZERO {
             return None;
         }
-        let min_body = Decimal::from_str(&self.min_body).ok()?;
-        if min_body < Decimal::ZERO {
+        let min_range = Decimal::from_str(&self.min_range).ok()?;
+        if min_range < Decimal::ZERO {
             return None;
         }
         let alarm = self.alarm_to_kernel()?;
@@ -272,7 +304,7 @@ impl StoredPreset {
             window: self.window as usize,
             min_factor,
             max_factor,
-            min_body,
+            min_range,
         };
         Some(CompiledPreset {
             params,
@@ -343,7 +375,65 @@ pub fn side_token(side: Side) -> &'static str {
     side.as_str()
 }
 
-/// Serde default for [`StoredPreset::min_body`]: rows from before the field
+impl StoredPreset {
+    /// Fold a floor stored under the old body key into the field that is
+    /// read now, and report whether it moved a number.
+    ///
+    /// Done **once, at load**, rather than by a resolver every read path
+    /// has to remember to call. A resolver was the first shape of this and
+    /// it was wrong in a way worth recording: the arming form takes
+    /// `popup.form = stored.clone()` and edits the struct directly, so a
+    /// preset whose floor lived in the vintage field would have shown `0`
+    /// in the form — the floor reading *off* — while the kernel ran with
+    /// 100. Two surfaces disagreeing about one number, which is the bug
+    /// this whole branch exists to end, rebuilt one layer down.
+    ///
+    /// Migrating in place leaves exactly one field to read, so no later
+    /// caller can bypass it. The vintage key is cleared either way: when
+    /// `min_range` already says something it is the authority and the old
+    /// number is superseded, and a superseded value that stays in the
+    /// struct is one a future save would write back out.
+    fn adopt_vintage_floor(&mut self) -> bool {
+        let Some(vintage) = self.min_body.as_deref() else {
+            return false;
+        };
+        // Compared as numbers, not as text. `"0"`, `"0.0"` and `"0.00"` all
+        // mean the floor is off, and a string sentinel would make them behave
+        // differently — one spelling adopting the vintage number and another
+        // discarding it, decided by how the trader happened to type a zero.
+        let vintage_value = Decimal::from_str(vintage).ok();
+        let Some(current) = Decimal::from_str(&self.min_range).ok() else {
+            // The current key will not parse, so `to_kernel` refuses this
+            // preset and the trader has to repair the row by hand. **Leave
+            // the vintage number exactly where it is**: it is the value they
+            // would repair it *with*, and an earlier version of this cleared
+            // it on the way past, which is how a broken row became a broken
+            // row with no clue in it.
+            return false;
+        };
+        if current != Decimal::ZERO {
+            // Both keys, and the current one is the authority. The vintage
+            // number is superseded, so it goes — leaving it would write both
+            // keys back on the next save and re-announce the migration on
+            // every launch forever. Not silent: the loader names every row
+            // whose vintage key it consumed and counts these separately from
+            // the ones it carried forward.
+            self.min_body = None;
+            return false;
+        }
+        if !vintage_value.is_some_and(|v| v > Decimal::ZERO) {
+            // A vintage zero is a floor that was already off; nothing to
+            // carry, and nothing worth keeping the key for.
+            self.min_body = None;
+            return false;
+        }
+        self.min_range = vintage.to_owned();
+        self.min_body = None;
+        true
+    }
+}
+
+/// Serde default for [`StoredPreset::min_range`]: rows from before the field
 /// existed read as "floor off".
 fn zero_points() -> String {
     "0".to_owned()
@@ -419,7 +509,43 @@ impl StrategyBank {
         let path = path.into();
         let presets = match std::fs::read_to_string(&path) {
             Ok(text) => match toml::from_str::<StoreFile>(&text) {
-                Ok(file) if file.version == STORE_FORMAT_VERSION => file.presets,
+                Ok(file) if file.version == STORE_FORMAT_VERSION => {
+                    // A preset still carrying the vintage key is about to be
+                    // read through a floor that measures something else.
+                    // Data honesty: the number is kept, and the fact that
+                    // its meaning moved is said out loud, once, beside the
+                    // other load-time anomalies.
+                    let mut presets = file.presets;
+                    // Every row whose vintage key was consumed is named, not
+                    // only the ones whose number moved: a row carrying both
+                    // keys has its older floor dropped too, and a silent drop
+                    // is the failure this whole migration exists to avoid.
+                    let mut carried = 0_usize;
+                    let vintage: Vec<String> = presets
+                        .iter_mut()
+                        .filter(|(_, preset)| preset.min_body.is_some())
+                        .map(|(name, preset)| {
+                            if preset.adopt_vintage_floor() {
+                                carried += 1;
+                            }
+                            name.clone()
+                        })
+                        .collect();
+                    if !vintage.is_empty() {
+                        tracing::warn!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "STRATEGY_FLOOR_REINTERPRETED",
+                            presets = %vintage.join(", "),
+                            carried_forward = carried,
+                            superseded = vintage.len() - carried,
+                            was = "body",
+                            now = "candle range",
+                            "a stored body floor is now read as a candle-range floor, which admits every bar it used to and more"
+                        );
+                    }
+                    presets
+                }
                 Ok(file) => {
                     tracing::warn!(
                         target: "quantick::app",
@@ -519,7 +645,7 @@ mod tests {
         assert_eq!(params.rearm, Rearm::OneShot);
         assert_eq!(force.window, 20);
         assert_eq!(
-            force.min_body,
+            force.min_range,
             Decimal::from(100),
             "the form's starting point carries the elephant floor"
         );
@@ -551,7 +677,7 @@ mod tests {
         let compiled = preset.to_kernel().expect("and still compiles");
         let (params, force) = (compiled.params, compiled.force);
         assert_eq!(
-            force.min_body,
+            force.min_range,
             Decimal::ZERO,
             "absent floor means off, not refused"
         );
@@ -563,7 +689,7 @@ mod tests {
         std::fs::remove_file(&path).ok();
 
         let mut negative = StoredPreset::starting_point(Side::Buy);
-        negative.min_body = "-5".to_owned();
+        negative.min_range = "-5".to_owned();
         assert!(
             negative.to_kernel().is_none(),
             "a negative floor is refused whole"
@@ -847,5 +973,257 @@ mod tests {
         assert_eq!(alarm.params.when, AlarmWhen::OnClose);
         assert_eq!(alarm.params.repeat, RepeatPolicy::OncePerBar);
         assert_eq!(alarm.cue, Cue::whole(AlertSound::default()));
+    }
+
+    /// A bank saved when the floor measured the body still loads, keeps its
+    /// number, and says that the number now means something else.
+    ///
+    /// This is the trader's own file: `min_body = "100"`, the key every
+    /// build wrote before the floor began measuring the whole candle.
+    /// Defaulting it to `0` would switch their elephant gate *off* — the
+    /// loudest possible way to lose a setting, invisible until a flood of
+    /// small bars started firing.
+    #[test]
+    fn a_bank_written_under_the_old_body_key_keeps_its_floor() {
+        let path = scratch("vintage_floor");
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(
+            &path,
+            "version = 1\n\
+             [presets.SellGainAlarm]\n\
+             trigger = \"force_bar\"\n\
+             side = \"sell\"\n\
+             quantity = \"1\"\n\
+             window = 20\n\
+             min_factor = \"2\"\n\
+             max_factor = \"4.5\"\n\
+             min_body = \"100\"\n\
+             tp_mult = \"1.0\"\n\
+             sl_mult = \"1.2\"\n\
+             rearm = \"one_shot\"\n",
+        )
+        .unwrap();
+        let bank = StrategyBank::load_from(&path);
+        let preset = bank
+            .get("SellGainAlarm")
+            .expect("a bank from before the rename still loads");
+        assert_eq!(
+            preset.min_range, "100",
+            "the vintage number now lives in the field every reader uses"
+        );
+        assert!(
+            preset.min_body.is_none(),
+            "and the old key is gone, so a later save cannot write it back"
+        );
+        assert_eq!(
+            preset
+                .to_kernel()
+                .expect("it still compiles to a runnable ruler")
+                .force
+                .min_range,
+            Decimal::from(100),
+            "carried all the way into the kernel's floor"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// A bank carrying **both** keys resolves instead of destroying itself.
+    ///
+    /// Serde treats an alias as the same field, so `min_range` beside
+    /// `min_body` in one table is a duplicate-field error — and
+    /// `load_from` answers any parse error by starting empty, which the
+    /// next save writes over the trader's whole bank. Reachable by a
+    /// hand-edit, by merging two banks, or by a half-applied migration, and
+    /// the rename is exactly what makes such a file possible. Separate
+    /// optional fields make it a reconciliation rather than a loss.
+    #[test]
+    fn a_bank_carrying_both_floor_keys_resolves_instead_of_vanishing() {
+        let path = scratch("both_floor_keys");
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(
+            &path,
+            "version = 1\n\
+             [presets.Both]\n\
+             trigger = \"force_bar\"\n\
+             side = \"sell\"\n\
+             quantity = \"1\"\n\
+             window = 20\n\
+             min_factor = \"2\"\n\
+             max_factor = \"4.5\"\n\
+             min_range = \"250\"\n\
+             min_body = \"100\"\n\
+             tp_mult = \"1.0\"\n\
+             sl_mult = \"1.2\"\n\
+             rearm = \"one_shot\"\n",
+        )
+        .unwrap();
+        let bank = StrategyBank::load_from(&path);
+        let preset = bank
+            .get("Both")
+            .expect("both keys in one row must not empty the bank");
+        assert_eq!(
+            preset.min_range, "250",
+            "the current key wins; the vintage one is superseded"
+        );
+        assert!(
+            preset.min_body.is_none(),
+            "and dropped, so it cannot come back on the next save"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// A bank *loaded* from the vintage key and saved again writes only the
+    /// current one, and stops warning.
+    ///
+    /// The case the previous test could not reach: it exercised
+    /// `starting_point`, whose vintage field is already `None`, so nothing
+    /// covered the row that actually carries one. Without the migration the
+    /// whole bank is re-serialised on any save, the vintage key rides along,
+    /// and the file ends up stating a floor of `0` while the app runs 100 —
+    /// warning about it on every startup, forever.
+    #[test]
+    fn a_loaded_vintage_preset_saves_without_its_old_key() {
+        let path = scratch("vintage_resave");
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(
+            &path,
+            "version = 1\n\
+             [presets.Vintage]\n\
+             trigger = \"force_bar\"\n\
+             side = \"sell\"\n\
+             quantity = \"1\"\n\
+             window = 20\n\
+             min_factor = \"2\"\n\
+             max_factor = \"4.5\"\n\
+             min_body = \"100\"\n\
+             tp_mult = \"1.0\"\n\
+             sl_mult = \"1.2\"\n\
+             rearm = \"one_shot\"\n",
+        )
+        .unwrap();
+        // Loading migrates in memory; the file changes on the next save.
+        // Writing it back at load time was tried and reverted: it turned a
+        // read into a non-atomic write that re-serialises every row through
+        // this build's `StoredPreset`, which would strip an optional field a
+        // newer build had added — a startup that silently edits the trader's
+        // bank to cure a repeated log line is a bad trade.
+        let mut bank = StrategyBank::load_from(&path);
+        bank.save("Other", StoredPreset::starting_point(Side::Buy));
+        let written = std::fs::read_to_string(&path).expect("the bank wrote it");
+        assert!(
+            !written.contains("min_body"),
+            "the vintage key must not survive a save: {written}"
+        );
+        assert!(
+            written.contains("min_range = \"100\""),
+            "and the number it carried is now stored under the key that is read: {written}"
+        );
+        // A second load has nothing left to reinterpret, so the warning is
+        // a one-time event rather than a line on every launch forever.
+        let reloaded = StrategyBank::load_from(&path);
+        let preset = reloaded.get("Vintage").expect("still there");
+        assert_eq!(preset.min_range, "100");
+        assert!(preset.min_body.is_none());
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// A row carrying both keys is reported even though its number did not
+    /// move.
+    ///
+    /// The current key wins, so the vintage number is superseded and
+    /// dropped — and an earlier version of this migration dropped it on a
+    /// path that logged nothing, because it took the value before deciding
+    /// what to do with it. A number leaving a trader's file silently is the
+    /// failure the whole migration exists to avoid, so the loader names
+    /// every row whose vintage key it consumed and separates the ones it
+    /// carried forward from the ones it superseded.
+    #[test]
+    fn a_superseded_vintage_floor_is_dropped_but_not_silently() {
+        let path = scratch("superseded_floor");
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(
+            &path,
+            "version = 1\n\
+             [presets.Both]\n\
+             trigger = \"force_bar\"\n\
+             side = \"sell\"\n\
+             quantity = \"1\"\n\
+             window = 20\n\
+             min_factor = \"2\"\n\
+             max_factor = \"4.5\"\n\
+             min_range = \"250\"\n\
+             min_body = \"100\"\n\
+             tp_mult = \"1.0\"\n\
+             sl_mult = \"1.2\"\n\
+             rearm = \"one_shot\"\n",
+        )
+        .unwrap();
+        let bank = StrategyBank::load_from(&path);
+        let preset = bank.get("Both").expect("the row survives");
+        assert_eq!(preset.min_range, "250", "the current key is the authority");
+        assert!(
+            preset.min_body.is_none(),
+            "the superseded one is gone, and the loader counted it as superseded"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// A preset whose current floor will not parse keeps its vintage number
+    /// out of the bin.
+    ///
+    /// `to_kernel` refuses an unparsable field, which is correct — but the
+    /// migration used to consume the vintage key on the way past, so the
+    /// trader was left with an un-armable preset *and* no record of the
+    /// number that had been in it.
+    #[test]
+    fn an_unparsable_floor_does_not_take_the_vintage_number_with_it() {
+        let path = scratch("unparsable_floor");
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(
+            &path,
+            "version = 1\n\
+             [presets.Broken]\n\
+             trigger = \"force_bar\"\n\
+             side = \"sell\"\n\
+             quantity = \"1\"\n\
+             window = 20\n\
+             min_factor = \"2\"\n\
+             max_factor = \"4.5\"\n\
+             min_range = \"abc\"\n\
+             min_body = \"100\"\n\
+             tp_mult = \"1.0\"\n\
+             sl_mult = \"1.2\"\n\
+             rearm = \"one_shot\"\n",
+        )
+        .unwrap();
+        let bank = StrategyBank::load_from(&path);
+        let preset = bank.get("Broken").expect("the row still loads");
+        assert!(
+            preset.to_kernel().is_none(),
+            "an unparsable floor still voids the preset"
+        );
+        assert_eq!(
+            preset.min_body.as_deref(),
+            Some("100"),
+            "and the number the trader would repair it with is still there —              asserting only that the preset is void proves nothing about that,              which is what an earlier version of this test did"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// A preset this build wrote carries only the current key, so the
+    /// vintage field never grows into the file it was added to read.
+    #[test]
+    fn a_freshly_saved_preset_writes_only_the_current_floor_key() {
+        let path = scratch("fresh_floor");
+        let _ = std::fs::remove_file(&path);
+        let mut bank = StrategyBank::load_from(&path);
+        bank.save("Fresh", StoredPreset::starting_point(Side::Sell));
+        let written = std::fs::read_to_string(&path).expect("the bank wrote it");
+        assert!(written.contains("min_range = \"100\""));
+        assert!(
+            !written.contains("min_body"),
+            "the vintage key is read, never written: {written}"
+        );
+        std::fs::remove_file(&path).ok();
     }
 }

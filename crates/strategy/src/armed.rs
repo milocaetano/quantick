@@ -336,6 +336,29 @@ impl ArmedStrategy {
         }
     }
 
+    /// Why the **ruler** declined the last bar it judged, as a stable
+    /// name, or `None` when the bar fired.
+    ///
+    /// [`Self::hold_reason`] answers the other half: it reports the *gates*
+    /// — side, region, geometry, account — which only ever run on a bar
+    /// the ruler already passed. A bar the ruler itself refused reaches no
+    /// gate at all, so it leaves `hold_reason` untouched and the previous
+    /// refusal standing; asking only that one is how a surface ends up
+    /// reporting an older bar's gate as though it explained this bar. Read
+    /// both, and prefer this one when it is `Some`: it is about the bar
+    /// that just closed, always.
+    ///
+    /// Handed out as a value, not a sentence, for the same reason
+    /// `hold_reason` is: an operator that is not looking at the chart has
+    /// to be able to compare a name instead of parsing English. The prose
+    /// with the numbers in it is the ruler's own
+    /// [`status`](crate::Trigger::status), reachable through
+    /// [`Self::trigger`].
+    #[must_use]
+    pub fn ruler_refusal(&self) -> Option<&'static str> {
+        self.trigger.refusal()
+    }
+
     #[must_use]
     pub fn params(&self) -> &StrategyParams {
         &self.params
@@ -921,7 +944,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_range: Decimal::ZERO,
             })),
         )
     }
@@ -1115,7 +1138,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_range: Decimal::ZERO,
             })),
         );
         warm_then_force(&mut instance, &region);
@@ -1221,7 +1244,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_range: Decimal::ZERO,
             })),
         );
         let commands = warm_then_force(&mut instance, &region);
@@ -1249,6 +1272,10 @@ mod tests {
             }
             fn status(&self) -> String {
                 "always".to_owned()
+            }
+            fn refusal(&self) -> Option<&'static str> {
+                // Fires on every bar, so it never declines one.
+                None
             }
         }
         let region = Region::new(dec("100"), dec("110"));
@@ -1286,6 +1313,10 @@ mod tests {
             }
             fn status(&self) -> String {
                 "always".to_owned()
+            }
+            fn refusal(&self) -> Option<&'static str> {
+                // Fires on every bar, so it never declines one.
+                None
             }
         }
         let region = Region::new(dec("100"), dec("110"));
@@ -1422,7 +1453,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_range: Decimal::ZERO,
             })),
         )
     }
@@ -1504,7 +1535,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_range: Decimal::ZERO,
             })),
         );
         assert!(warm_then_sell_cut(&mut instance, &region).is_empty());
@@ -1703,7 +1734,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_range: Decimal::ZERO,
             })),
         );
         warm_then_sell_cut(&mut auto, &region);
@@ -1753,7 +1784,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_range: Decimal::ZERO,
             })),
         );
         warm_then_sell_cut(&mut auto, &region);
@@ -1939,7 +1970,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_range: Decimal::ZERO,
             })),
         );
         // SL = 104 + 0.1 × 6 = 104.6, below the 105 edge a short entered
@@ -2019,7 +2050,7 @@ mod tests {
                 window: 3,
                 min_factor: dec("1.5"),
                 max_factor: dec("2.5"),
-                min_body: Decimal::ZERO,
+                min_range: Decimal::ZERO,
             })),
         )
     }
@@ -2206,7 +2237,7 @@ mod tests {
             window: 3,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
-            min_body: Decimal::ZERO,
+            min_range: Decimal::ZERO,
         };
         let mut ignoring = ArmedStrategy::new(
             params(Side::Sell),
@@ -2232,6 +2263,135 @@ mod tests {
         assert_eq!(
             resting.preview_opportunity(&cutting, &region, true),
             Some(Opportunity::Retest { edge: dec("105") })
+        );
+    }
+
+    /// Every way the ruler can decline a bar has a name a machine can read.
+    ///
+    /// This is the half of the reported defect that a screenshot cannot
+    /// show. A bar the ruler refuses never reaches a gate, so `hold_reason`
+    /// keeps pointing at an older bar — and until `ruler_refusal` existed
+    /// there was no value anywhere saying *this* bar was declined by the
+    /// ruler, only prose in a badge. An operator that is not looking at the
+    /// chart had no way to answer "why did nothing happen here?".
+    ///
+    /// One assertion per verdict, so a sixth one cannot be added without
+    /// deciding what it is called.
+    #[test]
+    fn every_ruler_verdict_that_declines_a_bar_has_a_readable_name() {
+        let region = Region::new(dec("100"), dec("110"));
+        let banded = |min_range: &str| {
+            ArmedStrategy::new(
+                params(Side::Buy),
+                Box::new(ForceTrigger::new(ForceParams {
+                    window: 3,
+                    min_factor: dec("1.5"),
+                    max_factor: dec("2.5"),
+                    min_range: dec(min_range),
+                })),
+            )
+        };
+
+        // Nothing judged yet.
+        assert_eq!(banded("0").ruler_refusal(), Some("no bars judged yet"));
+
+        // Warmup: fewer bodies than the window.
+        let mut instance = banded("0");
+        instance.on_closed_bar(&bar("100", "101"), &region, true, true);
+        assert_eq!(instance.ruler_refusal(), Some("ruler still warming up"));
+
+        // Flat average: an all-doji window has no ratio to speak of.
+        let mut instance = banded("0");
+        for _ in 0..3 {
+            instance.on_closed_bar(&bar("100", "100"), &region, true, true);
+        }
+        assert_eq!(instance.ruler_refusal(), Some("flat average — no ruler"));
+
+        // No side: a warm ruler and a bar that closed where it opened.
+        let mut instance = banded("0");
+        for pair in [("100", "101"), ("101", "102"), ("102", "104")] {
+            instance.on_closed_bar(&bar(pair.0, pair.1), &region, true, true);
+        }
+        instance.on_closed_bar(&bar("104", "104"), &region, true, true);
+        assert_eq!(instance.ruler_refusal(), Some("doji — no side"));
+
+        // Quiet: a body far under the band.
+        let mut instance = banded("0");
+        for pair in [("100", "110"), ("110", "120")] {
+            instance.on_closed_bar(&bar(pair.0, pair.1), &region, true, true);
+        }
+        instance.on_closed_bar(&bar("120", "121"), &region, true, true);
+        assert_eq!(
+            instance.ruler_refusal(),
+            Some("body quiet against the average")
+        );
+
+        // Exhaustion: a body far over it.
+        let mut instance = banded("0");
+        for pair in [("100", "110"), ("110", "120")] {
+            instance.on_closed_bar(&bar(pair.0, pair.1), &region, true, true);
+        }
+        instance.on_closed_bar(&bar("120", "320"), &region, true, true);
+        assert_eq!(instance.ruler_refusal(), Some("body above the band"));
+
+        // Under the floor: in the band, and the candle too small in price.
+        let mut instance = banded("1000");
+        for pair in [("100", "110"), ("110", "120")] {
+            instance.on_closed_bar(&bar(pair.0, pair.1), &region, true, true);
+        }
+        instance.on_closed_bar(&bar("120", "140"), &region, true, true);
+        assert_eq!(instance.ruler_refusal(), Some("candle under the floor"));
+
+        // And a bar that fires refuses nothing.
+        let mut instance = banded("0");
+        for pair in [("100", "110"), ("110", "120")] {
+            instance.on_closed_bar(&bar(pair.0, pair.1), &region, true, true);
+        }
+        instance.on_closed_bar(&bar("120", "140"), &region, true, true);
+        assert_eq!(
+            instance.ruler_refusal(),
+            None,
+            "a force bar is not a refusal"
+        );
+    }
+
+    /// The two halves answer about different bars, and that is the point.
+    ///
+    /// The reported bug in one test: a gate refuses an early bar, then the
+    /// ruler refuses a later one. `hold_reason` still names the *gate* —
+    /// correctly, it is the last gate that spoke — and only `ruler_refusal`
+    /// is about the bar that just closed. A reader consulting one and not
+    /// the other gets a confident answer about the wrong candle.
+    #[test]
+    fn a_ruler_refused_bar_leaves_the_gates_reason_standing_and_says_so() {
+        let region = Region::new(dec("100"), dec("110"));
+        let mut instance = force_instance(Side::Buy);
+        // Warm, then a force bar whose body sits entirely above the region:
+        // the geometry gate refuses it by name.
+        for pair in [("200", "201"), ("201", "202")] {
+            instance.on_closed_bar(&bar(pair.0, pair.1), &region, true, true);
+        }
+        instance.on_closed_bar(&bar("202", "206"), &region, true, true);
+        assert_eq!(
+            instance.hold_reason().map(|held| held.reason),
+            Some("the body never cut the region")
+        );
+        assert_eq!(instance.ruler_refusal(), None, "the ruler passed that bar");
+
+        // Now a bar the ruler itself declines.
+        instance.on_closed_bar(&bar("206", "207"), &region, true, true);
+        assert_eq!(
+            instance.ruler_refusal(),
+            Some("body quiet against the average"),
+            "this bar was refused by the ruler, and says which way"
+        );
+        let held = instance
+            .hold_reason()
+            .expect("the gate's reason still stands");
+        assert_eq!(held.reason, "the body never cut the region");
+        assert!(
+            !held.fresh,
+            "and it is marked as not being about the bar that just closed"
         );
     }
 }

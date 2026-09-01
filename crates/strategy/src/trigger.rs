@@ -63,7 +63,50 @@ pub trait Trigger {
 
     /// One human-readable line for badges and tooltips: why the trigger is
     /// or is not firing ("warmup 7/20", "quiet 0.8×", "force 1.9×").
+    ///
+    /// **It may only change when the ruler is advanced or reset** — that
+    /// is, inside [`Self::on_closed_bar`] or [`Self::reset`], never on a
+    /// clock and never per print. The chart badge paints it every frame, so
+    /// a line that moved between those calls would flicker against a bar
+    /// that has not changed. A ruler with a genuinely live reading belongs
+    /// in [`Self::preview`], which is `&self` and explicitly provisional.
+    ///
+    /// **Keep it cheap.** It is built on the paint path, once per armed
+    /// instance per frame, so it formats a couple of numbers and returns —
+    /// no scans, no collection. (An earlier version of this branch cached
+    /// the result in `ArmedStrategy` to avoid the allocation; that was
+    /// reverted, because it put the cost on every closed bar of every
+    /// backtest session, which never reads it, to save one allocation of
+    /// several on a paint path that allocates regardless.)
     fn status(&self) -> String;
+
+    /// Why this ruler declined the last bar it judged, as a **stable name**
+    /// rather than a sentence — or `None` when the bar fired.
+    ///
+    /// The twin of [`Self::status`], and the reason it exists separately:
+    /// `status` is prose with numbers in it, written to be read by a
+    /// person in a chart corner. An operator that is not looking at the
+    /// screen — a script, a test, the assistant `CLAUDE.md` plans for —
+    /// needs to know *that the ruler refused this bar* without parsing
+    /// English out of a badge. Without this, "why did nothing happen here?"
+    /// is answerable only by a human reading pixels, which is precisely
+    /// what "operable without a hand" forbids.
+    ///
+    /// The names are stable ids, not display text: a surface may phrase
+    /// them however it likes, but two builds must agree on the string.
+    ///
+    /// **Required, deliberately.** A default returning `None` would read as
+    /// "this bar fired" for every bar of any ruler that forgot to override
+    /// it — an operator asking why nothing happened would be told the
+    /// ruler passed, which is the wrong-answer class this method exists to
+    /// end, reproduced silently on the next trigger to dock. `status` is
+    /// required for the same reason. A ruler with nothing to report says so
+    /// by returning `Some` with a name of its own.
+    ///
+    /// `None` means **the last judged bar fired**. A ruler that has judged
+    /// nothing yet has not fired either, so it returns a name for that too
+    /// rather than borrowing the one word that means success.
+    fn refusal(&self) -> Option<&'static str>;
 
     /// Forget every bar seen: the series the ruler was measuring no longer
     /// exists (a rebuilt timeline, another bar spec, another market). A
@@ -133,6 +176,24 @@ impl Trigger for ForceTrigger {
         self.window.params().window
     }
 
+    fn refusal(&self) -> Option<&'static str> {
+        // One arm per verdict, and no catch-all: a sixth `BarVerdict` must
+        // decide what it is called here rather than inheriting a
+        // neighbour's name by falling through.
+        match &self.last {
+            // Not a verdict about a bar — there is no bar. It is still not
+            // a fire, and `None` here would claim one.
+            None => Some("no bars judged yet"),
+            Some(BarVerdict::Warmup { .. }) => Some("ruler still warming up"),
+            Some(BarVerdict::FlatAverage) => Some("flat average — no ruler"),
+            Some(BarVerdict::NoSide) => Some("doji — no side"),
+            Some(BarVerdict::Quiet { .. }) => Some("body quiet against the average"),
+            Some(BarVerdict::UnderFloor { .. }) => Some("candle under the floor"),
+            Some(BarVerdict::Exhaustion { .. }) => Some("body above the band"),
+            Some(BarVerdict::Force(_)) => None,
+        }
+    }
+
     fn status(&self) -> String {
         match &self.last {
             None => format!("waiting for bars 0/{}", self.window.params().window),
@@ -141,10 +202,24 @@ impl Trigger for ForceTrigger {
             Some(BarVerdict::NoSide) => "doji — no side".to_owned(),
             Some(BarVerdict::Quiet { ratio }) => format!("quiet {}×", round_ratio(*ratio)),
             Some(BarVerdict::Force(force)) => format!("force {}×", round_ratio(force.ratio)),
-            Some(BarVerdict::UnderFloor { ratio, body }) => {
+            Some(BarVerdict::UnderFloor { ratio, range }) => {
                 // The band said force; the absolute floor said no. Saying
-                // "quiet" here would hide the one number the trader needs.
-                format!("{}× in band · body {body} under floor", round_ratio(*ratio))
+                // "quiet" here would hide the one number the trader needs —
+                // and that number is the candle's size, because size is what
+                // the floor actually measured. Printing the body here would
+                // send the trader to change an input this gate never read.
+                // `normalize` and not `round_dp`: this is a price span and
+                // instruments differ by orders of magnitude. Rounding to two
+                // places would print `candle 0.00` on a market whose whole
+                // range is thousandths — worse than the trailing zeros it
+                // fixes. Subtraction in `rust_decimal` keeps the operands'
+                // scale, so an untouched span reaches the badge as
+                // `0.10000000`.
+                format!(
+                    "{}× in band · candle {} under floor",
+                    round_ratio(*ratio),
+                    range.normalize()
+                )
             }
             Some(BarVerdict::Exhaustion { ratio, .. }) => {
                 format!("exhaustion {}×", round_ratio(*ratio))
@@ -182,6 +257,22 @@ mod tests {
         Decimal::from_str(s).unwrap()
     }
 
+    /// A bar with explicit wicks, for fixtures whose whole range is
+    /// smaller than the point `bar` pads by.
+    fn tight(open: &str, close: &str, high: &str, low: &str) -> Bar {
+        Bar {
+            open_time: 0,
+            close_time: 0,
+            open: dec(open),
+            high: dec(high),
+            low: dec(low),
+            close: dec(close),
+            buy_volume: Decimal::ONE,
+            sell_volume: Decimal::ONE,
+            trade_count: 2,
+        }
+    }
+
     fn bar(open: &str, close: &str) -> Bar {
         let open = dec(open);
         let close = dec(close);
@@ -204,7 +295,7 @@ mod tests {
             window: 3,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
-            min_body: Decimal::ZERO,
+            min_range: Decimal::ZERO,
         });
         assert_eq!(trigger.on_closed_bar(&bar("100", "101")), None);
         assert_eq!(trigger.on_closed_bar(&bar("101", "102")), None);
@@ -224,12 +315,59 @@ mod tests {
             window: 2,
             min_factor: dec("1.5"),
             max_factor: dec("2.5"),
-            min_body: Decimal::ZERO,
+            min_range: Decimal::ZERO,
         });
         assert_eq!(trigger.status(), "waiting for bars 0/2");
         trigger.on_closed_bar(&bar("100", "101"));
         assert_eq!(trigger.status(), "warmup 1/2");
         trigger.on_closed_bar(&bar("100", "101"));
         assert_eq!(trigger.status(), "quiet 1×");
+    }
+
+    /// The one user-visible sentence this change rewrote, pinned.
+    ///
+    /// The arm went from naming the body to naming the candle, and gained a
+    /// `normalize()` whose whole justification is how the number reads on
+    /// instruments of different scale. Neither half was asserted anywhere,
+    /// so a regression to `round_dp(2)` — which prints `candle 0.00` on a
+    /// market whose entire range is thousandths — would have shipped green.
+    #[test]
+    fn the_under_floor_line_names_the_candle_and_reads_at_any_scale() {
+        // Whole numbers: no trailing noise, and the candle, not the body.
+        let mut trigger = ForceTrigger::new(ForceParams {
+            window: 3,
+            min_factor: dec("1.5"),
+            max_factor: dec("2.5"),
+            min_range: dec("1000"),
+        });
+        trigger.on_closed_bar(&bar("100", "110"));
+        trigger.on_closed_bar(&bar("110", "120"));
+        trigger.on_closed_bar(&bar("120", "140"));
+        assert_eq!(
+            trigger.status(),
+            "1.50× in band · candle 22 under floor",
+            "the candle is what the floor measured, and 22 is not 22.00000000"
+        );
+
+        // A market whose whole range is thousandths still gets a number it
+        // can act on, which rounding to two places would have erased.
+        let mut trigger = ForceTrigger::new(ForceParams {
+            window: 3,
+            min_factor: dec("1.5"),
+            max_factor: dec("2.5"),
+            min_range: dec("1"),
+        });
+        // The span has to be one that `round_dp(2)` would actually erase,
+        // or the assertion cannot fail for the regression it names: a range
+        // of 0.022 rounds to 0.02 and reads fine, which is why an earlier
+        // version of this test proved nothing.
+        trigger.on_closed_bar(&tight("0.1000", "0.1010", "0.1011", "0.0999"));
+        trigger.on_closed_bar(&tight("0.1010", "0.1020", "0.1021", "0.1009"));
+        trigger.on_closed_bar(&tight("0.1020", "0.1040", "0.1041", "0.1019"));
+        assert_eq!(
+            trigger.status(),
+            "1.50× in band · candle 0.0022 under floor",
+            "a span of 0.0022 survives whole; `round_dp(2)` would print 0.00"
+        );
     }
 }

@@ -118,7 +118,14 @@
 // chart would call one. This is measured, not suspected: on a live WINV26
 // session the same bare band marked 247 of 1 355 volume bars as force bars;
 // an absolute floor of 100 points left 7 (see docs/ux/strategy-anchors.md,
-// which is why the strategy kernel's force ruler carries `min_body`).
+// which is why the strategy kernel's force ruler carries a floor at all).
+//
+// The floor measures the WHOLE CANDLE (`high - low`), the same measurement
+// the kernel's `min_range` uses. It measured the body until the trader asked
+// for the candle instead; both moved together, on purpose. A chart that
+// paints a force bar and an armed instance that fires on one must mean the
+// same thing by the word, or a trader calibrates against this script and
+// then watches the bot take a bar the chart left unmarked.
 //
 // So section 5 adds a floor in POINTS, `and`ed with the ratio above: a
 // bar must be big relative to its neighbours AND big in the instrument's own
@@ -223,7 +230,7 @@ show_bottom = input.bool(true, "4 Display: mark bottom reversals (buy side)")
 // instrument priced in fractions a drag of 1 per pixel is far too coarse and
 // the number is typed instead. A script cannot ask what a tick is worth here,
 // so one of the two has to be the dragged case.
-min_body_points = input.float(0.0, "5 Calibration: min force-bar body (points, 0 = off)", minval=0.0, step=1.0)
+min_range_points = input.float(0.0, "5 Calibration: min force-bar candle range (points, 0 = off)", minval=0.0, step=1.0)
 run_body_only = input.bool(true, "5 Calibration: run measures the body, not the range")
 cover_body_only = input.bool(true, "5 Calibration: cover measures the body, not the range")
 paint_force = input.bool(false, "5 Calibration: paint the bars that arm a push")
@@ -272,9 +279,9 @@ arm_window = math.max(run_window, cover_window)
 // `not na` guards are what keep the opening stretch unmarked.
 // The ratio and the floor, in that order: the ratio rejects most bars on its
 // own, so the floor is a comparison the short-circuit rarely reaches. A floor
-// of 0 is `body >= 0`, true for every bar including a doji — the ratio is
+// of 0 is `high - low >= 0`, true for every bar including a doji — the ratio is
 // what still decides, exactly as it did before this input existed.
-big_body = not na(avg_body_before) and avg_body_before > 0 and body >= body_factor * avg_body_before and body >= min_body_points
+big_enough = not na(avg_body_before) and avg_body_before > 0 and body >= body_factor * avg_body_before and (high - low) >= min_range_points
 new_high = not na(high_before) and high >= high_before
 new_low = not na(low_before) and low <= low_before
 
@@ -287,8 +294,8 @@ var int bull_run = 0
 bear_run := bear_bar ? bear_run + 1 : 0
 bull_run := bull_bar ? bull_run + 1 : 0
 
-top_anchor = big_body and new_high and (not need_direction or bull_bar)
-bottom_anchor = big_body and new_low and (not need_direction or bear_bar)
+top_anchor = big_enough and new_high and (not need_direction or bull_bar)
+bottom_anchor = big_enough and new_low and (not need_direction or bear_bar)
 
 // ------------------------------------------------------------------- state
 

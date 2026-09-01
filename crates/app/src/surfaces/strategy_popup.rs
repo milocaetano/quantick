@@ -504,14 +504,15 @@ impl Surface for StrategyPopupSurface {
                             ui.label("bodies");
                         });
                         ui.horizontal(|ui| {
-                            ui.label("and body ≥");
+                            ui.label("and candle ≥");
                             ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.min_body)
+                                egui::TextEdit::singleline(&mut popup.form.min_range)
                                     .desired_width(50.0),
                             );
                             ui.label("pts (0 = off)").on_hover_text(
-                                "the elephant floor: the relative band alone marks dozens of small \
-                         bars as force on activity-cut bars; an elephant has a size",
+                                "the elephant floor, measured across the whole candle (high − low, \
+                                 wicks included): the relative band alone marks dozens of small bars \
+                                 as force on activity-cut bars; an elephant has a size",
                             );
                         });
                         ui.horizontal(|ui| {

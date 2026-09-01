@@ -13659,7 +13659,7 @@ crosshair = false
         form.window = 3;
         // The fixture's bodies are 4 points; the elephant floor is off so
         // the test exercises the band, not the floor (which has its own).
-        form.min_body = "0".to_owned();
+        form.min_range = "0".to_owned();
         app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "test BF".to_owned())
             .expect("the form compiles and the drawing exists");
 
@@ -13785,7 +13785,7 @@ crosshair = false
         let mut form =
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
         form.window = 3;
-        form.min_body = "0".to_owned();
+        form.min_range = "0".to_owned();
         form.alarm = true;
         form.alarm_when = "share".to_owned();
         form.alarm_share_percent = 70;
@@ -13950,7 +13950,7 @@ crosshair = false
         let mut form =
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
         form.window = 3;
-        form.min_body = "0".to_owned();
+        form.min_range = "0".to_owned();
         app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "test BF".to_owned())
             .expect("the form compiles and the drawing exists");
 
@@ -14029,7 +14029,7 @@ crosshair = false
         let mut form =
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
         form.window = 3;
-        form.min_body = "0".to_owned();
+        form.min_range = "0".to_owned();
         app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "test BF".to_owned())
             .expect("arming before any bar closed skips the span guard");
 
@@ -14224,7 +14224,7 @@ crosshair = false
         let mut form =
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell);
         form.window = 3;
-        form.min_body = "0".to_owned();
+        form.min_range = "0".to_owned();
         form.on_break = "retest_limit".to_owned();
         app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF".to_owned())
             .expect("the form compiles");
@@ -14308,7 +14308,7 @@ crosshair = false
         let mut form =
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell);
         form.window = 3;
-        form.min_body = "0".to_owned();
+        form.min_range = "0".to_owned();
         form.on_break = "retest_limit".to_owned();
         app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF no cut".to_owned())
             .expect("the retest form compiles");
@@ -14413,7 +14413,7 @@ crosshair = false
         let mut form =
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell);
         form.window = 3;
-        form.min_body = "0".to_owned();
+        form.min_range = "0".to_owned();
         form.alarm = true;
         app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF sell".to_owned())
             .expect("the form compiles and the span still covers the future");
@@ -14503,7 +14503,7 @@ crosshair = false
         let mut form =
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell);
         form.window = 3;
-        form.min_body = "0".to_owned();
+        form.min_range = "0".to_owned();
         form.on_break = "retest_limit".to_owned();
         app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF retest".to_owned())
             .expect("the retest form compiles");
@@ -14601,7 +14601,7 @@ crosshair = false
         let mut form =
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell);
         form.window = 3;
-        form.min_body = "0".to_owned();
+        form.min_range = "0".to_owned();
         form.on_break = "retest_limit".to_owned();
         app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF retest".to_owned())
             .expect("the retest form compiles");
@@ -14699,7 +14699,7 @@ crosshair = false
         let mut form =
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
         form.window = 3;
-        form.min_body = "0".to_owned();
+        form.min_range = "0".to_owned();
         app.arm_strategy_instance(pane::PaneSide::Flow, first, &form, "a".to_owned())
             .expect("arms");
         app.arm_strategy_instance(pane::PaneSide::Flow, second, &form, "b".to_owned())
@@ -20792,7 +20792,7 @@ crosshair = false
         let mut form =
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell);
         form.window = 7;
-        form.min_body = "0".to_owned();
+        form.min_range = "0".to_owned();
         form.alarm = true;
         app.arm_strategy_instance(pane::PaneSide::Flow, source, &form, "carry me".to_owned())
             .expect("the region arms");

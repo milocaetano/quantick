@@ -63,7 +63,7 @@ const USE_RUN: usize = 4;
 const RUN_WINDOW: usize = 6;
 const USE_COVER: usize = 8;
 const SHOW_TOP: usize = 11;
-const MIN_BODY_POINTS: usize = 13;
+const MIN_RANGE_POINTS: usize = 13;
 const RUN_BODY_ONLY: usize = 14;
 const COVER_BODY_ONLY: usize = 15;
 const PAINT_FORCE: usize = 16;
@@ -648,21 +648,21 @@ fn a_ratio_without_a_size_is_not_an_elephant() {
     // would call one (measured on WINV26: 247 of 1 355 bars by ratio alone,
     // 7 with a 100-point floor — docs/ux/strategy-anchors.md).
     let mut floored = inputs();
-    floored[MIN_BODY_POINTS] = InputValue::Float(11.0);
+    floored[MIN_RANGE_POINTS] = InputValue::Float(11.0);
     assert_eq!(
         sells(&run(&floored, &sell_tape())),
         none(),
-        "a 10-point body under an 11-point floor never arms, so nothing the bars after it do can mark"
+        "a 10-point candle under an 11-point floor never arms, so nothing the bars after it do can mark"
     );
 
     // And the floor is a floor, not a filter on the mark: one point lower and
     // the identical tape marks where it always did.
     let mut cleared = inputs();
-    cleared[MIN_BODY_POINTS] = InputValue::Float(10.0);
+    cleared[MIN_RANGE_POINTS] = InputValue::Float(10.0);
     assert_eq!(
         sells(&run(&cleared, &sell_tape())),
         vec![8],
-        "the floor is `>=`: a body exactly at it still counts"
+        "the floor is `>=`: a candle exactly at it still counts"
     );
 
     // Off is off — the shipped default changes nothing about the old ruler.
@@ -675,7 +675,7 @@ fn the_floor_and_the_paint_agree_about_what_armed() {
     // signal path made. A floor that silenced the arrow while leaving the bar
     // painted would send the trader hunting a bug that is not there.
     let mut floored = inputs();
-    floored[MIN_BODY_POINTS] = InputValue::Float(11.0);
+    floored[MIN_RANGE_POINTS] = InputValue::Float(11.0);
     floored[PAINT_FORCE] = InputValue::Bool(true);
     let tape = sell_tape();
     assert_eq!(
@@ -1245,5 +1245,55 @@ fn switching_the_run_off_leaves_the_cover_alone_and_vice_versa() {
         sells(&run(&neither, &cover_tape())),
         none(),
         "both shapes off is an indicator that marks nothing at all"
+    );
+}
+
+/// The floor measures the **candle**, and a fixture with wicks is the only
+/// thing that can say so.
+///
+/// Every other floor test here drives `FORCE_UP`, whose body and range are
+/// both 10 — so it passes identically whether the script reads
+/// `|close - open|` or `high - low`, and a revert to the body would leave
+/// the suite green. This tape's push has a body of 10 inside a candle of 30.
+///
+/// It is the Pine half of the kernel's
+/// `the_floor_measures_the_whole_candle_not_the_body`. The two must agree:
+/// the script paints what the armed instance trades, and a trader who
+/// calibrates the floor against this chart and then types the same number
+/// into the arming dialog has to get the same bars.
+#[test]
+fn the_floor_measures_the_candle_not_the_body() {
+    /// Body 10 (101 -> 111) inside a 30-point candle (96 -> 126): the shapes
+    /// the two measurements disagree about.
+    const WICKED_FORCE_UP: Ohlc = (101.0, 126.0, 96.0, 111.0);
+
+    let wicked_tape = || {
+        let mut t = context_up();
+        t.push(WICKED_FORCE_UP); //               5  force bar, body 10, range 30
+        t.push((111.0, 111.0, 109.0, 109.0)); //  6  give-back 1 of 3
+        t.push((109.0, 109.0, 107.0, 107.0)); //  7  give-back 2 of 3
+        t.push((107.0, 107.0, 103.0, 103.0)); //  8  give-back 3 of 3 -> marks
+        t
+    };
+
+    // A floor of 20 sits above the body and below the candle. Reading the
+    // candle, the bar clears it and the tape marks.
+    let mut between = inputs();
+    between[MIN_RANGE_POINTS] = InputValue::Float(20.0);
+    assert_eq!(
+        sells(&run(&between, &wicked_tape())),
+        vec![8],
+        "a 10-point body inside a 30-point candle clears a 20-point candle floor \
+         — reading the body, this would refuse and mark nothing"
+    );
+
+    // Above the candle, it refuses — so the floor is still a floor, and the
+    // test above is not passing because the floor stopped working.
+    let mut above = inputs();
+    above[MIN_RANGE_POINTS] = InputValue::Float(31.0);
+    assert_eq!(
+        sells(&run(&above, &wicked_tape())),
+        none(),
+        "and a 31-point floor is over the whole candle, so nothing arms"
     );
 }
