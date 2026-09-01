@@ -43,10 +43,36 @@ the exemption is bounded by how large the branch turns out to be, and neither
 is something to arrange at the point of shipping. If you are here because a
 gate refused a branch, the branch owes this review — run it.
 
+## Cost discipline — read this before assembling anything
+
+This review is worth what it catches and no more, and it has been measured
+costing more than that. The default is the **cheapest shape that still keeps a
+stranger in the loop**; the expensive shape is what a finding escalates *to*,
+never where a branch starts.
+
+- **Hand over the stat, not the diff.** The reviewer gets the checklist,
+  `branch.stat` and `branch.log`, and reads the specific files a criterion
+  names. `branch.diff` goes over only when a criterion cannot be graded without
+  it, and the verdict says which ones needed it.
+- **One fix round before escalating.** Step 5's bound is three, and three is
+  for a loop that is converging. A round returning the same count as the last
+  is not converging: its remaining gaps go to the trader as findings, not into
+  another dossier. The archives record a branch that spent four rounds with the
+  count flat at 15 — that is the shape this bullet exists to stop.
+- **Never re-grade what did not change.** A re-run reads the criteria that
+  failed and the files the fix touched. Re-grading a `DELIVERED` line whose
+  code nobody edited is spend with no possible finding behind it.
+
+None of this touches the stranger. The reviewer is still a fresh-context
+subagent that never sees the implementing session's account of its own work,
+because that is the entire property this skill provides — and it is the one
+thing a cheaper shape must not buy its way out of.
+
 ## Two modes, and the tier picks one
 
 **Full** (`high`, `max`, and any direct invocation): everything below — the
-dossier, the fresh subagent, all three passes, every `A` and `G` graded.
+dossier, the fresh subagent, all three passes, every `A` and `G` graded, under
+the cost discipline above.
 
 **Completeness-only** (`medium`): step 1, then the **completeness pass alone**,
 run inline in the calling session. No dossier, no subagent, no criteria pass.

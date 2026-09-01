@@ -372,6 +372,27 @@ a review. `.claude/hooks/README.md` owns the rest of the mechanism.
    it is *performed* first, so the goal file lands on the branch that will
    carry it.
 
+   **Arm the worktree before the first edit.** A fresh worktree has no
+   `target/`, so `target/debug/quantick-guards` does not exist — and the
+   `guard-watch` hook is silent when it is missing. Silent, not clean: the size
+   ratchet, the language scan and the encoding check report *nothing* for the
+   whole mission, and the news they exist to deliver early arrives at the
+   review instead. Measured across eighteen worktrees in this repo: the binary
+   was absent from all of them. Two commands, seconds each, and they are the
+   difference between a crossed ceiling reported at the edit that caused it and
+   one reported after the code is written:
+
+   ```sh
+   cd "$WT" &&
+     cargo build -p quantick-guards &&   # arms guard-watch; no dependencies
+     cargo check -p <the crate you will edit> --all-targets
+   ```
+
+   The second primes the incremental cache, so the first `cargo check` *after*
+   an edit is incremental rather than a cold build of the dependency graph.
+   `CLAUDE.md`'s *Verification loop* owns the distinction between that loop and
+   the four checks at the gate; do not restate it here.
+
    **Record the tier here**, in the new worktree, before the first line of
    work. It goes beside the two review markers, in that worktree's own git dir,
    so it is per-branch and never committed:

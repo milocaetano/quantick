@@ -55,7 +55,27 @@ Every change must pass all four checks before commit — no exceptions:
 3. `cargo build --workspace`
 4. `cargo test --workspace`
 
-The four are the gate and nothing replaces them. What can move earlier is the repository guards: `cargo test -p quantick-guards` runs the size ratchet, the language scan and the encoding check in about a second, because that crate has no dependencies to build. Ask it after a batch of edits rather than discovering a crossed ceiling at the end of a full suite run — and when the ratchet reports a file that *shrank*, `cargo run -p quantick-guards -- --tighten` writes the new number, since that direction has nothing for a human to decide. A `PostToolUse` hook runs the same binary over each edited file; it is advisory and silent when the binary has not been built, so it reports early and gates nothing.
+The four are the gate, and they are **not** the edit loop. Running them after every
+edit is the most expensive habit available in this repo: `cargo check -p
+quantick-app --all-targets` answers in about 40 seconds warm, while `cargo build
+--workspace` links the largest crate in the repo to tell you the same thing.
+**While you work, the loop is `cargo check -p <the crate you are editing>` and
+`cargo test -p <crate> <filter>`; the four run once, before the commit.** This was
+unwritten until it was measured, and `cargo check` appeared nowhere in this
+repository's documentation — an agent with no name for the fast path defaults to
+the slow one, on every edit, for the length of a mission.
+
+Nothing replaces the four at the gate. What can also move earlier is the repository guards: `cargo test -p quantick-guards` runs the size ratchet, the language scan and the encoding check in about a second, because that crate has no dependencies to build. Ask it after a batch of edits rather than discovering a crossed ceiling at the end of a full suite run — and when the ratchet reports a file that *shrank*, `cargo run -p quantick-guards -- --tighten` writes the new number, since that direction has nothing for a human to decide. A `PostToolUse` hook runs the same binary over each edited file; it is advisory and silent when the binary has not been built, so it reports early and gates nothing.
+
+**That silence is why the hook has to be armed on purpose.** A fresh worktree has
+no `target/`, so `target/debug/quantick-guards` does not exist, so the hook reports
+nothing — not "clean", *nothing* — for the whole mission. Measured in this
+checkout: the binary was absent, across eighteen worktrees. The cheapest structural
+check in the repo was switched off in exactly the phase it was built for, and the
+cost went to the reviews at the end instead. So **`cargo build -p quantick-guards`
+is part of setting up a worktree**, not an optimisation: it takes seconds, the
+crate has no dependencies, and it is the difference between a crossed size ceiling
+reported at the edit that caused it and one reported after the code is written.
 
 CI (`.github/workflows/ci.yml`) enforces the same four checks on every PR and on pushes to `main`, plus four the workspace cannot see: `sh .claude/hooks/guardrails_test.sh`, `ruff check --select F` over `tools/mt5/` and `bridge/mt5/`, `python3 tools/mt5/test_export_session.py`, and every `python3 bridge/mt5/tests/test_*.py`. The MetaTrader bridge and the session exporter are Python — cargo never compiles them, and an undefined name there ships silently. Run the ones your change touches; the bridge's paging tests are the step whose own comment records that without it a revert to `COPY_TICKS_ALL` ships green. After pushing a PR, watch CI with `gh pr checks <n> --watch` and fix any failure before requesting review or merging. A PR with red CI is never merged.
 
