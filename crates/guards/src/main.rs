@@ -129,7 +129,9 @@ fn report(root: &std::path::Path, only: Option<String>) -> ExitCode {
         for violation in &violations {
             eprintln!("{violation}");
         }
-        eprintln!("\n{}\n", guard.remedy);
+        for remedy in (guard.remedy)(&violations) {
+            eprintln!("\n{remedy}\n");
+        }
     }
     if clean {
         ExitCode::SUCCESS

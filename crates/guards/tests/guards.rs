@@ -31,7 +31,7 @@ fn assert_clean(name: &str) {
         "{name} guard: {} finding(s)\n{}\n\n{}",
         violations.len(),
         violations.join("\n"),
-        guard.remedy
+        (guard.remedy)(&violations).join("\n\n")
     );
 }
 

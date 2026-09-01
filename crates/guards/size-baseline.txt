@@ -42,6 +42,26 @@
 # `by time` reach's span) in the six places such settings live, plus the
 # `ScriptedMenu` registry that replaced a string equality so a capture can
 # open the history menu at all.
+# ## The debt budget
+#
+# The sum of every ceiling below may not exceed this number. Per-file ceilings
+# alone could not answer the question that matters -- is this repository's
+# largest code getting better or worse? -- because eighteen entries each raised
+# "for this branch" read as eighteen reasonable decisions and one lost trunk.
+# That is not hypothetical: the entry for `app.rs` went from 9,775 to 9,890 in
+# the branch before this one, signed, with nothing extracted in return.
+#
+# So growth is pay-as-you-go. Raising a ceiling means lowering another by as
+# much, in the same change -- extract a surface into its own module and both
+# numbers fall on their own. Nothing is blocked: raising this line is still
+# allowed and is the escape hatch on purpose, because it is one number, in one
+# place, that a reviewer watches move.
+#
+# It only ever goes down on its own: `--tighten` lowers it to match the
+# ceilings and will never raise it, or the failure message would be
+# recommending its own bypass.
+!budget 61467
+
 crates/app/src/app.rs 9890
 
 # The five entries below `pane.rs` were invisible to the first version of this

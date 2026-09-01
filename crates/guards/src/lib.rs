@@ -58,8 +58,17 @@ pub struct Guard {
     pub check: fn(&Path) -> Vec<String>,
     /// Every violation in one file, for the edit-time hook.
     pub check_file: fn(&Path, &str) -> Vec<String>,
-    /// What to do about a violation.
-    pub remedy: &'static str,
+    /// What to do about the violations that were actually found.
+    ///
+    /// A function of the findings rather than one string per guard, because
+    /// the size guard grew a second class of violation whose fix is nothing
+    /// like the first: a file over its ceiling is a capability that docked by
+    /// editing the trunk, while the debt budget being over is a raise nobody
+    /// paid for. Printing one text for both would have handed an author the
+    /// wrong instruction in whichever case lost, and a wrong remedy is worse
+    /// than a terse one — it is followed. Every remedy that applies is
+    /// returned, so a mixed run explains both.
+    pub remedy: fn(&[String]) -> Vec<&'static str>,
 }
 
 /// Every guard this crate runs.
@@ -68,18 +77,18 @@ pub const GUARDS: &[Guard] = &[
         name: "size",
         check: size::check,
         check_file: size::check_file,
-        remedy: size::REMEDY,
+        remedy: size::remedies,
     },
     Guard {
         name: "language",
         check: language::check,
         check_file: language::check_file,
-        remedy: language::REMEDY,
+        remedy: |_| vec![language::REMEDY],
     },
     Guard {
         name: "encoding",
         check: encoding::check,
         check_file: encoding::check_file,
-        remedy: encoding::REMEDY,
+        remedy: |_| vec![encoding::REMEDY],
     },
 ];
