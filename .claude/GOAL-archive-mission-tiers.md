@@ -23,7 +23,7 @@ gate, instead of an off-the-books one.
 | R3 | `small` does not run a long code review. | *"nao precisa de um code review lonog"* |
 | R4 | `small` does not run `delivery-review` at all. | *"nem emsmo confirmar com um delivery review"* |
 | R5 | **(purpose — judges the rest)** smaller tasks reach delivery quickly through a leaner flow. | *"algo mais enxuto para tarefas menores serem entregues logo"* |
-| R6 | **The `small` tier must be true of the work it is claimed for** — it is *for* small tasks, not a word a mission may apply to any branch. Added by the delivery review, which found it in the request and nowhere in this ledger. | *"Tipo small é para tarefas pequeans"* |
+| R6 | *(discharged by **A5**, and bounded by **D4**)* **The `small` tier must be true of the work it is claimed for** — it is *for* small tasks, not a word a mission may apply to any branch. Added by the delivery review, which found it in the request and nowhere in this ledger. | *"Tipo small é para tarefas pequeans"* |
 
 ## Decisions taken by the trader
 
@@ -117,9 +117,16 @@ gate, instead of an off-the-books one.
       leading argument, and the skill states what each one changes.
       *Evidence:* the tier table in the skill, one row per step that scales, one
       column per tier. → `.claude/skills/mission/SKILL.md`. *(R1, R2)*
-- [x] **A2** — with no tier given the mission runs at `medium`, and the skill
-      says so where the argument is defined.
-      *Evidence:* the default stated in the argument section.
+- [x] **A2** — with no tier given the mission runs at the default, and the skill
+      says so where the argument is defined **and in the tier table**, which are
+      the two places a reader looks. The default is **`small`** per **D8**,
+      which supersedes D2's `medium`.
+      *Evidence:* *"With no tier given, the mission runs at **`small`**."* in the
+      argument section, and the table header column reading ``small`` (default).
+      Both were checked after D8: the prose was updated and the table was not,
+      so one file stated two different defaults three lines apart — found by
+      delivery-review round 2, which is exactly the divergence class this repo
+      treats as its own bug.
       → `.claude/skills/mission/SKILL.md`. *(R1)*
 - [x] **A3** — `small` runs the bug pass at `low` effort and limits the shape
       pass to the dimensions the diff touches, dimension 8 always included.
@@ -132,7 +139,11 @@ gate, instead of an off-the-books one.
 - [x] **A5** — the `small` exemption cannot be taken by a branch that is not
       small: over the ceiling the full gate applies again.
       *Evidence:* a suite case whose branch exceeds the ceiling and is denied
-      naming `delivery-review-ok`. → `.claude/hooks/guardrails_test.sh`. *(R4, S1)*
+      naming `delivery-review-ok`, plus a case pinning that a branch pushed over
+      the ceiling **by its own goal archive** keeps the exemption — the size
+      measurement excludes `.claude/GOAL*.md`, while the review key deliberately
+      does not.
+      → `.claude/hooks/guardrails_test.sh`. *(R4, R6, D4)*
 - [x] **A6** — the denial an agent sees when it has simply not run
       `delivery-review` is **unchanged**: it never names the tier file, the tier
       words, or any way to create them.
@@ -354,6 +365,36 @@ the four checks, and a shape read by hand. That is stated rather than implied:
 the `arch-review-ok` marker on this branch covers three `xhigh` step-0 rounds
 over earlier heads plus a manual pass over the last commit, and a reader should
 know which is which.
+
+**delivery-review round 2: FAIL**, and it found a Blocker this branch had
+authored between the rounds — the strongest argument available against the
+"no fourth automated round" call recorded above, and it is left standing rather
+than softened:
+
+- **D7 changed the marker's key and every documented recording command kept
+  writing the old one.** `review_key` hashes the branch's diff; the four
+  snippets in the README, `arch-review`, `delivery-review` and the prose in
+  `CLAUDE.md` still said `git rev-parse HEAD`. Following the repo's own
+  instructions produced a marker the gate rejects. The reviewer proved it by
+  running this branch's own `pr-gate` against this branch. The suite could not
+  see it: its drift checks assert that a doc *names* a marker file, never what
+  it writes into it. Both halves are now pinned, and a mutation confirms a doc
+  reverted to the sha form turns exactly those two cases red.
+- **`A2` was MISSING.** D8 moved the default to `small`, the prose was updated
+  and the tier table was not — one file stating two defaults three lines apart.
+- **`SIZE_EXCLUDES` had no case at all**, so deleting the exclusion shipped
+  green while every small mission was thrown out of its tier by its own goal
+  file. Now pinned by a fixture that is over the ceiling by paperwork and under
+  it by work, so it can only pass through the exclusion.
+- The verdict artifact described two rounds and 72 cases when three rounds and
+  75 had happened. Rewritten from the branch as shipped.
+
+**A note on this branch's own markers.** They hold **commit shas**, not the new
+diff hashes, and that is correct rather than an oversight: `.claude/settings.json`
+invokes the hook at `${CLAUDE_PROJECT_DIR}`, which is the main checkout, so this
+branch is gated by `main`'s copy of `guardrails.sh` — the version it is
+replacing. The README already documents that a branch cannot test its own gate
+through the hook. Branches cut after this merges will hold diff hashes.
 
 ## The request as received
 

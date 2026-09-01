@@ -111,14 +111,17 @@ findings through it. The bug pass is not the waived part.
 ## Record the marker when the review closes
 
 A branch cannot open a PR until this review is recorded against the exact
-commit being shipped. Recording it belongs here, in the skill that knows
+change being shipped — a hash of the branch's diff, so a rebase or an amend
+does not invalidate it but an edit to a tracked file does. Recording it belongs here, in the skill that knows
 whether the review actually closed — not to whichever caller happened to
 invoke it. Once every Blocker and Should-fix is resolved or deferred in the PR
 body, and the branch has no further commits coming:
 
 ```sh
 WT=/path/to/worktree
-cd "$WT" && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
+cd "$WT" &&
+  git diff origin/main...HEAD |
+    git hash-object --stdin > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
 ```
 
 The `cd` matters: both `git` calls resolve against the shell's cwd, which for

@@ -13,22 +13,27 @@ Wired in `.claude/settings.json`, implemented in `guardrails.sh` (POSIX sh, no
 | Mode | Event | Acts on | Effect |
 | --- | --- | --- | --- |
 | `worktree-guard` | `PreToolUse` | `Edit`, `Write`, `NotebookEdit` | Denies the write when it lands in the main checkout while that checkout is on `main`. |
-| `pr-gate` | `PreToolUse` | `Bash` | Denies `gh pr create` until **both** `arch-review-ok` and `delivery-review-ok` record the exact `HEAD` being shipped. A branch that declared the `small` mission tier needs only the first, while it stays under the ceiling. |
+| `pr-gate` | `PreToolUse` | `Bash` | Denies `gh pr create` until **both** `arch-review-ok` and `delivery-review-ok` record the exact **change** being shipped. A branch that declared the `small` mission tier needs only the first, while it stays under the ceiling. |
 | `commit-reminder` | `PostToolUse` | `Bash` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming and names the markers that branch's tier actually owes. |
 
 ## Recording the two reviews
 
-`pr-gate` reads two files in the worktree's git dir, each holding the commit
-sha the review it names covered:
+`pr-gate` reads two files in the worktree's git dir, each holding a hash of
+the change the review it names covered — `git diff origin/main...HEAD`, not the
+sha of whichever commit happened to carry it:
 
 ```sh
 # after arch-review, its findings handled
 WT=/path/to/worktree
-cd "$WT" && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
+cd "$WT" &&
+  git diff origin/main...HEAD |
+    git hash-object --stdin > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
 
 # after delivery-review returns PASS
 WT=/path/to/worktree
-cd "$WT" && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
+cd "$WT" &&
+  git diff origin/main...HEAD |
+    git hash-object --stdin > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
 ```
 
 They are separate files because they answer separate questions. `arch-review`
@@ -43,10 +48,25 @@ which marker is missing or stale — with two of them, "a review is missing"
 would leave an agent guessing, and a wrong guess costs a whole review.
 
 The files live in the worktree's own git dir, so they are per-branch and never
-committed. Storing the sha rather than a timestamp is what makes the gate
-honest: commit again after a review and that sha no longer matches, so the gate
-denies and names both shas. A marker that only said "a review happened" would
-pass while the newest commits went unreviewed.
+committed. Storing a hash of the change rather than a timestamp is what makes
+the gate honest: edit a tracked file after a review and that hash no longer
+matches, so the gate denies and names both values. A marker that only said "a
+review happened" would pass while the newest work went unreviewed.
+
+**Why the change and not the commit.** Keying on `rev-parse HEAD` meant a
+rebase, an amend or a reword stale a review that was still perfectly valid, and
+the cost of that is real: the branch that introduced this paid for five review
+rounds, several of which re-graded a diff nothing had touched. Keying on the
+diff is also *stricter* in the one case the sha form missed — a rebase that
+lands the branch on top of upstream edits to the very files it changes now
+stales the marker, which is exactly the case most deserving of a second look.
+`origin/main` advancing on its own does not stale anything, because the merge
+base does not move when `HEAD` does not.
+
+When the change cannot be identified at all — no `origin/main`, unrelated
+histories — the gate falls back to the commit sha, which is what it keyed on
+before. That is stricter than failing open, and such a checkout is outside this
+workflow anyway: every review in it measures against that same ref.
 
 Since `arch-review`'s step 0 runs the bundled `code-review` first, its marker
 is meant to say both passes happened — correctness and shape. Meant to, not

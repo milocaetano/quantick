@@ -374,12 +374,14 @@ On **PASS** only:
 
 ```sh
 WT=/path/to/worktree
-cd "$WT" && git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
+cd "$WT" &&
+  git diff origin/main...HEAD |
+    git hash-object --stdin > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
 ```
 
-`pr-gate` denies `gh pr create` until this file holds the exact HEAD being
-shipped, alongside `arch-review-ok`. Recording it on a FAIL, or before the last
-commit, is lying to the gate — and since the marker stores a sha, the second
+`pr-gate` denies `gh pr create` until this file holds the hash of the exact
+change being shipped, alongside `arch-review-ok`. Recording it on a FAIL, or before the last
+edit, is lying to the gate — and since the marker stores a hash of the change, the second
 one is caught automatically and the first one is not caught by anything but
 you.
 

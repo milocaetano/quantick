@@ -56,7 +56,7 @@ fi
 # --- fixture ----------------------------------------------------------------
 
 root=$(mktemp -d)
-trap 'git -C "$root/mainco" worktree remove --force "$root/wt" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/big" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/binary" >/dev/null 2>&1; rm -rf "$root"' EXIT
+trap 'git -C "$root/mainco" worktree remove --force "$root/wt" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/big" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/binary" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/paperwork" >/dev/null 2>&1; rm -rf "$root"' EXIT
 
 git init -b main -q "$root/mainco"
 git -C "$root/mainco" config user.email t@t
@@ -121,6 +121,29 @@ binary_sha=$(git -C "$root/binary" rev-parse HEAD)
 binary_git_dir=$(git -C "$root/binary" rev-parse --absolute-git-dir)
 if [ -z "$binary_git_dir" ]; then
     printf 'FAIL the binary-asset fixture worktree was not created\n'
+    failed=$((failed + 1))
+fi
+
+# A two-line change carrying a goal archive larger than the whole ceiling.
+# `mission` requires that archive as the branch's *last* commit, and this repo
+# has produced one bigger than the ceiling itself - so counting it would push a
+# genuinely small mission out of its own tier by the paperwork the tier obliged
+# it to write, with a denial telling it to make an escalation the skill calls
+# irreversible.
+git -C "$root/mainco" worktree add -q -b feat/paperwork "$root/paperwork"
+mkdir -p "$root/paperwork/.claude"
+printf 'changed\n' > "$root/paperwork/src/a.txt"
+paper_line=0
+: > "$root/paperwork/.claude/GOAL-archive-paperwork.md"
+while [ "$paper_line" -le "$small_ceiling" ]; do
+    echo "line $paper_line" >> "$root/paperwork/.claude/GOAL-archive-paperwork.md"
+    paper_line=$((paper_line + 1))
+done
+git -C "$root/paperwork" add -A
+git -C "$root/paperwork" commit -qm "a two-line fix and its goal archive"
+paperwork_git_dir=$(git -C "$root/paperwork" rev-parse --absolute-git-dir)
+if [ -z "$paperwork_git_dir" ]; then
+    printf 'FAIL the goal-archive fixture worktree was not created\n'
     failed=$((failed + 1))
 fi
 
@@ -515,6 +538,27 @@ run "and the reminder does not tell it to raise the tier" \
     commit-reminder "$(json_bash "$root/binary" "git commit -m x")" \
     context "of the $small_ceiling changed lines"
 
+# The exclusion the size measurement applies, which had no case at all: delete
+# `SIZE_EXCLUDES` from the hook and every other case here still passes, while
+# every small mission is thrown out of its tier the moment it files its own
+# goal file. The branch below is over the ceiling by paperwork and under it by
+# work, so it can only pass through the exclusion.
+set_tier "$root/paperwork" small
+set_marker_in "$paperwork_git_dir" arch-review-ok "$(marker_key "$root/paperwork")"
+set_marker_in "$paperwork_git_dir" delivery-review-ok ""
+
+if [ "$(LC_ALL=C git -C "$root/paperwork" diff --numstat origin/main...HEAD |
+        cut -f1 | paste -sd+ - | sed 's/^/0+/' | xargs -I{} sh -c 'echo $(({}))')" \
+        -gt "$small_ceiling" ]; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL the goal-archive fixture is not actually over the ceiling, so its case proves nothing\n'
+    failed=$((failed + 1))
+fi
+
+run "a goal archive does not push a small mission over the ceiling" \
+    pr-gate "$(json_bash "$root/paperwork" "gh pr create --fill")" silent
+
 # Fail-closed, where the size cannot be measured at all. Without this the
 # git-error branch of `changed_lines` could be 'simplified' to return 0 - which
 # looks harmless next to the empty-diff case that legitimately yields 0 - and
@@ -843,6 +887,41 @@ for doc in .claude/hooks/README.md .claude/skills/mission/SKILL.md; do
     else
         printf 'FAIL %s does not write the tier file in the branch-pinned format the gate parses\n' "$doc"
         failed=$((failed + 1))
+    fi
+done
+
+# --- the recording commands must write the key the gate actually reads -------
+#
+# `pr-gate` keys a marker on a hash of the branch's diff. Every document that
+# tells an agent how to record one must therefore pipe that diff through
+# `hash-object`, and a doc left on the old `rev-parse HEAD` form produces a
+# marker the gate rejects - from following the repo's own instructions. That
+# shipped once: the key changed in the hook and four documents kept writing a
+# commit sha, with the whole suite green, because the checks above assert only
+# that a doc *names* a marker file and never what it writes into it.
+
+for doc in .claude/hooks/README.md .claude/skills/arch-review/SKILL.md \
+    .claude/skills/delivery-review/SKILL.md; do
+    if [ ! -f "$repo_root/$doc" ]; then
+        printf 'FAIL %s is checked for its recording command but does not exist\n' "$doc"
+        failed=$((failed + 1))
+    elif grep -qF -- 'hash-object --stdin' "$repo_root/$doc"; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL %s records a marker without hashing the diff, so the gate would reject it\n' "$doc"
+        failed=$((failed + 1))
+    fi
+done
+
+# And none of them may still tell an agent to write a bare commit id.
+for doc in .claude/hooks/README.md .claude/skills/arch-review/SKILL.md \
+    .claude/skills/delivery-review/SKILL.md; do
+    if [ -f "$repo_root/$doc" ] &&
+        grep -qF -- 'git rev-parse HEAD > "$(git rev-parse --absolute-git-dir)' "$repo_root/$doc"; then
+        printf 'FAIL %s still records a marker as a commit id, which the gate no longer accepts\n' "$doc"
+        failed=$((failed + 1))
+    else
+        passed=$((passed + 1))
     fi
 done
 

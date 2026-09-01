@@ -65,7 +65,7 @@ The predictable result is that the flow got skipped rather than scaled, and a
 skipped flow protects nothing at all. The tier is how a mission buys less
 ceremony **on the record**, with a gate that knows it did.
 
-| | `small` | `medium` (default) | `high` | `max` |
+| | `small` (default) | `medium` | `high` | `max` |
 | --- | --- | --- | --- | --- |
 | **2** — request ledger | required, terse | required | required | required |
 | **3** — interrogation | skipped; every doubt becomes an `S` assumption, bar the one exception below | at most two questions, and only where a wrong guess throws work away | the full round, at most four | the full round, re-checked against the plan before code is written |
