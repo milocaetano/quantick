@@ -41,7 +41,7 @@ to do* goes back in `SurfaceResponse`, so it never holds a reference to the
 host and stays testable without one. The old shape — a field, a line in the
 constructor, a call in `draw_frame`, a hotkey in the menu — is what took
 `QuantickApp` to 130 fields and a 1,022-line constructor, and
-`crates/app/tests/size_guard.rs` fails the build when the trunk grows that way
+`crates/guards/src/size.rs` fails the build when the trunk grows that way
 again — counting every line outside a top-level `#[cfg(test)]` item, so test
 code stays free while production code does not.
 

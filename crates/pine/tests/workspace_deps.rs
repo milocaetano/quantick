@@ -80,6 +80,12 @@ const ALLOWED: &[(&str, &[&str])] = &[
         "backtest",
         &["engine", "indicators", "pine", "replay", "sim", "strategy"],
     ),
+    // The repository guards. Empty for the same reason `control` is, but
+    // load-bearing in a way the others are not: these read files and count
+    // lines, and the whole point of giving them a crate was that nothing
+    // needs building before they can answer. A dependency here would put a
+    // compile back in front of the cheapest checks in the repo.
+    ("guards", &[]),
 ];
 
 /// The one crate above the graph: everything may be linked from it, so there

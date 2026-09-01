@@ -2,7 +2,9 @@
 # Agent guardrails for quantick. See .claude/hooks/README.md.
 #
 # Three CLAUDE.md rules were enforceable only by an agent remembering them.
-# These make the harness enforce them instead:
+# The first three modes make the harness enforce them instead. The fourth
+# enforces nothing and is not a gate: it carries news from a check that
+# already exists, and says so where it is defined.
 #
 #   worktree-guard    PreToolUse on Edit|Write|NotebookEdit. Denies a write
 #                     that lands in the main checkout while it sits on the
@@ -20,6 +22,11 @@
 #   commit-reminder   PostToolUse on Bash. Cannot block (the commit
 #                     already landed); says the gate is coming and how to
 #                     satisfy it.
+#   guard-watch       PostToolUse on Edit|Write. Not a gate: runs the
+#                     repository guards over the file just written, using
+#                     the already-built binary, and reports. It never
+#                     denies and never blocks; `cargo test --workspace`
+#                     remains the thing that enforces those guards.
 #
 # What `runs_command` can and cannot see is a known, bounded limitation, and it
 # is deliberately left as it was rather than deepened. It splits on `&&`, `||`
@@ -517,9 +524,102 @@ commit_reminder() {
     context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH. \`gh pr create\` is gated on both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recording the exact change being shipped, so run arch-review and then delivery-review once the branch is final — an edit after either one makes its marker stale, though a rebase, an amend or a reword does not.\""
 }
 
+# PostToolUse on Edit|Write. Runs the repository guards over the file that was
+# just written and reports what they found, so a crossed size ceiling, a
+# non-English word or a codepage round-trip surfaces at the edit that caused
+# it rather than at the end of a `cargo test --workspace` run minutes later.
+#
+# Three properties make this safe to run on every write:
+#
+#   It never blocks. PostToolUse cannot deny — the edit has already landed —
+#   and that is the right shape here. The gate stays `cargo test --workspace`;
+#   this only moves the *news* earlier.
+#
+#   It never invokes cargo. It runs the already-built binary straight out of
+#   `target/`, so it cannot contend for the build lock with a `cargo build`
+#   the agent is running, and cannot silently trigger a four-minute compile of
+#   its own. No binary means no output: the guards still run in the suite.
+#
+#   It reads one file. `--file` checks that path against the baseline instead
+#   of walking the repo, which is milliseconds rather than the seconds a full
+#   scan costs.
+guard_watch() {
+    file=$(normalize_path "$(json_string_field file_path)")
+    [ -n "$file" ] || exit 0
+
+    # No extension filter here on purpose. One lived here and was a third
+    # hand-kept copy of a list the two Rust guards already own; adding an
+    # extension there while forgetting it here would have left the suite
+    # seeing a file the edit-time hook silently did not — an all-clear that
+    # reads exactly like a clean file. Each guard's `check_file` already
+    # returns nothing for a path it does not read, so the filter bought a
+    # process spawn and cost a drift.
+    # An absolute path or nothing. A relative `file_path` would make `dirname`
+    # answer `.`, and both git queries below would then resolve against this
+    # hook process's own working directory — the main checkout — so the guards
+    # would run over a same-named file in a tree the author is not editing
+    # while the file they did edit went unchecked.
+    case "$file" in
+        /* | ?:/*) ;;
+        *) exit 0 ;;
+    esac
+
+    dir=$(dirname "$file")
+    [ -d "$dir" ] || exit 0
+
+    # Both answers from one process. `--show-toplevel` and `--show-prefix`
+    # were two spawns for what one call prints on two lines, and on Windows a
+    # spawn costs tens of milliseconds — against a binary that answers in 27.
+    # This mode fires on every write in the session, so the shell plumbing had
+    # become the dominant cost of the thing built to be cheap.
+    location=$(git -C "$dir" rev-parse --show-toplevel --show-prefix 2>/dev/null) || exit 0
+    root=$(normalize_path "$(printf '%s\n' "$location" | sed -n '1p')")
+    prefix=$(printf '%s\n' "$location" | sed -n '2p')
+
+    # The binary the branch already built, under either name this platform
+    # gives it. Absent is the ordinary case on a fresh worktree, and silence
+    # is the correct answer to it.
+    binary="$root/target/debug/quantick-guards"
+    [ -x "$binary" ] || binary="$binary.exe"
+    [ -x "$binary" ] || exit 0
+
+    # Workspace-relative, forward slashes: the spelling the baseline uses.
+    # `$prefix` above comes from git rather than from subtracting the root out
+    # of the absolute path, because the two are not spelled alike here — the
+    # payload carries the path the way the host writes it and
+    # `--show-toplevel` answers the way git does, so under Git Bash
+    # `/tmp/x/src/a.rs` and `C:/Users/.../Temp/x` describe the same tree and
+    # share no prefix. The subtraction silently produced no match, which reads
+    # exactly like a clean file.
+    relative="$prefix$(basename "$file")"
+
+    # The binary is told which root to read, because the one compiled into it
+    # is whichever worktree happened to build it.
+    findings=$(QUANTICK_GUARDS_ROOT="$root" "$binary" --file "$relative" 2>&1) && exit 0
+    [ -n "$findings" ] || exit 0
+
+    # JSON-escape by hand, because there is no jq here. Separate `-e` scripts
+    # and a `|` delimiter: a `;`-joined script with a `/` delimiter is what
+    # this environment's sed rejects, and it rejects it to stderr while the
+    # pipeline still exits 0 — which produced an empty message that read as a
+    # clean file.
+    escaped=$(printf '%s' "$findings" |
+        sed -e 's|\\|\\\\|g' -e 's|"|\\"|g' |
+        awk 'BEGIN { ORS = "" } { if (NR > 1) printf "\\n"; print }')
+    # `$relative` gets the same treatment. It is derived from a filename, so a
+    # quote in it would close the JSON string early and the harness would drop
+    # the whole payload — leaving the author with the silence that reads as a
+    # clean file. Escaping the findings and interpolating the path raw was the
+    # same defect `require_marker` goes to some length to avoid on the deny
+    # path.
+    escaped_path=$(printf '%s' "$relative" | sed -e 's|\\|\\\\|g' -e 's|"|\\"|g')
+    context "\"Repository guards on \`$escaped_path\`:\n$escaped\n\nThis is advisory and blocks nothing; \`cargo test --workspace\` is still the gate. Fix it now while the edit is in hand, or run \`cargo run -p quantick-guards -- --tighten\` if a size entry only needs lowering.\""
+}
+
 case "$mode" in
     worktree-guard) worktree_guard ;;
     pr-gate) pr_gate ;;
     commit-reminder) commit_reminder ;;
+    guard-watch) guard_watch ;;
     *) exit 0 ;;
 esac

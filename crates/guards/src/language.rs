@@ -4,7 +4,7 @@
 //! tracked file is English. Nothing the compiler does can see a Portuguese
 //! comment — fmt, clippy, build and the whole suite stay green while half the
 //! codebase becomes unreadable to the next contributor — so the rule is
-//! enforced here, the way `source_encoding_guard.rs` enforces an encoding the
+//! enforced here, the way [`crate::encoding`] enforces an encoding the
 //! compiler also cannot see.
 //!
 //! Detection is by **word**, not by accented character. A blanket
@@ -31,7 +31,7 @@
 //! silently skipped so the debt stays visible and cannot grow.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Portuguese vocabulary distinctive enough to be safe as whole words in an
 /// English codebase, in both spellings a keyboard produces. Deliberately
@@ -60,7 +60,14 @@ const KEYWORDS: &[&str] = &[
 const SCANNED_DIRS: &[&str] = &["crates", "docs", ".claude/skills", ".claude/hooks"];
 
 /// Extensions worth scanning inside those directories.
-const SCANNED_EXTS: &[&str] = &["rs", "pine", "md", "html", "toml"];
+///
+/// `.txt` is here because of `crates/guards/size-baseline.txt`. Sixty lines of
+/// hand-written rationale moved into it when the size ceilings left Rust for a
+/// data file, and those comments are the signed justifications the whole
+/// ratchet doctrine rests on — exactly the "comments inside config files"
+/// `CLAUDE.md` names. Without this the branch that wrote them put them
+/// somewhere no guard opens.
+const SCANNED_EXTS: &[&str] = &["rs", "pine", "md", "html", "toml", "txt"];
 
 /// Paths that already carried non-English prose when this guard was written.
 /// Grandfathered by `CLAUDE.md`'s rule, which grades the lines a diff authors.
@@ -70,7 +77,7 @@ const ALLOWED: &[&str] = &[
     // This guard itself. Its word list and its own test fixtures are the
     // mechanism, not prose — the same exemption `CLAUDE.md` grants a
     // localisation resource.
-    "crates/app/tests/language_guard.rs",
+    "crates/guards/src/language.rs",
     // A full UX specification written in Portuguese, ~46 non-English lines.
     "docs/ux/drawing-tools-ux-spec.html",
     // Two doc comments quoting the trader's own bug reports verbatim. These
@@ -84,7 +91,7 @@ const ALLOWED: &[&str] = &[
 /// Split an identifier or sentence into comparable words: on anything that is
 /// not alphanumeric, and again at each camelCase hump. `preco_medio`,
 /// `precoMedio` and `preco medio` all yield `preco`.
-fn words(line: &str) -> Vec<String> {
+pub fn words(line: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut current = String::new();
     let mut prev_lower = false;
@@ -123,81 +130,112 @@ fn scan(dir: &Path, root: &Path, violations: &mut Vec<String>) {
             scan(&path, root, violations);
             continue;
         }
-        if path
-            .extension()
-            .is_none_or(|e| !SCANNED_EXTS.iter().any(|ext| e == *ext))
-        {
-            continue;
-        }
         let relative = path
             .strip_prefix(root)
             .unwrap_or(&path)
             .to_string_lossy()
             .replace('\\', "/");
-        if ALLOWED.contains(&relative.as_str()) {
+        if !in_scope(&relative) {
             continue;
         }
-        let Ok(text) = fs::read_to_string(&path) else {
-            continue;
-        };
-        for (line_no, line) in text.lines().enumerate() {
-            if let Some(word) = words(line)
-                .into_iter()
-                .find(|w| KEYWORDS.contains(&w.as_str()))
-            {
-                violations.push(format!(
-                    "{relative}:{}: `{word}` — this repo writes in English",
-                    line_no + 1
-                ));
-            }
+        inspect(&path, &relative, violations);
+    }
+}
+
+/// Whether a workspace-relative path is one this guard reads. The single
+/// owner of that question, called by the walker and by [`check_file`], so the
+/// suite and the edit-time hook can never disagree about what is in scope —
+/// the hook used to report Portuguese inside `target/`, which the whole-repo
+/// scan skips as build output, leaving an author an advisory that running the
+/// suite could not clear.
+fn in_scope(relative: &str) -> bool {
+    SCANNED_DIRS
+        .iter()
+        .any(|dir| relative.starts_with(&format!("{dir}/")))
+        && !relative.split('/').any(|part| part == "target")
+        && relative
+            .rsplit_once('.')
+            .is_some_and(|(_, ext)| SCANNED_EXTS.contains(&ext))
+}
+
+/// The per-file half of the scan, shared with [`check_file`] so the
+/// whole-repo run and the edit-time hook read the same file the same way.
+fn inspect(path: &Path, relative: &str, violations: &mut Vec<String>) {
+    if ALLOWED.contains(&relative) {
+        return;
+    }
+    let Ok(text) = fs::read_to_string(path) else {
+        return;
+    };
+    for (line_no, line) in text.lines().enumerate() {
+        if let Some(word) = words(line)
+            .into_iter()
+            .find(|w| KEYWORDS.contains(&w.as_str()))
+        {
+            violations.push(format!(
+                "{relative}:{}: `{word}` — this repo writes in English",
+                line_no + 1
+            ));
         }
     }
 }
 
-#[test]
-fn tracked_files_are_written_in_english() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("crates/app sits two levels below the workspace root")
-        .to_path_buf();
+/// What the guard asks for beyond the list of violations.
+pub const REMEDY: &str = "See the English rule in CLAUDE.md; if the foreign text is the data — a \
+                          localisation resource, a fixture reproducing a real system's string, an \
+                          attributed quotation — say so in a comment and add the path to ALLOWED \
+                          in crates/guards/src/language.rs.";
+
+/// Every non-English word found in a scanned file.
+pub fn check(root: &Path) -> Vec<String> {
     let mut violations = Vec::new();
     for dir in SCANNED_DIRS {
-        scan(&root.join(dir), &root, &mut violations);
+        scan(&root.join(dir), root, &mut violations);
     }
-    assert!(
-        violations.is_empty(),
-        "non-English text in tracked files (see the English rule in CLAUDE.md; if the foreign \
-         text is the data — a localisation resource, a fixture reproducing a real system's \
-         string, an attributed quotation — say so in a comment and add the path to \
-         ALLOWED):\n{}",
-        violations.join("\n")
-    );
+    violations
 }
 
-/// The two ways a Portuguese word hides from a shell `grep -w`: inside a
-/// snake_case identifier, where `_` is a word character, and inside a
-/// camelCase one, where there is no boundary at all.
-#[test]
-fn words_splits_identifiers_a_word_boundary_match_would_miss() {
-    assert!(words("let preco_medio = 2;").contains(&"preco".to_string()));
-    assert!(words("let precoMedio = 2;").contains(&"preco".to_string()));
-    assert!(words("fn erro_handler() {}").contains(&"erro".to_string()));
+/// The same check for one file. A path outside the scanned directories, or
+/// with an extension the guard does not read, reports nothing.
+pub fn check_file(root: &Path, relative: &str) -> Vec<String> {
+    if !in_scope(relative) {
+        return Vec::new();
+    }
+    let mut violations = Vec::new();
+    inspect(&root.join(relative), relative, &mut violations);
+    violations
 }
 
-/// English words that merely start with a listed keyword must not match,
-/// which is what splitting on word boundaries rather than on substrings buys.
-#[test]
-fn words_does_not_split_inside_english_words() {
-    assert!(!words("let error = compute();").contains(&"erro".to_string()));
-    assert!(!words("a paragraph of prose").contains(&"para".to_string()));
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// `grep -i` does not case-fold multi-byte characters in this environment, so
-/// an accented uppercase spelling is exactly what a shell recipe loses. Rust
-/// folds it, and this pins the difference the guard exists to close.
-#[test]
-fn words_folds_accented_uppercase() {
-    assert!(words("panic!(\"PREÇO INVÁLIDO\")").contains(&"preço".to_string()));
-    assert!(words("log::error!(\"NÃO CONECTOU\")").contains(&"não".to_string()));
+    /// The two ways a Portuguese word hides from a shell `grep -w`: inside a
+    /// snake_case identifier, where `_` is a word character, and inside a
+    /// camelCase one, where there is no boundary at all.
+    #[test]
+    fn words_splits_identifiers_a_word_boundary_match_would_miss() {
+        assert!(words("let preco_medio = 2;").contains(&"preco".to_string()));
+        assert!(words("let precoMedio = 2;").contains(&"preco".to_string()));
+        assert!(words("fn erro_handler() {}").contains(&"erro".to_string()));
+    }
+
+    /// English words that merely start with a listed keyword must not match,
+    /// which is what splitting on word boundaries rather than on substrings
+    /// buys.
+    #[test]
+    fn words_does_not_split_inside_english_words() {
+        assert!(!words("let error = compute();").contains(&"erro".to_string()));
+        assert!(!words("a paragraph of prose").contains(&"para".to_string()));
+    }
+
+    /// `grep -i` does not case-fold multi-byte characters in this
+    /// environment, so an accented uppercase spelling is exactly what a shell
+    /// recipe loses. Rust folds it, and this pins the difference the guard
+    /// exists to close.
+    #[test]
+    fn words_folds_accented_uppercase() {
+        assert!(words("panic!(\"PREÇO INVÁLIDO\")").contains(&"preço".to_string()));
+        assert!(words("log::error!(\"NÃO CONECTOU\")").contains(&"não".to_string()));
+    }
 }

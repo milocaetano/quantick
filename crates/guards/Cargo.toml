@@ -1,0 +1,13 @@
+[package]
+name = "quantick-guards"
+description = "Repository guards the compiler cannot see: file size, language, source encoding"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Deliberately empty, and the whole point of this crate. These guards read
+# files and count lines; they need nothing from the workspace. Living under
+# `crates/app/tests/` made every run of them build the largest crate in the
+# repo first, so the cheapest checks in the codebase were the slowest to ask.
+# A dependency added here gives that back.
+[dependencies]

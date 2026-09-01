@@ -7,7 +7,7 @@
 //! constructor, a call in `draw_frame`, and sometimes a hotkey — so
 //! sixty-eight modules left the root struct holding 133 fields and a
 //! 1,149-line constructor. `arch-review` dimension 9 is the review half of
-//! that story and `size_guard.rs` the mechanical half; this module is the
+//! that story and `crates/guards/src/size.rs` the mechanical half; this module is the
 //! place the wiring goes instead.
 //!
 //! # Shape, and why it copies the dock

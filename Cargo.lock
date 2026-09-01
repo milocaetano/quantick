@@ -3035,6 +3035,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantick-guards"
+version = "0.1.0"
+
+[[package]]
 name = "quantick-indicators"
 version = "0.1.0"
 dependencies = [

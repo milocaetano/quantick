@@ -245,7 +245,7 @@ a review. `.claude/hooks/README.md` owns the rest of the mechanism.
 
    | The mission… | Injected acceptance criteria |
    | --- | --- |
-   | Any mission at all | **every artifact in English** — the rule, its scope and its exemptions live in `CLAUDE.md`, which is already loaded and is their single owner; do not restate or count them here. Graded by `arch-review` dimension 8, enforced by `crates/app/tests/language_guard.rs`. It costs one edit now and a review round later |
+   | Any mission at all | **every artifact in English** — the rule, its scope and its exemptions live in `CLAUDE.md`, which is already loaded and is their single owner; do not restate or count them here. Graded by `arch-review` dimension 8, enforced by `crates/guards/src/language.rs`. It costs one edit now and a review round later |
    | Any code change | four checks green after rebasing on latest `main`; **performance impact declared** — classify every touched path by rate (per-trade / per-depth / per-frame / rare, the `arch-review` table) as part of the plan, not the review; `arch-review` run with every Blocker/Should-fix resolved or deferred in the PR body |
    | Touches a hot path (per-trade, per-depth, per-frame) | evidence that performance is flat or better, not a belief: `APP_HEALTH_SUMMARY` fps/frame_avg under a dense tape vs. a `main` control run, or a bench over a fixture — measured before the PR, numbers in its body |
    | Touches anything user-visible | follow `ui-harness`: every new/changed surface reachable by env hook (hook added in the same change); `visual-qa` pass with all surfaces PASS or defects explicitly accepted; `trader-ux-review` with no unresolved Blocker |

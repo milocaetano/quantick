@@ -286,7 +286,7 @@ A hook for a floating surface lives **in that surface's module** under
 `crates/app/src/surfaces/`, as an `apply_env_hook` the registry calls, not
 as another line in `app.rs`. That is the fifth hand-written edit per
 feature the `Surface` port removes — the other four being the field, the
-initialiser, the draw call and the hotkey — and `crates/app/tests/size_guard.rs`
+initialiser, the draw call and the hotkey — and `crates/guards/src/size.rs`
 now fails a branch that adds it to the trunk instead.
 
 ## Launch and capture workflow

@@ -641,7 +641,7 @@ mod tests {
     /// scripted edit that swallows a line join leaves a hole mid-sentence that
     /// nothing else in the build can see — rustfmt does not reflow string
     /// literals and clippy does not read them. Two of these shipped with one
-    /// for months. The sibling guard is `tests/source_encoding_guard.rs`,
+    /// for months. The sibling guard is `crates/guards/src/encoding.rs`,
     /// which catches the same class of damage in comments.
     #[test]
     fn every_menu_string_reads_as_a_sentence() {

@@ -43,7 +43,7 @@ The generated wire schemas live outside this tree, in
 | --- | --- |
 | [`agentic-development.md`](agentic-development.md) | The skills, the review gates and the hooks that enforce them — how work actually moves from objective to merged PR here |
 | [`../CLAUDE.md`](../CLAUDE.md) | The working rules, authoritative for any agent changing this repository |
-| [`../.claude/hooks/README.md`](../.claude/hooks/README.md) | The guardrail hooks — the three modes, why they fail open, and how to override them |
+| [`../.claude/hooks/README.md`](../.claude/hooks/README.md) | The guardrail hooks — the four modes, which three are gates and which one only reports, why they fail open, and how to override them |
 
 ## Scripting and indicators
 
@@ -68,6 +68,6 @@ The generated wire schemas live outside this tree, in
 | [`ux/strategy-anchors.md`](ux/strategy-anchors.md) | The semi-automatic operation and the division of labour between trader and machine |
 | [`drawing-toolbar-ux.md`](drawing-toolbar-ux.md) | The drawing toolbar and inspector redesign (specification) |
 | [`ux/drawing-tools-2026-08.md`](ux/drawing-tools-2026-08.md) | The design review that reshaped the drawing rail into a price-action toolbox |
-| [`ux/drawing-tools-ux-spec.html`](ux/drawing-tools-ux-spec.html) | The detailed interaction target for user-authored chart objects: toolbox, non-modal inspector, selection, lock/visibility/delete semantics, keyboard grammar and the Fibonacci level editor. Pre-dates the English rule and is allowlisted by `language_guard` |
+| [`ux/drawing-tools-ux-spec.html`](ux/drawing-tools-ux-spec.html) | The detailed interaction target for user-authored chart objects: toolbox, non-modal inspector, selection, lock/visibility/delete semantics, keyboard grammar and the Fibonacci level editor. Pre-dates the English rule and is allowlisted by the language guard |
 | [`ux/img/`](ux/img/) | The shell diagrams `ui-design-model.md` refers to as part of the spec, not decoration |
 | [`ux/ux-audit-2026-08.md`](ux/ux-audit-2026-08.md) | The August 2026 audit of the whole `crates/app` surface — six reviewers, one report per area in [`ux/ux-audit-2026-08/`](ux/ux-audit-2026-08/) |
