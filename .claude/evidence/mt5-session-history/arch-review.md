@@ -32,6 +32,7 @@ above it, at `xhigh`.
 | 3 | the delta after pass 2, by me | 2 | 2 fixed |
 | 4 | the delta after round 4 of `delivery-review`, by me | 1 | 1 fixed |
 | 5 | the delta after round 7 of `delivery-review`, by me | 3 | 3 fixed |
+| 6 | the delta after round 8 of `delivery-review`, by me | 0 new | — |
 
 The three that could have reached the trader, all from the agent passes:
 
@@ -49,6 +50,9 @@ The three that could have reached the trader, all from the agent passes:
 Every one of those is now covered by a test **run red against the un-fixed
 code** before being accepted: the cursor, the buffer drop, the dropped slices,
 the in-window session edge, and the zero cap.
+
+Round 6 found nothing of its own: that delta is prose, and its whole content
+is round 8's findings, listed there rather than duplicated here.
 
 Round 5's three, on the perf summariser this directory generates itself from:
 its first return value was called `launch` and the sentence it printed said
