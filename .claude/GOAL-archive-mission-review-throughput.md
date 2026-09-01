@@ -1,8 +1,15 @@
 # Mission — arm the cheap half of the workflow
 
-**Tier:** `small`. Three documentation files, 71 changed lines, no compiled
-code. The work is a correction to instructions, and the one change it makes to
-behaviour is that a hook which was reporting nothing starts reporting.
+**Tier:** `small`. Documentation only, well under the ceiling, no compiled code.
+
+Be exact about what that buys, because the branch is a set of instructions and
+instructions only run if someone follows them. Nothing here *forces* the guards
+binary to exist: `guard-watch` still treats absence and cleanliness as the same
+observable, and a `cargo clean` returns a worktree to silence with no signal.
+What the branch changes is that the arming step now appears in all three places
+a worktree is created, instead of nowhere. Follow-up 6 is the version that does
+not depend on being read, and it needs an authorisation this session did not
+have.
 
 ## Objective
 
@@ -63,11 +70,18 @@ code is written, not at the PR.
       `mission` step 6 carries `cargo build -p quantick-guards`; measured at
       1.80s in this worktree, and `./target/debug/quantick-guards` then exits 0.
       → `.claude/skills/mission/SKILL.md` *(R2, R4)*
-- [x] **A3** — `delivery-review` starts at its cheapest shape rather than its
-      most expensive, without losing the fresh-context stranger. *Evidence:*
-      the *Cost discipline* section — stat over diff, one fix round before
-      escalating, never re-grade unchanged lines.
-      → `.claude/skills/delivery-review/SKILL.md` *(R1, R3)*
+- [ ] **A3** — `delivery-review` starts at its cheapest shape rather than its
+      most expensive, without losing the fresh-context stranger.
+      **WITHDRAWN, not delivered.** A *Cost discipline* section was written and
+      then reverted after step 0 returned six findings against it, all tracing
+      to one omission: the section was added without editing steps 2, 4 and 5,
+      so it argued against five passages that still stood. The worst was not a
+      contradiction but a new hole — grading from `branch.stat` plus the files
+      as they stand lets a reviewer quote a sentence that was already on
+      `origin/main` and mark the criterion DELIVERED, which is a false pass the
+      full diff was the only input able to prevent. Making it correct means
+      rewriting three steps of that skill; that is its own branch, not a
+      paragraph bolted onto this one. *(R1, R3 — carried forward, undischarged)*
 
 ## Not applicable, and why
 
@@ -109,10 +123,25 @@ session finds the analysis rather than re-deriving it.
    files and every large one live. Every file already opens with a `//!` line;
    a `--map` mode on the dependency-free guards binary would emit the index and
    keep it from going stale.
-5. **A shared cargo target directory.** 18 worktrees each hold 12–16 GB and
-   every mission starts from a cold dependency graph. Not shipped here because
-   CI caches `./target` via `Swatinem/rust-cache@v2` and a tracked
-   `.cargo/config.toml` would silently miss that cache.
+5. **A shared cargo target directory.** Every worktree holds its own 12–16 GB
+   and every mission starts from a cold dependency graph. **Do not do this
+   without changing `guard-watch` first.** `guardrails.sh:582` hardcodes
+   `binary="$root/target/debug/quantick-guards"`, where `$root` is the worktree
+   toplevel. Redirecting `CARGO_TARGET_DIR` moves the binary out from under that
+   path, `[ -x "$binary" ] || exit 0` goes silent again — indistinguishably from
+   clean — and every worktree loses the arming this branch just added, at once.
+   The build-time win would silently buy back the exact defect this branch
+   fixed. It is also why the change was not shipped here as a tracked
+   `.cargo/config.toml`: CI caches `./target` via `Swatinem/rust-cache@v2` and
+   would miss the cache too.
+6. **Make `guard-watch` report its own absence.** The deepest fix, and the one
+   that makes 5 safe. Today absence and cleanliness are the same observable, so
+   a `cargo clean` or a wiped `target/` returns a worktree to silence
+   mid-mission with nothing to notice. One `context` line the first time the
+   hook finds no binary, naming the build command, turns a property every agent
+   in every worktree has to remember into one the mechanism reports about
+   itself. It touches `guardrails.sh`, so it needs the same authorisation as
+   the marker change above.
 
 ## The request as received
 

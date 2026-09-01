@@ -18,9 +18,14 @@ Argument: the issue number (e.g. `/new-task 3`). If missing, list open issues in
    ```sh
    git fetch origin
    git worktree add -b <prefix>/<short-kebab-slug> ../quantick-worktrees/<prefix>-<short-kebab-slug> origin/main
+   cd ../quantick-worktrees/<prefix>-<short-kebab-slug> && cargo build -p quantick-guards
    ```
 
    Then work from inside `../quantick-worktrees/<prefix>-<short-kebab-slug>`.
+   That `cargo build` arms `guard-watch`, which reports nothing — not "clean",
+   *nothing* — until the binary exists; `CLAUDE.md`'s *Verification loop* owns
+   why. A branch started here is exactly the one that would otherwise miss it,
+   since the arming rule used to live only in `mission` step 6.
 
    Prefix from the issue's labels: `bug` or `type:fix` → `fix/`, `type:docs` → `docs/`, everything else → `feat/`. Slug: short kebab-case from the issue title.
 

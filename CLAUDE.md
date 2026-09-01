@@ -55,27 +55,33 @@ Every change must pass all four checks before commit — no exceptions:
 3. `cargo build --workspace`
 4. `cargo test --workspace`
 
-The four are the gate, and they are **not** the edit loop. Running them after every
-edit is the most expensive habit available in this repo: `cargo check -p
-quantick-app --all-targets` answers in about 40 seconds warm, while `cargo build
---workspace` links the largest crate in the repo to tell you the same thing.
-**While you work, the loop is `cargo check -p <the crate you are editing>` and
-`cargo test -p <crate> <filter>`; the four run once, before the commit.** This was
-unwritten until it was measured, and `cargo check` appeared nowhere in this
-repository's documentation — an agent with no name for the fast path defaults to
-the slow one, on every edit, for the length of a mission.
+The four are the gate, and they are **not** the edit loop. **While you work, the
+loop is `cargo check -p <crate>` over the crate you are editing, plus
+`cargo test -p <crate> <filter>`; the four run once, before the commit.** A
+one-package `cargo check` skips codegen and linking, so on `quantick-app` it
+answers in well under a minute where a workspace build takes many — the two are
+not the same question, which is exactly why the loop is not the gate: `check`
+proves nothing about linking and does not stand in for `clippy`, so it belongs
+between edits and never in place of the four.
+
+This was unwritten until it was measured: `cargo check` appeared nowhere in this
+repository's documentation, so the gate was doubling as the edit loop. An agent
+with no name for the fast path defaults to the slow one, on every edit, for the
+length of a mission.
 
 Nothing replaces the four at the gate. What can also move earlier is the repository guards: `cargo test -p quantick-guards` runs the size ratchet, the language scan and the encoding check in about a second, because that crate has no dependencies to build. Ask it after a batch of edits rather than discovering a crossed ceiling at the end of a full suite run — and when the ratchet reports a file that *shrank*, `cargo run -p quantick-guards -- --tighten` writes the new number, since that direction has nothing for a human to decide. A `PostToolUse` hook runs the same binary over each edited file; it is advisory and silent when the binary has not been built, so it reports early and gates nothing.
 
 **That silence is why the hook has to be armed on purpose.** A fresh worktree has
 no `target/`, so `target/debug/quantick-guards` does not exist, so the hook reports
-nothing — not "clean", *nothing* — for the whole mission. Measured in this
-checkout: the binary was absent, across eighteen worktrees. The cheapest structural
-check in the repo was switched off in exactly the phase it was built for, and the
-cost went to the reviews at the end instead. So **`cargo build -p quantick-guards`
-is part of setting up a worktree**, not an optimisation: it takes seconds, the
-crate has no dependencies, and it is the difference between a crossed size ceiling
-reported at the edit that caused it and one reported after the code is written.
+nothing — not "clean", *nothing* — for as long as that stays true. This was found
+switched off across every worktree in one checkout at once, which is the state a
+`git worktree add` leaves behind by default rather than an accident someone had to
+cause. So **`cargo build -p quantick-guards` is part of setting up a worktree**,
+not an optimisation: the crate has no dependencies, so it costs seconds, and it is
+the difference between a crossed size ceiling reported at the edit that caused it
+and one reported after the code is written. `.claude/hooks/README.md` owns why the
+hook never blocks and never builds; this is the one line that section cannot
+state, because arming happens outside the hook.
 
 CI (`.github/workflows/ci.yml`) enforces the same four checks on every PR and on pushes to `main`, plus four the workspace cannot see: `sh .claude/hooks/guardrails_test.sh`, `ruff check --select F` over `tools/mt5/` and `bridge/mt5/`, `python3 tools/mt5/test_export_session.py`, and every `python3 bridge/mt5/tests/test_*.py`. The MetaTrader bridge and the session exporter are Python — cargo never compiles them, and an undefined name there ships silently. Run the ones your change touches; the bridge's paging tests are the step whose own comment records that without it a revert to `COPY_TICKS_ALL` ships green. After pushing a PR, watch CI with `gh pr checks <n> --watch` and fix any failure before requesting review or merging. A PR with red CI is never merged.
 
@@ -88,7 +94,14 @@ CI (`.github/workflows/ci.yml`) enforces the same four checks on every PR and on
   ```sh
   git fetch origin
   git worktree add -b <prefix>/<slug> ../quantick-worktrees/<prefix>-<slug> origin/main
+  cd ../quantick-worktrees/<prefix>-<slug> && cargo build -p quantick-guards
   ```
+
+  That last line is not optional and not an optimisation — it arms `guard-watch`,
+  which reports nothing at all until the binary exists. See *Verification loop*
+  above for what its silence costs. It belongs in this snippet, and in
+  `new-task`'s, because a rule stated only in `mission` step 6 leaves every
+  branch that did not start from a mission unarmed.
 
   Work happens inside that directory. After the branch is merged, clean up from the main checkout: `git worktree remove ../quantick-worktrees/<prefix>-<slug>` then `git branch -d <prefix>/<slug>`.
 - **One mission, one tier**: `/mission` takes an optional leading tier — `small` (the default), `medium`, `high` or `max` — that scales the ceremony to the size of the work: how much is interrogated, which gates are injected, how hard the bug pass looks, and whether `delivery-review` runs at all. `small` is the only one the hooks can see, and the only one that changes what they require. The skill owns the table; `.claude/hooks/README.md` owns what the gate does with it.
