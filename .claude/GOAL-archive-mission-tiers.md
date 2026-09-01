@@ -23,6 +23,7 @@ gate, instead of an off-the-books one.
 | R3 | `small` does not run a long code review. | *"nao precisa de um code review lonog"* |
 | R4 | `small` does not run `delivery-review` at all. | *"nem emsmo confirmar com um delivery review"* |
 | R5 | **(purpose — judges the rest)** smaller tasks reach delivery quickly through a leaner flow. | *"algo mais enxuto para tarefas menores serem entregues logo"* |
+| R6 | **The `small` tier must be true of the work it is claimed for** — it is *for* small tasks, not a word a mission may apply to any branch. Added by the delivery review, which found it in the request and nowhere in this ledger. | *"Tipo small é para tarefas pequeans"* |
 
 ## Decisions taken by the trader
 
@@ -34,21 +35,39 @@ gate, instead of an off-the-books one.
 - **D2** — the default tier, when `/mission` is called with no level, is
   `medium`. The rigour of today's flow becomes an explicit `/mission high`.
 - **D3** — this change ships the normal way: worktree, branch, both reviews, PR.
+- **D4** — **the exemption is capped at 300 changed lines**, and the cap is the
+  trader's decision rather than the mission's. Put to them after the delivery
+  review found that D1 had approved the exemption as unconditional (*"skips
+  delivery-review outright"*) while the branch shipped it bounded, and that the
+  number itself had never been offered for a decision. They chose to keep the
+  bound at 300, against the alternatives of removing it entirely and of
+  tightening it to 150. R4 is therefore discharged as the trader wants it, not
+  as the ledger first read it.
+- **D5** — **`max` does not gain a gate**: it tells the trader that
+  `/code-review ultra` exists and stops there. Raised because `high` and `max`
+  otherwise run an identical bug pass — the harness reserves `ultra` for the
+  trader to trigger and bills it to them — so the trader was asked whether
+  `max` should refuse to close without it. They chose the notice. The two top
+  tiers stay close, and now that is a decision on the record rather than a
+  limitation nobody mentioned.
 
 ## Assumptions
 
-- **S1** — **the exemption is bounded by the shipped diff**, at 300 changed
-  lines (insertions + deletions against `origin/main`). Not asked, and the
-  closest thing here to inventing scope, so the reasoning is on the record: D1
-  removes a gate the hooks' own README says was deliberately built without an
-  override, because a skip file "hands the kill switch to precisely the caller
-  with a motive to use it". Binding the word `small` to a measurable property of
-  the branch is what stops that from recurring — an agent that declares `small`
-  dishonestly at PR time gets the exemption only on branches where declaring it
-  honestly would also have been allowed. The number is one constant with a
-  comment, reversible in one edit; 300 lines sits comfortably above a fix or a
-  doc paragraph and comfortably below anything carrying enough asks for a ledger
-  to be worth grading.
+- **S1** — ~~the exemption is bounded by the shipped diff, at 300 changed
+  lines, and this was *not asked*~~. **Struck: the premise was false and the
+  handling followed it into the wrong bucket.** The trader did speak to this
+  dimension — *"Tipo small é para tarefas pequenas"*, now R6 — so binding the
+  word to a measurable property was discharging an ask, not inventing scope.
+  What was genuinely never put to them is **the number**, and that is precisely
+  `mission` step 3's *"a number nobody chose"*, which earns a question rather
+  than an assumption. It became one: see **D4**. Recorded here rather than
+  quietly rewritten, because the failure is the interesting part — a mission
+  that mislabels an ask as its own invention will reason about it as scope to
+  defend instead of a requirement to discharge.
+
+  The engineering the assumption produced stands unchanged: the bound fails
+  closed, lives in one constant the suite reads rather than restates, and is
+  proven by two mutations. Only its provenance was wrong.
 - **S2** — the tier is the **leading token** of the argument, so
   `/mission small fix the axis labels` parses as tier `small`. An objective that
   genuinely begins with one of the four words is misread by this rule; the
@@ -101,9 +120,12 @@ gate, instead of an off-the-books one.
       name nor the word `small`. → `.claude/hooks/guardrails_test.sh`. *(R4)*
 - [x] **A7** — the tier is recorded where it cannot silently drift: the tier
       file the gate reads, a `**Tier:**` line in `GOAL.md`, and the PR body.
-      *Evidence:* the recording step in the skill, plus a suite case pinning
-      that `guardrails.sh` and `mission/SKILL.md` agree on the file name and the
-      four words. → `.claude/skills/mission/SKILL.md`,
+      *Evidence:* step 6 records the file and step 8.4 requires the PR body to
+      name the tier — the third site, added after the delivery review found no
+      shipped line asking for it; `ship` step 6 says the same. Plus the drift
+      checks pinning that `guardrails.sh` and `mission/SKILL.md` agree on the
+      file name, the four words and the recording snippet's format.
+      → `.claude/skills/mission/SKILL.md`, `.claude/skills/ship/SKILL.md`,
       `.claude/hooks/guardrails_test.sh`. *(R1, S5)*
 - [x] **A8** — `small` also drops the interrogation round, the injected gate
       rows the diff does not touch, and the `/goal` handover, so the saving is
@@ -122,16 +144,26 @@ gate, instead of an off-the-books one.
 
 ## Injected gates
 
-- [ ] **G1** — every artifact in English (`CLAUDE.md` owns the rule and its
-      exemptions). *Evidence:* `arch-review` dimension 8 clean.
-      → the arch-review verdict.
+- [x] **G1** — every artifact in English (`CLAUDE.md` owns the rule and its
+      exemptions). *Evidence:* the `arch-review` verdict, written to a file
+      before the PR exists rather than recalled while writing it, plus
+      `language_guard` 4/4. One real dimension-8 finding: the delivery review
+      caught a Portuguese word inside an English comment in `guardrails.sh` —
+      a line this diff *authors*, which `CLAUDE.md`'s exemptions do not cover
+      and which `language_guard` cannot see because it does not scan `.sh`.
+      Rewritten to make the point without the word.
+      → `delivery-review/arch-review-verdict.md`, quoted in the PR body.
 - [x] **G2** — the four checks green after rebasing on latest `main`.
       *Evidence:* four exit-0 runs. → the PR body.
 - [x] **G3** — `sh .claude/hooks/guardrails_test.sh` reports zero failures, and
       reports failures when `guardrails.sh` is neutered to `exit 0`.
       *Evidence:* both run outputs. → the PR body.
-- [ ] **G4** — `arch-review` run with every Blocker and Should-fix resolved, or
-      deferred in the PR body. *Evidence:* the verdict. → the PR body.
+- [x] **G4** — `arch-review` run with every Blocker and Should-fix resolved, or
+      deferred in the PR body. *Evidence:* the verdict as an artifact — two step
+      0 rounds at `xhigh`, 30 findings, 30 confirmed, 30 fixed, 0 deferred, with
+      the resolutions named. A marker proves a review was *recorded*, never that
+      it was good, so the verdict is written down rather than inferred from the
+      marker. → `delivery-review/arch-review-verdict.md`, quoted in the PR body.
 
 ## Closing steps
 
@@ -168,7 +200,7 @@ Recorded 2026-08-31, on `feat/mission-tiers` at commit `7b01b04`.
 | A7 | `mission` step 6 records the file; step 5 requires the `**Tier:**` line; the drift check at the foot of `guardrails_test.sh` fails unless `guardrails.sh` and the skill agree on the file name and on all four tier words, and the pre-existing check that every `absolute-git-dir)/…` name in the prose is one the gate reads was widened to cover it. |
 | A9 | *A tier goes up, never down* in the skill; and in `guardrails.sh`, the over-ceiling denial says so in the message it hands back. |
 | A10 | Named in `.claude/hooks/README.md` (new section *The `small` mission exemption*, plus both table rows), `CLAUDE.md` (new **One mission, one tier** bullet and two amended ones), `.claude/skills/ship/SKILL.md` step 4, `.claude/skills/delivery-review/SKILL.md` (new *When this skill does not run*), and `docs/agentic-development.md` (three passages). |
-| G2 | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo build --workspace`, `cargo test --workspace` — each run on its own, all exit 0. Two reds appeared and both are recorded flakes of this machine, not of this branch, which touches no Rust: one `quantick-app` bin test that passed on rerun, and `quantick-feed-mt5 --test bridge_paging`, whose Python was then run directly (`python bridge/mt5/tests/test_paging.py` — 31 checks, all passed). |
+| G2 | **Rebased onto latest `origin/main` first.** The criterion says *after* rebasing, and the first version of this line was written 13 commits behind — the delivery review caught it. Post-rebase, each check run on its own: `cargo fmt --all -- --check` **exit 0**, `cargo clippy --workspace --all-targets -- -D warnings` **exit 0**, `cargo build --workspace` **exit 0**, `cargo test -p quantick-app --test language_guard` **exit 0** (4/4). `cargo test --workspace` **exits 101**, on one test and the same one in all three runs: `quantick-feed-mt5 --test bridge_paging`, whose failure text is `Python was not found; run without arguments to install from the Microsoft Store` — this box resolves `python3` to the Store alias stub. Run directly, `python bridge/mt5/tests/test_paging.py` passes **31 checks, exit 0**. The diff contains **zero** `.rs` files and zero cargo manifests, so no Rust test result can be caused by it; CI, which has a real `python3`, is where the fourth check goes green without an asterisk. Two things seen and not hidden: an earlier version of this line claimed "all exit 0" over "one bin test" when the artifacts showed exit 101 and three, and the first post-rebase run failed to link with `LNK1181` on a build-script `resource.res` — target-directory contention right after a rebase invalidated the cache, gone on a clean re-run and unrelated to the diff. |
 | G3 | `sh .claude/hooks/guardrails_test.sh` → **72 passed, 0 failed** (39 before this branch). Neutered to `exit 0` → **18 passed, 30 failed**, the suite still running to completion, then restored and re-run green. Six mutation runs besides, each reintroducing one defect a review found: every one turns red exactly the case written for it and no other — the branch-identity check, the unmeasurable size, the binary skip (two cases), the drift check that had stopped firing, the absence vocabulary, and the snippet format. |
 
 **G1 and G4 are open here on purpose.** Both are verdicts of the `arch-review`
@@ -179,9 +211,9 @@ the PR body. This is the closest thing on this branch to a criterion that cannot
 be graded when the grading happens, and it is named rather than ticked.
 
 **A note on the tier this branch ran at.** `high`, and the diff proves it was
-right: 555 insertions and 27 deletions, 582 changed lines against a `small`
-ceiling of 300. Had it declared `small`, the hook it adds would itself have
-refused the exemption.
+right: 1,153 insertions and 30 deletions, 1,183 changed lines against a `small`
+ceiling of 300 — nearly four times over. Had it declared `small`, the hook it
+adds would itself have refused it the exemption.
 
 ## Review rounds
 
@@ -241,6 +273,28 @@ accepted for an ambiguous objective, and the echo names *what the tier drops*
 rather than only the word it read, so the expensive misparse is the loudest one.
 A parser that could tell an adjective from a tier was judged more machinery than
 the failure warrants. Recorded here as a residual the trader can revisit.
+
+**delivery-review round 1: FAIL**, and it earned the verdict. One
+**UNLEDGERED** ask (R6 above), R4 `PARTLY COVERED`, A7 and G2 `PARTIAL`, G1 and
+G4 `UNPROVEN`. What it caught that two `arch-review` rounds structurally could
+not:
+
+- **an ask that never reached the ledger.** Both shape rounds took the change
+  as given; neither opens the request. This is the failure the gate exists for,
+  and it found one on the first branch that tried to weaken it.
+- **S1 asserting its own innocence.** "Not asked" was false, and the mission had
+  reasoned from it for the whole branch.
+- **the branch never rebased.** G2 says *after rebasing on latest `main`*; it
+  was 13 commits behind, and every check had run against a stale base.
+- **an evidence line that overstated its own artifacts** — "all exit 0" over
+  "one bin test", where the recorded runs show exit 101 and three.
+- **a criterion no shipped line implemented.** A7 claimed three recording
+  sites; nothing anywhere asked for the third.
+- **a Portuguese word in an English comment**, in the one file extension
+  `language_guard` does not scan.
+
+Two of its findings were escalated rather than closed by the mission, because
+they were the trader's: D4 and D5 above.
 
 ## The request as received
 

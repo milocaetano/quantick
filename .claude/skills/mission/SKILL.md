@@ -427,7 +427,12 @@ a review. `.claude/hooks/README.md` owns the rest of the mechanism.
    3. **`Skill(delivery-review)`** — conformance, over the same final branch.
       It records `delivery-review-ok` itself, on PASS only. **Skipped at
       `small`**, and only there; the PR opens on the arch marker alone.
-   4. **`gh pr create`.**
+   4. **`gh pr create`** — and **the PR body names the tier**, beside the four
+      verification boxes. This is the third of the three places a tier is
+      recorded, and the only public one: a reader asking why a branch shipped
+      with no conformance review should find the answer in the PR, not in a
+      file inside someone's git dir. A `small` tier stated where reviewers look
+      is one they can dispute; one stated only to the hook is one nobody can.
 
    A `small` mission still archives `GOAL.md` at step 1 above. Nothing grades
    the archive at that tier, and it is written anyway: the file is the only

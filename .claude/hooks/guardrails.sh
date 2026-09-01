@@ -237,11 +237,12 @@ declared_tier() {
 # the gate off rather than tripping it.
 #
 # `--numstat` under `LC_ALL=C`, never `--shortstat`. Shortstat is prose, and
-# git translates it: under a localised install the counts sit inside words like
-# `inserções`, an English pattern matches nothing, and a sum of two empty
-# strings is 0 — which reads as an empty diff and grants the exemption to a
-# branch of any size. That is failing open in the one function that must not.
-# Numstat is `added<TAB>deleted<TAB>path` in every locale.
+# git ships translations of it: under a localised install the counts sit inside
+# words no English pattern matches, so both parses come back empty, the sum is
+# 0 — and 0 is indistinguishable from an empty diff, which grants the exemption
+# to a branch of any size. That is failing open in the one function that must
+# not. Numstat is `added<TAB>deleted<TAB>path` in every locale, which is the
+# whole reason it is what gets read here.
 changed_lines() {
     lines_raw=$(LC_ALL=C git -C "$1" diff --numstat "origin/$MAIN_BRANCH...HEAD" 2>/dev/null) || return 1
 
