@@ -23,10 +23,34 @@ GUARDRAILS="$script_dir/guardrails.sh"
 passed=0
 failed=0
 
+# The tier vocabulary, read out of guardrails.sh rather than written here.
+# Restating the file name or the ceiling would make this suite a second source
+# of truth for both, and a test that agrees with itself about a renamed file
+# proves nothing. Empty means the constant moved, which is a failure loud
+# enough to stop: every tier case below would otherwise pass vacuously.
+tier_file_name=$(sed -n 's/^TIER_FILE_NAME="\([^"]*\)".*/\1/p' "$GUARDRAILS")
+tiers=$(sed -n 's/^TIERS="\([^"]*\)".*/\1/p' "$GUARDRAILS")
+small_ceiling=$(sed -n 's/^SMALL_TIER_MAX_CHANGED_LINES=\([0-9][0-9]*\).*/\1/p' "$GUARDRAILS")
+
+# Loud, and deliberately not fatal. Stopping here would hide whatever else a
+# rename broke behind one line of output, and the whole suite reporting a
+# single failure reads like a small problem. The substitutes below are chosen
+# to keep every later case running and failing honestly: a file name nothing
+# will ever match, one tier, and a usable ceiling. `set_tier` must never be
+# handed an empty name - it would build a path ending in a bare slash.
+if [ -z "$tier_file_name" ] || [ -z "$tiers" ] || [ -z "$small_ceiling" ]; then
+    printf 'FAIL the tier constants are not readable from guardrails.sh\n'
+    printf '  file=%s tiers=%s ceiling=%s\n' "$tier_file_name" "$tiers" "$small_ceiling"
+    failed=$((failed + 1))
+    tier_file_name="mission-tier-unreadable"
+    tiers="small"
+    small_ceiling=300
+fi
+
 # --- fixture ----------------------------------------------------------------
 
 root=$(mktemp -d)
-trap 'git -C "$root/mainco" worktree remove --force "$root/wt" >/dev/null 2>&1; rm -rf "$root"' EXIT
+trap 'git -C "$root/mainco" worktree remove --force "$root/wt" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/big" >/dev/null 2>&1; rm -rf "$root"' EXIT
 
 git init -b main -q "$root/mainco"
 git -C "$root/mainco" config user.email t@t
@@ -51,6 +75,24 @@ git -C "$root/wt" commit -qm "second"
 
 head_sha=$(git -C "$root/wt" rev-parse HEAD)
 wt_git_dir=$(git -C "$root/wt" rev-parse --absolute-git-dir)
+
+# A second branch, one line fatter than the `small` tier's ceiling, so the
+# bound on the exemption is tested against a diff git actually measures rather
+# than a number the suite asserts about itself. Sized from the script's own
+# constant: a hardcoded 400 here would go quietly vacuous the day the ceiling
+# moved past it, and a ceiling case that cannot fail is worse than none.
+git -C "$root/mainco" worktree add -q -b feat/big "$root/big" >/dev/null 2>&1
+big_line=0
+: > "$root/big/src/big.txt"
+while [ "$big_line" -le "$small_ceiling" ]; do
+    echo "line $big_line" >> "$root/big/src/big.txt"
+    big_line=$((big_line + 1))
+done
+git -C "$root/big" add -A
+git -C "$root/big" commit -qm "over the ceiling"
+big_sha=$(git -C "$root/big" rev-parse HEAD)
+big_git_dir=$(git -C "$root/big" rev-parse --absolute-git-dir)
+big_changed=$((small_ceiling + 1))
 
 # --- harness ----------------------------------------------------------------
 
@@ -129,12 +171,27 @@ run() {
     passed=$((passed + 1))
 }
 
-# set_marker <marker-name> <sha, or empty to remove it>
-set_marker() {
-    if [ -z "$2" ]; then
-        rm -f "$wt_git_dir/$1"
+# set_marker_in <git-dir> <marker-name> <sha, or empty to remove it>
+set_marker_in() {
+    if [ -z "$3" ]; then
+        rm -f "$1/$2"
     else
-        printf '%s\n' "$2" > "$wt_git_dir/$1"
+        printf '%s\n' "$3" > "$1/$2"
+    fi
+}
+
+# set_marker <marker-name> <sha, or empty to remove it>, on the default
+# worktree. Every pre-existing case speaks through this one.
+set_marker() { set_marker_in "$wt_git_dir" "$1" "$2"; }
+
+# set_tier <git-dir> <tier, or empty to remove the declaration>. The file name
+# comes from the script, so a rename there fails the suite here rather than
+# leaving it testing a file nothing reads.
+set_tier() {
+    if [ -z "$2" ]; then
+        rm -f "$1/$tier_file_name"
+    else
+        printf '%s\n' "$2" > "$1/$tier_file_name"
     fi
 }
 
@@ -263,7 +320,97 @@ set_marker delivery-review-ok ""
 run "the script judges the payload, not the tool that produced it" \
     pr-gate "$(printf '{"tool_name":"PowerShell","cwd":"%s","tool_input":{"command":"gh pr create --fill"}}' "$root/wt")" deny
 
+# --- pr-gate: the small tier ------------------------------------------------
+#
+# `small` is the only tier that changes what the gate requires, so it is the
+# only tier that needs cases. They fix both directions - the exemption is
+# granted where it was earned and refused everywhere else - and then the
+# property the whole design rests on: a branch that never asked for the
+# exemption is never told that one exists.
+
+set_marker arch-review-ok "$head_sha"
+set_marker delivery-review-ok ""
+
+set_tier "$wt_git_dir" small
+run "a small mission opens its PR on arch-review alone" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
+
+# The tier buys a shorter review, never no review. Without this case the
+# exemption could be widened to cover both markers with every other case still
+# green, and the bug pass is the last thing a branch should buy its way out of.
+set_marker arch-review-ok ""
+run "a small mission still cannot skip arch-review" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "arch-review-ok"
+set_marker arch-review-ok "$head_sha"
+
+# Every other tier pays in full. Looped over the tiers the script itself
+# declares, minus the exempt one, so a tier added later is covered on the day
+# it is added rather than the day someone remembers this file exists.
+for tier in $tiers; do
+    [ "$tier" != "small" ] || continue
+    set_tier "$wt_git_dir" "$tier"
+    run "the $tier tier still requires delivery-review" \
+        pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
+done
+
+# A word the script does not know is not a tier. Read as `small` instead, the
+# gate would open for anything at all written into that file.
+set_tier "$wt_git_dir" "smallish"
+run "an unrecognised tier grants nothing" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
+
+# The bound, on a branch that really is too big. Two cases rather than one: the
+# first pins that the exemption lapses, the second that it lapsed because the
+# size was *measured*. Without the second, a `declared_tier` that had stopped
+# recognising `small` at all would pass the first and look correct.
+set_marker_in "$big_git_dir" arch-review-ok "$big_sha"
+set_marker_in "$big_git_dir" delivery-review-ok ""
+set_tier "$big_git_dir" small
+
+run "a small mission that outgrew the ceiling pays in full" \
+    pr-gate "$(json_bash "$root/big" "gh pr create --fill")" deny "delivery-review-ok"
+
+run "and is told the measured size that cost it the exemption" \
+    pr-gate "$(json_bash "$root/big" "gh pr create --fill")" deny "carries $big_changed"
+
+# The property the exemption rests on, and the reason the earlier skip file was
+# reverted: an agent that has merely forgotten the review must not learn from
+# the denial that a way around it exists. `run` can only assert a string is
+# present, so absence is checked here.
+set_tier "$wt_git_dir" ""
+set_marker arch-review-ok "$head_sha"
+set_marker delivery-review-ok ""
+untiered=$(printf '%s' "$(json_bash "$root/wt" "gh pr create --fill")" | sh "$GUARDRAILS" pr-gate 2>&1)
+teaches=""
+for secret in $tier_file_name small; do
+    case "$untiered" in
+        *"$secret"*) teaches="$teaches $secret" ;;
+    esac
+done
+if [ -z "$teaches" ]; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL the untiered denial advertises the exemption:%s\n  output: %s\n' \
+        "$teaches" "$untiered"
+    failed=$((failed + 1))
+fi
+
 # --- commit-reminder --------------------------------------------------------
+
+# At the `small` tier the reminder has to name the gate that branch actually
+# faces. Sending it to run the review its own tier exempts it from would spend
+# exactly the saving the tier exists to buy.
+set_tier "$wt_git_dir" small
+run "the reminder at the small tier names the exemption it runs under" \
+    commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "exemption"
+
+# Cleared before anything else runs: every case from here on predates tiers and
+# assumes no declaration, and a leftover file would quietly change what they
+# test rather than fail them.
+set_tier "$wt_git_dir" ""
+
+run "the untiered reminder still names both markers" \
+    commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "delivery-review-ok"
 
 run "a bash command that is not git commit is ignored" \
     commit-reminder "$(json_bash "$root/wt" "git status")" silent
@@ -323,7 +470,13 @@ run "a cd to a path that does not exist falls back to the session cwd" \
 
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
 markers=$(sed -n 's/^[A-Z_]*MARKER_NAME="\([^"]*\)".*/\1/p' "$GUARDRAILS")
-markers_padded=" $(echo $markers) "
+
+# Every file the gate reads out of a worktree's git dir, not only the review
+# markers: the tier file is written by the same kind of prose snippet and read
+# by the same script, so the drift check below has to know it is legitimate.
+# Widened here rather than special-cased at the loop, so a third such file
+# joins the set by being declared in guardrails.sh and nowhere else.
+gate_files_padded=" $(echo $markers $tier_file_name) "
 
 if [ -z "$markers" ]; then
     printf 'FAIL no MARKER_NAME constants found in guardrails.sh\n'
@@ -377,7 +530,8 @@ for doc in $review_skills; do
     done
 done
 
-# Every marker name the prose tells an agent to *write* is one the gate reads.
+# Every file name the prose tells an agent to *write* into a git dir is one the
+# gate reads - the two review markers and the tier file.
 # Anchored on the recording command's shape, not on the names — grepping for
 # the current names is what let a renamed doc escape the set. `grep -o`, not
 # `sed`, because a leading `.*` is greedy and would see only the last recording
@@ -389,7 +543,7 @@ for doc in $flow_docs $review_skills CLAUDE.md; do
         continue
     fi
     for written in $(grep -o -- 'absolute-git-dir)/[A-Za-z0-9._-]*' "$repo_root/$doc" | sed 's|.*/||' | sort -u); do
-        case "$markers_padded" in
+        case "$gate_files_padded" in
             *" $written "*) passed=$((passed + 1)) ;;
             *)
                 printf 'FAIL %s tells an agent to write %s, which guardrails.sh never reads\n' "$doc" "$written"
@@ -397,6 +551,36 @@ for doc in $flow_docs $review_skills CLAUDE.md; do
                 ;;
         esac
     done
+done
+
+# --- the gate and the mission skill must name the same tiers ----------------
+#
+# The same boundary the markers cross, one layer along: guardrails.sh reads the
+# tier file and the `mission` skill writes it. Rename the file on one side only
+# and a mission declares a tier the gate never sees - which fails in the safe
+# direction for `small`, silently costs the saving for the rest, and in neither
+# case says anything.
+
+tier_docs=".claude/hooks/README.md .claude/skills/mission/SKILL.md"
+for doc in $tier_docs; do
+    if [ ! -f "$repo_root/$doc" ]; then
+        printf 'FAIL %s is checked for the tier file name but does not exist\n' "$doc"
+        failed=$((failed + 1))
+    elif grep -qF -- "$tier_file_name" "$repo_root/$doc"; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL %s never names %s, the file the gate reads\n' "$doc" "$tier_file_name"
+        failed=$((failed + 1))
+    fi
+done
+
+for tier in $tiers; do
+    if grep -qF -- "$tier" "$repo_root/.claude/skills/mission/SKILL.md"; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL the mission skill never names the %s tier, which the gate accepts\n' "$tier"
+        failed=$((failed + 1))
+    fi
 done
 
 # --- report -----------------------------------------------------------------

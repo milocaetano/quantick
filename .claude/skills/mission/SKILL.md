@@ -5,8 +5,20 @@ description: Define and enforce a mission for the current session — read the r
 
 # Mission
 
-Argument: the session objective (e.g. `/mission make the heatmap render at
-60fps`). If missing, ask the user what it is before doing anything else.
+Argument: an optional tier, then the session objective — `/mission small the
+axis labels overlap at low zoom`, or `/mission make the heatmap render at
+60fps`. If the objective is missing, ask the user what it is before doing
+anything else.
+
+**The tier is the first word, and only when that word is one of `small`,
+`medium`, `high` or `max`.** Anything else is objective text and the objective
+keeps every word of it. With no tier given, the mission runs at **`medium`**.
+
+That rule misreads an objective genuinely opening with one of the four words:
+`/mission small fonts are unreadable on the axis` parses as tier `small`. The
+mitigation is step 1, which echoes the tier it parsed and the objective it
+kept — so a misparse costs one correction in the first turn instead of
+surfacing as a missing gate at the PR.
 
 The mission is the orchestrator: it decides which of the other skills are part
 of *done* so the user never has to list them. One session, one mission, one
@@ -28,6 +40,61 @@ dropped ask visible, the interrogation makes a wrong reading expensive early
 instead of late, the checklist format makes a criterion gradeable by someone
 else, and `delivery-review` is that someone else.
 
+## Tiers
+
+One mission does not cost what another does, and until this table existed they
+all charged the same: a one-line fix paid for an interrogation round, a full
+gate table, a `high`-effort bug pass and a fresh-context conformance review.
+The predictable result is that the flow got skipped rather than scaled, and a
+skipped flow protects nothing at all. The tier is how a mission buys less
+ceremony **on the record**, with a gate that knows it did.
+
+| | `small` | `medium` (default) | `high` | `max` |
+| --- | --- | --- | --- | --- |
+| **2** — request ledger | required, terse | required | required | required |
+| **3** — interrogation | skipped; every doubt becomes an `S` assumption, bar the one exception below | at most two questions, and only where a wrong guess throws work away | the full round, at most four | the full round, re-checked against the plan before code is written |
+| **4** — injected gates | English, and the four checks. Every other row applies only where the diff actually reaches that territory | the full table | the full table | the full table, and the UI rows apply to a surface touched even indirectly |
+| **5** — `GOAL.md` | short form: objective, ledger, `S`, criteria, verbatim request | full | full | full |
+| **8** — bug pass (`arch-review` step 0) | `code-review` at `low` | at `medium` | at `high` | at `high`, and the trader is told `/code-review ultra` exists |
+| **8** — shape pass | only the dimensions the diff touches; **8 always** | full | full | full |
+| **8** — `delivery-review` | **not run** | runs | runs | runs |
+| **9** — the `/goal` line | skipped | printed | printed | printed |
+
+**What no tier buys.** `arch-review` runs at every one of them, the four checks
+run at every one of them, and the worktree rule holds at every one of them. A
+tier shortens a review; it never removes the bug pass. A small diff is not the
+same thing as a safe one, and the cheapest way to ship a crash has always been
+to ship it in three lines.
+
+**The one question `small` still asks.** Step 3's *a call that is the trader's*
+— money, safety, irreversibility, autonomy — is not ceremony and does not
+scale. A `small` mission that runs into one stops and asks; and if it is
+asking, the work was never `small`, so raise the tier in the same breath.
+
+**A tier goes up, never down.** Raise it the moment the work turns out bigger
+than it looked — a second ask appears, the diff grows, a decision turns out to
+be the trader's — and rewrite the tier file from step 6 when you do. Lowering
+one mid-mission is the single move this mechanism cannot tell apart from
+dodging a review that was about to fail, so it is not available: a mission that
+started at `high` finishes at `high`.
+
+### What `small` actually costs at the gate
+
+`small` is the only tier the `pr-gate` hook can see, because it is the only one
+that changes what the hook requires: a `small` branch opens its PR on
+`arch-review-ok` alone, with no `delivery-review-ok` at all. That is a real
+hole in a gate built deliberately without an override, so it is **bounded
+rather than trusted** — the exemption lapses the moment the branch exceeds the
+ceiling in `guardrails.sh` (`SMALL_TIER_MAX_CHANGED_LINES`: insertions plus
+deletions against `origin/main`). Past it the branch pays in full, whatever the
+tier file says.
+
+The word therefore has to be true when the branch *ships*, not when the mission
+starts. A `small` mission that grows past the ceiling has two honest moves —
+raise the tier and run `delivery-review`, or split the work until a branch
+really is small — and one dishonest one, which is shrinking a diff to get under
+a review. `.claude/hooks/README.md` owns the rest of the mechanism.
+
 ## Steps
 
 1. **Capture the mission**: restate the objective in one sentence **written in
@@ -35,6 +102,12 @@ else, and `delivery-review` is that someone else.
    `.claude/GOAL.md`, the branch name and the first line of the PR body, every
    one of them a repository artifact. Saying it back to the trader in their own
    language too is welcome; the version written down is the English one.
+
+   **Echo the parse in the same breath**, on one line: the tier and the
+   objective it kept, as `tier: <tier> | objective: <the sentence>`. This is
+   the only cheap moment to catch the leading-word misread described under
+   *Argument*, and a tier nobody intended silently decides which gates the
+   branch will ever face.
 
 2. **Build the request ledger.** Before deriving a single criterion, decompose
    the request into atomic asks, numbered `R1`…`Rn`.
@@ -69,6 +142,14 @@ else, and `delivery-review` is that someone else.
 3. **Interrogate — once, before any work starts.** Raise everything that
    qualifies in a single `AskUserQuestion` call (at most four questions,
    recommended option first, in whatever language the trader speaks).
+
+   **The tier sets the budget**: four questions at `high` and `max`, two at
+   `medium`, none at `small` — where every doubt below becomes an `S`
+   assumption instead, except *a call that is the trader's*, which is asked at
+   every tier and means the tier was wrong. Under a reduced budget the ranking
+   rule at the end of this step is not optional: everything that qualified and
+   went unasked is an `S` line marked *wanted to ask*, carrying the reading you
+   went with. A tier lowers what you ask; it never lowers what you record.
 
    **What earns a question:**
 
@@ -119,6 +200,13 @@ else, and `delivery-review` is that someone else.
    criteria from the ledger — every `R` discharged — then add the gates for its
    kind:
 
+   At `small`, only the first two rows are injected outright — English, and the
+   four checks — and every other row applies solely where the diff genuinely
+   reaches that territory. That is a narrower reading of the same table, never
+   a different table: a `small` mission that touches a hot path still owes the
+   measurement, and one that adds a surface still owes the harness hook. If a
+   row keeps applying anyway, the mission is not `small`.
+
    | The mission… | Injected acceptance criteria |
    | --- | --- |
    | Any mission at all | **every artifact in English** — the rule, its scope and its exemptions live in `CLAUDE.md`, which is already loaded and is their single owner; do not restate or count them here. Graded by `arch-review` dimension 8, enforced by `crates/app/tests/language_guard.rs`. It costs one edit now and a review round later |
@@ -168,10 +256,21 @@ else, and `delivery-review` is that someone else.
    name: dozens of archives already use it, and renaming the record would buy
    nothing.
 
-   `GOAL.md` carries, in this order: the objective and why it matters; the
+   `GOAL.md` carries, in this order: the objective and why it matters; **the
+   tier, as a `**Tier:**` line naming it and why the work earns it**; the
    request ledger; the trader's decisions `D1`…`Dn`; the assumptions
    `S1`…`Sn`; the acceptance criteria; what is not applicable and why; and
    last, **the request as received, quoted in full and verbatim**.
+
+   The tier line is not bookkeeping. `delivery-review` reads this file and
+   nothing else, so a branch that arrives at it having declared `small` needs
+   the file to say why the exemption it took was earned — and a `small` mission
+   that grew is one whose file no longer matches the diff, which is exactly the
+   discrepancy a reviewer should be able to see. At `small` the file may drop
+   the decisions and the not-applicable sections when both are empty, and keeps
+   everything else: the ledger, the assumptions, the criteria and the verbatim
+   request are what makes a goal file gradeable at all, and the tier does not
+   buy an ungradeable one.
 
    That last section is not decoration and it is not optional. `delivery-review`
    reads `GOAL.md` and nothing else — it never sees this conversation. Without
@@ -232,6 +331,21 @@ else, and `delivery-review` is that someone else.
    it is *performed* first, so the goal file lands on the branch that will
    carry it.
 
+   **Record the tier here**, in the new worktree, before the first line of
+   work. It goes beside the two review markers, in that worktree's own git dir,
+   so it is per-branch and never committed:
+
+   ```sh
+   WT=/path/to/worktree
+   TIER=small                  # small | medium | high | max
+   cd "$WT" && printf '%s\n' "$TIER" > "$(git rev-parse --absolute-git-dir)/mission-tier"
+   ```
+
+   `pr-gate` reads that file. A tier declared only in `GOAL.md` changes nothing
+   at the gate, and a `small` mission that never writes it pays the full price
+   at the PR — which is the safe direction to fail, and still a wasted review.
+   Rewrite the file, same command, whenever the tier is raised.
+
 7. **Stay on track**: refuse scope creep. A necessary detour is stated
    explicitly and tied back to the mission (or taken to the user). Keep the
    checklist in the todo list so progress is visible. Narrowing the user's
@@ -268,11 +382,18 @@ else, and `delivery-review` is that someone else.
         git commit -m "docs: archive the $SLUG mission"
       ```
 
-   2. **`Skill(arch-review)`** — shape and bugs, over the final branch. It
-      records `arch-review-ok` itself when the review closes.
+   2. **`Skill(arch-review)`** — shape and bugs, over the final branch, at the
+      effort and breadth this mission's tier sets. It records `arch-review-ok`
+      itself when the review closes. Every tier runs it.
    3. **`Skill(delivery-review)`** — conformance, over the same final branch.
-      It records `delivery-review-ok` itself, on PASS only.
+      It records `delivery-review-ok` itself, on PASS only. **Skipped at
+      `small`**, and only there; the PR opens on the arch marker alone.
    4. **`gh pr create`.**
+
+   A `small` mission still archives `GOAL.md` at step 1 above. Nothing grades
+   the archive at that tier, and it is written anyway: the file is the only
+   record of what the branch was for, and the day the trader asks why a commit
+   exists, "it was too small to write down" is not an answer.
 
    The order is the whole point, and getting it backwards is a trap with a
    pleasant-looking exit. Archive *after* recording the markers and that commit
@@ -290,7 +411,9 @@ else, and `delivery-review` is that someone else.
    before re-recording it. Re-stamping a marker whose review did not run again
    is the one dishonest move this whole mechanism cannot detect.
 
-9. **Hand over the `/goal` condition.** Right after step 4, print the built-in
+9. **Hand over the `/goal` condition.** Skipped at `small`, where the mission
+   is short enough to finish inside one turn and a self-judging loop costs more
+   than the work. At every other tier, right after step 4, print the built-in
    command for the user to paste, so the session keeps working across turns
    without them prompting each step:
 
@@ -322,6 +445,8 @@ else, and `delivery-review` is that someone else.
 ## What done means
 
 Done = the PR is open, CI is green, `delivery-review` returned PASS, and the
-evidence is in the PR body. Not merged — merging is the user's call, always.
-Do not ask permission to push or open the PR; opening it *is* the mission's
-final step.
+evidence is in the PR body. At `small`, where that review does not run, done is
+the same line without it — the PR open, CI green, `arch-review` closed, the
+evidence in the body. Not merged — merging is the user's call, always. Do not
+ask permission to push or open the PR; opening it *is* the mission's final
+step, at every tier.

@@ -11,7 +11,10 @@
 #                     until BOTH reviews have been recorded for the exact
 #                     commit being shipped: arch-review ("no branch ships
 #                     un-reviewed") and delivery-review ("no branch ships
-#                     ungraded against what was asked for").
+#                     ungraded against what was asked for"). A mission
+#                     that declared the `small` tier is exempt from the
+#                     second one, but only while the branch stays small
+#                     enough to have earned the word - see `declared_tier`.
 #   commit-reminder   PostToolUse on Bash. Cannot block (the commit
 #                     already landed); says the gate is coming and how to
 #                     satisfy it.
@@ -52,6 +55,37 @@ MAIN_BRANCH="main"
 # passed one has not passed both.
 ARCH_MARKER_NAME="arch-review-ok"
 DELIVERY_MARKER_NAME="delivery-review-ok"
+
+# What ceremony a mission declared for this branch, written by the `mission`
+# skill into the same per-branch git dir as the markers above and never
+# committed. Only `small` changes anything here: it exempts the branch from
+# delivery-review, which is the whole reason a tier is worth declaring.
+#
+# The exemption is bounded, and the bound is the design rather than a
+# refinement of it. A way past this gate was tried once before, as a skip file,
+# and reverted: the denial that taught an agent to create it was the same
+# denial an agent sees when it has simply not run the review, which handed the
+# kill switch to exactly the caller with a motive to pull it. Two things keep
+# this one honest.
+#
+#   1. The denial says nothing about tiers unless the branch already declared
+#      one. An agent that never asked for the cheap path is never told there
+#      is one, so the gate cannot teach its own way around itself.
+#   2. The word has to be true. The exemption holds only while the diff stays
+#      under the ceiling below, so declaring `small` dishonestly at PR time
+#      buys it only on branches where declaring it honestly would have been
+#      allowed anyway. That is the argument the skip file could not make.
+TIER_FILE_NAME="mission-tier"
+# Every tier `mission` may declare, in the order they cost. A file holding
+# anything else is treated as no declaration at all: an unrecognised word must
+# never be the difference between a graded branch and an ungraded one.
+TIERS="small medium high max"
+# Changed lines - insertions plus deletions against origin/main - a `small`
+# branch may carry and keep its exemption. A fix, a tweak or a paragraph of
+# prose sits well under it; past it a branch carries enough separate asks that
+# a ledger is worth grading, which is exactly when delivery-review earns its
+# cost. One constant with one comment, so reversing the judgement is one edit.
+SMALL_TIER_MAX_CHANGED_LINES=300
 
 mode="${1:-}"
 input=$(cat)
@@ -125,6 +159,47 @@ marker_path() {
     marker_git_dir=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
     [ -n "$marker_git_dir" ] || return 1
     printf '%s/%s' "$marker_git_dir" "$2"
+}
+
+# The tier declared for worktree `$1`, or nothing when none is declared or the
+# declaration is not one of `$TIERS`. The file's contents never leave this
+# function: an unrecognised tier is reported as no tier at all, so a corrupt or
+# hostile file can neither reach `deny`'s JSON nor widen anything.
+declared_tier() {
+    tier_file=$(marker_path "$1" "$TIER_FILE_NAME") || return 1
+    [ -f "$tier_file" ] || return 1
+
+    tier=$(head -n 1 "$tier_file" 2>/dev/null |
+        tr -d '\r' |
+        sed 's/^[[:space:]]*//; s/[[:space:]]*$//' |
+        tr 'A-Z' 'a-z')
+
+    for tier_known in $TIERS; do
+        if [ "$tier" = "$tier_known" ]; then
+            printf '%s' "$tier"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Insertions plus deletions on worktree `$1` against origin/<main>, or nothing
+# when that cannot be measured: an absent remote ref, a git that errors.
+#
+# The caller reads "cannot measure" as "no exemption". This is the one place in
+# the script that fails *closed*, and deliberately against the file's own
+# fail-open rule: everywhere else an undetermined answer costs a permission
+# prompt, while here it would cost an ungraded branch.
+#
+# Digits only, always. The result reaches `deny`'s JSON, where a stray quote
+# emits a payload the harness cannot parse - and a lost deny decision switches
+# the gate off rather than tripping it.
+changed_lines() {
+    lines_stat=$(git -C "$1" diff --shortstat "origin/$MAIN_BRANCH...HEAD" 2>/dev/null) || return 1
+
+    lines_ins=$(printf '%s' "$lines_stat" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) insertion.*/\1/p')
+    lines_del=$(printf '%s' "$lines_stat" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) deletion.*/\1/p')
+    printf '%s' "$((${lines_ins:-0} + ${lines_del:-0}))"
 }
 
 # Deny unless marker `$3` in worktree `$1` records exactly the commit `$2`
@@ -229,13 +304,39 @@ pr_gate() {
     # Checked in the order the reviews run. arch-review first: a delivery
     # review of a branch the shape review is about to change is wasted work,
     # and naming the earlier gap first is the shorter path back to green.
+    #
+    # Required at every tier, `small` included. A tier buys a shorter review,
+    # never no review: the bug pass is the last thing a branch should be able
+    # to buy its way out of, and a small diff is not the same as a safe one.
     require_marker "$dir" "$head" "$ARCH_MARKER_NAME" \
         "no branch ships un-reviewed" \
         "Run the arch-review skill over \`git diff origin/$MAIN_BRANCH...HEAD\` and resolve every Blocker and Should-fix (or note the deferral in the PR body)"
 
+    delivery_how="Run the delivery-review skill: it grades every ask in the branch's goal file and every acceptance criterion, and passes only when none is MISSING, PARTIAL or UNPROVEN"
+
+    # A branch that declared no tier takes the path it has always taken and is
+    # told exactly what it was told before. That is deliberate, and it is the
+    # property the whole exemption rests on: the denial an agent meets when it
+    # has merely forgotten the review must never double as an advertisement for
+    # the way around it. Only a branch that already asked for the cheap path
+    # hears anything at all about the bound on it.
+    if [ "$(declared_tier "$dir")" = "small" ]; then
+        small_size=$(changed_lines "$dir")
+
+        if [ -n "$small_size" ] && [ "$small_size" -le "$SMALL_TIER_MAX_CHANGED_LINES" ]; then
+            exit 0
+        fi
+
+        if [ -z "$small_size" ]; then
+            delivery_how="This branch declares the \`small\` tier, whose exemption from this review is granted only where its size against origin/$MAIN_BRANCH can be measured, and here it cannot. $delivery_how"
+        else
+            delivery_how="This branch declares the \`small\` tier, whose exemption from this review stops at $SMALL_TIER_MAX_CHANGED_LINES changed lines against origin/$MAIN_BRANCH; it carries $small_size, so the work has outgrown the word. Raise the tier in the goal file - a tier goes up, never down. $delivery_how"
+        fi
+    fi
+
     require_marker "$dir" "$head" "$DELIVERY_MARKER_NAME" \
         "no branch ships ungraded against what was asked for" \
-        "Run the delivery-review skill: it grades every ask in the branch's goal file and every acceptance criterion, and passes only when none is MISSING, PARTIAL or UNPROVEN"
+        "$delivery_how"
 
     exit 0
 }
@@ -254,6 +355,17 @@ commit_reminder() {
 
     ahead=$(git -C "$dir" rev-list --count "origin/$MAIN_BRANCH..HEAD" 2>/dev/null) || exit 0
     [ "${ahead:-0}" -gt 0 ] || exit 0
+
+    # A `small` mission is reminded of the gate it actually faces. Repeating
+    # the two-marker line at every tier would send it off to run the review its
+    # own tier exempts it from, which is the saving the tier exists to buy. It
+    # would also make this the place an agent first learns the exemption exists
+    # - the thing pr-gate's denial is careful never to be. Here that is safe:
+    # the branch has already declared the tier, so nothing is being taught.
+    if [ "$(declared_tier "$dir")" = "small" ]; then
+        small_size=$(changed_lines "$dir")
+        context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH at the \`small\` tier, so \`gh pr create\` wants \`$ARCH_MARKER_NAME\` alone - recorded for the exact HEAD being shipped, which any later commit stales. The exemption from \`$DELIVERY_MARKER_NAME\` holds while the branch stays within $SMALL_TIER_MAX_CHANGED_LINES changed lines against origin/$MAIN_BRANCH, and it carries ${small_size:-an unmeasurable number} now. Past that the tier has to be raised and both reviews run.\""
+    fi
 
     context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH. \`gh pr create\` is gated on both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recording the exact HEAD being shipped, so run arch-review and then delivery-review once the branch is final — a commit after either one makes its marker stale.\""
 }

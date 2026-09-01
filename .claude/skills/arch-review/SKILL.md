@@ -34,6 +34,18 @@ Skill(code-review), args: "<target> <effort>"      one string, in that order
              level it used.
 ```
 
+**A mission's tier overrides that default**, because the tier is the trader's
+own statement of how much this change is worth reviewing: `low` for `small`,
+`medium` for `medium`, `high` for `high` and for `max`. At `max`, say in the
+header that `/code-review ultra` exists — a deep multi-agent cloud pass the
+trader triggers themselves, never this skill. The tier is in the branch's goal
+file, on its `**Tier:**` line; a branch with no goal file has no tier and takes
+the defaults above. **Name the level in the header either way**, along with
+where it came from, so a short pass is never mistaken for a thorough one.
+
+```text
+```
+
 **Check the scope it comes back with.** When the target does not pin a range
 the skill derives one, so it can end up reviewing another branch's merged work
 (local `main` behind `origin/main`) or nothing at all (a pushed branch whose
@@ -154,6 +166,19 @@ fixes the local ref too, and is worth doing before a review either way.
 Read the neighbouring code before judging any of it. The repo's existing
 pattern is the standard; a change that invents a second way to do something
 already solved is a finding, even when the new way is prettier in isolation.
+
+### The mission's tier scopes the shape pass
+
+At the `small` tier, read only the dimensions the diff actually reaches —
+**dimension 8 always**, since a foreign-language line is exactly what a hurried
+change leaves behind, and step 0 always in full. This is a smaller *reading*,
+never a lower bar: a dimension that applies still applies, and a finding is
+still a Blocker at the severity it earns. If three or more dimensions turn out
+to apply, say so in the header — the branch has outgrown its tier, and the
+mission's job is to raise it rather than to have it graded cheaply.
+
+Every other tier reads all nine. The tier is a claim about the change's size,
+and this is the review that can see whether the claim held.
 
 ## The nine dimensions
 

@@ -13,8 +13,8 @@ Wired in `.claude/settings.json`, implemented in `guardrails.sh` (POSIX sh, no
 | Mode | Event | Acts on | Effect |
 | --- | --- | --- | --- |
 | `worktree-guard` | `PreToolUse` | `Edit`, `Write`, `NotebookEdit` | Denies the write when it lands in the main checkout while that checkout is on `main`. |
-| `pr-gate` | `PreToolUse` | `Bash` | Denies `gh pr create` until **both** `arch-review-ok` and `delivery-review-ok` record the exact `HEAD` being shipped. |
-| `commit-reminder` | `PostToolUse` | `Bash` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming and names both markers. |
+| `pr-gate` | `PreToolUse` | `Bash` | Denies `gh pr create` until **both** `arch-review-ok` and `delivery-review-ok` record the exact `HEAD` being shipped. A branch that declared the `small` mission tier needs only the first, while it stays under the ceiling. |
+| `commit-reminder` | `PostToolUse` | `Bash` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming and names the markers that branch's tier actually owes. |
 
 ## Recording the two reviews
 
@@ -56,6 +56,9 @@ review header, which names the level step 0 ran at or says it did not run. The
 same hole exists for `delivery-review-ok`, and the same answer applies: its
 verdict states the checklist source it graded against and what it checked that
 could have failed.
+
+One tier changes what this section requires: see *The `small` mission
+exemption* below. Everything above holds unchanged for every other branch.
 
 The gate proves a review was *recorded*, not that it was *good*. Nothing can
 prove the latter from outside the review. What it does remove is the failure
@@ -162,6 +165,57 @@ written down in CLAUDE.md.
   with a motive to use it, permanently and for the whole branch. An override
   scoped to the command that tripped it, rather than to the branch, is the
   shape worth building. It is not built here.
+
+  The `small` tier below is **not** that override and does not reopen this
+  question: it exempts one of the two reviews, on a bound the branch has to
+  meet, and it is never mentioned by a denial to a branch that did not already
+  declare it. The section says why that distinction is load-bearing.
+
+## The `small` mission exemption
+
+`mission` declares a tier for a branch by writing one word into `mission-tier`,
+beside the two markers in the worktree's own git dir — so it is per-branch,
+never committed, and discovered exactly the way the markers are:
+
+```sh
+WT=/path/to/worktree
+cd "$WT" && printf 'small\n' > "$(git rev-parse --absolute-git-dir)/mission-tier"
+```
+
+The tiers are `small`, `medium`, `high` and `max`, and only `small` changes
+what this gate requires: that branch opens its PR on `arch-review-ok` alone.
+Every other tier, an unrecognised word, and an absent file all leave the
+two-marker gate exactly as it was — which is every branch that existed before
+this file did.
+
+That is a hole in a gate deliberately built without an override, so it is worth
+being exact about why it is not the skip file that got reverted.
+
+- **The denial never advertises it.** A branch that declared no tier gets the
+  message it has always got, naming neither tiers, nor the file, nor the word
+  `small`. The gate does not teach its own way around itself, which is the
+  precise failure the skip file had. `guardrails_test.sh` asserts that absence
+  rather than trusting it, because it is the kind of property a later edit
+  breaks by being helpful.
+- **The word has to be true.** The exemption lapses once the branch exceeds
+  `SMALL_TIER_MAX_CHANGED_LINES` changed lines — insertions plus deletions
+  against `origin/main` — and past that the branch pays in full whatever the
+  file says. So writing `small` dishonestly at PR time buys the exemption only
+  on branches where writing it honestly would have been allowed anyway. That is
+  the argument a skip file could never make, and it is the whole design.
+- **It is one review, not both.** `arch-review` is required at every tier. A
+  tier buys a shorter bug pass, never no bug pass: a small diff is not a safe
+  one, and three lines is a perfectly good size for a crash.
+- **It fails closed.** When the branch's size cannot be measured — no
+  `origin/main`, a `git` that errors — there is no exemption. This is the one
+  place in `guardrails.sh` that deliberately breaks the fail-open rule below:
+  everywhere else an undetermined answer costs a permission prompt, and here it
+  would cost an ungraded branch.
+
+What is **not** claimed: nothing stops an agent from declaring `small` on a
+branch that was small and still deserved grading, and nothing here could. The
+bound holds the blast radius down to what the tier's honest use already allows.
+It is a limit on the damage, not a proof of good faith.
 
 ## Tests
 

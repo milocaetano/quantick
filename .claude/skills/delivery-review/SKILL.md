@@ -16,6 +16,22 @@ exists to catch is the quiet one: eight asks in, six criteria written, five
 delivered, everything green, and the trader finds the other three by using the
 product.
 
+## When this skill does not run
+
+A branch whose mission declared the `small` tier is exempt, and `pr-gate` lets
+it open a PR on `arch-review-ok` alone. That is the tier's entire purpose: a
+one-line fix does not carry enough separate asks for a ledger to be worth
+grading, and a gate that costs more than the work it guards is a gate people
+route around.
+
+Two things about that exemption matter here. It is bounded — it lapses once the
+branch outgrows the ceiling in `.claude/hooks/README.md`, and then this review
+is owed like any other. And it is a decision the *mission* takes, never this
+skill: invoked directly, by `/delivery-review` or by a session that wants the
+answer, this skill grades the branch and records its marker exactly as it would
+at any other tier. Declining to grade a branch someone asked about is not a
+saving, it is a refusal.
+
 ## What this skill is not
 
 - **Not a code review.** Bugs belong to `arch-review`'s step 0. A correct

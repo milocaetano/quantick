@@ -32,7 +32,7 @@ name as a slash command.
 
 | Skill | What it owns |
 | --- | --- |
-| `mission` | The orchestrator. Captures the session objective in English, classifies it, and derives the acceptance criteria — including which of the gates below are part of *done* for this kind of work, so the maintainer never has to list them. One session, one mission. |
+| `mission` | The orchestrator. Captures the session objective in English, classifies it, and derives the acceptance criteria — including which of the gates below are part of *done* for this kind of work, so the maintainer never has to list them. It also takes a **tier** — `small`, `medium`, `high`, `max` — which scales all of that to the size of the change, down to whether the conformance review runs at all. One session, one mission. |
 | `new-task` | Starts work from a GitHub issue: reads it, branches from updated `main` with the right prefix, moves the board card. |
 | `new-extension` | The build-time twin of the review question below. `arch-review` asks after the fact whether a feature could have been a new file plus one registration line; this skill designs it that way from the start. |
 | `arch-review` | The pre-PR review. Step 0 runs a correctness pass; then it grades *shape* — does the change dock like a module, does it declare its performance impact, do its tests stay out of the shipped binary, is it drivable without a mouse, does it hide anything behind a magic number, is it English throughout. |
@@ -79,10 +79,21 @@ receives artifacts rather than the implementing session's story. It passes only
 when nothing is MISSING, PARTIAL or UNPROVEN, and a gap ships only as a
 deferral the trader approved.
 
+This is the one gate a mission can buy its way out of, and only at the `small`
+tier — the one-line fix, where a ledger has nothing to grade and the review
+costs more than the change. The exemption is bounded rather than trusted: it
+lapses the moment the branch grows past a ceiling measured against
+`origin/main`, so the word has to be true of the branch that ships and not
+merely of the one that was planned. The hook never mentions the exemption to a
+branch that did not declare it, which is what keeps the gate from teaching its
+own way around itself.
+
 **The review gates the work actually earns.** `mission` decides which apply:
 a change a trader touches mid-session gets `trader-ux-review`; anything
 visual gets `visual-qa`; a docs-only change gets neither, but never skips the
-English check or the correctness pass.
+English check or the correctness pass. The tier decides how hard the ones that
+do apply look — and nothing, at any tier, skips the four checks or the bug
+pass. A cheap review is a real one done briefly; it is never an absent one.
 
 ## The hooks that make the gates real
 
