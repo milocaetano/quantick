@@ -1,0 +1,90 @@
+# The recorded ceiling, in production lines, for every file over the
+# threshold. One `path ceiling` pair per line; `#` starts a comment.
+#
+# These are sizes, not targets: each entry is debt, and the only direction one
+# should ever move is down. `app.rs` at the top of the list is the reason the
+# guard exists.
+#
+# This is a data file rather than a Rust `const` for two reasons. Raising a
+# ceiling is then a data diff instead of an edit to a source file full of
+# prose, which is what two worktrees conflict over; and `--tighten` can
+# rewrite a line-oriented file safely, where rewriting a Rust array by machine
+# is the kind of clever nobody should have to review.
+
+# `app.rs` is the reason this guard exists. Tightened three times now. The
+# guard's own change took the agent popup, the acknowledgement toast and the
+# Save-as box out to `src/surfaces/`; the second batch took the
+# indicator-preview watermark, the appearance window, the footprint settings
+# window, the market dialog and the arming dialog with its alarm section -
+# 403 production lines and nine struct fields - and gave back the environment
+# the port hands them instead, plus the review's fixes and the
+# `QUANTICK_TOAST=paper` hook that photographs the converged acknowledgement
+# lane.
+#
+# The third batch was the drawing chrome: the context bar, the on-chart note
+# editor, the inspector in both its hosts and the object manager, with the
+# title bar, the body, the placement rule and the action applier they share.
+# 1,548 production lines and twenty-one struct fields, out to
+# `src/surfaces/drawing_chrome/` as one member - they are one subsystem, and
+# four members would have left the state they share behind. The number below
+# is what that left, not a target: this file is still six times the threshold.
+#
+# Raised again by the risk-per-trade work, for the three things only this file
+# can do: reading the sidecar into every tab on boot, the save-and-fan-out
+# when a ticket changes the risk, and handing a newly opened tab the settings
+# the one beside it is using. All three have the shapes
+# `persist_order_strategies` and `set_cmd_trading` beside them already have,
+# and none can move - they reach `self.tabs`, which is what this file is. The
+# last of them came out of that branch's own review: the toolbar's entry pair
+# reads the same lock the ticket does, because gating one and not the other
+# left a button lit while the order behind it was already refused.
+crates/app/src/app.rs 9775
+
+# The five entries below `pane.rs` were invisible to the first version of this
+# guard, which stopped counting at the first `#[cfg(test)]` of any kind:
+# `gateway.rs` scored 72 lines of its 4,142, `drawings/mod.rs` 221 of 2,283.
+# They are recorded at today's true size, not at a target. `paper_trading.rs`
+# came down two lines when its private toast - a second acknowledgement lane
+# in the same place on a different clock - was converged onto the window's
+# `ToastSurface`; what left was mostly drawing code, and what stayed is the
+# outbox that replaced it.
+#
+# Then raised by the risk-per-trade work. The capability itself docked as
+# `src/risk_sizing.rs` - the policy half of the arithmetic, the sentences, the
+# whole RISK block, the sidecar records and the launch hook, around 1,300
+# production lines that never entered this file. What is recorded here is the
+# seam that could not leave: the settings the ticket holds, the accessors the
+# control plane reads through, the three placement sites where the lock is
+# enforced, the quantity field turning derived, and one call that draws the
+# block. They reach this struct's private state - `aim_bracket`,
+# `quantity_preview`, `parse_quantity`, `show_toast`, `venue` - so moving them
+# would mean widening five private items to a sibling module, which trades a
+# number in this table for a hole in the type's encapsulation. The two-pass
+# sizing *did* move, behind a closure, once it was clear it was logic rather
+# than registration. Argue with these numbers rather than with their absence.
+crates/app/src/paper_trading.rs 9238
+
+# Raised by 14 for the strategy badge, and deliberately: not a capability
+# docking by trunk-edit, but a repair to `badge_text_for`, which reached only
+# for a *stale* hold reason and so answered "why did nothing happen here?"
+# with a sentence about an earlier bar. It now leads with the ruler's reading
+# of the bar actually under the cursor, the way `ArmedStrategy::status_line`
+# and the right-click menu always have. The lines are three short branches and
+# the comment saying why the order matters; there is no new module to carve,
+# because the fix is that this function was reading one input too few.
+crates/app/src/pane.rs 7771
+crates/app/src/tab.rs 4401
+crates/app/src/control/gateway.rs 4142
+crates/app/src/orderflow_render.rs 3075
+crates/app/src/orderflow_view.rs 2485
+crates/app/src/drawings/mod.rs 2283
+crates/app/src/footprint_render.rs 2234
+crates/feed-mt5/src/stream.rs 2142
+crates/app/src/toolrail.rs 2114
+crates/app/src/orderflow/projection.rs 1850
+crates/app/src/control/contract.rs 1718
+crates/app/src/control/evidence.rs 1708
+crates/pine/src/eval.rs 1669
+crates/app/src/app/layout_wiring.rs 1557
+crates/pine/src/compile.rs 1540
+crates/app/src/orderflow/config.rs 1523

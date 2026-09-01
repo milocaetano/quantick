@@ -16,6 +16,7 @@ members = [
     "crates/feed-hyperliquid",
     "crates/feed-mt5",
     "crates/backtest",
+    "crates/guards",
     "crates/app",
 ]
 

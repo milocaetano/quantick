@@ -1,7 +1,7 @@
 #!/bin/sh
 # Agent guardrails for quantick. See .claude/hooks/README.md.
 #
-# Three CLAUDE.md rules were enforceable only by an agent remembering them.
+# Four CLAUDE.md rules were enforceable only by an agent remembering them.
 # These make the harness enforce them instead:
 #
 #   worktree-guard    PreToolUse on Edit|Write|NotebookEdit. Denies a write
@@ -15,6 +15,9 @@
 #   commit-reminder   PostToolUse on Bash. Cannot block (the commit
 #                     already landed); says the gate is coming and how to
 #                     satisfy it.
+#   guard-watch       PostToolUse on Edit|Write. Runs the repository
+#                     guards over the file just written, using the
+#                     already-built binary. Advisory only.
 #
 # What `runs_command` can and cannot see is a known, bounded limitation, and it
 # is deliberately left as it was rather than deepened. It splits on `&&`, `||`
@@ -258,9 +261,76 @@ commit_reminder() {
     context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH. \`gh pr create\` is gated on both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recording the exact HEAD being shipped, so run arch-review and then delivery-review once the branch is final — a commit after either one makes its marker stale.\""
 }
 
+# PostToolUse on Edit|Write. Runs the repository guards over the file that was
+# just written and reports what they found, so a crossed size ceiling, a
+# non-English word or a codepage round-trip surfaces at the edit that caused
+# it rather than at the end of a `cargo test --workspace` run minutes later.
+#
+# Three properties make this safe to run on every write:
+#
+#   It never blocks. PostToolUse cannot deny — the edit has already landed —
+#   and that is the right shape here. The gate stays `cargo test --workspace`;
+#   this only moves the *news* earlier.
+#
+#   It never invokes cargo. It runs the already-built binary straight out of
+#   `target/`, so it cannot contend for the build lock with a `cargo build`
+#   the agent is running, and cannot silently trigger a four-minute compile of
+#   its own. No binary means no output: the guards still run in the suite.
+#
+#   It reads one file. `--file` checks that path against the baseline instead
+#   of walking the repo, which is milliseconds rather than the seconds a full
+#   scan costs.
+guard_watch() {
+    file=$(normalize_path "$(json_string_field file_path)")
+    [ -n "$file" ] || exit 0
+    case "$file" in
+        *.rs|*.pine|*.md|*.html|*.toml) ;;
+        *) exit 0 ;;
+    esac
+
+    dir=$(dirname "$file")
+    [ -d "$dir" ] || exit 0
+    root=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || exit 0
+    root=$(normalize_path "$root")
+
+    # The binary the branch already built, under either name this platform
+    # gives it. Absent is the ordinary case on a fresh worktree, and silence
+    # is the correct answer to it.
+    binary="$root/target/debug/quantick-guards"
+    [ -x "$binary" ] || binary="$binary.exe"
+    [ -x "$binary" ] || exit 0
+
+    # Workspace-relative, forward slashes: the spelling the baseline uses.
+    # Computed by git rather than by subtracting the root from the absolute
+    # path, because the two are not spelled alike here — the payload carries
+    # the path the way the host writes it and `--show-toplevel` answers the
+    # way git does, so under Git Bash `/tmp/x/src/a.rs` and
+    # `C:/Users/.../Temp/x` describe the same tree and share no prefix. The
+    # subtraction silently produced no match, which reads exactly like a
+    # clean file.
+    prefix=$(git -C "$dir" rev-parse --show-prefix 2>/dev/null) || exit 0
+    relative="$prefix$(basename "$file")"
+
+    # The binary is told which root to read, because the one compiled into it
+    # is whichever worktree happened to build it.
+    findings=$(QUANTICK_GUARDS_ROOT="$root" "$binary" --file "$relative" 2>&1) && exit 0
+    [ -n "$findings" ] || exit 0
+
+    # JSON-escape by hand, because there is no jq here. Separate `-e` scripts
+    # and a `|` delimiter: a `;`-joined script with a `/` delimiter is what
+    # this environment's sed rejects, and it rejects it to stderr while the
+    # pipeline still exits 0 — which produced an empty message that read as a
+    # clean file.
+    escaped=$(printf '%s' "$findings" |
+        sed -e 's|\\|\\\\|g' -e 's|"|\\"|g' |
+        awk 'BEGIN { ORS = "" } { if (NR > 1) printf "\\n"; print }')
+    context "\"Repository guards on \`$relative\`:\n$escaped\n\nThis is advisory and blocks nothing; \`cargo test --workspace\` is still the gate. Fix it now while the edit is in hand, or run \`cargo run -p quantick-guards -- --tighten\` if a size entry only needs lowering.\""
+}
+
 case "$mode" in
     worktree-guard) worktree_guard ;;
     pr-gate) pr_gate ;;
     commit-reminder) commit_reminder ;;
+    guard-watch) guard_watch ;;
     *) exit 0 ;;
 esac

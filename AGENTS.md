@@ -156,6 +156,7 @@ graph TD
 | `mcp` | The MCP adapter. A leaf: it depends on `control` and `control-local` only, never on `app`, and its stdout carries MCP frames only. |
 | `feed-*` | Binance, Hyperliquid and MetaTrader 5 sources. They produce trades and never link the script language. |
 | `backtest` | The headless harness: recorded sessions in, performance out, over the exact engine and indicator path the chart draws. |
+| `guards` | The repository guards the compiler cannot see: the size ratchet, the English word scan, the source-encoding check. No dependencies at all, so asking them costs a second rather than a full build of `app`. |
 | `app` | The desktop chart (egui). A consumer of the engine, never the other way around. |
 
 Market replay is a **source**, not a chart mode: it releases a recorded
@@ -179,7 +180,7 @@ and that file differ, that file wins.
 4. **English is the repository's language.** `CLAUDE.md` is the rule's single
    owner — it defines the scope and the four exemptions where the foreign text
    *is* the data. Read it there; this file deliberately does not restate it,
-   and `crates/app/tests/language_guard.rs` enforces the mechanical half.
+   and `crates/guards/src/language.rs` enforces the mechanical half.
 5. **Small and focused.** This is not a trading platform. Build bars, show
    bars, expose bars to code. This is the rule that refuses scope creep, and
    it applies to the control plane above as much as to the chart.

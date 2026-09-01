@@ -1109,7 +1109,7 @@ mod tests {
     /// why [`SavedTab::flow_layout`] may be one — but has nowhere to put a
     /// hole inside an *array*, and answers with an error that costs the whole
     /// file. The repo's own pattern for a rule the compiler cannot see:
-    /// `source_encoding_guard.rs`, `fmath_guard.rs`, this.
+    /// `crates/guards/src/encoding.rs`, `fmath_guard.rs`, this.
     #[test]
     fn toml_cannot_write_a_hole_inside_an_array() {
         #[derive(Serialize)]

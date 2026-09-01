@@ -15,6 +15,46 @@ Wired in `.claude/settings.json`, implemented in `guardrails.sh` (POSIX sh, no
 | `worktree-guard` | `PreToolUse` | `Edit`, `Write`, `NotebookEdit` | Denies the write when it lands in the main checkout while that checkout is on `main`. |
 | `pr-gate` | `PreToolUse` | `Bash` | Denies `gh pr create` until **both** `arch-review-ok` and `delivery-review-ok` record the exact `HEAD` being shipped. |
 | `commit-reminder` | `PostToolUse` | `Bash` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming and names both markers. |
+| `guard-watch` | `PostToolUse` | `Edit`, `Write` | Cannot block, and is not meant to. Runs the already-built `quantick-guards` binary over the file just written and reports what the repository guards found. Silent when nothing was found, when the binary has not been built, or when the file is outside a repository. |
+
+## Why `guard-watch` never blocks and never builds
+
+The other three modes are gates. This one is a courier.
+
+The repository guards — the size ratchet, the language scan, the encoding
+check — are the cheapest checks in the codebase and used to be the slowest to
+consult, because they lived under `crates/app/tests/` and cargo built the
+largest crate in the repo before it could answer. Four minutes of link for
+five seconds of work, on a warm `target/`. So a crossed ceiling surfaced at
+the end of a full suite run, long after the edit that caused it, and the
+author paid another full run to confirm the fix. Moving the guards into
+`crates/guards`, which depends on nothing, is what made the answer cheap; this
+mode is what makes it arrive on time.
+
+Three properties keep it off the critical path, and all three are load-bearing:
+
+- **It never denies.** `PostToolUse` cannot — the edit has already landed —
+  and that is the right shape. `cargo test --workspace` is still the gate.
+  Moving the *news* earlier is the whole intent; moving the *gate* earlier
+  would make an advisory check into a thing that stops work over its own bugs.
+- **It never invokes cargo.** It runs `target/debug/quantick-guards` directly.
+  Going through `cargo run` would contend for the build lock with a build the
+  agent is already running, and could trigger a compile of its own behind an
+  edit. No binary means no output — the guards still run in the suite, so
+  nothing is lost, only delayed to where it was before.
+- **It reads one file.** `--file` checks that path against the baseline
+  instead of walking the repo: about 40ms, against the few seconds a full scan
+  costs. That is the difference between a hook you leave on and one you
+  disable.
+
+The relative path handed to the binary comes from `git rev-parse
+--show-prefix`, not from subtracting the toplevel out of the absolute path.
+Under Git Bash the payload spells a path the way the host writes it and
+`--show-toplevel` answers the way git does, so `/tmp/x/src/a.rs` and
+`C:/Users/.../Temp/x` describe the same tree and share no prefix. The
+subtraction produced no match, which reads exactly like a clean file — the
+failure mode this repo's guards exist to prevent, reproduced in the hook that
+reports them.
 
 ## Recording the two reviews
 

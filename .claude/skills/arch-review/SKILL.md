@@ -514,10 +514,10 @@ again: the next reader is locked out of half the codebase, every grep runs
 twice, and a contributor who reads neither language has no way in.
 
 **The mechanical half is a test, not a paste.**
-`crates/app/tests/language_guard.rs` runs in `cargo test --workspace` and in
+`crates/guards/src/language.rs` runs in `cargo test --workspace` and in
 CI, holds the allowlist for the debt above, and fails on a new accented run or
 Portuguese keyword in `.rs`, `.pine` and `docs/`. That is the repo's own
-pattern for a rule the compiler cannot see (`source_encoding_guard.rs`,
+pattern for a rule the compiler cannot see (`crates/guards/src/encoding.rs`,
 `fmath_guard.rs`), and it is why this dimension does not ship a grep recipe:
 one was drafted, and it silently missed every accented uppercase word (GNU
 grep's `-i` does not case-fold multi-byte characters here) and every
@@ -536,7 +536,7 @@ So the reviewer's job in this dimension is the part the guard cannot do:
 - Whether an exemption is honestly claimed: the string inside a fixture may be
   foreign, the comment above it may not.
 
-Report the guard's verdict and your own separately. "`language_guard` passes"
+Report the guard's verdict and your own separately. "`quantick-guards` language passes"
 is not the same claim as "I read the prose".
 
 ### 9. The trunk — where did the registration lines land?
@@ -555,14 +555,14 @@ extend it is to edit it.
 
 Look for:
 
-- **Growth in the trunk.** `crates/app/tests/size_guard.rs` records a ceiling
+- **Growth in the trunk.** `crates/guards/src/size.rs` records a ceiling
   for every file over 1,500 production lines — every line outside a top-level
   `#[cfg(test)]` item — and fails when one grows past it. Check what it counts
   before trusting what it says: the first version of that guard stopped at the
   first `#[cfg(test)]` of any kind, which scored `control/gateway.rs` at 72
   lines of its 4,142 and left five of the largest files in the repo untracked.
   A mechanical half that is blind where the debt is largest is worse than none,
-  because a review cites it and stops looking. That guard is this dimension's mechanical half, as `language_guard.rs`
+  because a review cites it and stops looking. That guard is this dimension's mechanical half, as `crates/guards/src/language.rs`
   is dimension 8's; the judgement half is yours. Raising a ceiling stays
   legitimate — it is a visible, signed line in the diff — but it is a finding
   to argue with, never a silent act. A branch that raises one without saying
@@ -639,7 +639,7 @@ A clean change gets a short review saying it is clean and why. Never pad.
   list kept by hand beside the registry; something the trader was meant to vary
   shipped as a compiled variant; a new field on the application root struct for
   state only one surface reads; a new variant on a registry enum where a trait
-  object would have absorbed it; a `size_guard` ceiling raised with no comment
+  object would have absorbed it; a size-baseline ceiling raised with no comment
   saying why.
 - **Consider** — clarity and structure improvements with no correctness,
   performance or extensibility consequence.
@@ -687,10 +687,10 @@ Close with a verdict in seven lines:
   is a unit test (`#[cfg(test)]`, private access) or an integration test
   (`tests/`, public API only).
 - **Accumulation** — did the trunk grow? Name the tracked files the diff
-  moved and by how many production lines, and say whether any `size_guard`
+  moved and by how many production lines, and say whether any the size guard
   ceiling was raised and whether the comment beside it justifies the raise.
   Say "trunk flat" when nothing tracked moved; never drop the line.
-- **Language** — two claims, not one: whether `language_guard` passed, and
+- **Language** — two claims, not one: whether the language guard passed, and
   whether you read the prose, the branch name and the commit messages yourself.
   Say both rather than dropping the line — a silent language verdict is
   indistinguishable from one nobody checked.

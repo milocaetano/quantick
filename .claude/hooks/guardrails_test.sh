@@ -274,6 +274,59 @@ run "a commit on main says nothing" \
 run "a commit on a branch ahead of origin/main reminds" \
     commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context
 
+# --- guard-watch ------------------------------------------------------------
+
+# The ordinary case on a worktree nobody has built yet: there is no binary to
+# run, so the mode says nothing. This is the property that keeps the hook off
+# the critical path — it must never reach for cargo and start a compile of its
+# own behind an edit.
+run "guard-watch: silent when the binary has not been built" \
+    guard-watch "$(json_path "$root/wt/src/a.rs")" silent
+
+# A stub standing in for the built binary. What is under test here is the
+# hook's plumbing — finding the repository, deriving the path the baseline is
+# keyed on, and escaping a multi-line report into one line of JSON — not the
+# guards themselves, which have their own tests in `crates/guards`.
+mkdir -p "$root/wt/target/debug"
+stub="$root/wt/target/debug/quantick-guards"
+{
+    echo '#!/bin/sh'
+    echo 'echo "size: 1 finding(s)"'
+    echo 'echo "  $2: 9999 production lines, ceiling 10 (+9989)"'
+    echo 'echo "a \"quoted\" remedy"'
+    echo 'exit 1'
+} > "$stub"
+chmod +x "$stub"
+
+run "guard-watch: reports what the binary found" \
+    guard-watch "$(json_path "$root/wt/src/a.rs")" context "9989"
+
+# The path handed to the binary is workspace-relative. An absolute one would
+# match no baseline entry, so every file would come back clean and the hook
+# would look like it was working while reporting nothing.
+run "guard-watch: passes a workspace-relative path" \
+    guard-watch "$(json_path "$root/wt/src/a.rs")" context "src/a.rs"
+
+# A quotation mark in the report has to survive into the JSON string. The
+# harness already rejects a payload that is not a parseable one-line object,
+# so this case fails loudly if the escaping regresses — which it did once,
+# when a `;`-joined sed script this environment rejects left the message
+# empty and the hook looked like it had found nothing.
+run "guard-watch: escapes quotes in the report" \
+    guard-watch "$(json_path "$root/wt/src/a.rs")" context 'quoted'
+
+# An extension no guard reads costs nothing: the mode returns before it looks
+# for a repository, let alone a binary.
+run "guard-watch: ignores an extension no guard scans" \
+    guard-watch "$(json_path "$root/wt/src/a.txt")" silent
+
+# A file outside any git repository cannot be made relative to a workspace
+# root, and the mode fails open rather than guessing.
+run "guard-watch: silent outside a repository" \
+    guard-watch "$(json_path "$root/loose.rs")" silent
+
+rm -rf "$root/wt/target"
+
 # --- the gate must judge the command, not the prose around it ---------------
 #
 # Both cases below blocked or misjudged real work the first time these hooks

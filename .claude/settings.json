@@ -61,6 +61,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guardrails.sh\" guard-watch",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }
