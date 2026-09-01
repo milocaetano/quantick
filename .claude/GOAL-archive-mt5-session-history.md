@@ -218,6 +218,28 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
 
 ## Deferrals, approved
 
+- **A `+ older` press made *during* the opening fill can over-count.** A
+  `Span` campaign measures traded time across the whole chart tape, and the
+  fill is extending that tape below the campaign's anchor — so a run started
+  in the ~3 s the fill lasts can report `ReachMet` on hours the slices brought
+  rather than the pages it fetched. Found by the second `code-review` round.
+  Not fixed here because the honest fix is for the campaign to measure what it
+  pulled rather than what the chart holds, which is a change to `Campaign`'s
+  contract rather than to this branch, and the window is three seconds wide
+  with an outcome (more history than was asked for) that costs the trader
+  nothing.
+- **A continuous market's opening block is unmeasured.** On a 24/5 CFD the
+  walk has no session edge and now reaches its 48-hour span cap against a
+  4 M-tick ceiling, where before it was a 12-hour window capped at 1 M. Every
+  performance figure on this branch is measured on WINV26, which closes after
+  about nine hours. The bound exists and is tested; what is missing is a
+  measurement on a tape this repository does not have.
+- **The `QUANTICK_MENU=history` hook goes stale when the toolbar folds.** The
+  caret's rect is published by `draw_history`, which does not run while the
+  history group is in the overflow menu, so on a narrow window the hook aims at
+  a stale coordinate or none. It affects captures, never a trader.
+
+
 - **The reconnect re-sends the opening block over the wire.** After a
   reconnect the bridge re-runs its whole opening block, and the app now
   refuses those slices in one branch rather than mapping and discarding each

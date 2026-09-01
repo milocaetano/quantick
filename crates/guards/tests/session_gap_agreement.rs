@@ -87,10 +87,16 @@ fn python_constant(source: &str, name: &str) -> i64 {
 /// both sides are now checked the same way, and neither can satisfy this test
 /// by being the one that gets imported.
 fn rust_constant(source: &str, name: &str) -> i64 {
-    let needle = format!("pub const {name}: i64 = ");
+    // The visibility and the integer type are both incidental: what is being
+    // read is a number two sides have to agree on, and one of them is a
+    // private `usize` in another crate.
+    let needle = format!("const {name}: ");
     let line = source
         .lines()
-        .find(|line| line.trim_start().starts_with(&needle))
+        .find(|line| {
+            let line = line.trim_start();
+            line.starts_with(&needle) || line.starts_with(&format!("pub {needle}"))
+        })
         .unwrap_or_else(|| {
             panic!(
                 "`{name}` is not declared as a `pub const … : i64` in \
@@ -99,8 +105,9 @@ fn rust_constant(source: &str, name: &str) -> i64 {
             )
         });
     let expression = line
-        .trim_start()
-        .trim_start_matches(&needle)
+        .split_once('=')
+        .expect("a const declaration has a value")
+        .1
         .split(';')
         .next()
         .expect("a split always yields a first part")
@@ -219,6 +226,30 @@ fn the_shipped_config_default_agrees_with_the_bridge_too() {
         bridge_gap_ms,
         "the config default the trader reads ({shipped_minutes} min) and the gap the \
          bridge walks by ({bridge_gap_ms} ms) disagree; change both, or neither"
+    );
+}
+
+#[test]
+fn the_slice_cap_matches_what_the_feed_will_accept() {
+    // The bridge slices the opening block; the feed trims any block past
+    // `MAX_TRADES_PER_PAGE` and drops the surplus with only a warn line. So a
+    // bridge whose slice cap drifts above the feed's turns a fixed defect back
+    // on — a quiet cut of the trader's morning — and the bridge's own comment
+    // says this test is what stops that. It was not, until it existed.
+    let root = repo_root();
+    let bridge = std::fs::read_to_string(root.join("bridge/mt5/quantick_bridge.py"))
+        .expect("the MetaTrader bridge is part of this repository");
+    let stream = std::fs::read_to_string(root.join("crates/feed-mt5/src/stream.rs"))
+        .expect("the feed's stream is part of this repository");
+
+    let bridge_cap = python_constant(&bridge, "MAX_SLICE_TICKS_THE_FEED_ACCEPTS");
+    let feed_cap = rust_constant(&stream, "MAX_TRADES_PER_PAGE");
+
+    assert_eq!(
+        bridge_cap, feed_cap,
+        "the bridge clamps its opening slices to {bridge_cap}, but the feed \
+         accepts {feed_cap} in one block and silently trims the rest. Change \
+         both, or neither."
     );
 }
 

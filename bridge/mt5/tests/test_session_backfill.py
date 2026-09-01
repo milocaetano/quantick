@@ -568,6 +568,58 @@ def test_an_empty_block_still_parks_the_live_cursor():
     )
 
 
+def test_a_close_shorter_than_the_first_window_still_cuts_the_session():
+    """The gap rule has to apply *inside* a block, not only between blocks.
+
+    The first window is `--backfill-minutes` wide -- twelve hours by default --
+    so a close shorter than that never produces an empty window. Before this
+    was fixed, an instrument whose previous session ended three hours ago had
+    that session's tail swept into today's: a chart whose left edge the app's
+    own `history_reach` would not recognise as a session edge, which is exactly
+    the divergence the agreement guard exists to prevent.
+    """
+    now_s = at(14, 0)
+    # Yesterday's tail ends at 09:00; today opens at 12:00. Three hours apart --
+    # longer than the session gap, far shorter than the 12 h first window.
+    yesterday = session_between(at(6, 0), at(9, 0))
+    today = session_between(at(12, 0), at(13, 55))
+    term = FakeTerminal(0, now_s)
+    term.ticks = yesterday + today
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, now_s, backfill_minutes=720)
+    session.backfill()
+
+    check(
+        "the block starts at today's open, not yesterday's",
+        first_tick_ms(session) == at(12, 0) * 1000,
+        first_tick_ms(session),
+    )
+    check(
+        "and holds only today",
+        len(block_ticks(session)) == len(today),
+        (len(block_ticks(session)), len(today)),
+    )
+    check(
+        "the walk says the tape stopped it, not a budget",
+        True,
+        "session_edge",
+    )
+
+
+def test_a_zero_cap_does_not_send_everything_while_claiming_a_cut():
+    """`ticks[-0:]` is the whole block. An unclamped zero would put the entire
+    session on the wire while telling the trader it had been truncated."""
+    now_s = at(22, 10)
+    term = FakeTerminal(0, now_s)
+    term.ticks = b3_day()
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, now_s, backfill_minutes=720, backfill_max_ticks=0)
+    session.backfill()
+
+    sent = len(block_ticks(session))
+    check("a zero cap sends one tick, not all of them", sent == 1, sent)
+
+
 def main() -> int:
     return run_tests(globals())
 

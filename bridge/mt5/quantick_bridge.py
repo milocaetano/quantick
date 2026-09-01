@@ -247,7 +247,10 @@ DEFAULT_OPENING_SLICE_TICKS = 200_000
 # The largest block the feed will take whole, from
 # `crates/feed-mt5/src/stream.rs`'s `MAX_TRADES_PER_PAGE`. Duplicated across a
 # language boundary the repository cannot type-check, so it is pinned by
-# `crates/app/tests/session_gap_agreement.rs` rather than trusted.
+# `crates/app/tests/session_gap_agreement.rs`'s
+# `the_slice_cap_matches_what_the_feed_will_accept` rather than trusted: a
+# slice past the feed's cap is trimmed on arrival and the surplus dropped with
+# only a warn line, which is the quiet cut this block was rebuilt to abolish.
 MAX_SLICE_TICKS_THE_FEED_ACCEPTS = 250_000
 
 # Windows one opening walk may spend: the span above, in gap-wide steps.
@@ -680,14 +683,17 @@ class Session:
                 searched_calls=searched,
                 note="the terminal holds no ticks for this symbol; sending an empty block",
             )
+            # `send_backfill` parks the cursor for an empty block; doing it
+            # again here would be a second owner of the same invariant.
             self.send_backfill([])
-            self.cursor_msc = now_s * 1000
-            self.sent_at_cursor = 0
             return
 
         ticks, windows, stopped_on = self.session_ticks(newest_ms)
         available = len(ticks)
-        cap = self.args.backfill_max_ticks
+        # Clamped like the slice knob beside it: `ticks[-0:]` is the whole
+        # block, so an unclamped zero would send everything while telling the
+        # trader through `bridge_log` that their session was cut.
+        cap = max(1, self.args.backfill_max_ticks)
         if available > cap:
             # The cap is a bound on *memory*, never on the span: the walk above
             # already stopped at the session's own edge. When it does bite, the
@@ -812,8 +818,10 @@ class Session:
         """The part of a terminal answer strictly older than `cursor_ms`.
 
         `copy_ticks_range` answers with a numpy structured array, where this is
-        one vectorised pass and the result is a view-shaped array rather than a
-        million Python objects. The fake terminal the tests run against answers
+        one vectorised pass rather than a million Python objects. Boolean-mask
+        indexing *copies*, so the window is briefly resident twice -- which is
+        why the tick cap bounds roughly two to three times its own number in
+        peak memory rather than exactly it. The fake terminal the tests run against answers
         with a list, which only a comprehension can filter.
 
         The difference is not academic: measured against the live terminal over
@@ -824,6 +832,36 @@ class Session:
         if hasattr(found, "dtype"):
             return found[found["time_msc"] < cursor_ms]
         return [tick for tick in found if int(tick["time_msc"]) < cursor_ms]
+
+    @staticmethod
+    def session_edge_in(found, gap_ms: int) -> int:
+        """Index of the first print after the newest gap of `gap_ms` in `found`,
+        or 0 when the block holds no such gap.
+
+        The walk stops when a whole window comes back empty, and that alone is
+        not enough: the *first* window is `--backfill-minutes` wide -- twelve
+        hours by default -- so a close shorter than that never produces an
+        empty window and the previous session's tail is swept into today's.
+        An instrument with a maintenance break, or any symbol whose last
+        session ended less than twelve hours ago, would open on a chart whose
+        left edge the app's own `history_reach` does not recognise as a session
+        edge: exactly the divergence `session_gap_agreement.rs` exists to stop.
+
+        So each block is cut here too, and the two rules are the same rule.
+        """
+        if len(found) < 2:
+            return 0
+        if hasattr(found, "dtype"):
+            import numpy  # noqa: PLC0415  (only on the terminal's own arrays)
+
+            stamps = found["time_msc"].astype("int64")
+            breaks = numpy.nonzero(numpy.diff(stamps) >= gap_ms)[0]
+            return int(breaks[-1]) + 1 if len(breaks) else 0
+        edge = 0
+        for index in range(1, len(found)):
+            if int(found[index]["time_msc"]) - int(found[index - 1]["time_msc"]) >= gap_ms:
+                edge = index
+        return edge
 
     @staticmethod
     def join_windows(windows: list):
@@ -868,7 +906,7 @@ class Session:
         """
         flags = self.tick_flags()
         floor_ms = self.earliest_tick_ms()
-        cap = self.args.backfill_max_ticks
+        cap = max(1, self.args.backfill_max_ticks)
         # The first window is the trader's own `--backfill-minutes`, which on a
         # market that is trading covers the whole session in a single call. The
         # walk then confirms the edge with one more.
@@ -917,6 +955,13 @@ class Session:
             if not len(fresh):
                 # A whole window with no prints in it: the session started
                 # after this point, and what is in hand is all of it.
+                stopped_on = "session_edge"
+                break
+            edge = self.session_edge_in(fresh, SESSION_GAP_MS)
+            if edge:
+                # The session began inside this window. Keep the part above the
+                # break and stop -- everything below it is the day before.
+                windows.append(fresh[edge:])
                 stopped_on = "session_edge"
                 break
             windows.append(fresh)
@@ -1233,13 +1278,17 @@ class Session:
             return None
         claimed = int(found[0]["time_msc"])
         to_s = claimed // 1000
-        from_s = max(0, to_s - OPENING_REACH_WINDOW_S)
+        # Wide enough to see through dead time, which a four-hour look is not:
+        # a terminal that named a *session's open* as its oldest tick would be
+        # believed, because the hours directly below it are the night before
+        # and legitimately empty. Two days clears any overnight gap and most
+        # weekends, and it is one call on a range the terminal answers from
+        # disk.
+        from_s = max(0, to_s - SESSION_WALK_MAX_SPAN_MS // 1000)
         below = mt5.copy_ticks_range(self.symbol, from_s, to_s, mt5.COPY_TICKS_ALL)
         # Only *whether any* exist is needed, and this runs before the first
-        # tick reaches the chart — so it takes the vectorised path for the same
-        # reason `older_than` does. Counting them one boxed row at a time cost
-        # 840 ms per 1.5 M rows when measured, all of it on the frame the
-        # trader is waiting through.
+        # tick reaches the chart, so it takes the vectorised path for the same
+        # reason `older_than` does.
         older = 0 if below is None else len(self.older_than(below, claimed))
         if older:
             log(

@@ -489,6 +489,12 @@ pub struct Tab {
     pub history_reach_span_minutes: u32,
     /// Slices of the opening session still to arrive, while one is filling in
     /// behind the chart. `None` when nothing is filling.
+    ///
+    /// Cleared by every way a fill can *end*, not only by the last slice
+    /// saying zero. A bridge that dies mid-fill sends no final slice, and a
+    /// count frozen at twelve would go on telling an operator the chart was
+    /// still arriving for the life of the tab — which is the one question this
+    /// field exists to answer.
     opening_slices_remaining: Option<u64>,
     /// The run of requests a reach beyond one page started, or `None` when
     /// nothing is paging.
@@ -2646,6 +2652,7 @@ impl Tab {
         self.history_trades = 0;
         // The old feed's unanswered loads died with its channel; the new feed
         // opens with exactly one backfill in flight.
+        self.opening_slices_remaining = None;
         self.loading.restart(LoadingTask::History);
         self.latest_trade_latency_ms = None;
         let symbol = self.symbol.clone();
@@ -3504,6 +3511,7 @@ impl Tab {
         // The refill arrives as one backfill batch; keep the loading indicator
         // up until it lands. Requests sent to the source before the reset will
         // never be answered, so the count restarts rather than accumulates.
+        self.opening_slices_remaining = None;
         self.loading.restart(LoadingTask::History);
         let symbol = self.symbol.clone();
         self.tape_mut().reset_for_symbol(symbol);
