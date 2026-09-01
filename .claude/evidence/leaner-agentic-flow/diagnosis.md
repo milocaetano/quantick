@@ -84,11 +84,27 @@ for f in CLAUDE.md AGENTS.md .claude/hooks/README.md .claude/skills/*/SKILL.md; 
 done | sort -rn
 ```
 
-`ui-harness/SKILL.md` was **76,459 bytes — larger than the next two skills
-combined**, and 61,483 of those bytes were one table: the hook registry, 118
-rows of `| QUANTICK_… | what it reaches |`. It is *data*, consulted one row at a
-time by a capture run that drives one or two surfaces, and it was loaded whole
-on every invocation of `ui-harness`, `visual-qa` and `trader-ux-review`.
+`ui-harness/SKILL.md` was **76,459 bytes — nearly twice the next skill**, and
+**61,466 of them were the hook-registry section**: 126 rows of
+`| QUANTICK_… | what it reaches |`, plus the prose introducing them.
+
+```sh
+git show 4e12f8b:.claude/skills/ui-harness/SKILL.md | wc -c            # 76459
+git show 4e12f8b:.claude/skills/ui-harness/SKILL.md | sed -n '21,291p' | wc -c  # 61466
+git show 4e12f8b:.claude/skills/ui-harness/SKILL.md | grep -cE '^\| `QUANTICK'  # 126
+```
+
+It is *data*, consulted one row at a time by a capture run that drives one or
+two surfaces, and it was loaded whole on every invocation of `ui-harness`,
+`visual-qa` and `trader-ux-review`.
+
+> Three figures in this paragraph were wrong until `delivery-review` re-ran
+> them: it said 61,483 bytes (that is the extracted file, which carries a
+> heading this section did not), 118 rows (the count was already 126), and
+> "larger than the next two skills combined" (43,375 + 33,527 = 76,902, so it
+> was smaller, by 443 bytes). Each is corrected above with the command that
+> produces it. None of them changes the argument, which is why a reading did
+> not catch them and a re-run did.
 
 **Fixed by** moving it verbatim to `references/hook-registry.md`, with the skill
 pointing at it and telling the reader to `grep` for the surface they need. No
@@ -198,11 +214,23 @@ crate**, with `app.rs` alone at 34,064 lines. The thing `CLAUDE.md` forbids has
 already happened, so a cheaper review could not simply be taken on trust.
 
 The per-file ratchet forbids *invisible* growth and permits *signed* growth.
-That is the right rule for one file and no rule at all for eighteen: #272 itself
-raised `app.rs` from 9,775 to 9,890 production lines, with a comment explaining
-why, extracted nothing in return, and every check in the repository stayed
-green. Eighteen entries each raised "for this branch" read as eighteen
-reasonable decisions and one lost trunk.
+That is the right rule for one file and no rule at all for eighteen: commit
+`2dcf062`, on **#271** (`feat/mt5-session-history`), raised `app.rs` from 9,775
+to 9,890 production lines with a comment explaining why, extracted nothing in
+return, and every check in the repository stayed green. Eighteen entries each
+raised "for this branch" read as eighteen reasonable decisions and one lost
+trunk.
+
+```sh
+git log --oneline -S'crates/app/src/app.rs 9890' -- crates/guards/size-baseline.txt
+git merge-base --is-ancestor 2dcf062 e398a69^2   # e398a69 is the #271 merge
+```
+
+> Attributed to #272 in two earlier drafts, and to "the branch before this one"
+> in the baseline's own comment. `2dcf062` is an ancestor of both merges — #272
+> branched after #271 landed — but #271 is where it was authored. This is the
+> anecdote the whole `!budget` mechanism rests on, so the wrong PR number on it
+> is not cosmetic.
 
 **Fixed by** the `!budget` directive — a cap on the *sum* of every recorded
 ceiling, seeded at the 61,467 lines currently signed for. Raising one ceiling
@@ -233,6 +261,7 @@ rate table:
   slower one: it parses the baseline and walks no files.
 
 No per-trade, per-depth or per-frame path is touched. Measured: `cargo test -p
-quantick-guards` runs 31 unit tests in **0.15s**, and the whole crate's five
-binaries in about a second — unchanged, because the added work is a sum over
+quantick-guards` runs its 31 unit tests in **well under a second** (0.12-0.15s
+across runs; the range rather than a point, because a single timing is not a
+figure anyone can reproduce), and the whole crate in about a second — unchanged, because the added work is a sum over
 eighteen integers.

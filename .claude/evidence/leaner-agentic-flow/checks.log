@@ -4450,3 +4450,30 @@ crates/guards/tests/guards.rs
 ```
 
 The full suite was then re-run and came back green with no FAILED line.
+
+## Re-run at the final head
+
+Everything above was recorded before three review rounds changed the branch, so
+its guards figure (26 unit tests) is stale by construction. Rather than edit a
+log, here is the run at the head that ships:
+
+```
+$ git rev-parse --short HEAD
+ed72a10
+$ cargo fmt --all -- --check
+exit=0
+$ cargo clippy --workspace --all-targets -- -D warnings
+exit=0
+$ cargo build --workspace
+exit=0
+$ cargo test --workspace
+exit=0
+$ cargo test -p quantick-guards
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+$ cargo run -p quantick-guards
+exit=0
+```

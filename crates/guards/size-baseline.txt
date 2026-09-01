@@ -49,7 +49,7 @@
 # largest code getting better or worse? -- because eighteen entries each raised
 # "for this branch" read as eighteen reasonable decisions and one lost trunk.
 # That is not hypothetical: the entry for `app.rs` went from 9,775 to 9,890 in
-# the branch before this one, signed, with nothing extracted in return.
+# commit 2dcf062, on PR #271, signed, with nothing extracted in return.
 #
 # So growth is pay-as-you-go. Raising a ceiling means lowering another by as
 # much, in the same change -- extract a surface into its own module and both

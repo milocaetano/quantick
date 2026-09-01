@@ -31,10 +31,12 @@ loop. It left one criterion explicitly undischarged and carried forward:
 `delivery-review` still starts at its most expensive shape, and fixing that
 "is its own branch, not a paragraph bolted onto this one". This is that branch.
 
-It also, in the same commit, raised `app.rs` from 9,775 to 9,890 production
-lines with a signed comment and extracted nothing in return. That is the
-ratchet working exactly as designed and still losing ground, which is the
-trader's question made concrete.
+The signed raise that shows the ratchet losing ground came one PR earlier:
+commit `2dcf062` on **#271** (`feat/mt5-session-history`) put `app.rs` from
+9,775 to 9,890 production lines with a comment saying why, extracted nothing in
+return, and left every check green. That is the ratchet working exactly as
+designed and still losing ground, which is the trader's question made concrete.
+(Attributed to #272 until `delivery-review` checked the ancestry.)
 
 ## Request ledger
 
@@ -115,6 +117,14 @@ failure, and it is recorded rather than quietly absorbed.
   in `size-baseline.txt` is exactly what `Baseline::recorded` implements. The
   justification holds, but it is a design decision that was presented as an
   assumption.
+- **S2 drove the design too**, and the first version of this section missed it.
+  "Per-mission cost rather than monthly spend" is the metric the whole token
+  accounting uses, and it is what makes moving the registry a *saving* at all:
+  the 68,639 bytes still exist, so a run that does consult them pays the same
+  or slightly more, while every run that does not pays nothing. Under the other
+  reading the headline number would be far smaller. It was marked *wanted to
+  ask* and never asked, and it decided what "economia de tokens" was measured
+  as — which is a question, not an assumption.
 
 ## Acceptance criteria
 
