@@ -264,10 +264,38 @@ For a screen that represents the user's real setup, enable the trio:
 `QUANTICK_LIVE_STRIP_AUTOSTART`, with a preset from `config/bubbles.toml`
 (never bare defaults).
 
-A hook for a floating surface lives **in that surface's module** under
-`crates/app/src/surfaces/`, as an `apply_env_hook` the registry calls, not
-as another line in `app.rs`. That is the fifth hand-written edit per
-feature the `Surface` port removes — the other four being the field, the
-initialiser, the draw call and the hotkey — and `crates/guards/src/size.rs`
-now fails a branch that adds it to the trunk instead.
+Landing with the MT5 older-history goal (`feat/mt5-load-older`):
 
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_LOAD_OLDER=<pages>` | the toolbar's `+ older` button **pressed**, that many times, once the chart has bars to page back from. The button's point is what happens after the click — the prints prepended in front of what is already drawn — so a capture that can only photograph the enabled button proves the affordance exists and nothing about whether it works. Goes through `Tab::request_older_history`, the very function the click calls, so a hooked run drives the loading indicator too. Fires one page per frame and waits for each reply: the feed serves one request at a time, so pressing them together would photograph the refusal path instead of the feature. Waits up to `LOAD_OLDER_HOOK_FRAMES` (~10 s) for a first block, then gives up and logs `LOAD_OLDER_AUTOSTART_GAVE_UP` rather than hanging a capture run on a bridge that never connected. On MetaTrader it needs a bridge that declares `history_paging` (`bridge/mt5/quantick_bridge.py`, not the Expert Advisor); on a feed that cannot page, each press is answered empty and the chart is unchanged |
+Once merged, move it into the table above.
+
+Landing with the one-week candle default (`fix/frvp-candles-window-and-history`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_LOAD_OLDER_CANDLES=<spans>` | the history menu's `+ older candles` entry **pressed**, that many times, once the opening span has landed. A chart now opens on one week of venue candles (`feed::TIME_HISTORY_SPAN_MS`) and reaches the quarter a week at a time, so "what does a deep chart look like" is a state no capture reaches without a hand on the menu. Goes through `Tab::request_older_ohlcv_history`, the function the menu entry calls, so a hooked run drives the loading indicator and the prepend too. One span per frame, and it waits: the tab serves one candle request at a time. Spends `LOAD_OLDER_CANDLES_HOOK_FRAMES` (~60 s at 60 fps) across the whole run — much larger than the trade twin's, because a span is several slices of several pages and the reach is documented in thirteen of them — and every waiting frame costs a tick, so a venue that never answers gives up and logs `LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP` with the reason rather than hanging the run. The trade twin is `QUANTICK_LOAD_OLDER` — two records, two capabilities, two hooks: a feed can serve candle history without paging its tape |
+
+Once merged, move it into the table above.
+
+Landing with the load-older outcome (`fix/history-reach-speaks`):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_HISTORY_NOTE=<ending>` | the **outcome** of a `+ older` press, in the loading lane where the spinner was — the one line that tells a trader their press reached nothing. Named by the ending's own log token and resolved through `CampaignEnd::from_action`: `nothing_coming_back` (the venue answered empty and the run gave up), `venue_exhausted` (the record is spent), `page_budget_spent` / `print_budget_spent` / `span_cap_covered` (stopped on a budget, press again), `nothing_charted`. `reach_met` raises nothing and says so in the log — a press that worked has the chart as its answer. Raised through `Tab::raise_history_note`, the same call a settled run makes, so the picture is the picture a refusing venue gives. Without this the surface is invisible to a capture: on any feed a validation run can arrange, the reach either lands its session or the source declares it cannot page and the button never takes a press. An unknown token raises no note rather than the wrong one |
+
+Once merged, move it into the table above.
+
+
+Landing with the history-reach goal (*a load-older press that reaches the previous session*):
+
+| Hook | Reaches |
+| --- | --- |
+| `QUANTICK_HISTORY_REACH=<token>` | pins how far one `+ older` press reaches, overriding what the workspace saved: `page` (one request of the page size — the press every release before this one had), `previous-session` (keep asking until the tape reaches past the market's last close plus a lead into the session before it), or `span` (keep asking until the chart holds `QUANTICK_HISTORY_REACH_SPAN_MINUTES` more of *traded* time). The tokens come from `HistoryReach::ALL`, the same list the history menu is drawn from, so a hook can reach every reach a trader can. A token this build does not know is refused out loud (`HISTORY_REACH_HOOK_UNKNOWN`) and leaves the current reach alone — a silent fallback would look like a press ignoring the run it was told to make. Pair it with `QUANTICK_LOAD_OLDER=1` to photograph a run in flight: with `previous-session` a single press keeps paging, so the loading indicator stays up across several replies |
+| `QUANTICK_HISTORY_REACH` note for `QUANTICK_LOAD_OLDER` | with `previous-session` set, **one hooked press is one run**, not one request: the hook waits on the same loading task the run holds, so `QUANTICK_LOAD_OLDER=3` is three runs and not three pages. The `+ older` button itself is drawn disabled while a run is in flight (a press during one does nothing, and a live button that swallows it reads as broken), so a capture of the button mid-run photographs the greyed state and its reason — which is the state to photograph |
+| `QUANTICK_HISTORY_REACH_SPAN_MINUTES=<n>` | how far one press of the `span` reach pulls, in minutes of **traded** time — nights and weekends are crossed to find them and add nothing to them. Pair with `QUANTICK_HISTORY_REACH=span`: the reach and how far it goes are one choice, and a hook that could pick `by time` but not say how much time would leave the operator setting half of it. Goes through `set_history_reach_span_minutes`, the same call the menu's box makes, and is clamped there to the campaign's own span cap — promising a reach the budgets forbid is worse than refusing it. A value that is not a whole number of minutes is logged (`HISTORY_REACH_SPAN_HOOK_UNREADABLE`) and ignored, never silently defaulted. Read back over the control plane as `history_reach_span_minutes` in the workspace summary |
+| `QUANTICK_MENU=history` | the toolbar's **history menu** open on the first drawn frame — the reach chips, the `by time` span box, the page size, the trades-backfilled readout and the candle reach. Everything in that group sits behind a caret button, which a scripted run cannot press, so without this the whole menu — including the two reaches that shipped before it — is invisible to a capture. Same mechanism as `QUANTICK_MENU=workspace` and the same registry (`ScriptedMenu::ALL`): the click is delivered on the button's own published rectangle through the app's input path, so what opens is what a trader's click opens. A feed that pages nothing has no menu to open and the hook photographs that rather than forcing it; an unknown token opens nothing rather than the wrong menu |
+| `QUANTICK_VENUE_LEAD_IN=1` | pins the View → *venue candles on charts cut by trades* switch on. Off by default and off for anything but `1`, because that is the whole point of the switch: a tick, volume, dollar or imbalance chart has always opened holding only the prints this session saw, and nothing goes in front of them unasked. On, the venue's own 1-minute candles are installed unfolded in front of a chart cut by trades — the only state in which a tick chart shows yesterday, and one no capture reaches without a hand in the View menu. Reaches `Tab::set_venue_lead_in`, the function the checkbox calls, so a hooked run refolds exactly as a click does |
+
+Once merged, move these into the table above.

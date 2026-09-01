@@ -43,14 +43,17 @@ moved down rather than the gate removed. At `max`, say in the header that
 `/code-review ultra` exists — a deep multi-agent cloud pass the trader triggers
 themselves, never this skill, and never a level this step selects.
 
-**Never re-run a level that already ran clean.** Two passes of *this step* is
-its own budget; a third is for a branch whose second found Blockers.
+**Never re-run a level that already ran clean.** That is a rule about what to
+skip *inside* one round, not a budget of its own — a level that came back clean
+has already answered, and re-asking it spends tokens to be told the same thing.
 
-That budget sits inside a larger one. `CLAUDE.md`'s *review chain has a budget*
-bounds the whole chain — both reviews, counted together — and owns the rules
-for spending it and for deferring what will not fit. Read it there. The line
-above is scoped deliberately to the bug pass and is not the total; a second
-statement of a number is a second number to keep true.
+The count lives in one place: `CLAUDE.md`'s *review chain has a budget*, three
+rounds per branch, where a round is one sweep of **everything that owes the
+branch a review** — this step, the shape pass below, then `delivery-review` —
+plus the commit that answers what they all found. So this step does not carry a
+number, the shape pass does not carry one either, and neither can quietly eat
+the other's. A second statement of a number is a second number to keep true,
+and the previous arrangement had three of them that did not add up.
 
 **The bug pass is open judgement, so it keeps the strong model.** `code-review`
 finds real defects partly by being one, and this is the exception

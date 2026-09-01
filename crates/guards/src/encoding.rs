@@ -32,6 +32,8 @@
 use std::fs;
 use std::path::Path;
 
+use crate::Finding;
+
 /// Byte sequences a codepage round-trip leaves behind. Each is the UTF-8
 /// encoding of a character that cannot occur in this repo's sources on its
 /// own: `Â`, `Ã`, `â` and `Ð` only ever appear here as the first byte of a
@@ -185,21 +187,31 @@ pub const REMEDY: &str = "Source files were rewritten in the wrong encoding. Wri
                           [System.IO.File]::WriteAllBytes or an editor, never Set-Content.";
 
 /// Every encoding accident found under `crates`.
-pub fn check(root: &Path) -> Vec<String> {
+pub fn check(root: &Path) -> Vec<Finding> {
     let mut violations = Vec::new();
     scan(&root.join("crates"), root, &mut violations);
+    // One class of violation, one remedy: every finding this guard raises is
+    // fixed the same way, so the mapping is a wrap rather than a decision.
     violations
+        .into_iter()
+        .map(|v| Finding::new(v, REMEDY))
+        .collect()
 }
 
 /// The same check for one file. A path outside `crates/`, or with an
 /// extension the guard does not read, reports nothing.
-pub fn check_file(root: &Path, relative: &str) -> Vec<String> {
+pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     if !in_scope(relative) {
         return Vec::new();
     }
     let mut violations = Vec::new();
     inspect(&root.join(relative), relative, &mut violations);
+    // One class of violation, one remedy: every finding this guard raises is
+    // fixed the same way, so the mapping is a wrap rather than a decision.
     violations
+        .into_iter()
+        .map(|v| Finding::new(v, REMEDY))
+        .collect()
 }
 
 #[cfg(test)]

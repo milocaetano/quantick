@@ -151,7 +151,7 @@ trader's question made concrete.
 
 ### Injected gates
 
-- [ ] **G1** — every artifact in English, per `CLAUDE.md`; graded by
+- [x] **G1** — every artifact in English, per `CLAUDE.md`; graded by
       `arch-review` dimension 8. *Evidence:* the review verdict.
       → `.claude/evidence/leaner-agentic-flow/arch-review.md`
 - [x] **G2** — the four checks green after rebasing on latest `main`.
@@ -161,7 +161,7 @@ trader's question made concrete.
       compiled code changed; classify the added check by rate.
       *Evidence:* the classification, with the guard's measured runtime.
       → the diagnosis
-- [ ] **G4** — `arch-review` run with every Blocker and Should-fix resolved or
+- [x] **G4** — `arch-review` run with every Blocker and Should-fix resolved or
       deferred in the PR body, at this tier's effort. *Evidence:* the verdict.
       → `.claude/evidence/leaner-agentic-flow/arch-review.md`
 - [x] **G5** — the repository guards pass on this branch, including the new

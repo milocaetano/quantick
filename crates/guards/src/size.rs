@@ -81,6 +81,8 @@
 use std::fs;
 use std::path::Path;
 
+use crate::Finding;
+
 /// Production lines above which a file must carry a baseline entry. Files
 /// below it are not the problem this guard exists for, and tracking them
 /// would turn every ordinary edit into a baseline update — the reliable way
@@ -107,9 +109,24 @@ pub const BUDGET_DIRECTIVE: &str = "!budget";
 ///
 /// Wider than [`SLACK`] on purpose. This number tracks every entry at once, so
 /// ordinary tightening moves it constantly, and a budget needing a rewrite on
-/// every extraction is a budget people delete. Narrow enough that it cannot
-/// bank a feature: [`SLACK`] is what one file may hide, and the total is not
-/// allowed to hide much more.
+/// every extraction is a budget people delete.
+///
+/// # What this does not bound
+///
+/// It is tempting to read this as all the headroom the mechanism hides, and it
+/// is not. [`Baseline::recorded`] sums *ceilings*, not measured counts, so
+/// every tracked file may also sit up to [`SLACK`] under its own entry without
+/// moving the total at all. The real hidden headroom is therefore
+/// `BUDGET_SLACK + entries × SLACK` — with the eighteen entries recorded
+/// today, about 4,100 production lines rather than 500.
+///
+/// That is stated rather than fixed, because the alternative is worse. Summing
+/// measured counts would move the budget on every ordinary edit, so a branch
+/// would go over for touching a file it never grew, and the number would stop
+/// meaning "what this repository has signed for". The per-file ratchet bounds
+/// the per-file gap; this bounds the sum of the *permissions*. A guard whose
+/// whole purpose is answering "is this getting better or worse" has no
+/// business overstating its own guarantee.
 pub const BUDGET_SLACK: usize = 500;
 
 /// What the guard asks for when the recorded total is over budget. Quoted by
@@ -139,31 +156,28 @@ pub const REMEDY: &str = "A file over its ceiling means a capability docked by e
                           file that shrank needs no argument at all: `cargo run -p \
                           quantick-guards -- --tighten` writes the new number.";
 
-/// Which remedies the findings in hand actually call for.
-///
-/// The two are not interchangeable, and picking wrong is worse than saying
-/// nothing: [`REMEDY`] tells an author to carve a module, which does not help a
-/// branch whose files are each within their ceiling and whose *total* moved,
-/// while [`BUDGET_REMEDY`] tells them to pay for a raise they may not have
-/// made. A run that produced both gets both, in the order to act in — fix the
-/// file, then settle the total.
-pub fn remedies(findings: &[String]) -> Vec<&'static str> {
-    let is_budget =
-        |line: &String| line.contains(BUDGET_DIRECTIVE) || line.contains("nothing caps them");
-    let mut out = Vec::new();
-    // Everything that is not the budget's is one [`REMEDY`] speaks to: a file
-    // over its ceiling, a stale entry, an unreadable path. Derived by
-    // subtraction rather than by matching each wording, so a finding added
-    // later arrives with a remedy instead of with silence — and silence here
-    // reads exactly like "nothing to do".
-    if findings.iter().any(|line| !is_budget(line)) {
-        out.push(REMEDY);
-    }
-    if findings.iter().any(is_budget) {
-        out.push(BUDGET_REMEDY);
-    }
-    out
-}
+/// What the guard asks for when the recorded total has fallen *below* its
+/// budget. Good news with the number already computed, so it is one command
+/// rather than an argument — the same shape as the per-file tightening, and
+/// deliberately not [`BUDGET_REMEDY`], which would tell an author to pay for a
+/// raise they never made.
+pub const BUDGET_SLACK_REMEDY: &str = "The recorded ceilings now total less than the budget caps \
+                                       them at, which means code left a debt file and the cap has \
+                                       not caught up. Nothing has to be argued: `cargo run -p \
+                                       quantick-guards -- --tighten` writes the new total, and \
+                                       only ever downward.";
+
+/// What the guard asks for when the baseline itself cannot be read as data — a
+/// malformed count, a duplicated directive, an unreadable file. Neither of the
+/// others applies: nothing docked in the trunk and no raise was made, so both
+/// would send an author to restructure code over a typo in a data file.
+pub const BASELINE_REMEDY: &str = "The baseline could not be read as data, so no ceiling was \
+                                   checked at all — this is a syntax finding, not a size one. \
+                                   Every line in crates/guards/size-baseline.txt is blank, a `#` \
+                                   comment, the one `!budget <count>` directive, or a `<path> \
+                                   <count>` pair. Fix the line the finding names and the guard \
+                                   resumes. Until then it is not reporting a clean repository, it \
+                                   is reporting that it could not look.";
 
 /// One recorded ceiling, with the position that lets [`tighten`] rewrite it.
 struct Entry {
@@ -425,20 +439,29 @@ pub fn measure(root: &Path) -> Measured {
 /// place the three verdicts are worded, so the whole-repo scan and the
 /// single-file check the edit-time hook runs can never disagree about the
 /// same file.
-fn verdict(entry: Option<&Entry>, path: &str, actual: usize) -> Option<String> {
+fn verdict(entry: Option<&Entry>, path: &str, actual: usize) -> Option<Finding> {
     match entry {
-        Some(entry) if actual > entry.ceiling => Some(format!(
-            "  {path}: {actual} production lines, ceiling {} (+{})",
-            entry.ceiling,
-            actual - entry.ceiling
+        Some(entry) if actual > entry.ceiling => Some(Finding::new(
+            format!(
+                "  {path}: {actual} production lines, ceiling {} (+{})",
+                entry.ceiling,
+                actual - entry.ceiling
+            ),
+            REMEDY,
         )),
-        Some(entry) if entry.ceiling.saturating_sub(actual) > SLACK => Some(format!(
-            "  {path}: down to {actual} from {} — good news, tighten the entry to {actual}",
-            entry.ceiling
+        Some(entry) if entry.ceiling.saturating_sub(actual) > SLACK => Some(Finding::new(
+            format!(
+                "  {path}: down to {actual} from {} — good news, tighten the entry to {actual}",
+                entry.ceiling
+            ),
+            REMEDY,
         )),
-        None if actual > THRESHOLD => Some(format!(
-            "  {path}: {actual} production lines, over the {THRESHOLD} threshold and absent from \
-             the baseline — add `{path} {actual}`"
+        None if actual > THRESHOLD => Some(Finding::new(
+            format!(
+                "  {path}: {actual} production lines, over the {THRESHOLD} threshold and absent \
+                 from the baseline — add `{path} {actual}`"
+            ),
+            REMEDY,
         )),
         _ => None,
     }
@@ -455,38 +478,51 @@ fn verdict(entry: Option<&Entry>, path: &str, actual: usize) -> Option<String> {
 /// grows a file and *does not* raise its ceiling is caught by [`verdict`] as
 /// it always was, and one that raises the ceiling honestly is caught here
 /// unless it paid for the raise by extraction.
-fn budget_verdict(recorded: &Baseline) -> Option<String> {
+fn budget_verdict(recorded: &Baseline) -> Option<Finding> {
     let total = recorded.recorded();
     let Some(budget) = &recorded.budget else {
-        return Some(format!(
-            "  {BASELINE_FILE}: no `{BUDGET_DIRECTIVE}` line — the recorded ceilings total \
-             {total} and nothing caps them. Restore the directive at {total} or lower; deleting \
-             it is the one edit that switches pay-as-you-go off for every file at once"
+        return Some(Finding::new(
+            format!(
+                "  {BASELINE_FILE}: no `{BUDGET_DIRECTIVE}` line — the recorded ceilings total \
+                 {total} and nothing caps them. Restore the directive at {total} or lower; \
+                 deleting it is the one edit that switches pay-as-you-go off for every file at \
+                 once"
+            ),
+            BUDGET_REMEDY,
         ));
     };
     if total > budget.allowed {
-        return Some(format!(
-            "  {BASELINE_FILE}:{}: the recorded ceilings total {total}, over the \
-             {BUDGET_DIRECTIVE} of {} (+{}) — this branch raised a ceiling without lowering \
-             another",
-            budget.line + 1,
-            budget.allowed,
-            total - budget.allowed
+        return Some(Finding::new(
+            format!(
+                "  {BASELINE_FILE}:{}: the recorded ceilings total {total}, over the \
+                 {BUDGET_DIRECTIVE} of {} (+{}) — this branch raised a ceiling without lowering \
+                 another",
+                budget.line + 1,
+                budget.allowed,
+                total - budget.allowed
+            ),
+            BUDGET_REMEDY,
         ));
     }
     if budget.allowed.saturating_sub(total) > BUDGET_SLACK {
-        return Some(format!(
-            "  {BASELINE_FILE}:{}: the recorded ceilings total {total}, down from the \
-             {BUDGET_DIRECTIVE} of {} — good news, tighten the budget to {total}",
-            budget.line + 1,
-            budget.allowed
+        // Good news, and therefore deliberately *not* BUDGET_REMEDY: that text
+        // tells an author to pay for a raise, and this author made none. The
+        // number is already computed, so the remedy is one command.
+        return Some(Finding::new(
+            format!(
+                "  {BASELINE_FILE}:{}: the recorded ceilings total {total}, down from the \
+                 {BUDGET_DIRECTIVE} of {} — good news, tighten the budget to {total}",
+                budget.line + 1,
+                budget.allowed
+            ),
+            BUDGET_SLACK_REMEDY,
         ));
     }
     None
 }
 
 /// Every way the recorded baseline and the files on disk disagree.
-pub fn check(root: &Path) -> Vec<String> {
+pub fn check(root: &Path) -> Vec<Finding> {
     // Checked before anything is measured, because an unreadable `crates/`
     // measures as *empty* — and an empty measurement makes every baseline
     // entry look stale. The guard would then print eighteen findings whose
@@ -494,19 +530,28 @@ pub fn check(root: &Path) -> Vec<String> {
     // switches the ratchet off on every large file in the repo.
     let sources = root.join("crates");
     if !sources.is_dir() {
-        return vec![format!(
-            "  {} is not a readable directory — there is nothing to measure, and every baseline \
+        return vec![Finding::new(
+            format!(
+                "  {} is not a readable directory — there is nothing to measure, and every baseline \
              entry would otherwise be reported stale",
-            sources.display()
+                sources.display()
+            ),
+            BASELINE_REMEDY,
         )];
     }
     let recorded = match baseline(root) {
         Ok(recorded) => recorded,
-        Err(problem) => return vec![format!("  {problem}")],
+        Err(problem) => return vec![Finding::new(format!("  {problem}"), BASELINE_REMEDY)],
     };
     let entries = &recorded.entries;
     let found = measure(root);
-    let mut violations = found.unreadable.clone();
+    // The walker reports unreadable paths as bare strings. Each is a file the
+    // guard could not clear, which is REMEDY territory like any other.
+    let mut violations: Vec<Finding> = found
+        .unreadable
+        .iter()
+        .map(|line| Finding::new(line.clone(), REMEDY))
+        .collect();
 
     for (path, actual) in &found.counts {
         let entry = entries.iter().find(|entry| &entry.path == path);
@@ -531,9 +576,12 @@ pub fn check(root: &Path) -> Vec<String> {
                 .iter()
                 .any(|line| line.contains(entry.path.as_str()));
         if !seen {
-            violations.push(format!(
-                "  {}: in the baseline but no longer scanned — drop the stale entry",
-                entry.path
+            violations.push(Finding::new(
+                format!(
+                    "  {}: in the baseline but no longer scanned — drop the stale entry",
+                    entry.path
+                ),
+                REMEDY,
             ));
         }
     }
@@ -549,7 +597,7 @@ pub fn check(root: &Path) -> Vec<String> {
 /// gives it. A tracked path that cannot be read reports *that*, rather than
 /// nothing: the hook prints whatever comes back, and an empty result is what
 /// an author reads as an all-clear.
-pub fn check_file(root: &Path, relative: &str) -> Vec<String> {
+pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     // The baseline is not a source file, so [`tracked`] rejects it — but it is
     // the file a raise is actually written into, and the edit-time hook seeing
     // every `.rs` change while missing the one edit that spends the budget
@@ -558,7 +606,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<String> {
     if relative == BASELINE_FILE {
         return match baseline(root) {
             Ok(recorded) => budget_verdict(&recorded).into_iter().collect(),
-            Err(problem) => vec![format!("  {problem}")],
+            Err(problem) => vec![Finding::new(format!("  {problem}"), BASELINE_REMEDY)],
         };
     }
     if !tracked(relative) {
@@ -566,7 +614,12 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<String> {
     }
     let bytes = match fs::read(root.join(relative)) {
         Ok(bytes) => bytes,
-        Err(e) => return vec![format!("  {relative}: could not be read: {e}")],
+        Err(e) => {
+            return vec![Finding::new(
+                format!("  {relative}: could not be read: {e}"),
+                REMEDY,
+            )];
+        }
     };
     // Not valid UTF-8 belongs to the encoding guard, which runs beside this
     // one over the same file and words it better.
@@ -575,7 +628,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<String> {
     };
     let recorded = match baseline(root) {
         Ok(recorded) => recorded,
-        Err(problem) => return vec![format!("  {problem}")],
+        Err(problem) => return vec![Finding::new(format!("  {problem}"), BASELINE_REMEDY)],
     };
     let entry = recorded.entries.iter().find(|e| e.path == relative);
     verdict(entry, relative, production_lines(&source))
@@ -638,10 +691,17 @@ pub fn tighten(root: &Path) -> Result<Vec<String>, String> {
     // raise the number would turn `--tighten` into the bypass the whole
     // mechanism is built to deny: a branch over budget would run the command
     // the failure message recommends and have its raise signed by a tool
-    // instead of by a person. So the strict `<` is the load-bearing character
-    // in this function.
+    // instead of by a person.
+    //
+    // And only once the gap is wide enough to *be* a finding -- the same test
+    // `budget_verdict` applies, for the same reason the per-entry rewrite above
+    // uses `SLACK`. Lowering on any gap at all would revoke headroom somebody
+    // deliberately signed for: a branch may raise the budget on purpose, sit
+    // silently under `BUDGET_SLACK`, and then have that decision reversed by a
+    // `--tighten` run made for an unrelated reason. A tool that undoes a signed
+    // decision unasked is the same failure as one that makes an unsigned one.
     if let Some(budget) = &recorded.budget
-        && tightened_total < budget.allowed
+        && budget.allowed.saturating_sub(tightened_total) > BUDGET_SLACK
     {
         let trailing = lines[budget.line]
             .find('#')
@@ -667,6 +727,7 @@ pub fn tighten(root: &Path) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remedies;
     use crate::workspace_root;
 
     /// The test module does not count, so test code may grow without moving a
@@ -893,9 +954,9 @@ mod tests {
             // matched as a substring: one tracked path being a substring of
             // another would otherwise attribute the wrong file's violation.
             let prefix = format!("  {path}: ");
-            let from_scan: Vec<String> = whole
+            let from_scan: Vec<Finding> = whole
                 .iter()
-                .filter(|line| line.starts_with(&prefix))
+                .filter(|f| f.line.starts_with(&prefix))
                 .cloned()
                 .collect();
             assert_eq!(
@@ -937,7 +998,7 @@ mod tests {
         let findings = check_file(&workspace_root(), "crates/app/src/does_not_exist.rs");
         assert_eq!(findings.len(), 1, "expected one finding, got {findings:?}");
         assert!(
-            findings[0].contains("could not be read"),
+            findings[0].line.contains("could not be read"),
             "the finding must say the file was unreadable: {findings:?}"
         );
     }
@@ -973,7 +1034,7 @@ mod tests {
         );
         let findings = check(&root);
         assert!(
-            !findings.iter().any(|line| line.contains("stale entry")),
+            !findings.iter().any(|f| f.line.contains("stale entry")),
             "an undecodable file must not be called a stale entry: {findings:?}"
         );
         let _ = fs::remove_dir_all(&root);
@@ -998,7 +1059,7 @@ mod tests {
         let findings = check(&root);
         assert_eq!(findings.len(), 1, "expected one finding, got {findings:?}");
         assert!(
-            findings[0].contains("nothing to measure"),
+            findings[0].line.contains("nothing to measure"),
             "the finding must name the missing directory: {findings:?}"
         );
         let _ = fs::remove_dir_all(&root);
@@ -1042,7 +1103,8 @@ mod tests {
 
         assert_eq!(findings.len(), 1, "expected only the budget: {findings:?}");
         assert!(
-            findings[0].contains("+100") && findings[0].contains("without lowering another"),
+            findings[0].line.contains("+100")
+                && findings[0].line.contains("without lowering another"),
             "the finding must name the overage and the act: {findings:?}"
         );
         let _ = fs::remove_dir_all(&root);
@@ -1096,7 +1158,7 @@ mod tests {
         let findings = check(&root);
         assert_eq!(findings.len(), 1, "expected one finding: {findings:?}");
         assert!(
-            findings[0].contains("3700") && findings[0].contains("nothing caps them"),
+            findings[0].line.contains("3700") && findings[0].line.contains("nothing caps them"),
             "the finding must name the uncapped total: {findings:?}"
         );
         let _ = fs::remove_dir_all(&root);
@@ -1116,7 +1178,7 @@ mod tests {
         let findings = check(&root);
         assert_eq!(findings.len(), 1, "expected one finding: {findings:?}");
         assert!(
-            findings[0].contains("a second"),
+            findings[0].line.contains("a second"),
             "the parse must refuse a duplicate: {findings:?}"
         );
         let _ = fs::remove_dir_all(&root);
@@ -1178,9 +1240,9 @@ mod tests {
     fn check_file_agrees_with_the_scan_about_the_baseline() {
         let root = scratch_pair("budget-agree", 2_100, 1_600, 3_600);
         let prefix = format!("  {BASELINE_FILE}:");
-        let from_scan: Vec<String> = check(&root)
+        let from_scan: Vec<Finding> = check(&root)
             .into_iter()
-            .filter(|line| line.starts_with(&prefix))
+            .filter(|f| f.line.starts_with(&prefix))
             .collect();
 
         assert_eq!(from_scan.len(), 1, "the scratch tree is over budget");
@@ -1205,8 +1267,95 @@ mod tests {
         let findings = check_file(&root, BASELINE_FILE);
         assert_eq!(findings.len(), 1, "expected one finding: {findings:?}");
         assert!(
-            findings[0].contains("is not a count"),
+            findings[0].line.contains("is not a count"),
             "the finding must name the parse failure: {findings:?}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The routing, asserted per class. This is the test whose absence let two
+    /// misroutings ship green in the first version: the remedy was chosen by
+    /// sniffing a finding's own prose for substrings, and nothing bound the
+    /// classifier to the messages it was reading.
+    ///
+    /// A remedy is followed, so a wrong one does more damage than a vague one.
+    /// Each case below is a violation an author actually hits, paired with the
+    /// only instruction that helps them.
+    #[test]
+    fn every_class_of_finding_carries_the_remedy_that_fixes_it() {
+        // Over a ceiling: carve a module.
+        let over_ceiling = scratch("remedy-over-ceiling", 10, 100);
+        let findings = check(&over_ceiling);
+        assert_eq!(
+            findings.iter().map(|f| f.remedy).collect::<Vec<_>>(),
+            vec![REMEDY],
+            "a file over its ceiling must be told to carve a module: {findings:?}"
+        );
+        let _ = fs::remove_dir_all(&over_ceiling);
+
+        // Over budget: pay for the raise.
+        let over_budget = scratch_pair("remedy-over-budget", 2_100, 1_600, 3_600);
+        let findings = check(&over_budget);
+        assert_eq!(
+            findings.iter().map(|f| f.remedy).collect::<Vec<_>>(),
+            vec![BUDGET_REMEDY],
+            "an unpaid raise must be told to pay for it: {findings:?}"
+        );
+        let _ = fs::remove_dir_all(&over_budget);
+
+        // Under budget by more than the slack: good news, and `--tighten`
+        // already knows the number. BUDGET_REMEDY would tell this author to
+        // pay for a raise they never made, and never names the command.
+        let under_budget = scratch_pair("remedy-under-budget", 2_100, 1_600, 5_000);
+        let findings = check(&under_budget);
+        assert_eq!(
+            findings.iter().map(|f| f.remedy).collect::<Vec<_>>(),
+            vec![BUDGET_SLACK_REMEDY],
+            "a total below budget must be told to tighten: {findings:?}"
+        );
+        assert!(
+            BUDGET_SLACK_REMEDY.contains("--tighten"),
+            "the remedy for good news must name the command that applies it"
+        );
+        let _ = fs::remove_dir_all(&under_budget);
+    }
+
+    /// The case the substring classifier got wrong, kept as its own test
+    /// because it is the one with no size finding in it at all. A one-character
+    /// typo in a data file used to be answered with "give the capability its
+    /// own file and a port to dock into".
+    #[test]
+    fn a_baseline_that_does_not_parse_gets_the_baseline_remedy() {
+        let root = scratch_pair("remedy-unparseable", 2_100, 1_600, 3_700);
+        fs::write(root.join(BASELINE_FILE), "!budget 61,467\n").expect("baseline is writable");
+
+        for findings in [check(&root), check_file(&root, BASELINE_FILE)] {
+            assert_eq!(findings.len(), 1, "expected one finding: {findings:?}");
+            assert_eq!(
+                findings[0].remedy, BASELINE_REMEDY,
+                "a malformed baseline is a syntax finding, not a size one: {findings:?}"
+            );
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A run that produced two classes explains both, once each, in the order
+    /// to act in. The doc comment on `remedies` promises this; nothing checked
+    /// it, and the first implementation could not have delivered it for the
+    /// parse case at all.
+    #[test]
+    fn a_mixed_run_explains_every_class_once() {
+        let root = scratch_pair("remedy-mixed", 2_100, 1_600, 3_600);
+        // Push one file over its own ceiling as well, so the run carries a
+        // file-level finding and the budget finding together.
+        fs::write(root.join("crates/probe/src/one.rs"), "x\n".repeat(2_400))
+            .expect("scratch source is writable");
+
+        let findings = check(&root);
+        assert_eq!(
+            remedies(&findings),
+            vec![REMEDY, BUDGET_REMEDY],
+            "a mixed run must explain both, file first: {findings:?}"
         );
         let _ = fs::remove_dir_all(&root);
     }

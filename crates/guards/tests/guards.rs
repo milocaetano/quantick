@@ -7,7 +7,7 @@
 //! moved — only the four minutes of `quantick-app` that used to stand between
 //! an author and the answer.
 
-use quantick_guards::{GUARDS, workspace_root};
+use quantick_guards::{GUARDS, remedies, workspace_root};
 
 /// The guards this file tests, in the order the tests below declare them.
 ///
@@ -30,8 +30,12 @@ fn assert_clean(name: &str) {
         violations.is_empty(),
         "{name} guard: {} finding(s)\n{}\n\n{}",
         violations.len(),
-        violations.join("\n"),
-        (guard.remedy)(&violations).join("\n\n")
+        violations
+            .iter()
+            .map(|f| f.line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        remedies(&violations).join("\n\n")
     );
 }
 

@@ -76,14 +76,16 @@ on every invocation of `ui-harness`, `visual-qa` and `trader-ux-review`.
 
 **Fixed by** moving it verbatim to `references/hook-registry.md`, with the skill
 pointing at it and telling the reader to `grep` for the surface they need. No
-row was dropped, and reading it whole is still available for the rare case that
+row was dropped — the first split of this branch stranded five hooks in the skill,
+which the review caught and this branch fixed, so the registry now holds all 126
+rows including the pending ones. Reading it whole is still available for the case that
 wants it — taking inventory, auditing coverage — which now costs what it always
 did instead of being charged to every run.
 
 | | before | after |
 | --- | --- | --- |
-| `ui-harness/SKILL.md` | 76,459 | **16,316** (−79%) |
-| all ten `SKILL.md` together | 203,402 | **146,576** (−28%) |
+| `ui-harness/SKILL.md` | 76,459 | **9,887** (−87%) |
+| all ten `SKILL.md` together | 203,402 | **144,441** (−29%) |
 
 ### Be honest about the other direction
 
@@ -92,15 +94,23 @@ kind of accounting this repository files as a finding:
 
 | | change |
 | --- | --- |
-| `CLAUDE.md` (chain budget + model routing) | +2,573 |
-| `delivery-review/SKILL.md` (cheap start, escalation) | +2,785 |
-| `arch-review/SKILL.md` (points at the chain budget) | +532 |
-| **spent** | **+5,890** |
-| **recovered from the registry move** | **−60,143** |
-| **net across every always-read artifact** | **−54,253** |
+| `delivery-review/SKILL.md` (pass split, escalation, its wiring) | +6,306 |
+| `CLAUDE.md` (chain budget + model routing) | +3,028 |
+| `arch-review/SKILL.md` (points at the chain budget) | +796 |
+| `ship/SKILL.md` (stops carrying a second round count) | +509 |
+| **spent** | **+10,639** |
+| **recovered from the registry move** | −66,572 |
+| **net across every always-read artifact** | −55,933 |
 
-So the saving is one structural move, not a diet. Roughly 13,500 tokens per
-invocation that touches the harness, and nothing at all on a run that does not.
+So the saving is one structural move, not a diet — and the rules cost nearly
+twice what the first draft of this table claimed, because the review round added
+four more passages. Roughly 14,000 tokens saved per invocation that touches the
+harness, and nothing at all on a run that does not.
+
+The 68,639-byte reference file is not counted as a saving anywhere above. It is
+the same bytes, moved to where they are paid for on demand rather than on every
+run — which is the whole claim, and inflating it into a deletion would be the
+kind of accounting this section exists to avoid.
 
 ## 3. Models: every subagent was billed at open-judgement rates
 
@@ -111,10 +121,24 @@ reads a diff and applies a checklist somebody else already wrote.
 
 **Fixed by** the routing rule in `CLAUDE.md` — retrieval on `haiku`,
 checklist-application on `sonnet`, open judgement on the strong model — and by
-`delivery-review` naming `sonnet` in its dispatch, with a second dispatch on the
-strong model carrying **only** the lines the first graded as other than
-`DELIVERED`. The strong pass is now paid per disputed line rather than per
-branch, and a clean branch never pays it.
+`delivery-review` naming `sonnet` on its **criteria pass**, with a second
+dispatch on the strong model carrying **only** the lines the first graded as
+other than `DELIVERED`. The strong pass is paid per disputed line rather than
+per branch, and a clean branch never pays it.
+
+**Two corrections the review forced, both worth recording.** The first draft
+routed the whole reviewer to `sonnet`, including the **completeness pass** —
+and that was backwards. `UNLEDGERED` is a *discovery* grade: its failure mode is
+a false negative, an ask nobody noticed, which produces no line for any
+escalation to pick up. The skill itself calls it the only failure the rest of
+the pipeline is blind to by construction, so it was the one pass that could not
+afford a weaker reader. It keeps the strong model and is never escalated.
+
+The second is about this very rule's reach: `grep -rn haiku .claude/` matches
+nothing but this document. No skill routes a retrieval agent, and
+`delivery-review`'s criteria pass is the **only** routed call site in the
+repository. The rule is written as the standard the next dispatch meets, and
+`CLAUDE.md` now says so rather than implying a taxonomy the repo exercises.
 
 **The exception is the point.** `arch-review` step 0 stays on the strong model
 and now says so. `code-review` finds real defects partly by being one;
@@ -143,8 +167,8 @@ absorbed it:
 | Given up | What carries it now |
 | --- | --- |
 | Shape-pass rounds beyond the third | The chain budget defers rather than discards — the remainder ships as a PR follow-up with its severity, visible and arguable. An open Blocker never defers. |
-| A strong model grading every `A`/`G` line | A `sonnet` first pass, with the strong model re-grading every line that is not `DELIVERED`. The judgement is bought where the disagreement is. |
-| A reviewer reading the whole registry | 118 rows still there, greppable. Nothing was deleted. |
+| A strong model grading every `A`/`G` line | A `sonnet` first pass **on the criteria pass only**, with the strong model re-grading every line that is not `DELIVERED`. The completeness pass, which has no escalation that could catch its failure mode, keeps the strong model. |
+| A reviewer reading the whole registry | All 126 rows still there, greppable. Nothing was deleted. |
 | Reviewer attention on file growth | **The debt budget** — mechanical, ~1s, at edit time. See below. |
 
 ### The debt this repository already carries

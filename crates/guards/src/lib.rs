@@ -49,26 +49,64 @@ pub fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// One guard, so the binary and the tests name the same three things in the
-/// same order.
+/// One violation, carrying the instruction that fixes *it*.
+///
+/// The remedy rides on the finding rather than on the guard, because the size
+/// guard has three classes of violation whose fixes are unrelated: a file over
+/// its ceiling is a capability that docked by editing the trunk, a debt total
+/// over budget is a raise nobody paid for, and a baseline that does not parse
+/// is a typo in a data file. A wrong remedy is worse than a terse one — it is
+/// followed.
+///
+/// The first attempt made the remedy a function of the finding *strings*,
+/// which meant classifying a violation by sniffing its own prose for
+/// substrings. That is the duplicated-constant defect this repository files
+/// against code: reword a message and the classifier silently starts handing
+/// out the wrong instruction, with nothing to fail. Attaching the remedy where
+/// the finding is *built* makes the two impossible to separate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Finding {
+    /// The violation, already formatted for output.
+    pub line: String,
+    /// What to do about this one.
+    pub remedy: &'static str,
+}
+
+impl Finding {
+    /// Build a finding. Taking the remedy at construction is the whole point:
+    /// there is no way to produce a violation without saying how to fix it.
+    pub fn new(line: impl Into<String>, remedy: &'static str) -> Self {
+        Self {
+            line: line.into(),
+            remedy,
+        }
+    }
+}
+
+/// Every distinct remedy across a set of findings, in the order the findings
+/// raised them, each appearing once.
+///
+/// Order is the order to act in, and it comes from the findings rather than
+/// from a fixed list, so a guard that grows a fourth class needs no edit here.
+pub fn remedies(findings: &[Finding]) -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::new();
+    for finding in findings {
+        if !out.contains(&finding.remedy) {
+            out.push(finding.remedy);
+        }
+    }
+    out
+}
+
+/// One guard, so the binary and the tests name the same things in the same
+/// order.
 pub struct Guard {
     /// How the guard is named in output.
     pub name: &'static str,
     /// Every violation across the whole repository.
-    pub check: fn(&Path) -> Vec<String>,
+    pub check: fn(&Path) -> Vec<Finding>,
     /// Every violation in one file, for the edit-time hook.
-    pub check_file: fn(&Path, &str) -> Vec<String>,
-    /// What to do about the violations that were actually found.
-    ///
-    /// A function of the findings rather than one string per guard, because
-    /// the size guard grew a second class of violation whose fix is nothing
-    /// like the first: a file over its ceiling is a capability that docked by
-    /// editing the trunk, while the debt budget being over is a raise nobody
-    /// paid for. Printing one text for both would have handed an author the
-    /// wrong instruction in whichever case lost, and a wrong remedy is worse
-    /// than a terse one — it is followed. Every remedy that applies is
-    /// returned, so a mixed run explains both.
-    pub remedy: fn(&[String]) -> Vec<&'static str>,
+    pub check_file: fn(&Path, &str) -> Vec<Finding>,
 }
 
 /// Every guard this crate runs.
@@ -77,18 +115,15 @@ pub const GUARDS: &[Guard] = &[
         name: "size",
         check: size::check,
         check_file: size::check_file,
-        remedy: size::remedies,
     },
     Guard {
         name: "language",
         check: language::check,
         check_file: language::check_file,
-        remedy: |_| vec![language::REMEDY],
     },
     Guard {
         name: "encoding",
         check: encoding::check,
         check_file: encoding::check_file,
-        remedy: |_| vec![encoding::REMEDY],
     },
 ];

@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use quantick_guards::{GUARDS, size, workspace_root};
+use quantick_guards::{GUARDS, remedies, size, workspace_root};
 
 /// Turn whatever the caller typed into the workspace-relative spelling with
 /// forward slashes that every guard is keyed on.
@@ -61,7 +61,8 @@ usage: quantick-guards (--file <path> | --tighten)
 
   (no arguments)   run every guard over the repository
   --file <path>    run every guard over one workspace-relative path
-  --tighten        lower any size-baseline entry whose file has shrunk
+  --tighten        lower any size-baseline entry whose file has shrunk, and
+                   the !budget total to match -- only ever downward
 
 The two modes are alternatives; they cannot be combined.
 Exit code 1 means a guard found something.";
@@ -127,9 +128,9 @@ fn report(root: &std::path::Path, only: Option<String>) -> ExitCode {
         clean = false;
         eprintln!("{}: {} finding(s)", guard.name, violations.len());
         for violation in &violations {
-            eprintln!("{violation}");
+            eprintln!("{}", violation.line);
         }
-        for remedy in (guard.remedy)(&violations) {
+        for remedy in remedies(&violations) {
             eprintln!("\n{remedy}\n");
         }
     }
@@ -140,7 +141,8 @@ fn report(root: &std::path::Path, only: Option<String>) -> ExitCode {
     }
 }
 
-/// Lower every size-baseline entry whose file has shrunk past the slack.
+/// Lower every size-baseline entry whose file has shrunk past the slack, and
+/// the `!budget` total with them. Both directions are down only.
 fn tighten(root: &std::path::Path) -> ExitCode {
     match size::tighten(root) {
         Err(problem) => {
@@ -148,7 +150,12 @@ fn tighten(root: &std::path::Path) -> ExitCode {
             ExitCode::FAILURE
         }
         Ok(applied) if applied.is_empty() => {
-            println!("nothing to tighten: no tracked file has shrunk past the slack");
+            println!(
+                "nothing to tighten: no tracked file has shrunk past the slack, and the {} \
+                 total is within {} of its ceilings",
+                size::BUDGET_DIRECTIVE,
+                size::BUDGET_SLACK
+            );
             ExitCode::SUCCESS
         }
         Ok(applied) => {
@@ -159,7 +166,7 @@ fn tighten(root: &std::path::Path) -> ExitCode {
             // someone else's, whose `git status` then carries a change nobody
             // made on purpose.
             println!(
-                "tightened {} entr(ies) in {}:",
+                "tightened {} line(s) in {}:",
                 applied.len(),
                 root.join(size::BASELINE_FILE).display()
             );
