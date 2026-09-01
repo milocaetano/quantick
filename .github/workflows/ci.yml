@@ -38,10 +38,20 @@ jobs:
         run: python3 tools/mt5/test_export_session.py
       - name: Bridge tests
         # Same shape, for the bridge itself: a fake terminal, no MetaTrader.
-        # It covers which ticks the live pump asks for and how "load older"
-        # walks backwards — behaviour cargo cannot see and ruff cannot judge,
-        # so without this step a revert to COPY_TICKS_ALL ships green.
-        run: python3 bridge/mt5/tests/test_paging.py
+        # It covers which ticks the live pump asks for, how "load older" walks
+        # backwards, and where the opening block starts — behaviour cargo
+        # cannot see and ruff cannot judge, so without this step a revert to
+        # COPY_TICKS_ALL, or to a clock-anchored backfill, ships green.
+        #
+        # The glob is deliberate: a suite added beside these is run the moment
+        # it exists, rather than when someone remembers to name it here. It is
+        # also what `cargo test -p quantick-feed-mt5 --test bridge_paging`
+        # does, so the two cannot disagree about which suites are covered.
+        run: |
+          for suite in bridge/mt5/tests/test_*.py; do
+            echo "== $suite"
+            python3 "$suite"
+          done
       - name: Install desktop GUI dependencies
         # quantick-app (egui/eframe + winit) needs these to build/link on Linux.
         run: |

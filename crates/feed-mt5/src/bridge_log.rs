@@ -97,6 +97,27 @@ pub fn event_code_of(line: &str) -> Option<String> {
 
 /// Translate one bridge stderr line, or `None` when it says nothing a user
 /// needs (unknown code, routine statistics, or not JSON at all).
+/// A count with thin spaces every three digits, the way the rest of the UI
+/// writes them.
+///
+/// `1525621` in a sentence the trader is supposed to act on is a number they
+/// have to count the digits of. This is the only place the bridge's structured
+/// fields become prose, so it is the place that owes them a readable shape.
+fn grouped(value: i64) -> String {
+    let digits = value.abs().to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
+    if value < 0 {
+        out.push('-');
+    }
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push('\u{202f}');
+        }
+        out.push(digit);
+    }
+    out
+}
+
 #[must_use]
 pub fn report_for_line(line: &str) -> Option<BridgeReport> {
     let value: Value = serde_json::from_str(line.trim()).ok()?;
@@ -109,6 +130,10 @@ pub fn report_for_line(line: &str) -> Option<BridgeReport> {
             .filter(|text| !text.is_empty())
     };
     let symbol = field("symbol").unwrap_or_else(|| "that contract".to_owned());
+    // The backfill's own lines count things, and a count is the whole point of
+    // what they say. Grouped for reading: "4000000" in a sentence a trader is
+    // meant to act on is a number they have to squint at.
+    let count = |name: &str| value.get(name).and_then(Value::as_i64).map(grouped);
 
     let report = match code {
         // -- fatal, and every one of them has a fix the user can perform ----
@@ -156,6 +181,24 @@ pub fn report_for_line(line: &str) -> Option<BridgeReport> {
             BridgeReport::progress(code, "the bridge lost its connection — reconnecting")
         }
         // -- streaming, but with less than the full picture ------------------
+        "BRIDGE_BACKFILL_TRUNCATED" => BridgeReport::survivable(
+            code,
+            match count("sending") {
+                Some(sent) => format!(
+                    "{symbol} traded more in this session than quantick opens with — \
+                     the newest {sent} prints are on the chart"
+                ),
+                None => format!("{symbol}'s session was larger than quantick opens with"),
+            },
+            "The rest of the day is still in MetaTrader: press + older to pull \
+             it in. Nothing was lost — this is a limit on what is held at once.",
+        ),
+        "BRIDGE_BACKFILL_WALK_FAILED" => BridgeReport::survivable(
+            code,
+            format!("MetaTrader stopped answering partway through {symbol}'s session"),
+            "The chart holds what did arrive and keeps streaming. Press + older \
+             to ask for the rest.",
+        ),
         "BRIDGE_BOOK_SUBSCRIBE_FAILED" => BridgeReport::survivable(
             code,
             format!("{symbol} has no Depth of Market in this terminal"),
@@ -246,6 +289,15 @@ mod tests {
         assert!(!ends(
             r#"{"event_code":"BRIDGE_BOOK_SUBSCRIBE_FAILED","symbol":"WDO$"}"#
         ));
+        // Same shape for the two the opening block can raise: the trader has
+        // less than the whole session and a way to get the rest, but the tape
+        // is streaming and killing the session would cost them that too.
+        assert!(!ends(
+            r#"{"event_code":"BRIDGE_BACKFILL_TRUNCATED","symbol":"WINV26","sending":4000000}"#
+        ));
+        assert!(!ends(
+            r#"{"event_code":"BRIDGE_BACKFILL_WALK_FAILED","symbol":"WINV26"}"#
+        ));
         for line in [
             r#"{"event_code":"BRIDGE_STARTING"}"#,
             r#"{"event_code":"BRIDGE_SESSION_STARTED","symbol":"WINQ26"}"#,
@@ -266,6 +318,40 @@ mod tests {
         assert_eq!(report.severity, BridgeSeverity::Attention);
         let step = report.next_step.expect("attention always has a next step");
         assert!(step.contains("Trades keep streaming"), "step was: {step}");
+    }
+
+    #[test]
+    fn a_cut_session_says_what_arrived_and_how_to_reach_the_rest() {
+        let report = report_for_line(
+            r#"{"event_code":"BRIDGE_BACKFILL_TRUNCATED","symbol":"WINV26","found":9000000,"sending":4000000,"action":"keep_newest"}"#,
+        )
+        .expect("a user-visible report");
+        assert_eq!(report.severity, BridgeSeverity::Attention);
+        assert!(
+            report.headline.contains("4\u{202f}000\u{202f}000"),
+            "the trader is told how much they have, grouped: {}",
+            report.headline
+        );
+        let step = report.next_step.expect("attention always has a next step");
+        assert!(
+            step.contains("+ older"),
+            "and the way back to the rest of the day: {step}"
+        );
+    }
+
+    #[test]
+    fn a_cut_with_no_count_still_says_something_true() {
+        // The bridge always sends `sending`, but a report that reads a field
+        // must never depend on one: a line from an older bridge would
+        // otherwise translate into a sentence with a hole in it.
+        let report =
+            report_for_line(r#"{"event_code":"BRIDGE_BACKFILL_TRUNCATED","symbol":"WINV26"}"#)
+                .expect("a user-visible report");
+        assert!(
+            report.headline.contains("larger than quantick opens with"),
+            "headline was: {}",
+            report.headline
+        );
     }
 
     #[test]

@@ -1,0 +1,182 @@
+//! The bridge and the app must agree about where a trading session begins.
+//!
+//! Two pieces of software read the same tape and both have to decide the same
+//! thing from it. `bridge/mt5/quantick_bridge.py` walks back from the newest
+//! print to find where the session started, so it knows what the opening block
+//! is; `crates/app/src/history_reach.rs` walks back from the chart's oldest bar
+//! for the same reason, so it knows when one press of *load older* has arrived.
+//! If those two ever disagree, a chart opens on a block whose left edge the
+//! campaign does not recognise as a session edge — and the trader sees a
+//! *load older* press that either refuses to move or silently drags in half of
+//! the day before.
+//!
+//! Nothing about the two languages lets them share the constant, so this test
+//! is the joint. It reads both sources and compares the numbers, which is
+//! deliberately cruder than linking one of them and deliberately impossible to
+//! forget: an edit to either side that does not touch the other turns this red
+//! with a message naming both.
+//!
+//! Why a test rather than a comment on each: the repository has been through
+//! this exact failure. `QuantickBridge.mq5` sends 30 minutes of opening history
+//! and `quantick_bridge.py` sent 720, and the two drifted apart quietly enough
+//! that four separate branches worked on the symptom. A comment saying "keep
+//! these in step" is what those two constants already had.
+
+use std::path::{Path, PathBuf};
+
+/// One constant that has to hold the same value on both sides of the wire.
+struct Agreement {
+    /// The Python name, as assigned at the bridge's module level.
+    python: &'static str,
+    /// The Rust name, as declared in `history_reach.rs`.
+    rust: &'static str,
+    /// Why they have to agree, printed when they do not.
+    because: &'static str,
+}
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("crates/app sits two levels below the workspace root")
+        .to_path_buf()
+}
+
+/// The value assigned to `name` at the bridge's module level.
+///
+/// The bridge writes these as arithmetic (`60 * 60 * 1000`) because that is how
+/// a reader checks them, so the right-hand side is evaluated rather than
+/// parsed: a product of integer literals, which is all these assignments are
+/// and all this needs to understand. Anything else is reported as unreadable
+/// rather than guessed at, because a guess here would defeat the whole test.
+fn python_constant(source: &str, name: &str) -> i64 {
+    let prefix = format!("{name} = ");
+    let line = source
+        .lines()
+        .find(|line| line.starts_with(&prefix))
+        .unwrap_or_else(|| {
+            panic!(
+                "`{name}` is not assigned at the module level of \
+                 bridge/mt5/quantick_bridge.py. If it was renamed, rename it here too — \
+                 that is what this test is for."
+            )
+        });
+    let expression = line[prefix.len()..]
+        .split('#')
+        .next()
+        .expect("a split always yields a first part")
+        .trim();
+    product_of_literals(expression, name, "bridge/mt5/quantick_bridge.py")
+}
+
+/// The value assigned to `pub const NAME` in a Rust source.
+///
+/// `crates/app` builds as a binary, so an integration test cannot `use` its
+/// constants — there is no library target to link. Reading the source is what
+/// is left, and it turns out to be the more honest half of the pair anyway:
+/// both sides are now checked the same way, and neither can satisfy this test
+/// by being the one that gets imported.
+fn rust_constant(source: &str, name: &str) -> i64 {
+    let needle = format!("pub const {name}: i64 = ");
+    let line = source
+        .lines()
+        .find(|line| line.trim_start().starts_with(&needle))
+        .unwrap_or_else(|| {
+            panic!(
+                "`{name}` is not declared as a `pub const … : i64` in \
+                 crates/app/src/history_reach.rs. If it was renamed or retyped, say so here \
+                 too — that is what this test is for."
+            )
+        });
+    let expression = line
+        .trim_start()
+        .trim_start_matches(&needle)
+        .split(';')
+        .next()
+        .expect("a split always yields a first part")
+        .trim();
+    product_of_literals(expression, name, "crates/app/src/history_reach.rs")
+}
+
+/// Evaluate `a * b * c`, which is all either side writes these as.
+///
+/// Both files spell their durations out as arithmetic (`60 * 60 * 1_000`)
+/// because that is how a reader checks them against a clock. Anything richer is
+/// reported as unreadable rather than guessed at: a guess here would let the
+/// two drift while the test stayed green, which is the one failure it exists to
+/// prevent.
+fn product_of_literals(expression: &str, name: &str, file: &str) -> i64 {
+    expression
+        .split('*')
+        .map(|factor| {
+            let factor = factor.trim().replace('_', "");
+            factor.parse::<i64>().unwrap_or_else(|_| {
+                panic!(
+                    "`{name}` in {file} is `{expression}`, which this test only knows how to \
+                     read as a product of integer literals. Either write it that way or teach \
+                     this test the new shape."
+                )
+            })
+        })
+        .product()
+}
+
+#[test]
+fn the_bridge_and_the_app_measure_a_session_the_same_way() {
+    let root = repo_root();
+    let source = std::fs::read_to_string(root.join("bridge/mt5/quantick_bridge.py"))
+        .expect("the MetaTrader bridge is part of this repository");
+    let rust_source = std::fs::read_to_string(root.join("crates/app/src/history_reach.rs"))
+        .expect("the chart's history reach is part of this repository");
+
+    let agreements = [
+        Agreement {
+            python: "SESSION_GAP_MS",
+            rust: "SESSION_GAP_MS",
+            because: "the bridge stops the opening block at a gap this wide, and the app \
+                      decides a load-older campaign reached a session edge at the same one. \
+                      Different values mean the chart opens on a block whose edge the \
+                      campaign does not recognise.",
+        },
+        Agreement {
+            python: "SESSION_WALK_MAX_SPAN_MS",
+            rust: "MAX_CAMPAIGN_SPAN_MS",
+            because: "on a market that never closes there is no gap to stop either side, so \
+                      both fall back to this span. Different values mean the opening block \
+                      and one press of load older disagree about how far back is enough.",
+        },
+    ];
+
+    let mut broken = Vec::new();
+    for agreement in &agreements {
+        let python_value = python_constant(&source, agreement.python);
+        let rust_value = rust_constant(&rust_source, agreement.rust);
+        if python_value != rust_value {
+            broken.push(format!(
+                "  bridge {} = {} but chart {} = {}\n    {}",
+                agreement.python, python_value, agreement.rust, rust_value, agreement.because
+            ));
+        }
+    }
+
+    assert!(
+        broken.is_empty(),
+        "the MetaTrader bridge and the chart no longer measure a session the same way:\n{}\n\
+         Change both, or neither.",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn the_walk_budget_is_derived_from_the_span_it_bounds() {
+    let source = std::fs::read_to_string(repo_root().join("bridge/mt5/quantick_bridge.py"))
+        .expect("the MetaTrader bridge is part of this repository");
+    let span = python_constant(&source, "SESSION_WALK_MAX_SPAN_MS");
+    let gap = python_constant(&source, "SESSION_GAP_MS");
+    assert!(
+        span % gap == 0,
+        "the opening walk steps in gap-wide windows up to a span budget, so the span \
+         ({span} ms) has to be a whole number of gaps ({gap} ms). A remainder is a final \
+         window the walk can never spend."
+    );
+}
