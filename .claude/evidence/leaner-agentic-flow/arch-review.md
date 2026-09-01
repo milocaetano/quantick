@@ -1,7 +1,11 @@
 # arch-review — refactor/leaner-agentic-flow
 
-Graded at `fb57687a5475824a3ba52be819e7fd6c5238515f` for step 0, then re-read
-over the round that answered it. Mission tier `high`, read from
+Step 0 graded `fb57687a5475824a3ba52be819e7fd6c5238515f`. The shape pass and
+this verdict cover the branch through `13c000b0a273c6d3f496f7b952bcbbe670ea4673`,
+the commit that resolves every finding below -- named explicitly, because the
+marker holds only a hash and an undated verdict cannot be told apart from one
+written for an earlier head. This file is committed after that sha, so the sha
+it names is its parent rather than its own; that is the ordering, not an error. Mission tier `high`, read from
 `mission-tier` in the worktree's git dir, which agrees with the goal file's
 `**Tier:**` line.
 
