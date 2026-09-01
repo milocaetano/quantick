@@ -273,17 +273,19 @@ fn the_fill_progress_is_on_the_wire_and_is_optional() {
         schema.contains("\"opening_slices_remaining\""),
         "the feed-status schema does not carry the opening fill's progress, so          an operator cannot read it back"
     );
-    // The `required` array is one JSON array of names; the field must not be in
-    // it. Checked by shape rather than by parsing, which is what every other
-    // guard in this file does.
-    let required = schema
-        .split("\"required\"")
-        .nth(1)
-        .and_then(|rest| rest.split(']').next())
-        .unwrap_or("");
+    // The field must appear in *no* `required` array in the document. Checked
+    // across all of them rather than the first: the schema carries one per
+    // `$defs` entry, and an earlier version of this assertion read
+    // `FeedCapabilitiesSnapshot`'s — not the one that governs this field — so
+    // it would have stayed green if the field had been made required. A guard
+    // that cannot fail for the reason it states is worse than none.
+    let required_anywhere = schema
+        .match_indices("\"required\"")
+        .filter_map(|(at, _)| schema[at..].split(']').next())
+        .any(|block| block.contains("opening_slices_remaining"));
     assert!(
-        !required.contains("opening_slices_remaining"),
-        "the field is marked required, so a snapshot taken while nothing is          filling — the steady state — would fail its own schema"
+        !required_anywhere,
+        "the field is marked required in some definition, so a snapshot taken          while nothing is filling — the steady state — would fail its own schema"
     );
 }
 

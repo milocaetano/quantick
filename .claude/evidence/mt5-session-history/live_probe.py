@@ -8,10 +8,12 @@ ships. Prints the old clock-window answer beside the new session-anchored one.
 import datetime as dt
 import sys
 import time
-import types
 from pathlib import Path
 
-BRIDGE = Path(r"C:\src\quantick-worktrees\feat-mt5-session-history\bridge\mt5")
+# Resolved from this file rather than hardcoded: the worktree this was
+# written in is removed once the branch merges, and a probe that dies then
+# is a probe nobody can re-run to check the claim it backs.
+BRIDGE = Path(__file__).resolve().parents[3] / "bridge" / "mt5"
 sys.path.insert(0, str(BRIDGE))
 
 import MetaTrader5 as mt5  # noqa: E402

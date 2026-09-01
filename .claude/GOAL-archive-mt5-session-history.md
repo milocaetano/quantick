@@ -174,7 +174,7 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
       fps/frame_avg under the full-day load against a `main` control run.
       *Evidence:* both summaries. →
       `.claude/evidence/mt5-session-history/perf.md`.
-      → **MET.** [`.claude/evidence/mt5-session-history/perf.md`](.claude/evidence/mt5-session-history/perf.md) — both runs' health lines in full, measured *under* the load: fps floor 58 → 54, frame_cpu peak 2.16 → 3.99 ms, zero `APP_SLOW_FRAMES` on either side, for 4.1× the trades. An earlier draft of this evidence quoted the recovery frame as the load; `delivery-review` caught it and the slice size was resized from 50 000 to 200 000 in response, taking the floor from 43 to 54.
+      → **MET.** [`.claude/evidence/mt5-session-history/perf.md`](.claude/evidence/mt5-session-history/perf.md), whose tables are the output of `summarise_perf.py` over the two logs committed beside it — deliberately not restated here, because restating them by hand is the defect three review rounds caught. Run the script to reproduce them. It also records what an earlier 50 000-print slice cost and why the shipped size is 200 000.
 
 - [x] **G5** — User-visible surfaces follow `ui-harness`: every new or changed
       surface reachable by an env hook added in this change; `visual-qa` with
