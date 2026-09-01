@@ -12,8 +12,18 @@ covered. Hence this file, in the repository, beside the evidence it cites.
 
 ## Step 0 — the bug pass
 
-Two `code-review` passes at **xhigh** over the branch, plus one self-review of
-the delta after them. Stated separately because they are different in kind.
+Two `code-review` passes at **xhigh** over the branch, plus three self-reviews
+of the deltas after them. Stated separately because they are different in kind.
+
+**No agent pass ran for rounds 3, 4 or 5, and that is the skill's own rule
+rather than a shortcut.** Two rounds is this repo's budget, a third is for a
+branch whose second round found Blockers, and past that the instruction is to
+report the remainder as PR follow-ups instead of spending another pass. Rounds
+1 and 2 were both spent and both closed. Each later delta is small and its bug
+pass is mine, which is said here so a short pass is never read as a thorough
+one. This branch has no tier file and no `**Tier:**` line, so the default
+level for a branch — `high` — is what rounds 1 and 2 would have used; they ran
+above it, at `xhigh`.
 
 | Pass | Scope | Findings | Outcome |
 | --- | --- | --- | --- |
@@ -21,6 +31,7 @@ the delta after them. Stated separately because they are different in kind.
 | 2 | whole branch @ `7bdef1a` | 14, all confirmed | 6 fixed, 3 deferred with reasons, 5 doc/claim corrections |
 | 3 | the delta after pass 2, by me | 2 | 2 fixed |
 | 4 | the delta after round 4 of `delivery-review`, by me | 1 | 1 fixed |
+| 5 | the delta after round 7 of `delivery-review`, by me | 3 | 3 fixed |
 
 The three that could have reached the trader, all from the agent passes:
 
@@ -38,6 +49,16 @@ The three that could have reached the trader, all from the agent passes:
 Every one of those is now covered by a test **run red against the un-fixed
 code** before being accepted: the cursor, the buffer drop, the dropped slices,
 the in-window session edge, and the zero cap.
+
+Round 5's three, on the perf summariser this directory generates itself from:
+its first return value was called `launch` and the sentence it printed said
+"after process launch", when it is the first stamped line *in the log* — after
+the process starts, after its subscriber is up. Small, free to avoid, and
+exactly the shape of overstatement this file keeps retracting, so it is
+`first_line` now and the sentence says so. Beside it, `"MT5_HISTORY_READY"`
+inline in a module that keeps its two other log-event names as constants, and
+a function called `parse` in a module that names `stamp_of` after what it
+reads.
 
 My own passes over the deltas found three things the agent passes could not
 have seen, because they were in code written after them: the floor check I had
@@ -88,9 +109,13 @@ visible decision to argue with rather than a skipped gate.
   reason.
 
   *Under the fill*: fps floor 54 against a control's 57, no `APP_SLOW_FRAMES`
-  on either side, for eight times the trades. Generated, not transcribed —
-  [`perf.md`](perf.md) and [`summarise_perf.py`](summarise_perf.py).
-  Per-trade and per-depth paths are untouched.
+  on either side, for eight times the trades — and the chart draws its first
+  bars **sooner** than the control's, 1.31 s against 3.45 s from
+  `MT5_BACKFILL_START`, which is what the opening block is for. Generated, not
+  transcribed — [`perf.md`](perf.md) and
+  [`summarise_perf.py`](summarise_perf.py), which reads those two marks off
+  each log rather than having them typed under it. Per-trade and per-depth
+  paths are untouched.
 - **Operability** — `QUANTICK_MENU=history` and
   `QUANTICK_HISTORY_REACH_SPAN_MINUTES`, both in the `ui-harness` registry; the
   reach and its span read back over the control plane
