@@ -821,8 +821,10 @@ class Session:
         one vectorised pass rather than a million Python objects. Boolean-mask
         indexing *copies*, so the window is briefly resident twice -- which is
         why the tick cap bounds roughly two to three times its own number in
-        peak memory rather than exactly it. The fake terminal the tests run against answers
-        with a list, which only a comprehension can filter.
+        peak memory rather than exactly it.
+
+        The fake terminal the tests run against answers with a list, which only
+        a comprehension can filter.
 
         The difference is not academic: measured against the live terminal over
         one WINV26 session (1 525 621 prints) the comprehension cost ~840 ms and
@@ -832,6 +834,21 @@ class Session:
         if hasattr(found, "dtype"):
             return found[found["time_msc"] < cursor_ms]
         return [tick for tick in found if int(tick["time_msc"]) < cursor_ms]
+
+    @staticmethod
+    def any_older_than(found, cursor_ms: int) -> bool:
+        """Whether `found` holds any tick strictly older than `cursor_ms`.
+
+        The yes/no half of `older_than`. Kept apart because the caller that
+        wants a bit should not pay for an array: on the startup path this is
+        asked of a two-day window, where building the filtered copy is megabytes
+        thrown away one line later.
+        """
+        if found is None or not len(found):
+            return False
+        if hasattr(found, "dtype"):
+            return bool((found["time_msc"] < cursor_ms).any())
+        return any(int(tick["time_msc"]) < cursor_ms for tick in found)
 
     @staticmethod
     def session_edge_in(found, gap_ms: int) -> int:
@@ -905,7 +922,7 @@ class Session:
         Returns the ticks, how many windows it spent, and what stopped it.
         """
         flags = self.tick_flags()
-        floor_ms = self.earliest_tick_ms()
+        floor_ms = self.earliest_tick_ms(newest_ms)
         cap = max(1, self.args.backfill_max_ticks)
         # The first window is the trader's own `--backfill-minutes`, which on a
         # market that is trading covers the whole session in a single call. The
@@ -997,7 +1014,15 @@ class Session:
         Silent on the socket by construction: it runs before `backfill_start`,
         where the session shape in PROTOCOL.md has no heartbeat.
         """
-        floor_ms = self.earliest_tick_ms()
+        # Deliberately not consulted here. This is the function a
+        # misreported floor burns: believing a claimed oldest tick of
+        # "19:30 today" made it give up one step in and bracket an empty
+        # block on a day with 1.5 M prints in it. It has no reference print
+        # to judge such a claim against -- it is looking for that print --
+        # so instead of judging one it does not ask. `OPENING_REACH_MAX_CALLS`
+        # is the bound that keeps a symbol with no history from searching
+        # forever, and an empty range is cheap.
+        floor_ms = None
         flags = self.tick_flags()
         cursor_s = before_s
         for call in range(1, OPENING_REACH_MAX_CALLS + 1):
@@ -1237,7 +1262,7 @@ class Session:
             scanned_to_ms = cursor_ms
         return ticks, exhausted, scanned_to_ms, calls
 
-    def earliest_tick_ms(self) -> int | None:
+    def earliest_tick_ms(self, newest_ms: int | None = None) -> int | None:
         """The oldest tick the terminal holds for this symbol, or None.
 
         Asked once per session and cached, the failure included: a terminal
@@ -1277,6 +1302,16 @@ class Session:
             )
             return None
         claimed = int(found[0]["time_msc"])
+        if newest_ms is not None and newest_ms - claimed > SESSION_WALK_MAX_SPAN_MS:
+            # Two days or more below the newest print this symbol has: whatever
+            # else that is, it is not the failure this check exists for, which
+            # is a terminal naming a tick from *inside* recent data as its
+            # oldest. Believing it costs nothing, and the alternative is a
+            # two-day range fetch on the startup path -- measured at 1.1 s on
+            # WINV26, against 0 ms for this comparison.
+            self.earliest_ms = claimed
+            log("BRIDGE_TICK_FLOOR", symbol=self.symbol, earliest_ms=claimed, checked="unnecessary")
+            return claimed
         to_s = claimed // 1000
         # Wide enough to see through dead time, which a four-hour look is not:
         # a terminal that named a *session's open* as its oldest tick would be
@@ -1286,10 +1321,10 @@ class Session:
         # disk.
         from_s = max(0, to_s - SESSION_WALK_MAX_SPAN_MS // 1000)
         below = mt5.copy_ticks_range(self.symbol, from_s, to_s, mt5.COPY_TICKS_ALL)
-        # Only *whether any* exist is needed, and this runs before the first
-        # tick reaches the chart, so it takes the vectorised path for the same
-        # reason `older_than` does.
-        older = 0 if below is None else len(self.older_than(below, claimed))
+        # Only *whether any* exist is needed, so this asks that and nothing
+        # more: `older_than` would build a filtered copy of a two-day window on
+        # the startup path, and the answer is one bit.
+        older = self.any_older_than(below, claimed)
         if older:
             log(
                 "BRIDGE_TICK_FLOOR_IMPLAUSIBLE",
