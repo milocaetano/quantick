@@ -217,13 +217,25 @@ and the bridge does not use that idea at all. Two surfaces that should agree.
   (ascending, deduplicated across slices) is asserted directly in the A1 and A4
   tests instead.
 
-## Deferrals requested — NOT granted
+## Deferrals — granted by the trader, 2026-09-01
 
-**Nothing below has been approved.** The heading said "approved" for four
-rounds and it was wrong: these were written by the session that also decided
-them, which `delivery-review` names as the failure the deferral mechanism
-exists to prevent. They are put to the trader with the PR, and until one is
-granted it is an open gap rather than an accepted one.
+**All five were put to the trader and all five were granted.** They are
+recorded with that fact because the heading previously said "approved" for
+four rounds while nobody had been asked — which `delivery-review` names as the
+failure the deferral mechanism exists to prevent: a deferral the session grants
+itself is not a deferral. They were presented with their real costs, including
+one whose stated window had been wrong by three and a half times, and the
+trader took them as PR follow-ups.
+
+Two carry a decision of their own:
+
+- On the `+ older` over-count, the trader's words were that bringing *more*
+  history than asked for does not get in their way, so the campaign keeps
+  measuring the chart rather than refusing the press during a fill.
+- On the continuous market, the trader confirmed they run **B3 only** on this
+  bridge — mini index and mini dollar — not the Tickmill CFDs. So the 24/5 path
+  is bounded and tested but touched by nobody, which is why measuring it was
+  not made a condition of shipping.
 
 
 - **A `+ older` press made *during* the opening fill can over-count.** A
