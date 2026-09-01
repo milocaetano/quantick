@@ -210,10 +210,17 @@ being exact about why it is not the skip file that got reverted.
 
 - **The denial never advertises it.** A branch that declared no tier gets the
   message it has always got, naming neither tiers, nor the file, nor the word
-  `small`. The gate does not teach its own way around itself, which is the
-  precise failure the skip file had. `guardrails_test.sh` asserts that absence
-  rather than trusting it, because it is the kind of property a later edit
-  breaks by being helpful.
+  `small`. `guardrails_test.sh` asserts that absence rather than trusting it,
+  because it is the kind of property a later edit breaks by being helpful.
+
+  **This is narrower than "the gate cannot teach its own way around itself",
+  and that stronger claim would be false.** `CLAUDE.md` is loaded in every
+  session and states the exemption; `ship` step 4 spells out how to read the
+  tier; this very section carries a writable snippet. The mechanism is
+  documented on purpose — one nobody can find is one nobody can audit — so what
+  the denial buys is only that an agent which merely *forgot* the review is not
+  handed the bypass at the moment it is most tempted. The load-bearing
+  protection is the bound below, not the silence.
 - **The word has to be true.** The exemption lapses once the branch exceeds
   `SMALL_TIER_MAX_CHANGED_LINES` changed lines — insertions plus deletions
   against `origin/main` — and past that the branch pays in full whatever the

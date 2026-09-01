@@ -14,7 +14,13 @@ anything else.
 `medium`, `high` or `max`** — bare (`/mission small …`) or flagged
 (`/mission --small …`), the two being the same instruction. Anything else is
 objective text and the objective keeps every word of it. With no tier given,
-the mission runs at **`medium`**.
+the mission runs at **`small`**.
+
+That default is the trader's, and it was moved there after the first branch to
+use this mechanism spent five review rounds on a docs change. The reasoning is
+worth keeping: a gate that costs more than the work it guards is a gate people
+route around, and a fast path nobody selects is a fast path that does not
+exist. `medium` and above are what you type when the change earns them.
 
 The bare form misreads an objective that genuinely opens with one of those
 words: `/mission small fonts are unreadable on the axis`, `/mission high CPU on
@@ -64,11 +70,18 @@ ceremony **on the record**, with a gate that knows it did.
 | **2** — request ledger | required, terse | required | required | required |
 | **3** — interrogation | skipped; every doubt becomes an `S` assumption, bar the one exception below | at most two questions, and only where a wrong guess throws work away | the full round, at most four | the full round, re-checked against the plan before code is written |
 | **4** — injected gates | English, and *Any code change* whole. Every other row applies only where the diff actually reaches that territory | the full table | the full table | the full table, and the UI rows apply to a surface touched even indirectly |
-| **5** — `GOAL.md` | short form: objective, ledger, `S`, criteria, verbatim request | full | full | full |
-| **8** — bug pass (`arch-review` step 0) | `code-review` at `low` | at `medium` | at `high` | at `high`, and the trader is told `/code-review ultra` exists |
+| **5** — `GOAL.md` | short form: objective, **the `**Tier:**` line**, ledger, `S`, criteria, verbatim request | full | full | full |
+| **8** — bug pass (`arch-review` step 0) | `code-review` at `low` | at `low` | at `medium` | at `high`, and the trader is told `/code-review ultra` exists |
 | **8** — shape pass | only the dimensions the diff touches; **8 always** | full | full | full |
-| **8** — `delivery-review` | **not run** | runs | runs | runs |
+| **8** — `delivery-review` | **not run** | **completeness pass only**, inline | runs in full | runs in full |
 | **9** — the `/goal` line | skipped | printed | printed | printed |
+
+The whole ladder moved down a notch after the trader measured what it cost:
+three `xhigh` bug passes and a full conformance review on one docs branch, for
+work that used to ship at roughly four-fifths the quality in a fraction of the
+time. The reply to that is not to delete the gates, it is to stop charging
+`high` prices for `small` work — which is what the tier is for. Nothing above
+`max` runs `ultra`, and nothing runs it automatically at all.
 
 **What no tier buys.** `arch-review` runs at every one of them, the four checks
 run at every one of them, and the worktree rule holds at every one of them. A

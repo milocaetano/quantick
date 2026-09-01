@@ -142,6 +142,26 @@ git -C "$root/noremote" commit -qm "second"
 noremote_sha=$(git -C "$root/noremote" rev-parse HEAD)
 noremote_git_dir=$(git -C "$root/noremote" rev-parse --absolute-git-dir)
 
+# marker_key <worktree> — the value a marker must hold for that branch: the
+# hash of its own diff against origin/main, falling back to the commit when
+# that cannot be computed. This restates guardrails.sh's `review_key`, and is
+# called out as a second copy: the alternative is sourcing a script whose first
+# act is to read stdin and whose last is to dispatch on $1. Every case below
+# fails loudly if the two ever disagree, which is the property that matters.
+marker_key() {
+    # The preconditions come first, exactly as `review_key` checks them. A bare
+    # pipe would hand hash-object an empty stream when `git diff` fails and
+    # yield the empty-blob hash - a well-formed value that is not the fallback
+    # the hook uses, so every no-remote case would fail for the wrong reason.
+    if git -C "$1" rev-parse --verify --quiet origin/main >/dev/null 2>&1 &&
+        git -C "$1" merge-base origin/main HEAD >/dev/null 2>&1; then
+        git -C "$1" diff "origin/main...HEAD" 2>/dev/null |
+            git -C "$1" hash-object --stdin 2>/dev/null
+    else
+        git -C "$1" rev-parse HEAD 2>/dev/null
+    fi
+}
+
 # --- harness ----------------------------------------------------------------
 
 # run <name> <mode> <stdin-json> <expect: deny|context|silent> [substring]
@@ -308,6 +328,30 @@ git -C "$root/mainco" checkout -q main
 # using a longer hash — still green, testing nothing it claims to.
 stale_sha=$(printf '%*s' "${#head_sha}" '' | tr ' ' 0)
 
+# What each fixture's markers must hold. A function of the diff, not of the
+# commit that carries it.
+wt_key=$(marker_key "$root/wt")
+big_key=$(marker_key "$root/big")
+binary_key=$(marker_key "$root/binary")
+noremote_key=$(marker_key "$root/noremote")
+
+if [ -z "$wt_key" ]; then
+    printf 'FAIL the fixture worktree has no review key, so no marker case is meaningful\n'
+    failed=$((failed + 1))
+fi
+
+# Rewording a commit must not move the key. That is the whole reason it is a
+# diff hash rather than a commit id, and without this case the marker could
+# regress to keying on the sha with every other case still green.
+git -C "$root/wt" commit -q --amend -m "second, reworded"
+if [ "$(marker_key "$root/wt")" = "$wt_key" ]; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL rewording a commit moved the review key, so the marker is not rebase-safe\n'
+    failed=$((failed + 1))
+fi
+head_sha=$(git -C "$root/wt" rev-parse HEAD)
+
 set_marker arch-review-ok ""
 set_marker delivery-review-ok ""
 
@@ -331,39 +375,39 @@ run "with neither review recorded the gate names arch-review first" \
 # other missing, every one of them would deny for the wrong reason and prove
 # nothing about staleness at all.
 set_marker arch-review-ok "$stale_sha"
-set_marker delivery-review-ok "$head_sha"
-run "an arch review recorded for an older commit is denied" \
+set_marker delivery-review-ok "$(marker_key "$root/wt")"
+run "an arch review recorded for an older change is denied" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "arch-review-ok"
 
-set_marker arch-review-ok "$head_sha"
+set_marker arch-review-ok "$(marker_key "$root/wt")"
 set_marker delivery-review-ok "$stale_sha"
-run "a delivery review recorded for an older commit is denied" \
+run "a delivery review recorded for an older change is denied" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
 
 # A marker holding something other than a sha must trip the gate, not break it:
 # `deny` interpolates the contents into JSON, and a payload the harness cannot
 # parse loses the decision and lets the command through. The delivery marker is
 # parked at HEAD so the arch marker is the only thing left to complain about.
-set_marker delivery-review-ok "$head_sha"
+set_marker delivery-review-ok "$(marker_key "$root/wt")"
 printf 'he said "hi"\nsecond line\n' > "$wt_git_dir/arch-review-ok"
 run "a corrupt marker is reported as not a commit id" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny '(not a commit id)'
 
 # Absence, one marker at a time. Each pins that the *other* being satisfied
 # does not carry the branch through.
-set_marker arch-review-ok "$head_sha"
+set_marker arch-review-ok "$(marker_key "$root/wt")"
 set_marker delivery-review-ok ""
 run "arch-review alone does not open the PR" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
 
 set_marker arch-review-ok ""
-set_marker delivery-review-ok "$head_sha"
+set_marker delivery-review-ok "$(marker_key "$root/wt")"
 run "delivery-review alone does not open the PR" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "arch-review-ok"
 
-set_marker arch-review-ok "$head_sha"
-set_marker delivery-review-ok "$head_sha"
-run "both reviews recorded for the exact HEAD is allowed" \
+set_marker arch-review-ok "$(marker_key "$root/wt")"
+set_marker delivery-review-ok "$(marker_key "$root/wt")"
+run "both reviews recorded for the exact change is allowed" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
 
 # The script is tool-agnostic: it reads the payload's `command` field and does
@@ -391,7 +435,7 @@ run "the script judges the payload, not the tool that produced it" \
 # property the whole design rests on: a branch that never asked for the
 # exemption is never told that one exists.
 
-set_marker arch-review-ok "$head_sha"
+set_marker arch-review-ok "$(marker_key "$root/wt")"
 set_marker delivery-review-ok ""
 
 set_tier "$root/wt" small
@@ -404,7 +448,7 @@ run "a small mission opens its PR on arch-review alone" \
 set_marker arch-review-ok ""
 run "a small mission still cannot skip arch-review" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "arch-review-ok"
-set_marker arch-review-ok "$head_sha"
+set_marker arch-review-ok "$(marker_key "$root/wt")"
 
 # Every other tier pays in full. Looped over the tiers the script itself
 # declares, minus the exempt one, so a tier added later is covered on the day
@@ -426,7 +470,7 @@ run "an unrecognised tier grants nothing" \
 # first pins that the exemption lapses, the second that it lapsed because the
 # size was *measured*. Without the second, a `declared_tier` that had stopped
 # recognising `small` at all would pass the first and look correct.
-set_marker_in "$big_git_dir" arch-review-ok "$big_sha"
+set_marker_in "$big_git_dir" arch-review-ok "$(marker_key "$root/big")"
 set_marker_in "$big_git_dir" delivery-review-ok ""
 set_tier "$root/big" small
 
@@ -441,8 +485,24 @@ run "and is told the measured size that cost it the exemption" \
 # captured screenshot paid the full delivery-review and was told its size could
 # not be measured - pointing at an absent remote it does have.
 set_tier "$root/binary" small
-set_marker_in "$binary_git_dir" arch-review-ok "$binary_sha"
+set_marker_in "$binary_git_dir" arch-review-ok "$(marker_key "$root/binary")"
 set_marker_in "$binary_git_dir" delivery-review-ok ""
+
+# Without this the case is vacuous: `silent` is also what any within-ceiling
+# branch produces, so if `logo.png` ever stops being seen as binary - a
+# `printf` that truncates at the NUL, a git that calls 21 bytes text - the case
+# passes while proving nothing about the `'-') continue` branch it exists to
+# pin. Assert the premise, not only the conclusion.
+if LC_ALL=C git -C "$root/binary" diff --numstat origin/main...HEAD |
+        grep -qP '^-\t-\t' 2>/dev/null ||
+    LC_ALL=C git -C "$root/binary" diff --numstat origin/main...HEAD |
+        grep -q "^-$(printf '\t')-$(printf '\t')"; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL the binary fixture is not seen as binary by git, so its case proves nothing\n'
+    printf '  numstat: %s\n' "$(LC_ALL=C git -C "$root/binary" diff --numstat origin/main...HEAD | tr '\n' ' ')"
+    failed=$((failed + 1))
+fi
 
 run "a binary file does not cost a small mission its exemption" \
     pr-gate "$(json_bash "$root/binary" "gh pr create --fill")" silent
@@ -461,7 +521,7 @@ run "and the reminder does not tell it to raise the tier" \
 # every small branch in a checkout without origin/main would ship ungraded at
 # any size, with all other cases still green.
 set_tier "$root/noremote" small
-set_marker_in "$noremote_git_dir" arch-review-ok "$noremote_sha"
+set_marker_in "$noremote_git_dir" arch-review-ok "$(marker_key "$root/noremote")"
 set_marker_in "$noremote_git_dir" delivery-review-ok ""
 
 run "a small mission whose size cannot be measured pays in full" \
@@ -480,7 +540,7 @@ git -C "$root/wt" checkout -q -b feat/inherits
 echo three > "$root/wt/src/a.txt"
 git -C "$root/wt" add -A
 git -C "$root/wt" commit -qm "a different mission, same worktree"
-set_marker arch-review-ok "$(git -C "$root/wt" rev-parse HEAD)"
+set_marker arch-review-ok "$(marker_key "$root/wt")"
 set_marker delivery-review-ok ""
 
 run "a second branch in the same worktree does not inherit the tier" \
@@ -488,8 +548,20 @@ run "a second branch in the same worktree does not inherit the tier" \
 
 git -C "$root/wt" checkout -q feat/x
 
+# A detached head names no branch. `rev-parse --abbrev-ref` prints the literal
+# `HEAD` there, and the snippet that writes this file uses that same command -
+# so without the guard, a declaration made while detached matches every future
+# detached checkout in this worktree: the inheritance bug in a different hat.
+git -C "$root/wt" checkout -q --detach
+printf 'HEAD small\n' > "$wt_git_dir/$tier_file_name"
+set_marker arch-review-ok "$(marker_key "$root/wt")"
+run "a tier declared while detached grants nothing" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
+git -C "$root/wt" checkout -q feat/x
+set_marker arch-review-ok "$(marker_key "$root/wt")"
+
 printf 'small\n' > "$wt_git_dir/$tier_file_name"
-set_marker arch-review-ok "$head_sha"
+set_marker arch-review-ok "$(marker_key "$root/wt")"
 run "a tier file naming no branch grants nothing" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
 
@@ -498,7 +570,7 @@ run "a tier file naming no branch grants nothing" \
 # the denial that a way around it exists. `run` can only assert a string is
 # present, so absence is checked here.
 set_tier "$root/wt" ""
-set_marker arch-review-ok "$head_sha"
+set_marker arch-review-ok "$(marker_key "$root/wt")"
 set_marker delivery-review-ok ""
 
 # The denial itself first, through `run`, so the absence check below cannot
@@ -509,6 +581,12 @@ run "an untiered branch is still denied for delivery-review" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
 
 untiered=$(printf '%s' "$(json_bash "$root/wt" "gh pr create --fill")" | sh "$GUARDRAILS" pr-gate 2>&1)
+
+# The denial quotes the recording command, which contains `$root` - a mktemp
+# path whose random suffix can itself contain `max`, `high`, `tier` or `small`.
+# Scanning it made a correct hook fail at random, with a message that sends the
+# next reader hunting a leak which is not there.
+untiered=$(printf '%s' "$untiered" | sed "s|$root||g")
 teaches=""
 case "$untiered" in
     *'"permissionDecision":"deny"'*) ;;
@@ -594,8 +672,8 @@ run "a commit message naming the gated command still reminds, not blocks" \
 run "a leading cd sends the gate to the worktree, not the session cwd" \
     pr-gate "$(json_bash "$root/mainco" "cd $root/wt && gh pr create --fill")" deny
 
-set_marker arch-review-ok "$head_sha"
-set_marker delivery-review-ok "$head_sha"
+set_marker arch-review-ok "$(marker_key "$root/wt")"
+set_marker delivery-review-ok "$(marker_key "$root/wt")"
 run "a leading cd finds the reviews recorded in that worktree" \
     pr-gate "$(json_bash "$root/mainco" "cd $root/wt && gh pr create --fill")" silent
 

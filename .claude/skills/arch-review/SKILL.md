@@ -35,10 +35,17 @@ Skill(code-review), args: "<target> <effort>"      one string, in that order
 ```
 
 **A mission's tier overrides that default**, because the tier is the trader's
-own statement of how much this change is worth reviewing: `low` for `small`,
-`medium` for `medium`, `high` for `high` and for `max`. At `max`, say in the
-header that `/code-review ultra` exists — a deep multi-agent cloud pass the
-trader triggers themselves, never this skill.
+own statement of how much this change is worth reviewing: **`low` for `small`
+and for `medium`, `medium` for `high`, `high` for `max`** — one notch below
+what the tier is named, deliberately. The trader measured three `xhigh` passes
+on a single docs branch and called the slowness not worth it, so the ladder was
+moved down rather than the gate removed. At `max`, say in the header that
+`/code-review ultra` exists — a deep multi-agent cloud pass the trader triggers
+themselves, never this skill, and never a level this step selects.
+
+**Never re-run a level that already ran clean.** Two rounds is this repo's
+budget; a third is for a branch whose second round found Blockers. Beyond that,
+report the remainder as PR follow-ups rather than spending another pass.
 
 Read the tier from **the same file `pr-gate` reads**, never from a second
 statement of it. The goal file's `**Tier:**` line is for the reader; this file
@@ -194,6 +201,11 @@ mission's job is to raise it rather than to have it graded cheaply.
 
 Every other tier reads all nine. The tier is a claim about the change's size,
 and this is the review that can see whether the claim held.
+
+**Ignore the narrowing when the claim is false.** If the branch is over the
+`small` ceiling in `guardrails.sh`, read all nine whatever the tier file says —
+otherwise the one unverified word that bought the exemption also cuts the
+budget of the pass most likely to notice it was unearned.
 
 ## The nine dimensions
 

@@ -43,6 +43,26 @@ gate, instead of an off-the-books one.
   bound at 300, against the alternatives of removing it entirely and of
   tightening it to 150. R4 is therefore discharged as the trader wants it, not
   as the ledger first read it.
+- **D6** — **`medium` runs only `delivery-review`'s completeness pass**, inline,
+  and the full graded review is reserved for `high` and `max`. The trader took
+  the measurement to its conclusion: the completeness pass is the only check in
+  the pipeline that can see an ask which never became a criterion, and it costs
+  reading two blocks of text; the criteria pass is what needs a dossier and a
+  stranger. Buy the half that catches what nothing else can.
+- **D7** — **a marker records the change reviewed, not the commit carrying it.**
+  Keyed on a hash of `git diff origin/main...HEAD` instead of `rev-parse HEAD`,
+  so a rebase, an amend or a reword no longer stales a review that is still
+  valid — the cascade that made this branch pay for five review rounds. It is
+  strictly *stricter* in one case the sha form missed: a rebase that lands the
+  branch on top of upstream edits to the very files it changes now stales the
+  marker, which is the case most deserving of a second look.
+- **D8** — **the default tier is `small`, not `medium`.** This supersedes D2,
+  and the trader's reason is on the record: *"antes do delivery review
+  funcionava bem 80% bem… depois que adicionei ficou super lento e pra mim não
+  compensa ficar lento assim"*. The bug pass ladder moved down a notch with it
+  (`low`/`low`/`medium`/`high`), because three `xhigh` passes on a docs branch
+  is what prompted this. A fast path nobody selects is a fast path that does
+  not exist, so it became the one you get by default.
 - **D5** — **`max` does not gain a gate**: it tells the trader that
   `/code-review ultra` exists and stops there. Raised because `high` and `max`
   otherwise run an identical bug pass — the harness reserves `ultra` for the
@@ -201,7 +221,7 @@ Recorded 2026-08-31, on `feat/mission-tiers` at commit `7b01b04`.
 | A9 | *A tier goes up, never down* in the skill; and in `guardrails.sh`, the over-ceiling denial says so in the message it hands back. |
 | A10 | Named in `.claude/hooks/README.md` (new section *The `small` mission exemption*, plus both table rows), `CLAUDE.md` (new **One mission, one tier** bullet and two amended ones), `.claude/skills/ship/SKILL.md` step 4, `.claude/skills/delivery-review/SKILL.md` (new *When this skill does not run*), and `docs/agentic-development.md` (three passages). |
 | G2 | **Rebased onto latest `origin/main` first.** The criterion says *after* rebasing, and the first version of this line was written 13 commits behind — the delivery review caught it. Post-rebase, each check run on its own: `cargo fmt --all -- --check` **exit 0**, `cargo clippy --workspace --all-targets -- -D warnings` **exit 0**, `cargo build --workspace` **exit 0**, `cargo test -p quantick-app --test language_guard` **exit 0** (4/4). `cargo test --workspace` **exits 101**, on one test and the same one in all three runs: `quantick-feed-mt5 --test bridge_paging`, whose failure text is `Python was not found; run without arguments to install from the Microsoft Store` — this box resolves `python3` to the Store alias stub. Run directly, `python bridge/mt5/tests/test_paging.py` passes **31 checks, exit 0**. The diff contains **zero** `.rs` files and zero cargo manifests, so no Rust test result can be caused by it; CI, which has a real `python3`, is where the fourth check goes green without an asterisk. Two things seen and not hidden: an earlier version of this line claimed "all exit 0" over "one bin test" when the artifacts showed exit 101 and three, and the first post-rebase run failed to link with `LNK1181` on a build-script `resource.res` — target-directory contention right after a rebase invalidated the cache, gone on a clean re-run and unrelated to the diff. |
-| G3 | `sh .claude/hooks/guardrails_test.sh` → **72 passed, 0 failed** (39 before this branch). Neutered to `exit 0` → **18 passed, 30 failed**, the suite still running to completion, then restored and re-run green. Six mutation runs besides, each reintroducing one defect a review found: every one turns red exactly the case written for it and no other — the branch-identity check, the unmeasurable size, the binary skip (two cases), the drift check that had stopped firing, the absence vocabulary, and the snippet format. |
+| G3 | `sh .claude/hooks/guardrails_test.sh` → **75 passed, 0 failed** (39 before this branch). Neutered to `exit 0` → **18 passed, 30 failed**, the suite still running to completion, then restored and re-run green. Six mutation runs besides, each reintroducing one defect a review found: every one turns red exactly the case written for it and no other — the branch-identity check, the unmeasurable size, the binary skip (two cases), the drift check that had stopped firing, the absence vocabulary, and the snippet format. |
 
 **G1 and G4 are open here on purpose.** Both are verdicts of the `arch-review`
 that runs immediately after this commit, so neither can exist while this file is
@@ -295,6 +315,45 @@ not:
 
 Two of its findings were escalated rather than closed by the mission, because
 they were the trader's: D4 and D5 above.
+
+**arch-review round 3: 12 findings, all confirmed, all fixed.** Two more
+reproduced against the hook, and the first was the ugliest of the branch:
+
+- **A tier declared while HEAD is detached recorded the literal string `HEAD`**
+  — because the snippet that writes the file uses `rev-parse --abbrev-ref`,
+  which prints exactly that when detached — and then matched *every* future
+  detached checkout in that worktree. The `<branch> <tier>` format added in
+  round 1 to close the inheritance bug had a second door in it, and the comment
+  two lines above claimed detached heads "grant nothing". Now they do.
+- **The ceiling counted the mission's own paperwork.** The goal archive is
+  required as the branch's last commit, and this file alone is larger than the
+  entire 300-line ceiling — so a genuinely small mission could be pushed out of
+  its own tier by the artifact the tier obliged it to write, with the denial
+  telling it to make an irreversible escalation. The size measurement now
+  excludes `.claude/GOAL*.md`. The review key deliberately does *not*: both
+  reviews read that file.
+
+The rest were three fragile `if`s that were mutually exclusive only because a
+helper happened to call `exit`; a reminder whose remedy ("check that
+origin/main exists") is unreachable when origin/main is missing; a secrecy
+check that scanned the `mktemp` path and so failed at random on a correct hook;
+a binary-asset case that could pass vacuously; and a `$WT` used without being
+defined.
+
+**Two of my own were caught before any reviewer saw them**, both in D7's first
+draft: the recording command piped the raw diff while `review_key` captured it
+in `$( )` first, so the two hashed different bytes and the gate would have been
+impossible to satisfy; and `review_key` returning empty made `pr-gate` fail
+*open* where `origin/main` is missing, weaker than the sha form it replaced.
+Fixed with a precondition check and a fallback to the commit.
+
+**No fourth automated round was run**, at the trader's instruction and with the
+reason recorded in D8. The final delta — D6, D7, D8 and the round-3 fixes — was
+verified by the suite (75 cases, 0 failures, up from 39 before this branch),
+the four checks, and a shape read by hand. That is stated rather than implied:
+the `arch-review-ok` marker on this branch covers three `xhigh` step-0 rounds
+over earlier heads plus a manual pass over the last commit, and a reader should
+know which is which.
 
 ## The request as received
 

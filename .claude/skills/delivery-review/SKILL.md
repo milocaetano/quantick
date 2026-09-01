@@ -43,6 +43,31 @@ the exemption is bounded by how large the branch turns out to be, and neither
 is something to arrange at the point of shipping. If you are here because a
 gate refused a branch, the branch owes this review — run it.
 
+## Two modes, and the tier picks one
+
+**Full** (`high`, `max`, and any direct invocation): everything below — the
+dossier, the fresh subagent, all three passes, every `A` and `G` graded.
+
+**Completeness-only** (`medium`): step 1, then the **completeness pass alone**,
+run inline in the calling session. No dossier, no subagent, no criteria pass.
+Read the verbatim request at the foot of the goal file, derive the atomic asks
+from it, and compare against the ledger. PASS when nothing is `UNLEDGERED`;
+record the marker on PASS, and **say in the verdict which mode ran** — a marker
+from a completeness pass must never read as one from a full review.
+
+Why that is the half worth keeping when only one is affordable: the
+completeness pass is the only check in the entire pipeline that can see an ask
+which never became a criterion, and it costs reading two blocks of text. The
+criteria pass is what needs the dossier and the stranger, because grading
+"is this outcome really in the branch" against the author's own account is
+exactly what a self-grading session gets wrong.
+
+And it is the half that survives being run inline. "Does every ask in the
+request appear as a numbered line?" is close to mechanical; a session can
+answer it about its own ledger without much room to flatter itself. "Is `A7`
+delivered?" is a judgement about work you just did, which is why that one keeps
+the stranger. Say plainly that the weaker mode ran; do not imply the stronger.
+
 ## Step 1 — Find the checklist
 
 In order of preference. Say which source was used; the answer changes how much

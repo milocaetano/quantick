@@ -32,7 +32,7 @@ name as a slash command.
 
 | Skill | What it owns |
 | --- | --- |
-| `mission` | The orchestrator. Captures the session objective in English, classifies it, and derives the acceptance criteria — including which of the gates below are part of *done* for this kind of work, so the maintainer never has to list them. It also takes a **tier** — `small`, `medium`, `high`, `max` — which scales all of that to the size of the change, down to whether the conformance review runs at all. One session, one mission. |
+| `mission` | The orchestrator. Captures the session objective in English, classifies it, and derives the acceptance criteria — including which of the gates below are part of *done* for this kind of work, so the maintainer never has to list them. It also takes a **tier** — `small` (the default), `medium`, `high`, `max` — which scales all of that to the size of the change, down to how hard the bug pass looks and whether the conformance review runs at all. One session, one mission. |
 | `new-task` | Starts work from a GitHub issue: reads it, branches from updated `main` with the right prefix, moves the board card. |
 | `new-extension` | The build-time twin of the review question below. `arch-review` asks after the fact whether a feature could have been a new file plus one registration line; this skill designs it that way from the start. |
 | `arch-review` | The pre-PR review. Step 0 runs a correctness pass; then it grades *shape* — does the change dock like a module, does it declare its performance impact, do its tests stay out of the shipped binary, is it drivable without a mouse, does it hide anything behind a magic number, is it English throughout. |
