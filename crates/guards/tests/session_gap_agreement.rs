@@ -254,6 +254,40 @@ fn the_slice_cap_matches_what_the_feed_will_accept() {
 }
 
 #[test]
+fn the_fill_progress_is_on_the_wire_and_is_optional() {
+    // The control plane is how an operator without a mouse tells "this chart
+    // is still arriving" from "this is all there is". That answer travels as
+    // `opening_slices_remaining` in the feed-status snapshot, so the shipped
+    // schema has to carry it — and has to carry it as *optional*, because it
+    // is absent whenever nothing is filling, which is the steady state.
+    //
+    // Asserted against the committed schema rather than the Rust type: the
+    // schema is what a consumer validates against, and it is the artifact that
+    // would silently stop matching if the field were renamed or made required.
+    let schema = std::fs::read_to_string(
+        repo_root().join("schemas/control/observer-feed-status-v1.schema.json"),
+    )
+    .expect("the observer feed-status schema is part of this repository");
+
+    assert!(
+        schema.contains("\"opening_slices_remaining\""),
+        "the feed-status schema does not carry the opening fill's progress, so          an operator cannot read it back"
+    );
+    // The `required` array is one JSON array of names; the field must not be in
+    // it. Checked by shape rather than by parsing, which is what every other
+    // guard in this file does.
+    let required = schema
+        .split("\"required\"")
+        .nth(1)
+        .and_then(|rest| rest.split(']').next())
+        .unwrap_or("");
+    assert!(
+        !required.contains("opening_slices_remaining"),
+        "the field is marked required, so a snapshot taken while nothing is          filling — the steady state — would fail its own schema"
+    );
+}
+
+#[test]
 fn the_walk_budget_is_derived_from_the_span_it_bounds() {
     let source = std::fs::read_to_string(repo_root().join("bridge/mt5/quantick_bridge.py"))
         .expect("the MetaTrader bridge is part of this repository");

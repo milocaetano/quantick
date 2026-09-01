@@ -25,7 +25,11 @@ history_reach              = span
 history_reach_span_minutes = 240
 ```
 
-Recorded in [`second-operator-reads.txt`](second-operator-reads.txt).
+The transcript, with the raw answer under it, is
+[`second-operator-reach-readback.txt`](second-operator-reach-readback.txt).
+(An earlier revision of this file cited `second-operator-reads.txt` for these
+two lines; that file holds the *fill-progress* polling below and never held
+them. `delivery-review` caught the mis-citation.)
 
 ## Read — the opening fill's progress
 
@@ -36,11 +40,22 @@ It is absent when nothing is filling — so an operator can tell *"this chart is
 still arriving"* from *"this is all there is"*, which `history_trade_count`
 alone cannot say: it rises with no denominator.
 
-**What is proven, and how.** The tab's reader is asserted directly by
-`an_opening_slice_draws_without_answering_the_traders_press`
-(`crates/app/src/tab.rs`), which drives a real slice through `drain_feed` and
-checks `opening_slices_remaining() == Some(4)`. The snapshot field is wired
-from that reader and ships in the schema.
+**What is proven, and how.** Two halves, tested separately because they fail
+separately:
+
+- The tab's reader is asserted by
+  `an_opening_slice_draws_without_answering_the_traders_press`
+  (`crates/app/src/tab.rs`), which drives a real slice through `drain_feed` and
+  checks `opening_slices_remaining() == Some(4)`.
+- The wire contract is asserted by `the_fill_progress_is_on_the_wire_and_is_optional`
+  (`crates/app/tests/session_gap_agreement.rs`), which checks the shipped
+  feed-status schema carries the field **and does not require it** — absent is
+  the steady state, so a required field would make every idle snapshot fail its
+  own schema.
+
+What neither covers is the one-line copy between them in
+`crates/app/src/control/feed.rs`. That is review-covered rather than
+test-covered, and saying so is cheaper than implying otherwise.
 
 **What is not proven, and why — stated rather than implied.** I tried five
 times to catch the value live over the control plane and could not. The fill is

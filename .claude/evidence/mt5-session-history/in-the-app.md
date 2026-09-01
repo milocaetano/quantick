@@ -40,10 +40,16 @@ window, same tape: only the opening block differs.
 | bars at tick(50) | ~7 500 | **30 510** |
 | oldest print | the clock window | **09:03** (the session) |
 
-The frame cost of that is measured, and measured *under the load* rather than
-after it: see [`perf.md`](perf.md), which carries both runs' health lines in
-full. Summary — fps floor 58 → 54, `frame_cpu` peak 2.16 → 3.99 ms, zero
-`APP_SLOW_FRAMES` on either side.
+The frame cost is measured separately and mechanically: see
+[`perf.md`](perf.md), whose tables are generated from committed logs rather
+than transcribed. Summary — fps floor 57 → 54 for eight times the trades, no
+`APP_SLOW_FRAMES` inside either fill.
+
+**The surface verdicts below were captured on an earlier build** whose opening
+slice was 50 000 rather than the shipped 200 000. Slice size changes how long
+the fill takes and what it costs in frames — not what any of these five
+surfaces draws — so the verdicts stand, but the status-bar row's figures are
+that build's and the performance question is answered by `perf.md`, not here.
 
 It is also worth recording *why* the control exists: the first run of this
 capture photographed the old behaviour and would have been reported as a pass.
@@ -54,7 +60,7 @@ The bridge path in `mt5-config.toml` is absolute now, with a comment saying so.
 | Surface × state | Verdict | Evidence |
 | --- | --- | --- |
 | Flow chart, MT5 WINV26, whole session loaded | **PASS** | `shots/mt5-session-open.png` — 30 510 bars, axis 18:10→18:22 on the newest, price axis intact, no clipping, footprint legend reads `rows 5 · min qty 92 · side inferred` |
-| Status bar under the load | **PASS** | `60 fps · 16.7 ms · cpu 2.0 ms`; `arrival —` because the block is history and carries no live latency, which is the honest reading rather than a fabricated one |
+| Status bar under the load | **PASS** | It renders and stays legible while the session lands; `arrival —` because the block is history and carries no live latency, which is the honest reading rather than a fabricated one. The frame figures it happened to show are that run's — the measured ones are in [`perf.md`](perf.md) |
 | Book badge with `--no-book` | **PASS** | `book down · bridge_without_depth` and `no book` on the axis — the disabled state explains itself, per the data-honesty rule |
 | History menu, `by time` reach | **PASS** | `shots/older-span-menu.png` — chip beside `one page` and `previous session`, `hours of tape per press` = `3 h` from 180 minutes |
 | History menu, `previous session` reach | **PASS** | `shots/reach-previous-session-menu.png` — the duration rows are **absent**, so the control appears only under the reach that reads it |
