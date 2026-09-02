@@ -623,6 +623,30 @@ mod tests {
     }
 
     #[test]
+    fn an_untracked_path_stays_silent_even_on_a_tree_this_guard_cannot_measure() {
+        // The test above passes for the wrong reason on its own: the real
+        // repository always has `.claude/skills/`, so it never exercises the
+        // refusal. With the refusal placed above the `tracked` early return,
+        // `--file crates/probe/src/a.rs` on a tree without that directory
+        // exited 1 with a context finding — carrying BASELINE_REMEDY, which
+        // blames the author's baseline for a missing directory.
+        let root =
+            std::env::temp_dir().join(format!("quantick-context-no-skills-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
+        fs::write(root.join(BASELINE_FILE), "!budget 0\n").expect("scratch baseline is writable");
+
+        assert!(
+            check_file(&root, "crates/probe/src/a.rs").is_empty(),
+            "a path this guard does not read is not this guard's to complain about"
+        );
+        // A path it *does* read gets the refusal, because a verdict from a
+        // scan that saw nothing is worth nothing.
+        assert!(!check_file(&root, "CLAUDE.md").is_empty());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn the_baseline_is_checked_by_the_hook_that_sees_it_edited() {
         // The budget verdict is the whole reason the baseline is answerable
         // at all: it is the file a raise is written into.
