@@ -391,8 +391,8 @@ struct ReportView {
 }
 
 /// The report as data: what is being asked, and what came back. Handed
-/// out by [`PaperTrading::report_snapshot`] so an operator that cannot see
-/// the window can still say which trades produced which numbers.
+/// out by [`ReportState::snapshot`] so an operator that cannot see the
+/// window can still say which trades produced which numbers.
 pub(crate) struct ReportSnapshot<'a> {
     /// `None` — every symbol folder in scope.
     pub(crate) symbol: Option<&'a str>,
