@@ -151,3 +151,69 @@ catch classes of failure — drift, unreviewed commits, untested surfaces,
 mouse-only capabilities — not all failure. And the process is only as good as
 the acceptance criteria a mission writes down, which is a human judgement at
 the start of every session.
+
+## Why the rules read the way they do
+
+`CLAUDE.md` states each working rule operatively and keeps no argument. The
+arguments are here, because every one of these rules was written after the
+thing it forbids had already happened.
+
+**The edit loop is not the gate.** `cargo check` appeared nowhere in this
+repository's documentation, so the four-check gate was doubling as the loop
+between edits. An agent with no name for the fast path defaults to the slow
+one, on every edit, for the length of a mission. A one-package `cargo check`
+skips codegen and linking and answers on `quantick-app` in well under a
+minute, where a workspace build takes many.
+
+**The guard binary has to be armed on purpose.** A fresh worktree has no
+`target/`, so `target/debug/quantick-guards` does not exist, so the
+`PostToolUse` hook reports nothing — not "clean", *nothing* — for as long as
+that stays true. This was found switched off across every worktree in one
+checkout at once, which is the state `git worktree add` leaves behind by
+default rather than an accident someone had to cause. The crate has no
+dependencies, so arming it costs seconds, and it is the difference between a
+crossed ceiling reported at the edit that caused it and one reported after the
+code is written.
+
+**The size ratchet exists because the review measures the leaf.**
+`arch-review` dimension 1 asks whether a new capability can dock as a new file
+plus one registration line, and recent features answered yes honestly. `app.rs`
+still grew from 108 lines to over 36,000 in the five weeks after it was
+created, monotonically, never once shrinking. Nothing asks *where the
+registration lines accumulate*: they accumulate in `QuantickApp` and its
+constructor, because a capability with no port is docked by hand — a field, an
+init, a draw call, a hotkey — and every one of those four edits lands in the
+same file. fmt, clippy, build and the whole suite stay green throughout.
+
+It counts production lines only because a guard counting total lines would
+fire on a well-tested change and teach the author to write fewer tests, which
+is worse than the disease. It has teeth below a ceiling as well as above one
+because unclaimed slack is only headroom for the next feature to refill
+silently, which is how the debt was run up the first time. And the total is
+capped on top of the per-file ceilings because one branch raised `app.rs` from
+9,775 to 9,890 with a comment explaining why, extracted nothing in return, and
+every check stayed green — as it should have. Eighteen entries each raised
+"for this branch" read as eighteen reasonable decisions and one lost trunk,
+and no per-file rule can see that, because the question is about the sum.
+
+**`guards` has an empty manifest by design.** These guards read files and count
+lines, so living under `crates/app/tests/` made cargo build the largest crate
+in the repo before the cheapest question in it could be answered — four minutes
+of link for five seconds of work. A ratchet is meant to fire while you work,
+and one that expensive to consult gets consulted late, which is when its
+finding costs most to act on.
+
+**The review budget covers the chain, not each skill.** The old arrangement had
+no total at all: `arch-review`'s step 0 was bounded at two, `delivery-review`
+carried a separate three, the nine-dimension shape pass had none, and since
+answering any of them is a commit — which stales both markers by design and
+re-runs both reviews — nothing summed them. Measured before it was written:
+ordinary code branches spend about one round, meta-work on the workflow itself
+averages three, and the worst branch in the last twenty spent eight.
+
+**Model routing is a standard, not a description.** A bug pass finds real
+defects partly by being a strong model, which is the exception that pays for
+routing everything else down. Stated wider than its use, a rule drifts before
+anyone notices, so the count is worth being exact about: `delivery-review`'s
+criteria pass is the only routed call site in the repository today, and the
+`haiku` tier describes no existing dispatch at all.
