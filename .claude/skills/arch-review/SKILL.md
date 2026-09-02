@@ -464,7 +464,7 @@ not the goal. What the review checks is the mechanism Rust actually uses:
   finding, not the fix** — no crate here has a `[features]` section at all.
   The repo's answer is a *deliberately published* module, documented as part of
   what the crate is: `engine::fixture` and `engine::golden`, and
-  `control::fake`, whose fake host/client ports `CLAUDE.md` names in the
+  `control::fake`, whose fake host/client ports `AGENTS.md` names in the
   crate's own description. Per-file helpers used by one integration test go in
   `tests/common/mod.rs`, never a top-level `tests/common.rs` — cargo builds
   every top-level file in `tests/` as its own test binary, so the flat version

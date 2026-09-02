@@ -4,7 +4,7 @@ Real-time alternative bar charts (tick / volume / dollar / imbalance bars) for o
 
 Authoritative for working rules — each stated once, operatively. The reasoning lives in `docs/agentic-development.md`; the crate map, dependency graph and MCP control plane in `AGENTS.md`; the gate mechanics in `.claude/hooks/README.md`; everything else indexed by `docs/README.md`.
 
-## Commands
+## Verification loop (mandatory)
 
 Between edits: `cargo check -p <crate>`, `cargo test -p <crate> <filter>`, `cargo test -p quantick-guards`. Before every commit, all four — `check` never stands in for `clippy`:
 
@@ -14,6 +14,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace
 cargo test --workspace
 ```
+
+`cargo test -p quantick-guards` runs the repository guards in about a second, because that crate has no dependencies to build — ask it after a batch of edits rather than at the end of a full suite run. A `PostToolUse` hook runs the same binary over each edited file, but a fresh worktree has no `target/`, so the hook reports nothing at all — not "clean", *nothing* — until `cargo build -p quantick-guards` has been run there. It is advisory and gates nothing.
 
 CI runs those four plus what cargo cannot see — `sh .claude/hooks/guardrails_test.sh`, `ruff check --select F` over `tools/mt5/` and `bridge/mt5/`, `python3 tools/mt5/test_export_session.py`, `python3 bridge/mt5/tests/test_*.py`. Run the ones your change touches, watch with `gh pr checks <n> --watch`; red CI never merges.
 
@@ -45,7 +47,6 @@ Crates under `crates/`; `AGENTS.md` *The map* owns the descriptions and the grap
 - **The size ratchet enforces this** — `crates/guards/src/size.rs`, ceilings in `crates/guards/size-baseline.txt`. Production lines only, threshold 1,500; `tests/` untracked.
 - **Teeth both ways** — no growth past a ceiling, and no sitting more than 200 lines below one. `cargo run -p quantick-guards -- --tighten` writes the new number when a file shrinks.
 - **Growth is pay-as-you-go** — a raise must be signed in the baseline with a reason, and a budget caps the sum of all ceilings, so raising one means lowering another in the same change.
-- **Arm the guard in a fresh worktree** — with no `target/` the `PostToolUse` hook reports nothing at all, not "clean". `cargo build -p quantick-guards` costs seconds; it is advisory and gates nothing.
 
 ## Workflow
 
