@@ -188,13 +188,13 @@ fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
     app.active_tab_mut().paper.redirect_history_dir(journal);
     app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
     while cmd_rx.try_recv().is_ok() {}
-    app.pending_replay_restart = Some(1);
+    app.harness.arm_replay_restart(1);
 
     // No round trip yet: the hook waits rather than seeking an empty
     // ledger, which would photograph nothing it exists to show.
     app.apply_replay_restart();
     assert_eq!(
-        app.pending_replay_restart,
+        app.harness.replay_restart_after(),
         Some(1),
         "the seek fired before a trade had closed"
     );
@@ -213,7 +213,11 @@ fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
     assert_eq!(app.active_tab().paper.session_trades().len(), 1);
 
     app.apply_replay_restart();
-    assert_eq!(app.pending_replay_restart, None, "the hook is consumed");
+    assert_eq!(
+        app.harness.replay_restart_after(),
+        None,
+        "the hook is consumed"
+    );
     assert!(
         matches!(
             cmd_rx.try_recv(),
@@ -238,10 +242,10 @@ fn the_scripted_replay_restart_waits_for_a_recording() {
     // Whatever the startup already asked the feed for is not the
     // subject; only what the hook adds after it is.
     while cmd_rx.try_recv().is_ok() {}
-    app.pending_replay_restart = Some(1);
+    app.harness.arm_replay_restart(1);
     app.apply_replay_restart();
     assert_eq!(
-        app.pending_replay_restart,
+        app.harness.replay_restart_after(),
         Some(1),
         "a live feed has no timeline to seek"
     );
@@ -416,7 +420,7 @@ fn the_scripted_pan_settles_on_the_projection_margin() {
     let slots = app.active_tab().flow_pane.slots();
     let newest = (slots - 1) as f32;
 
-    app.scripted_pan_px = Some(-9_000.0);
+    app.harness.arm_pan_px(-9_000.0);
     for _ in 0..3 {
         run_frame(&mut app, &ctx);
     }

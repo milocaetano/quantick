@@ -25,6 +25,10 @@ use crate::dock::{Dock, DockEnv, DockTab};
 use crate::drawings::{self, DeleteOutcome, DrawingAuthor};
 use crate::feed::{self, FeedCommand, FeedHandle, ReplayControl};
 use crate::feed_notice;
+use crate::harness::{
+    ContextMenuPane, DrawingDraft, DrawingsDemo, FrvpDemo, Harness, ScriptedMenu, StrategyDemoMode,
+    VenueHistoryDemo,
+};
 use crate::indicator_legend;
 use crate::indicator_panel::{self, SettingsDialog, SettingsOutcome};
 use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorSource, SlotId};
@@ -57,51 +61,6 @@ const AXIS_GUTTER: f32 = 64.0;
 const TIME_STRIP: f32 = 24.0;
 /// Id of the tab the window opens with.
 const FIRST_TAB_ID: u64 = 0;
-
-/// Frames the `QUANTICK_LOAD_OLDER` hook waits for a chart worth paging from.
-///
-/// It cannot fire at startup: paging asks for trades older than the ones on
-/// screen, and at launch there are none — the feed would refuse the request as
-/// `nothing_charted_yet`. So the hook waits for the first block to land, and
-/// gives up rather than hanging a capture run on a bridge that never connects.
-/// About ten seconds at 60 fps, which is longer than any bridge takes to say
-/// hello and shorter than a person's patience with a frozen window.
-const LOAD_OLDER_HOOK_FRAMES: u32 = 600;
-
-/// Frames the `QUANTICK_HISTORY_NOTE` hook holds its sentence on screen for.
-///
-/// A *hold*, not a wait — which is why it is not
-/// [`LOAD_OLDER_HOOK_FRAMES`]: that one is sized against how long a bridge
-/// takes to say hello, and retuning it for bridge latency must not silently
-/// retune how long a capture has to photograph a note.
-///
-/// Comfortably past `tab::HISTORY_NOTE_LINGER`, so a run that waits out a
-/// slow source still finds the sentence up; the note keeps its ordinary
-/// linger from the last raise once the hold ends, so even a hooked run
-/// photographs a note that expires.
-const HISTORY_NOTE_HOOK_FRAMES: u32 = 900;
-
-/// Frames the `QUANTICK_LOAD_OLDER_CANDLES` hook has for the *whole* run.
-///
-/// Much larger than the trade twin's, and for a reason the trade twin does
-/// not have: a page of prints is one venue round trip, while a span of
-/// candles is several slices of several pages each, and the hook is
-/// documented as reaching the old ninety-day default in thirteen of them.
-/// Every frame spent waiting for a span costs one tick here, so the budget
-/// has to cover the legitimate fetching as well as the hang it exists to
-/// bound. About a minute at 60 fps: longer than thirteen spans take against
-/// a venue that is answering, and far shorter than a capture run's patience
-/// with one that is not.
-const LOAD_OLDER_CANDLES_HOOK_FRAMES: u32 = 3_600;
-
-/// How long `QUANTICK_CONTROL_EVIDENCE=screenshot` waits for the window to
-/// hand over a rasterised frame.
-///
-/// A window that presents answers on the frame after the request; a headless
-/// or occluded one never does. About two seconds at 60 fps: long enough for a
-/// surface that is coming up, short enough that a capture run gets a bundle
-/// with an honest gap instead of waiting for one that will never arrive.
-const CONTROL_EVIDENCE_HOOK_FRAMES: u32 = 120;
 
 /// How much of the newest chart the `QUANTICK_DRAWINGS_DEMO` hook spreads its
 /// objects across. Close to what a default viewport shows, so every object
@@ -373,101 +332,6 @@ fn fmt_progress(progress: &quantick_engine::BarProgress, unit: &str) -> String {
     )
 }
 
-/// What `QUANTICK_STRATEGY_DEMO` stages: the armed instance itself, or the
-/// arming dialog a screenshot of the form needs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StrategyDemoMode {
-    Armed,
-    Popup,
-    /// The arming dialog with the **alarm switched on** and its share gate
-    /// picked, so every alarm control is on screen at once. The section
-    /// folds itself away while the checkbox is clear — which is right for a
-    /// trader and useless for a capture — so `popup` alone can never
-    /// photograph it.
-    AlarmPopup,
-    /// The same dialog with the **sound picker dropped open** — the three
-    /// headings and the thirty-two names under them. A combo box's list
-    /// exists only while it is open, and opening it is a click no scripted
-    /// run has a hand for, so the scene asks egui to open it on the frame
-    /// the dialog appears.
-    AlarmSounds,
-    /// An armed instance whose region's drawn span no longer reaches the
-    /// next bar — the badge clause telling the trader to stretch it right.
-    /// A live tape reaches it only by walking past a hand-drawn right edge,
-    /// which is minutes of market no capture can wait for. The instance
-    /// stays armed and its alarm stays live: the region holds, it is not
-    /// disarmed, so dragging the band forward resumes it with no button.
-    EndedBadge,
-    /// An instance whose region lost its footing on the series — the badge
-    /// clause that says the bot is paused and why. Reached on a real chart
-    /// only by a re-cut that strands an anchor, which a scripted run has no
-    /// way to provoke on demand.
-    PausedBadge,
-    /// An **alarm-only** instance armed on the region, carrying a standing
-    /// preview mark: the badge that says "this places nothing" and the
-    /// provisional label, in one frame. Both are states a real tape reaches
-    /// only when a force bar happens to be half-formed, which no capture
-    /// can wait for.
-    AlarmBadge,
-}
-
-/// Which pane a scripted right-click should land on.
-///
-/// The two panes now open different menus, so "open the context menu" is no
-/// longer one instruction — a capture has to say which canvas it is asking
-/// about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ContextMenuPane {
-    /// The candles, left of the divider.
-    Chart,
-    /// The rolling tape, right of it.
-    Tape,
-    /// The price gutter — the axis's own menu (Inverted chart, and the
-    /// compass's price half).
-    Axis,
-    /// The bottom time strip — the time axis's own menu (the compass's time
-    /// half). The candles' segment of it: past the lane divider the strip is
-    /// the tape's window and carries no menu.
-    Time,
-}
-
-impl ContextMenuPane {
-    /// Read one off `QUANTICK_CONTEXT_MENU`; `None` for anything else, so a
-    /// typo opens no menu rather than the wrong one.
-    fn from_env_value(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "chart" | "candles" => Some(Self::Chart),
-            "tape" | "lane" => Some(Self::Tape),
-            "axis" | "scale" => Some(Self::Axis),
-            "time" | "clock" => Some(Self::Time),
-            _ => None,
-        }
-    }
-}
-
-/// Read a scripted pointer position off `QUANTICK_POINTER`.
-///
-/// `<fx>,<fy>`, both fractions of the flow pane's *candle* area — `0,0` its
-/// top-left corner, `1,1` its bottom-right, `0.99,0.5` out in the projection
-/// margin past the newest bar. The flow pane and not the focused one, so this
-/// hook and `QUANTICK_CONTEXT_MENU` aim at the same canvas: a capture that
-/// opened an axis menu on one pane and parked the mouse on another would be
-/// photographing two different charts at once. Fractions rather than pixels because the thing
-/// a capture wants to point at is a candle, and the candles' pane moves with
-/// the window size, the lane divider and the indicator band: an absolute pair
-/// that framed the right bar at one window size frames a different one at the
-/// next, and a capture that photographs the wrong bar and calls it a pass is
-/// worse than one that photographs nothing.
-///
-/// `None` for anything else — a typo must not silently place the pointer
-/// somewhere the author did not ask for.
-fn parse_pointer_fraction(value: &str) -> Option<egui::Vec2> {
-    let (x, y) = value.trim().split_once(',')?;
-    let x: f32 = x.trim().parse().ok()?;
-    let y: f32 = y.trim().parse().ok()?;
-    ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)).then(|| egui::vec2(x, y))
-}
-
 /// Read a tape window off `QUANTICK_TAPE_WINDOW`.
 ///
 /// `auto` follows the bars; a duration pins it, in the units a human would
@@ -514,15 +378,6 @@ pub fn fmt_time_as(ms: i64, tz: TzOffset, format: crate::chart::TimeLabelFormat)
     format.write(secs / 3600, (secs % 3600) / 60, secs % 60)
 }
 
-/// Which venue-history frame `QUANTICK_VENUE_HISTORY_DEMO` opens on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum VenueHistoryDemo {
-    /// The finished prefix: the seam divider with no wait behind it.
-    Complete,
-    /// A run still arriving: prefix installed, loading indicator still up.
-    Partial,
-}
-
 /// Read-only frame observations exposed to on-demand semantic projections.
 pub(crate) struct ControlFrameMetrics {
     pub wall_average_ms: Option<f32>,
@@ -534,38 +389,6 @@ pub(crate) struct ControlFrameMetrics {
 
 /// The quantick chart window.
 ///
-/// Which menu `QUANTICK_MENU` presses open.
-///
-/// A menu bar button is not something a scripted run can click, and every
-/// entry behind one is therefore invisible to a capture without a hook. The
-/// hook delivers a real click on the button's own published rectangle rather
-/// than reaching into egui's popup state, so what opens is exactly what a
-/// trader's click opens.
-///
-/// A token this build does not know opens nothing rather than the wrong menu:
-/// a capture of the wrong surface that passes is worse than one that fails.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ScriptedMenu {
-    /// The Workspace menu — the only door to save, export, open and locate.
-    Workspace,
-    /// The toolbar's history caret — the reach chips, the span the `by time`
-    /// reach pulls, the page size and the candle reach.
-    History,
-}
-
-impl ScriptedMenu {
-    /// Every menu this hook can open, by the token that names it.
-    const ALL: [(&'static str, Self); 2] =
-        [("workspace", Self::Workspace), ("history", Self::History)];
-
-    fn from_token(token: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case(token))
-            .map(|(_, menu)| menu)
-    }
-}
-
 /// One workspace: N open markets ([`Tab`]) and the chrome around them. The
 /// chrome is what is single-instance by nature — one menu bar, one toolbox,
 /// one dock, one appearance, one status line — plus the indicator persistence
@@ -614,11 +437,6 @@ pub struct QuantickApp {
     feed_popup_tab: Option<u64>,
     /// Whether the toolbar's layout popover is open.
     layout_picker_open: bool,
-    /// A pending request to open that popover, from the
-    /// `QUANTICK_LAYOUT_PICKER` hook. Drained by the frame that honours it —
-    /// the popover is a popup egui owns, so the hook asks for it through the
-    /// same call the click makes rather than faking the surface.
-    layout_picker_autostart: bool,
     /// The window's one source of pane ids. Pane ids namespace egui
     /// interaction state across the whole window rather than within a tab, so
     /// this may not be per-tab state: two panes sharing an id share a drag.
@@ -663,10 +481,6 @@ pub struct QuantickApp {
     /// lands — the same deferral [`Self::pending_hidden`] performs, for the
     /// same reason.
     pending_styles: Vec<(TabSlot, crate::indicator_style::StyleOverride)>,
-    /// `QUANTICK_INDICATOR_SETTINGS`: which indicator to open the dialog on,
-    /// and on which tab, once its view exists. Cleared by the first open, so a
-    /// dialog the run then closes stays closed.
-    settings_autostart: Option<(usize, indicator_panel::SettingsTab)>,
     /// The workspace's layouts: the strip's tabs, their indicator sets and
     /// their per-market drawings. See [`crate::layouts`].
     layouts: crate::layouts::LayoutBook,
@@ -720,70 +534,16 @@ pub struct QuantickApp {
     /// The `QUANTICK_CONTROL_EVIDENCE` hook: which scopes to capture, and
     /// whether to rasterise the window with them.
     pending_control_evidence: Option<String>,
-    /// Frames the evidence hook has spent waiting for a rasterised window.
-    control_evidence_hook_frames: u32,
     /// The `QUANTICK_CONTROL_MARK` hook: take a mark on the first frame,
     /// through the hotkey's own action, with the note the hook carried.
     pending_control_mark: Option<String>,
-    // The floating inspector's position: automatic placement until the user
-    // drags the title bar, manual from then on (only ever re-clamped). The
-    // chart rectangle it is placed against belongs to the focused
-    // [`ChartPane`], so a split window places against the pane the selection
-    // lives on, not the window.
-    // Scripted-validation hook: place one of every registered drawing on the
-    // flow pane as soon as it has bars to anchor them to. Consumed once.
-    pending_drawing_demo: bool,
-    /// Pages of older history the `QUANTICK_LOAD_OLDER` hook still owes, and
-    /// the frame budget it has left to wait for a chart to ask from.
-    pending_load_older: Option<(usize, u32)>,
-    /// The ending whose sentence the `QUANTICK_HISTORY_NOTE` hook asks the
-    /// loading lane to carry, and the frame budget it has left to wait for a
-    /// chart to carry it over. Consumed once.
-    ///
-    /// A settled reach speaks only when a real venue really refuses, which is
-    /// a market condition and not a setting: on the feeds a validation run can
-    /// arrange, the reach either lands its session or the source declares it
-    /// cannot page at all and the button never takes a press. Without this the
-    /// whole surface is invisible to anything but a bad afternoon.
-    pending_history_note: Option<(crate::history_reach::CampaignEnd, u32)>,
-    /// Spans of older *candles* the `QUANTICK_LOAD_OLDER_CANDLES` hook still
-    /// owes, and the frame budget it has left to wait for a first reply to
-    /// reach back from. The trade twin of this is `pending_load_older`; they
-    /// are two records with two capabilities, so they are two hooks.
-    pending_load_older_candles: Option<(usize, u32)>,
-    // Scripted-validation hook: one fixed-range volume profile straddling the
-    // venue-prefix seam (when there is one). Consumed once.
-    pending_frvp_demo: bool,
-    /// `QUANTICK_AVWAP_DEMO`: one anchored VWAP placed on the flow pane once
-    /// it has bars — the band stack and anchor marker, photographable from a
-    /// fresh launch. Consumed once, like the other demos.
-    pending_avwap_demo: bool,
-    /// `QUANTICK_REPLAY_RESTART_AFTER=<n>`: take the replay transport's own
-    /// Restart once the session has closed `n` round trips.
-    ///
-    /// The one state where a closed-trade mark is asked to paint against a
-    /// tape that has not reached its fill: the seek keeps the trades (they
-    /// happened) and rebuilds the bars under them. It is reached in the app
-    /// by pressing Restart mid-session, which a scripted capture cannot do,
-    /// and it is the state the marks used to pile up in. Consumed once.
-    pending_replay_restart: Option<usize>,
-    /// `QUANTICK_VENUE_HISTORY_DEMO`: a venue candle prefix delivered to the
-    /// focused tab through the feed's own path, so the seam divider — and,
-    /// with `=partial`, a run still arriving — can be photographed from a
-    /// fresh launch.
-    ///
-    /// The seam only exists where venue candles meet bars cut from prints,
-    /// which on a live feed means waiting on a real venue for a real quarter
-    /// of history. That is not a state a scripted capture can reach, and
-    /// "arrived halfway" is not a state it can reach *at all*: it lasts a few
-    /// seconds, once, at a moment nothing controls. Consumed once.
-    pending_venue_history_demo: Option<VenueHistoryDemo>,
-    // Scripted-validation hook: how many anchors of the armed tool are already
-    // placed when the run opens, with the pointer parked where the next one
-    // would go. Consumed once.
-    pending_drawing_draft: Option<usize>,
     /// The popup's position changed by hand this frame and the workspace has
     /// not been told yet.
+    ///
+    /// The position itself is automatic until the user drags the title bar and
+    /// manual from then on (only ever re-clamped), and the chart rectangle it
+    /// is placed against belongs to the focused [`ChartPane`] — so a split
+    /// window places against the pane the selection lives on, not the window.
     ///
     /// A flag rather than a write on the spot, for two reasons. A drag reports
     /// a new position on *every* frame the hand is moving, and writing the file
@@ -821,9 +581,6 @@ pub struct QuantickApp {
     /// [`crate::window_scale`] for why that number is worth logging, and for
     /// the defect it was measured chasing.
     surface: Option<window_scale::SurfaceProbe>,
-    /// Whether `QUANTICK_WINDOW_MAXIMIZED=1` still owes the window a maximise.
-    /// Drained on the first frame — see [`Self::apply_maximize_hook`].
-    pending_maximize: bool,
     /// Where a pane's layer menu leaves the grid switch and the "an indicator
     /// was hidden" flag; drained right after the canvas is drawn.
     layer_actions: chart_layers::LayerActions,
@@ -837,22 +594,6 @@ pub struct QuantickApp {
     // dialog's preset picker.
     indicator_presets: preset_file::PresetStore,
     indicator_presets_path: std::path::PathBuf,
-    /// The boot hooks' requests, kept so tabs opened later (replay
-    /// autostart) get them too: `QUANTICK_FOOTPRINT_AUTOSTART`,
-    /// `QUANTICK_CANDLE_WIDTH` and `QUANTICK_PAN_PX`.
-    scripted_footprint: bool,
-    /// Which pane a scripted run asked to right-click, until the click lands.
-    ///
-    /// Cleared by the first frame that can honour it — the divider only exists
-    /// once the canvas has drawn once — so the menu opens exactly once and
-    /// then behaves like any menu a hand opened.
-    /// Whether a scripted run asked for the Workspace menu open
-    /// (`QUANTICK_MENU=workspace`). A menu is a popup egui owns, so a capture
-    /// reaches it by clicking the button, not by setting state — see
-    /// [`Self::raw_input_hook`].
-    scripted_menu: Option<ScriptedMenu>,
-    /// The press's matching release, on the frame after it.
-    scripted_menu_release: Option<egui::Pos2>,
     /// Where the Workspace button was drawn, published by the menu bar so the
     /// hook can click it rather than guess at a coordinate.
     workspace_menu_rect: Option<egui::Rect>,
@@ -860,13 +601,6 @@ pub struct QuantickApp {
     /// while the menu is unreachable — a feed that pages nothing has no menu
     /// to open, and a hook must photograph that rather than force it.
     history_menu_rect: Option<egui::Rect>,
-    scripted_context_menu: Option<ContextMenuPane>,
-    /// Where `QUANTICK_POINTER` parks the mouse, as a fraction of the focused
-    /// pane's candle area. Re-delivered every frame, because a pointer is a
-    /// position the app is *told* about continuously: one event and the next
-    /// frame with no pointer over the canvas would take the compass away
-    /// again.
-    scripted_pointer: Option<egui::Vec2>,
     /// Where signal alarms are played. The shipped sink is the platform's
     /// own sounds; a test swaps in a recorder, which is how "the alarm
     /// sounded, once, and it was the sound the preset named" is asserted
@@ -876,39 +610,6 @@ pub struct QuantickApp {
     /// dialog. A build with no audio backend, or a platform that refused,
     /// is reported: an alarm the trader never heard is never assumed heard.
     alert_failure: Option<String>,
-    /// `QUANTICK_STRATEGY_DEMO`: rectangle + armed instance (`1`) or the
-    /// arming dialog over it (`popup`), for validation runs. Consumed once
-    /// the chart has bars enough, like the drawings demo.
-    ///
-    /// The dialog it stages lives in `surfaces::strategy_popup`; this hook
-    /// stays here because it has to place the drawing the dialog arms over
-    /// before it can open anything.
-    pending_strategy_demo: Option<StrategyDemoMode>,
-    /// Where the scripted press landed, until its release goes out.
-    ///
-    /// A real right-click spans frames: the button goes down, the app draws,
-    /// and only then does it come up. Delivering both halves in one frame
-    /// makes the menu open and close in the same pass, which is why a scripted
-    /// click has to hold the button for a frame like a hand does.
-    scripted_context_menu_release: Option<egui::Pos2>,
-    scripted_candle_width: Option<f32>,
-    /// `QUANTICK_PAN_PX`: a drag on the candles, in pixels, applied every
-    /// frame until it lands. Negative pushes the chart left into the
-    /// projection margin; positive walks back into history.
-    ///
-    /// Every frame, and not once at boot, because the gesture it stands for
-    /// needs bars to move over: at boot the series is empty, `pan_pixels` is
-    /// a no-op on it, and a hook that fired then would validate nothing. It
-    /// re-applies while the view can still move, and stops as soon as the
-    /// per-frame clamp holds it — which is exactly the state a projection
-    /// screenshot wants.
-    scripted_pan_px: Option<f32>,
-    /// `QUANTICK_INDICATOR_SETTINGS`: open the settings dialog for the
-    /// first indicator once its inputs have arrived from the worker. Armed
-    /// at boot, fired (and disarmed) by the first frame that can honour it —
-    /// the dialog needs a view whose `input_values` the Rebuilt event has
-    /// filled, which no boot-time code can guarantee.
-    scripted_indicator_settings: bool,
 
     /// The chart appearance every renderer reads. The window that edits it
     /// is `surfaces::style_panel`, which hands back a copy rather than
@@ -1030,6 +731,12 @@ pub struct QuantickApp {
     /// what the window is ingesting, not what one market prints.
     trades_since_summary: u64,
     last_summary: Instant,
+    /// Every environment hook an agent drives this window by, read once at
+    /// launch and named. See [`crate::harness`] for what belongs here and
+    /// why the trunk asks it rather than holding its flags: twenty-three of
+    /// them used to sit in this struct, beside the state the chart actually
+    /// trades on.
+    harness: Harness,
 }
 
 /// An indicator slot together with the tab and pane that own it.
@@ -1169,10 +876,9 @@ impl QuantickApp {
         let mut app = Self {
             tabs: vec![tab],
             active_tab: 0,
+            harness: Harness::from_env(),
             next_tab_id: FIRST_TAB_ID + 1,
             layout_picker_open: false,
-            layout_picker_autostart: std::env::var("QUANTICK_LAYOUT_PICKER")
-                .is_ok_and(|value| value == "1"),
             pane_ids,
             added_symbols: symbols_file::load(&symbols_file::default_path()),
             symbols_path: symbols_file::default_path(),
@@ -1189,7 +895,6 @@ impl QuantickApp {
             slot_kinds: Vec::new(),
             pending_hidden: Vec::new(),
             pending_styles: Vec::new(),
-            settings_autostart: None,
             layouts: loaded_layouts.0,
             layouts_path: crate::layouts::default_path(),
             layouts_dirty: false,
@@ -1210,17 +915,7 @@ impl QuantickApp {
             pending_control_annotation: None,
             pending_control_notification: None,
             pending_control_evidence: None,
-            control_evidence_hook_frames: 0,
             pending_control_mark: None,
-            pending_drawing_demo: false,
-            pending_load_older: None,
-            pending_load_older_candles: None,
-            pending_history_note: None,
-            pending_frvp_demo: false,
-            pending_avwap_demo: false,
-            pending_replay_restart: None,
-            pending_venue_history_demo: None,
-            pending_drawing_draft: None,
             inspector_position_dirty: false,
             drawing_presets: drawings::presets::PresetStore::load_from(
                 drawings::presets::PresetStore::default_path(),
@@ -1229,27 +924,15 @@ impl QuantickApp {
             saved_layer_mask: 0,
             saved_layer_tab: 0,
             surface: None,
-            pending_maximize: std::env::var("QUANTICK_WINDOW_MAXIMIZED")
-                .is_ok_and(|value| value == "1"),
             layer_actions: chart_layers::LayerActions::default(),
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
             footprint_settings_path,
             indicator_presets: preset_file::PresetStore::load(&indicator_presets_path),
             indicator_presets_path,
-            scripted_footprint: false,
-            scripted_menu: None,
-            scripted_menu_release: None,
             workspace_menu_rect: None,
             history_menu_rect: None,
-            scripted_context_menu: None,
-            scripted_context_menu_release: None,
-            scripted_pointer: None,
             alerts: Box::new(crate::audio::Speaker::default()),
             alert_failure: None,
-            pending_strategy_demo: None,
-            scripted_indicator_settings: false,
-            scripted_candle_width: None,
-            scripted_pan_px: None,
             style: ChartStyle::default(),
             style_revision: 0,
             show_perf: true,
@@ -1422,89 +1105,6 @@ impl QuantickApp {
         if let Ok(family_id) = std::env::var("QUANTICK_TOOLBOX_FLYOUT") {
             app.toolrail.request_flyout(family_id.trim().to_owned());
         }
-        app.pending_drawing_demo = std::env::var("QUANTICK_DRAWINGS_DEMO")
-            .is_ok_and(|value| matches!(value.as_str(), "1" | "bands"));
-        // The replay seek, scripted: restart the recording once the session
-        // has closed this many round trips. Zero is refused with everything
-        // else that does not parse — a restart before any trade closed
-        // photographs nothing this hook exists to show.
-        app.pending_replay_restart = std::env::var("QUANTICK_REPLAY_RESTART_AFTER")
-            .ok()
-            .and_then(|value| value.trim().parse::<usize>().ok())
-            .filter(|trades| *trades > 0);
-        // Pages of older trades fetched at launch — the "+ older" button
-        // pressed, without a hand. The button's whole point is what it does
-        // *after* the click, and the bars it prepends are the surface: a
-        // capture that can only photograph the enabled button proves the
-        // affordance exists and nothing about whether it works.
-        app.pending_load_older = std::env::var("QUANTICK_LOAD_OLDER")
-            .ok()
-            .and_then(|value| value.trim().parse::<usize>().ok())
-            .filter(|pages| *pages > 0)
-            .map(|pages| (pages, LOAD_OLDER_HOOK_FRAMES));
-        // The same door onto the candle reach. A chart opens on one week
-        // (`feed::TIME_HISTORY_SPAN_MS`) and the quarter is asked for a week at
-        // a time, so "what does a deep chart look like" is a state no capture
-        // could otherwise reach without a hand on the menu.
-        app.pending_load_older_candles = std::env::var("QUANTICK_LOAD_OLDER_CANDLES")
-            .ok()
-            .and_then(|value| value.trim().parse::<usize>().ok())
-            .filter(|spans| *spans > 0)
-            .map(|spans| (spans, LOAD_OLDER_CANDLES_HOOK_FRAMES));
-        // And the *outcome* of a press, which is the half of this button a
-        // trader actually acts on. Named by the ending's own log token
-        // (`nothing_coming_back`, `venue_exhausted`, `page_budget_spent`, …)
-        // and resolved through `CampaignEnd::from_action`, so an ending that
-        // exists is photographable by name and one that does not yields no
-        // note rather than the wrong one. It raises the real sentence through
-        // `Tab::raise_history_note` — the same call a settled run makes — so
-        // the picture is the picture a refusing venue gives.
-        if let Ok(token) = std::env::var("QUANTICK_HISTORY_NOTE") {
-            // Refused out loud, exactly as `QUANTICK_HISTORY_REACH` above
-            // refuses an unknown reach: a capture run that silently got no
-            // note reads the surface as broken, which is the conclusion this
-            // whole branch exists to make impossible.
-            match crate::history_reach::CampaignEnd::from_action(&token) {
-                Some(end) if end.notice().is_some() => {
-                    app.pending_history_note = Some((end, HISTORY_NOTE_HOOK_FRAMES));
-                }
-                Some(end) => tracing::warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "HISTORY_NOTE_HOOK_SILENT_ENDING",
-                    ending = end.action(),
-                    action = "no_note_raised",
-                    "QUANTICK_HISTORY_NOTE named the one ending that says nothing"
-                ),
-                None => tracing::warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "HISTORY_NOTE_HOOK_UNKNOWN",
-                    token = %token,
-                    accepted = %crate::history_reach::CampaignEnd::ALL
-                        .map(crate::history_reach::CampaignEnd::action)
-                        .join(", "),
-                    action = "no_note_raised",
-                    "QUANTICK_HISTORY_NOTE names no ending this build has"
-                ),
-            }
-        }
-        // How many anchors of the armed tool are already down when the run
-        // opens — the half-placed state a screenshot cannot otherwise reach,
-        // because it lives between two clicks. See `apply_drawing_draft`.
-        app.pending_drawing_draft = std::env::var("QUANTICK_DRAWING_DRAFT")
-            .ok()
-            .and_then(|value| value.trim().parse::<usize>().ok())
-            .filter(|anchors| *anchors > 0);
-        // One fixed-range volume profile, placed to straddle the venue-prefix
-        // seam when there is one — the partial-coverage honesty label is a
-        // surface, and this is how a validation run photographs it.
-        app.pending_frvp_demo = std::env::var("QUANTICK_FRVP_DEMO")
-            .is_ok_and(|value| matches!(value.trim(), "1" | "compare" | "stress"));
-        // One anchored VWAP, anchored a stretch back so the average and its
-        // band stack have room to develop on screen.
-        app.pending_avwap_demo =
-            std::env::var("QUANTICK_AVWAP_DEMO").is_ok_and(|value| value.trim() == "1");
         // The switch itself, so both sides of it are reachable without a
         // click. Set explicitly, it also overrides what the workspace saved:
         // a validation run must be able to pin the state it is photographing.
@@ -1569,13 +1169,6 @@ impl QuantickApp {
                 _ => {}
             }
         }
-        app.pending_venue_history_demo = std::env::var("QUANTICK_VENUE_HISTORY_DEMO")
-            .ok()
-            .and_then(|value| match value.trim() {
-                "1" => Some(VenueHistoryDemo::Complete),
-                "partial" => Some(VenueHistoryDemo::Partial),
-                _ => None,
-            });
         // The drawing chrome's five hooks, read here rather than on the first
         // drawn frame: the demo appliers run earlier in that frame and ask
         // whether the inspector is open, so a hook another hook depends on has
@@ -1600,61 +1193,6 @@ impl QuantickApp {
                 pane.price_view.set_inverted(true);
             }
         }
-        // The right-click itself, on the pane it names. The two panes open
-        // different menus now, so a capture has to say which canvas it is
-        // asking about; the click is delivered through the app's own input
-        // path (see `raw_input_hook`), never by reaching into egui's menu
-        // state, so what opens is what a trader's click opens.
-        app.scripted_context_menu = std::env::var("QUANTICK_CONTEXT_MENU")
-            .ok()
-            .and_then(|value| ContextMenuPane::from_env_value(&value));
-
-        // The mouse, parked over the candles. The pointer compass, the
-        // crosshair and every hover readout exist only while a pointer is over
-        // the chart, so without this the whole class of them is invisible to
-        // anything but a hand on the mouse. Delivered as a real
-        // `PointerMoved` through `raw_input_hook`, so what the chart does with
-        // it is what it does with a trader's own mouse.
-        app.scripted_pointer = std::env::var("QUANTICK_POINTER").ok().and_then(|value| {
-            let parsed = parse_pointer_fraction(&value);
-            if parsed.is_none() {
-                tracing::warn!(
-                    target: "quantick",
-                    value = %value,
-                    "POINTER_HOOK_REJECTED: expected <fx>,<fy> with both in 0..=1"
-                );
-            }
-            parsed
-        });
-
-        // A rectangle with an armed force-bar strategy riding it (`1`), or
-        // the arming dialog open over it (`popup`) — the strategy-anchor
-        // surfaces, reachable by a validation run without a click. The
-        // rectangle spans the recent tape and a stretch past its end, so
-        // the chart-centre click of `QUANTICK_CONTEXT_MENU=chart` lands on
-        // it and opens the per-drawing menu.
-        app.pending_strategy_demo =
-            std::env::var("QUANTICK_STRATEGY_DEMO")
-                .ok()
-                .and_then(|value| match value.trim() {
-                    "1" | "armed" => Some(StrategyDemoMode::Armed),
-                    "popup" => Some(StrategyDemoMode::Popup),
-                    "alarm" => Some(StrategyDemoMode::AlarmPopup),
-                    "alarm-sounds" => Some(StrategyDemoMode::AlarmSounds),
-                    "alarm-badge" => Some(StrategyDemoMode::AlarmBadge),
-                    "ended-badge" => Some(StrategyDemoMode::EndedBadge),
-                    "paused-badge" => Some(StrategyDemoMode::PausedBadge),
-                    _ => None,
-                });
-
-        // The Workspace menu, open. Its entries are the only door to
-        // exporting, opening and locating a workspace, and a menu bar button
-        // is not something a scripted run can press — so the hook presses it.
-        // Anything but `workspace` opens nothing rather than the wrong menu.
-        app.scripted_menu = std::env::var("QUANTICK_MENU")
-            .ok()
-            .and_then(|value| ScriptedMenu::from_token(value.trim()));
-
         // The tape switch in the canvas's top-right corner — the one control
         // that decides whether there is a band at all. Same setter the chip
         // calls, so a capture shows what a click shows. Anything but `on`/`off`
@@ -1709,8 +1247,7 @@ impl QuantickApp {
         // Same convenience for the candle footprint — the same field the
         // pane's layer menu writes, so a validation run sees exactly what a
         // click would show.
-        if std::env::var("QUANTICK_FOOTPRINT_AUTOSTART").is_ok_and(|value| value == "1") {
-            app.scripted_footprint = true;
+        if app.harness.footprint() {
             app.active_tab_mut().flow_pane.footprint_visible = true;
         }
         // Every style by its own id, resolved through the same registry the
@@ -1731,18 +1268,10 @@ impl QuantickApp {
                 ),
             }
         }
-        // The indicator settings dialog (sliders + live preview): pair with
-        // an autostart hook that loads an indicator; the dialog opens for
-        // the first slot as soon as its inputs arrive from the worker.
-        app.scripted_indicator_settings =
-            std::env::var("QUANTICK_INDICATOR_SETTINGS").is_ok_and(|value| value == "1");
         // The zoom, scriptable: the footprint's detail levels are functions
         // of candle width, and a validation run cannot drag a scroll wheel.
         // Same clamp as the gesture (see Viewport::set_px_per_bar).
-        if let Ok(value) = std::env::var("QUANTICK_CANDLE_WIDTH")
-            && let Ok(px) = value.trim().parse::<f32>()
-        {
-            app.scripted_candle_width = Some(px);
+        if let Some(px) = app.harness.candle_width() {
             app.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
         }
         // The bubble budget, scriptable. The fold is the one bubble state a
@@ -1775,16 +1304,6 @@ impl QuantickApp {
             for tab in &mut app.tabs {
                 tab.tape_mut().set_starve_tape_after_ms(after_ms);
             }
-        }
-        // The pan, scriptable, for the same reason: the projection margin and
-        // the way back from history are states a screenshot cannot otherwise
-        // reach. `QUANTICK_PAN_PX=-9000` is "shove the chart as far left as it
-        // goes" — the margin then holds it exactly where the gesture would.
-        if let Ok(value) = std::env::var("QUANTICK_PAN_PX")
-            && let Ok(px) = value.trim().parse::<f32>()
-            && px.is_finite()
-        {
-            app.scripted_pan_px = Some(px);
         }
         // Same convenience for indicators: open with the two M1 natives on
         // (EMA overlay + CVD pane), through the same code path the toolbar
@@ -1845,14 +1364,6 @@ impl QuantickApp {
             let active = app.focused_pane_layout();
             app.apply_strip_action(crate::layout_strip::StripAction::Delete(active));
         }
-        // The settings dialog, reachable without a pointer: the index of the
-        // indicator to open it on, among the focused pane's views in add
-        // order, and optionally the tab (`0` or `inputs`, `1` or `style`).
-        // Every UI surface owes the harness a hook, and a dialog that can only
-        // be reached by double-clicking is a dialog no visual capture can see.
-        app.settings_autostart = std::env::var("QUANTICK_INDICATOR_SETTINGS")
-            .ok()
-            .and_then(|value| Self::parse_settings_hook(&value));
         // Scripted validation runs can open with library scripts loaded:
         // a comma-separated list of script names, each through the same
         // code path the INDICATORS menu takes.
@@ -2795,7 +2306,7 @@ impl QuantickApp {
     ///
     /// A capture that asked for an image waits for it: the window is asked to
     /// rasterise and the hook takes the next frame, giving up after
-    /// [`CONTROL_EVIDENCE_HOOK_FRAMES`] rather than hanging a capture run on a
+    /// [`crate::harness::CONTROL_EVIDENCE_HOOK_FRAMES`] rather than hanging a capture run on a
     /// surface that never presents.
     fn apply_control_evidence_hook(&mut self, ctx: &egui::Context) {
         if self.pending_control_evidence.is_none() {
@@ -2857,8 +2368,7 @@ impl QuantickApp {
             access.service_screenshot(self, ctx);
         }
         if wants_screenshot && !access.has_screenshot() {
-            self.control_evidence_hook_frames = self.control_evidence_hook_frames.saturating_add(1);
-            if self.control_evidence_hook_frames <= CONTROL_EVIDENCE_HOOK_FRAMES {
+            if self.harness.evidence_frame_waited() {
                 // Every waiting frame asks for the next one. Without this a
                 // quiescent window — a paused replay, no feed, exactly the
                 // headless validation run the hook exists for — would never
@@ -2872,7 +2382,7 @@ impl QuantickApp {
             tracing::warn!(
                 target: "quantick::control",
                 event_code = "CONTROL_EVIDENCE_HOOK_GAVE_UP_ON_IMAGE",
-                frames = CONTROL_EVIDENCE_HOOK_FRAMES,
+                frames = crate::harness::CONTROL_EVIDENCE_HOOK_FRAMES,
                 "the window never delivered a frame to rasterise; capturing without one"
             );
             // The request stays true on purpose. Clearing it would send
@@ -3135,10 +2645,10 @@ impl QuantickApp {
         // The scripted footprint/zoom hooks reach tabs opened later too: the
         // replay tab a validation run autostarts is the tab the run means,
         // and it does not exist yet when the boot hooks fire.
-        if self.scripted_footprint {
+        if self.harness.footprint() {
             self.active_tab_mut().flow_pane.footprint_visible = true;
         }
-        if let Some(px) = self.scripted_candle_width {
+        if let Some(px) = self.harness.candle_width() {
             self.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
         }
         // After the declared layout ran: that is what decides whether the
@@ -3338,7 +2848,7 @@ impl QuantickApp {
         let mut layout_picker_open = self.layout_picker_open;
         // One shot: the hook opens the popover on the first drawn frame and
         // then gets out of the way, so a trader's click can close it.
-        let layout_picker_autostart = std::mem::take(&mut self.layout_picker_autostart);
+        let layout_picker_autostart = self.harness.take_layout_picker_autostart();
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
         let pane = match focused {
@@ -3525,26 +3035,6 @@ impl QuantickApp {
         }
     }
 
-    /// Flip a slot's render-side eye, wherever the slot lives. Addressed by
-    /// [`TabSlot`], never by focus: the legend acts on the pane it is drawn
-    /// on, and the toolbar path builds its target from focus before calling.
-    /// Parse `QUANTICK_INDICATOR_SETTINGS`: `<index>` or `<index>:<tab>`,
-    /// where the tab is `inputs`/`0` or `style`/`1`.
-    ///
-    /// Nonsense is no hook at all rather than a guessed one: a validation run
-    /// that captured the wrong tab because a typo silently defaulted would be
-    /// a screenshot claiming to show something it does not.
-    fn parse_settings_hook(value: &str) -> Option<(usize, indicator_panel::SettingsTab)> {
-        let (index, tab) = value.split_once(':').unwrap_or((value, "inputs"));
-        let index = index.trim().parse::<usize>().ok()?;
-        let tab = match tab.trim().to_ascii_lowercase().as_str() {
-            "inputs" | "0" => indicator_panel::SettingsTab::Inputs,
-            "style" | "1" => indicator_panel::SettingsTab::Style,
-            _ => return None,
-        };
-        Some((index, tab))
-    }
-
     /// Open the dialog for whichever indicator a gesture on a pane asked
     /// about: the pane header, a collapsed strip, or an overlay's own line.
     ///
@@ -3558,7 +3048,7 @@ impl QuantickApp {
         // The harness hook waits for the view it names, exactly as the restored
         // hidden flags do: the indicator is born from the worker's first
         // Rebuilt, which is several frames after the window opens.
-        if let Some((index, tab)) = self.settings_autostart {
+        if let Some((index, tab)) = self.harness.settings_autostart() {
             // The focused pane first, then the flow pane. A split tab can open
             // with the *time* pane focused while every indicator — the ones the
             // other autostart hook adds, and the ones the state file restores —
@@ -3576,7 +3066,7 @@ impl QuantickApp {
                     .map(|view| (side, view.slot))
             });
             if let Some((side, slot)) = found {
-                self.settings_autostart = None;
+                self.harness.settings_autostart_opened();
                 self.open_indicator_settings_at(TabSlot {
                     tab: tab_id,
                     side,
@@ -3636,6 +3126,9 @@ impl QuantickApp {
         self.set_legend_collapsed(tab_id, side, collapsed);
     }
 
+    /// Flip a slot's render-side eye, wherever the slot lives. Addressed by
+    /// [`TabSlot`], never by focus: the legend acts on the pane it is drawn
+    /// on, and the toolbar path builds its target from focus before calling.
     fn toggle_indicator_hidden_at(&mut self, target: TabSlot) {
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) else {
             return;
@@ -3792,8 +3285,8 @@ impl QuantickApp {
     /// input change takes, UI or not.
     fn draw_indicator_settings(&mut self, ctx: &egui::Context) {
         // The boot hook's deferred half: fire once a slot can actually show
-        // a dialog (see `scripted_indicator_settings`).
-        if self.scripted_indicator_settings && self.indicator_settings.is_none() {
+        // a dialog (see `harness::Harness::wants_indicator_settings_dialog`).
+        if self.harness.wants_indicator_settings_dialog() && self.indicator_settings.is_none() {
             let tab_id = self.active_tab().id;
             if let Some(slot) = self
                 .active_tab()
@@ -3809,7 +3302,7 @@ impl QuantickApp {
                     side: PaneSide::Flow,
                     slot,
                 });
-                self.scripted_indicator_settings = false;
+                self.harness.indicator_settings_dialog_opened();
             }
         }
         let target = self.indicator_settings_target;
@@ -5670,10 +5163,9 @@ impl QuantickApp {
     /// the platform runs when a hand hits the title bar, which is the state
     /// this hook exists to reach.
     fn apply_maximize_hook(&mut self, ctx: &egui::Context) {
-        if !self.pending_maximize {
+        if !self.harness.take_maximize() {
             return;
         }
-        self.pending_maximize = false;
         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
         tracing::info!(
             target: "quantick::app",
@@ -7550,7 +7042,7 @@ impl QuantickApp {
     /// fraction of before then, and guessing one would park the pointer
     /// somewhere the author did not ask for.
     fn scripted_pointer_pos(&self) -> Option<egui::Pos2> {
-        let fraction = self.scripted_pointer?;
+        let fraction = self.harness.pointer()?;
         let flow = &self.active_tab().flow_pane;
         let candles = flow.drawing_area(flow.last_chart_rect?);
         Some(egui::pos2(
@@ -7594,7 +7086,7 @@ impl eframe::App for QuantickApp {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         // Second frame: the button comes up where it went down, and the menu
         // that opened on the press stays open.
-        if let Some(position) = self.scripted_context_menu_release.take() {
+        if let Some(position) = self.harness.take_context_menu_release() {
             raw_input.events.push(egui::Event::PointerButton {
                 pos: position,
                 button: egui::PointerButton::Secondary,
@@ -7608,7 +7100,7 @@ impl eframe::App for QuantickApp {
         // it; the hook supplies the press, and every line after it is what a
         // trader's click runs. The rect is published by the draw, so the
         // first frame has none — wait for it rather than guess.
-        if let Some(position) = self.scripted_menu_release.take() {
+        if let Some(position) = self.harness.take_menu_release() {
             raw_input.events.push(egui::Event::PointerButton {
                 pos: position,
                 button: egui::PointerButton::Primary,
@@ -7617,15 +7109,14 @@ impl eframe::App for QuantickApp {
             });
             return;
         }
-        if let Some(menu) = self.scripted_menu
+        if let Some(menu) = self.harness.menu()
             && let Some(position) = match menu {
                 ScriptedMenu::Workspace => self.workspace_menu_rect,
                 ScriptedMenu::History => self.history_menu_rect,
             }
             .map(|rect| rect.center())
         {
-            self.scripted_menu = None;
-            self.scripted_menu_release = Some(position);
+            self.harness.menu_pressed(position);
             raw_input.events.push(egui::Event::PointerMoved(position));
             raw_input.events.push(egui::Event::PointerButton {
                 pos: position,
@@ -7643,7 +7134,7 @@ impl eframe::App for QuantickApp {
         // hover readout at all, and read as "the compass does not draw"
         // rather than "the menu never opened".
         self.push_scripted_pointer(raw_input);
-        let Some(pane) = self.scripted_context_menu else {
+        let Some(pane) = self.harness.context_menu() else {
             return;
         };
         // The divider is published by the draw, so the first frame has none:
@@ -7651,8 +7142,7 @@ impl eframe::App for QuantickApp {
         let Some(position) = self.scripted_context_menu_pos(pane) else {
             return;
         };
-        self.scripted_context_menu = None;
-        self.scripted_context_menu_release = Some(position);
+        self.harness.context_menu_pressed(position);
         raw_input.events.push(egui::Event::PointerMoved(position));
         raw_input.events.push(egui::Event::PointerButton {
             pos: position,
@@ -7681,7 +7171,7 @@ impl QuantickApp {
     ///
     /// A run with neither variable set does nothing here.
     fn apply_scripted_view(&mut self) {
-        let (width, pan) = (self.scripted_candle_width, self.scripted_pan_px);
+        let (width, pan) = self.harness.scripted_view();
         if width.is_none() && pan.is_none() {
             return;
         }
@@ -7710,19 +7200,18 @@ impl QuantickApp {
     /// have every page after the first refused and answered empty — a capture
     /// of the drop path rather than of the feature.
     fn apply_load_older(&mut self) {
-        let Some((pages, budget)) = self.pending_load_older else {
+        let Some(pages) = self.harness.load_older_pages() else {
             return;
         };
         if self.active_tab().flow_pane.slots() == 0 {
             // Nothing charted yet. Wait, but not forever.
-            self.pending_load_older = budget.checked_sub(1).map(|left| (pages, left));
-            if self.pending_load_older.is_none() {
+            if self.harness.spend_load_older_frame().gave_up {
                 tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
                     event_code = "LOAD_OLDER_AUTOSTART_GAVE_UP",
                     pages,
-                    frames_waited = LOAD_OLDER_HOOK_FRAMES,
+                    frames_waited = crate::harness::LOAD_OLDER_HOOK_FRAMES,
                     action = "chart_left_as_it_is",
                     "QUANTICK_LOAD_OLDER found no bars to page back from"
                 );
@@ -7736,7 +7225,7 @@ impl QuantickApp {
         }
         let (tab, config) = self.active_with_config();
         tab.request_older_history(config);
-        self.pending_load_older = (pages > 1).then_some((pages - 1, budget));
+        self.harness.load_older_page_sent();
     }
 
     /// The `QUANTICK_HISTORY_NOTE` hook: the sentence a settled reach leaves,
@@ -7756,23 +7245,21 @@ impl QuantickApp {
     /// [`crate::tab::HISTORY_NOTE_LINGER`] from the last raise and then leaves
     /// on its own, so even a hooked run photographs a note that expires.
     fn apply_history_note_hook(&mut self) {
-        let Some((end, budget)) = self.pending_history_note else {
+        let Some(end) = self.harness.history_note_ending() else {
             return;
         };
-        let Some(left) = budget.checked_sub(1) else {
+        if self.harness.spend_history_note_frame().gave_up {
             tracing::info!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "HISTORY_NOTE_HOOK_RELEASED",
                 ending = end.action(),
-                frames_held = HISTORY_NOTE_HOOK_FRAMES,
+                frames_held = crate::harness::HISTORY_NOTE_HOOK_FRAMES,
                 action = "note_left_to_expire",
                 "QUANTICK_HISTORY_NOTE let go of its sentence"
             );
-            self.pending_history_note = None;
             return;
-        };
-        self.pending_history_note = Some((end, left));
+        }
         let tab = self.active_tab();
         // Nothing charted yet, or the note is already up: nothing to raise.
         //
@@ -7806,7 +7293,7 @@ impl QuantickApp {
     /// *from* until the opening request has landed; and it gives up rather
     /// than hanging a capture on a venue that never answers.
     fn apply_load_older_candles(&mut self) {
-        let Some((spans, budget)) = self.pending_load_older_candles else {
+        let Some(spans) = self.harness.load_older_candle_spans() else {
             return;
         };
         let capabilities = self.active_tab().capabilities(&self.config);
@@ -7823,14 +7310,13 @@ impl QuantickApp {
             .loading
             .is_active(LoadingTask::VenueHistory)
         {
-            self.pending_load_older_candles = budget.checked_sub(1).map(|left| (spans, left));
-            if self.pending_load_older_candles.is_none() {
+            if self.harness.spend_load_older_candles_frame().gave_up {
                 tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
                     event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
                     spans,
-                    frames_waited = LOAD_OLDER_CANDLES_HOOK_FRAMES,
+                    frames_waited = crate::harness::LOAD_OLDER_CANDLES_HOOK_FRAMES,
                     reason = "venue_never_answered",
                     action = "chart_left_as_it_is",
                     "QUANTICK_LOAD_OLDER_CANDLES gave up waiting for a span to arrive"
@@ -7843,14 +7329,13 @@ impl QuantickApp {
             // here. Both are worth waiting a bounded while for, and both end
             // the same way; the log names what the tab held so an operator can
             // tell them apart.
-            self.pending_load_older_candles = budget.checked_sub(1).map(|left| (spans, left));
-            if self.pending_load_older_candles.is_none() {
+            if self.harness.spend_load_older_candles_frame().gave_up {
                 tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
                     event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
                     spans,
-                    frames_waited = LOAD_OLDER_HOOK_FRAMES,
+                    frames_waited = crate::harness::LOAD_OLDER_CANDLES_HOOK_FRAMES,
                     candles_held = self.active_tab().venue_candles_held(),
                     ohlcv_history = capabilities.ohlcv_history,
                     action = "chart_left_as_it_is",
@@ -7868,21 +7353,18 @@ impl QuantickApp {
             .active_tab_mut()
             .request_older_ohlcv_history(capabilities)
         {
-            self.pending_load_older_candles = (spans > 1).then_some((spans - 1, budget));
-        } else {
-            self.pending_load_older_candles = budget.checked_sub(1).map(|left| (spans, left));
-            if self.pending_load_older_candles.is_none() {
-                tracing::warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
-                    spans,
-                    frames_waited = LOAD_OLDER_CANDLES_HOOK_FRAMES,
-                    reason = "request_never_queued",
-                    action = "chart_left_as_it_is",
-                    "QUANTICK_LOAD_OLDER_CANDLES could not get a request out"
-                );
-            }
+            self.harness.load_older_candles_span_sent();
+        } else if self.harness.spend_load_older_candles_frame().gave_up {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
+                spans,
+                frames_waited = crate::harness::LOAD_OLDER_CANDLES_HOOK_FRAMES,
+                reason = "request_never_queued",
+                action = "chart_left_as_it_is",
+                "QUANTICK_LOAD_OLDER_CANDLES could not get a request out"
+            );
         }
     }
 
@@ -7896,7 +7378,7 @@ impl QuantickApp {
     /// this attempt — an env var is a request for this run, and it must never
     /// keep re-placing objects the user then deletes.
     fn apply_drawing_demo(&mut self) {
-        if !self.pending_drawing_demo {
+        if !self.harness.drawings_demo_armed() {
             return;
         }
         let pane = &mut self.active_tab_mut().flow_pane;
@@ -7905,16 +7387,14 @@ impl QuantickApp {
         if slots < 8 * drawings::DRAWING_TOOLS.len() {
             return;
         }
-        self.pending_drawing_demo = false;
-        let share = std::env::var("QUANTICK_DRAWINGS_DEMO_SHARED").is_ok_and(|v| v == "1");
-        // Which object ends up selected. Selection is what puts an object's
-        // handles on screen, so "show me the channel's handles" is a question
-        // no screenshot could answer while only the last-placed tool was ever
-        // selected.
-        let select_tool = std::env::var("QUANTICK_DRAWINGS_DEMO_SELECT").ok();
-        // `=bands` adds a set on every indicator pane; `=1` stays exactly
-        // what it was, so every screenshot taken of the old hook still is.
-        let bands = std::env::var("QUANTICK_DRAWINGS_DEMO").is_ok_and(|v| v == "bands");
+        let Some(demo) = self.harness.take_drawings_demo() else {
+            return;
+        };
+        let DrawingsDemo {
+            bands,
+            shared: share,
+            select_tool,
+        } = demo;
         if share {
             // A shared drawing has nothing to be shared *with* on a single
             // pane, so the hook that asks for one opens the split too — the
@@ -8040,7 +7520,7 @@ impl QuantickApp {
     /// Waits for bars, and is consumed once, for the same reasons
     /// [`Self::apply_drawing_demo`] is.
     fn apply_drawing_draft(&mut self) {
-        let Some(anchors) = self.pending_drawing_draft else {
+        let Some(DrawingDraft { anchors, constrain }) = self.harness.drawing_draft() else {
             return;
         };
         let Some(tool) = self.toolrail.tool().drawing_tool() else {
@@ -8053,7 +7533,7 @@ impl QuantickApp {
         let (Some(chart), true) = (pane.last_chart_area, slots > 0) else {
             return;
         };
-        self.pending_drawing_draft = None;
+        self.harness.drawing_draft_staged();
         let pane = &mut self.active_tab_mut().flow_pane;
         // One short of the count, whatever was asked for: a draft that
         // completed itself is not a draft, and photographs as a finished
@@ -8114,9 +7594,7 @@ impl QuantickApp {
         };
         pane.parked_hand = Some(pane::ParkedHand {
             position: parked,
-            constrain: if std::env::var("QUANTICK_DRAWING_CONSTRAIN")
-                .is_ok_and(|value| value == "1")
-            {
+            constrain: if constrain {
                 drawings::Constrain::Level
             } else {
                 drawings::Constrain::Free
@@ -8136,7 +7614,7 @@ impl QuantickApp {
         /// Candles the venue-history scene installs: enough for the seam and
         /// the divider to read, few enough to stay one screenful of context.
         const DEMO_PREFIX_CANDLES: i64 = 90;
-        let Some(demo) = self.pending_venue_history_demo else {
+        let Some(demo) = self.harness.venue_history_demo() else {
             return;
         };
         let tab = self.active_tab_mut();
@@ -8144,7 +7622,7 @@ impl QuantickApp {
         if tab.flow_pane.state.bars().len() < 12 {
             return;
         }
-        self.pending_venue_history_demo = None;
+        self.harness.venue_history_demo_staged();
         let slice = match demo {
             VenueHistoryDemo::Complete => crate::feed::OhlcvSlice::Last { complete: true },
             VenueHistoryDemo::Partial => crate::feed::OhlcvSlice::More,
@@ -8456,7 +7934,7 @@ impl QuantickApp {
     /// Consumed once, whether or not the trades ever arrived — an env var
     /// is a request for this run, not a standing rule.
     fn apply_replay_restart(&mut self) {
-        let Some(after) = self.pending_replay_restart else {
+        let Some(after) = self.harness.replay_restart_after() else {
             return;
         };
         let tab = self.active_tab();
@@ -8468,7 +7946,7 @@ impl QuantickApp {
         // un-seeked timeline while the harness believed otherwise; the next
         // frame simply tries again.
         if self.apply_replay_action(ReplayAction::Control(ReplayControl::Restart)) {
-            self.pending_replay_restart = None;
+            self.harness.replay_restart_taken();
         }
     }
 
@@ -8481,7 +7959,7 @@ impl QuantickApp {
     /// click lands on it and opens the per-drawing menu. Consumed once the
     /// chart has bars enough, like the drawings demo.
     fn apply_strategy_demo(&mut self) {
-        let Some(mode) = self.pending_strategy_demo else {
+        let Some(mode) = self.harness.strategy_demo() else {
             return;
         };
         /// Fewest bars before the demo stages: enough for the shipped
@@ -8508,7 +7986,7 @@ impl QuantickApp {
         else {
             // No rectangle in the registry: staging can never succeed, so
             // the flag is consumed rather than retried forever.
-            self.pending_strategy_demo = None;
+            self.harness.strategy_demo_staged();
             return;
         };
         let drawing_id = {
@@ -8550,7 +8028,7 @@ impl QuantickApp {
             pane.drawings.items()[index].id
         };
         // Staged: the rectangle exists, so the hook is consumed.
-        self.pending_strategy_demo = None;
+        self.harness.strategy_demo_staged();
         let mut form =
             crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
         // The alarm scenes tick the checkbox the trader would tick, and the
@@ -8672,16 +8150,18 @@ impl QuantickApp {
         /// showing, so the slot count is this number only at 1m — the scene is
         /// about the fold surviving a long history, not about an exact count.
         const FRVP_STRESS_CANDLES: i64 = 25_000;
-        if !self.pending_frvp_demo {
-            return;
-        }
         // `=compare` places two adjacent profiles over the same stretch of
         // map, one in each over-heatmap mode — the before/after of the
         // silhouette decision in a single frame, which no toggle-and-wait
         // pair of screenshots can prove as cleanly.
-        let mode = std::env::var("QUANTICK_FRVP_DEMO").unwrap_or_default();
-        let compare = mode.trim() == "compare";
-        let stress = mode.trim() == "stress";
+        let Some(demo) = self.harness.frvp_demo() else {
+            return;
+        };
+        let FrvpDemo {
+            compare,
+            stress,
+            select,
+        } = demo;
         // The venue's candles land on the **time** pane — that is the chart
         // whose history runs to tens of thousands of bars, and the one a
         // trader drops a session profile on. Every other scene stays on the
@@ -8707,7 +8187,7 @@ impl QuantickApp {
             .into_iter()
             .find(|tool| tool.id() == crate::frvp::TOOL_ID)
         else {
-            self.pending_frvp_demo = false;
+            self.harness.frvp_demo_placed();
             return;
         };
         // `=stress` is the scene this object used to freeze the app on: a
@@ -8729,7 +8209,7 @@ impl QuantickApp {
         {
             return;
         }
-        self.pending_frvp_demo = false;
+        self.harness.frvp_demo_placed();
         // Re-read after the delivery: the prefix that just landed is part of
         // the chart the range is about to span.
         let slots = self.active_tab_mut().pane_mut(side).slots();
@@ -8739,7 +8219,7 @@ impl QuantickApp {
         // session's earliest bars never get cells. So it waits for enough
         // freshly-built bars and anchors on those, where the coverage is.
         if compare && slots.saturating_sub(prefix) < 60 {
-            self.pending_frvp_demo = true;
+            self.harness.rearm_frvp_demo(demo);
             return;
         }
         let pane = self.active_tab_mut().pane_mut(side);
@@ -8776,7 +8256,6 @@ impl QuantickApp {
         // Without it a validation run can photograph a profile but never the
         // controls over it, which is exactly the surface whose placement this
         // change is about (`ui-harness`: every surface owes a hook).
-        let select = std::env::var("QUANTICK_FRVP_DEMO_SELECT").is_ok_and(|v| v.trim() == "1");
         for &(from, to, outline) in ranges {
             for slot in [from, to] {
                 pane.drawings.place_with(
@@ -8820,14 +8299,14 @@ impl QuantickApp {
         const DEMO_AVWAP_MIN_SLOTS: usize = 12;
         /// How far back of the newest bar the demo drops its anchor.
         const DEMO_AVWAP_LOOKBACK_BARS: usize = 40;
-        if !self.pending_avwap_demo {
+        if !self.harness.avwap_demo() {
             return;
         }
         let slots = self.active_tab_mut().flow_pane.slots();
         if slots < DEMO_AVWAP_MIN_SLOTS {
             return;
         }
-        self.pending_avwap_demo = false;
+        self.harness.avwap_demo_placed();
         let Some(tool) = drawings::DRAWING_TOOLS
             .into_iter()
             .find(|tool| tool.id() == crate::avwap::TOOL_ID)
@@ -8939,7 +8418,7 @@ impl QuantickApp {
     /// cannot reach, faded and labelled off-series. One extra object is placed
     /// an hour before the first bar to produce the second.
     fn apply_drawing_demo_recut(&mut self) {
-        if !std::env::var("QUANTICK_DRAWINGS_DEMO_RECUT").is_ok_and(|value| value == "1") {
+        if !self.harness.drawings_demo_recut() {
             return;
         }
         let pane = &mut self.active_tab_mut().flow_pane;

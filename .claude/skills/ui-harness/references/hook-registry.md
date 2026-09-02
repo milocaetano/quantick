@@ -84,6 +84,7 @@ Landing with the drawing-toolbar goal (`feat/drawing-toolbar-pro`):
 | `QUANTICK_FRVP_DEMO=1` | one fixed-range volume profile placed on the flow pane once it has bars. When the pane carries a venue history prefix the range straddles the seam, so the partial-coverage label ("profile from N of M bars") is on screen — the honesty surface this hook photographs |
 | `QUANTICK_FRVP_DEMO=compare` | two adjacent profiles over the same stretch of liquidity map, one per over-heatmap mode (outline vs always-fill) — the silhouette decision's before/after in a single frame |
 | `QUANTICK_FRVP_DEMO=stress` | 25 000 one-minute venue candles delivered behind the tape (folded to whatever interval the time pane shows) with one profile over the whole of the **time** pane — the range that used to freeze the app. What it photographs is the *filling* state: a partial histogram with `loading N of M bars` on its status line |
+| `QUANTICK_FRVP_DEMO_SELECT=1` | leaves the profile the demo placed **selected**, so the context bar a trader edits it from is on screen with it. A capture can otherwise photograph a profile but never the controls over it |
 | `QUANTICK_FRVP_FOLD_BUDGET=<bars>` | how much a profile's fold spends per frame (default 1500 bars-worth of map touches). `=1` advances one bar per frame, holding the filling state on screen for as long as a capture needs; a non-positive or unparseable value is refused and the default stands |
 
 Landing with the trade-history context goal (`feat/trade-history-context`):
@@ -154,6 +155,7 @@ Landing with the toolbar usability goal (`fix/toolbar-usability`):
 | Hook | Reaches |
 | --- | --- |
 | `QUANTICK_DRAWING_DRAFT=<anchors>` | the **half-placed** object: that many anchors of the tool armed by `QUANTICK_DRAWING_TOOL` already down, with the pointer parked where the next one would go. A draft's live preview is the whole feedback of a multi-anchor gesture, and it is the only surface that exists *between* two clicks — nothing else reaches it without a hand on the mouse. Clamped to one short of the tool's anchor count, so it always photographs a gesture in flight and never a finished object. `QUANTICK_DRAWING_TOOL=parallel-channel QUANTICK_DRAWING_DRAFT=2` is the channel mid-width, the state the "it draws a straight line" report was about |
+| `QUANTICK_DRAWING_CONSTRAIN=1` | the parked hand of `QUANTICK_DRAWING_DRAFT` holds a **level**, as a held modifier would — so the draft's preview is the constrained one. Without it the draft is photographed free-hand, which is the other half of the same gesture and not the one a level-snap report is about |
 
 Landing with the drawing context bar goal (`feat/drawing-context-bar`):
 
