@@ -1,4 +1,4 @@
-//! The three repository guards, as the tests CI runs.
+//! The four repository guards, as the tests CI runs.
 //!
 //! Each is a thin shell over the library: the logic, its rationale and its
 //! unit tests live in the module the failure names, and this file exists so
@@ -17,7 +17,7 @@ use quantick_guards::{GUARDS, remedies, workspace_root};
 /// instead of a green suite over a guard CI never runs — which is the failure
 /// the check exists to prevent, and which a hand-kept list of names invites by
 /// making "add the string" the obvious fix.
-const TESTED: [&str; 3] = ["size", "language", "encoding"];
+const TESTED: [&str; 4] = ["size", "language", "encoding", "context"];
 
 /// Run one named guard and fail with everything it found.
 fn assert_clean(name: &str) {
@@ -68,6 +68,11 @@ fn every_guard_in_the_registry_has_a_test_here() {
         missing.is_empty(),
         "guards with no test in this file: {missing:?} — each would run in the binary and never \
          in CI. Widening TESTED alone will not do: its length is fixed and every slot is indexed \
-         by a #[test] above, so a fourth guard needs a fourth test."
+         by a #[test] above, so the next guard needs the next test."
     );
+}
+
+#[test]
+fn no_context_file_grows_past_its_recorded_ceiling() {
+    assert_clean(TESTED[3]);
 }

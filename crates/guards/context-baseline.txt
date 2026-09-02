@@ -1,0 +1,54 @@
+# The recorded ceiling, in bytes, for every context file over the threshold —
+# the files a Claude session loads before it reads any code. One
+# `path ceiling` pair per line; `#` starts a comment.
+#
+# These are costs, not targets. Every byte here is paid on every turn of every
+# session that loads the file, so the only direction an entry should move is
+# down. The `!budget` line caps the whole tracked weight — these ceilings plus
+# every tracked file too small to need one — so adding weight anywhere means
+# taking comparable weight out somewhere else in the same change.
+#
+# Kept as data rather than a Rust `const` for the reason the size baseline is:
+# a raise is then a data diff a reviewer can see, and `--tighten` can rewrite a
+# line-oriented file safely.
+
+# The three review and mission skills, after the cut that introduced this
+# guard: 108,963 bytes between them before it, 59,682 after. Every operative
+# rule stayed; the histories and the per-dimension detail moved into
+# `references/` beside each skill, which a run reads only when it reaches that
+# dimension. Each of these three is still the single largest thing a session
+# loads when it invokes the skill, so each is debt, not a target.
+.claude/skills/mission/SKILL.md 22007
+.claude/skills/arch-review/SKILL.md 19588
+.claude/skills/delivery-review/SKILL.md 18087
+
+# Pre-existing debt this branch measured rather than paid. `ui-harness` and its
+# registry are the next cut and were deliberately out of its scope: the
+# registry is grepped rather than read whole, but every row is a paragraph
+# where a sentence and a `references/` note would do, and `visual-qa` and
+# `trader-ux-review` both depend on its shape. `AGENTS.md` is the file
+# `CLAUDE.md` delegates the crate map to, so it is load-bearing rather than
+# merely long — but it is loaded all the same, and PR #279 moved weight into
+# it, which is exactly why it is rationed here.
+.claude/skills/ui-harness/references/hook-registry.md 69177
+.claude/skills/ui-harness/SKILL.md 13377
+AGENTS.md 12771
+
+# What a session's instructions weigh in total: every ceiling above, plus the
+# measured bytes of every tracked file too small to need one. Raising it means
+# taking comparable weight out somewhere else.
+#
+# The second half is what makes it a cap rather than a bypass. A budget of
+# ceilings alone would pay a branch for splitting a large file into pieces that
+# each sit under the threshold: the recorded total falls, `--tighten` writes
+# the smaller number down as progress, and a session loads exactly as much
+# prose as before. The branch that built this guard did that by accident — of
+# the 49,281 bytes it took out of three skills, 37,490 landed in sub-threshold
+# `references/` siblings. Counting the remainder also removes the cliff the
+# first version had: a file crossing the threshold now moves bytes from the
+# unrecorded half to the recorded one, rather than adding 10,000 at a stroke.
+#
+# The cost is a total that drifts with ordinary edits. That is what the guard's
+# BUDGET_SLACK absorbs, and why this number is expected to move down over time
+# and to be argued over when it moves up.
+!budget 231950

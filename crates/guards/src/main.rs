@@ -6,7 +6,7 @@
 //! ceiling is crossed and reported in the same breath, instead of surfacing
 //! four minutes later at the end of a full suite run.
 //!
-//! `--tighten` is the other one. The size ratchet asks for a file that shrank
+//! `--tighten` is the other one. A ratchet asks for a file that shrank
 //! to have its entry lowered, and that direction is always good news with the
 //! correct number already computed — there is nothing for a human to decide,
 //! only something to type. So the command types it.
@@ -18,13 +18,13 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use quantick_guards::{GUARDS, remedies, size, workspace_root};
+use quantick_guards::{GUARDS, context, ratchet, remedies, size, workspace_root};
 
 /// Turn whatever the caller typed into the workspace-relative spelling with
 /// forward slashes that every guard is keyed on.
 ///
 /// Without this, `--file ./crates/app/src/app.rs` and an absolute path — both
-/// of which a shell tab-completes — fell out of scope in all three guards and
+/// of which a shell tab-completes — fell out of scope in every guard and
 /// exited 0 with no output. That is the silent all-clear this crate's own doc
 /// comments spend paragraphs forbidding: a developer asks about a real file
 /// and is told nothing, which reads exactly like clean.
@@ -61,8 +61,8 @@ usage: quantick-guards (--file <path> | --tighten)
 
   (no arguments)   run every guard over the repository
   --file <path>    run every guard over one workspace-relative path
-  --tighten        lower any size-baseline entry whose file has shrunk, and
-                   the !budget total to match -- only ever downward
+  --tighten        lower any baseline entry whose file has shrunk, in both
+                   ratchets, and the !budget totals to match -- only downward
 
 The two modes are alternatives; they cannot be combined.
 Exit code 1 means a guard found something.";
@@ -71,7 +71,7 @@ fn main() -> ExitCode {
     // A set-but-empty variable is not a root. `var_os` hands back
     // `Some("")` for it, which resolves every later `join` against the
     // process working directory instead — the baseline read then fails while
-    // two of the three guards report clean.
+    // the other guards report clean.
     let root = std::env::var_os("QUANTICK_GUARDS_ROOT")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -141,22 +141,60 @@ fn report(root: &std::path::Path, only: Option<String>) -> ExitCode {
     }
 }
 
-/// Lower every size-baseline entry whose file has shrunk past the slack, and
-/// the `!budget` total with them. Both directions are down only.
+/// Lower every baseline entry whose file has shrunk past the slack, and the
+/// `!budget` total with it. Both directions are down only.
+///
+/// Both ratchets run. A command that tightened code and quietly left the
+/// context ceilings stale would report the good news it happened to know
+/// about, and the author would find the other half as a failing test later —
+/// which is exactly the shape of surprise this flag exists to remove.
 fn tighten(root: &std::path::Path) -> ExitCode {
-    match size::tighten(root) {
+    let mut failed = false;
+    for outcome in [
+        tighten_one(
+            root,
+            "size",
+            size::tighten(root),
+            size::BASELINE_FILE,
+            size::BUDGET_SLACK,
+        ),
+        tighten_one(
+            root,
+            "context",
+            context::tighten(root),
+            context::BASELINE_FILE,
+            context::BUDGET_SLACK,
+        ),
+    ] {
+        failed |= outcome;
+    }
+    if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// Report one ratchet's tightening. Returns whether it failed.
+fn tighten_one(
+    root: &std::path::Path,
+    name: &str,
+    result: Result<Vec<String>, String>,
+    baseline_file: &str,
+    slack: usize,
+) -> bool {
+    match result {
         Err(problem) => {
             eprintln!("{problem}");
-            ExitCode::FAILURE
+            true
         }
         Ok(applied) if applied.is_empty() => {
             println!(
-                "nothing to tighten: no tracked file has shrunk past the slack, and the {} \
-                 total is within {} of its ceilings",
-                size::BUDGET_DIRECTIVE,
-                size::BUDGET_SLACK
+                "nothing to tighten in the {name} ratchet: no tracked file has shrunk past its \
+                 slack, and the tracked total is within {slack} of the {}",
+                ratchet::BUDGET_DIRECTIVE
             );
-            ExitCode::SUCCESS
+            false
         }
         Ok(applied) => {
             // The resolved absolute path, not the relative spelling. The root
@@ -168,12 +206,12 @@ fn tighten(root: &std::path::Path) -> ExitCode {
             println!(
                 "tightened {} line(s) in {}:",
                 applied.len(),
-                root.join(size::BASELINE_FILE).display()
+                root.join(baseline_file).display()
             );
             for line in &applied {
                 println!("{line}");
             }
-            ExitCode::SUCCESS
+            false
         }
     }
 }

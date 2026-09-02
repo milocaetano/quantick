@@ -64,11 +64,12 @@
 //! branch" read as eighteen reasonable decisions and one lost trunk, and no
 //! per-file rule can see that, because the question is about the sum.
 //!
-//! So [`BUDGET_DIRECTIVE`] caps the total of every recorded ceiling. Raising
-//! one now means lowering another in the same change: growth is pay-as-you-go,
-//! and an extraction lowers both numbers on its own. Nothing is blocked —
-//! raising the budget line is still allowed, and is the escape hatch on
-//! purpose, since it is one number in one place that a reviewer watches move.
+//! So [`BUDGET_DIRECTIVE`](crate::ratchet::BUDGET_DIRECTIVE) caps the total of
+//! every recorded ceiling. Raising one now means lowering another in the same
+//! change: growth is pay-as-you-go, and an extraction lowers both numbers on
+//! its own. Nothing is blocked — raising the budget line is still allowed, and
+//! is the escape hatch on purpose, since it is one number in one place that a
+//! reviewer watches move.
 //!
 //! Three properties keep that hatch from becoming a bypass, and each has a
 //! test. [`tighten`] follows the ceilings down and never up, or the command
@@ -82,6 +83,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::Finding;
+use crate::ratchet::{Baseline, Policy};
 
 /// Production lines above which a file must carry a baseline entry. Files
 /// below it are not the problem this guard exists for, and tracking them
@@ -96,13 +98,6 @@ pub const SLACK: usize = 200;
 
 /// The recorded ceilings, as a workspace-relative path.
 pub const BASELINE_FILE: &str = "crates/guards/size-baseline.txt";
-
-/// The line in the baseline that caps the *sum* of every recorded ceiling.
-///
-/// A directive rather than a comment because the parser strips comments, and a
-/// budget the parser cannot see is one that silently stops existing the day
-/// somebody reflows the file.
-pub const BUDGET_DIRECTIVE: &str = "!budget";
 
 /// How far below the budget the recorded total may sit before the budget
 /// itself has to come down.
@@ -179,97 +174,27 @@ pub const BASELINE_REMEDY: &str = "The baseline could not be read as data, so no
                                    resumes. Until then it is not reporting a clean repository, it \
                                    is reporting that it could not look.";
 
-/// One recorded ceiling, with the position that lets [`tighten`] rewrite it.
-struct Entry {
-    path: String,
-    ceiling: usize,
-    /// Index into the baseline file's lines, so a rewrite touches the number
-    /// and leaves every comment where its author put it.
-    line: usize,
-}
+/// This guard's ratchet: the numbers and wordings above, handed to the
+/// mechanism that [`context`](crate::context) shares with it.
+pub const POLICY: Policy = Policy {
+    baseline_file: BASELINE_FILE,
+    threshold: THRESHOLD,
+    slack: SLACK,
+    budget_slack: BUDGET_SLACK,
+    // Zero: this budget sums signed permissions, and a raise is an act.
+    budget_headroom: 0,
+    unit: "production lines",
+    remedy: REMEDY,
+    budget_remedy: BUDGET_REMEDY,
+    budget_slack_remedy: BUDGET_SLACK_REMEDY,
+    baseline_remedy: BASELINE_REMEDY,
+};
 
-/// The cap on the sum of every recorded ceiling, with the position that lets
-/// [`tighten`] rewrite it.
-struct Budget {
-    allowed: usize,
-    line: usize,
-}
-
-/// Everything the baseline file states: the per-file ceilings, and the cap on
-/// their total.
-struct Baseline {
-    entries: Vec<Entry>,
-    /// Absent only when the directive is missing, which is itself a finding.
-    /// Parsed as an option rather than defaulted, because a default would make
-    /// deleting the line the cheapest way past the budget — the guard would
-    /// hand out its own bypass.
-    budget: Option<Budget>,
-}
-
-impl Baseline {
-    /// The recorded debt: what the repository has signed for, not what its
-    /// files currently measure. Deliberately the ceilings rather than the
-    /// counts — the budget rations *permission* to be large, so a file sitting
-    /// under its ceiling still spends the whole entry until the entry is
-    /// tightened, and [`SLACK`] is what bounds that gap.
-    fn recorded(&self) -> usize {
-        self.entries.iter().map(|entry| entry.ceiling).sum()
-    }
-}
-
-/// Read the ceilings and the budget. Comments and blank lines are skipped;
-/// anything else must be `path ceiling` or the [`BUDGET_DIRECTIVE`] line,
-/// because a typo silently dropping an entry would leave a file unguarded and
-/// looking green.
+/// The recorded ceilings and the budget, from the file [`BASELINE_FILE`]
+/// names. A thin name for [`Policy::baseline`], kept because the tests below
+/// read the parsed baseline directly.
 fn baseline(root: &Path) -> Result<Baseline, String> {
-    let file = root.join(BASELINE_FILE);
-    let text =
-        fs::read_to_string(&file).map_err(|e| format!("{} is unreadable: {e}", file.display()))?;
-    let mut entries = Vec::new();
-    let mut budget: Option<Budget> = None;
-    for (line, raw) in text.lines().enumerate() {
-        let content = raw.split('#').next().unwrap_or("").trim();
-        if content.is_empty() {
-            continue;
-        }
-        if let Some(rest) = content.strip_prefix(BUDGET_DIRECTIVE) {
-            let allowed = rest.trim().parse::<usize>().map_err(|e| {
-                format!(
-                    "{BASELINE_FILE}:{}: `{}` is not a count: {e}",
-                    line + 1,
-                    rest.trim()
-                )
-            })?;
-            // Two budgets is not a harmless duplicate: whichever one loses is
-            // a cap somebody wrote and nothing enforces, and the file gives no
-            // hint which that was.
-            if let Some(first) = &budget {
-                return Err(format!(
-                    "{BASELINE_FILE}:{}: a second `{BUDGET_DIRECTIVE}` — the first is on line {}, \
-                     and only one of them could ever be the cap",
-                    line + 1,
-                    first.line + 1
-                ));
-            }
-            budget = Some(Budget { allowed, line });
-            continue;
-        }
-        let (path, ceiling) = content
-            .rsplit_once(char::is_whitespace)
-            .ok_or_else(|| format!("{BASELINE_FILE}:{}: expected `path ceiling`", line + 1))?;
-        let ceiling = ceiling.parse::<usize>().map_err(|e| {
-            format!(
-                "{BASELINE_FILE}:{}: `{ceiling}` is not a count: {e}",
-                line + 1
-            )
-        })?;
-        entries.push(Entry {
-            path: path.trim().to_owned(),
-            ceiling,
-            line,
-        });
-    }
-    Ok(Baseline { entries, budget })
+    POLICY.baseline(root)
 }
 
 /// Lines of a source file that ship in the binary: every line that is not part
@@ -362,6 +287,16 @@ pub struct Measured {
     /// instructions. The encoding guard reports what is actually wrong with
     /// these; this guard only has to avoid lying about them.
     pub undecodable: Vec<String>,
+    /// Directory prefixes the walk could not list, with a trailing slash.
+    ///
+    /// The failure message names the directory; the entries at risk name
+    /// files inside it, and no substring of one is the other. Without this,
+    /// an unlistable `crates/app/src/drawings/` reported every ceiling under
+    /// it stale — and the stated remedy for a stale entry is to drop it,
+    /// after which the file is re-added at whatever size it has grown to.
+    /// [`crate::context::Measured::blind`] is the same field for the same
+    /// reason.
+    pub blind: Vec<String>,
 }
 
 /// Every tracked `.rs` file under `crates`, as workspace-relative paths with
@@ -383,6 +318,7 @@ fn scan(dir: &Path, root: &Path, found: &mut Measured) {
             found
                 .unreadable
                 .push(format!("  {relative}/: directory could not be listed: {e}"));
+            found.blind.push(format!("{relative}/"));
             return;
         }
     };
@@ -429,96 +365,11 @@ pub fn measure(root: &Path) -> Measured {
         counts: Vec::new(),
         unreadable: Vec::new(),
         undecodable: Vec::new(),
+        blind: Vec::new(),
     };
     scan(&root.join("crates"), root, &mut found);
     found.counts.sort();
     found
-}
-
-/// How one measured file stands against its recorded ceiling. The single
-/// place the three verdicts are worded, so the whole-repo scan and the
-/// single-file check the edit-time hook runs can never disagree about the
-/// same file.
-fn verdict(entry: Option<&Entry>, path: &str, actual: usize) -> Option<Finding> {
-    match entry {
-        Some(entry) if actual > entry.ceiling => Some(Finding::new(
-            format!(
-                "  {path}: {actual} production lines, ceiling {} (+{})",
-                entry.ceiling,
-                actual - entry.ceiling
-            ),
-            REMEDY,
-        )),
-        Some(entry) if entry.ceiling.saturating_sub(actual) > SLACK => Some(Finding::new(
-            format!(
-                "  {path}: down to {actual} from {} — good news, tighten the entry to {actual}",
-                entry.ceiling
-            ),
-            REMEDY,
-        )),
-        None if actual > THRESHOLD => Some(Finding::new(
-            format!(
-                "  {path}: {actual} production lines, over the {THRESHOLD} threshold and absent \
-                 from the baseline — add `{path} {actual}`"
-            ),
-            REMEDY,
-        )),
-        _ => None,
-    }
-}
-
-/// How the recorded total stands against the budget.
-///
-/// Kept beside [`verdict`] and worded once, for the same reason: this is the
-/// finding an author acts on, and two wordings of it would drift.
-///
-/// It reads the baseline alone and never the files, which is what makes the
-/// rule pay-as-you-go rather than a second size check. Growth reaches this
-/// function only once somebody has written a raise down — so a branch that
-/// grows a file and *does not* raise its ceiling is caught by [`verdict`] as
-/// it always was, and one that raises the ceiling honestly is caught here
-/// unless it paid for the raise by extraction.
-fn budget_verdict(recorded: &Baseline) -> Option<Finding> {
-    let total = recorded.recorded();
-    let Some(budget) = &recorded.budget else {
-        return Some(Finding::new(
-            format!(
-                "  {BASELINE_FILE}: no `{BUDGET_DIRECTIVE}` line — the recorded ceilings total \
-                 {total} and nothing caps them. Restore the directive at {total} or lower; \
-                 deleting it is the one edit that switches pay-as-you-go off for every file at \
-                 once"
-            ),
-            BUDGET_REMEDY,
-        ));
-    };
-    if total > budget.allowed {
-        return Some(Finding::new(
-            format!(
-                "  {BASELINE_FILE}:{}: the recorded ceilings total {total}, over the \
-                 {BUDGET_DIRECTIVE} of {} (+{}) — this branch raised a ceiling without lowering \
-                 another",
-                budget.line + 1,
-                budget.allowed,
-                total - budget.allowed
-            ),
-            BUDGET_REMEDY,
-        ));
-    }
-    if budget.allowed.saturating_sub(total) > BUDGET_SLACK {
-        // Good news, and therefore deliberately *not* BUDGET_REMEDY: that text
-        // tells an author to pay for a raise, and this author made none. The
-        // number is already computed, so the remedy is one command.
-        return Some(Finding::new(
-            format!(
-                "  {BASELINE_FILE}:{}: the recorded ceilings total {total}, down from the \
-                 {BUDGET_DIRECTIVE} of {} — good news, tighten the budget to {total}",
-                budget.line + 1,
-                budget.allowed
-            ),
-            BUDGET_SLACK_REMEDY,
-        ));
-    }
-    None
 }
 
 /// Every way the recorded baseline and the files on disk disagree.
@@ -532,8 +383,8 @@ pub fn check(root: &Path) -> Vec<Finding> {
     if !sources.is_dir() {
         return vec![Finding::new(
             format!(
-                "  {} is not a readable directory — there is nothing to measure, and every baseline \
-             entry would otherwise be reported stale",
+                "  {} is not a readable directory — there is nothing to measure, and every \
+                 baseline entry would otherwise be reported stale",
                 sources.display()
             ),
             BASELINE_REMEDY,
@@ -541,9 +392,8 @@ pub fn check(root: &Path) -> Vec<Finding> {
     }
     let recorded = match baseline(root) {
         Ok(recorded) => recorded,
-        Err(problem) => return vec![Finding::new(format!("  {problem}"), BASELINE_REMEDY)],
+        Err(problem) => return vec![POLICY.unparsed(&problem)],
     };
-    let entries = &recorded.entries;
     let found = measure(root);
     // The walker reports unreadable paths as bare strings. Each is a file the
     // guard could not clear, which is REMEDY territory like any other.
@@ -553,38 +403,19 @@ pub fn check(root: &Path) -> Vec<Finding> {
         .map(|line| Finding::new(line.clone(), REMEDY))
         .collect();
 
-    for (path, actual) in &found.counts {
-        let entry = entries.iter().find(|entry| &entry.path == path);
-        violations.extend(verdict(entry, path, *actual));
-    }
-
-    violations.extend(budget_verdict(&recorded));
-
-    for entry in entries {
-        // "Seen" is wider than "counted". A file that was found but could not
-        // be decoded or opened is present, not gone, and telling the author to
-        // drop its entry would delete a ceiling over a file that still
-        // exists — after which it is re-added at whatever size it has grown
-        // to, laundering a raise through the guard's own instructions.
-        let seen = found
-            .counts
-            .iter()
-            .any(|(scanned, _)| scanned == &entry.path)
-            || found.undecodable.contains(&entry.path)
+    // `0`: this ratchet keeps the budget a pure statement of signed
+    // permissions. A `.rs` file under the threshold is not a piece some
+    // larger file was split into to dodge a ceiling — the module boundary is
+    // load-bearing here, and `new-extension` asks for exactly that split.
+    violations.extend(POLICY.against(&recorded, &found.counts, 0, &|path| {
+        found.counts.iter().any(|(scanned, _)| scanned == path)
+            || found.undecodable.iter().any(|scanned| scanned == path)
             || found
                 .unreadable
                 .iter()
-                .any(|line| line.contains(entry.path.as_str()));
-        if !seen {
-            violations.push(Finding::new(
-                format!(
-                    "  {}: in the baseline but no longer scanned — drop the stale entry",
-                    entry.path
-                ),
-                REMEDY,
-            ));
-        }
-    }
+                .any(|line| line.starts_with(&format!("  {path}: ")))
+            || found.blind.iter().any(|dir| path.starts_with(dir.as_str()))
+    }));
 
     violations
 }
@@ -605,8 +436,8 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     // alone, with no file walk.
     if relative == BASELINE_FILE {
         return match baseline(root) {
-            Ok(recorded) => budget_verdict(&recorded).into_iter().collect(),
-            Err(problem) => vec![Finding::new(format!("  {problem}"), BASELINE_REMEDY)],
+            Ok(recorded) => POLICY.budget_verdict(&recorded, 0).into_iter().collect(),
+            Err(problem) => vec![POLICY.unparsed(&problem)],
         };
     }
     if !tracked(relative) {
@@ -628,10 +459,14 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     };
     let recorded = match baseline(root) {
         Ok(recorded) => recorded,
-        Err(problem) => return vec![Finding::new(format!("  {problem}"), BASELINE_REMEDY)],
+        Err(problem) => return vec![POLICY.unparsed(&problem)],
     };
-    let entry = recorded.entries.iter().find(|e| e.path == relative);
-    verdict(entry, relative, production_lines(&source))
+    POLICY
+        .verdict(
+            recorded.entry(relative),
+            relative,
+            production_lines(&source),
+        )
         .into_iter()
         .collect()
 }
@@ -642,91 +477,13 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
 ///
 /// Returns one line per entry rewritten.
 pub fn tighten(root: &Path) -> Result<Vec<String>, String> {
-    let recorded = baseline(root)?;
-    let entries = &recorded.entries;
-    let found = measure(root);
-    let file = root.join(BASELINE_FILE);
-    let text =
-        fs::read_to_string(&file).map_err(|e| format!("{} is unreadable: {e}", file.display()))?;
-    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
-    let mut applied = Vec::new();
-
-    // The total as it will stand once every rewrite below has been applied,
-    // accumulated as they are decided rather than re-read afterwards: the
-    // rewritten text is not parsed again, so this is the only place the new
-    // sum exists.
-    let mut tightened_total = 0;
-
-    for entry in entries {
-        let Some((_, actual)) = found.counts.iter().find(|(path, _)| path == &entry.path) else {
-            // An entry with no measured file keeps its ceiling and still
-            // spends it. `check` reports it as stale; dropping it from the
-            // total here would let a deleted file's budget quietly finance
-            // the next raise.
-            tightened_total += entry.ceiling;
-            continue;
-        };
-        if entry.ceiling.saturating_sub(*actual) <= SLACK {
-            tightened_total += entry.ceiling;
-            continue;
-        }
-        tightened_total += *actual;
-        // A trailing comment is carried across. The file header advertises
-        // `#` and the parser honours it anywhere on the line, so an author
-        // may well have written the justification for a ceiling *beside* it —
-        // and that justification is the whole doctrine of this guard. A
-        // rewrite that dropped it would delete the signed decision while
-        // reporting only that a number went down.
-        let trailing = lines[entry.line]
-            .find('#')
-            .map(|at| lines[entry.line][at..].to_owned());
-        lines[entry.line] = match trailing {
-            Some(comment) => format!("{} {actual}  {comment}", entry.path),
-            None => format!("{} {actual}", entry.path),
-        };
-        applied.push(format!("  {}: {} -> {actual}", entry.path, entry.ceiling));
-    }
-
-    // The budget follows the ceilings down, and **only** down. Letting this
-    // raise the number would turn `--tighten` into the bypass the whole
-    // mechanism is built to deny: a branch over budget would run the command
-    // the failure message recommends and have its raise signed by a tool
-    // instead of by a person.
-    //
-    // And only once the gap is wide enough to *be* a finding -- the same test
-    // `budget_verdict` applies, for the same reason the per-entry rewrite above
-    // uses `SLACK`. Lowering on any gap at all would revoke headroom somebody
-    // deliberately signed for: a branch may raise the budget on purpose, sit
-    // silently under `BUDGET_SLACK`, and then have that decision reversed by a
-    // `--tighten` run made for an unrelated reason. A tool that undoes a signed
-    // decision unasked is the same failure as one that makes an unsigned one.
-    if let Some(budget) = &recorded.budget
-        && budget.allowed.saturating_sub(tightened_total) > BUDGET_SLACK
-    {
-        let trailing = lines[budget.line]
-            .find('#')
-            .map(|at| lines[budget.line][at..].to_owned());
-        lines[budget.line] = match trailing {
-            Some(comment) => format!("{BUDGET_DIRECTIVE} {tightened_total}  {comment}"),
-            None => format!("{BUDGET_DIRECTIVE} {tightened_total}"),
-        };
-        applied.push(format!(
-            "  {BUDGET_DIRECTIVE}: {} -> {tightened_total}",
-            budget.allowed
-        ));
-    }
-
-    if !applied.is_empty() {
-        let mut out = lines.join("\n");
-        out.push('\n');
-        fs::write(&file, out).map_err(|e| format!("{} is unwritable: {e}", file.display()))?;
-    }
-    Ok(applied)
+    POLICY.tighten(root, &measure(root).counts, 0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ratchet::BUDGET_DIRECTIVE;
     use crate::remedies;
     use crate::workspace_root;
 
@@ -1104,7 +861,7 @@ mod tests {
         assert_eq!(findings.len(), 1, "expected only the budget: {findings:?}");
         assert!(
             findings[0].line.contains("+100")
-                && findings[0].line.contains("without lowering another"),
+                && findings[0].line.contains("without taking any away"),
             "the finding must name the overage and the act: {findings:?}"
         );
         let _ = fs::remove_dir_all(&root);
@@ -1158,7 +915,7 @@ mod tests {
         let findings = check(&root);
         assert_eq!(findings.len(), 1, "expected one finding: {findings:?}");
         assert!(
-            findings[0].line.contains("3700") && findings[0].line.contains("nothing caps them"),
+            findings[0].line.contains("3700") && findings[0].line.contains("nothing caps it"),
             "the finding must name the uncapped total: {findings:?}"
         );
         let _ = fs::remove_dir_all(&root);

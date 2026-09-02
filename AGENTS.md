@@ -166,7 +166,7 @@ graph TD
 | `mcp` | The MCP adapter. A leaf: it depends on `control` and `control-local` only, never on `app`, and its stdout carries MCP frames only. |
 | `feed-*` | Binance, Hyperliquid and MetaTrader 5 sources. They produce trades and never link the script language. |
 | `backtest` | The headless harness: recorded sessions in, performance out, over the exact engine and indicator path the chart draws. |
-| `guards` | The repository guards the compiler cannot see: the size ratchet, the English word scan, the source-encoding check. No dependencies at all, so asking them costs a second rather than a full build of `app`. |
+| `guards` | The repository guards the compiler cannot see: the size and context ratchets, the English scan, the encoding check. No dependencies, so asking them costs a second rather than a full build of `app`. |
 | `app` | The desktop chart (egui). A consumer of the engine, never the other way around. |
 
 Market replay is a **source**, not a chart mode: it releases a recorded

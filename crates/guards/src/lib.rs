@@ -34,8 +34,10 @@
 //! is [`encoding`], which now sees every crate rather than only the one it
 //! was born inside.
 
+pub mod context;
 pub mod encoding;
 pub mod language;
+pub mod ratchet;
 pub mod size;
 
 use std::path::{Path, PathBuf};
@@ -115,6 +117,11 @@ pub const GUARDS: &[Guard] = &[
         name: "size",
         check: size::check,
         check_file: size::check_file,
+    },
+    Guard {
+        name: "context",
+        check: context::check,
+        check_file: context::check_file,
     },
     Guard {
         name: "language",
