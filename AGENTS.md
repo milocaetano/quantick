@@ -114,14 +114,23 @@ graph TD
   end
 
   app --> pine
+  app --> indicators
   app --> strategy
+  app --> sim
   app --> replay
+  app --> orderbook
   app --> feeds
+  app --> control
   app --> controllocal
+  app --> engine
   backtest --> strategy
   backtest --> pine
+  backtest --> indicators
   backtest --> replay
+  backtest --> sim
+  backtest --> engine
   mcp --> controllocal
+  mcp --> control
 
   pine["pine<br/>Quantick Pine frontend"] --> indicators
   strategy["strategy<br/>armed regions, alarms"] --> sim
