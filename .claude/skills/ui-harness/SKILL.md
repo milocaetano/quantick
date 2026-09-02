@@ -216,7 +216,17 @@ neither of them is the trunk:
 
 So: **a surface's hook goes beside the surface; every other hook goes in
 `harness.rs`.** If you are about to add a `std::env::var` call to `app.rs`, the
-answer is one of those two files instead.
+answer is almost always one of those two files instead.
+
+*Almost*, because about fifty reads are still in `app.rs` and are not debt in
+the same sense. Most are hooks that keep **no state at all** — they call a
+setter on a tab and are finished (`QUANTICK_TAPE`, `QUANTICK_INVERTED`,
+`QUANTICK_INDICATORS_AUTOSTART`), so there is no field for an owner to hold.
+The rest belong to clusters that are each their own extraction — the
+`QUANTICK_CONTROL_*` family, the tab and layout hooks, the replay and
+workspace hooks — and they reach `self.tabs` and the control gateway, which
+`harness.rs` deliberately cannot see. A hook of yours that keeps a field, and
+needs nothing but its own parsed value, belongs in the owner.
 
 **Prefer a defaulting field to a new variant.** A hook that already exists and
 needs a second dimension — "the same demo, but shared across the split", "the

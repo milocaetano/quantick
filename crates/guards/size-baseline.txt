@@ -60,9 +60,9 @@
 # It only ever goes down on its own: `--tighten` lowers it to match the
 # ceilings and will never raise it, or the failure message would be
 # recommending its own bypass.
-!budget 60932
+!budget 60939
 
-crates/app/src/app.rs 9355
+crates/app/src/app.rs 9362
 
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:

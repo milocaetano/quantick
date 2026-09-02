@@ -540,6 +540,11 @@ pub struct QuantickApp {
     /// The popup's position changed by hand this frame and the workspace has
     /// not been told yet.
     ///
+    /// The position itself is automatic until the user drags the title bar and
+    /// manual from then on (only ever re-clamped), and the chart rectangle it
+    /// is placed against belongs to the focused [`ChartPane`] — so a split
+    /// window places against the pane the selection lives on, not the window.
+    ///
     /// A flag rather than a write on the spot, for two reasons. A drag reports
     /// a new position on *every* frame the hand is moving, and writing the file
     /// sixty times a second for a window that has not landed yet is a lot of
@@ -7330,7 +7335,7 @@ impl QuantickApp {
                     schema_version = 1_u8,
                     event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
                     spans,
-                    frames_waited = crate::harness::LOAD_OLDER_HOOK_FRAMES,
+                    frames_waited = crate::harness::LOAD_OLDER_CANDLES_HOOK_FRAMES,
                     candles_held = self.active_tab().venue_candles_held(),
                     ohlcv_history = capabilities.ohlcv_history,
                     action = "chart_left_as_it_is",
@@ -7351,11 +7356,11 @@ impl QuantickApp {
             self.harness.load_older_candles_span_sent();
         } else if self.harness.spend_load_older_candles_frame().gave_up {
             tracing::warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
-                    spans,
-                    frames_waited = crate::harness::LOAD_OLDER_CANDLES_HOOK_FRAMES,
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
+                spans,
+                frames_waited = crate::harness::LOAD_OLDER_CANDLES_HOOK_FRAMES,
                 reason = "request_never_queued",
                 action = "chart_left_as_it_is",
                 "QUANTICK_LOAD_OLDER_CANDLES could not get a request out"
@@ -7373,16 +7378,18 @@ impl QuantickApp {
     /// this attempt — an env var is a request for this run, and it must never
     /// keep re-placing objects the user then deletes.
     fn apply_drawing_demo(&mut self) {
-        let Some(demo) = self.harness.drawings_demo() else {
+        if !self.harness.drawings_demo_armed() {
             return;
-        };
+        }
         let pane = &mut self.active_tab_mut().flow_pane;
         let slots = pane.slots();
         // Enough bars for every tool to get its own stretch of chart.
         if slots < 8 * drawings::DRAWING_TOOLS.len() {
             return;
         }
-        self.harness.drawings_demo_placed();
+        let Some(demo) = self.harness.take_drawings_demo() else {
+            return;
+        };
         let DrawingsDemo {
             bands,
             shared: share,

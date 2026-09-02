@@ -2271,7 +2271,7 @@ fn the_drawings_demo_keeps_the_panel_the_hook_asked_for() {
         run_frame(&mut app, &ctx);
     }
 
-    assert!(app.harness.drawings_demo().is_none(), "the demo has run");
+    assert!(!app.harness.drawings_demo_armed(), "the demo has run");
     assert!(
         app.drawing_pane().drawings.selected().is_some(),
         "and left an object selected, which is what closes the panel"
@@ -2317,7 +2317,7 @@ fn the_inspector_hook_survives_the_demo_that_runs_before_it() {
     for _ in 0..4 {
         run_frame(&mut app, &ctx);
     }
-    assert!(app.harness.drawings_demo().is_none(), "the demo has run");
+    assert!(!app.harness.drawings_demo_armed(), "the demo has run");
     assert!(
         app.drawing_pane().drawings.selected().is_some(),
         "and left an object selected, which is what closes the panel"

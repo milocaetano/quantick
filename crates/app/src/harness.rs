@@ -354,6 +354,18 @@ impl<T> Budgeted<T> {
 /// The trunk holds exactly one of these. See the module documentation for why
 /// it is a typed struct the host asks rather than a bag of flags the host
 /// holds.
+///
+/// [`Default`] is derived rather than written, and that is what keeps this
+/// module's promise honest: adding a hook is **one field and one line in
+/// [`Harness::from_env`]**, with nothing else in the file to keep in step. A
+/// hand-written "every hook unset" constructor was a third list saying the
+/// same thing, and a third list is where the next hook gets forgotten.
+/// It is **gated to test builds**, though. `Harness::default()` is every hook
+/// unset — a harness that read no environment — and in production that is
+/// indistinguishable at the call site from `from_env`, so a future edit
+/// reaching for the shorter name would disarm every hook with no compile
+/// error. Tests get it; the trunk has exactly one way to build a harness.
+#[cfg_attr(test, derive(Default))]
 pub(crate) struct Harness {
     /// `QUANTICK_LAYOUT_PICKER`: a pending request to open the toolbar's
     /// layout popover. Drained by the frame that honours it — the popover is a
@@ -377,6 +389,18 @@ pub(crate) struct Harness {
     /// `QUANTICK_INDICATOR_SETTINGS=1`: open the settings dialog for the first
     /// indicator once its inputs have arrived from the worker. Armed at boot,
     /// fired (and disarmed) by the first frame that can honour it.
+    ///
+    /// **This and [`Self::settings_autostart`] read the same variable and do
+    /// not agree about `=1`**: this one means "the first indicator", while the
+    /// index parser below reads `1` as an index and means the *second*. Both
+    /// then arm, and the later of the two writes wins, so a run that sets `=1`
+    /// with two indicators loaded photographs the second one's dialog while
+    /// this line promises the first. That is how the hook behaved before this
+    /// module existed and it is left alone here, because collecting the hooks
+    /// was not licensed to change what any of them does; the move is what
+    /// makes the disagreement visible on two adjacent lines for the first
+    /// time. Reconciling it is a change to what the hook accepts, and belongs
+    /// to a change that says so.
     indicator_settings_dialog: bool,
     /// `QUANTICK_INDICATOR_SETTINGS=<index>[:<tab>]`: which indicator to open
     /// the dialog on, and on which tab, once its view exists. Cleared by the
@@ -570,38 +594,6 @@ impl Harness {
         }
     }
 
-    /// A harness with every hook unset — the state a run that set no variable
-    /// gets, and the base a test arms one hook on.
-    #[cfg(test)]
-    pub(crate) fn unset() -> Self {
-        Self {
-            layout_picker_autostart: false,
-            maximize: false,
-            footprint: false,
-            candle_width: None,
-            pan_px: None,
-            indicator_settings_dialog: false,
-            settings_autostart: None,
-            pointer: None,
-            context_menu: None,
-            context_menu_release: None,
-            menu: None,
-            menu_release: None,
-            drawings_demo: None,
-            drawings_demo_recut: false,
-            frvp_demo: None,
-            avwap_demo: false,
-            venue_history_demo: None,
-            strategy_demo: None,
-            replay_restart: None,
-            drawing_draft: None,
-            load_older: None,
-            load_older_candles: None,
-            history_note: None,
-            evidence_frames: 0,
-        }
-    }
-
     /// Whether the layout popover should open this frame, and never again:
     /// one shot, so a trader's click can close it.
     pub(crate) fn take_layout_picker_autostart(&mut self) -> bool {
@@ -696,17 +688,21 @@ impl Harness {
         self.menu_release.take()
     }
 
-    /// What the drawings demo was asked for, if it was. Peeked rather than
-    /// taken: the applier waits for bars across frames and must stay armed
-    /// until it can actually place something.
-    pub(crate) fn drawings_demo(&self) -> Option<DrawingsDemo> {
-        self.drawings_demo.clone()
+    /// Whether the drawings demo is still owed.
+    ///
+    /// A bare `bool` rather than the request itself, because this is asked on
+    /// **every frame** the applier is waiting for bars, and the request owns a
+    /// `String`: handing it out would allocate sixty times a second to answer
+    /// "not yet". The applier asks this, checks its bars, and only then takes
+    /// the request with [`Self::take_drawings_demo`].
+    pub(crate) fn drawings_demo_armed(&self) -> bool {
+        self.drawings_demo.is_some()
     }
 
-    /// The demo placed its objects: consumed, so it never re-places ones the
-    /// trader then deletes.
-    pub(crate) fn drawings_demo_placed(&mut self) {
-        self.drawings_demo = None;
+    /// The demo can place its objects: hand over what was asked for and
+    /// consume the hook, so it never re-places ones the trader then deletes.
+    pub(crate) fn take_drawings_demo(&mut self) -> Option<DrawingsDemo> {
+        self.drawings_demo.take()
     }
 
     /// Whether the re-cut scene was asked for.
@@ -1003,12 +999,12 @@ fn parse_history_note(token: String) -> Option<Budgeted<CampaignEnd>> {
 }
 
 #[cfg(test)]
-mod harness_tests {
+mod tests {
     use super::*;
 
     #[test]
     fn a_budgeted_hook_gives_up_on_the_frame_that_spends_its_last() {
-        let mut harness = Harness::unset();
+        let mut harness = Harness::default();
         harness.arm_load_older(2, 2);
         assert!(!harness.spend_load_older_frame().gave_up, "one frame left");
         assert_eq!(harness.load_older_remaining(), Some((2, 1)));
@@ -1023,7 +1019,7 @@ mod harness_tests {
 
     #[test]
     fn a_page_that_went_out_costs_a_page_and_no_budget() {
-        let mut harness = Harness::unset();
+        let mut harness = Harness::default();
         harness.arm_load_older(2, 10);
         harness.load_older_page_sent();
         assert_eq!(
@@ -1037,7 +1033,7 @@ mod harness_tests {
 
     #[test]
     fn spending_a_hook_that_was_never_armed_reports_nothing() {
-        let mut harness = Harness::unset();
+        let mut harness = Harness::default();
         assert_eq!(
             harness.spend_load_older_frame(),
             HookFrame::default(),
@@ -1047,7 +1043,7 @@ mod harness_tests {
 
     #[test]
     fn the_evidence_hook_waits_its_budget_and_then_stops() {
-        let mut harness = Harness::unset();
+        let mut harness = Harness::default();
         for frame in 1..=CONTROL_EVIDENCE_HOOK_FRAMES {
             assert!(
                 harness.evidence_frame_waited(),
