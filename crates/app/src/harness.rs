@@ -398,6 +398,9 @@ pub(crate) struct Harness {
     /// `QUANTICK_DRAWINGS_DEMO`: one of every registered drawing on the flow
     /// pane as soon as it has bars to anchor them to. Consumed once.
     drawings_demo: Option<DrawingsDemo>,
+    /// `QUANTICK_DRAWINGS_DEMO_RECUT`: the re-cut scene — objects still on
+    /// their own instants, and one the new series cannot reach.
+    drawings_demo_recut: bool,
     /// `QUANTICK_FRVP_DEMO`: one fixed-range volume profile, placed to
     /// straddle the venue-prefix seam when there is one.
     frvp_demo: Option<FrvpDemo>,
@@ -509,6 +512,7 @@ impl Harness {
                     shared: flag("QUANTICK_DRAWINGS_DEMO_SHARED"),
                     select_tool: read("QUANTICK_DRAWINGS_DEMO_SELECT"),
                 }),
+            drawings_demo_recut: flag("QUANTICK_DRAWINGS_DEMO_RECUT"),
             frvp_demo: read("QUANTICK_FRVP_DEMO")
                 .filter(|value| matches!(value.trim(), "1" | "compare" | "stress"))
                 .map(|value| FrvpDemo {
@@ -584,6 +588,7 @@ impl Harness {
             menu: None,
             menu_release: None,
             drawings_demo: None,
+            drawings_demo_recut: false,
             frvp_demo: None,
             avwap_demo: false,
             venue_history_demo: None,
@@ -702,6 +707,11 @@ impl Harness {
     /// trader then deletes.
     pub(crate) fn drawings_demo_placed(&mut self) {
         self.drawings_demo = None;
+    }
+
+    /// Whether the re-cut scene was asked for.
+    pub(crate) fn drawings_demo_recut(&self) -> bool {
+        self.drawings_demo_recut
     }
 
     /// What the fixed-range profile demo was asked for, if it was.

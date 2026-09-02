@@ -8411,7 +8411,7 @@ impl QuantickApp {
     /// cannot reach, faded and labelled off-series. One extra object is placed
     /// an hour before the first bar to produce the second.
     fn apply_drawing_demo_recut(&mut self) {
-        if !std::env::var("QUANTICK_DRAWINGS_DEMO_RECUT").is_ok_and(|value| value == "1") {
+        if !self.harness.drawings_demo_recut() {
             return;
         }
         let pane = &mut self.active_tab_mut().flow_pane;
