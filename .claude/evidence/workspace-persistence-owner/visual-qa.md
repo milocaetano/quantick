@@ -21,8 +21,11 @@ monitor.
 | **delete** | `menu-bm` | the Workspace menu's *Delete* submenu, enabled because the seeded file holds two named arrangements |
 | **reopen** | `reopen` | `QUANTICK_WORKSPACE_IMPORT=<bundle>` after `QUANTICK_WORKSPACE_EXPORT` wrote it |
 
-Plus `menu-cold` (nothing saved — every entry in its empty state) and
-`menu-warm` / `menu-full` (intermediate seeds).
+Plus `menu-cold` (nothing saved — every entry in its empty state). The cases
+suffixed nothing (`name-box`, `menu-warm`) ran against the first seed, the ones
+named `-full` and `-bm` against the corrected seeds described at the foot of
+this file; both builds always saw the same seed as each other, which is what
+the comparison rests on.
 
 ## Verdict: PASS — no difference attributable to the change
 
@@ -34,8 +37,8 @@ The strongest evidence, and stronger than any screenshot: the files themselves.
 | --- | --- | --- |
 | `menu-cold` | none, both | — |
 | `save` | `ui-state.toml`, both | **byte-identical** (SHA-256 match) |
-| `name-box` | `ui-state.toml`, both | **byte-identical** |
-| `menu-warm` | `ui-state.toml`, both | **byte-identical** |
+| `name-box` (first seed) | `ui-state.toml`, both | **byte-identical** |
+| `menu-warm` (first seed) | `ui-state.toml`, both | **byte-identical** |
 | `export` | `ui-state.toml`, both | one line differs: `recent_workspaces` holds the bundle path each build was *told* to export to (`bundle-control` vs `bundle-branch`) — a fixture difference, not a behaviour one |
 | `reopen` | `ui-state.toml`, both | same one line, same reason |
 | bundle | `.qws.toml`, both | one line differs: `name = "bundle-control"` vs `"bundle-branch"`, which is the filename each was given |

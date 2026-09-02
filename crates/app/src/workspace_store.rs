@@ -156,6 +156,14 @@ impl LayoutStore {
     /// unless the book was made from an imported indicator set, which the file
     /// does not hold yet. Either way this is the last word, which is why it
     /// clears as readily as it sets.
+    ///
+    /// **Call it after the caller has finished seeding**, which is where the
+    /// two assignments it replaces stood. `seed_new_panes` marks no change
+    /// today, so the order is not observable and no test pins it — which is
+    /// precisely why it is written here. A later reading of "these are just
+    /// two flags" moves the call above the seeding; the day seeding does mark
+    /// a change, an import begins writing the file back over itself and
+    /// nothing fails to say so.
     pub(crate) fn settle(&mut self, changed: bool, now: Instant) {
         self.dirty = changed;
         self.last_change = changed.then_some(now);
@@ -221,9 +229,13 @@ impl LayoutStore {
 
 /// Where the cockpit's stores live this run.
 ///
-/// Six paths, each resolved by its own module and handed in. This struct is a
-/// carrier, deliberately without behaviour: the moment it grew a `resolve` it
-/// would become a second answer to a question [`crate::store_home`] already
+/// Five paths, each resolved by its own module and handed in. The sixth — the
+/// layouts file — is not here but on [`LayoutStore`], beside the rule that
+/// decides when it is written: a path and the question "may I write it yet?"
+/// are one subject, and splitting them is what this module exists to undo.
+///
+/// A carrier, deliberately without behaviour: the moment it grew a `resolve`
+/// it would become a second answer to a question [`crate::store_home`] already
 /// answers, and the two would drift.
 pub(crate) struct StorePaths {
     /// Where the picker's added instruments persist. See
@@ -400,12 +412,18 @@ impl WorkspaceSession {
 
 /// The app's one handle on where the workspace lives and whether it is saved.
 ///
-/// One field on `QuantickApp` where there were twenty-one. The four parts stay
-/// separate inside because they answer different questions and have different
-/// lifetimes — a path is fixed for the run, the layout rule changes every
-/// edit, the layer baseline changes per tab, the session state changes per
-/// menu action — and folding them into one flat bag would lose exactly the
-/// structure that makes the layout rule guardable.
+/// One field on `QuantickApp` where there were twenty-one.
+///
+/// Four named parts stay separate inside because they answer different
+/// questions and have different lifetimes — a path is fixed for the run, the
+/// layout rule changes every edit, the layer baseline changes per tab, the
+/// session state changes per menu action — and folding them into one flat bag
+/// would lose exactly the structure that makes the layout rule guardable.
+///
+/// Three fields sit beside those parts rather than inside one, because they
+/// belong to no store in particular: the two in-flight OS file dialogs, which
+/// are answers on their way back from outside the process, and the trades
+/// folder, which is a machine fact this window hands to every tab it opens.
 pub(crate) struct WorkspaceStore {
     paths: StorePaths,
     layouts: LayoutStore,
@@ -716,7 +734,7 @@ mod tests {
         assert_eq!(
             layouts.take_save(now + LAYOUTS_SAVE_DEBOUNCE),
             LayoutSave::Wait,
-            "an import that changed nothing must not write the file back, whatever              seeding its panes marked on the way"
+            "an import that changed nothing must not write the file back, whatever seeding its panes marked on the way"
         );
         layouts.settle(true, now);
         assert_eq!(

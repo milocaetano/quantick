@@ -1399,6 +1399,7 @@ impl QuantickApp {
             }
         }
         self.seed_new_panes();
+        // Last, after the seeding, and `LayoutStore::settle` says why.
         self.workspace
             .layouts_mut()
             .settle(migrate_imported_indicators, Instant::now());
