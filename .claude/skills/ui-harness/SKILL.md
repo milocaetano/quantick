@@ -129,6 +129,31 @@ $lines = @(
 $lines | & $mcp --profile observer
 ```
 
+**Send a blank line first.** Windows PowerShell 5.1 writes a UTF-8 preamble to
+a child's stdin the moment `Process.StandardInput` is touched, and it lands on
+line 1 — so the `initialize` frame comes back `-32700 parse error: expected
+value at line 1 column 1` while every line after it parses, which reads as "the
+adapter is broken" and is not. A leading newline takes the preamble:
+
+```powershell
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = $mcp; $psi.Arguments = "--profile observer"
+$psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true
+$psi.UseShellExecute = $false
+$m = [System.Diagnostics.Process]::Start($psi)
+$nl = [char]10
+$bytes = [System.Text.Encoding]::ASCII.GetBytes($nl + ($lines -join $nl) + $nl)
+$m.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+$m.StandardInput.BaseStream.Flush(); $m.StandardInput.Close()
+$m.StandardOutput.ReadToEnd()
+```
+
+**One instance at a time**, or discovery answers `control.instance_ambiguous`
+and names the ids rather than choosing. Clear strays by **path**, never by
+process name: `Get-Process quantick-app | Stop-Process` takes the trader's own
+window down with yours, which is the *be a guest on the desktop* rule above,
+broken by a one-liner.
+
 Every answer is one JSON line on stdout; `result.structuredContent` is the
 capability's own result, and `result.isError` with a `control.*` code is a
 refusal you can branch on. Useful calls:
