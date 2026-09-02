@@ -50,7 +50,7 @@ fn opening_a_workspace_keeps_the_indicator_set_being_saved() {
         "every pane of the imported strip carries the imported layout"
     );
     assert!(
-        !app.layouts_dirty,
+        !app.workspace.layouts().is_dirty(),
         "what is on screen is the file's; nothing to write back yet"
     );
     let _ = std::fs::remove_file(&file);
@@ -69,7 +69,7 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
     let layouts_path = crate::layouts::default_path();
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(&layouts_path);
-    app.layouts_path = layouts_path.clone();
+    app.workspace.set_layouts_path(layouts_path.clone());
 
     // A saved set: one native with bound inputs, one hidden native, and
     // a script the library does not have.
@@ -114,7 +114,7 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
     assert_eq!(app.slot_kinds[1].1, SavedKind::NativeCvd);
     assert_eq!(app.pending_hidden.len(), 1, "the hidden flag survived");
     assert!(
-        !app.layouts_dirty,
+        !app.workspace.layouts().is_dirty(),
         "restoring is not a user edit and must not rewrite the file"
     );
 
@@ -141,7 +141,7 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
         "and every entry has its slot on the chart"
     );
     assert!(
-        !app.layouts_dirty,
+        !app.workspace.layouts().is_dirty(),
         "the debounce fired, so the change is written"
     );
     let _ = std::fs::remove_file(&path);

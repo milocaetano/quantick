@@ -88,6 +88,7 @@ mod viewport;
 mod widgets;
 mod window_scale;
 mod workspace_bundle;
+mod workspace_store;
 
 /// The bar type the chart opens on. The type and its parameter are tunable live
 /// from the controls bar; the feed and symbol come from the configuration.

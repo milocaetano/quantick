@@ -1011,11 +1011,14 @@ fn park_the_popup(app: &mut QuantickApp, ctx: &egui::Context, delta: egui::Vec2)
 /// one starts from. The autosave updates a workspace; it does not invent
 /// one.
 fn with_a_saved_workspace(app: &mut QuantickApp, ctx: &egui::Context, name: &str) {
-    app.ui_state_path = scratch_ui_state(name);
+    app.workspace.set_ui_state_path(scratch_ui_state(name));
     run_frame(app, ctx);
     app.save_workspace("test");
     app.surfaces.toast.clear();
-    assert!(app.ui_state_path.exists(), "the cockpit is on disk");
+    assert!(
+        app.workspace.ui_state_path().exists(),
+        "the cockpit is on disk"
+    );
 }
 
 /// Place a tool by its registry id through the pointer, anchor by anchor,

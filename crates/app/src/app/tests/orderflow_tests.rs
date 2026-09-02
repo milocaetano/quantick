@@ -261,7 +261,7 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
     let ctx = egui::Context::default();
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 700.0));
     let (mut app, _events, _commands, _book) = test_app();
-    app.chart_layers_path = path.clone();
+    app.workspace.set_chart_layers_path(path.clone());
 
     let menu_frame = |app: &mut QuantickApp, on_tape: bool| {
         with_flow_pane(app, |pane, chrome| {

@@ -2221,7 +2221,7 @@ fn giving_the_placement_back_is_saved_as_well() {
     draw_horizontal_line(&mut app, &ctx, 300.0);
     park_the_popup(&mut app, &ctx, egui::vec2(120.0, 90.0));
     assert!(
-        ui_state::load(&app.ui_state_path)
+        ui_state::load(app.workspace.ui_state_path())
             .chrome
             .is_some_and(|chrome| chrome.inspector_position.is_some()),
         "the parked position is on disk before the reset"
@@ -2245,14 +2245,14 @@ fn giving_the_placement_back_is_saved_as_well() {
     run_frame(&mut app, &ctx);
 
     assert_eq!(
-        ui_state::load(&app.ui_state_path)
+        ui_state::load(app.workspace.ui_state_path())
             .chrome
             .expect("the chrome is still recorded")
             .inspector_position,
         None,
         "the file forgets the position the trader discarded"
     );
-    let _ = std::fs::remove_file(&app.ui_state_path);
+    let _ = std::fs::remove_file(app.workspace.ui_state_path());
 }
 
 /// The harness table tells an agent to pair `QUANTICK_DRAWING_INSPECTOR=1`
@@ -2263,7 +2263,8 @@ fn giving_the_placement_back_is_saved_as_well() {
 fn the_drawings_demo_keeps_the_panel_the_hook_asked_for() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(500);
-    app.ui_state_path = scratch_ui_state("demo-inspector");
+    app.workspace
+        .set_ui_state_path(scratch_ui_state("demo-inspector"));
     app.harness.arm_drawings_demo(DrawingsDemo::default());
     app.surfaces.drawing_chrome.set_inspector_open(true);
 
@@ -2307,7 +2308,8 @@ fn the_inspector_hook_survives_the_demo_that_runs_before_it() {
     unsafe { std::env::set_var("QUANTICK_DRAWING_INSPECTOR", "1") };
     let (mut app, _commands) = app_with_history(500);
     unsafe { std::env::remove_var("QUANTICK_DRAWING_INSPECTOR") };
-    app.ui_state_path = scratch_ui_state("hook-inspector");
+    app.workspace
+        .set_ui_state_path(scratch_ui_state("hook-inspector"));
     app.harness.arm_drawings_demo(DrawingsDemo::default());
 
     assert!(

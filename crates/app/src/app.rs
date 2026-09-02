@@ -53,6 +53,7 @@ use crate::toolbar::{self, ToolbarAction};
 use crate::toolrail::{Tool, ToolRail, ToolboxDock};
 use crate::ui_state;
 use crate::window_scale;
+use crate::workspace_store::{LayoutStore, StorePaths, WorkspacePick, WorkspaceStore};
 use smallvec::SmallVec;
 
 /// Width of the right-hand price-axis gutter, in pixels (§5 zone 9).
@@ -111,19 +112,8 @@ const DEMO_OFF_SERIES_LEAD_MS: i64 = 3_600_000;
 const DEFAULT_EMA_LEN: usize = 9;
 /// How often the hot-reload poll checks script files for changes.
 const SCRIPT_RELOAD_POLL_INTERVAL: Duration = Duration::from_millis(1_000);
-/// How long after the last indicator change the state file is written.
-const INDICATOR_STATE_SAVE_DEBOUNCE: Duration = Duration::from_millis(1_000);
 /// Horizontal offset of a duplicated drawing, so the copy is visibly a copy.
 const DUPLICATE_OFFSET_BARS: f32 = 2.0;
-
-/// What the open file dialog is for, so the one poll can land either answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WorkspacePick {
-    /// Choosing where to write a workspace file.
-    Export,
-    /// Choosing a workspace file to open.
-    Import,
-}
 
 /// The slice the drawing chrome reads, assembled from the pieces of the
 /// application it is allowed to see.
@@ -446,8 +436,6 @@ pub struct QuantickApp {
     /// addition — which it may take back out — from a shipped entry, which is
     /// the config file's and not the app's to touch.
     added_symbols: AddedSymbols,
-    /// Where those additions persist. See [`crate::symbols_file`].
-    symbols_path: std::path::PathBuf,
 
     config: AppConfig,
 
@@ -481,21 +469,6 @@ pub struct QuantickApp {
     /// lands — the same deferral [`Self::pending_hidden`] performs, for the
     /// same reason.
     pending_styles: Vec<(TabSlot, crate::indicator_style::StyleOverride)>,
-    /// The workspace's layouts: the strip's tabs, their indicator sets and
-    /// their per-market drawings. See [`crate::layouts`].
-    layouts: crate::layouts::LayoutBook,
-    /// Where the layouts persist.
-    layouts_path: std::path::PathBuf,
-    /// Set by any layout edit — a switch, a rename, a drawing, a settled
-    /// indicator change; drained by the debounced save.
-    layouts_dirty: bool,
-    /// When the last layout change happened (the debounce clock).
-    last_layout_change: Option<Instant>,
-    /// Whether the layouts file may be written this session. `true` only
-    /// when the file was there at launch, could not be read, and could not
-    /// be set aside — the trader's only copy, which this session's empty
-    /// book must never replace.
-    layouts_save_blocked: bool,
     /// The layout being renamed in the strip, with the draft name.
     layout_rename: Option<(crate::layouts::LayoutId, String)>,
     /// The layout a delete is waiting on: deleting takes its drawings with
@@ -561,21 +534,6 @@ pub struct QuantickApp {
     // Custom drawing presets (named payload exports + default-for-new),
     // persisted across restarts in a versioned file.
     drawing_presets: drawings::presets::PresetStore,
-
-    // Layer visibility (the right-click menu on a pane's canvas). The layers
-    // belong to the pane that draws them; what lives here is where the choices
-    // are written down and the switches no pane owns.
-    /// Where layer visibility persists.
-    chart_layers_path: std::path::PathBuf,
-    /// The visibility already on disk, as a bitmask over the active tab's flow
-    /// pane. Compared with the live one once per frame so a switch is saved
-    /// whoever flipped it — the menu, the toolbar, the dock or the appearance
-    /// panel. A dozen bool reads and an integer compare: cheaper than teaching
-    /// four call sites to remember.
-    saved_layer_mask: u32,
-    /// Which tab [`Self::saved_layer_mask`] was taken from, so a tab *switch*
-    /// is never mistaken for a switch the trader flipped.
-    saved_layer_tab: u64,
     /// The window this app is drawing into, kept so the health summary can
     /// report the client area the platform believes it has — see
     /// [`crate::window_scale`] for why that number is worth logging, and for
@@ -588,12 +546,9 @@ pub struct QuantickApp {
     /// `config/footprint.toml` preset > saved edits > defaults), edited live
     /// by the layer menu's controls.
     footprint_config: crate::footprint_config::FootprintConfig,
-    /// Where those edits persist (see `footprint_config::settings_path`).
-    footprint_settings_path: std::path::PathBuf,
     // Named input setups per indicator kind, offered by the settings
     // dialog's preset picker.
     indicator_presets: preset_file::PresetStore,
-    indicator_presets_path: std::path::PathBuf,
     /// Where the Workspace button was drawn, published by the menu bar so the
     /// hook can click it rather than guess at a coordinate.
     workspace_menu_rect: Option<egui::Rect>,
@@ -661,63 +616,16 @@ pub struct QuantickApp {
 
     // Fixed UTC offset the time axis is displayed in (default UTC−03:00).
     tz: TzOffset,
-
-    /// Where trades save this run — resolved once at boot (environment >
-    /// the user's stored pick > config) and updated by the panel's folder
-    /// picker; new tabs journal here too.
-    trades_dir: std::path::PathBuf,
-    /// The in-flight trades-folder dialog, if any. One at a time.
-    trades_dir_picker: Option<std::sync::mpsc::Receiver<Option<std::path::PathBuf>>>,
-
-    // The saved workspace (§14, `ui-state.toml`): what the window opens on.
-    // See [`crate::ui_state`] for what this file owns and what it deliberately
-    // leaves to the sibling stores.
-    /// Where the workspace persists.
-    ui_state_path: std::path::PathBuf,
-    /// Whether closing the window writes it. Read from the file at startup and
-    /// toggled from the Workspace menu.
-    save_on_exit: bool,
-    /// Whether the rail's pinned tools were staged by `QUANTICK_TOOL_FAVORITES`
-    /// rather than chosen by the trader.
+    /// Where the workspace lives on disk, and whether what is on screen has
+    /// reached it: the six store paths, the layout book with the one rule that
+    /// decides when it is written, the chart-layer baseline, and what the
+    /// Workspace menu knows without asking the filesystem.
     ///
-    /// A validation run dresses the rail through that hook to reach a state a
-    /// screenshot needs; the stars in it are a costume. Since a star is written
-    /// to the workspace the moment it is clicked, a run that toggles one would
-    /// otherwise write the harness's list into the trader's real file — the
-    /// same failure `replay_view.stored_pick()` guards for `QUANTICK_REPLAY_DIR`
-    /// (see [`Self::capture_workspace`]). Set once at startup, never cleared:
-    /// a session that began wearing a costume never takes it off.
-    favorites_are_staged: bool,
-    /// The arrangements the trader named and kept, in the order the file lists
-    /// them.
-    ///
-    /// Held here because every write of the workspace file rewrites the whole
-    /// file: capturing the live window and saving it would drop the bookmarks
-    /// on the floor if the app did not carry them between load and save.
-    bookmarks: Vec<ui_state::NamedArrangement>,
-    /// Whether a workspace is on disk, so the menu can disable Reset without
-    /// asking the filesystem. The menu body runs every frame it is open, and a
-    /// `Path::exists` there is a syscall at 60 Hz for an answer that changes
-    /// only when this app saves or forgets — the two places that update it.
-    workspace_saved: bool,
-    /// Workspace files exported or imported recently, newest first, as the
-    /// file remembers them. Carried between load and save for the same reason
-    /// `bookmarks` is: every write rewrites the whole file.
-    recent_workspaces: Vec<String>,
-    /// Which of them are actually on disk, resolved when the list changes
-    /// rather than when the menu is drawn.
-    ///
-    /// The same rule `workspace_saved` above is here for: the menu body runs
-    /// every frame it is open, so filtering ten paths there would be ten
-    /// syscalls at 60 Hz for an answer that changes only when this app
-    /// exports, imports or restores — the three places that refresh it.
-    recent_on_disk: Vec<std::path::PathBuf>,
-    /// The native file dialog, while one is open, and what it is for. One at
-    /// a time, and off the UI thread — the OS dialog never blocks a frame.
-    workspace_picker: Option<(
-        WorkspacePick,
-        std::sync::mpsc::Receiver<Option<std::path::PathBuf>>,
-    )>,
+    /// One field where there were twenty-one. See [`crate::workspace_store`]
+    /// for why the owner is a new type rather than a home inside `ui_state`,
+    /// `layouts` or `workspace_bundle` — none of which holds session state —
+    /// and for the invariant the layout trio could not carry apart.
+    workspace: crate::workspace_store::WorkspaceStore,
     /// The window's inner size as of the last frame, in points — captured here
     /// because the size a workspace records is the one the user last saw, and
     /// by exit time the viewport has already been asked to close.
@@ -871,6 +779,7 @@ impl QuantickApp {
         // Resolved once: under test the settings path is a fresh scratch
         // file per call, and the load must read the same file the saves
         // will write.
+        let symbols_path = symbols_file::default_path();
         let footprint_settings_path = crate::footprint_config::settings_path();
         let indicator_presets_path = preset_file::default_path();
         let mut app = Self {
@@ -880,8 +789,7 @@ impl QuantickApp {
             next_tab_id: FIRST_TAB_ID + 1,
             layout_picker_open: false,
             pane_ids,
-            added_symbols: symbols_file::load(&symbols_file::default_path()),
-            symbols_path: symbols_file::default_path(),
+            added_symbols: symbols_file::load(&symbols_path),
             config,
             control_access: Some(crate::control::ControlAccess::new()),
             script_library: ScriptLibrary::scan(),
@@ -895,11 +803,6 @@ impl QuantickApp {
             slot_kinds: Vec::new(),
             pending_hidden: Vec::new(),
             pending_styles: Vec::new(),
-            layouts: loaded_layouts.0,
-            layouts_path: crate::layouts::default_path(),
-            layouts_dirty: false,
-            last_layout_change: None,
-            layouts_save_blocked: loaded_layouts.1,
             layout_rename: None,
             layout_delete_confirm: None,
             last_script_poll: Instant::now(),
@@ -920,15 +823,10 @@ impl QuantickApp {
             drawing_presets: drawings::presets::PresetStore::load_from(
                 drawings::presets::PresetStore::default_path(),
             ),
-            chart_layers_path: chart_layers::default_path(),
-            saved_layer_mask: 0,
-            saved_layer_tab: 0,
             surface: None,
             layer_actions: chart_layers::LayerActions::default(),
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
-            footprint_settings_path,
             indicator_presets: preset_file::PresetStore::load(&indicator_presets_path),
-            indicator_presets_path,
             workspace_menu_rect: None,
             history_menu_rect: None,
             alerts: Box::new(crate::audio::Speaker::default()),
@@ -945,16 +843,21 @@ impl QuantickApp {
             // is the first tab there is.
             feed_popup_tab: feed_notice::popup_open_from_env().then_some(FIRST_TAB_ID),
             tz: TzOffset::default(),
-            trades_dir,
-            trades_dir_picker: None,
-            ui_state_path: ui_state::default_path(),
-            save_on_exit: true,
-            favorites_are_staged: false,
-            bookmarks: Vec::new(),
-            workspace_saved: false,
-            recent_workspaces: Vec::new(),
-            recent_on_disk: Vec::new(),
-            workspace_picker: None,
+            workspace: WorkspaceStore::new(
+                StorePaths {
+                    symbols: symbols_path,
+                    chart_layers: chart_layers::default_path(),
+                    footprint_settings: footprint_settings_path,
+                    indicator_presets: indicator_presets_path,
+                    ui_state: ui_state::default_path(),
+                },
+                LayoutStore::new(
+                    loaded_layouts.0,
+                    crate::layouts::default_path(),
+                    loaded_layouts.1,
+                ),
+                trades_dir,
+            ),
             window_size: None,
             frames: FrameStats::new(120),
             cpu_frames: FrameStats::new(120),
@@ -1070,7 +973,7 @@ impl QuantickApp {
                 .collect();
             app.toolrail.set_favorites(&ids);
             // A staged rail, so a star toggled during the run stays in the run.
-            app.favorites_are_staged = true;
+            app.workspace.session_mut().stage_favorites();
         }
         // Dock the rail against a named edge, so a validation run can shoot
         // the horizontal band without editing the workspace file.
@@ -1671,7 +1574,8 @@ impl QuantickApp {
         // An env var is not a user edit: what the autostart hooks switched on
         // must not be written back as though the user had asked for it every
         // launch from now on. Same rule the indicator state follows.
-        app.saved_layer_mask = app.layer_mask();
+        let staged_layers = app.layer_mask();
+        app.workspace.layers_mut().record(staged_layers);
         // The cockpit rescue ran in `main`, before any store was read. A
         // silent one would look like the app relocated the trader's settings
         // behind their back — and leave them not knowing which folder to back
@@ -1710,7 +1614,7 @@ impl QuantickApp {
     /// Ask the operating system for a trades folder, off the UI thread —
     /// the panel's "choose where trades are saved". One dialog at a time.
     fn open_trades_dir_picker(&mut self) {
-        if self.trades_dir_picker.is_some() {
+        if self.workspace.trades_dir_picker_open() {
             return;
         }
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -1727,28 +1631,29 @@ impl QuantickApp {
                 let _ = sender.send(dialog.pick_folder());
             })
             .expect("spawn trades-dir picker thread");
-        self.trades_dir_picker = Some(receiver);
+        self.workspace.open_trades_dir_picker(receiver);
     }
 
     /// Land the picked folder: every tab journals there from now on, and
     /// the choice is remembered across restarts (`paper-state.toml`) —
     /// files already written stay where they are.
     fn poll_trades_dir_picker(&mut self) {
-        let Some(receiver) = &self.trades_dir_picker else {
+        let Some(receiver) = self.workspace.trades_dir_picker() else {
             return;
         };
         let Ok(choice) = receiver.try_recv() else {
             return;
         };
-        self.trades_dir_picker = None;
+        self.workspace.close_trades_dir_picker();
         let Some(dir) = choice else { return };
         let path = crate::paper_state::default_path();
         let mut state = crate::paper_state::load(&path);
         state.trades_dir = Some(dir.display().to_string());
         crate::paper_state::save(&path, &state);
-        self.trades_dir = dir;
+        self.workspace.set_trades_dir(dir);
         for tab in &mut self.tabs {
-            tab.paper.set_trades_dir(self.trades_dir.clone());
+            tab.paper
+                .set_trades_dir(self.workspace.trades_dir().to_path_buf());
         }
     }
 
@@ -2095,7 +2000,11 @@ impl QuantickApp {
     }
 
     pub(crate) fn control_workspace_flags(&self) -> (bool, bool, bool) {
-        (self.save_on_exit, self.show_perf, self.progressive_history)
+        (
+            self.workspace.session().save_on_exit(),
+            self.show_perf,
+            self.progressive_history,
+        )
     }
 
     /// Choose how far one press of *load older* reaches.
@@ -2582,7 +2491,7 @@ impl QuantickApp {
                 .startup_spec_for(&feed_id)
                 .unwrap_or_else(|| self.active_tab().flow_pane.state.spec().clone())
         });
-        let trades_dir = self.trades_dir.clone();
+        let trades_dir = self.workspace.trades_dir().to_path_buf();
         // Cmd trading is app-wide (the trades-dir rule): a new tab starts
         // with the settings every other tab already carries.
         let cmd_trading = self.active_tab().paper.cmd_trading();
@@ -3474,7 +3383,8 @@ impl QuantickApp {
         };
         let inputs: Vec<SavedInput> = dialog.draft.iter().map(SavedInput::from_value).collect();
         if self.indicator_presets.insert(&kind, name, inputs) {
-            self.indicator_presets.save(&self.indicator_presets_path);
+            self.indicator_presets
+                .save(self.workspace.indicator_presets_path());
             dialog.preset_label = Some(name.trim().to_owned());
             dialog.preset_name_draft.clear();
         }
@@ -3493,7 +3403,8 @@ impl QuantickApp {
             return;
         };
         if self.indicator_presets.remove(&kind, name) {
-            self.indicator_presets.save(&self.indicator_presets_path);
+            self.indicator_presets
+                .save(self.workspace.indicator_presets_path());
             if let Some(dialog) = self.indicator_settings.as_mut()
                 && dialog.preset_label.as_deref() == Some(name)
             {
@@ -3787,7 +3698,10 @@ impl QuantickApp {
             self.mark_indicator_state_dirty();
         }
         if actions.footprint_changed {
-            crate::footprint_config::save(&self.footprint_settings_path, &self.footprint_config);
+            crate::footprint_config::save(
+                self.workspace.footprint_settings_path(),
+                &self.footprint_config,
+            );
         }
         if actions.open_footprint_settings {
             self.surfaces.footprint_settings.open();
@@ -3874,7 +3788,7 @@ impl QuantickApp {
                 self.active_tab_mut().pane_mut(side).footprint_override = Some((*edited).clone());
                 self.footprint_config = *edited;
                 crate::footprint_config::save(
-                    &self.footprint_settings_path,
+                    self.workspace.footprint_settings_path(),
                     &self.footprint_config,
                 );
             }
@@ -3909,12 +3823,11 @@ impl QuantickApp {
         // hand moved. A different chart answering is a re-baseline, not an
         // edit; the file keeps whatever the last real switch put there.
         let tab = self.active_tab().id;
-        if tab != self.saved_layer_tab {
-            self.saved_layer_tab = tab;
-            self.saved_layer_mask = mask;
+        if tab != self.workspace.layers().tab() {
+            self.workspace.layers_mut().rebaseline(tab, mask);
             return;
         }
-        if mask == self.saved_layer_mask {
+        if mask == self.workspace.layers().mask() {
             return;
         }
         // Name every switch that moved, before writing it down.
@@ -3931,7 +3844,7 @@ impl QuantickApp {
         // above already gates it, so this runs on the frames a switch actually
         // moves — a handful in a session — and not one of the other 60 a
         // second.
-        let flipped = mask ^ self.saved_layer_mask;
+        let flipped = mask ^ self.workspace.layers().mask();
         for (bit, layer) in ChartLayer::ALL.into_iter().enumerate() {
             if flipped & (1 << bit) == 0 {
                 continue;
@@ -3947,10 +3860,10 @@ impl QuantickApp {
             );
         }
         chart_layers::save(
-            &self.chart_layers_path,
+            self.workspace.chart_layers_path(),
             &self.active_tab().flow_pane.layer_states(&self.style),
         );
-        self.saved_layer_mask = mask;
+        self.workspace.layers_mut().record(mask);
     }
 
     /// Apply the saved layer visibility to the tab the app opened with.
@@ -3959,7 +3872,7 @@ impl QuantickApp {
     /// still wins for the run it was set on: a validation session asks for the
     /// heatmap on the command line and gets it, whatever the file remembers.
     fn restore_chart_layers(&mut self) {
-        let defaults = chart_layers::load(&self.chart_layers_path);
+        let defaults = chart_layers::load(self.workspace.chart_layers_path());
         // Whatever the file said (including nothing at all) is now on screen;
         // only a change from here is worth another write.
         if defaults.is_empty() {
@@ -3972,25 +3885,25 @@ impl QuantickApp {
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "CHART_LAYERS_UNAVAILABLE",
-                path = %self.chart_layers_path.display(),
+                path = %self.workspace.chart_layers_path().display(),
                 action = "keep_code_defaults",
                 "no layer visibility to apply; the shipped config did not parse"
             );
-            self.saved_layer_mask = self.layer_mask();
-            self.saved_layer_tab = self.active_tab().id;
+            let (tab, mask) = (self.active_tab().id, self.layer_mask());
+            self.workspace.layers_mut().rebaseline(tab, mask);
             return;
         }
         if let Some(grid) = defaults.get(&ChartLayer::Grid) {
             self.style.canvas.grid_enabled = *grid;
         }
         self.apply_layer_defaults(&defaults);
-        self.saved_layer_mask = self.layer_mask();
-        self.saved_layer_tab = self.active_tab().id;
+        let (tab, mask) = (self.active_tab().id, self.layer_mask());
+        self.workspace.layers_mut().rebaseline(tab, mask);
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "CHART_LAYERS_RESTORED",
-            path = %self.chart_layers_path.display(),
+            path = %self.workspace.chart_layers_path().display(),
             // `off`, not `hidden`: the map now always speaks for every layer,
             // the shipped-off `backfill_divider` included, so a count over it
             // is no longer "how many the trader switched off". Renamed rather
@@ -4032,7 +3945,7 @@ impl QuantickApp {
     fn capture_workspace(&self) -> ui_state::Workspace {
         let (tabs, chrome) = self.capture_arrangement();
         ui_state::Workspace::new(
-            self.save_on_exit,
+            self.workspace.session().save_on_exit(),
             self.window_size,
             self.active_tab,
             tabs,
@@ -4040,11 +3953,11 @@ impl QuantickApp {
         )
         // Every write rewrites the whole file, so the bookmarks have to ride
         // along or saving the startup screen would silently delete them.
-        .with_saved(self.bookmarks.clone())
+        .with_saved(self.workspace.session().bookmarks().to_vec())
         // And the recent workspace files, for the same reason: a save that
         // dropped them would empty the Open-recent menu every time the
         // trader saved their layout.
-        .with_recent(self.recent_workspaces.clone())
+        .with_recent(self.workspace.session().recent().to_vec())
         // And so does the replay folder, for exactly the same reason: a save
         // that dropped it would send the browser back to nowhere on the next
         // launch, which is the failure this field was added to end. The
@@ -4197,15 +4110,18 @@ impl QuantickApp {
     /// a trader who switched autosave off and then reset their layout must not
     /// find it switched back on at the next launch.
     fn restore_workspace(&mut self, workspace: ui_state::Workspace) {
-        self.save_on_exit = workspace.save_on_exit;
-        self.bookmarks = workspace.saved.clone();
-        self.recent_workspaces = workspace.recent_workspaces.clone();
+        self.workspace.session_mut().adopt(
+            workspace.save_on_exit,
+            workspace.saved.clone(),
+            workspace.recent_workspaces.clone(),
+        );
         self.refresh_recent_workspaces();
         // One stat at boot, so the Reset entry can gate on a field instead of
         // the filesystem for the rest of the session. A file with no tabs
         // still counts: it carries the autosave setting, and Reset is how the
         // trader gets rid of it.
-        self.workspace_saved = self.ui_state_path.exists();
+        let on_disk = self.workspace.ui_state_path().exists();
+        self.workspace.session_mut().set_saved(on_disk);
         // Outside the chrome block deliberately: the stars belong to the file,
         // not to the arrangement, so a workspace with nothing else in it still
         // hands the rail back its pinned section.
@@ -4313,10 +4229,10 @@ impl QuantickApp {
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "UI_STATE_RESTORED",
-            path = %self.ui_state_path.display(),
+            path = %self.workspace.ui_state_path().display(),
             tabs = self.tabs.len(),
             active = self.active_tab,
-            save_on_exit = self.save_on_exit,
+            save_on_exit = self.workspace.session().save_on_exit(),
             "workspace restored"
         );
     }
@@ -4329,7 +4245,7 @@ impl QuantickApp {
     /// indicator state is written debounced, and an export that raced it
     /// would quietly save a cockpit the trader never had.
     fn open_workspace_export_picker(&mut self) {
-        if self.workspace_picker.is_some() {
+        if self.workspace.picker_open() {
             return;
         }
         let start = crate::workspace_bundle::default_dir();
@@ -4349,12 +4265,12 @@ impl QuantickApp {
                 let _ = sender.send(dialog.save_file());
             })
             .expect("spawn workspace export picker thread");
-        self.workspace_picker = Some((WorkspacePick::Export, receiver));
+        self.workspace.open_picker(WorkspacePick::Export, receiver);
     }
 
     /// The same, for choosing a workspace file to open.
     fn open_workspace_import_picker(&mut self) {
-        if self.workspace_picker.is_some() {
+        if self.workspace.picker_open() {
             return;
         }
         let start = crate::workspace_bundle::default_dir();
@@ -4373,12 +4289,12 @@ impl QuantickApp {
                 let _ = sender.send(dialog.pick_file());
             })
             .expect("spawn workspace import picker thread");
-        self.workspace_picker = Some((WorkspacePick::Import, receiver));
+        self.workspace.open_picker(WorkspacePick::Import, receiver);
     }
 
     /// Land whatever the dialog answered.
     fn poll_workspace_picker(&mut self) {
-        let Some((intent, receiver)) = &self.workspace_picker else {
+        let Some((intent, receiver)) = self.workspace.picker() else {
             return;
         };
         let choice = match receiver.try_recv() {
@@ -4389,7 +4305,7 @@ impl QuantickApp {
             // field set forever and both menu entries silently dead, since
             // each refuses to open a second dialog.
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.workspace_picker = None;
+                self.workspace.close_picker();
                 tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
@@ -4404,7 +4320,7 @@ impl QuantickApp {
             }
         };
         let intent = *intent;
-        self.workspace_picker = None;
+        self.workspace.close_picker();
         // A cancelled dialog is an answer, not a failure: say nothing.
         let Some(path) = choice else { return };
         match intent {
@@ -4452,7 +4368,10 @@ impl QuantickApp {
         .and_then(|bundle| crate::workspace_bundle::write(path, &bundle).map(|()| bundle.len()));
         match outcome {
             Ok(stores) => {
-                crate::workspace_bundle::remember_recent(&mut self.recent_workspaces, path);
+                crate::workspace_bundle::remember_recent(
+                    self.workspace.session_mut().recent_mut(),
+                    path,
+                );
                 self.refresh_recent_workspaces();
                 self.save_workspace("export_recent");
                 tracing::info!(
@@ -4506,7 +4425,10 @@ impl QuantickApp {
             Ok(written) => {
                 let stores = written.len();
                 self.reload_cockpit_stores(&written);
-                crate::workspace_bundle::remember_recent(&mut self.recent_workspaces, path);
+                crate::workspace_bundle::remember_recent(
+                    self.workspace.session_mut().recent_mut(),
+                    path,
+                );
                 self.refresh_recent_workspaces();
                 // The recent list lives in the workspace file the import just
                 // replaced, so it has to be written back after the reload —
@@ -4548,13 +4470,15 @@ impl QuantickApp {
     /// that restores one at startup — a second, import-only restore path is
     /// how the two would drift.
     fn reload_cockpit_stores(&mut self, imported: &[&str]) {
-        self.added_symbols = symbols_file::load(&self.symbols_path);
+        self.added_symbols = symbols_file::load(self.workspace.symbols_path());
         self.drawing_presets = drawings::presets::PresetStore::load_from(
             drawings::presets::PresetStore::default_path(),
         );
-        self.footprint_config = crate::footprint_config::load(&self.footprint_settings_path);
+        self.footprint_config =
+            crate::footprint_config::load(self.workspace.footprint_settings_path());
         self.surfaces.footprint_settings.reload_presets();
-        self.indicator_presets = preset_file::PresetStore::load(&self.indicator_presets_path);
+        self.indicator_presets =
+            preset_file::PresetStore::load(self.workspace.indicator_presets_path());
 
         // The tab strip first, and *before* the indicators: the restore adds
         // each indicator to whatever pane is focused right now, so the tabs
@@ -4562,7 +4486,8 @@ impl QuantickApp {
         // describes — before a single indicator is added. Getting this order
         // wrong puts a trader's imported indicators on the tab they happened
         // to be looking at, or on its time pane.
-        let workspace = ui_state::load(&self.ui_state_path).restore(&self.config.clone());
+        let workspace =
+            ui_state::load(self.workspace.ui_state_path()).restore(&self.config.clone());
         self.restore_workspace(workspace);
         self.restore_chart_layers();
 
@@ -4578,7 +4503,8 @@ impl QuantickApp {
     /// a drive that is merely unplugged today comes back when it is plugged
     /// in, and only the menu is filtered.
     fn refresh_recent_workspaces(&mut self) {
-        self.recent_on_disk = crate::workspace_bundle::existing_recent(&self.recent_workspaces);
+        let existing = crate::workspace_bundle::existing_recent(self.workspace.session().recent());
+        self.workspace.session_mut().set_recent_on_disk(existing);
     }
 
     /// Take every indicator off every pane.
@@ -4647,13 +4573,13 @@ impl QuantickApp {
     /// engineering against.
     fn save_workspace(&mut self, reason: &'static str) {
         let workspace = self.capture_workspace();
-        let saved = ui_state::save(&self.ui_state_path, &workspace);
-        self.workspace_saved |= saved;
+        let saved = ui_state::save(self.workspace.ui_state_path(), &workspace);
+        self.workspace.session_mut().note_write(saved);
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "UI_STATE_SAVED",
-            path = %self.ui_state_path.display(),
+            path = %self.workspace.ui_state_path().display(),
             tabs = workspace.tabs.len(),
             saved,
             reason,
@@ -4697,7 +4623,7 @@ impl QuantickApp {
     /// acknowledgement channel into wallpaper — but the log still names the
     /// write, so a position that went missing is answerable.
     fn write_inspector_position(&mut self) -> bool {
-        let mut file = ui_state::load(&self.ui_state_path);
+        let mut file = ui_state::load(self.workspace.ui_state_path());
         let Some(chrome) = file.chrome.as_mut() else {
             return false;
         };
@@ -4706,12 +4632,12 @@ impl QuantickApp {
             return false;
         }
         chrome.inspector_position = position;
-        let saved = ui_state::save(&self.ui_state_path, &file);
+        let saved = ui_state::save(self.workspace.ui_state_path(), &file);
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "UI_STATE_POPUP_POSITION_SAVED",
-            path = %self.ui_state_path.display(),
+            path = %self.workspace.ui_state_path().display(),
             parked = position.is_some(),
             saved,
             action = if saved { "position_written" } else { "position_not_written" },
@@ -4727,11 +4653,11 @@ impl QuantickApp {
     /// app opens on, and `capture_workspace` describes the screen *now*, which
     /// is exactly what the startup arrangement must not become.
     fn write_bookmarks(&mut self) -> bool {
-        let bookmarks = self.bookmarks.clone();
+        let bookmarks = self.workspace.session().bookmarks().to_vec();
         let written = self.edit_workspace_file("UI_STATE_BOOKMARKS_WRITTEN", |file| {
             file.saved = bookmarks;
         });
-        self.workspace_saved |= written;
+        self.workspace.session_mut().note_write(written);
         written
     }
 
@@ -4759,21 +4685,21 @@ impl QuantickApp {
         event_code: &'static str,
         edit: impl FnOnce(&mut ui_state::Workspace),
     ) -> bool {
-        let Some(mut file) = ui_state::load_for_edit(&self.ui_state_path) else {
+        let Some(mut file) = ui_state::load_for_edit(self.workspace.ui_state_path()) else {
             self.note_workspace(
                 "The workspace file could not be read, so it was left alone — see the log"
                     .to_owned(),
             );
             return false;
         };
-        file.save_on_exit = self.save_on_exit;
+        file.save_on_exit = self.workspace.session().save_on_exit();
         edit(&mut file);
-        let written = ui_state::save(&self.ui_state_path, &file);
+        let written = ui_state::save(self.workspace.ui_state_path(), &file);
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
             event_code,
-            path = %self.ui_state_path.display(),
+            path = %self.workspace.ui_state_path().display(),
             written,
             action = if written { "file_updated" } else { "file_not_written" },
             "a standing choice was written to the workspace file"
@@ -4793,7 +4719,7 @@ impl QuantickApp {
         let written = self.edit_workspace_file("REPLAY_FOLDER_REMEMBERED", |file| {
             file.replay_folder = stored;
         });
-        self.workspace_saved |= written;
+        self.workspace.session_mut().note_write(written);
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -4819,7 +4745,7 @@ impl QuantickApp {
         let written = self.edit_workspace_file("REPLAY_DAY_BEFORE_REMEMBERED", |file| {
             file.replay_day_before = Some(enabled);
         });
-        self.workspace_saved |= written;
+        self.workspace.session_mut().note_write(written);
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -4857,7 +4783,7 @@ impl QuantickApp {
         // replay folder gets applies: a validation run must not write a QA
         // list into the trader's workspace. The hook stages a screen; it does
         // not make choices on their behalf.
-        if self.favorites_are_staged {
+        if self.workspace.session().favorites_are_staged() {
             tracing::info!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -4906,13 +4832,19 @@ impl QuantickApp {
             tabs,
             chrome: Some(chrome),
         };
-        let replaced = match self.bookmarks.iter_mut().find(|held| held.name == name) {
+        let replaced = match self
+            .workspace
+            .session_mut()
+            .bookmarks_mut()
+            .iter_mut()
+            .find(|held| held.name == name)
+        {
             Some(held) => {
                 *held = entry;
                 true
             }
             None => {
-                self.bookmarks.push(entry);
+                self.workspace.session_mut().bookmarks_mut().push(entry);
                 false
             }
         };
@@ -4923,7 +4855,7 @@ impl QuantickApp {
             event_code = "UI_STATE_NAMED_SAVED",
             name = %name,
             replaced,
-            saved = self.bookmarks.len(),
+            saved = self.workspace.session().bookmarks().len(),
             written,
             action = if written { "bookmark_written" } else { "bookmark_not_written" },
             "named workspace saved"
@@ -4951,7 +4883,9 @@ impl QuantickApp {
     /// one entry above.
     fn open_named_workspace(&mut self, name: &str) {
         let Some(entry) = self
-            .bookmarks
+            .workspace
+            .session()
+            .bookmarks()
             .iter()
             .find(|held| held.name == name)
             .cloned()
@@ -5027,9 +4961,12 @@ impl QuantickApp {
     /// Forget the bookmark called `name`. The window on screen is untouched —
     /// deleting a bookmark throws away a way back, not the place you are.
     fn delete_named_workspace(&mut self, name: &str) {
-        let before = self.bookmarks.len();
-        self.bookmarks.retain(|held| held.name != name);
-        if self.bookmarks.len() == before {
+        let before = self.workspace.session().bookmarks().len();
+        self.workspace
+            .session_mut()
+            .bookmarks_mut()
+            .retain(|held| held.name != name);
+        if self.workspace.session().bookmarks().len() == before {
             return;
         }
         let written = self.write_bookmarks();
@@ -5038,7 +4975,7 @@ impl QuantickApp {
             schema_version = 1_u8,
             event_code = "UI_STATE_NAMED_DELETED",
             name = %name,
-            remaining = self.bookmarks.len(),
+            remaining = self.workspace.session().bookmarks().len(),
             written,
             action = if written { "bookmark_forgotten" } else { "file_not_written" },
             "named workspace deleted"
@@ -5059,7 +4996,7 @@ impl QuantickApp {
         // because coming back after a reset is the whole reason to name one:
         // deleting the safety net as part of the act it exists to undo would
         // be the single worst thing this menu could do.
-        let bookmarks_kept = !self.bookmarks.is_empty();
+        let bookmarks_kept = !self.workspace.session().bookmarks().is_empty();
         // The starred tools survive it too, and for a plainer reason: they
         // were never part of the arrangement being reset. Resetting a layout
         // is not asking to rebuild the rail by hand — and the same goes for
@@ -5069,9 +5006,9 @@ impl QuantickApp {
         let stars = self.starred_tool_ids();
         let kept = bookmarks_kept
             || !stars.is_empty()
-            || !self.recent_workspaces.is_empty()
+            || !self.workspace.session().recent().is_empty()
             || self.replay_view.stored_pick().is_some();
-        let bookmarks = self.bookmarks.clone();
+        let bookmarks = self.workspace.session().bookmarks().to_vec();
         let stars_kept = !stars.is_empty();
         let forgotten = if kept {
             // Edited rather than rebuilt from the defaults: writing a fresh
@@ -5088,7 +5025,7 @@ impl QuantickApp {
                 file.favorite_tools = stars;
             })
         } else {
-            ui_state::forget(&self.ui_state_path)
+            ui_state::forget(self.workspace.ui_state_path())
         };
         // The file still exists while it holds standing choices, so Reset
         // stays available — it is now a no-op for the startup screen and the
@@ -5096,14 +5033,16 @@ impl QuantickApp {
         // arrangement on disk and so leaves the entry live: the trader has to
         // be able to try again, and telling them "nothing saved yet" while the
         // next launch still reopens the layout they discarded would be a lie.
-        self.workspace_saved = if forgotten { kept } else { true };
+        self.workspace
+            .session_mut()
+            .set_saved(if forgotten { kept } else { true });
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "UI_STATE_FORGOTTEN",
-            path = %self.ui_state_path.display(),
+            path = %self.workspace.ui_state_path().display(),
             forgotten,
-            bookmarks_kept = self.bookmarks.len(),
+            bookmarks_kept = self.workspace.session().bookmarks().len(),
             favorites_kept = self.toolrail.favorites().len(),
             action = if forgotten { "open_on_config_defaults" } else { "workspace_kept" },
             "workspace reset"
@@ -5114,8 +5053,8 @@ impl QuantickApp {
         let survivors = match (bookmarks_kept, stars_kept) {
             (true, true) => format!(
                 " {} saved {} and the starred tools kept.",
-                self.bookmarks.len(),
-                if self.bookmarks.len() == 1 {
+                self.workspace.session().bookmarks().len(),
+                if self.workspace.session().bookmarks().len() == 1 {
                     "workspace"
                 } else {
                     "workspaces"
@@ -5123,8 +5062,8 @@ impl QuantickApp {
             ),
             (true, false) => format!(
                 " {} saved {} kept.",
-                self.bookmarks.len(),
-                if self.bookmarks.len() == 1 {
+                self.workspace.session().bookmarks().len(),
+                if self.workspace.session().bookmarks().len() == 1 {
                     "workspace"
                 } else {
                     "workspaces"
@@ -5222,10 +5161,12 @@ impl QuantickApp {
         // The closing frame takes the exit save instead: it writes the whole
         // window, this position included, so running both would serialise the
         // same file twice on the way out.
-        if closing && self.save_on_exit {
+        if closing && self.workspace.session().save_on_exit() {
             self.inspector_position_dirty = false;
             self.save_workspace("exit");
-        } else if std::mem::take(&mut self.inspector_position_dirty) && self.save_on_exit {
+        } else if std::mem::take(&mut self.inspector_position_dirty)
+            && self.workspace.session().save_on_exit()
+        {
             self.write_inspector_position();
         }
     }
@@ -6083,7 +6024,7 @@ impl QuantickApp {
                         // clicking it.
                         if ui
                             .add_enabled(
-                                self.workspace_saved,
+                                self.workspace.session().saved(),
                                 egui::Button::new("Reset startup layout"),
                             )
                             .on_hover_text(
@@ -6125,9 +6066,9 @@ impl QuantickApp {
                         }
                         let mut open: Option<String> = None;
                         let mut delete: Option<String> = None;
-                        ui.add_enabled_ui(!self.bookmarks.is_empty(), |ui| {
+                        ui.add_enabled_ui(!self.workspace.session().bookmarks().is_empty(), |ui| {
                             ui.menu_button("Open", |ui| {
-                                for entry in &self.bookmarks {
+                                for entry in self.workspace.session().bookmarks() {
                                     let tabs = entry.tabs.len();
                                     if ui
                                         .button(&entry.name)
@@ -6145,7 +6086,7 @@ impl QuantickApp {
                             .response
                             .on_disabled_hover_text("Nothing saved under a name yet");
                             ui.menu_button("Delete", |ui| {
-                                for entry in &self.bookmarks {
+                                for entry in self.workspace.session().bookmarks() {
                                     if ui.button(&entry.name).clicked() {
                                         delete = Some(entry.name.clone());
                                         ui.close_menu();
@@ -6190,9 +6131,9 @@ impl QuantickApp {
                         // Read off the field, not the filesystem: this body
                         // runs every frame the menu is open.
                         let mut reopen: Option<std::path::PathBuf> = None;
-                        ui.add_enabled_ui(!self.recent_on_disk.is_empty(), |ui| {
+                        ui.add_enabled_ui(!self.workspace.session().recent_on_disk().is_empty(), |ui| {
                             ui.menu_button("Open recent", |ui| {
-                                for path in &self.recent_on_disk {
+                                for path in self.workspace.session().recent_on_disk() {
                                     if ui
                                         .button(crate::workspace_bundle::recent_label(path))
                                         // The same warning the bookmark list
@@ -6229,7 +6170,7 @@ impl QuantickApp {
                         }
                         ui.separator();
                         if ui
-                            .checkbox(&mut self.save_on_exit, "Save on exit")
+                            .checkbox(self.workspace.session_mut().save_on_exit_mut(), "Save on exit")
                             .on_hover_text(
                                 "Keep the arrangement automatically when the window closes. Off, \
                                  only Save workspace changes what quantick opens on.",
@@ -8626,7 +8567,7 @@ impl QuantickApp {
         // out of.
         let Self {
             surfaces: registry,
-            bookmarks,
+            workspace,
             style,
             footprint_config,
             tabs,
@@ -8647,7 +8588,7 @@ impl QuantickApp {
         let surfaces = registry.draw_all(
             ctx,
             &crate::surfaces::SurfaceEnv {
-                bookmarks,
+                bookmarks: workspace.session().bookmarks(),
                 now,
                 indicator_preview_area: indicator_preview_area(
                     tabs,
@@ -9262,14 +9203,14 @@ impl QuantickApp {
         candidate.validate()?;
         self.config = candidate;
         self.added_symbols.add(feed_id, symbol);
-        if let Err(error) = symbols_file::save(&self.symbols_path, &self.added_symbols) {
+        if let Err(error) = symbols_file::save(self.workspace.symbols_path(), &self.added_symbols) {
             // The catalog took it for this session either way; what is lost is
             // the next launch, and the user is told which file did not take it.
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "SYMBOL_CATALOG_WRITE_FAILED",
-                path = %self.symbols_path.display(),
+                path = %self.workspace.symbols_path().display(),
                 error = %error,
                 action = "addition_is_session_only",
                 "cannot write the added-symbols file"
@@ -9281,7 +9222,7 @@ impl QuantickApp {
             event_code = "SYMBOL_ADDED",
             feed = %feed_id,
             symbol = %symbol,
-            path = %self.symbols_path.display(),
+            path = %self.workspace.symbols_path().display(),
             action = "open_in_new_tab",
             "a symbol was added from the source picker"
         );
@@ -9298,12 +9239,12 @@ impl QuantickApp {
             return;
         }
         self.added_symbols.remove(feed_id, symbol);
-        if let Err(error) = symbols_file::save(&self.symbols_path, &self.added_symbols) {
+        if let Err(error) = symbols_file::save(self.workspace.symbols_path(), &self.added_symbols) {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "SYMBOL_CATALOG_WRITE_FAILED",
-                path = %self.symbols_path.display(),
+                path = %self.workspace.symbols_path().display(),
                 error = %error,
                 action = "removal_is_session_only",
                 "cannot write the added-symbols file"
@@ -9315,7 +9256,7 @@ impl QuantickApp {
             event_code = "SYMBOL_REMOVED",
             feed = %feed_id,
             symbol = %symbol,
-            path = %self.symbols_path.display(),
+            path = %self.workspace.symbols_path().display(),
             action = "leave_open_tabs_alone",
             "a user-added symbol left the catalog"
         );
