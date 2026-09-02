@@ -28,6 +28,20 @@ use std::path::Path;
 
 use crate::Finding;
 
+/// Whether a guard's scan saw the whole tree it rations.
+///
+/// Only [`Policy::budget_verdict`] cares, and only for its "under budget"
+/// branch — the doc comment there says which of the three verdicts a short
+/// total can distort and which two it cannot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Measurement {
+    /// Every tracked file was read, and every recorded entry was found.
+    Complete,
+    /// Something was missed — a file that would not open, an entry whose
+    /// file is gone. The total is short by an unknown amount.
+    Partial,
+}
+
 /// What a ratchet's `!budget` line is a cap on.
 ///
 /// The two are not interchangeable, and mixing them is a bug this crate
@@ -300,10 +314,36 @@ impl Policy {
     /// budget applauded. The cost is a total that drifts with ordinary edits,
     /// which is what [`Policy::budget_slack`] and
     /// [`Policy::budget_headroom`] absorb between them.
+    ///
+    /// # What a partial measurement may and may not answer
+    ///
+    /// `measurement` says whether the scan saw the whole tree. A caller must
+    /// not decide this for itself by declining to ask — three verdicts live
+    /// here and a short total distorts exactly one of them:
+    ///
+    /// - **No `!budget` line** reads the baseline alone. No measurement is
+    ///   involved, so a partial scan cannot make it wrong. It is also the one
+    ///   finding that catches the deletion of the cap itself, and suppressing
+    ///   it means the edit that switches pay-as-you-go off for every file goes
+    ///   unreported by the surface built to catch it.
+    /// - **Over budget** can only *under*-report on a short total: bytes the
+    ///   scan missed are bytes it did not add. So a partial scan that still
+    ///   says "over" is telling the truth, and staying quiet here is how the
+    ///   split-into-sub-threshold-pieces bypass got back in behind a single
+    ///   stale entry.
+    /// - **Under budget** is the one that lies. A file the scan could not
+    ///   read, or one whose entry outlived it, drops out of the total and the
+    ///   gap it leaves reads as prose somebody removed. That is the branch
+    ///   [`Measurement::Partial`] silences, and only that one.
+    ///
+    /// The rule lives here rather than in the caller because only here are
+    /// the three branches distinguishable. A caller can only suppress all
+    /// three, which is what it did, and which cost the guard its own purpose.
     pub fn budget_verdict(
         &self,
         recorded: &Baseline,
         counts: &[(String, usize)],
+        measurement: Measurement,
     ) -> Option<Finding> {
         let name = self.baseline_file;
         let total = self.total(recorded, counts);
@@ -330,7 +370,10 @@ impl Policy {
                 self.budget_remedy,
             ));
         }
-        if budget.allowed.saturating_sub(total) > self.budget_slack {
+        // The one branch a short total can invent. See the doc comment.
+        if measurement == Measurement::Complete
+            && budget.allowed.saturating_sub(total) > self.budget_slack
+        {
             return Some(Finding::new(
                 format!(
                     "  {name}:{}: the tracked total is {total}, down from the \
@@ -411,13 +454,28 @@ impl Policy {
 
         for entry in &recorded.entries {
             let Some((_, actual)) = counts.iter().find(|(path, _)| path == &entry.path) else {
-                // An entry with no measured file keeps its ceiling and still
-                // spends it. The check reports it as stale; dropping it from
-                // the total here would let a deleted file's budget quietly
-                // finance the next raise.
-                if self.basis == Basis::Ceilings {
-                    tightened_total += entry.ceiling;
+                // On `Ceilings` an entry with no measured file keeps its
+                // ceiling and still spends it: the check reports it as stale,
+                // and dropping it from the total here would let a deleted
+                // file's budget quietly finance the next raise.
+                //
+                // On `Measured` there is nothing to keep — the seed is what
+                // the scan weighed, and a file it never saw weighs nothing in
+                // it. That is not an alternative reading of the same rule, it
+                // is the rule failing: the number written would be permanently
+                // short by that file. `context::tighten` refuses before
+                // reaching here for exactly this reason, so this is the
+                // backstop for the next `Measured` policy, or for a refactor
+                // that trusts this function alone.
+                if self.basis == Basis::Measured {
+                    return Err(format!(
+                        "refusing to tighten: `{}` is recorded but was not measured, so the total \
+                         written would be short by it — the caller must refuse a partial scan \
+                         before asking for a rewrite",
+                        entry.path
+                    ));
                 }
+                tightened_total += entry.ceiling;
                 continue;
             };
             if entry.ceiling.saturating_sub(*actual) <= self.slack {
@@ -618,7 +676,7 @@ mod tests {
         let dir = workspace("src/a.md 40\n");
         let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
         let finding = POLICY
-            .budget_verdict(&recorded, &[])
+            .budget_verdict(&recorded, &[], Measurement::Complete)
             .expect("no budget is a finding");
         assert!(finding.line.contains("nothing caps it"), "{}", finding.line);
     }
@@ -627,7 +685,9 @@ mod tests {
     fn a_raise_that_was_not_paid_for_is_over_budget() {
         let dir = workspace("!budget 50\nsrc/a.md 40\nsrc/b.md 30\n");
         let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
-        let finding = POLICY.budget_verdict(&recorded, &[]).expect("over budget");
+        let finding = POLICY
+            .budget_verdict(&recorded, &[], Measurement::Complete)
+            .expect("over budget");
         assert!(
             finding
                 .line
@@ -642,7 +702,9 @@ mod tests {
     fn a_total_far_under_budget_asks_for_the_cap_to_follow_it_down() {
         let dir = workspace("!budget 200\nsrc/a.md 40\n");
         let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
-        let finding = POLICY.budget_verdict(&recorded, &[]).expect("under budget");
+        let finding = POLICY
+            .budget_verdict(&recorded, &[], Measurement::Complete)
+            .expect("under budget");
         assert_eq!(finding.remedy, POLICY.budget_slack_remedy);
     }
 

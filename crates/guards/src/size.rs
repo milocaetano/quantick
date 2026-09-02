@@ -83,7 +83,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::Finding;
-use crate::ratchet::{Baseline, Basis, Policy};
+use crate::ratchet::{Baseline, Basis, Measurement, Policy};
 
 /// Production lines above which a file must carry a baseline entry. Files
 /// below it are not the problem this guard exists for, and tracking them
@@ -162,10 +162,19 @@ pub const BUDGET_SLACK_REMEDY: &str = "The recorded ceilings now total less than
                                        quantick-guards -- --tighten` writes the new total, and \
                                        only ever downward.";
 
-/// What the guard asks for when the baseline itself cannot be read as data — a
-/// malformed count, a duplicated directive, an unreadable file. Neither of the
-/// others applies: nothing docked in the trunk and no raise was made, so both
-/// would send an author to restructure code over a typo in a data file.
+/// What the guard asks for when it could not read the sources it rations — a
+/// directory it cannot list, an entry it cannot stat.
+///
+/// Its own remedy, because neither of the others is true: nothing docked in
+/// the trunk and the baseline parses fine.
+/// [`crate::context::UNMEASURABLE_REMEDY`] is the same idea for the other tree.
+pub const UNMEASURABLE_REMEDY: &str = "The guard could not read the sources it rations, so it has not cleared them — it is \
+     reporting that it could not look. Nothing docked in the trunk and nothing is wrong with the \
+     baseline. Find out why the path is unreadable: a permission the checkout does not have, a \
+     file held open by another process, a directory that vanished mid-walk. Until then treat \
+     every size verdict in this run as absent rather than clean.";
+
+/// What the guard asks for when the baseline itself cannot be read as data.
 pub const BASELINE_REMEDY: &str = "The baseline could not be read as data, so no ceiling was \
                                    checked at all — this is a syntax finding, not a size one. \
                                    Every line in crates/guards/size-baseline.txt is blank, a `#` \
@@ -421,11 +430,15 @@ pub fn check(root: &Path) -> Vec<Finding> {
     };
     let found = measure(root);
     // The walker reports unreadable paths as bare strings. Each is a file the
-    // guard could not clear, which is REMEDY territory like any other.
+    // guard could not clear. UNMEASURABLE_REMEDY, not REMEDY: an author who
+    // hit a permission error or a locked directory entry has not docked a
+    // capability in the trunk, and telling them to carve a module over an I/O
+    // failure is the wrong-remedy defect `Finding`'s doc comment argues is
+    // worse than a terse one. The context guard already splits these two.
     let mut violations: Vec<Finding> = found
         .unreadable
         .iter()
-        .map(|line| Finding::new(line.clone(), REMEDY))
+        .map(|line| Finding::new(line.clone(), UNMEASURABLE_REMEDY))
         .collect();
 
     violations.extend(POLICY.against(&recorded, &found.counts, &|path: &str| {
@@ -441,7 +454,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
     // in: the file that moved, then what it did to the total. On
     // `Basis::Ceilings` the budget reads the baseline alone, so a partial
     // scan cannot distort it and `&[]` is the honest input.
-    violations.extend(POLICY.budget_verdict(&recorded, &[]));
+    violations.extend(POLICY.budget_verdict(&recorded, &[], Measurement::Complete));
 
     violations
 }
@@ -469,7 +482,10 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
             // after every write, which is the cost this crate was extracted
             // to avoid. The sentence above is the contract, and passing a
             // scan quietly broke it.
-            Ok(recorded) => POLICY.budget_verdict(&recorded, &[]).into_iter().collect(),
+            Ok(recorded) => POLICY
+                .budget_verdict(&recorded, &[], Measurement::Complete)
+                .into_iter()
+                .collect(),
             Err(problem) => vec![POLICY.unparsed(&problem)],
         };
     }

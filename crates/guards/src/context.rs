@@ -54,7 +54,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::Finding;
-use crate::ratchet::{Baseline, Basis, Policy};
+use crate::ratchet::{Baseline, Basis, Measurement, Policy};
 
 /// Bytes above which a context file must carry a baseline entry.
 ///
@@ -364,17 +364,14 @@ fn unmeasurable(root: &Path) -> Option<Finding> {
 /// to write the number it just promised. The stale-entry finding is the honest
 /// one there; the budget has nothing to say until the entry is dropped.
 fn budget_where_measurable(recorded: &Baseline, found: &Measured) -> Option<Finding> {
-    if !found.unreadable.is_empty() {
-        return None;
-    }
-    if recorded
-        .entries
-        .iter()
-        .any(|entry| !found.seen(&entry.path))
-    {
-        return None;
-    }
-    POLICY.budget_verdict(recorded, &found.counts)
+    let complete =
+        found.unreadable.is_empty() && recorded.entries.iter().all(|entry| found.seen(&entry.path));
+    let measurement = if complete {
+        Measurement::Complete
+    } else {
+        Measurement::Partial
+    };
+    POLICY.budget_verdict(recorded, &found.counts, measurement)
 }
 
 /// Every way the recorded baseline and the context files on disk disagree.
@@ -645,6 +642,12 @@ mod tests {
                 .filter(|f| f.line.starts_with(&prefix))
                 .map(|f| f.line.as_str())
                 .collect();
+            // Only the baseline line is filtered out of the single-file side,
+            // not everything that is not this path. Filtering both by the same
+            // prefix would have made the invariant vacuous in the direction
+            // that matters: `check_file` emitting a finding the scan does not
+            // is exactly the divergence this test exists to catch.
+            let budget_line = format!("  {BASELINE_FILE}");
             // Both sides filtered the same way. `check_file` also appends the
             // budget verdict, whose line is prefixed with the baseline path,
             // so an unfiltered comparison would fail once per tracked file
@@ -652,7 +655,7 @@ mod tests {
             // a disagreement that never happened.
             let from_file: Vec<&str> = single
                 .iter()
-                .filter(|f| f.line.starts_with(&prefix))
+                .filter(|f| !f.line.starts_with(&budget_line))
                 .map(|f| f.line.as_str())
                 .collect();
             assert_eq!(
@@ -714,9 +717,9 @@ mod tests {
         };
         assert!(budget_where_measurable(&recorded, &whole).is_some());
 
-        // A recorded entry the scan never found suppresses it too: retiring a
-        // skill drops the total by its whole size, and promising "tighten the
-        // budget" there names a command `tighten` refuses to run.
+        // A recorded entry the scan never found suppresses the *saving* too:
+        // retiring a skill drops the total by its whole size, and promising
+        // "tighten the budget" there names a command `tighten` refuses to run.
         let retired = Measured {
             counts: whole.counts[1..].to_vec(),
             unreadable: Vec::new(),
@@ -726,6 +729,40 @@ mod tests {
             budget_where_measurable(&recorded, &retired).is_none(),
             "a deleted file is a stale entry to drop, not a saving to bank"
         );
+    }
+
+    #[test]
+    fn a_partial_scan_still_reports_a_tree_that_is_over_budget() {
+        // The hole the first version of the gate opened. Suppressing the whole
+        // budget verdict on a partial scan meant one stale entry switched off
+        // the over-budget branch as well — and the split-into-sub-threshold
+        // -pieces bypass this guard exists to close walked straight back in
+        // behind it. A short total can only *under*-report an overage: bytes
+        // the scan missed are bytes it did not add.
+        let root = scratch("partial-over", 12_000, 10_000, 12_000);
+        fs::remove_dir_all(root.join(".claude/skills/two")).expect("scratch skill is removable");
+        fs::create_dir_all(root.join(".claude/skills/one/references"))
+            .expect("scratch dirs are creatable");
+        fs::write(
+            root.join(".claude/skills/one/references/spill.md"),
+            "x".repeat(9_000),
+        )
+        .expect("scratch reference is writable");
+
+        let findings = check(&root);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.line.contains("drop the stale entry")),
+            "the deleted file is still reported: {findings:?}"
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.line.contains(BASELINE_FILE) && f.line.contains("over the")),
+            "a partial scan that is still over budget must say so: {findings:?}"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
