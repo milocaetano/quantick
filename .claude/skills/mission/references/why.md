@@ -1,85 +1,95 @@
 # Why the mission flow is shaped this way
 
-Background, not procedure. `SKILL.md` carries every rule; this file carries
-what each was bought with, for a reader deciding whether to change one.
+Background, not procedure. `SKILL.md` carries every rule and every command;
+this file carries what each rule was bought with, for a reader deciding whether
+to change one. Nothing here is operative — if a step is stated in both files,
+that is a defect in this one.
 
-use this mechanism spent five review rounds on a docs change. The reasoning is
-worth keeping: a gate that costs more than the work it guards is a gate people
-route around, and a fast path nobody selects is a fast path that does not
-exist. `medium` and above are what you type when the change earns them.
+## The failure the whole flow is shaped around
 
-The bare form misreads an objective that genuinely opens with one of those
+A request carrying eight asks becomes six criteria, and the two that fell out
+of the paraphrase are invisible from that moment on. Then the same agent that
+wrote the criteria ticks its own boxes, and the trader finds the gap by using
+the thing.
+
+Every step closes one part of that: the ledger makes a dropped ask visible, the
+interrogation makes a wrong reading expensive early instead of late, the
+checklist format makes a criterion gradeable by someone else, and
+`delivery-review` is that someone else.
+
+## Why `small` is the default
+
+The default was the trader's, and it was moved there after the first branch to
+use this mechanism spent five review rounds on a docs change. A gate that costs
+more than the work it guards is a gate people route around, and a fast path
+nobody selects is a fast path that does not exist. `medium` and above are what
+you type when the change earns them.
+
+## Why the bare tier word is accepted despite the misparse
+
+The bare form misreads an objective that genuinely opens with one of the four
 words: `/mission small fonts are unreadable on the axis`, `/mission high CPU on
 the heatmap`. For three of the four tiers a misparse costs nothing anyone
 notices. For `small` it costs the interrogation, most of the gate table and
 `delivery-review` — a skipped gate, from a typo-shaped ambiguity.
 
-Two things hold it, and neither pretends to be a parser. Step 1's echo **names
-what the tier drops**, not merely the word it read, so the expensive misparse is
-the one that announces itself loudest to the person reading the first turn. And
-the flagged form is there for exactly the objective a bare word would guess
-wrong on — use it when the sentence reads naturally with the tier word as an
-adjective. This is a residual the design accepts openly rather than one it
-## The failure this skill is shaped around
+Two things hold it, and neither pretends to be a parser. Step 1's echo names
+*what the tier drops* rather than merely the word it read, so the expensive
+misparse is the one that announces itself loudest to the person reading the
+first turn. And the flagged form is there for exactly the objective a bare word
+would guess wrong on. This is a residual the design accepts openly rather than
+one it claims to have closed.
 
-A request carrying eight asks becomes six criteria, and the two that fell out
-of the paraphrase are invisible from that moment on. Then the same agent that
-wrote the criteria ticks its own boxes, and the trader finds the gap by using
-the thing. Every step below closes one part of that: the ledger makes a
-dropped ask visible, the interrogation makes a wrong reading expensive early
-instead of late, the checklist format makes a criterion gradeable by someone
-else, and `delivery-review` is that someone else.
+## Why tiers exist at all
 
-One mission does not cost what another does, and until this table existed they
-all charged the same: a one-line fix paid for an interrogation round, a full
-gate table, a `high`-effort bug pass and a fresh-context conformance review.
-The predictable result is that the flow got skipped rather than scaled, and a
-skipped flow protects nothing at all. The tier is how a mission buys less
-| **8** — shape pass | only the dimensions the diff touches; **8 always** | full | full | full |
-| **8** — `delivery-review` | **not run** | **completeness pass only**, inline | runs in full | runs in full |
-| **9** — the `/goal` line | skipped | printed | printed | printed |
+Until the tier table existed every mission charged the same: a one-line fix
+paid for an interrogation round, a full gate table, a `high`-effort bug pass
+and a fresh-context conformance review. The predictable result is that the flow
+got skipped rather than scaled, and a skipped flow protects nothing.
 
-The whole ladder moved down a notch after the trader measured what it cost:
-three `xhigh` bug passes and a full conformance review on one docs branch, for
-work that used to ship at roughly four-fifths the quality in a fraction of the
-time. The reply to that is not to delete the gates, it is to stop charging
-`high` prices for `small` work — which is what the tier is for. Nothing above
-`max` runs `ultra`, and nothing runs it automatically at all.
+The whole ladder then moved down a notch after the trader measured what it
+cost: three `xhigh` bug passes and a full conformance review on one docs
+branch, for work that used to ship at roughly four-fifths the quality in a
+fraction of the time. The reply to that is not to delete the gates, it is to
+stop charging `high` prices for `small` work.
 
-**What no tier buys.** `arch-review` runs at every one of them, the four checks
+## Why the goal file is written into the worktree, not the checkout
 
-## Why the ordering rules exist
+The ordering used to be the other way round. A `GOAL.md` written into the main
+checkout is not on the branch, so the archive step has no source to rename
+there and stages a commit onto `main` if run from the main checkout — and
+`delivery-review`, which looks for the checklist *on the branch*, returns NOT
+GRADEABLE. The stranded `GOAL-archive-*.md` files sitting untracked in the main
+checkout are what that ordering left behind.
 
-   The tier line is not bookkeeping. `delivery-review` reads this file and
-   nothing else, so a branch that arrives at it having declared `small` needs
-   the file to say why the exemption it took was earned — and a `small` mission
-   that grew is one whose file no longer matches the diff, which is exactly the
-   discrepancy a reviewer should be able to see. At `small` the file may drop
-   the decisions and the not-applicable sections when both are empty, and keeps
-   everything else: the ledger, the assumptions, the criteria and the verbatim
-   request are what makes a goal file gradeable at all, and the tier does not
-   buy an ungradeable one.
+The file keeps its name: dozens of archives already use it, and renaming the
+record would buy nothing.
 
-   That last section is not decoration and it is not optional. `delivery-review`
-   reads `GOAL.md` and nothing else — it never sees this conversation. Without
-   the original request in the file, the ledger becomes its own source of
-   **Record the tier here**, in the new worktree, before the first line of
-   work. It goes beside the two review markers, in that worktree's own git dir,
-   so it is per-branch and never committed:
+## Why the tier is recorded with its branch name
 
-   ```sh
-   WT=/path/to/worktree
-   TIER=medium                 # small | medium | high | max
-   cd "$WT" &&
-     printf '%s %s\n' "$(git rev-parse --abbrev-ref HEAD)" "$TIER" \
-       > "$(git rev-parse --absolute-git-dir)/mission-tier"
-   ```
-        git add ".claude/GOAL-archive-$SLUG.md" &&
-        git commit -m "docs: archive the $SLUG mission"
-      ```
+The two review markers hold a sha, so they go stale the moment the branch
+moves. A bare tier word would outlive the mission that wrote it, and the next
+branch checked out in that worktree would inherit an exemption it never asked
+for and ship ungraded. That was measured on the first version of this feature,
+not imagined — which is why `guardrails.sh` refuses a declaration naming any
+other branch, and refuses the one-field format outright rather than guessing.
 
-   2. **`Skill(arch-review)`** — shape and bugs, over the final branch, at the
-      effort and breadth this mission's tier sets. It records `arch-review-ok`
-      itself when the review closes. Every tier runs it.
-   3. **`Skill(delivery-review)`** — conformance, over the same final branch.
-      It records `delivery-review-ok` itself, on PASS only. **Skipped at
+## Why the archive commit comes before the reviews
+
+Getting it backwards is a trap with a pleasant-looking exit. Archive *after*
+recording the markers and that commit moves `HEAD`, both markers go stale,
+`pr-gate` denies — and the cheapest way out is to re-stamp both markers without
+re-running either review, which silently destroys the one property the
+sha-based marker exists to give. Nothing would catch that; the gate would still
+say two reviews passed.
+
+## Why closing steps are not criteria
+
+They cannot be graded when the grading happens. `delivery-review` reads the
+checklist and grades every `A` and `G` against the shipped branch — but its own
+verdict does not exist while it is being written, and `pr-gate` will not let
+the PR open until that verdict is recorded. Written as criteria, those lines
+come back UNPROVEN on every mission, the fix loop burns three rounds on gaps no
+edit can close, and the gate escalates to the trader every single time. A gate
+that always fails teaches everyone to ignore it, which costs more than not
+having it.

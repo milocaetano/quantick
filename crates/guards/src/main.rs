@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use quantick_guards::{GUARDS, context, remedies, size, workspace_root};
+use quantick_guards::{GUARDS, context, ratchet, remedies, size, workspace_root};
 
 /// Turn whatever the caller typed into the workspace-relative spelling with
 /// forward slashes that every guard is keyed on.
@@ -184,7 +184,7 @@ fn tighten_one(
             println!(
                 "nothing to tighten in the {name} ratchet: no tracked file has shrunk past the \
                  slack, and the {} total is within its ceilings",
-                size::BUDGET_DIRECTIVE
+                ratchet::BUDGET_DIRECTIVE
             );
             false
         }

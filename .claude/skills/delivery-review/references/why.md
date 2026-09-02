@@ -37,27 +37,28 @@ the expensive part — the model is. Cut that.
 
 ## Why the reviewer is a general-purpose agent
 
-  search-shaped type whose tools exclude `Edit` and `Write` — but those types
-  are specified to read *excerpts* rather than whole files, and the
-  anti-rubber-stamp rules below require citing `file:line`, reading a named
-  test's assertions and quoting prose verbatim. A reviewer that grades from
-  excerpts on the one gate whose entire value is that it did not take the work
-  on trust is the wrong trade.
+The obvious alternative is a search-shaped agent type whose tools exclude
+`Edit` and `Write` — but those types are specified to read *excerpts* rather
+than whole files, and the anti-rubber-stamp rules require citing `file:line`,
+reading a named test's assertions and quoting prose verbatim. A reviewer that
+grades from excerpts, on the one gate whose entire value is that it did not
+take the work on trust, is the wrong trade.
 
-  The capability argument for the narrower type does not survive contact
-  either: every type here keeps `Bash`, and `printf … >> file` writes a file as
-  surely as `Edit` does. So "the reviewer must not edit the branch" is prose in
-  every case, and prose is a rule enforced by the party it constrains. Choose
-  for reading depth and enforce the rest with the check below.
-
+The capability argument for the narrower type does not survive contact either:
+every type here keeps `Bash`, and `printf … >> file` writes a file as surely as
+`Edit` does. So "the reviewer must not edit the branch" is prose in every case,
+and prose is a rule enforced by the party it constrains. Choose for reading
+depth, and enforce the rest with the branch-did-not-move check.
 
 ## Why a round that is not converging is worth naming
 
-  Say which it looks like. A round whose findings are smaller and fewer than
-  the last is converging; a round still returning Blockers, especially in code
-  the previous round's fix introduced, is a sign the approach is wrong rather
-  than incomplete — and that is worth naming, because more rounds will not fix
-  a design. The branch that introduced this skill took **four** rounds of
-  `arch-review` with the count flat at 15 and the severity climbing into newly
-  written code, which is exactly the shape that should have prompted the
-  conversation instead of a fifth round.
+More rounds will not fix a design, and the two shapes look identical from
+inside a fix loop. A round whose findings are smaller and fewer than the last
+is converging; a round still returning Blockers, especially in code the
+previous round's fix introduced, is a sign the approach is wrong rather than
+incomplete.
+
+The branch that introduced this skill took **four** rounds of `arch-review`
+with the count flat at 15 and the severity climbing into newly written code,
+which is exactly the shape that should have prompted the conversation instead
+of a fifth round.

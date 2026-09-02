@@ -2,6 +2,11 @@
 
 Read before writing a test-layout finding. The rule that every new behaviour has a failing-without-it test is in `SKILL.md`; this is the Rust layout that rule is graded against.
 
+Rust reaches the same discipline a separate test project gives C#, by a
+different mechanism — and importing that layout here would itself be the
+finding: there is no test project, and a `src/` module full of `pub` helpers
+written for the suite is the anti-pattern, not the goal. What the review checks
+is the mechanism Rust actually uses.
 
 - **Unit tests** live in a `#[cfg(test)] mod tests` child of the module under
   test — inline at the bottom of the file, or, once that module outgrows the

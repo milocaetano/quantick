@@ -66,7 +66,13 @@ pub const BASELINE_FILE: &str = "crates/guards/context-baseline.txt";
 pub const BUDGET_SLACK: usize = 4_000;
 
 /// The directory every skill lives under.
-const SKILLS: &str = ".claude/skills";
+///
+/// Carries its trailing slash so a prefix test is a directory test. Without
+/// it, `.claude/skills-old/notes.md` starts with `.claude/skills` and would be
+/// rationed as a skill — and, worse, an entry recorded for such a file would
+/// never be found by [`measure`], which walks the real directory, so the
+/// guard would report its own scan as a stale entry.
+const SKILLS: &str = ".claude/skills/";
 
 /// The context files that are not skills, relative to the workspace root.
 const ROOT_FILES: [&str; 2] = ["CLAUDE.md", "AGENTS.md"];
@@ -137,15 +143,28 @@ pub struct Measured {
     /// skipped: a file the guard cannot open is not a file it has cleared,
     /// and silence there is indistinguishable from a clean result.
     pub unreadable: Vec<String>,
+    /// Directory prefixes the walk could not list, with a trailing slash.
+    ///
+    /// Kept apart from the message in [`Measured::unreadable`] because the
+    /// two answer different questions. The message names the directory; the
+    /// entries at risk name *files inside it*, and no substring of one is the
+    /// other. Without this, an unlistable `.claude/skills/ui-harness/` made
+    /// every ceiling under it report as a stale entry — whose stated remedy
+    /// is to delete it, after which the file is re-added at whatever size it
+    /// has since grown to. That is the raise laundered through the guard's
+    /// own instructions that [`Policy::against`] exists to refuse.
+    pub blind: Vec<String>,
 }
 
 impl Measured {
-    /// Whether the walk saw this path at all — measured or merely present.
-    /// A file that exists but could not be read is present, not gone, and
-    /// reporting its entry stale would delete a ceiling over a live file.
+    /// Whether the walk saw this path at all — measured, present but
+    /// unreadable, or inside a directory it could not look into. A file that
+    /// exists but could not be read is present, not gone, and reporting its
+    /// entry stale would delete a ceiling over a live file.
     fn seen(&self, path: &str) -> bool {
         self.counts.iter().any(|(scanned, _)| scanned == path)
             || self.unreadable.iter().any(|line| line.contains(path))
+            || self.blind.iter().any(|dir| path.starts_with(dir.as_str()))
     }
 }
 
@@ -175,6 +194,7 @@ fn walk(dir: &Path, root: &Path, found: &mut Measured) {
             found
                 .unreadable
                 .push(format!("  {relative}/: directory could not be listed: {e}"));
+            found.blind.push(format!("{relative}/"));
             return;
         }
     };
@@ -214,6 +234,7 @@ pub fn measure(root: &Path) -> Measured {
     let mut found = Measured {
         counts: Vec::new(),
         unreadable: Vec::new(),
+        blind: Vec::new(),
     };
     for name in ROOT_FILES {
         let path = root.join(name);
@@ -336,6 +357,14 @@ mod tests {
     }
 
     #[test]
+    fn a_directory_that_merely_starts_like_the_skills_one_is_not_in_scope() {
+        // The prefix test is a directory test. A file recorded under a name
+        // the walk would never reach reports as a stale entry for ever.
+        assert!(!tracked(".claude/skills-old/notes.md"));
+        assert!(!tracked(".claude/skillsets.md"));
+    }
+
+    #[test]
     fn code_and_documentation_belong_to_other_guards() {
         assert!(!tracked("crates/app/src/app.rs"));
         assert!(!tracked("docs/agentic-development.md"));
@@ -383,6 +412,24 @@ mod tests {
                 "the two surfaces disagree about {path}"
             );
         }
+    }
+
+    #[test]
+    fn an_entry_inside_a_directory_the_walk_could_not_list_is_not_stale() {
+        // The directory failure names the directory; the entries at risk name
+        // files inside it. Reporting those stale tells the author to delete a
+        // live ceiling, and the file is then re-added at whatever size it has
+        // grown to — the guard laundering a raise through its own remedy.
+        let found = Measured {
+            counts: Vec::new(),
+            unreadable: vec![
+                "  .claude/skills/ui-harness/: directory could not be listed: denied".to_owned(),
+            ],
+            blind: vec![".claude/skills/ui-harness/".to_owned()],
+        };
+        assert!(found.seen(".claude/skills/ui-harness/SKILL.md"));
+        assert!(found.seen(".claude/skills/ui-harness/references/hook-registry.md"));
+        assert!(!found.seen(".claude/skills/mission/SKILL.md"));
     }
 
     #[test]

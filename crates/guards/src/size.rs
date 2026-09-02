@@ -64,7 +64,7 @@
 //! branch" read as eighteen reasonable decisions and one lost trunk, and no
 //! per-file rule can see that, because the question is about the sum.
 //!
-//! So [`BUDGET_DIRECTIVE`] caps the total of every recorded ceiling. Raising
+//! So [`BUDGET_DIRECTIVE`](crate::ratchet::BUDGET_DIRECTIVE) caps the total of every
 //! one now means lowering another in the same change: growth is pay-as-you-go,
 //! and an extraction lowers both numbers on its own. Nothing is blocked —
 //! raising the budget line is still allowed, and is the escape hatch on
@@ -83,12 +83,6 @@ use std::path::Path;
 
 use crate::Finding;
 use crate::ratchet::{Baseline, Policy};
-
-/// The `!budget` directive, from the mechanism that owns it. Re-exported
-/// rather than restated: the binary and the tests both name it through this
-/// module, and a second `"!budget"` literal in the repository is a parser and
-/// a writer waiting to disagree.
-pub use crate::ratchet::BUDGET_DIRECTIVE;
 
 /// Production lines above which a file must carry a baseline entry. Files
 /// below it are not the problem this guard exists for, and tracking them
@@ -466,6 +460,7 @@ pub fn tighten(root: &Path) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ratchet::BUDGET_DIRECTIVE;
     use crate::remedies;
     use crate::workspace_root;
 

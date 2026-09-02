@@ -32,6 +32,8 @@ Look for:
   asked for: new options default to today's behaviour, and config presence
   alone never activates anything.
 
+## Dimension 9 — the trunk
+
 Dimension 1 asks whether a capability *can* dock. This one asks where the
 docking went. The two are not the same question, and the gap between them is
 how this repo acquired a 36,000-line file while every review passed honestly.
