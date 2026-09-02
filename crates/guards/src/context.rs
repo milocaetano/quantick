@@ -66,9 +66,29 @@ pub const SLACK: usize = 1_000;
 /// The recorded ceilings, as a workspace-relative path.
 pub const BASELINE_FILE: &str = "crates/guards/context-baseline.txt";
 
-/// How far below the budget the recorded total may sit before the budget
+/// How far below the budget the tracked total may sit before the budget
 /// itself has to come down.
+///
+/// It bounds one direction only. The other is [`BUDGET_HEADROOM`], and this
+/// guard needs both where the size guard needs one: its budget counts
+/// *measured* bytes, not permissions alone, so an ordinary sentence moves the
+/// total where a `.rs` edit under its ceiling moves nothing.
 pub const BUDGET_SLACK: usize = 4_000;
+
+/// How far *over* the budget the tracked total may go before it is a finding.
+///
+/// Without it the baseline ships with zero tolerance upward: a one-word
+/// addition anywhere under `.claude/skills/`, `CLAUDE.md` or `AGENTS.md`
+/// fails `cargo test -p quantick-guards` and forces a baseline edit. That is
+/// the failure [`THRESHOLD`]'s own doc comment warns about — every ordinary
+/// edit becoming a baseline update is the reliable way to get a guard
+/// disabled — reintroduced through the budget instead of the threshold.
+///
+/// Deliberately smaller than [`BUDGET_SLACK`], and deliberately not zero. A
+/// paragraph is roughly 300 bytes, so this absorbs a few of them and nothing
+/// like a new section; the ratchet still catches every real growth, and
+/// `--tighten` pulls the number back down whenever prose leaves.
+pub const BUDGET_HEADROOM: usize = 2_000;
 
 /// The directory every skill lives under.
 ///
@@ -129,6 +149,7 @@ pub const POLICY: Policy = Policy {
     threshold: THRESHOLD,
     slack: SLACK,
     budget_slack: BUDGET_SLACK,
+    budget_headroom: BUDGET_HEADROOM,
     unit: "bytes of context",
     remedy: REMEDY,
     budget_remedy: BUDGET_REMEDY,
@@ -370,9 +391,13 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     let actual = match fs::metadata(root.join(relative)) {
         Ok(meta) => meta.len() as usize,
         Err(e) => {
+            // BASELINE_REMEDY here too, matching `check`. The two surfaces
+            // must not attach different instructions to the same condition:
+            // the author sees whichever ran, and one of them would send them
+            // to cut prose over a permission error.
             return vec![Finding::new(
                 format!("  {relative}: could not be read: {e}"),
-                REMEDY,
+                BASELINE_REMEDY,
             )];
         }
     };
@@ -380,16 +405,74 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
         Ok(recorded) => recorded,
         Err(problem) => return vec![POLICY.unparsed(&problem)],
     };
-    POLICY
+    let mut findings: Vec<Finding> = POLICY
         .verdict(recorded.entry(relative), relative, actual)
         .into_iter()
-        .collect()
+        .collect();
+    // And the budget, which is the whole point of counting unrecorded files.
+    // A file under the threshold has no ceiling to cross, so `verdict` is
+    // always silent about it — and that is the ordinary edit here, not the
+    // edge case. Without this the hook reports clean on exactly the write
+    // that puts the tree over budget, and the author meets it minutes later
+    // as a failing suite with no idea which edit did it.
+    let found = measure(root);
+    findings.extend(POLICY.budget_verdict(&recorded, unrecorded(&recorded, &found)));
+    findings
 }
 
 /// Lower any entry whose file has shrunk past [`SLACK`].
+///
+/// Refuses on an incomplete scan. `--tighten` writes the budget *down*, and
+/// only down, so a file the walk could not see is one whose bytes are missing
+/// from the total that gets written — permanently, and with nothing left to
+/// notice it by. Pointed at a tree holding one skill instead of ten, the
+/// first version wrote `!budget: 231950 -> 164886` and every honest run
+/// afterwards read 67k over budget, with the remedy telling the author to
+/// delete prose nobody had added. `check` already refuses the same
+/// conditions; this is the surface that *writes*, so it refuses harder.
 pub fn tighten(root: &Path) -> Result<Vec<String>, String> {
+    let skills = root.join(SKILLS);
+    if !skills.is_dir() {
+        return Err(format!(
+            "{} is not a readable directory — refusing to tighten from a scan that measured \
+             nothing, which would write a budget missing every skill",
+            skills.display()
+        ));
+    }
     let found = measure(root);
-    let unrecorded = unrecorded(&POLICY.baseline(root)?, &found);
+    if !found.unreadable.is_empty() {
+        return Err(format!(
+            "refusing to tighten: the scan could not read {} path(s), whose bytes would go \
+             missing from the total written down:\n{}",
+            found.unreadable.len(),
+            found.unreadable.join("\n")
+        ));
+    }
+    let recorded = POLICY.baseline(root)?;
+    // The check that actually catches a partial tree. A directory that lists
+    // fine but holds three of ten skills is *readable* — the walk succeeds and
+    // simply measures less — so neither test above sees it, and the budget
+    // written from it is short by every file that was not there. The signal is
+    // the baseline itself: an entry whose file the scan did not find means
+    // either a deleted file, which is a human's decision to drop, or a tree
+    // that is not the one the baseline describes. Both make this the wrong
+    // moment to write a number down.
+    let missing: Vec<&str> = recorded
+        .entries
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .filter(|path| !found.seen(path))
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "refusing to tighten: {} recorded file(s) were not found by the scan, so this tree is \
+             not the one the baseline describes and the total written would be short by every \
+             file that is missing — {}",
+            missing.len(),
+            missing.join(", ")
+        ));
+    }
+    let unrecorded = unrecorded(&recorded, &found);
     POLICY.tighten(root, &found.counts, unrecorded)
 }
 
@@ -568,6 +651,75 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    #[test]
+    fn tighten_refuses_a_tree_it_could_not_fully_measure() {
+        // The finding that made this a refusal: `--tighten` writes the budget
+        // down and only down, so a file the walk never saw is bytes missing
+        // from the number it writes — permanently, with nothing left to
+        // notice it by.
+        let root = scratch("tighten-refuses", 12_000, 10_000, 22_000);
+        fs::remove_dir_all(root.join(".claude/skills")).expect("scratch skills are removable");
+
+        let problem = tighten(&root).expect_err("an unmeasurable tree is refused");
+        assert!(problem.contains("refusing to tighten"), "{problem}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn tighten_refuses_a_tree_that_is_not_the_one_the_baseline_describes() {
+        // The partial tree the first refusal missed: every directory lists
+        // fine, so nothing is *unreadable* — there is simply less of it. The
+        // walk succeeds, measures a fraction, and `--tighten` would write that
+        // fraction down as the budget. Reproduced against the real repository
+        // by pointing the binary at a copy holding one skill of ten: it wrote
+        // `!budget: 231950 -> 164886`, permanently, and every honest run
+        // afterwards read 67k over budget.
+        let root = scratch("tighten-partial", 12_000, 10_000, 22_000);
+        fs::remove_dir_all(root.join(".claude/skills/two")).expect("scratch skill is removable");
+
+        let problem = tighten(&root).expect_err("a partial tree is refused");
+        assert!(
+            problem.contains("not the one the baseline describes")
+                && problem.contains(".claude/skills/two/SKILL.md"),
+            "{problem}"
+        );
+
+        let baseline = fs::read_to_string(root.join(BASELINE_FILE)).expect("baseline is readable");
+        assert!(baseline.contains("!budget 22000"), "{baseline}");
+
+        // And the baseline is untouched — a refusal that had already written
+        // would be no refusal at all.
+        let baseline = fs::read_to_string(root.join(BASELINE_FILE)).expect("baseline is readable");
+        assert!(baseline.contains("!budget 22000"), "{baseline}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_sentence_added_to_a_context_file_is_absorbed_rather_than_a_finding() {
+        // A budget over measured bytes moves on every ordinary edit. With no
+        // headroom, a one-word addition fails the suite and forces a baseline
+        // commit — which is how a guard gets switched off.
+        let root = scratch("headroom", 12_000, 10_000, 22_000);
+        assert!(check(&root).is_empty(), "the scratch tree starts clean");
+
+        // Grown in a file with no ceiling, so only the budget can answer —
+        // a file over its own entry is the per-file ratchet's business, and
+        // that one has no headroom by design.
+        fs::create_dir_all(root.join(".claude/skills/one/references"))
+            .expect("scratch dirs are creatable");
+        let note = root.join(".claude/skills/one/references/detail.md");
+        fs::write(&note, "x".repeat(300)).expect("scratch reference is writable");
+        assert!(
+            check(&root).is_empty(),
+            "300 bytes must be absorbed, not filed"
+        );
+
+        // And the budget still bites on real growth.
+        fs::write(&note, "x".repeat(3_000)).expect("scratch reference is writable");
+        assert!(!check(&root).is_empty(), "3,000 bytes is not churn");
+        let _ = fs::remove_dir_all(&root);
+    }
+
     /// A scratch workspace whose baseline names two skill files, so a raise on
     /// one can be paid for — or not — by the other.
     fn scratch(test: &str, first: usize, second: usize, budget: usize) -> std::path::PathBuf {
@@ -606,7 +758,7 @@ mod tests {
     /// calling a raise clean while the suite calls it a violation.
     #[test]
     fn check_file_agrees_with_the_scan_about_the_baseline() {
-        let root = scratch("budget-agree", 12_000, 11_000, 22_000);
+        let root = scratch("budget-agree", 12_000, 11_000, 20_000);
         let prefix = format!("  {BASELINE_FILE}:");
         let from_scan: Vec<Finding> = check(&root)
             .into_iter()

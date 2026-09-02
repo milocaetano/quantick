@@ -106,6 +106,13 @@ pub struct Policy {
     /// constantly, and a budget needing a rewrite on every extraction is a
     /// budget people delete.
     pub budget_slack: usize,
+    /// How far *over* the budget the total may go before it is a finding.
+    ///
+    /// Zero for a ratchet whose budget sums permissions: a ceiling raise is
+    /// deliberate, so there is nothing to absorb. Non-zero for one that sums
+    /// measured bytes, where an ordinary edit moves the total and a budget
+    /// that fails on every sentence is a budget somebody deletes.
+    pub budget_headroom: usize,
     /// What is being counted, as it reads inside a finding — `production
     /// lines`, `bytes of context`.
     pub unit: &'static str,
@@ -273,7 +280,7 @@ impl Policy {
                 self.budget_remedy,
             ));
         };
-        if total > budget.allowed {
+        if total > budget.allowed + self.budget_headroom {
             return Some(Finding::new(
                 format!(
                     "  {name}:{}: the tracked total is {total}, over the \
@@ -430,6 +437,7 @@ mod tests {
         threshold: 100,
         slack: 10,
         budget_slack: 50,
+        budget_headroom: 0,
         unit: "widgets",
         remedy: "over",
         budget_remedy: "budget",

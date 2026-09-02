@@ -181,6 +181,8 @@ pub const POLICY: Policy = Policy {
     threshold: THRESHOLD,
     slack: SLACK,
     budget_slack: BUDGET_SLACK,
+    // Zero: this budget sums signed permissions, and a raise is an act.
+    budget_headroom: 0,
     unit: "production lines",
     remedy: REMEDY,
     budget_remedy: BUDGET_REMEDY,
@@ -285,6 +287,16 @@ pub struct Measured {
     /// instructions. The encoding guard reports what is actually wrong with
     /// these; this guard only has to avoid lying about them.
     pub undecodable: Vec<String>,
+    /// Directory prefixes the walk could not list, with a trailing slash.
+    ///
+    /// The failure message names the directory; the entries at risk name
+    /// files inside it, and no substring of one is the other. Without this,
+    /// an unlistable `crates/app/src/drawings/` reported every ceiling under
+    /// it stale — and the stated remedy for a stale entry is to drop it,
+    /// after which the file is re-added at whatever size it has grown to.
+    /// [`crate::context::Measured::blind`] is the same field for the same
+    /// reason.
+    pub blind: Vec<String>,
 }
 
 /// Every tracked `.rs` file under `crates`, as workspace-relative paths with
@@ -306,6 +318,7 @@ fn scan(dir: &Path, root: &Path, found: &mut Measured) {
             found
                 .unreadable
                 .push(format!("  {relative}/: directory could not be listed: {e}"));
+            found.blind.push(format!("{relative}/"));
             return;
         }
     };
@@ -352,6 +365,7 @@ pub fn measure(root: &Path) -> Measured {
         counts: Vec::new(),
         unreadable: Vec::new(),
         undecodable: Vec::new(),
+        blind: Vec::new(),
     };
     scan(&root.join("crates"), root, &mut found);
     found.counts.sort();
@@ -396,7 +410,11 @@ pub fn check(root: &Path) -> Vec<Finding> {
     violations.extend(POLICY.against(&recorded, &found.counts, 0, &|path| {
         found.counts.iter().any(|(scanned, _)| scanned == path)
             || found.undecodable.iter().any(|scanned| scanned == path)
-            || found.unreadable.iter().any(|line| line.contains(path))
+            || found
+                .unreadable
+                .iter()
+                .any(|line| line.starts_with(&format!("  {path}: ")))
+            || found.blind.iter().any(|dir| path.starts_with(dir.as_str()))
     }));
 
     violations
