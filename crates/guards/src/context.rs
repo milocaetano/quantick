@@ -54,7 +54,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::Finding;
-use crate::ratchet::{Basis, Policy};
+use crate::ratchet::{Baseline, Basis, Policy};
 
 /// Bytes above which a context file must carry a baseline entry.
 ///
@@ -136,9 +136,10 @@ pub const BUDGET_REMEDY: &str = "The context budget is what a session's instruct
                                  that a reviewer watches move.";
 
 /// What the guard asks for when the recorded total has fallen below budget.
-pub const BUDGET_SLACK_REMEDY: &str = "The recorded ceilings now total less than the budget caps them at, which means prose left a \
-     context file and the cap has not caught up. Nothing has to be argued: `cargo run -p \
-     quantick-guards -- --tighten` writes the new total, and only ever downward.";
+pub const BUDGET_SLACK_REMEDY: &str = "The tracked files now weigh less than the budget caps them at, which means prose left a \
+     context file and the cap has not caught up. Ceilings have nothing to do with it — this \
+     budget counts bytes. Nothing has to be argued: `cargo run -p quantick-guards -- --tighten` \
+     writes the new total, and only ever downward.";
 
 /// What the guard asks for when the baseline itself cannot be read as data.
 pub const BASELINE_REMEDY: &str = "The baseline could not be read as data, so no ceiling was checked at all — this is a syntax \
@@ -233,7 +234,10 @@ fn walk(dir: &Path, root: &Path, found: &mut Measured) {
             found
                 .unreadable
                 .push(format!("  {relative}/: directory could not be listed: {e}"));
-            found.blind.push(format!("{relative}/"));
+            let prefix = format!("{relative}/");
+            if !found.blind.contains(&prefix) {
+                found.blind.push(prefix);
+            }
             return;
         }
     };
@@ -251,7 +255,10 @@ fn walk(dir: &Path, root: &Path, found: &mut Measured) {
                 found
                     .unreadable
                     .push(format!("  {relative}/: entry unreadable: {e}"));
-                found.blind.push(format!("{relative}/"));
+                let prefix = format!("{relative}/");
+                if !found.blind.contains(&prefix) {
+                    found.blind.push(prefix);
+                }
                 continue;
             }
         };
@@ -327,6 +334,21 @@ fn unmeasurable(root: &Path) -> Option<Finding> {
     ))
 }
 
+/// The budget verdict, but only when the scan actually read everything.
+///
+/// On [`Basis::Measured`] a file the walk could not open is simply missing
+/// from the counts, so the total is short by exactly its bytes — and the
+/// verdict computed from what remains reads "good news, tighten the budget",
+/// a saving invented out of a failure. `tighten` already refuses on the same
+/// condition; this is the reading half of that rule, and it keeps the two
+/// surfaces saying the same thing about the same tree.
+fn budget_where_measurable(recorded: &Baseline, found: &Measured) -> Option<Finding> {
+    if !found.unreadable.is_empty() {
+        return None;
+    }
+    POLICY.budget_verdict(recorded, &found.counts)
+}
+
 /// Every way the recorded baseline and the context files on disk disagree.
 pub fn check(root: &Path) -> Vec<Finding> {
     // Checked before anything is measured. Worded once, in `unmeasurable`,
@@ -350,6 +372,14 @@ pub fn check(root: &Path) -> Vec<Finding> {
         .map(|line| Finding::new(line.clone(), BASELINE_REMEDY))
         .collect();
     violations.extend(POLICY.against(&recorded, &found.counts, &|path| found.seen(path)));
+    // The budget only where the scan was complete. On `Basis::Measured` an
+    // unreadable file is simply absent from the counts, so its bytes vanish
+    // from the total — and the verdict computed from what is left reads "good
+    // news, tighten the budget", a saving the guard fabricated out of a file
+    // it could not open. Reporting the unreadable file *and* congratulating
+    // the author on the shortfall is two findings for one condition, one of
+    // them false.
+    violations.extend(budget_where_measurable(&recorded, &found));
     violations
 }
 
@@ -372,10 +402,17 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
             // violation.
             Ok(recorded) => {
                 let found = measure(root);
-                POLICY
-                    .budget_verdict(&recorded, &found.counts)
-                    .into_iter()
-                    .collect()
+                // What the scan could not read comes first, and suppresses
+                // the budget: a total short by a file it could not open is
+                // not a total, and reporting both would hand the author a
+                // fabricated saving beside the reason it is fabricated.
+                let mut findings: Vec<Finding> = found
+                    .unreadable
+                    .iter()
+                    .map(|line| Finding::new(line.clone(), BASELINE_REMEDY))
+                    .collect();
+                findings.extend(budget_where_measurable(&recorded, &found));
+                findings
             }
             Err(problem) => vec![POLICY.unparsed(&problem)],
         };
@@ -433,7 +470,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     // here, not the edge case. Without this the hook reports clean on exactly
     // the write that puts the tree over budget, and the author meets it
     // minutes later as a failing suite with no idea which edit did it.
-    findings.extend(POLICY.budget_verdict(&recorded, &found.counts));
+    findings.extend(budget_where_measurable(&recorded, &found));
     findings
 }
 
@@ -618,6 +655,35 @@ mod tests {
     }
 
     #[test]
+    fn a_scan_that_missed_a_file_reports_that_and_not_a_saving() {
+        // On a measured basis an unreadable file is simply absent from the
+        // counts, so the total is short by exactly its bytes — and a verdict
+        // computed from what is left congratulates the author on a saving the
+        // guard invented out of a failure. The file it could not read is the
+        // finding; the budget is not answerable at all.
+        let recorded = POLICY
+            .baseline(&workspace_root())
+            .expect("the repository baseline parses");
+        let short = Measured {
+            counts: Vec::new(),
+            unreadable: vec!["  CLAUDE.md: could not be read: denied".to_owned()],
+            blind: Vec::new(),
+        };
+        assert!(
+            budget_where_measurable(&recorded, &short).is_none(),
+            "a partial scan has no total to compare"
+        );
+
+        // And with nothing unread, the same tree does get a verdict.
+        let whole = Measured {
+            counts: Vec::new(),
+            unreadable: Vec::new(),
+            blind: Vec::new(),
+        };
+        assert!(budget_where_measurable(&recorded, &whole).is_some());
+    }
+
+    #[test]
     fn an_untracked_path_is_silent_rather_than_clean() {
         assert!(check_file(&workspace_root(), "crates/app/src/app.rs").is_empty());
     }
@@ -656,7 +722,7 @@ mod tests {
 
     #[test]
     fn splitting_a_tracked_file_into_sub_threshold_pieces_buys_nothing() {
-        // The bypass the budget's unrecorded half exists to close. `one` is
+        // The bypass a measured budget exists to close. `one` is
         // cut from 12,000 to 2,000 and the 10,000 bytes reappear as a
         // reference file below the threshold, so no ceiling is needed for it
         // and the recorded total falls by 10,000. Nothing a session loads

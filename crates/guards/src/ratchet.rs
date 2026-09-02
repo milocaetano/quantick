@@ -344,9 +344,17 @@ impl Policy {
         None
     }
 
-    /// Every way a set of measurements and the recorded baseline disagree:
-    /// each file against its ceiling, the total against the budget, and each
-    /// entry whose file the scan no longer sees.
+    /// Every way a set of measurements and the recorded baseline disagree,
+    /// file by file: each against its ceiling, and each entry whose file the
+    /// scan no longer sees.
+    ///
+    /// **The budget is not here.** It is the one verdict that depends on the
+    /// scan being *complete* rather than merely on what it found, and only
+    /// the guard knows whether its scan was — so each guard asks
+    /// [`Policy::budget_verdict`] itself, and can decline to when a file went
+    /// unread. Folding it in here produced a run that reported a file it
+    /// could not open *and*, in the same breath, congratulated the author on
+    /// a total that was short by exactly that file.
     ///
     /// `seen` answers "is this path still there?" rather than "did it
     /// measure?". A file that exists but could not be decoded or opened is
@@ -364,7 +372,6 @@ impl Policy {
             .iter()
             .filter_map(|(path, actual)| self.verdict(recorded.entry(path), path, *actual))
             .collect();
-        findings.extend(self.budget_verdict(recorded, counts));
         findings.extend(
             recorded
                 .entries

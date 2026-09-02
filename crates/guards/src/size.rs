@@ -319,7 +319,10 @@ fn scan(dir: &Path, root: &Path, found: &mut Measured) {
             found
                 .unreadable
                 .push(format!("  {relative}/: directory could not be listed: {e}"));
-            found.blind.push(format!("{relative}/"));
+            let prefix = format!("{relative}/");
+            if !found.blind.contains(&prefix) {
+                found.blind.push(prefix);
+            }
             return;
         }
     };
@@ -339,7 +342,10 @@ fn scan(dir: &Path, root: &Path, found: &mut Measured) {
                 found
                     .unreadable
                     .push(format!("  {relative}/: entry unreadable: {e}"));
-                found.blind.push(format!("{relative}/"));
+                let prefix = format!("{relative}/");
+                if !found.blind.contains(&prefix) {
+                    found.blind.push(prefix);
+                }
                 continue;
             }
         };
@@ -435,6 +441,11 @@ pub fn check(root: &Path) -> Vec<Finding> {
                 .any(|line| line.starts_with(&format!("  {path}: ")))
             || found.blind.iter().any(|dir| path.starts_with(dir.as_str()))
     }));
+    // After the per-file findings, which is the order an author reads them
+    // in: the file that moved, then what it did to the total. On
+    // `Basis::Ceilings` the budget reads the baseline alone, so a partial
+    // scan cannot distort it and `&[]` is the honest input.
+    violations.extend(POLICY.budget_verdict(&recorded, &[]));
 
     violations
 }
