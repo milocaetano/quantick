@@ -48,6 +48,12 @@ Crates under `crates/`; `AGENTS.md` *The map* owns the descriptions and the grap
 - **Teeth both ways** — no growth past a ceiling, and no sitting more than 200 lines below one. `cargo run -p quantick-guards -- --tighten` writes the new number when a file shrinks.
 - **Growth is pay-as-you-go** — a raise must be signed in the baseline with a reason, and a budget caps the sum of all ceilings, so raising one means lowering another in the same change.
 
+## Keeping the instructions small
+
+The same ratchet over the other tree — `crates/guards/src/context.rs`, ceilings in `context-baseline.txt`, mechanism shared with the size guard in `ratchet.rs`. It counts **bytes** (prose wrapped at 80 columns makes a line count meaningless) of what a session loads: this file, `AGENTS.md`, every `.md` under `.claude/skills/`. Threshold 10,000; same signed raises, same total budget. Goal files are out of scope on purpose.
+
+- **A `SKILL.md` states every rule that decides an outcome, once, operatively.** Reasoning, histories and per-dimension detail go to `references/` beside it, read on demand — a waived dimension then costs nothing. A working rule's reasoning goes to `docs/agentic-development.md`.
+
 ## Workflow
 
 - Engine code is test-first: fixture trades plus expected bars, then implement until green.

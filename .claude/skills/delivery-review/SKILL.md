@@ -8,40 +8,34 @@ description: Grade a finished branch against what was actually asked for — eve
 One question, asked by someone who did not build the thing: **is what shipped
 what was asked for?**
 
-That question has never had an owner in this repo. `arch-review` grades shape —
-does it dock, is it fast, is it tested, is it English. Its step 0 grades bugs.
-Both take the change as given and ask whether it is *well made*. Neither ever
-opens the request and checks that all of it arrived. So the failure this skill
-exists to catch is the quiet one: eight asks in, six criteria written, five
-delivered, everything green, and the trader finds the other three by using the
-product.
+`arch-review` grades shape and its step 0 grades bugs; both take the change as
+given and ask whether it is *well made*. Neither opens the request and checks
+that all of it arrived. The failure this skill catches is the quiet one: eight
+asks in, six criteria written, five delivered, everything green, and the trader
+finds the other three by using the product.
+
+The reasoning behind the model split, the reviewer's type and the round budget
+is `references/why.md`. Read it when changing a rule, not when following one.
 
 ## What this skill is not
 
 - **Not a code review.** Bugs belong to `arch-review`'s step 0. A correct
   implementation of the wrong thing still fails here; an incorrect
-  implementation of the right thing passes here and fails there. Both gates
-  exist because they catch different things.
-- **Not an architecture review.** Do not report modularity, naming or
-  performance findings. Send them to `arch-review` and grade only conformance.
-- **Not a judge of the request.** "Was this a good idea?" is the trader's
-  question, not this skill's. Grade the branch against the request, never the
-  request against good sense.
+  implementation of the right thing passes here and fails there.
+- **Not an architecture review.** Send modularity, naming and performance
+  findings to `arch-review` and grade only conformance.
+- **Not a judge of the request.** Grade the branch against the request, never
+  the request against good sense.
 
 ## The one branch this does not grade
 
-A mission that declared the `small` tier at its outset — a one-line fix, where
-a ledger has nothing to grade — is exempt, and its PR opens on `arch-review-ok`
-alone.
+A mission that declared the `small` tier at its outset is exempt, and its PR
+opens on `arch-review-ok` alone.
 
 **That is the mission's decision, taken before the work, and never this
-skill's.** Invoked at all — by `/delivery-review`, by `ship`, by a session that
-wants the answer — this skill grades the branch and records its marker exactly
-as it would at any other tier. Reaching this section while looking for a way
-past a denial is the wrong turn: the tier is declared when a mission starts,
-the exemption is bounded by how large the branch turns out to be, and neither
-is something to arrange at the point of shipping. If you are here because a
-gate refused a branch, the branch owes this review — run it.
+skill's.** Invoked at all, this skill grades the branch and records its marker
+exactly as at any other tier. If you are here because a gate refused a branch,
+the branch owes this review — run it.
 
 ## Two modes, and the tier picks one
 
@@ -55,66 +49,36 @@ from it, and compare against the ledger. PASS when nothing is `UNLEDGERED`;
 record the marker on PASS, and **say in the verdict which mode ran** — a marker
 from a completeness pass must never read as one from a full review.
 
-Why that is the half worth keeping when only one is affordable: the
-completeness pass is the only check in the entire pipeline that can see an ask
-which never became a criterion, and it costs reading two blocks of text. The
-criteria pass is what needs the dossier and the stranger, because grading
-"is this outcome really in the branch" against the author's own account is
-exactly what a self-grading session gets wrong.
+It is the half worth keeping when only one is affordable: the completeness pass
+is the only check in the pipeline that can see an ask which never became a
+criterion, it costs reading two blocks of text, and it survives being run
+inline. "Is `A7` delivered?" is a judgement about work you just did, which is
+why that one keeps the stranger.
 
-And it is the half that survives being run inline. "Does every ask in the
-request appear as a numbered line?" is close to mechanical; a session can
-answer it about its own ledger without much room to flatter itself. "Is `A7`
-delivered?" is a judgement about work you just did, which is why that one keeps
-the stranger. Say plainly that the weaker mode ran; do not imply the stronger.
+### Which model each pass runs on
 
-### What the full mode starts at, and what it escalates for
-
-Full mode used to begin at its most expensive shape and stay there. It now
-splits by *which pass*, because the two passes fail in opposite directions and
-one of them has no backstop at all.
-
-**The completeness pass keeps the strong model, and is not escalated.** It is
-the pass that reads the verbatim request and asks whether every ask became a
-ledger line, and its grade — `UNLEDGERED` — is a *discovery*: its failure mode
-is a false **negative**, an ask nobody noticed, which produces no line for any
-escalation to pick up. Step 3 already calls it the most serious grade here and
-the only failure the rest of the pipeline is blind to by construction. Cheapening
-the one pass with nothing downstream of it is the trade this section exists to
-refuse. It is also the cheap pass in tokens — two blocks of text — so there is
-almost nothing to save.
-
-**The criteria pass starts on `sonnet`, and escalates per line.** That one
-applies a checklist somebody else already wrote, against a diff, citing
-`file:line` — the middle kind in `CLAUDE.md`'s routing rule, and the largest
-subagent in this pipeline by input size.
+- **The completeness pass keeps the strong model and is never escalated.** Its
+  failure mode is a false *negative* — an ask nobody noticed — which produces
+  no line for an escalation to pick up. It is also the cheap pass.
+- **The criteria pass starts on `sonnet` and escalates per line.**
 
 1. **Dispatch the criteria reviewer with `model: "sonnet"`.** Name it in the
    `Agent` call; omitting the field inherits the caller's model.
 2. **Re-grade on the strong model every line it returned as other than
    `DELIVERED`** — a second dispatch, same dossier, carrying only those lines
-   and their evidence tails. That is where the judgement is: a `PARTIAL` is a
-   disagreement about whether shipped work counts. So the strong pass is paid
-   per disputed line rather than per branch, and a clean branch never pays it.
-3. **On a re-graded line, the strong pass is the verdict** — that is the whole
-   point of paying for it, and "FAIL if either pass says so" would make the
-   escalation unable to do the one thing it was bought for. It can overturn a
-   `PARTIAL` *and* it can confirm one; record both readings whenever they
-   differ, so a lifted grade is visible rather than silent. What it may never do
-   is re-open a line the first pass already graded `DELIVERED`: only the
-   disputed set is escalated, so an escalation that returns fewer failures than
-   it was handed is doing its job, and one that returns *more* lines than it was
-   given has exceeded its scope and the verdict is discarded.
+   and their evidence tails. The strong pass is paid per disputed line rather
+   than per branch, and a clean branch never pays it.
+3. **On a re-graded line, the strong pass is the verdict.** It can overturn a
+   `PARTIAL` and it can confirm one; record both readings whenever they differ.
+   What it may never do is re-open a line the first pass graded `DELIVERED`: an
+   escalation returning *more* lines than it was given has exceeded its scope
+   and its verdict is discarded.
 
-**What does not get cheaper, and why the last attempt to make it cheaper was
-reverted.** The reviewer keeps the **full diff**. The obvious saving — hand it
-`branch.stat` and let it read the files as they stand — opens a false pass with
-no floor under it: a reviewer grading from the current files can quote a
-sentence that was already on `origin/main` and mark the criterion `DELIVERED`,
-and *nothing downstream can catch that*, because the whole gate rests on this
-being the pass that did not take the work on trust. The diff is the only input
-that distinguishes what this branch did from what it inherited. It is also not
-the expensive part — the model is. Cut that.
+**The reviewer keeps the full diff.** Handing it `branch.stat` and letting it
+read the files as they stand opens a false pass with no floor under it — a
+reviewer grading from current files can quote a sentence that was already on
+`origin/main` and mark the criterion `DELIVERED`. The diff is the only input
+that distinguishes what this branch did from what it inherited.
 
 ## Step 1 — Find the checklist
 
@@ -122,36 +86,27 @@ In order of preference. Say which source was used; the answer changes how much
 the verdict is worth.
 
 1. **`.claude/GOAL.md`** on the branch (or `.claude/GOAL-archive-<slug>.md` if
-   the mission already archived it). Written by `mission`, in its documented
-   format: a request ledger `R1`…`Rn`, decisions `D1`…`Dn`, assumptions
-   `S1`…`Sn`, criteria `A1`…`An` and `G1`…`Gn`. This is the strong source.
-2. **The linked issue**, for a branch started from `/new-task` rather than
-   `/mission`. `gh issue view <N>`. Its `## Acceptance criteria` are the
-   criteria, and its `## Context` / `## Scope` are the request the completeness
-   pass reads. There is no `R` ledger, so say so, and derive the asks from the
-   issue body yourself.
+   the mission already archived it), in `mission`'s documented format: a ledger
+   `R1`…`Rn`, decisions `D1`…`Dn`, assumptions `S1`…`Sn`, criteria `A1`…`An`
+   and `G1`…`Gn`. The strong source.
+2. **The linked issue**, for a branch started from `/new-task`. `gh issue view
+   <N>`. Its `## Acceptance criteria` are the criteria and its `## Context` /
+   `## Scope` are the request. There is no `R` ledger — say so, and derive the
+   asks from the issue body yourself.
 
-**There is no third source.** A branch's own commit messages and PR
-description are not a statement of what was asked for — they are the author's
-account of what they did, which is the one thing this skill exists not to take
-on trust. If neither source above exists, return **NOT GRADEABLE**, say that
-nothing independent of the branch states what it was supposed to do, and stop.
-The session's move then is to get that statement — from the trader, or from
-the issue — not to grade the branch against its own homework.
+**There is no third source.** Commit messages and the PR description are the
+author's account of what they did, which is the one thing this skill exists not
+to take on trust.
 
-Return **NOT GRADEABLE** and record nothing in these cases too:
+Return **NOT GRADEABLE**, record nothing, and stop when: neither source exists;
+the `GOAL.md` carries no criteria in the documented format; or it carries no
+verbatim request section, so the completeness pass cannot run.
 
-- the source is `GOAL.md` but it carries no criteria in the documented format;
-- the source is `GOAL.md` and it carries no verbatim request section, so the
-  completeness pass cannot run at all.
-
-Both are the same failure wearing different clothes: **an absent input makes
-every check over it vacuously true.** With no request to compare against,
-nothing can be `UNLEDGERED`; with no ledger, every `R` is trivially `COVERED`.
-A verdict assembled from empty sets satisfies every PASS clause below and
-records the marker, which is precisely the "gate grades its own summary" hole
-this skill was built to close. Missing input is never a quiet pass — it is a
-refusal to grade, and it is loud.
+All three are the same failure: **an absent input makes every check over it
+vacuously true.** With no request, nothing can be `UNLEDGERED`; with no ledger,
+every `R` is trivially `COVERED`. A verdict assembled from empty sets satisfies
+every PASS clause and records the marker, which is the hole this skill closes.
+Missing input is never a quiet pass — it is a refusal to grade, and it is loud.
 
 ## Step 2 — Assemble the dossier, then dispatch
 
@@ -160,11 +115,9 @@ files, because anything that cannot be written to a file is exactly the kind of
 claim this skill exists to disbelieve.
 
 ```sh
-# Point this at the session's scratchpad directory, never at the repo: the
-# dossier is working material, and a diff of the branch committed into the
-# branch is a mess the next review has to read past. Substitute a real path —
-# an unquoted placeholder in angle brackets is not a placeholder to `sh`, it is
-# two redirections, and the line would truncate a file at the filesystem root.
+# Point this at the session's scratchpad, never at the repo. Substitute a real
+# path — an unquoted placeholder in angle brackets is not a placeholder to
+# `sh`, it is two redirections that would truncate a file at the root.
 DOSSIER="/path/to/scratchpad/delivery-review"
 WT=/path/to/worktree            # the branch under review, not the session cwd
 mkdir -p "$DOSSIER" &&
@@ -175,148 +128,90 @@ mkdir -p "$DOSSIER" &&
   git log origin/main..HEAD --oneline > "$DOSSIER/branch.log"
 ```
 
-Both the `cd` and the fetch are load-bearing, and both fail the same quiet way.
-An agent session's cwd is the main checkout, not the worktree — this repo's own
-hook treats that as established fact — so without the `cd` the diff compares
-`main` to `origin/main` and comes back empty, and the reviewer then grades every
-criterion against a diff containing none of the branch's work. Without the
-fetch, a stale local `main` makes the diff carry other branches' merged work as
-though this one had done it. Neither mistake announces itself: both read as a
-suspiciously generous pass. Check the stat before dispatching — if it does not
-look like the branch you are reviewing, stop.
+Both the `cd` and the fetch are load-bearing and both fail the same quiet way.
+An agent session's cwd is the main checkout, so without the `cd` the diff
+compares `main` to `origin/main` and comes back empty; without the fetch, a
+stale local `main` makes the diff carry other branches' merged work. Neither
+announces itself — both read as a suspiciously generous pass. **Check the stat
+before dispatching**; if it does not look like the branch you are reviewing,
+stop.
 
-**Inputs the reviewer may receive:**
-
-- the checklist from step 1, verbatim;
-- the diff, its stat and its log;
-- every path named in a criterion's `→` evidence tail;
-- the repository itself, read-only, to see the shipped state.
+**Inputs the reviewer may receive:** the checklist from step 1, verbatim; the
+diff, its stat and its log; every path named in a criterion's `→` evidence
+tail; the repository itself, read-only.
 
 A criterion whose evidence tail says "the PR body" has nowhere to point yet —
-this skill runs before the PR exists. Write that evidence into the dossier as
-a file first and let the PR body be authored from it. The order matters:
-evidence written down and then published is a record, evidence recalled while
-writing the PR is a story.
+this skill runs before the PR exists. Write that evidence into the dossier as a
+file first and let the PR body be authored from it: evidence written down and
+then published is a record, evidence recalled while writing the PR is a story.
 
-**Inputs it may not receive — this list is the skill:**
-
-- the implementing session's transcript, summary, plan or narrative;
-- your explanation of why a criterion is met;
-- any "I ran X and it passed" that is not backed by output written to a file,
-  or that the reviewer cannot re-run itself.
+**Inputs it may not receive — this list is the skill:** the implementing
+session's transcript, summary, plan or narrative; your explanation of why a
+criterion is met; any "I ran X and it passed" not backed by output written to a
+file, or that the reviewer cannot re-run itself.
 
 Dispatch with the `Agent` tool.
 
 - **Never `fork`.** A fork inherits this session's context, which is exactly
-  the contamination this skill exists to remove. This one *is* structural.
+  the contamination this skill exists to remove.
 - **Pass `model: "sonnet"`** on the first dispatch, and the strong model on the
-  escalation for disputed lines only. `CLAUDE.md`'s routing rule owns why; what
-  matters here is that omitting the field is not neutral — it inherits the
-  caller's model, so the largest subagent in the pipeline silently bills every
-  grade at open-judgement rates.
-- **Pick the type that can read whole files.** `general-purpose`, with the
-  read-only instruction written into the prompt. The obvious alternative is a
-  search-shaped type whose tools exclude `Edit` and `Write` — but those types
-  are specified to read *excerpts* rather than whole files, and the
-  anti-rubber-stamp rules below require citing `file:line`, reading a named
-  test's assertions and quoting prose verbatim. A reviewer that grades from
-  excerpts on the one gate whose entire value is that it did not take the work
-  on trust is the wrong trade.
+  escalation for disputed lines only. Omitting the field is not neutral: it
+  inherits the caller's model, so the largest subagent in the pipeline
+  silently bills every grade at open-judgement rates.
+- **Pick `general-purpose`**, with the read-only instruction in the prompt. The
+  search-shaped types read *excerpts*, and the anti-rubber-stamp rules require
+  citing `file:line`, reading a named test's assertions and quoting prose
+  verbatim.
 
-  The capability argument for the narrower type does not survive contact
-  either: every type here keeps `Bash`, and `printf … >> file` writes a file as
-  surely as `Edit` does. So "the reviewer must not edit the branch" is prose in
-  every case, and prose is a rule enforced by the party it constrains. Choose
-  for reading depth and enforce the rest with the check below.
-
-The failure that guards against is the sharpest in this whole mechanism: a
-reviewer that finds a criterion `MISSING`, writes the missing line, and then
-grades it `DELIVERED` returns a PASS whose evidence it manufactured. Nothing
-downstream sees it — `arch-review` has already run, `pr-gate` compares a sha
-and nothing else, and the calling session never reads the subagent's transcript
-*by design*.
-
-So do not rest on the prose. **Check that the branch did not move**, which the
-calling session can do and the reviewer cannot forge:
+The failure this guards against is the sharpest in the mechanism: a reviewer
+that finds a criterion `MISSING`, writes the missing line, and grades it
+`DELIVERED` returns a PASS whose evidence it manufactured. Nothing downstream
+sees it. So do not rest on the prose — **check that the branch did not move**:
 
 ```sh
 cd "$WT" && git rev-parse HEAD && git status --porcelain
 ```
 
 Once before the **first** dispatch, once after the **last** verdict returns —
-full mode has two dispatches, and the bracket goes around both; see *The
-escalation dispatch* below. Any difference — a new commit, a dirty file —
-invalidates the verdict: discard it, record no marker, and say what changed. A
-review that edited what it was grading is not a review.
+the bracket goes around both dispatches. Any difference invalidates the
+verdict: discard it, record no marker, and say what changed.
 
-Know what that check cannot see. The markers live in the worktree's **git
-dir**, outside both `HEAD` and the working tree, so a subagent that wrote
-`delivery-review-ok` itself would leave both readings unchanged. So the
-calling session records the marker — after reading the verdict, on PASS
-only — and reads the marker **before** dispatch alongside `HEAD` and the
-porcelain status. What condemns a verdict is the marker *appearing or
-changing* while the review ran, not its merely being there: a re-run after
-a deferral edit finds the previous round's marker still on disk, and a rule
-keyed on existence alone would discard every verdict from the second round
-onward and leave the branch permanently denied.
-
-Hand it the checklist and the dossier paths in the prompt, tell it to read the
-repo itself for anything else, and ask for the grade table and verdict below.
+The markers live in the worktree's **git dir**, outside both `HEAD` and the
+working tree, so read the marker before dispatch alongside those two. What
+condemns a verdict is the marker *appearing or changing* while the review ran,
+not its merely being there — a re-run after a deferral edit finds the previous
+round's marker still on disk.
 
 ### The escalation dispatch
 
-*What the full mode starts at* above sets the model on that first dispatch and
-buys a second one for the disputed lines. Here is the wiring, because a design
-stated only in a preamble is one an agent executing the numbered steps in order
-never performs.
-
 - **When**: after the criteria pass returns, and only if it graded at least one
-  line other than `DELIVERED`. No disputed lines, no second dispatch.
+  line other than `DELIVERED`.
 - **What it gets**: the same dossier paths, the same read-only instruction, and
   **only the disputed lines** — each criterion verbatim, with its evidence tail
-  and the first pass's grade and reasoning. Never the whole checklist: handing
-  it every line invites it to re-open the ones nobody disputed.
+  and the first pass's grade and reasoning. Never the whole checklist.
 - **What it returns**: the same grade table shape, restricted to those lines.
 - **How they merge**: undisputed lines keep the first pass's `DELIVERED`;
   disputed lines take the escalation's grade. A line the escalation did not
   answer keeps the first pass's grade — silence never promotes.
-- **The anti-tamper check brackets *both* dispatches.** `HEAD`, the porcelain
-  status and the marker are read once before the first dispatch and once after
-  the last verdict returns, not once per dispatch. Two reviewers now touch the
-  branch, so a mid-review edit has two chances to happen and the same single
-  consequence: any difference invalidates the whole review.
 
 ## Step 3 — Grade every line
 
-Three passes, and they run in this order because each one catches what the
-next one structurally cannot. The completeness pass catches asks that never
-reached the ledger; the ledger pass catches asks that never became criteria;
-the criteria pass catches criteria that never became code.
+Three passes, in this order because each catches what the next structurally
+cannot: the completeness pass catches asks that never reached the ledger, the
+ledger pass catches asks that never became criteria, the criteria pass catches
+criteria that never became code. Grade the criteria pass as one table — the
+merge happens before you read it.
 
-In full mode the first two run on the strong model and are never escalated; the
-third starts on `sonnet` and escalates its disputed lines to a second dispatch.
-*What the full mode starts at* explains why the split falls there, and *The
-escalation dispatch* is the wiring. Grade the criteria pass below as one table
-regardless — the merge happens before you read it, and a merged line carries
-whichever grade the escalation left it with.
+**Completeness pass** — the ledger against the request that produced it. Read
+the verbatim request yourself and derive the atomic asks from it — the same way
+`mission` was supposed to — *before* looking at the ledger. Then compare.
 
-**Completeness pass** — the ledger against the request that produced it.
-
-`mission` writes the trader's request into `GOAL.md` verbatim, as its last
-section, precisely so this pass is possible. Read that request yourself and
-derive the atomic asks from it — the same way `mission` was supposed to —
-before looking at the ledger. Then compare.
-
-An ask you found in the request that no `R` line carries is **UNLEDGERED**,
-and it is the most serious grade in this skill. Every other finding is about
-work that fell short of a written promise; this one is about a promise that was
-never written, and it is the only failure the rest of the pipeline is blind to
-by construction. Report it with the trader's own words beside it.
-
-For a source-2 branch the issue body is the request: derive the asks from it
-the same way. Step 1 already refuses to grade a `GOAL.md` with no verbatim
-request section, so this pass always has something to read — an absent request
-is a refusal to grade, never a pass with one check skipped.
+An ask you found in the request that no `R` line carries is **UNLEDGERED**, the
+most serious grade here: every other finding is about work that fell short of a
+written promise, this one is about a promise that was never written, and it is
+the only failure the rest of the pipeline is blind to by construction. Report
+it with the trader's own words beside it. For a source-2 branch the issue body
+is the request.
 
 **Ledger pass** — one grade per `R`:
 
@@ -326,15 +221,11 @@ is a refusal to grade, never a pass with one check skipped.
 | `PARTLY COVERED` | a criterion claims it but delivers less than the ask says — name the part that did not arrive |
 | `DROPPED` | no criterion discharges it, or every criterion that does failed |
 
-**Criteria pass** — one grade per `A` and per `G`.
-
-Grade those two groups and no others. A `C` line under **Closing steps** —
-this review returning PASS, `GOAL.md` archived, the PR open — is deliberately
-not a criterion: none of them can have happened at the moment you are writing
-this verdict, and two of them are unblocked *by* it. Grading them would fail
-every branch that ever ran this skill, which is a gate nobody would keep. If a
-checklist puts them among the `A` or `G` lines anyway, say so as a finding
-against the checklist and grade the rest.
+**Criteria pass** — one grade per `A` and per `G`, and no others. A `C` line
+under **Closing steps** is deliberately not a criterion: none of them can have
+happened while you are writing this verdict, and two are unblocked *by* it. A
+checklist that puts them among the `A` or `G` lines gets a finding against the
+checklist, and the rest is graded.
 
 | Grade | Meaning |
 | --- | --- |
@@ -345,8 +236,7 @@ against the checklist and grade the rest.
 
 `UNPROVEN` is the grade that does the work. It is not a softer `DELIVERED`; it
 is the honest answer when the outcome may well be there and nothing on disk
-says so. Treat it as a failure, and fix it by recording the evidence — which
-costs one command.
+says so. Treat it as a failure, and fix it by recording the evidence.
 
 ## Anti-rubber-stamp rules
 
@@ -355,28 +245,22 @@ on the subagent and go into its prompt.
 
 1. **"The code looks right" is not evidence.** Cite the `file:line` that
    implements the outcome, or grade it `MISSING`.
-2. **A criterion naming a test** is graded by reading that test's assertions.
-   A test that exists but asserts nothing about the criterion is `UNPROVEN`.
-3. **A criterion naming a command** needs that command's output recorded. "It
-   passed" without output is `UNPROVEN` — and the reviewer may simply re-run
-   the command, which is faster than arguing.
-4. **A prose criterion** ("the skill must say X") is graded by quoting the
-   lines that say it. A paraphrase is not a quote.
-5. **Grade the branch, not the plan.** Something promised in `GOAL.md` and
-   living only in a `TODO` comment, a doc sentence describing future work, or
-   a function nothing calls, is `MISSING`.
-6. **A commit message is not proof.** Neither is a PR body. Both are the
-   author's claim about the diff; read the diff.
-7. **Audit the assumptions.** For each `S`, ask whether it turned out to drive
-   the design. One that did is reported as a question that should have been
-   asked in `mission`'s interrogation round — not a criterion failure, but a
-   finding the trader reads.
-8. **Audit the exclusions.** A gate the mission listed as not applicable, that
-   in fact applies to the shipped diff, is a finding at the same weight as a
-   failed criterion.
+2. **A criterion naming a test** is graded by reading that test's assertions. A
+   test that exists but asserts nothing about the criterion is `UNPROVEN`.
+3. **A criterion naming a command** needs that command's output recorded — and
+   the reviewer may simply re-run it, which is faster than arguing.
+4. **A prose criterion** is graded by quoting the lines that say it. A
+   paraphrase is not a quote.
+5. **Grade the branch, not the plan.** Something living only in a `TODO`, a doc
+   sentence describing future work, or a function nothing calls, is `MISSING`.
+6. **A commit message is not proof.** Neither is a PR body. Read the diff.
+7. **Audit the assumptions.** An `S` that turned out to drive the design is
+   reported as a question `mission`'s interrogation should have asked.
+8. **Audit the exclusions.** A gate listed as not applicable that in fact
+   applies to the shipped diff is a finding at the weight of a failed criterion.
 9. **If every line grades DELIVERED on the first round**, say what you checked
    that could have failed and did not. An all-green verdict with no reasoning
-   is the shape a rubber stamp takes, and it is rejected here.
+   is the shape a rubber stamp takes.
 
 ## Step 4 — Verdict
 
@@ -384,87 +268,60 @@ on the subagent and go into its prompt.
 pass actually ran; nothing `UNLEDGERED`; every `R` `COVERED`; every `A` and `G`
 `DELIVERED`; nothing `UNPROVEN`, `MISSING` or `PARTIAL`.
 
-Those grades are the **merged** ones. A line the escalation re-graded counts at
-the escalation's reading, not the first pass's — that is what the second
-dispatch was paid for, and a verdict that took the worse of the two readings
-would make it unable to change any outcome. Where the two differed, say so in
-the verdict beside the line, so a grade that was lifted is visible rather than
-quietly better.
+Those grades are the **merged** ones — a re-graded line counts at the
+escalation's reading. Where the two differed, say so beside the line.
 
 **An approved deferral is exempt from every one of those clauses, the ledger
-included.** A deferred `A` line does not grade `DELIVERED`, so every `R` it
-discharges would grade `DROPPED` — and "every `R` `COVERED`" would then make
-PASS unreachable for the one route by which a gap is *allowed* to ship. Read a
-deferred line as satisfied for the purpose of the verdict, and say in the
-verdict that it was deferred and by whom, so the exemption is visible rather
-than silent.
+included.** A deferred `A` does not grade `DELIVERED`, so every `R` it
+discharges would grade `DROPPED`, and PASS would be unreachable for the one
+route by which a gap is *allowed* to ship. Read a deferred line as satisfied,
+and say in the verdict that it was deferred and by whom.
 
-That first clause is not a formality. Every clause after it quantifies over a
-set, and an empty set satisfies all of them: no request means nothing can be
-`UNLEDGERED`, no ledger means every `R` is `COVERED` by vacuity. A PASS
-assembled that way is indistinguishable from a real one at the marker, and the
-marker is all `pr-gate` can see. So check that the inputs existed before
-checking what they say.
+The first clause is not a formality: every clause after it quantifies over a
+set, and an empty set satisfies all of them. Check that the inputs existed
+before checking what they say.
 
-**FAIL** otherwise, with the failing lines listed first, each naming the
-smallest concrete thing that would change the grade.
-
-Close with the checklist source used, whether the completeness pass could run,
-the counts, and the answer to rule 9.
+**FAIL** otherwise, with the failing lines first, each naming the smallest
+concrete thing that would change the grade. Close with the checklist source
+used, whether the completeness pass could run, the counts, and the answer to
+rule 9.
 
 ## Step 5 — The bounded fix loop
 
-This loop belongs to the session that called the skill, not to the subagent —
-the reviewer grades and returns; it never edits the branch it is judging. The
-trader is not the one who closes these gaps either. The session is.
+This loop belongs to the session that called the skill. The reviewer grades and
+returns; it never edits the branch it is judging. The trader does not close
+these gaps either — the session does.
 
 - **Fix everything the review reported, then re-run** — a fresh dossier and a
   fresh subagent, because a reviewer that has already seen the branch is no
   longer a stranger to it.
-- **Spend from the chain's budget, not from a second one of this skill's own.**
-  `CLAUDE.md`'s *review chain has a budget* is the owner: three rounds per
-  branch across **both** reviews together, then the remainder ships as recorded
-  PR follow-ups. This skill used to carry its own three, which is how a branch
-  reached six — `arch-review` spent its rounds, every fix commit staled both
-  markers and re-ran both reviews, and no number covered the sum. Count the
-  rounds this branch has already spent before opening another.
+- **Spend from the chain's budget, not a second one.** `CLAUDE.md`'s *review
+  chain has a budget* is the owner: three rounds per branch across **both**
+  reviews together, then the remainder ships as recorded PR follow-ups. Count
+  the rounds this branch has already spent before opening another.
 
   When the budget is out, report the surviving gaps and what was tried on each,
-  and let the trader decide whether to keep going. The bound exists so a stuck
-  loop ends, not so a productive one does, and that difference is a judgement
-  the trader should get to make with the findings in front of them.
-
-  Say which it looks like. A round whose findings are smaller and fewer than
-  the last is converging; a round still returning Blockers, especially in code
-  the previous round's fix introduced, is a sign the approach is wrong rather
-  than incomplete — and that is worth naming, because more rounds will not fix
-  a design. The branch that introduced this skill took **four** rounds of
-  `arch-review` with the count flat at 15 and the severity climbing into newly
-  written code, which is exactly the shape that should have prompted the
-  conversation instead of a fifth round.
+  and let the trader decide whether to keep going. **Say which shape it is**: a
+  round whose findings are smaller and fewer is converging; a round still
+  returning Blockers in code the previous round's fix introduced means the
+  approach is wrong rather than incomplete, and more rounds will not fix a
+  design.
 - **Escalate immediately, without spending a round**, when closing the gap
   would change the mission's scope, contradict a recorded `D` decision, or
-  require a call that belongs to the trader. Those are step-3 questions in
-  `mission`, arriving late.
+  require a call that belongs to the trader.
 
 **Deferral** is the only way a gap ships, and only the trader grants it. A
 granted deferral is written into the goal file under a `## Deferred` heading —
 the line's ID, what is missing, why, and that the trader approved it — and
-repeated in the PR body. Note *which* file that is: the mandated order archives
-`.claude/GOAL.md` to `.claude/GOAL-archive-<slug>.md` before either review
-runs, so by the time a deferral exists the archive is the file to edit. And
-editing it is a commit, which stales both markers by design — so both reviews
-run again over the new head before either is re-recorded. Re-stamping instead
-is the cheap exit this whole mechanism is built to make unattractive.
+repeated in the PR body. By the time a deferral exists the archive is the file
+to edit, and editing it is a commit, which stales both markers by design: both
+reviews run again over the new head before either is re-recorded.
 
-**`## Deferred` means granted.** A gap still waiting on an answer goes under a
-heading that says so — `## Deferral requested — NOT granted` reads correctly at
-a glance. Otherwise a later reader, or a later reviewer keying on the heading,
-takes an approval nobody gave; a subtitle correcting the heading is not enough,
-because the heading is the part that gets skimmed.
-
-A deferral the session grants itself is not a deferral; it is the failure this
-skill was built to stop.
+**`## Deferred` means granted.** A gap still waiting on an answer goes under
+`## Deferral requested — NOT granted`, which reads correctly at a glance; a
+subtitle correcting the heading is not enough, because the heading is what gets
+skimmed. A deferral the session grants itself is not a deferral; it is the
+failure this skill was built to stop.
 
 ## Step 6 — Record the marker
 
@@ -478,10 +335,9 @@ cd "$WT" &&
 ```
 
 `pr-gate` denies `gh pr create` until this file holds the hash of the exact
-change being shipped, alongside `arch-review-ok`. Recording it on a FAIL, or before the last
-edit, is lying to the gate — and since the marker stores a hash of the change, the second
-one is caught automatically and the first one is not caught by anything but
-you.
+change being shipped, alongside `arch-review-ok`. Recording it on a FAIL, or
+before the last edit, is lying to the gate — the second is caught
+automatically, the first is caught by nothing but you.
 
 Run this skill **after** `arch-review`, never before: it grades the branch as
 shipped, including whatever the shape review made you change.

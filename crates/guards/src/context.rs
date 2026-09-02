@@ -1,0 +1,400 @@
+//! A ratchet for the files that are injected into a Claude session.
+//!
+//! `CLAUDE.md` is read at the start of every session; a skill's `SKILL.md` is
+//! read whole the moment that skill is invoked. Those bytes are paid for on
+//! every turn that follows, before a single line of the repository has been
+//! looked at — and unlike the code, nothing has ever rationed them.
+//!
+//! The result was measurable. By the time this guard was written,
+//! `arch-review`'s skill had reached 48 KB and `mission`'s 33 KB, so a
+//! `/mission → /arch-review → /delivery-review → /ship` cycle spent about
+//! 28,000 tokens on instructions before starting work. `CLAUDE.md` had gone
+//! the same way and was cut by two thirds in one branch. Both were the same
+//! failure the [`size`](crate::size) guard exists for, in a different file
+//! extension: something valuable grows a paragraph at a time, every paragraph
+//! is defensible, and nobody is looking at the total.
+//!
+//! So the rule is the size guard's rule, over the other tree. A context file
+//! has a ceiling, growth past it must be signed in the baseline with a
+//! reason, and a budget caps the sum — raising one file means lowering
+//! another. The mechanism is [`ratchet`](crate::ratchet), shared with the size
+//! guard; this module contributes the scan and the numbers.
+//!
+//! # Why bytes rather than lines
+//!
+//! Lines are what the size guard counts, and they are the wrong unit here.
+//! These files are prose wrapped at 80 columns, so a line is worth whatever
+//! the author's editor did, and moving a paragraph out of a table into a
+//! sentence changes the line count without changing what a session pays.
+//! Bytes track the cost being rationed — roughly four to a token for English
+//! prose — and they cannot be gamed by reflowing.
+//!
+//! # What is in scope
+//!
+//! Exactly the files a session loads: `CLAUDE.md`, `AGENTS.md` (which
+//! `CLAUDE.md` delegates the crate map to, so a cut that moves weight there
+//! must still be paid for), and every `.md` under `.claude/skills/`. The goal
+//! files under `.claude/` are not in scope — a `GOAL.md` is a record of one
+//! mission, read deliberately and never at start-up, and rationing it would
+//! push authors to write down less of what they were asked for.
+
+use std::fs;
+use std::path::Path;
+
+use crate::Finding;
+use crate::ratchet::Policy;
+
+/// Bytes above which a context file must carry a baseline entry.
+///
+/// About 2,500 tokens: large enough that no ordinary skill needs an entry,
+/// small enough that the three files this guard was written for all do. A
+/// file over it is not forbidden — it is asked to say, in the baseline, why
+/// every session should pay for it.
+pub const THRESHOLD: usize = 10_000;
+
+/// How far below its ceiling a tracked file may sit before the entry must be
+/// tightened. Wider than the size guard's slack in absolute terms and much
+/// tighter in relative ones: editing a sentence moves a markdown file by tens
+/// of bytes, and only a real cut moves it by a thousand.
+pub const SLACK: usize = 1_000;
+
+/// The recorded ceilings, as a workspace-relative path.
+pub const BASELINE_FILE: &str = "crates/guards/context-baseline.txt";
+
+/// How far below the budget the recorded total may sit before the budget
+/// itself has to come down.
+pub const BUDGET_SLACK: usize = 4_000;
+
+/// The directory every skill lives under.
+const SKILLS: &str = ".claude/skills";
+
+/// The context files that are not skills, relative to the workspace root.
+const ROOT_FILES: [&str; 2] = ["CLAUDE.md", "AGENTS.md"];
+
+/// What the guard asks for when a context file is over its ceiling.
+pub const REMEDY: &str = "A context file over its ceiling is a cost every session pays before it \
+                          reads any code. The fix is the one PR #279 applied to CLAUDE.md: keep \
+                          every operative rule, state each once, and move the reasoning out — to \
+                          docs/agentic-development.md for the working rules, or to a \
+                          references/ file beside the skill for detail that only some runs need. \
+                          A skill's references/ are read on demand, so a dimension or a step that \
+                          most reviews waive costs nothing until it is in scope. Raising a \
+                          ceiling on purpose is still allowed: change the number in \
+                          crates/guards/context-baseline.txt and say why in a comment. A file \
+                          that shrank needs no argument — `cargo run -p quantick-guards -- \
+                          --tighten` writes the new number.";
+
+/// What the guard asks for when the recorded total is over budget.
+pub const BUDGET_REMEDY: &str = "The context budget is the sum of every recorded ceiling: the one \
+                                 number that says whether the instructions are getting cheaper or \
+                                 more expensive to obey. Individually signed raises cannot answer \
+                                 that — every paragraph added to a skill was defensible on its own, \
+                                 which is how one reached 48 KB. So growth is pay-as-you-go. A \
+                                 branch that needs a ceiling raised moves comparable prose out of \
+                                 some other context file in the same change. Raising the budget \
+                                 line itself stays available and is the escape hatch on purpose: \
+                                 it is one number, in one place, that a reviewer watches move.";
+
+/// What the guard asks for when the recorded total has fallen below budget.
+pub const BUDGET_SLACK_REMEDY: &str = "The recorded ceilings now total less than the budget caps them at, which means prose left a \
+     context file and the cap has not caught up. Nothing has to be argued: `cargo run -p \
+     quantick-guards -- --tighten` writes the new total, and only ever downward.";
+
+/// What the guard asks for when the baseline itself cannot be read as data.
+pub const BASELINE_REMEDY: &str = "The baseline could not be read as data, so no ceiling was checked at all — this is a syntax \
+     finding, not a size one. Every line in crates/guards/context-baseline.txt is blank, a `#` \
+     comment, the one `!budget <count>` directive, or a `<path> <count>` pair. Fix the line the \
+     finding names and the guard resumes. Until then it is not reporting a lean set of \
+     instructions, it is reporting that it could not look.";
+
+/// This guard's ratchet.
+pub const POLICY: Policy = Policy {
+    baseline_file: BASELINE_FILE,
+    threshold: THRESHOLD,
+    slack: SLACK,
+    budget_slack: BUDGET_SLACK,
+    unit: "bytes of context",
+    remedy: REMEDY,
+    budget_remedy: BUDGET_REMEDY,
+    budget_slack_remedy: BUDGET_SLACK_REMEDY,
+    baseline_remedy: BASELINE_REMEDY,
+};
+
+/// Whether a workspace-relative path is a file a session loads.
+///
+/// The single owner of that question, called by the walk below *and* by
+/// [`check_file`], because those are the two surfaces the edit-time hook
+/// trusts to say the same thing.
+pub fn tracked(relative: &str) -> bool {
+    ROOT_FILES.contains(&relative) || (relative.starts_with(SKILLS) && relative.ends_with(".md"))
+}
+
+/// What a walk of the context tree found.
+pub struct Measured {
+    /// Byte counts by workspace-relative path, sorted.
+    pub counts: Vec<(String, usize)>,
+    /// Paths that exist and could not be read at all. Reported rather than
+    /// skipped: a file the guard cannot open is not a file it has cleared,
+    /// and silence there is indistinguishable from a clean result.
+    pub unreadable: Vec<String>,
+}
+
+impl Measured {
+    /// Whether the walk saw this path at all — measured or merely present.
+    /// A file that exists but could not be read is present, not gone, and
+    /// reporting its entry stale would delete a ceiling over a live file.
+    fn seen(&self, path: &str) -> bool {
+        self.counts.iter().any(|(scanned, _)| scanned == path)
+            || self.unreadable.iter().any(|line| line.contains(path))
+    }
+}
+
+/// Add one file's size to the measurement, or the reason it could not be
+/// taken.
+fn weigh(path: &Path, relative: String, found: &mut Measured) {
+    match fs::metadata(path) {
+        Ok(meta) => found.counts.push((relative, meta.len() as usize)),
+        Err(e) => found
+            .unreadable
+            .push(format!("  {relative}: could not be read: {e}")),
+    }
+}
+
+/// Every `.md` under a skills directory, recursively, so a skill's
+/// `references/` are weighed alongside its `SKILL.md`. A reference file is
+/// cheap only because it is read on demand; one that grows without bound is
+/// the same debt moved one directory down.
+fn walk(dir: &Path, root: &Path, found: &mut Measured) {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        // A directory that cannot be listed is not a directory that came back
+        // clean: a permission error would otherwise produce a green run over
+        // files nobody looked at, and make every baseline entry look stale.
+        Err(e) => {
+            let relative = relative_to(root, dir);
+            found
+                .unreadable
+                .push(format!("  {relative}/: directory could not be listed: {e}"));
+            return;
+        }
+    };
+    for entry in entries {
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(e) => {
+                found.unreadable.push(format!(
+                    "  {}: entry unreadable: {e}",
+                    relative_to(root, dir)
+                ));
+                continue;
+            }
+        };
+        if path.is_dir() {
+            walk(&path, root, found);
+            continue;
+        }
+        let relative = relative_to(root, &path);
+        if tracked(&relative) {
+            weigh(&path, relative, found);
+        }
+    }
+}
+
+/// A path under the workspace root, with forward slashes so baseline entries
+/// read the same on every platform.
+fn relative_to(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// Byte counts for every context file, sorted by path.
+pub fn measure(root: &Path) -> Measured {
+    let mut found = Measured {
+        counts: Vec::new(),
+        unreadable: Vec::new(),
+    };
+    for name in ROOT_FILES {
+        let path = root.join(name);
+        if path.is_file() {
+            weigh(&path, name.to_owned(), &mut found);
+        }
+    }
+    let skills = root.join(SKILLS);
+    if skills.is_dir() {
+        walk(&skills, root, &mut found);
+    }
+    found.counts.sort();
+    found
+}
+
+/// Every way the recorded baseline and the context files on disk disagree.
+pub fn check(root: &Path) -> Vec<Finding> {
+    // Checked before anything is measured, because a missing skills directory
+    // measures as *empty* — and an empty measurement makes every baseline
+    // entry look stale, whose stated remedy is to delete it. That one edit
+    // switches the ratchet off for every instruction file at once.
+    let skills = root.join(SKILLS);
+    if !skills.is_dir() {
+        return vec![Finding::new(
+            format!(
+                "  {} is not a readable directory — there is nothing to measure, and every \
+                 baseline entry would otherwise be reported stale",
+                skills.display()
+            ),
+            BASELINE_REMEDY,
+        )];
+    }
+    let recorded = match POLICY.baseline(root) {
+        Ok(recorded) => recorded,
+        Err(problem) => return vec![POLICY.unparsed(&problem)],
+    };
+    let found = measure(root);
+    let mut violations: Vec<Finding> = found
+        .unreadable
+        .iter()
+        .map(|line| Finding::new(line.clone(), REMEDY))
+        .collect();
+    violations.extend(POLICY.against(&recorded, &found.counts, &|path| found.seen(path)));
+    violations
+}
+
+/// The same verdict for one file, without walking the tree — what the
+/// edit-time hook calls after a write.
+pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
+    // The baseline is not a context file, so `tracked` rejects it — but it is
+    // where a raise is actually written, and a hook that saw every skill edit
+    // while missing the one edit that spends the budget would report the
+    // symptom and never the act.
+    if relative == BASELINE_FILE {
+        return match POLICY.baseline(root) {
+            Ok(recorded) => POLICY.budget_verdict(&recorded).into_iter().collect(),
+            Err(problem) => vec![POLICY.unparsed(&problem)],
+        };
+    }
+    if !tracked(relative) {
+        return Vec::new();
+    }
+    let actual = match fs::metadata(root.join(relative)) {
+        Ok(meta) => meta.len() as usize,
+        Err(e) => {
+            return vec![Finding::new(
+                format!("  {relative}: could not be read: {e}"),
+                REMEDY,
+            )];
+        }
+    };
+    let recorded = match POLICY.baseline(root) {
+        Ok(recorded) => recorded,
+        Err(problem) => return vec![POLICY.unparsed(&problem)],
+    };
+    POLICY
+        .verdict(recorded.entry(relative), relative, actual)
+        .into_iter()
+        .collect()
+}
+
+/// Lower any entry whose file has shrunk past [`SLACK`].
+pub fn tighten(root: &Path) -> Result<Vec<String>, String> {
+    POLICY.tighten(root, &measure(root).counts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workspace_root;
+
+    #[test]
+    fn the_repository_is_within_its_context_budget() {
+        let findings = check(&workspace_root());
+        assert!(
+            findings.is_empty(),
+            "context ratchet:\n{}",
+            findings
+                .iter()
+                .map(|f| f.line.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
+    #[test]
+    fn the_files_a_session_loads_are_the_files_in_scope() {
+        assert!(tracked("CLAUDE.md"));
+        assert!(tracked("AGENTS.md"));
+        assert!(tracked(".claude/skills/mission/SKILL.md"));
+        assert!(tracked(
+            ".claude/skills/ui-harness/references/hook-registry.md"
+        ));
+    }
+
+    #[test]
+    fn a_goal_file_is_a_record_of_one_mission_and_is_not_rationed() {
+        assert!(!tracked(".claude/GOAL.md"));
+        assert!(!tracked(".claude/GOAL-archive-mission-tiers.md"));
+    }
+
+    #[test]
+    fn code_and_documentation_belong_to_other_guards() {
+        assert!(!tracked("crates/app/src/app.rs"));
+        assert!(!tracked("docs/agentic-development.md"));
+        assert!(!tracked(".claude/hooks/README.md"));
+    }
+
+    #[test]
+    fn the_scan_finds_claude_md_and_every_skill() {
+        let found = measure(&workspace_root());
+        assert!(
+            found.counts.iter().any(|(path, _)| path == "CLAUDE.md"),
+            "CLAUDE.md is the file every session loads"
+        );
+        let skills = found
+            .counts
+            .iter()
+            .filter(|(path, _)| path.ends_with("/SKILL.md"))
+            .count();
+        assert!(skills >= 8, "found only {skills} skills");
+    }
+
+    #[test]
+    fn every_measured_file_has_a_size() {
+        let found = measure(&workspace_root());
+        assert!(
+            found.counts.iter().all(|(_, bytes)| *bytes > 0),
+            "a tracked context file measured as empty"
+        );
+    }
+
+    #[test]
+    fn check_file_agrees_with_the_scan_about_every_tracked_file() {
+        let root = workspace_root();
+        let whole = check(&root);
+        for (path, _) in measure(&root).counts {
+            let single = check_file(&root, &path);
+            let from_scan: Vec<&str> = whole
+                .iter()
+                .filter(|f| f.line.contains(&path))
+                .map(|f| f.line.as_str())
+                .collect();
+            let from_file: Vec<&str> = single.iter().map(|f| f.line.as_str()).collect();
+            assert_eq!(
+                from_scan, from_file,
+                "the two surfaces disagree about {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_untracked_path_is_silent_rather_than_clean() {
+        assert!(check_file(&workspace_root(), "crates/app/src/app.rs").is_empty());
+    }
+
+    #[test]
+    fn the_baseline_is_checked_by_the_hook_that_sees_it_edited() {
+        // The budget verdict is the whole reason the baseline is answerable
+        // at all: it is the file a raise is written into.
+        let findings = check_file(&workspace_root(), BASELINE_FILE);
+        assert!(findings.is_empty(), "{findings:?}");
+    }
+}
