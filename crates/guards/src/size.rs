@@ -64,11 +64,12 @@
 //! branch" read as eighteen reasonable decisions and one lost trunk, and no
 //! per-file rule can see that, because the question is about the sum.
 //!
-//! So [`BUDGET_DIRECTIVE`](crate::ratchet::BUDGET_DIRECTIVE) caps the total of every
-//! one now means lowering another in the same change: growth is pay-as-you-go,
-//! and an extraction lowers both numbers on its own. Nothing is blocked —
-//! raising the budget line is still allowed, and is the escape hatch on
-//! purpose, since it is one number in one place that a reviewer watches move.
+//! So [`BUDGET_DIRECTIVE`](crate::ratchet::BUDGET_DIRECTIVE) caps the total of
+//! every recorded ceiling. Raising one now means lowering another in the same
+//! change: growth is pay-as-you-go, and an extraction lowers both numbers on
+//! its own. Nothing is blocked — raising the budget line is still allowed, and
+//! is the escape hatch on purpose, since it is one number in one place that a
+//! reviewer watches move.
 //!
 //! Three properties keep that hatch from becoming a bypass, and each has a
 //! test. [`tighten`] follows the ceilings down and never up, or the command

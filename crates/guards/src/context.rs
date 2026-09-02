@@ -201,11 +201,18 @@ fn walk(dir: &Path, root: &Path, found: &mut Measured) {
     for entry in entries {
         let path = match entry {
             Ok(entry) => entry.path(),
+            // The error carries no name, so the file it stood for cannot be
+            // recorded — which is exactly the shape that made an unlistable
+            // directory report every ceiling under it as stale. The directory
+            // is marked blind for the same reason: a walk that lost an entry
+            // has not cleared this directory, and no ceiling inside it may be
+            // called gone on the strength of a scan that missed a name.
             Err(e) => {
-                found.unreadable.push(format!(
-                    "  {}: entry unreadable: {e}",
-                    relative_to(root, dir)
-                ));
+                let relative = relative_to(root, dir);
+                found
+                    .unreadable
+                    .push(format!("  {relative}/: entry unreadable: {e}"));
+                found.blind.push(format!("{relative}/"));
                 continue;
             }
         };
@@ -238,8 +245,17 @@ pub fn measure(root: &Path) -> Measured {
     };
     for name in ROOT_FILES {
         let path = root.join(name);
-        if path.is_file() {
-            weigh(&path, name.to_owned(), &mut found);
+        // Not `is_file()`, which answers `false` for a file that exists and
+        // whose metadata could not be read — the walk would then drop it
+        // silently, and a dropped file is a stale entry, whose stated remedy
+        // deletes a live ceiling. Only a genuine absence is silent here.
+        match fs::metadata(&path) {
+            Ok(meta) if meta.is_file() => found.counts.push((name.to_owned(), meta.len() as usize)),
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => found
+                .unreadable
+                .push(format!("  {name}: could not be read: {e}")),
         }
     }
     let skills = root.join(SKILLS);
@@ -401,9 +417,14 @@ mod tests {
         let whole = check(&root);
         for (path, _) in measure(&root).counts {
             let single = check_file(&root, &path);
+            // Anchored on the finding's own `"  {path}: "` prefix rather than
+            // matched as a substring: one tracked path being a substring of
+            // another would otherwise attribute the wrong file's violation,
+            // which is the hole the size guard's twin test already closed.
+            let prefix = format!("  {path}: ");
             let from_scan: Vec<&str> = whole
                 .iter()
-                .filter(|f| f.line.contains(&path))
+                .filter(|f| f.line.starts_with(&prefix))
                 .map(|f| f.line.as_str())
                 .collect();
             let from_file: Vec<&str> = single.iter().map(|f| f.line.as_str()).collect();
@@ -443,5 +464,64 @@ mod tests {
         // at all: it is the file a raise is written into.
         let findings = check_file(&workspace_root(), BASELINE_FILE);
         assert!(findings.is_empty(), "{findings:?}");
+    }
+
+    /// A scratch workspace whose baseline names two skill files, so a raise on
+    /// one can be paid for — or not — by the other.
+    fn scratch(test: &str, first: usize, second: usize, budget: usize) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("quantick-context-{test}"));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
+        fs::create_dir_all(root.join(".claude/skills/one")).expect("scratch dirs are creatable");
+        fs::create_dir_all(root.join(".claude/skills/two")).expect("scratch dirs are creatable");
+        fs::write(
+            root.join(BASELINE_FILE),
+            format!(
+                "!budget {budget}\n\
+                 .claude/skills/one/SKILL.md {first}\n\
+                 .claude/skills/two/SKILL.md {second}\n"
+            ),
+        )
+        .expect("scratch baseline is writable");
+        // Each file sits exactly at its ceiling, so the only finding a test
+        // can see is the budget's.
+        fs::write(root.join(".claude/skills/one/SKILL.md"), "x".repeat(first))
+            .expect("scratch skill is writable");
+        fs::write(root.join(".claude/skills/two/SKILL.md"), "x".repeat(second))
+            .expect("scratch skill is writable");
+        root
+    }
+
+    /// The same invariant as `check_file_agrees_with_the_scan_about_every_
+    /// tracked_file`, for the one path that scan cannot reach — and asserted
+    /// over a tree that is genuinely over budget, because agreement on two
+    /// empty lists proves nothing. The failure worth catching is the hook
+    /// calling a raise clean while the suite calls it a violation.
+    #[test]
+    fn check_file_agrees_with_the_scan_about_the_baseline() {
+        let root = scratch("budget-agree", 12_000, 11_000, 22_000);
+        let prefix = format!("  {BASELINE_FILE}:");
+        let from_scan: Vec<Finding> = check(&root)
+            .into_iter()
+            .filter(|f| f.line.starts_with(&prefix))
+            .collect();
+
+        assert_eq!(from_scan.len(), 1, "the scratch tree is over budget");
+        assert_eq!(
+            check_file(&root, BASELINE_FILE),
+            from_scan,
+            "the hook and the suite disagree about the baseline"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A raise paid for by a cut somewhere else clears the guard: the rule
+    /// bounds the total, it does not freeze any one file.
+    #[test]
+    fn a_raise_paid_for_by_a_cut_elsewhere_is_allowed() {
+        let root = scratch("budget-paid", 12_000, 10_000, 22_000);
+        let findings = check(&root);
+        assert!(findings.is_empty(), "{findings:?}");
+        let _ = fs::remove_dir_all(&root);
     }
 }

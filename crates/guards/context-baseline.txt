@@ -31,7 +31,17 @@
 # it, which is exactly why it is rationed here.
 .claude/skills/ui-harness/references/hook-registry.md 69177
 .claude/skills/ui-harness/SKILL.md 13377
-AGENTS.md 12777
+AGENTS.md 12771
 
 # The sum of every ceiling above. Raising one means lowering another.
-!budget 155013
+#
+# Known sharp edge, stated rather than smoothed: this total sits exactly on
+# the sum, and a file crossing the threshold enters at 10,000 bytes or more.
+# So the next new entry costs a 10,000-byte cut somewhere else, and the likely
+# answer is to raise this line instead. That is the escape hatch working as
+# designed — one number, in one place, that a reviewer watches move — but it
+# is a wider door here than in the size baseline, where the threshold is small
+# against the total. Widening the gap on purpose would be the other choice,
+# and it is the trader's: it trades teeth for the convenience of the branch
+# that next crosses the line.
+!budget 155007

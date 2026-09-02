@@ -68,7 +68,7 @@ fn every_guard_in_the_registry_has_a_test_here() {
         missing.is_empty(),
         "guards with no test in this file: {missing:?} — each would run in the binary and never \
          in CI. Widening TESTED alone will not do: its length is fixed and every slot is indexed \
-         by a #[test] above, so a fourth guard needs a fourth test."
+         by a #[test] above, so the next guard needs the next test."
     );
 }
 

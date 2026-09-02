@@ -167,8 +167,23 @@ impl Policy {
             let ceiling = ceiling
                 .parse::<usize>()
                 .map_err(|e| format!("{name}:{}: `{ceiling}` is not a count: {e}", line + 1))?;
+            let path = path.trim().to_owned();
+            // A path listed twice is the same defect as a second `!budget`,
+            // one level down: [`Baseline::entry`] answers from the first, so
+            // the second is a ceiling somebody wrote and nothing enforces,
+            // while [`Baseline::recorded`] sums both and charges the budget
+            // twice. Refused rather than picked, because the file gives no
+            // hint which of the two was meant.
+            if let Some(first) = entries.iter().find(|e: &&Entry| e.path == path) {
+                return Err(format!(
+                    "{name}:{}: `{path}` is already recorded on line {} — only one of the two \
+                     ceilings could ever be enforced",
+                    line + 1,
+                    first.line + 1
+                ));
+            }
             entries.push(Entry {
-                path: path.trim().to_owned(),
+                path,
                 ceiling,
                 line,
             });
@@ -458,6 +473,16 @@ mod tests {
         let dir = workspace("!budget 100\n!budget 200\n");
         let problem = POLICY.baseline(dir.path()).expect_err("two budgets");
         assert!(problem.contains("a second `!budget`"), "{problem}");
+    }
+
+    #[test]
+    fn a_path_recorded_twice_is_refused_rather_than_charged_twice() {
+        let dir = workspace("!budget 100\nsrc/a.md 40\nsrc/a.md 60\n");
+        let problem = POLICY.baseline(dir.path()).expect_err("two entries");
+        assert!(
+            problem.contains("is already recorded on line 2"),
+            "{problem}"
+        );
     }
 
     #[test]
