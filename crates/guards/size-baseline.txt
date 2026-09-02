@@ -60,16 +60,16 @@
 # It only ever goes down on its own: `--tighten` lowers it to match the
 # ceilings and will never raise it, or the failure message would be
 # recommending its own bypass.
-# Raised by 425 for the report extraction below, and this is the whole of
-# that raise: `paper_trading.rs` fell 2,856 and `paper_report.rs` arrived
-# at 3,281. The difference is the seam - the environment the report is
+# Raised by 458 for the report extraction below, and this is the whole of
+# that raise: `paper_trading.rs` fell 2,842 and `paper_report.rs` arrived
+# at 3,300. The difference is the seam - the environment the report is
 # handed, the response it answers with, the one state struct, and the
 # wrappers that keep every control-plane and harness name where its callers
 # already look. Paid here, in the one number a reviewer watches, rather
 # than hidden inside a signed entry: a reader of the budget alone should be
-# able to see that this branch cost 425 lines and ask whether the money
+# able to see that this branch cost 458 lines and ask whether the money
 # path being auditable was worth them.
-!budget 61364
+!budget 61397
 
 crates/app/src/app.rs 9362
 
@@ -103,8 +103,8 @@ crates/app/src/app.rs 9362
 # equity-curve plotting sitting in it was a line an auditor asking "was the
 # stop placed at the right price?" had to read past.
 #
-# 2,856 production lines and twenty-one struct fields left, against 3,281
-# arriving here - so the budget rises by 425 rather than falling, and that
+# 2,842 production lines and twenty-one struct fields left, against 3,300
+# arriving here - so the budget rises by 458 rather than falling, and that
 # is the honest number. What the difference bought: a `ReportEnv` the
 # report is *handed* instead of a host it reaches into, a `ReportResponse`
 # for what it cannot do itself, one `ReportState` in place of the
@@ -117,9 +117,9 @@ crates/app/src/app.rs 9362
 # asserts a fixed journal's whole report byte for byte, across two cuts. It
 # was written against the old code in its old home and its expected text
 # did not change - same SHA-256 before and after.
-crates/app/src/paper_report.rs 3281
+crates/app/src/paper_report.rs 3300
 
-crates/app/src/paper_trading.rs 6382
+crates/app/src/paper_trading.rs 6396
 
 # Raised by 14 for the strategy badge, and deliberately: not a capability
 # docking by trunk-edit, but a repair to `badge_text_for`, which reached only

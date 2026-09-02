@@ -263,9 +263,9 @@ named. The numbers, in one place:
 
 | | before | after |
 | --- | ---: | ---: |
-| `paper_trading.rs` production lines | 9,238 | **6,382** |
-| `paper_report.rs` production lines | — | **3,281** |
-| total production | 9,238 | 9,663 (**+425**) |
+| `paper_trading.rs` production lines | 9,238 | **6,396** |
+| `paper_report.rs` production lines | — | **3,300** |
+| total production | 9,238 | 9,696 (**+458**) |
 | `PaperTrading` fields | 75 | **55** |
 | `app.rs` lines changed | — | **0** |
 
@@ -306,6 +306,21 @@ named. The numbers, in one place:
    assumption was silent on whether the total would rise. It did, and the
    raise is on the `!budget` line with its reason, not hidden in a signed
    per-file entry. See `sizes.md`.
+
+5. **The review found one behaviour change, and it was real.** `arch-review`
+   step 0 and this session's own read landed on the same defect
+   independently: `draw_report_window` consumed `ReportResponse.start_import`
+   and dropped `ReportResponse.toast`, so a typed period the report refused
+   produced silence instead of the acknowledgement `origin/main` gave —
+   against R9, in the one place the extraction had genuinely changed
+   behaviour. Fixed, and covered by
+   `a_refusal_the_report_raises_reaches_the_windows_one_toast`, which fails
+   without the fix. The suite had no test on that path before; that gap is
+   why the seam could swallow it.
+6. **And one performance note, also fixed.** `report_env!` gathers the open
+   position, so building it on the per-trade close path cost a
+   `position_summary()` per closed trade even with the report shut.
+   `ReportState::is_open()` now guards it.
 
 ### Found on the way, not fixed here
 

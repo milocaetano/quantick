@@ -5043,11 +5043,18 @@ impl PaperTrading {
     /// The performance report window, computed from what is on disk.
     pub fn draw_report_window(&mut self, ctx: &egui::Context, tz: TzOffset) {
         let env = report_env!(self);
-        let response = self.report.draw_window(ctx, tz, &env);
+        let asked = self.report.draw_window(ctx, tz, &env);
         // The report can decide a folder picker should open; opening one is
         // this host's job, because the import copies into *its* journal.
-        if response.start_import {
+        if asked.start_import {
             self.start_import();
+        }
+        // And it can refuse a typed period. That message goes to the one
+        // outbox every paper acknowledgement uses - dropping it here would
+        // swallow a refusal the trader earned, which is what "a typed 2x
+        // must never do nothing quietly" was written against.
+        if let Some(message) = asked.toast {
+            self.show_toast(message);
         }
     }
 
@@ -5318,8 +5325,15 @@ impl PaperTrading {
                     // to disk; re-read now or the window shows yesterday
                     // until the manual refresh - the "my trade is missing"
                     // report.
-                    let env = report_env!(self);
-                    self.report.journal_changed(&env);
+                    //
+                    // Guarded rather than always gathered: this is the
+                    // per-trade path, and building a `ReportEnv` for a
+                    // window nobody has open is work a dense tape pays on
+                    // every single close.
+                    if self.report.is_open() {
+                        let env = report_env!(self);
+                        self.report.journal_changed(&env);
+                    }
                     // The toast slot holds one message: a healthy "closed"
                     // must not paint over the could-not-save warning.
                     if saved {

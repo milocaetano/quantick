@@ -768,10 +768,25 @@ impl ReportState {
         self.toast = Some(message);
     }
 
-    /// The saved journal rows the ledger has loaded, or `None` while it has
-    /// never been drawn. `None` and "loaded, and empty" are different
-    /// answers, and a caller that could not tell them apart would report a
-    /// folder as empty because nobody had looked at it yet.
+    /// Whether the report window is on screen.
+    ///
+    /// Read on the per-trade path, which is the whole reason it exists: a
+    /// close re-reads the journal only for a window somebody is looking
+    /// at, and the caller needs to know that *before* it gathers a
+    /// `ReportEnv` it would then throw away.
+    pub(crate) fn is_open(&self) -> bool {
+        self.report_open
+    }
+
+    /// Test-only. The saved journal rows the ledger has loaded, or `None`
+    /// while it has never been drawn. `None` and "loaded, and empty" are
+    /// different answers, and a caller that could not tell them apart would
+    /// report a folder as empty because nobody had looked at it yet.
+    ///
+    /// This and the two below exist for the ten report tests that stayed
+    /// with `paper_trading` because they drive a real journal on disk. They
+    /// let those tests ask a question instead of reading a field, which is
+    /// what keeps this struct's state private now that it has any.
     #[cfg(test)]
     pub(crate) fn saved_rows_loaded(&self) -> Option<&[HistoryRow]> {
         self.history_cache
@@ -779,14 +794,14 @@ impl ReportState {
             .map(|cache| cache.rows.as_slice())
     }
 
-    /// How many pages of saved history the ledger has revealed.
+    /// Test-only. How many pages of saved history the ledger has revealed.
     #[cfg(test)]
     pub(crate) fn revealed_pages(&self) -> usize {
         self.ledger_pages
     }
 
-    /// The trades inside the report's current cut, or `None` before one has
-    /// been made.
+    /// Test-only. The trades inside the report's current cut, or `None`
+    /// before one has been made.
     #[cfg(test)]
     pub(crate) fn view_rows(&self) -> Option<&[HistoryRow]> {
         self.report_view.as_ref().map(|view| view.rows.as_slice())
@@ -816,13 +831,17 @@ impl ReportState {
         self.selected_trade = None;
     }
 
-    /// A close was journaled while the window was open: re-read now, or the
+    /// A close was journaled while the window is open: re-read now, or the
     /// report shows yesterday until a manual refresh — the "my trade is
     /// missing" report.
+    ///
+    /// Call only when [`Self::is_open`] says so. It is stated that way
+    /// round rather than tested again here because this runs per closed
+    /// trade, and the caller has to build a `ReportEnv` to reach it —
+    /// work worth skipping entirely for a window nobody has open.
     pub(crate) fn journal_changed(&mut self, env: &ReportEnv<'_>) {
-        if self.report_open {
-            self.reload_report(env);
-        }
+        debug_assert!(self.report_open, "the caller checks `is_open` first");
+        self.reload_report(env);
     }
 
     /// An import copied files into the journal folder.
@@ -4550,5 +4569,42 @@ equity.low: 0.0  equity.high: 11.0
         let view = paper.report_state().report_view.as_ref().expect("rebuilt");
         assert_eq!(view.rows.len(), 1, "its own scope shows the old market");
         assert_eq!(view.hidden_outside, 0);
+    }
+    /// A refusal the report raises reaches the window's one toast.
+    ///
+    /// The typed-period field answers a value it cannot read with an
+    /// acknowledgement - "a typed `2d` must never do nothing quietly". When
+    /// the report lived on the host that was one call to `show_toast`; now
+    /// it is an outbox, a `ReportResponse` and a host that has to forward
+    /// it, which is three places for the message to die. It died in the
+    /// first draft of exactly that seam, and no test in the suite noticed,
+    /// so this is the test that would have.
+    ///
+    /// Asserted with the window *shut*, which is the harder half: the
+    /// message is raised, the trader closes the window, and the refusal
+    /// they earned must still arrive rather than leaving with the thing
+    /// that raised it.
+    #[test]
+    fn a_refusal_the_report_raises_reaches_the_windows_one_toast() {
+        let mut paper = PaperTrading::new();
+        paper
+            .report_state_mut()
+            .show_toast("SIM: could not read `2x` as a period".to_owned());
+
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            paper.draw_report_window(ctx, TzOffset::new(0));
+        });
+
+        assert_eq!(
+            paper.take_toast().as_deref(),
+            Some("SIM: could not read `2x` as a period"),
+            "the report's refusal must reach the window's acknowledgement lane"
+        );
+        assert_eq!(
+            paper.take_toast(),
+            None,
+            "and once only - the outbox is a slot that is handed over, not a copy"
+        );
     }
 }
