@@ -95,6 +95,29 @@ stated rather than smoothed over.
   the layout popover with its four presets and the current one ringed, and the
   chart pane's context menu with the trade block and the full chart-layers list.
 
+## Re-capture after the review round
+
+The first review round changed the shape of `apply_drawing_demo`'s binding —
+the applier now takes the request after its bar check instead of cloning it
+every frame — so the surface whose code moved was captured again on the shipped
+build (exe 2026-09-02 03:30), and this time the health line answers the
+question directly rather than by picture:
+
+| run | `drawings` | `shared_drawings` | fps | slow-frame lines |
+| --- | --- | --- | --- | --- |
+| `QUANTICK_DRAWINGS_DEMO=1` | 305 | 66 | 60 | 0 |
+| `… + _SHARED=1 + _SELECT=parallel-channel` | 327 | 88 | 59 | 0 |
+
+Both hooks still fire, and the `shared` field of `DrawingsDemo` is still
+honoured — twenty-two more shared objects with the satellite set than without.
+→ `shots/branch-r-drawings-demo-postfix.png`,
+`shots/branch-r-drawings-shared-postfix.png`
+
+Nothing else in that round can reach a pixel: a `#[cfg_attr(test, derive(…))]`,
+four doc comments, one `tracing::warn!` field's constant, an indentation the
+formatter cannot reach, one line of skill prose and one number in the size
+baseline.
+
 ## Defect checklist
 
 - **Integrity** — no clipped or overlapping control in any capture. The
