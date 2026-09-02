@@ -774,9 +774,13 @@ code-review at high (effort-first, no reuse notice), 12 findings, 3 confirmed`
 is the claim that failed on PR #274, and the two words after it are the whole
 difference between a level that was requested and one that ran. When the pass
 diverged, the line says so and says which way — `step 0: code-review at xhigh
-(tier bought medium; reuse notice, accepted per the asymmetric rule), …`. On
-the `ReportFindings` path that line is
-the text accompanying the call, since the tool carries no header field. It is
+(tier bought medium; reuse notice, accepted per the asymmetric rule), …` — and
+when the report settles nothing either way, it says that instead of rounding it
+up: `step 0: code-review at medium (effort-first; level unverified), …`. Three
+shapes, and the header always carries exactly one of them.
+
+On the `ReportFindings` path that line is the text accompanying the call, since
+the tool carries no header field. It is
 the only signal that the bug pass was skipped, so it is never dropped — and it
 goes into the PR body too, next to the deferred findings `CLAUDE.md` already
 requires there. Chat scrolls away; the PR is where the next reader looks.
