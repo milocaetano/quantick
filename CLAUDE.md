@@ -53,7 +53,7 @@ Crates under `crates/`; `AGENTS.md` *The map* owns the descriptions and the grap
 The same ratchet over the other tree — `crates/guards/src/context.rs`, ceilings in `context-baseline.txt`, mechanism shared with the size guard in `ratchet.rs`. It counts **bytes** (prose wrapped at 80 columns makes a line count meaningless) of what a session loads: this file, `AGENTS.md`, every `.md` under `.claude/skills/`. Goal files are out of scope on purpose.
 
 - **A `SKILL.md` states every rule that decides an outcome, once, operatively.** Reasoning, histories and per-dimension detail go to `references/` beside it, read on demand — a waived dimension then costs nothing. A working rule's reasoning goes to `docs/agentic-development.md`.
-- **The budget is the whole tracked weight**, not just the ceilings: files over 10,000 bytes carry a signed entry, and every smaller one still counts. So splitting prose into sub-threshold files buys nothing — only deleting it does.
+- **The budget is measured, not signed** — the bytes of every tracked file, ceiling or no ceiling. Splitting prose into smaller files buys nothing; only deleting it does. Files over 10,000 bytes additionally carry a signed entry, which is a separate rule.
 
 ## Workflow
 
