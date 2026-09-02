@@ -732,6 +732,28 @@ mod tests {
     }
 
     #[test]
+    fn tighten_refuses_a_drop_larger_than_the_slack() {
+        // The hole the entry-based refusal could not close. Every *recorded*
+        // entry can be present while most of the tree is absent — the baseline
+        // names three files of fifteen, so counting entries proves nothing
+        // about the rest. Reproduced against the real repository with a sparse
+        // copy: `--tighten` would have written `!budget: 231973 -> 164909`.
+        // Refusing the drop needs no knowledge of what should have been there.
+        let root = scratch("tighten-drop", 12_000, 10_000, 22_000);
+        fs::write(root.join(".claude/skills/one/SKILL.md"), "x".repeat(1_000))
+            .expect("scratch skill is writable");
+        fs::write(root.join(".claude/skills/two/SKILL.md"), "x".repeat(1_000))
+            .expect("scratch skill is writable");
+
+        let problem = tighten(&root).expect_err("a drop past the slack is refused");
+        assert!(problem.contains("more than the 4000"), "{problem}");
+
+        let baseline = fs::read_to_string(root.join(BASELINE_FILE)).expect("baseline is readable");
+        assert!(baseline.contains("!budget 22000"), "{baseline}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn a_partial_scan_still_reports_a_tree_that_is_over_budget() {
         // The hole the first version of the gate opened. Suppressing the whole
         // budget verdict on a partial scan meant one stale entry switched off

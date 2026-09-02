@@ -421,7 +421,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
                  baseline entry would otherwise be reported stale",
                 sources.display()
             ),
-            BASELINE_REMEDY,
+            UNMEASURABLE_REMEDY,
         )];
     }
     let recorded = match baseline(root) {
@@ -497,7 +497,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
         Err(e) => {
             return vec![Finding::new(
                 format!("  {relative}: could not be read: {e}"),
-                REMEDY,
+                UNMEASURABLE_REMEDY,
             )];
         }
     };

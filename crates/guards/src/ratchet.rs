@@ -321,11 +321,14 @@ impl Policy {
     /// not decide this for itself by declining to ask — three verdicts live
     /// here and a short total distorts exactly one of them:
     ///
-    /// - **No `!budget` line** reads the baseline alone. No measurement is
-    ///   involved, so a partial scan cannot make it wrong. It is also the one
-    ///   finding that catches the deletion of the cap itself, and suppressing
-    ///   it means the edit that switches pay-as-you-go off for every file goes
-    ///   unreported by the surface built to catch it.
+    /// - **No `!budget` line** is the one finding that catches the deletion of
+    ///   the cap itself, so it always fires: suppressing it means the edit
+    ///   that switches pay-as-you-go off for every file goes unreported by the
+    ///   surface built to catch it. On [`Basis::Measured`] the *number* it
+    ///   proposes does come from the scan, so a partial one names no number
+    ///   rather than a short one — an author who restored the directive below
+    ///   the tree's real weight would then be told, for ever, that they added
+    ///   prose nobody added.
     /// - **Over budget** can only *under*-report on a short total: bytes the
     ///   scan missed are bytes it did not add. So a partial scan that still
     ///   says "over" is telling the truth, and staying quiet here is how the
@@ -348,11 +351,30 @@ impl Policy {
         let name = self.baseline_file;
         let total = self.total(recorded, counts);
         let Some(budget) = &recorded.budget else {
+            // Always reported — it is the finding that catches the deletion of
+            // the cap itself. But the *number* is only offered when the scan
+            // saw the whole tree: on a measured basis a short total would have
+            // the author restore the directive below the tree's real weight,
+            // after which every honest run reports it over budget with a
+            // remedy telling them to delete prose nobody added.
+            let restore = match measurement {
+                Measurement::Complete => {
+                    format!(
+                        "the tracked total is {total} and nothing caps it. Restore the \
+                             directive at {total} or lower"
+                    )
+                }
+                Measurement::Partial => {
+                    "nothing caps the tracked total, and this run could not measure the whole \
+                     tree, so it cannot say what to restore it to. Fix the unreadable path \
+                     first, then run again for the number"
+                        .to_owned()
+                }
+            };
             return Some(Finding::new(
                 format!(
-                    "  {name}: no `{BUDGET_DIRECTIVE}` line — the tracked total is {total} \
-                     and nothing caps it. Restore the directive at {total} or lower; deleting \
-                     it is the one edit that switches pay-as-you-go off for every file at once"
+                    "  {name}: no `{BUDGET_DIRECTIVE}` line — {restore}; deleting it is the one \
+                     edit that switches pay-as-you-go off for every file at once"
                 ),
                 self.budget_remedy,
             ));
@@ -500,6 +522,31 @@ impl Policy {
         // And only once the gap is wide enough to *be* a finding — the same
         // test `budget_verdict` applies. Lowering on any gap at all would
         // revoke headroom somebody deliberately signed for.
+        // A drop larger than the slack is a claim, not an observation. On
+        // `Basis::Measured` the number comes from a walk of the disk, and no
+        // amount of checking the baseline can tell "sixty kilobytes of prose
+        // were deleted" from "this tree is missing nine files" — the baseline
+        // names three of the fifteen, so counting entries proves nothing about
+        // the rest. Refusing to *write* a big drop is the one bound that does
+        // not depend on knowing what should have been there: a real cut of
+        // that size is then a signed edit to one line, which is the same price
+        // a raise pays, and a partial tree can move the number by at most the
+        // slack — visibly, and recoverably.
+        if let Some(budget) = &recorded.budget
+            && self.basis == Basis::Measured
+            && budget.allowed.saturating_sub(tightened_total) > self.budget_slack
+        {
+            return Err(format!(
+                "refusing to tighten: the measured total {tightened_total} is {} below the \
+                 {BUDGET_DIRECTIVE} of {}, more than the {} this ratchet treats as drift. A drop \
+                 that size is either a real cut worth signing by hand, or a tree missing files \
+                 this scan never knew to look for — and nothing here can tell the two apart. \
+                 Edit the line and say which it was.",
+                budget.allowed - tightened_total,
+                budget.allowed,
+                self.budget_slack
+            ));
+        }
         if let Some(budget) = &recorded.budget
             && budget.allowed.saturating_sub(tightened_total) > self.budget_slack
         {
