@@ -60,7 +60,16 @@
 # It only ever goes down on its own: `--tighten` lowers it to match the
 # ceilings and will never raise it, or the failure message would be
 # recommending its own bypass.
-!budget 60939
+# Raised by 425 for the report extraction below, and this is the whole of
+# that raise: `paper_trading.rs` fell 2,856 and `paper_report.rs` arrived
+# at 3,281. The difference is the seam - the environment the report is
+# handed, the response it answers with, the one state struct, and the
+# wrappers that keep every control-plane and harness name where its callers
+# already look. Paid here, in the one number a reviewer watches, rather
+# than hidden inside a signed entry: a reader of the budget alone should be
+# able to see that this branch cost 425 lines and ask whether the money
+# path being auditable was worth them.
+!budget 61364
 
 crates/app/src/app.rs 9362
 
@@ -86,7 +95,31 @@ crates/app/src/app.rs 9362
 # number in this table for a hole in the type's encapsulation. The two-pass
 # sizing *did* move, behind a closure, once it was clear it was logic rather
 # than registration. Argue with these numbers rather than with their absence.
-crates/app/src/paper_trading.rs 9238
+# The performance report and the trades ledger came out of
+# `paper_trading.rs` as `paper_report.rs` - the reading half of paper
+# trading, split from the writing half. The point was not tidiness: that
+# file places orders, projects brackets, sizes risk against capital and
+# writes the trades journal, and every line of calendar tinting and
+# equity-curve plotting sitting in it was a line an auditor asking "was the
+# stop placed at the right price?" had to read past.
+#
+# 2,856 production lines and twenty-one struct fields left, against 3,281
+# arriving here - so the budget rises by 425 rather than falling, and that
+# is the honest number. What the difference bought: a `ReportEnv` the
+# report is *handed* instead of a host it reaches into, a `ReportResponse`
+# for what it cannot do itself, one `ReportState` in place of the
+# twenty-one fields, and the wrappers that keep every control-plane and
+# harness name exactly where its callers already look. The report's own
+# tests went with it, and the ten that drive a real journal stayed with the
+# host that writes one.
+#
+# The numbers are pinned, not merely moved: `the_report_numbers_are_fixed`
+# asserts a fixed journal's whole report byte for byte, across two cuts. It
+# was written against the old code in its old home and its expected text
+# did not change - same SHA-256 before and after.
+crates/app/src/paper_report.rs 3281
+
+crates/app/src/paper_trading.rs 6382
 
 # Raised by 14 for the strategy badge, and deliberately: not a capability
 # docking by trunk-edit, but a repair to `badge_text_for`, which reached only
