@@ -8,21 +8,11 @@ use super::*;
 /// whatever the window size and whatever share the live lane has taken.
 #[test]
 fn the_pointer_hook_parks_the_mouse_among_the_candles() {
-    assert_eq!(
-        parse_pointer_fraction("0.25, 0.75"),
-        Some(egui::vec2(0.25, 0.75))
-    );
-    for refused in ["0.5", "2,0.5", "-0.1,0.5", "half,half", ""] {
-        assert_eq!(
-            parse_pointer_fraction(refused),
-            None,
-            "{refused:?} is not a position, and a typo must photograph nothing rather than the wrong place"
-        );
-    }
-
+    // The fractions themselves are parsed and refused in `harness`; this is
+    // the trunk's half — where a fraction lands on the pane that drew.
     let (mut app, _cmd_rx) = app_with_history(50);
     let ctx = egui::Context::default();
-    app.scripted_pointer = Some(egui::vec2(0.5, 0.5));
+    app.harness.arm_pointer(egui::vec2(0.5, 0.5));
     assert_eq!(
         app.scripted_pointer_pos(),
         None,

@@ -128,14 +128,14 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
     // Whatever startup queued is not what this test is about.
     while cmd_rx.try_recv().is_ok() {}
-    app.pending_load_older = Some((2, 3));
+    app.harness.arm_load_older(2, 3);
     app.apply_load_older();
     assert!(
         cmd_rx.try_recv().is_err(),
         "nothing is charted yet, so nothing may be asked for"
     );
     assert_eq!(
-        app.pending_load_older,
+        app.harness.load_older_remaining(),
         Some((2, 2)),
         "it waits, spending one frame of its budget"
     );
@@ -145,7 +145,11 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     for _ in 0..3 {
         app.apply_load_older();
     }
-    assert_eq!(app.pending_load_older, None, "the budget is finite");
+    assert_eq!(
+        app.harness.load_older_remaining(),
+        None,
+        "the budget is finite"
+    );
     assert!(
         cmd_rx.try_recv().is_err(),
         "and it gave up quietly rather than asking from nothing"
@@ -156,13 +160,17 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     let (mut app, mut cmd_rx) = app_with_history(200);
     while cmd_rx.try_recv().is_ok() {}
     app.active_tab_mut().loading.end(LoadingTask::History);
-    app.pending_load_older = Some((2, 10));
+    app.harness.arm_load_older(2, 10);
     app.apply_load_older();
     assert!(
         matches!(cmd_rx.try_recv(), Ok(FeedCommand::LoadOlder { .. })),
         "the first page is asked for"
     );
-    assert_eq!(app.pending_load_older, Some((1, 10)), "one still owed");
+    assert_eq!(
+        app.harness.load_older_remaining(),
+        Some((1, 10)),
+        "one still owed"
+    );
 
     // One at a time: the feed serves one request per session, so firing
     // the second before the first is answered would have it refused and
@@ -172,7 +180,7 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
         cmd_rx.try_recv().is_err(),
         "a page is still in flight; the hook waits for it"
     );
-    assert_eq!(app.pending_load_older, Some((1, 10)));
+    assert_eq!(app.harness.load_older_remaining(), Some((1, 10)));
 
     app.active_tab_mut().loading.end(LoadingTask::History);
     app.apply_load_older();
@@ -180,7 +188,11 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
         cmd_rx.try_recv(),
         Ok(FeedCommand::LoadOlder { .. })
     ));
-    assert_eq!(app.pending_load_older, None, "both pages asked for");
+    assert_eq!(
+        app.harness.load_older_remaining(),
+        None,
+        "both pages asked for"
+    );
 }
 
 #[test]

@@ -391,7 +391,8 @@ fn the_settings_hook_finds_indicators_on_the_flow_pane_while_the_time_pane_has_f
         "the fixture has to actually focus the pane without indicators"
     );
 
-    app.settings_autostart = Some((0, crate::indicator_panel::SettingsTab::Style));
+    app.harness
+        .arm_settings_autostart(0, crate::indicator_panel::SettingsTab::Style);
     app.open_requested_indicator_settings();
 
     let dialog = app
@@ -406,34 +407,9 @@ fn the_settings_hook_finds_indicators_on_the_flow_pane_while_the_time_pane_has_f
     );
     assert_eq!(dialog.tab, crate::indicator_panel::SettingsTab::Style);
     assert!(
-        app.settings_autostart.is_none(),
+        app.harness.settings_autostart().is_none(),
         "spent by the first open, so closing the dialog leaves it closed"
     );
-}
-
-/// The harness hook is the only way a scripted capture can see this
-/// dialog, so it has to name both halves — and refuse nonsense rather than
-/// guess, which would produce a screenshot of the wrong tab.
-#[test]
-fn the_settings_hook_names_an_indicator_and_a_tab() {
-    use crate::indicator_panel::SettingsTab;
-    assert_eq!(
-        QuantickApp::parse_settings_hook("0"),
-        Some((0, SettingsTab::Inputs)),
-        "a bare index opens on Inputs"
-    );
-    assert_eq!(
-        QuantickApp::parse_settings_hook("2:style"),
-        Some((2, SettingsTab::Style))
-    );
-    assert_eq!(
-        QuantickApp::parse_settings_hook("1:1"),
-        Some((1, SettingsTab::Style)),
-        "the numeric spelling works too"
-    );
-    assert_eq!(QuantickApp::parse_settings_hook("0:colours"), None);
-    assert_eq!(QuantickApp::parse_settings_hook("first"), None);
-    assert_eq!(QuantickApp::parse_settings_hook(""), None);
 }
 
 /// A legend row acts on the pane it is drawn on, never the focused one —

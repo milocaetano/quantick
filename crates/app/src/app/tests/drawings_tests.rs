@@ -2264,14 +2264,14 @@ fn the_drawings_demo_keeps_the_panel_the_hook_asked_for() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(500);
     app.ui_state_path = scratch_ui_state("demo-inspector");
-    app.pending_drawing_demo = true;
+    app.harness.arm_drawings_demo(DrawingsDemo::default());
     app.surfaces.drawing_chrome.set_inspector_open(true);
 
     for _ in 0..4 {
         run_frame(&mut app, &ctx);
     }
 
-    assert!(!app.pending_drawing_demo, "the demo has run");
+    assert!(app.harness.drawings_demo().is_none(), "the demo has run");
     assert!(
         app.drawing_pane().drawings.selected().is_some(),
         "and left an object selected, which is what closes the panel"
@@ -2308,7 +2308,7 @@ fn the_inspector_hook_survives_the_demo_that_runs_before_it() {
     let (mut app, _commands) = app_with_history(500);
     unsafe { std::env::remove_var("QUANTICK_DRAWING_INSPECTOR") };
     app.ui_state_path = scratch_ui_state("hook-inspector");
-    app.pending_drawing_demo = true;
+    app.harness.arm_drawings_demo(DrawingsDemo::default());
 
     assert!(
         app.surfaces.drawing_chrome.inspector_open(),
@@ -2317,7 +2317,7 @@ fn the_inspector_hook_survives_the_demo_that_runs_before_it() {
     for _ in 0..4 {
         run_frame(&mut app, &ctx);
     }
-    assert!(!app.pending_drawing_demo, "the demo has run");
+    assert!(app.harness.drawings_demo().is_none(), "the demo has run");
     assert!(
         app.drawing_pane().drawings.selected().is_some(),
         "and left an object selected, which is what closes the panel"

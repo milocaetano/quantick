@@ -39,8 +39,13 @@ it now costs the same as it always did instead of being charged to every run.
 
 Code is the source of truth either way — `grep env::var crates/app/src` — and
 the table is the index. A hook the registry does not list is a hook nobody can
-find; see *Adding a new hook* below, which is unchanged and still requires the
-row.
+find; see *Adding a new hook* below, which still requires the row.
+
+For the code itself there is now one file to open rather than a grep:
+**`crates/app/src/harness.rs`** owns every hook the window reads at launch —
+the parse, the value, and the budget a multi-frame hook counts down. The
+exception is a hook belonging to a floating surface, which parses itself beside
+that surface. *Adding a new hook* below says which of the two a new hook is.
 
 ## Launch and capture workflow
 
@@ -166,18 +171,37 @@ the same function the manual toggle calls, default off. Then add one row to
 of done: a hook nobody can find is a surface nobody can reach.
 
 **Where the var is read depends on what it reaches**, and getting this wrong is
-now a build failure rather than a style note:
+now a build failure rather than a style note. There are exactly two homes, and
+neither of them is the trunk:
 
-- **A floating surface** — its hook lives **in that surface's own module**
-  under `crates/app/src/surfaces/`, as an `apply_env_hook` the registry calls.
-  Not another line in `app.rs`. That line is the fifth hand-written edit per
-  feature the `Surface` port removes — the other four being the field, the
-  initialiser, the draw call and the hotkey — and `crates/guards/src/size.rs`
-  fails a branch that adds it to the trunk instead.
-- **Anything else** — beside the existing autostart block in
-  `crates/app/src/app.rs`, which is where the rest of them are read.
+- **A hook the window owns** — a menu pressed open, a pointer parked, a demo
+  staged, a page of history asked for, a budget counted down over frames —
+  lives in **`crates/app/src/harness.rs`**. One field on `Harness`, one line in
+  `Harness::from_env`, one accessor named for what the hook is *for*. The
+  trunk's own line is then the single call that asks for it. That module's
+  header carries the argument; the short version is that twenty-three of
+  `QuantickApp`'s ninety-eight fields used to be this wiring, so every module
+  that touched the trunk saw them.
+- **A hook a floating surface owns** — its hook lives **in that surface's own
+  module** under `crates/app/src/surfaces/`, as an `apply_env_hook` the
+  registry calls. Not another line in `app.rs`. That line is the fifth
+  hand-written edit per feature the `Surface` port removes — the other four
+  being the field, the initialiser, the draw call and the hotkey — and
+  `crates/guards/src/size.rs` fails a branch that adds it to the trunk instead.
 
-That first rule used to live at the bottom of the registry, which is now a
+So: **a surface's hook goes beside the surface; every other hook goes in
+`harness.rs`.** If you are about to add a `std::env::var` call to `app.rs`, the
+answer is one of those two files instead.
+
+**Prefer a defaulting field to a new variant.** A hook that already exists and
+needs a second dimension — "the same demo, but shared across the split", "the
+same profile, but left selected" — becomes a field on that hook's struct
+(`DrawingsDemo`, `FrvpDemo`, `DrawingDraft`), defaulting to "did not ask". It
+does not become a new arm of an enum, which reopens every call site that
+matches on it. `ChartLayer`'s 21 variants across 264 call sites are what that
+rule is written against.
+
+That surface rule used to live at the bottom of the registry, which is now a
 61KB data file this skill tells you to `grep` rather than read. An authoring
 rule nobody reads is one the size guard enforces by failing you instead, so it
 belongs here, beside the instruction it is the exception to.
