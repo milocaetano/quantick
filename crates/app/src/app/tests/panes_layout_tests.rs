@@ -1,5 +1,4 @@
 use super::*;
-use crate::app::*;
 
 #[test]
 fn the_live_strip_carves_between_chart_and_gutter_only_when_shown() {

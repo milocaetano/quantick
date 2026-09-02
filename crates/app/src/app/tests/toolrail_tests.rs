@@ -1,5 +1,4 @@
 use super::*;
-use crate::app::*;
 
 /// A star clicked is a star kept, on the frame it was clicked. Waiting for
 /// a clean exit means one crash — or one session that ends any other way —

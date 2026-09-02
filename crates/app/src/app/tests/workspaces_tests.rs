@@ -1,5 +1,4 @@
 use super::*;
-use crate::app::*;
 
 /// The whole point of the feature, end to end inside a running app:
 /// export a cockpit, change it, open the file back, and the cockpit the

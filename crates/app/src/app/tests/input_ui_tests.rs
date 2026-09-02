@@ -1,5 +1,4 @@
 use super::*;
-use crate::app::*;
 
 /// The chip is the popup's only door, in both directions — the rule the
 /// trader asked for after a card that opened itself every morning.

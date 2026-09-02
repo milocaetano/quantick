@@ -1,5 +1,4 @@
 use super::*;
-use crate::app::*;
 
 /// The same app, plus the notice sender its feed would hold. The other
 /// ends come back so the caller keeps the channels open, exactly as a live

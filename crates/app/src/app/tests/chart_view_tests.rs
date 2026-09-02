@@ -1,5 +1,4 @@
 use super::*;
-use crate::app::*;
 
 /// `QUANTICK_POINTER` parks the mouse over the candles, which is the only
 /// way a scripted run photographs anything that exists while a pointer is

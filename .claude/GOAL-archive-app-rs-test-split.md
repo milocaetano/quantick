@@ -1,7 +1,7 @@
 # Mission — split the test module out of `app.rs` into a file per subsystem
 
 **Objective:** begin the first refactor of the oversized `crates/app/src/app.rs`
-by moving its 589-test `#[cfg(test)] mod tests` into `src/app/tests/`, one file
+by moving its 474-test `#[cfg(test)] mod tests` into `src/app/tests/`, one file
 per subsystem, taking the largest number of lines out of the file that can be
 taken quickly and safely.
 
@@ -53,7 +53,7 @@ quickly. R5 arrived mid-turn and is what fixed the shape of the answer.
   answers to the description the request gives it.
 - **S2** — Rust's answer to R5 is a child-module split, not an integration-test
   split. `crates/app/tests/*.rs` compiles as a separate crate and sees only
-  `quantick-app`'s public API, while these 589 tests use `use super::*` and
+  `quantick-app`'s public API, while these 474 tests use `use super::*` and
   reach private items of `QuantickApp`. Child modules under `src/app/tests/`
   keep that access unchanged and widen no visibility, which is both the
   idiomatic Rust answer and the only one that compiles.
@@ -82,7 +82,7 @@ quickly. R5 arrived mid-turn and is what fixed the shape of the answer.
       declarations. No category file exceeds a third of the old module.
       *Evidence:* a listing of the directory with per-file line counts.
       → the PR body. *(R5)*
-- [ ] **A3** — Every one of the 589 tests still exists and still runs: the test
+- [ ] **A3** — Every one of the 474 tests still exists and still runs: the test
       count reported by `cargo test -p quantick-app` is identical before and
       after, and none is marked ignored.
       *Evidence:* the two test-count lines, quoted.
@@ -139,7 +139,7 @@ quickly. R5 arrived mid-turn and is what fixed the shape of the answer.
   changed. Nothing a trader can see differs by one pixel.
 - **`new-extension`** — no capability is added. Nothing docks; code moves.
 - **Engine / determinism test-first** — no engine code is touched, and no
-  behaviour is written to test first. The 589 existing tests are the guard.
+  behaviour is written to test first. The 474 existing tests are the guard.
 - **Docs/skills waiver** — does not apply. This is a code change and takes the
   full shape pass.
 - **Size-ratchet tightening** — deliberately excluded by D2, not omitted. The

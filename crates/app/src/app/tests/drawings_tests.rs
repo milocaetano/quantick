@@ -1,5 +1,4 @@
 use super::*;
-use crate::app::*;
 
 /// The divider is the tape's, and nothing else in the band is.
 ///

@@ -7,18 +7,25 @@
 // no widened visibility anywhere in production code.
 //
 // The shared harness -- `test_app`, the `run_frame` family, the paint readers
-// -- lives here in the parent, and every file below reaches it with
-// `use super::*`. Each also carries `use crate::app::*`, because that first
-// glob does not cover it: a glob import does not re-export the names it
-// received through a glob of its own, so this module's `use super::*` stops
-// here rather than reaching the children. Globbing the ancestor directly
-// restores exactly the scope these tests had while they lived in `app.rs`.
+// -- lives here in the parent, and one `use super::*` per file is all any of
+// them needs. That single glob carries `crate::app`'s own imports down too:
+// this module's `use super::*` binds them here, and a child sees an
+// ancestor's private bindings, glob-imported ones included. So the scope
+// inside these files is the scope the tests had while they lived in `app.rs`,
+// reached in one hop rather than two.
 //
-// The `_tests` suffix on every file is load-bearing. Siblings glob each other
-// in through `use super::*`, so a module named `drawings` would shadow the
-// crate's own `drawings` inside all of them -- five of the twelve names
-// collide that way. Suffixing all twelve keeps the naming uniform instead of
-// renaming only the ones that happen to clash today.
+// The `_tests` suffix on every file is what makes that one hop enough, and it
+// is load-bearing rather than decorative. Siblings glob each other in through
+// the same `use super::*`, so a module named `drawings` would shadow the
+// crate's own `drawings` inside all twelve files at once -- five of the twelve
+// subsystem names collide with a real module that way. Suffixing all twelve
+// keeps the naming uniform instead of renaming only the ones that clash today.
+//
+// This was learned the expensive way: the first attempt used the bare names,
+// hit 90 ambiguity errors, and was misread as a rule about globs not
+// propagating -- which sent a second `use crate::app::*` into every file to
+// work around a problem that was really the shadowing. There is no such rule.
+// The suffix fixes it; the second glob was redundant and is gone.
 
 mod chart_view_tests;
 mod control_plane_tests;

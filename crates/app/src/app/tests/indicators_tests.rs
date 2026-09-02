@@ -1,5 +1,4 @@
 use super::*;
-use crate::app::*;
 
 /// An anchor dropped in an indicator pane belongs to that pane.
 #[test]

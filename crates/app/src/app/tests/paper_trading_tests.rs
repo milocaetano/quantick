@@ -1,5 +1,4 @@
 use super::*;
-use crate::app::*;
 
 /// A drawing tool takes the *primary button*, never the chart.
 ///

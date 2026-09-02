@@ -1,5 +1,4 @@
 use super::*;
-use crate::app::*;
 
 /// The layer menu writes through to whoever owns the layer, and touches
 /// nothing else. A menu holding its own copy of "is the heatmap on" would

@@ -1,5 +1,4 @@
 use super::*;
-use crate::app::*;
 
 #[test]
 fn the_newest_notice_wins_and_clear_puts_the_chart_back() {
