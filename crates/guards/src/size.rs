@@ -389,7 +389,11 @@ pub fn check(root: &Path) -> Vec<Finding> {
         .map(|line| Finding::new(line.clone(), REMEDY))
         .collect();
 
-    violations.extend(POLICY.against(&recorded, &found.counts, &|path| {
+    // `0`: this ratchet keeps the budget a pure statement of signed
+    // permissions. A `.rs` file under the threshold is not a piece some
+    // larger file was split into to dodge a ceiling — the module boundary is
+    // load-bearing here, and `new-extension` asks for exactly that split.
+    violations.extend(POLICY.against(&recorded, &found.counts, 0, &|path| {
         found.counts.iter().any(|(scanned, _)| scanned == path)
             || found.undecodable.iter().any(|scanned| scanned == path)
             || found.unreadable.iter().any(|line| line.contains(path))
@@ -414,7 +418,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     // alone, with no file walk.
     if relative == BASELINE_FILE {
         return match baseline(root) {
-            Ok(recorded) => POLICY.budget_verdict(&recorded).into_iter().collect(),
+            Ok(recorded) => POLICY.budget_verdict(&recorded, 0).into_iter().collect(),
             Err(problem) => vec![POLICY.unparsed(&problem)],
         };
     }
@@ -455,7 +459,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
 ///
 /// Returns one line per entry rewritten.
 pub fn tighten(root: &Path) -> Result<Vec<String>, String> {
-    POLICY.tighten(root, &measure(root).counts)
+    POLICY.tighten(root, &measure(root).counts, 0)
 }
 
 #[cfg(test)]
@@ -839,7 +843,7 @@ mod tests {
         assert_eq!(findings.len(), 1, "expected only the budget: {findings:?}");
         assert!(
             findings[0].line.contains("+100")
-                && findings[0].line.contains("without lowering another"),
+                && findings[0].line.contains("without taking any away"),
             "the finding must name the overage and the act: {findings:?}"
         );
         let _ = fs::remove_dir_all(&root);
@@ -893,7 +897,7 @@ mod tests {
         let findings = check(&root);
         assert_eq!(findings.len(), 1, "expected one finding: {findings:?}");
         assert!(
-            findings[0].line.contains("3700") && findings[0].line.contains("nothing caps them"),
+            findings[0].line.contains("3700") && findings[0].line.contains("nothing caps it"),
             "the finding must name the uncapped total: {findings:?}"
         );
         let _ = fs::remove_dir_all(&root);

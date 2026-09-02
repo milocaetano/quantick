@@ -241,22 +241,33 @@ impl Policy {
         )
     }
 
-    /// How the recorded total stands against the budget.
+    /// How the total stands against the budget.
     ///
-    /// It reads the baseline alone and never the files, which is what makes
-    /// the rule pay-as-you-go rather than a second size check. Growth reaches
-    /// this function only once somebody has written a raise down — so a
-    /// branch that grows a file and *does not* raise its ceiling is caught by
-    /// [`Policy::verdict`], and one that raises the ceiling honestly is
-    /// caught here unless it paid for the raise by extraction.
-    pub fn budget_verdict(&self, recorded: &Baseline) -> Option<Finding> {
+    /// `unrecorded` is what the guard measured in files that carry no entry.
+    /// A guard passes `0` to keep the budget a pure statement of signed
+    /// permissions; it passes a real sum when a file below the threshold
+    /// still costs something the budget is meant to see.
+    ///
+    /// That choice is the difference between a cap and a bypass. With `0`,
+    /// growth reaches this function only once somebody has written a raise
+    /// down — a branch that grows a file without raising its ceiling is
+    /// caught by [`Policy::verdict`] instead. But it also means a tracked
+    /// file can be split into pieces that each sit under the threshold, and
+    /// the recorded total *falls* while the real weight does not move. The
+    /// context ratchet was built on a branch that did exactly that by
+    /// accident: 37,490 of the 49,281 bytes it removed from three files
+    /// landed in sub-threshold siblings, and the budget applauded. Counting
+    /// the unrecorded remainder closes that, at the cost of a total that
+    /// drifts with ordinary edits — which is what [`Policy::budget_slack`]
+    /// absorbs.
+    pub fn budget_verdict(&self, recorded: &Baseline, unrecorded: usize) -> Option<Finding> {
         let name = self.baseline_file;
-        let total = recorded.recorded();
+        let total = recorded.recorded() + unrecorded;
         let Some(budget) = &recorded.budget else {
             return Some(Finding::new(
                 format!(
-                    "  {name}: no `{BUDGET_DIRECTIVE}` line — the recorded ceilings total {total} \
-                     and nothing caps them. Restore the directive at {total} or lower; deleting \
+                    "  {name}: no `{BUDGET_DIRECTIVE}` line — the tracked total is {total} \
+                     and nothing caps it. Restore the directive at {total} or lower; deleting \
                      it is the one edit that switches pay-as-you-go off for every file at once"
                 ),
                 self.budget_remedy,
@@ -265,9 +276,9 @@ impl Policy {
         if total > budget.allowed {
             return Some(Finding::new(
                 format!(
-                    "  {name}:{}: the recorded ceilings total {total}, over the \
-                     {BUDGET_DIRECTIVE} of {} (+{}) — this branch raised a ceiling without \
-                     lowering another",
+                    "  {name}:{}: the tracked total is {total}, over the \
+                     {BUDGET_DIRECTIVE} of {} (+{}) — this branch added weight without taking \
+                     any away",
                     budget.line + 1,
                     budget.allowed,
                     total - budget.allowed
@@ -278,7 +289,7 @@ impl Policy {
         if budget.allowed.saturating_sub(total) > self.budget_slack {
             return Some(Finding::new(
                 format!(
-                    "  {name}:{}: the recorded ceilings total {total}, down from the \
+                    "  {name}:{}: the tracked total is {total}, down from the \
                      {BUDGET_DIRECTIVE} of {} — good news, tighten the budget to {total}",
                     budget.line + 1,
                     budget.allowed
@@ -303,13 +314,14 @@ impl Policy {
         &self,
         recorded: &Baseline,
         counts: &[(String, usize)],
+        unrecorded: usize,
         seen: &dyn Fn(&str) -> bool,
     ) -> Vec<Finding> {
         let mut findings: Vec<Finding> = counts
             .iter()
             .filter_map(|(path, actual)| self.verdict(recorded.entry(path), path, *actual))
             .collect();
-        findings.extend(self.budget_verdict(recorded));
+        findings.extend(self.budget_verdict(recorded, unrecorded));
         findings.extend(
             recorded
                 .entries
@@ -326,7 +338,12 @@ impl Policy {
     /// the decision a human signs.
     ///
     /// Returns one line per entry rewritten.
-    pub fn tighten(&self, root: &Path, counts: &[(String, usize)]) -> Result<Vec<String>, String> {
+    pub fn tighten(
+        &self,
+        root: &Path,
+        counts: &[(String, usize)],
+        unrecorded: usize,
+    ) -> Result<Vec<String>, String> {
         let recorded = self.baseline(root)?;
         let file = root.join(self.baseline_file);
         let text = fs::read_to_string(&file)
@@ -338,7 +355,9 @@ impl Policy {
         // applied, accumulated as they are decided rather than re-read
         // afterwards: the rewritten text is not parsed again, so this is the
         // only place the new sum exists.
-        let mut tightened_total = 0;
+        // Seeded with what the guard measured outside the baseline, so the
+        // number written here is the same total `budget_verdict` compares.
+        let mut tightened_total = unrecorded;
 
         for entry in &recorded.entries {
             let Some((_, actual)) = counts.iter().find(|(path, _)| path == &entry.path) else {
@@ -541,24 +560,20 @@ mod tests {
         let dir = workspace("src/a.md 40\n");
         let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
         let finding = POLICY
-            .budget_verdict(&recorded)
+            .budget_verdict(&recorded, 0)
             .expect("no budget is a finding");
-        assert!(
-            finding.line.contains("nothing caps them"),
-            "{}",
-            finding.line
-        );
+        assert!(finding.line.contains("nothing caps it"), "{}", finding.line);
     }
 
     #[test]
     fn a_raise_that_was_not_paid_for_is_over_budget() {
         let dir = workspace("!budget 50\nsrc/a.md 40\nsrc/b.md 30\n");
         let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
-        let finding = POLICY.budget_verdict(&recorded).expect("over budget");
+        let finding = POLICY.budget_verdict(&recorded, 0).expect("over budget");
         assert!(
             finding
                 .line
-                .contains("total 70, over the !budget of 50 (+20)"),
+                .contains("total is 70, over the !budget of 50 (+20)"),
             "{}",
             finding.line
         );
@@ -569,7 +584,7 @@ mod tests {
     fn a_total_far_under_budget_asks_for_the_cap_to_follow_it_down() {
         let dir = workspace("!budget 200\nsrc/a.md 40\n");
         let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
-        let finding = POLICY.budget_verdict(&recorded).expect("under budget");
+        let finding = POLICY.budget_verdict(&recorded, 0).expect("under budget");
         assert_eq!(finding.remedy, POLICY.budget_slack_remedy);
     }
 
@@ -577,7 +592,7 @@ mod tests {
     fn an_entry_whose_file_the_scan_no_longer_sees_is_stale() {
         let dir = workspace("!budget 40\nsrc/gone.md 40\n");
         let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
-        let findings = POLICY.against(&recorded, &[], &|_| false);
+        let findings = POLICY.against(&recorded, &[], 0, &|_| false);
         assert!(
             findings
                 .iter()
@@ -590,7 +605,7 @@ mod tests {
     fn a_file_that_exists_but_did_not_measure_is_seen_and_keeps_its_ceiling() {
         let dir = workspace("!budget 40\nsrc/binary.md 40\n");
         let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
-        let findings = POLICY.against(&recorded, &[], &|path| path == "src/binary.md");
+        let findings = POLICY.against(&recorded, &[], 0, &|path| path == "src/binary.md");
         assert!(
             !findings.iter().any(|f| f.line.contains("stale")),
             "{findings:?}"
@@ -601,7 +616,7 @@ mod tests {
     fn tighten_lowers_an_entry_and_keeps_the_comment_beside_it() {
         let dir = workspace("!budget 100\nsrc/a.md 90  # signed for the parser\n");
         let applied = POLICY
-            .tighten(dir.path(), &[("src/a.md".into(), 20)])
+            .tighten(dir.path(), &[("src/a.md".into(), 20)], 0)
             .expect("tighten runs");
         let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
         assert!(
@@ -618,7 +633,7 @@ mod tests {
     fn tighten_never_raises_a_ceiling() {
         let dir = workspace("!budget 100\nsrc/a.md 40\n");
         POLICY
-            .tighten(dir.path(), &[("src/a.md".into(), 900)])
+            .tighten(dir.path(), &[("src/a.md".into(), 900)], 0)
             .expect("tighten runs");
         let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
         assert!(text.contains("src/a.md 40"), "{text}");
@@ -628,7 +643,7 @@ mod tests {
     fn tighten_follows_the_budget_down_but_only_past_the_budget_slack() {
         let dir = workspace("!budget 100\nsrc/a.md 90\n");
         POLICY
-            .tighten(dir.path(), &[("src/a.md".into(), 10)])
+            .tighten(dir.path(), &[("src/a.md".into(), 10)], 0)
             .expect("tighten runs");
         let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
         assert!(text.contains("!budget 10"), "{text}");
@@ -638,7 +653,7 @@ mod tests {
     fn tighten_leaves_a_budget_alone_when_the_gap_is_headroom_somebody_signed() {
         let dir = workspace("!budget 100\nsrc/a.md 90\n");
         POLICY
-            .tighten(dir.path(), &[("src/a.md".into(), 60)])
+            .tighten(dir.path(), &[("src/a.md".into(), 60)], 0)
             .expect("tighten runs");
         let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
         // 60 is 40 under the budget, inside BUDGET_SLACK of 50.
@@ -649,7 +664,7 @@ mod tests {
     fn an_entry_with_no_measurement_still_spends_its_ceiling_against_the_budget() {
         let dir = workspace("!budget 100\nsrc/a.md 90\nsrc/gone.md 10\n");
         POLICY
-            .tighten(dir.path(), &[("src/a.md".into(), 10)])
+            .tighten(dir.path(), &[("src/a.md".into(), 10)], 0)
             .expect("tighten runs");
         let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
         // 10 measured plus the 10 the vanished entry still holds.

@@ -16,9 +16,14 @@
 //!
 //! So the rule is the size guard's rule, over the other tree. A context file
 //! has a ceiling, growth past it must be signed in the baseline with a
-//! reason, and a budget caps the sum — raising one file means lowering
-//! another. The mechanism is [`ratchet`](crate::ratchet), shared with the size
-//! guard; this module contributes the scan and the numbers.
+//! reason, and a budget caps the whole tracked weight — every ceiling plus
+//! every tracked file too small to need one, so adding weight anywhere means
+//! taking comparable weight out somewhere else. That second half is what
+//! stops the obvious dodge: splitting a tracked file into sub-threshold
+//! pieces moves the prose a session loads not at all, and a budget of
+//! ceilings alone would have called it a saving. The mechanism is
+//! [`ratchet`](crate::ratchet), shared with the size guard; this module
+//! contributes the scan and the numbers.
 //!
 //! # Why bytes rather than lines
 //!
@@ -42,7 +47,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::Finding;
-use crate::ratchet::Policy;
+use crate::ratchet::{Baseline, Policy};
 
 /// Bytes above which a context file must carry a baseline entry.
 ///
@@ -91,15 +96,20 @@ pub const REMEDY: &str = "A context file over its ceiling is a cost every sessio
                           --tighten` writes the new number.";
 
 /// What the guard asks for when the recorded total is over budget.
-pub const BUDGET_REMEDY: &str = "The context budget is the sum of every recorded ceiling: the one \
-                                 number that says whether the instructions are getting cheaper or \
-                                 more expensive to obey. Individually signed raises cannot answer \
-                                 that — every paragraph added to a skill was defensible on its own, \
-                                 which is how one reached 48 KB. So growth is pay-as-you-go. A \
-                                 branch that needs a ceiling raised moves comparable prose out of \
-                                 some other context file in the same change. Raising the budget \
-                                 line itself stays available and is the escape hatch on purpose: \
-                                 it is one number, in one place, that a reviewer watches move.";
+pub const BUDGET_REMEDY: &str = "The context budget is what a session's instructions weigh in \
+                                 total: every recorded ceiling, plus the measured bytes of every \
+                                 tracked file too small to need one. Both halves are deliberate. \
+                                 Individually signed raises cannot say whether the instructions \
+                                 are getting cheaper — every paragraph added to a skill was \
+                                 defensible on its own, which is how one reached 48 KB. And a \
+                                 budget of ceilings alone would pay a branch for splitting a \
+                                 large file into sub-threshold pieces, which moves the prose a \
+                                 session loads not at all. So growth is pay-as-you-go: a branch \
+                                 that adds weight takes comparable weight out somewhere else, and \
+                                 moving prose between context files buys nothing. Raising the \
+                                 budget line itself stays available and is the escape hatch on \
+                                 purpose: it is one number, in one place, that a reviewer watches \
+                                 move.";
 
 /// What the guard asks for when the recorded total has fallen below budget.
 pub const BUDGET_SLACK_REMEDY: &str = "The recorded ceilings now total less than the budget caps them at, which means prose left a \
@@ -163,7 +173,10 @@ impl Measured {
     /// entry stale would delete a ceiling over a live file.
     fn seen(&self, path: &str) -> bool {
         self.counts.iter().any(|(scanned, _)| scanned == path)
-            || self.unreadable.iter().any(|line| line.contains(path))
+            || self
+                .unreadable
+                .iter()
+                .any(|line| line.starts_with(&format!("  {path}: ")))
             || self.blind.iter().any(|dir| path.starts_with(dir.as_str()))
     }
 }
@@ -266,6 +279,27 @@ pub fn measure(root: &Path) -> Measured {
     found
 }
 
+/// The bytes the scan measured in files that carry no baseline entry.
+///
+/// This is what makes the budget a cap rather than a bypass. Without it, a
+/// tracked file split into pieces that each sit under [`THRESHOLD`] leaves
+/// the recorded total *lower* while a session loads exactly as much prose —
+/// and `--tighten` would then write the smaller number down as progress. The
+/// branch that built this guard did that by accident: of the 49,281 bytes it
+/// removed from three skills, 37,490 landed in sub-threshold `references/`
+/// siblings.
+///
+/// A file with an entry is excluded because its ceiling already speaks for
+/// it, and counting both would charge it twice.
+fn unrecorded(recorded: &Baseline, found: &Measured) -> usize {
+    found
+        .counts
+        .iter()
+        .filter(|(path, _)| recorded.entry(path).is_none())
+        .map(|(_, bytes)| bytes)
+        .sum()
+}
+
 /// Every way the recorded baseline and the context files on disk disagree.
 pub fn check(root: &Path) -> Vec<Finding> {
     // Checked before anything is measured, because a missing skills directory
@@ -291,9 +325,18 @@ pub fn check(root: &Path) -> Vec<Finding> {
     let mut violations: Vec<Finding> = found
         .unreadable
         .iter()
-        .map(|line| Finding::new(line.clone(), REMEDY))
+        // BASELINE_REMEDY, not REMEDY: an author who hit a permission error
+        // is not an author who wrote too much prose, and `Finding`'s own doc
+        // comment argues that a wrong remedy is worse than a terse one
+        // because it gets followed.
+        .map(|line| Finding::new(line.clone(), BASELINE_REMEDY))
         .collect();
-    violations.extend(POLICY.against(&recorded, &found.counts, &|path| found.seen(path)));
+    violations.extend(POLICY.against(
+        &recorded,
+        &found.counts,
+        unrecorded(&recorded, &found),
+        &|path| found.seen(path),
+    ));
     violations
 }
 
@@ -306,7 +349,18 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     // symptom and never the act.
     if relative == BASELINE_FILE {
         return match POLICY.baseline(root) {
-            Ok(recorded) => POLICY.budget_verdict(&recorded).into_iter().collect(),
+            // The budget covers files with no entry, so answering it needs the
+            // scan. It is fifteen `stat` calls over known paths, not a walk
+            // of the repository, and a hook that answered from the baseline
+            // alone would call a split clean that the suite calls a
+            // violation.
+            Ok(recorded) => {
+                let found = measure(root);
+                POLICY
+                    .budget_verdict(&recorded, unrecorded(&recorded, &found))
+                    .into_iter()
+                    .collect()
+            }
             Err(problem) => vec![POLICY.unparsed(&problem)],
         };
     }
@@ -334,7 +388,9 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
 
 /// Lower any entry whose file has shrunk past [`SLACK`].
 pub fn tighten(root: &Path) -> Result<Vec<String>, String> {
-    POLICY.tighten(root, &measure(root).counts)
+    let found = measure(root);
+    let unrecorded = unrecorded(&POLICY.baseline(root)?, &found);
+    POLICY.tighten(root, &found.counts, unrecorded)
 }
 
 #[cfg(test)]
@@ -466,10 +522,61 @@ mod tests {
         assert!(findings.is_empty(), "{findings:?}");
     }
 
+    #[test]
+    fn splitting_a_tracked_file_into_sub_threshold_pieces_buys_nothing() {
+        // The bypass the budget's unrecorded half exists to close. `one` is
+        // cut from 12,000 to 2,000 and the 10,000 bytes reappear as a
+        // reference file below the threshold, so no ceiling is needed for it
+        // and the recorded total falls by 10,000. Nothing a session loads
+        // moved, and the guard must say so.
+        let root = scratch("split-bypass", 12_000, 10_000, 22_000);
+        assert!(check(&root).is_empty(), "the scratch tree starts clean");
+
+        let one = root.join(".claude/skills/one/SKILL.md");
+        fs::write(&one, "x".repeat(2_000)).expect("scratch skill is writable");
+        fs::create_dir_all(root.join(".claude/skills/one/references"))
+            .expect("scratch dirs are creatable");
+        fs::write(
+            root.join(".claude/skills/one/references/detail.md"),
+            "x".repeat(9_000),
+        )
+        .expect("scratch reference is writable");
+        // The entry is tightened, and the budget is lowered to the sum of the
+        // ceilings the way a budget of permissions alone would have it —
+        // 2,000 + 10,000. That is the bypass: it claims a 10,000-byte saving
+        // for a split that removed 1,000 real bytes.
+        let baseline = fs::read_to_string(root.join(BASELINE_FILE)).expect("baseline is readable");
+        fs::write(
+            root.join(BASELINE_FILE),
+            baseline
+                .replace(
+                    ".claude/skills/one/SKILL.md 12000",
+                    ".claude/skills/one/SKILL.md 2000",
+                )
+                .replace("!budget 22000", "!budget 12000"),
+        )
+        .expect("scratch baseline is writable");
+
+        let findings = check(&root);
+        assert!(
+            findings.iter().any(
+                |f| f.line.contains("the tracked total is 21000") && f.line.contains("(+9000)")
+            ),
+            "the 9,000 bytes that moved into a sub-threshold file must still be \
+             charged: {findings:?}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
     /// A scratch workspace whose baseline names two skill files, so a raise on
     /// one can be paid for — or not — by the other.
     fn scratch(test: &str, first: usize, second: usize, budget: usize) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!("quantick-context-{test}"));
+        // Process-unique, like `ratchet::tests::tempdir`: two worktrees running
+        // the suite at once — the workflow `CLAUDE.md` prescribes — would
+        // otherwise have one run `remove_dir_all` the other's fixture
+        // mid-test.
+        let root =
+            std::env::temp_dir().join(format!("quantick-context-{test}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join(".claude/skills/one")).expect("scratch dirs are creatable");

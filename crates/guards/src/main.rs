@@ -151,12 +151,19 @@ fn report(root: &std::path::Path, only: Option<String>) -> ExitCode {
 fn tighten(root: &std::path::Path) -> ExitCode {
     let mut failed = false;
     for outcome in [
-        tighten_one(root, "size", size::tighten(root), size::BASELINE_FILE),
+        tighten_one(
+            root,
+            "size",
+            size::tighten(root),
+            size::BASELINE_FILE,
+            size::BUDGET_SLACK,
+        ),
         tighten_one(
             root,
             "context",
             context::tighten(root),
             context::BASELINE_FILE,
+            context::BUDGET_SLACK,
         ),
     ] {
         failed |= outcome;
@@ -174,6 +181,7 @@ fn tighten_one(
     name: &str,
     result: Result<Vec<String>, String>,
     baseline_file: &str,
+    slack: usize,
 ) -> bool {
     match result {
         Err(problem) => {
@@ -182,8 +190,8 @@ fn tighten_one(
         }
         Ok(applied) if applied.is_empty() => {
             println!(
-                "nothing to tighten in the {name} ratchet: no tracked file has shrunk past the \
-                 slack, and the {} total is within its ceilings",
+                "nothing to tighten in the {name} ratchet: no tracked file has shrunk past its \
+                 slack, and the tracked total is within {slack} of the {}",
                 ratchet::BUDGET_DIRECTIVE
             );
             false
