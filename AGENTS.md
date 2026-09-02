@@ -114,14 +114,23 @@ graph TD
   end
 
   app --> pine
+  app --> indicators
   app --> strategy
+  app --> sim
   app --> replay
+  app --> orderbook
   app --> feeds
+  app --> control
   app --> controllocal
+  app --> engine
   backtest --> strategy
   backtest --> pine
+  backtest --> indicators
   backtest --> replay
+  backtest --> sim
+  backtest --> engine
   mcp --> controllocal
+  mcp --> control
 
   pine["pine<br/>Quantick Pine frontend"] --> indicators
   strategy["strategy<br/>armed regions, alarms"] --> sim
@@ -152,7 +161,7 @@ graph TD
 | `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements — so a real broker adapter docks where the paper simulator sits, and nothing above learns a second vocabulary. |
 | `sim` | Deterministic paper trading: one implementation of `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
 | `strategy` | The strategy kernel: armed price regions, projected brackets, the armed-instance state machine, and the `SignalAlarm` beside it. |
-| `control` | Transport-neutral control-plane contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors. |
+| `control` | Transport-neutral control-plane contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors, and the `fake` host/client ports — a deliberately published module, not a test-only feature. |
 | `control-local` | The local transport: the private instance-descriptor directory and the blocking loopback client. One implementation of the ownership checks serves publisher and client. |
 | `mcp` | The MCP adapter. A leaf: it depends on `control` and `control-local` only, never on `app`, and its stdout carries MCP frames only. |
 | `feed-*` | Binance, Hyperliquid and MetaTrader 5 sources. They produce trades and never link the script language. |
