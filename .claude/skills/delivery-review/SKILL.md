@@ -68,6 +68,54 @@ answer it about its own ledger without much room to flatter itself. "Is `A7`
 delivered?" is a judgement about work you just did, which is why that one keeps
 the stranger. Say plainly that the weaker mode ran; do not imply the stronger.
 
+### What the full mode starts at, and what it escalates for
+
+Full mode used to begin at its most expensive shape and stay there. It now
+splits by *which pass*, because the two passes fail in opposite directions and
+one of them has no backstop at all.
+
+**The completeness pass keeps the strong model, and is not escalated.** It is
+the pass that reads the verbatim request and asks whether every ask became a
+ledger line, and its grade — `UNLEDGERED` — is a *discovery*: its failure mode
+is a false **negative**, an ask nobody noticed, which produces no line for any
+escalation to pick up. Step 3 already calls it the most serious grade here and
+the only failure the rest of the pipeline is blind to by construction. Cheapening
+the one pass with nothing downstream of it is the trade this section exists to
+refuse. It is also the cheap pass in tokens — two blocks of text — so there is
+almost nothing to save.
+
+**The criteria pass starts on `sonnet`, and escalates per line.** That one
+applies a checklist somebody else already wrote, against a diff, citing
+`file:line` — the middle kind in `CLAUDE.md`'s routing rule, and the largest
+subagent in this pipeline by input size.
+
+1. **Dispatch the criteria reviewer with `model: "sonnet"`.** Name it in the
+   `Agent` call; omitting the field inherits the caller's model.
+2. **Re-grade on the strong model every line it returned as other than
+   `DELIVERED`** — a second dispatch, same dossier, carrying only those lines
+   and their evidence tails. That is where the judgement is: a `PARTIAL` is a
+   disagreement about whether shipped work counts. So the strong pass is paid
+   per disputed line rather than per branch, and a clean branch never pays it.
+3. **On a re-graded line, the strong pass is the verdict** — that is the whole
+   point of paying for it, and "FAIL if either pass says so" would make the
+   escalation unable to do the one thing it was bought for. It can overturn a
+   `PARTIAL` *and* it can confirm one; record both readings whenever they
+   differ, so a lifted grade is visible rather than silent. What it may never do
+   is re-open a line the first pass already graded `DELIVERED`: only the
+   disputed set is escalated, so an escalation that returns fewer failures than
+   it was handed is doing its job, and one that returns *more* lines than it was
+   given has exceeded its scope and the verdict is discarded.
+
+**What does not get cheaper, and why the last attempt to make it cheaper was
+reverted.** The reviewer keeps the **full diff**. The obvious saving — hand it
+`branch.stat` and let it read the files as they stand — opens a false pass with
+no floor under it: a reviewer grading from the current files can quote a
+sentence that was already on `origin/main` and mark the criterion `DELIVERED`,
+and *nothing downstream can catch that*, because the whole gate rests on this
+being the pass that did not take the work on trust. The diff is the only input
+that distinguishes what this branch did from what it inherited. It is also not
+the expensive part — the model is. Cut that.
+
 ## Step 1 — Find the checklist
 
 In order of preference. Say which source was used; the answer changes how much
@@ -161,6 +209,11 @@ Dispatch with the `Agent` tool.
 
 - **Never `fork`.** A fork inherits this session's context, which is exactly
   the contamination this skill exists to remove. This one *is* structural.
+- **Pass `model: "sonnet"`** on the first dispatch, and the strong model on the
+  escalation for disputed lines only. `CLAUDE.md`'s routing rule owns why; what
+  matters here is that omitting the field is not neutral — it inherits the
+  caller's model, so the largest subagent in the pipeline silently bills every
+  grade at open-judgement rates.
 - **Pick the type that can read whole files.** `general-purpose`, with the
   read-only instruction written into the prompt. The obvious alternative is a
   search-shaped type whose tools exclude `Edit` and `Write` — but those types
@@ -190,10 +243,11 @@ calling session can do and the reviewer cannot forge:
 cd "$WT" && git rev-parse HEAD && git status --porcelain
 ```
 
-Once before dispatch, once after the verdict returns. Any difference — a new
-commit, a dirty file — invalidates the verdict: discard it, record no marker,
-and say what changed. A review that edited what it was grading is not a
-review.
+Once before the **first** dispatch, once after the **last** verdict returns —
+full mode has two dispatches, and the bracket goes around both; see *The
+escalation dispatch* below. Any difference — a new commit, a dirty file —
+invalidates the verdict: discard it, record no marker, and say what changed. A
+review that edited what it was grading is not a review.
 
 Know what that check cannot see. The markers live in the worktree's **git
 dir**, outside both `HEAD` and the working tree, so a subagent that wrote
@@ -209,12 +263,42 @@ onward and leave the branch permanently denied.
 Hand it the checklist and the dossier paths in the prompt, tell it to read the
 repo itself for anything else, and ask for the grade table and verdict below.
 
+### The escalation dispatch
+
+*What the full mode starts at* above sets the model on that first dispatch and
+buys a second one for the disputed lines. Here is the wiring, because a design
+stated only in a preamble is one an agent executing the numbered steps in order
+never performs.
+
+- **When**: after the criteria pass returns, and only if it graded at least one
+  line other than `DELIVERED`. No disputed lines, no second dispatch.
+- **What it gets**: the same dossier paths, the same read-only instruction, and
+  **only the disputed lines** — each criterion verbatim, with its evidence tail
+  and the first pass's grade and reasoning. Never the whole checklist: handing
+  it every line invites it to re-open the ones nobody disputed.
+- **What it returns**: the same grade table shape, restricted to those lines.
+- **How they merge**: undisputed lines keep the first pass's `DELIVERED`;
+  disputed lines take the escalation's grade. A line the escalation did not
+  answer keeps the first pass's grade — silence never promotes.
+- **The anti-tamper check brackets *both* dispatches.** `HEAD`, the porcelain
+  status and the marker are read once before the first dispatch and once after
+  the last verdict returns, not once per dispatch. Two reviewers now touch the
+  branch, so a mid-review edit has two chances to happen and the same single
+  consequence: any difference invalidates the whole review.
+
 ## Step 3 — Grade every line
 
 Three passes, and they run in this order because each one catches what the
 next one structurally cannot. The completeness pass catches asks that never
 reached the ledger; the ledger pass catches asks that never became criteria;
 the criteria pass catches criteria that never became code.
+
+In full mode the first two run on the strong model and are never escalated; the
+third starts on `sonnet` and escalates its disputed lines to a second dispatch.
+*What the full mode starts at* explains why the split falls there, and *The
+escalation dispatch* is the wiring. Grade the criteria pass below as one table
+regardless — the merge happens before you read it, and a merged line carries
+whichever grade the escalation left it with.
 
 **Completeness pass** — the ledger against the request that produced it.
 
@@ -300,6 +384,13 @@ on the subagent and go into its prompt.
 pass actually ran; nothing `UNLEDGERED`; every `R` `COVERED`; every `A` and `G`
 `DELIVERED`; nothing `UNPROVEN`, `MISSING` or `PARTIAL`.
 
+Those grades are the **merged** ones. A line the escalation re-graded counts at
+the escalation's reading, not the first pass's — that is what the second
+dispatch was paid for, and a verdict that took the worse of the two readings
+would make it unable to change any outcome. Where the two differed, say so in
+the verdict beside the line, so a grade that was lifted is visible rather than
+quietly better.
+
 **An approved deferral is exempt from every one of those clauses, the ledger
 included.** A deferred `A` line does not grade `DELIVERED`, so every `R` it
 discharges would grade `DROPPED` — and "every `R` `COVERED`" would then make
@@ -330,11 +421,18 @@ trader is not the one who closes these gaps either. The session is.
 - **Fix everything the review reported, then re-run** — a fresh dossier and a
   fresh subagent, because a reviewer that has already seen the branch is no
   longer a stranger to it.
-- **Three rounds, then tell the trader** — report the surviving gaps and what
-  was tried on each, and let them decide whether to keep going. The bound
-  exists so a stuck loop ends, not so a productive one does, and the
-  difference between those two is a judgement the trader should get to make
-  with the findings in front of them.
+- **Spend from the chain's budget, not from a second one of this skill's own.**
+  `CLAUDE.md`'s *review chain has a budget* is the owner: three rounds per
+  branch across **both** reviews together, then the remainder ships as recorded
+  PR follow-ups. This skill used to carry its own three, which is how a branch
+  reached six — `arch-review` spent its rounds, every fix commit staled both
+  markers and re-ran both reviews, and no number covered the sum. Count the
+  rounds this branch has already spent before opening another.
+
+  When the budget is out, report the surviving gaps and what was tried on each,
+  and let the trader decide whether to keep going. The bound exists so a stuck
+  loop ends, not so a productive one does, and that difference is a judgement
+  the trader should get to make with the findings in front of them.
 
   Say which it looks like. A round whose findings are smaller and fewer than
   the last is converging; a round still returning Blockers, especially in code

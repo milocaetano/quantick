@@ -33,6 +33,8 @@
 use std::fs;
 use std::path::Path;
 
+use crate::Finding;
+
 /// Portuguese vocabulary distinctive enough to be safe as whole words in an
 /// English codebase, in both spellings a keyboard produces. Deliberately
 /// short: a word that could plausibly turn up inside English prose or an
@@ -187,23 +189,33 @@ pub const REMEDY: &str = "See the English rule in CLAUDE.md; if the foreign text
                           in crates/guards/src/language.rs.";
 
 /// Every non-English word found in a scanned file.
-pub fn check(root: &Path) -> Vec<String> {
+pub fn check(root: &Path) -> Vec<Finding> {
     let mut violations = Vec::new();
     for dir in SCANNED_DIRS {
         scan(&root.join(dir), root, &mut violations);
     }
+    // One class of violation, one remedy: every finding this guard raises is
+    // fixed the same way, so the mapping is a wrap rather than a decision.
     violations
+        .into_iter()
+        .map(|v| Finding::new(v, REMEDY))
+        .collect()
 }
 
 /// The same check for one file. A path outside the scanned directories, or
 /// with an extension the guard does not read, reports nothing.
-pub fn check_file(root: &Path, relative: &str) -> Vec<String> {
+pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     if !in_scope(relative) {
         return Vec::new();
     }
     let mut violations = Vec::new();
     inspect(&root.join(relative), relative, &mut violations);
+    // One class of violation, one remedy: every finding this guard raises is
+    // fixed the same way, so the mapping is a wrap rather than a decision.
     violations
+        .into_iter()
+        .map(|v| Finding::new(v, REMEDY))
+        .collect()
 }
 
 #[cfg(test)]
