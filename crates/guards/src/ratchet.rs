@@ -28,7 +28,29 @@ use std::path::Path;
 
 use crate::Finding;
 
-/// The line in a baseline that caps the *sum* of every recorded ceiling.
+/// What a ratchet's `!budget` line is a cap on.
+///
+/// The two are not interchangeable, and mixing them is a bug this crate
+/// shipped for one round: summing *ceilings* for recorded files and *measured
+/// bytes* for the rest double-counts a pure extraction. Moving 4,000 bytes out
+/// of a ceilinged file into a sub-threshold sibling raised the total by 4,000
+/// — the sibling's bytes arrived while the ceiling had not yet come down —
+/// and the guard accused the author of adding weight for doing exactly what
+/// its own remedy asks. One basis, applied to every file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Basis {
+    /// The sum of every recorded ceiling: what the repository has *signed
+    /// for*. A file under its ceiling still spends the whole entry, so
+    /// ordinary edits never move the number and only a signed raise does.
+    /// Right where the thing rationed is permission to be large.
+    Ceilings,
+    /// The sum of every measured file. Right where the thing rationed is a
+    /// cost paid per byte, and where the per-file ceilings are a second,
+    /// separate rule rather than the budget's own currency.
+    Measured,
+}
+
+/// The line in a baseline that caps the total, as [`Basis`] defines it.
 ///
 /// A directive rather than a comment because the parser strips comments, and
 /// a budget the parser cannot see is one that silently stops existing the day
@@ -113,6 +135,8 @@ pub struct Policy {
     /// measured bytes, where an ordinary edit moves the total and a budget
     /// that fails on every sentence is a budget somebody deletes.
     pub budget_headroom: usize,
+    /// What the `!budget` line caps. See [`Basis`].
+    pub basis: Basis,
     /// What is being counted, as it reads inside a finding — `production
     /// lines`, `bytes of context`.
     pub unit: &'static str,
@@ -198,6 +222,18 @@ impl Policy {
         Ok(Baseline { entries, budget })
     }
 
+    /// The number the `!budget` line is compared against, on this policy's
+    /// [`Basis`].
+    ///
+    /// One function, so the verdict and `--tighten` can never compute it two
+    /// different ways — which is how the double-count got in.
+    pub fn total(&self, recorded: &Baseline, counts: &[(String, usize)]) -> usize {
+        match self.basis {
+            Basis::Ceilings => recorded.recorded(),
+            Basis::Measured => counts.iter().map(|(_, bytes)| bytes).sum(),
+        }
+    }
+
     /// A baseline that would not parse, worded as the finding an author acts
     /// on. Kept here so both guards and both of their entry points say it the
     /// same way.
@@ -248,28 +284,29 @@ impl Policy {
         )
     }
 
-    /// How the total stands against the budget.
+    /// How the total stands against the budget, on this policy's [`Basis`].
     ///
-    /// `unrecorded` is what the guard measured in files that carry no entry.
-    /// A guard passes `0` to keep the budget a pure statement of signed
-    /// permissions; it passes a real sum when a file below the threshold
-    /// still costs something the budget is meant to see.
+    /// [`Basis::Ceilings`] keeps the budget a statement of signed
+    /// permissions: growth reaches this function only once somebody has
+    /// written a raise down, and a branch that grows a file without raising
+    /// its ceiling is caught by [`Policy::verdict`] instead.
     ///
-    /// That choice is the difference between a cap and a bypass. With `0`,
-    /// growth reaches this function only once somebody has written a raise
-    /// down — a branch that grows a file without raising its ceiling is
-    /// caught by [`Policy::verdict`] instead. But it also means a tracked
-    /// file can be split into pieces that each sit under the threshold, and
-    /// the recorded total *falls* while the real weight does not move. The
-    /// context ratchet was built on a branch that did exactly that by
-    /// accident: 37,490 of the 49,281 bytes it removed from three files
-    /// landed in sub-threshold siblings, and the budget applauded. Counting
-    /// the unrecorded remainder closes that, at the cost of a total that
-    /// drifts with ordinary edits — which is what [`Policy::budget_slack`]
-    /// absorbs.
-    pub fn budget_verdict(&self, recorded: &Baseline, unrecorded: usize) -> Option<Finding> {
+    /// [`Basis::Measured`] is for a cost paid per byte, where that would be a
+    /// bypass rather than a cap: a tracked file split into pieces that each
+    /// sit under the threshold lowers the recorded total while the real
+    /// weight does not move. The context ratchet was built on a branch that
+    /// did exactly that by accident — 37,490 of the 49,281 bytes it removed
+    /// from three files landed in sub-threshold siblings, and a ceilings
+    /// budget applauded. The cost is a total that drifts with ordinary edits,
+    /// which is what [`Policy::budget_slack`] and
+    /// [`Policy::budget_headroom`] absorb between them.
+    pub fn budget_verdict(
+        &self,
+        recorded: &Baseline,
+        counts: &[(String, usize)],
+    ) -> Option<Finding> {
         let name = self.baseline_file;
-        let total = recorded.recorded() + unrecorded;
+        let total = self.total(recorded, counts);
         let Some(budget) = &recorded.budget else {
             return Some(Finding::new(
                 format!(
@@ -321,14 +358,13 @@ impl Policy {
         &self,
         recorded: &Baseline,
         counts: &[(String, usize)],
-        unrecorded: usize,
         seen: &dyn Fn(&str) -> bool,
     ) -> Vec<Finding> {
         let mut findings: Vec<Finding> = counts
             .iter()
             .filter_map(|(path, actual)| self.verdict(recorded.entry(path), path, *actual))
             .collect();
-        findings.extend(self.budget_verdict(recorded, unrecorded));
+        findings.extend(self.budget_verdict(recorded, counts));
         findings.extend(
             recorded
                 .entries
@@ -345,12 +381,7 @@ impl Policy {
     /// the decision a human signs.
     ///
     /// Returns one line per entry rewritten.
-    pub fn tighten(
-        &self,
-        root: &Path,
-        counts: &[(String, usize)],
-        unrecorded: usize,
-    ) -> Result<Vec<String>, String> {
+    pub fn tighten(&self, root: &Path, counts: &[(String, usize)]) -> Result<Vec<String>, String> {
         let recorded = self.baseline(root)?;
         let file = root.join(self.baseline_file);
         let text = fs::read_to_string(&file)
@@ -359,12 +390,17 @@ impl Policy {
         let mut applied = Vec::new();
 
         // The total as it will stand once every rewrite below has been
-        // applied, accumulated as they are decided rather than re-read
-        // afterwards: the rewritten text is not parsed again, so this is the
-        // only place the new sum exists.
-        // Seeded with what the guard measured outside the baseline, so the
-        // number written here is the same total `budget_verdict` compares.
-        let mut tightened_total = unrecorded;
+        // applied, accumulated as the rewrites are decided rather than
+        // re-read afterwards: the rewritten text is never parsed again, so
+        // this is the only place the new sum exists.
+        //
+        // On [`Basis::Measured`] the rewrites do not move it at all — that
+        // basis sums the files, and lowering a ceiling changes no file — so
+        // it starts at the measured total and stays there.
+        let mut tightened_total = match self.basis {
+            Basis::Ceilings => 0,
+            Basis::Measured => self.total(&recorded, counts),
+        };
 
         for entry in &recorded.entries {
             let Some((_, actual)) = counts.iter().find(|(path, _)| path == &entry.path) else {
@@ -372,14 +408,20 @@ impl Policy {
                 // spends it. The check reports it as stale; dropping it from
                 // the total here would let a deleted file's budget quietly
                 // finance the next raise.
-                tightened_total += entry.ceiling;
+                if self.basis == Basis::Ceilings {
+                    tightened_total += entry.ceiling;
+                }
                 continue;
             };
             if entry.ceiling.saturating_sub(*actual) <= self.slack {
-                tightened_total += entry.ceiling;
+                if self.basis == Basis::Ceilings {
+                    tightened_total += entry.ceiling;
+                }
                 continue;
             }
-            tightened_total += *actual;
+            if self.basis == Basis::Ceilings {
+                tightened_total += *actual;
+            }
             applied.push(format!("  {}: {} -> {actual}", entry.path, entry.ceiling));
             lines[entry.line] = rewrite(&lines[entry.line], &entry.path, *actual);
         }
@@ -438,6 +480,7 @@ mod tests {
         slack: 10,
         budget_slack: 50,
         budget_headroom: 0,
+        basis: Basis::Ceilings,
         unit: "widgets",
         remedy: "over",
         budget_remedy: "budget",
@@ -568,7 +611,7 @@ mod tests {
         let dir = workspace("src/a.md 40\n");
         let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
         let finding = POLICY
-            .budget_verdict(&recorded, 0)
+            .budget_verdict(&recorded, &[])
             .expect("no budget is a finding");
         assert!(finding.line.contains("nothing caps it"), "{}", finding.line);
     }
@@ -577,7 +620,7 @@ mod tests {
     fn a_raise_that_was_not_paid_for_is_over_budget() {
         let dir = workspace("!budget 50\nsrc/a.md 40\nsrc/b.md 30\n");
         let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
-        let finding = POLICY.budget_verdict(&recorded, 0).expect("over budget");
+        let finding = POLICY.budget_verdict(&recorded, &[]).expect("over budget");
         assert!(
             finding
                 .line
@@ -592,7 +635,7 @@ mod tests {
     fn a_total_far_under_budget_asks_for_the_cap_to_follow_it_down() {
         let dir = workspace("!budget 200\nsrc/a.md 40\n");
         let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
-        let finding = POLICY.budget_verdict(&recorded, 0).expect("under budget");
+        let finding = POLICY.budget_verdict(&recorded, &[]).expect("under budget");
         assert_eq!(finding.remedy, POLICY.budget_slack_remedy);
     }
 
@@ -600,7 +643,7 @@ mod tests {
     fn an_entry_whose_file_the_scan_no_longer_sees_is_stale() {
         let dir = workspace("!budget 40\nsrc/gone.md 40\n");
         let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
-        let findings = POLICY.against(&recorded, &[], 0, &|_| false);
+        let findings = POLICY.against(&recorded, &[], &|_| false);
         assert!(
             findings
                 .iter()
@@ -613,7 +656,7 @@ mod tests {
     fn a_file_that_exists_but_did_not_measure_is_seen_and_keeps_its_ceiling() {
         let dir = workspace("!budget 40\nsrc/binary.md 40\n");
         let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
-        let findings = POLICY.against(&recorded, &[], 0, &|path| path == "src/binary.md");
+        let findings = POLICY.against(&recorded, &[], &|path| path == "src/binary.md");
         assert!(
             !findings.iter().any(|f| f.line.contains("stale")),
             "{findings:?}"
@@ -624,7 +667,7 @@ mod tests {
     fn tighten_lowers_an_entry_and_keeps_the_comment_beside_it() {
         let dir = workspace("!budget 100\nsrc/a.md 90  # signed for the parser\n");
         let applied = POLICY
-            .tighten(dir.path(), &[("src/a.md".into(), 20)], 0)
+            .tighten(dir.path(), &[("src/a.md".into(), 20)])
             .expect("tighten runs");
         let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
         assert!(
@@ -641,7 +684,7 @@ mod tests {
     fn tighten_never_raises_a_ceiling() {
         let dir = workspace("!budget 100\nsrc/a.md 40\n");
         POLICY
-            .tighten(dir.path(), &[("src/a.md".into(), 900)], 0)
+            .tighten(dir.path(), &[("src/a.md".into(), 900)])
             .expect("tighten runs");
         let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
         assert!(text.contains("src/a.md 40"), "{text}");
@@ -651,7 +694,7 @@ mod tests {
     fn tighten_follows_the_budget_down_but_only_past_the_budget_slack() {
         let dir = workspace("!budget 100\nsrc/a.md 90\n");
         POLICY
-            .tighten(dir.path(), &[("src/a.md".into(), 10)], 0)
+            .tighten(dir.path(), &[("src/a.md".into(), 10)])
             .expect("tighten runs");
         let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
         assert!(text.contains("!budget 10"), "{text}");
@@ -661,7 +704,7 @@ mod tests {
     fn tighten_leaves_a_budget_alone_when_the_gap_is_headroom_somebody_signed() {
         let dir = workspace("!budget 100\nsrc/a.md 90\n");
         POLICY
-            .tighten(dir.path(), &[("src/a.md".into(), 60)], 0)
+            .tighten(dir.path(), &[("src/a.md".into(), 60)])
             .expect("tighten runs");
         let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
         // 60 is 40 under the budget, inside BUDGET_SLACK of 50.
@@ -672,7 +715,7 @@ mod tests {
     fn an_entry_with_no_measurement_still_spends_its_ceiling_against_the_budget() {
         let dir = workspace("!budget 100\nsrc/a.md 90\nsrc/gone.md 10\n");
         POLICY
-            .tighten(dir.path(), &[("src/a.md".into(), 10)], 0)
+            .tighten(dir.path(), &[("src/a.md".into(), 10)])
             .expect("tighten runs");
         let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
         // 10 measured plus the 10 the vanished entry still holds.

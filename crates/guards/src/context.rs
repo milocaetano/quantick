@@ -16,14 +16,21 @@
 //!
 //! So the rule is the size guard's rule, over the other tree. A context file
 //! has a ceiling, growth past it must be signed in the baseline with a
-//! reason, and a budget caps the whole tracked weight — every ceiling plus
-//! every tracked file too small to need one, so adding weight anywhere means
-//! taking comparable weight out somewhere else. That second half is what
-//! stops the obvious dodge: splitting a tracked file into sub-threshold
-//! pieces moves the prose a session loads not at all, and a budget of
-//! ceilings alone would have called it a saving. The mechanism is
-//! [`ratchet`](crate::ratchet), shared with the size guard; this module
-//! contributes the scan and the numbers.
+//! reason, and a budget caps the whole tracked weight — the measured bytes of
+//! every tracked file, so adding weight anywhere means taking comparable
+//! weight out somewhere else.
+//!
+//! **Measured, not signed**, and that is the one place this guard's budget
+//! differs from the size guard's ([`Basis`](crate::ratchet::Basis)). A budget
+//! of ceilings pays a branch for splitting a large file into sub-threshold
+//! pieces, which moves the prose a session loads not at all. Mixing the two —
+//! ceilings for recorded files, measured bytes for the rest — is worse still:
+//! it double-counts a pure extraction, so moving a paragraph into a
+//! `references/` file raised the total and the guard accused the author of
+//! adding weight for following its own remedy. One basis, every file.
+//!
+//! The mechanism is [`ratchet`](crate::ratchet), shared with the size guard;
+//! this module contributes the scan and the numbers.
 //!
 //! # Why bytes rather than lines
 //!
@@ -47,7 +54,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::Finding;
-use crate::ratchet::{Baseline, Policy};
+use crate::ratchet::{Basis, Policy};
 
 /// Bytes above which a context file must carry a baseline entry.
 ///
@@ -116,20 +123,17 @@ pub const REMEDY: &str = "A context file over its ceiling is a cost every sessio
                           --tighten` writes the new number.";
 
 /// What the guard asks for when the recorded total is over budget.
-pub const BUDGET_REMEDY: &str = "The context budget is what a session's instructions weigh in \
-                                 total: every recorded ceiling, plus the measured bytes of every \
-                                 tracked file too small to need one. Both halves are deliberate. \
-                                 Individually signed raises cannot say whether the instructions \
-                                 are getting cheaper — every paragraph added to a skill was \
-                                 defensible on its own, which is how one reached 48 KB. And a \
-                                 budget of ceilings alone would pay a branch for splitting a \
-                                 large file into sub-threshold pieces, which moves the prose a \
-                                 session loads not at all. So growth is pay-as-you-go: a branch \
-                                 that adds weight takes comparable weight out somewhere else, and \
-                                 moving prose between context files buys nothing. Raising the \
-                                 budget line itself stays available and is the escape hatch on \
-                                 purpose: it is one number, in one place, that a reviewer watches \
-                                 move.";
+pub const BUDGET_REMEDY: &str = "The context budget is what a session's instructions weigh: the \
+                                 measured bytes of every tracked file, ceiling or no ceiling. \
+                                 Measured rather than signed, because a budget of ceilings alone \
+                                 pays a branch for splitting a large file into sub-threshold \
+                                 pieces, which moves the prose a session loads not at all. So \
+                                 growth is pay-as-you-go and moving prose between context files \
+                                 buys nothing — only deleting it does. The per-file ceilings are \
+                                 a separate rule: they say which single files are large enough to \
+                                 need a signature. Raising the budget line stays available and is \
+                                 the escape hatch on purpose: it is one number, in one place, \
+                                 that a reviewer watches move.";
 
 /// What the guard asks for when the recorded total has fallen below budget.
 pub const BUDGET_SLACK_REMEDY: &str = "The recorded ceilings now total less than the budget caps them at, which means prose left a \
@@ -150,6 +154,7 @@ pub const POLICY: Policy = Policy {
     slack: SLACK,
     budget_slack: BUDGET_SLACK,
     budget_headroom: BUDGET_HEADROOM,
+    basis: Basis::Measured,
     unit: "bytes of context",
     remedy: REMEDY,
     budget_remedy: BUDGET_REMEDY,
@@ -300,27 +305,6 @@ pub fn measure(root: &Path) -> Measured {
     found
 }
 
-/// The bytes the scan measured in files that carry no baseline entry.
-///
-/// This is what makes the budget a cap rather than a bypass. Without it, a
-/// tracked file split into pieces that each sit under [`THRESHOLD`] leaves
-/// the recorded total *lower* while a session loads exactly as much prose —
-/// and `--tighten` would then write the smaller number down as progress. The
-/// branch that built this guard did that by accident: of the 49,281 bytes it
-/// removed from three skills, 37,490 landed in sub-threshold `references/`
-/// siblings.
-///
-/// A file with an entry is excluded because its ceiling already speaks for
-/// it, and counting both would charge it twice.
-fn unrecorded(recorded: &Baseline, found: &Measured) -> usize {
-    found
-        .counts
-        .iter()
-        .filter(|(path, _)| recorded.entry(path).is_none())
-        .map(|(_, bytes)| bytes)
-        .sum()
-}
-
 /// Every way the recorded baseline and the context files on disk disagree.
 pub fn check(root: &Path) -> Vec<Finding> {
     // Checked before anything is measured, because a missing skills directory
@@ -352,18 +336,29 @@ pub fn check(root: &Path) -> Vec<Finding> {
         // because it gets followed.
         .map(|line| Finding::new(line.clone(), BASELINE_REMEDY))
         .collect();
-    violations.extend(POLICY.against(
-        &recorded,
-        &found.counts,
-        unrecorded(&recorded, &found),
-        &|path| found.seen(path),
-    ));
+    violations.extend(POLICY.against(&recorded, &found.counts, &|path| found.seen(path)));
     violations
 }
 
 /// The same verdict for one file, without walking the tree — what the
 /// edit-time hook calls after a write.
 pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
+    // The same refusal `check` opens with, for the same reason and so the two
+    // surfaces cannot contradict each other. Both answer the budget from a
+    // scan now, so an unmeasurable tree would have this one reporting "good
+    // news, tighten the budget" from a walk that saw nothing while the suite
+    // reported the tree unmeasurable — the hook handing an author a number
+    // the suite refuses to compute.
+    if !root.join(SKILLS).is_dir() {
+        return vec![Finding::new(
+            format!(
+                "  {} is not a readable directory — nothing can be measured, so no verdict here \
+                 is worth anything",
+                root.join(SKILLS).display()
+            ),
+            BASELINE_REMEDY,
+        )];
+    }
     // The baseline is not a context file, so `tracked` rejects it — but it is
     // where a raise is actually written, and a hook that saw every skill edit
     // while missing the one edit that spends the budget would report the
@@ -378,7 +373,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
             Ok(recorded) => {
                 let found = measure(root);
                 POLICY
-                    .budget_verdict(&recorded, unrecorded(&recorded, &found))
+                    .budget_verdict(&recorded, &found.counts)
                     .into_iter()
                     .collect()
             }
@@ -409,14 +404,22 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
         .verdict(recorded.entry(relative), relative, actual)
         .into_iter()
         .collect();
-    // And the budget, which is the whole point of counting unrecorded files.
-    // A file under the threshold has no ceiling to cross, so `verdict` is
-    // always silent about it — and that is the ordinary edit here, not the
-    // edge case. Without this the hook reports clean on exactly the write
-    // that puts the tree over budget, and the author meets it minutes later
-    // as a failing suite with no idea which edit did it.
     let found = measure(root);
-    findings.extend(POLICY.budget_verdict(&recorded, unrecorded(&recorded, &found)));
+    // What the scan could not read, exactly as `check` reports it. Dropping
+    // these here would let the hook compute a budget from a partial walk and
+    // present the number as though the walk were complete.
+    findings.extend(
+        found
+            .unreadable
+            .iter()
+            .map(|line| Finding::new(line.clone(), BASELINE_REMEDY)),
+    );
+    // And the budget. A file under the threshold has no ceiling to cross, so
+    // `verdict` is always silent about it — and that is the ordinary edit
+    // here, not the edge case. Without this the hook reports clean on exactly
+    // the write that puts the tree over budget, and the author meets it
+    // minutes later as a failing suite with no idea which edit did it.
+    findings.extend(POLICY.budget_verdict(&recorded, &found.counts));
     findings
 }
 
@@ -472,8 +475,7 @@ pub fn tighten(root: &Path) -> Result<Vec<String>, String> {
             missing.join(", ")
         ));
     }
-    let unrecorded = unrecorded(&recorded, &found);
-    POLICY.tighten(root, &found.counts, unrecorded)
+    POLICY.tighten(root, &found.counts)
 }
 
 #[cfg(test)]
@@ -566,7 +568,16 @@ mod tests {
                 .filter(|f| f.line.starts_with(&prefix))
                 .map(|f| f.line.as_str())
                 .collect();
-            let from_file: Vec<&str> = single.iter().map(|f| f.line.as_str()).collect();
+            // Both sides filtered the same way. `check_file` also appends the
+            // budget verdict, whose line is prefixed with the baseline path,
+            // so an unfiltered comparison would fail once per tracked file
+            // the moment the tree went over budget — with a message blaming
+            // a disagreement that never happened.
+            let from_file: Vec<&str> = single
+                .iter()
+                .filter(|f| f.line.starts_with(&prefix))
+                .map(|f| f.line.as_str())
+                .collect();
             assert_eq!(
                 from_scan, from_file,
                 "the two surfaces disagree about {path}"
@@ -717,6 +728,41 @@ mod tests {
         // And the budget still bites on real growth.
         fs::write(&note, "x".repeat(3_000)).expect("scratch reference is writable");
         assert!(!check(&root).is_empty(), "3,000 bytes is not churn");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn moving_prose_out_of_a_ceilinged_file_is_not_added_weight() {
+        // The false accusation the single basis exists to remove. Moving
+        // 4,000 bytes from a ceilinged `SKILL.md` into a sub-threshold
+        // `references/` sibling is precisely what REMEDY asks for. Under a
+        // budget that summed ceilings for recorded files and measured bytes
+        // for the rest, the sibling's bytes arrived while the ceiling had not
+        // yet come down, the total rose by 4,000, and the guard told the
+        // author to take weight out for having taken weight out.
+        let root = scratch("extraction", 12_000, 10_000, 22_000);
+        assert!(check(&root).is_empty(), "the scratch tree starts clean");
+
+        fs::write(root.join(".claude/skills/one/SKILL.md"), "x".repeat(8_000))
+            .expect("scratch skill is writable");
+        fs::create_dir_all(root.join(".claude/skills/one/references"))
+            .expect("scratch dirs are creatable");
+        fs::write(
+            root.join(".claude/skills/one/references/why.md"),
+            "x".repeat(4_000),
+        )
+        .expect("scratch reference is writable");
+
+        // The ceiling is now 4,000 above the file, so the per-file ratchet
+        // asks for it to be tightened — that is its job and it is good news.
+        // What must not appear is a budget finding: nothing was added.
+        let findings = check(&root);
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.line.contains(BASELINE_FILE) && f.line.contains("over the")),
+            "a pure extraction must not read as added weight: {findings:?}"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 

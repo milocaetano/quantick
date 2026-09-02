@@ -83,7 +83,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::Finding;
-use crate::ratchet::{Baseline, Policy};
+use crate::ratchet::{Baseline, Basis, Policy};
 
 /// Production lines above which a file must carry a baseline entry. Files
 /// below it are not the problem this guard exists for, and tracking them
@@ -183,6 +183,7 @@ pub const POLICY: Policy = Policy {
     budget_slack: BUDGET_SLACK,
     // Zero: this budget sums signed permissions, and a raise is an act.
     budget_headroom: 0,
+    basis: Basis::Ceilings,
     unit: "production lines",
     remedy: REMEDY,
     budget_remedy: BUDGET_REMEDY,
@@ -323,7 +324,25 @@ fn scan(dir: &Path, root: &Path, found: &mut Measured) {
         }
     };
     for entry in entries {
-        let path = entry.expect("dir entry is readable").path();
+        // Not an `expect`. One unreadable directory entry would abort the
+        // whole process — taking the language and encoding guards and the
+        // edit-time hook down with it — where the twin walk in `context`
+        // records the failure and keeps going.
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(e) => {
+                let relative = dir
+                    .strip_prefix(root)
+                    .unwrap_or(dir)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                found
+                    .unreadable
+                    .push(format!("  {relative}/: entry unreadable: {e}"));
+                found.blind.push(format!("{relative}/"));
+                continue;
+            }
+        };
         let relative = path
             .strip_prefix(root)
             .expect("scanned path sits under the workspace root")
@@ -407,7 +426,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
     // permissions. A `.rs` file under the threshold is not a piece some
     // larger file was split into to dodge a ceiling — the module boundary is
     // load-bearing here, and `new-extension` asks for exactly that split.
-    violations.extend(POLICY.against(&recorded, &found.counts, 0, &|path| {
+    violations.extend(POLICY.against(&recorded, &found.counts, &|path: &str| {
         found.counts.iter().any(|(scanned, _)| scanned == path)
             || found.undecodable.iter().any(|scanned| scanned == path)
             || found
@@ -436,7 +455,10 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     // alone, with no file walk.
     if relative == BASELINE_FILE {
         return match baseline(root) {
-            Ok(recorded) => POLICY.budget_verdict(&recorded, 0).into_iter().collect(),
+            Ok(recorded) => POLICY
+                .budget_verdict(&recorded, &measure(root).counts)
+                .into_iter()
+                .collect(),
             Err(problem) => vec![POLICY.unparsed(&problem)],
         };
     }
@@ -477,7 +499,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
 ///
 /// Returns one line per entry rewritten.
 pub fn tighten(root: &Path) -> Result<Vec<String>, String> {
-    POLICY.tighten(root, &measure(root).counts, 0)
+    POLICY.tighten(root, &measure(root).counts)
 }
 
 #[cfg(test)]
