@@ -428,10 +428,6 @@ pub fn check(root: &Path) -> Vec<Finding> {
         .map(|line| Finding::new(line.clone(), REMEDY))
         .collect();
 
-    // `0`: this ratchet keeps the budget a pure statement of signed
-    // permissions. A `.rs` file under the threshold is not a piece some
-    // larger file was split into to dodge a ceiling — the module boundary is
-    // load-bearing here, and `new-extension` asks for exactly that split.
     violations.extend(POLICY.against(&recorded, &found.counts, &|path: &str| {
         found.counts.iter().any(|(scanned, _)| scanned == path)
             || found.undecodable.iter().any(|scanned| scanned == path)

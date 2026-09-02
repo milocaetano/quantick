@@ -141,6 +141,19 @@ pub const BUDGET_SLACK_REMEDY: &str = "The tracked files now weigh less than the
      budget counts bytes. Nothing has to be argued: `cargo run -p quantick-guards -- --tighten` \
      writes the new total, and only ever downward.";
 
+/// What the guard asks for when it could not measure the tree — a missing
+/// skills directory, a file it could not open.
+///
+/// Its own remedy, not [`BASELINE_REMEDY`]. That one sends the author to hunt
+/// a syntax error in a file that parses perfectly, which is the wrong-remedy
+/// failure `Finding`'s doc comment argues is worse than a terse one because it
+/// gets followed.
+pub const UNMEASURABLE_REMEDY: &str = "The guard could not read the files it rations, so it has not cleared them — it is reporting \
+     that it could not look. Nothing is wrong with the baseline and nothing needs cutting. Find \
+     out why the path is unreadable: a worktree missing `.claude/`, a file held open by another \
+     process, a permission the checkout does not have. Until then treat every context verdict in \
+     this run as absent rather than clean.";
+
 /// What the guard asks for when the baseline itself cannot be read as data.
 pub const BASELINE_REMEDY: &str = "The baseline could not be read as data, so no ceiling was checked at all — this is a syntax \
      finding, not a size one. Every line in crates/guards/context-baseline.txt is blank, a `#` \
@@ -330,20 +343,35 @@ fn unmeasurable(root: &Path) -> Option<Finding> {
              entry would otherwise be reported stale",
             skills.display()
         ),
-        BASELINE_REMEDY,
+        UNMEASURABLE_REMEDY,
     ))
 }
 
-/// The budget verdict, but only when the scan actually read everything.
+/// The budget verdict, but only when the scan measured the tree the baseline
+/// describes.
+///
+/// Two conditions, and they are exactly the two [`tighten`] refuses on — that
+/// is the point. Whatever suppresses the *writing* of a total must suppress
+/// the *promise* of one, or the guard hands the author a finding whose stated
+/// remedy is a command that then errors out.
 ///
 /// On [`Basis::Measured`] a file the walk could not open is simply missing
-/// from the counts, so the total is short by exactly its bytes — and the
-/// verdict computed from what remains reads "good news, tighten the budget",
-/// a saving invented out of a failure. `tighten` already refuses on the same
-/// condition; this is the reading half of that rule, and it keeps the two
-/// surfaces saying the same thing about the same tree.
+/// from the counts, so the total is short by exactly its bytes and the verdict
+/// reads "good news, tighten the budget" — a saving invented out of a failure.
+/// A recorded entry whose file the scan never found does the same thing for a
+/// different reason: retire a skill by deleting it and the total drops by its
+/// whole size, so the budget congratulates the author while `tighten` refuses
+/// to write the number it just promised. The stale-entry finding is the honest
+/// one there; the budget has nothing to say until the entry is dropped.
 fn budget_where_measurable(recorded: &Baseline, found: &Measured) -> Option<Finding> {
     if !found.unreadable.is_empty() {
+        return None;
+    }
+    if recorded
+        .entries
+        .iter()
+        .any(|entry| !found.seen(&entry.path))
+    {
         return None;
     }
     POLICY.budget_verdict(recorded, &found.counts)
@@ -365,11 +393,11 @@ pub fn check(root: &Path) -> Vec<Finding> {
     let mut violations: Vec<Finding> = found
         .unreadable
         .iter()
-        // BASELINE_REMEDY, not REMEDY: an author who hit a permission error
-        // is not an author who wrote too much prose, and `Finding`'s own doc
-        // comment argues that a wrong remedy is worse than a terse one
-        // because it gets followed.
-        .map(|line| Finding::new(line.clone(), BASELINE_REMEDY))
+        // UNMEASURABLE_REMEDY: an author who hit a permission error is not an
+        // author who wrote too much prose, and neither is their baseline
+        // malformed. `Finding`'s own doc comment argues that a wrong remedy is
+        // worse than a terse one because it gets followed.
+        .map(|line| Finding::new(line.clone(), UNMEASURABLE_REMEDY))
         .collect();
     violations.extend(POLICY.against(&recorded, &found.counts, &|path| found.seen(path)));
     // The budget only where the scan was complete. On `Basis::Measured` an
@@ -409,7 +437,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
                 let mut findings: Vec<Finding> = found
                     .unreadable
                     .iter()
-                    .map(|line| Finding::new(line.clone(), BASELINE_REMEDY))
+                    .map(|line| Finding::new(line.clone(), UNMEASURABLE_REMEDY))
                     .collect();
                 findings.extend(budget_where_measurable(&recorded, &found));
                 findings
@@ -423,9 +451,8 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     // The refusal `check` opens with, but *below* the two returns above so a
     // path this guard does not read stays silent whatever the tree looks
     // like. Placed first, it made `--file crates/probe/src/a.rs` on a tree
-    // with no `.claude/skills/` exit 1 with a context finding — and with
-    // BASELINE_REMEDY attached, telling the author their baseline had a
-    // syntax error when the real problem was a missing directory.
+    // with no `.claude/skills/` exit 1 with a context finding, over a file
+    // this guard does not even read.
     //
     // For a path this guard *does* read, the refusal is the point: both
     // surfaces answer the budget from a scan, so an unmeasurable tree would
@@ -437,13 +464,12 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     let actual = match fs::metadata(root.join(relative)) {
         Ok(meta) => meta.len() as usize,
         Err(e) => {
-            // BASELINE_REMEDY here too, matching `check`. The two surfaces
-            // must not attach different instructions to the same condition:
-            // the author sees whichever ran, and one of them would send them
-            // to cut prose over a permission error.
+            // The same remedy `check` attaches. The two surfaces must not give
+            // different instructions for the same condition: the author sees
+            // whichever ran.
             return vec![Finding::new(
                 format!("  {relative}: could not be read: {e}"),
-                BASELINE_REMEDY,
+                UNMEASURABLE_REMEDY,
             )];
         }
     };
@@ -463,7 +489,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
         found
             .unreadable
             .iter()
-            .map(|line| Finding::new(line.clone(), BASELINE_REMEDY)),
+            .map(|line| Finding::new(line.clone(), UNMEASURABLE_REMEDY)),
     );
     // And the budget. A file under the threshold has no ceiling to cross, so
     // `verdict` is always silent about it — and that is the ordinary edit
@@ -674,13 +700,32 @@ mod tests {
             "a partial scan has no total to compare"
         );
 
-        // And with nothing unread, the same tree does get a verdict.
+        // And a scan that saw every recorded file does get a verdict — here
+        // one far under the budget, which is the "good news" branch the
+        // suppression above exists to keep honest.
         let whole = Measured {
-            counts: Vec::new(),
+            counts: recorded
+                .entries
+                .iter()
+                .map(|entry| (entry.path.clone(), entry.ceiling))
+                .collect(),
             unreadable: Vec::new(),
             blind: Vec::new(),
         };
         assert!(budget_where_measurable(&recorded, &whole).is_some());
+
+        // A recorded entry the scan never found suppresses it too: retiring a
+        // skill drops the total by its whole size, and promising "tighten the
+        // budget" there names a command `tighten` refuses to run.
+        let retired = Measured {
+            counts: whole.counts[1..].to_vec(),
+            unreadable: Vec::new(),
+            blind: Vec::new(),
+        };
+        assert!(
+            budget_where_measurable(&recorded, &retired).is_none(),
+            "a deleted file is a stale entry to drop, not a saving to bank"
+        );
     }
 
     #[test]
@@ -694,8 +739,8 @@ mod tests {
         // repository always has `.claude/skills/`, so it never exercises the
         // refusal. With the refusal placed above the `tracked` early return,
         // `--file crates/probe/src/a.rs` on a tree without that directory
-        // exited 1 with a context finding — carrying BASELINE_REMEDY, which
-        // blames the author's baseline for a missing directory.
+        // exited 1 with a context finding, over a file this guard does not
+        // even read.
         let root =
             std::env::temp_dir().join(format!("quantick-context-no-skills-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
