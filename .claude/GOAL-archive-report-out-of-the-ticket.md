@@ -41,6 +41,7 @@ tidying it.
 | **R14** | `PaperTrading` loses at least 20 fields; state before and after. | A3 |
 | **R15** | `visual-qa` captures the report window, the calendar and the ledger before and after, and they are identical. | A13 |
 | **R16** | Stay out of the non-goals: risk sizing, order entry and the cmd/bracket/drag path, and anything in `app.rs` beyond the five calls. | A9, A14 |
+| **R18** | *"This is extraction, not design."* The diff is a relocation, not a re-modelling of the report. | A1, A2, A8 |
 | **R17** | *(purpose)* Make the money path auditable — what is left in `paper_trading.rs` is order placement, brackets, risk and the journal, not report rendering. | A1, A12, A15 |
 
 ---
@@ -268,6 +269,7 @@ named. The numbers, in one place:
 | total production | 9,238 | 9,696 (**+458**) |
 | `PaperTrading` fields | 75 | **55** |
 | `app.rs` lines changed | — | **0** |
+| `PaperTrading` methods | 149 | **138** (135 ship; three are `#[cfg(test)]`) |
 
 - **A6/A7** — the golden's text has the same SHA-256 at the commit that
   wrote it and at HEAD: `c90b6f97…5cfe25`. It was written before the move
@@ -321,6 +323,30 @@ named. The numbers, in one place:
    position, so building it on the per-trade close path cost a
    `position_summary()` per closed trade even with the report shut.
    `ReportState::is_open()` now guards it.
+
+7. **The ledger was one line short, and `delivery-review` said so.** The
+   completeness pass derived 22 atomic asks from the trader's own words and
+   found 21 in the ledger. The missing one is *"This is extraction, not
+   design."* — carried in spirit by R5 and R6, which are the request's
+   *positive* design instructions, but never written down as the constraint
+   it is. Added above as **R18** and graded COVERED: the moved bodies are
+   verbatim and the only new types are the seam R6 requires. The work was
+   never at risk; the record was.
+8. **S7's commitment was dropped and then kept.** S7 said the method count
+   would be "reported honestly in the PR body and not optimised for", and
+   the first draft of this file and of the PR body stated no method count at
+   all. `delivery-review` caught the drift. It is **149 → 138** — fifteen
+   methods left, four arrived (`open_row`, and the three `#[cfg(test)]`
+   accessors), so 135 reach the shipped binary. Not optimised for, as
+   promised: the eleven surviving wrappers could have been deleted to make
+   the number look better, and deleting an API its callers use to improve a
+   statistic is the opposite of the point.
+9. **Not rebased, then rebased.** The four checks were first run against the
+   `origin/main` this branch was cut from, while main had moved 11 commits —
+   including a rework of the very guards crate A11 and A12 depend on. G2
+   says "after rebasing on latest `main`", so the branch was rebased onto
+   `9376ac7` and every check re-run against it. The reworked size ratchet
+   accepts these numbers unchanged.
 
 ### Found on the way, not fixed here
 

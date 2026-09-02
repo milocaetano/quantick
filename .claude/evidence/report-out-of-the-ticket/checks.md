@@ -3,12 +3,21 @@
 Each run on its own, never chained: a `&&` or a trailing `|| echo` has
 reported success on this repository while one of the four had failed.
 
+**Run against the rebased branch**, as G2 requires. The first pass of these
+checks was made against the `origin/main` this worktree was cut from, while
+main had moved 11 commits — including PR #280, which reworked the guards
+crate that this branch's ratchet numbers depend on. `delivery-review` caught
+that the criterion says "after rebasing on latest `main`" and the evidence
+did not show one. The branch is now rebased onto `9376ac7` and every number
+below was measured after it. The reworked size ratchet accepts this branch's
+ceilings unchanged.
+
 | check | exit | result |
 | --- | --- | --- |
 | `cargo fmt --all -- --check` | 0 | clean |
 | `cargo clippy --workspace --all-targets -- -D warnings` | 0 | no warnings |
 | `cargo build --workspace` | 0 | `Finished dev profile in 1m 43s` |
-| `cargo test --workspace` | 0 | **2176 passed, 0 failed, 6 ignored** (app), every other crate green |
+| `cargo test --workspace` | 0 | **3,307 passed, 0 failed** across 90 targets |
 
 `cargo check -p quantick-app --all-targets` is also warning-free: no dead
 code, no unused import, nothing left behind by the move.
@@ -19,7 +28,7 @@ code, no unused import, nothing left behind by the move.
 and the size ratchet:
 
 ```
-test result: ok. 4 passed; 0 failed        (guards: size ratchet, language scan, encoding)
+test result: ok. 65 passed; 0 failed      (guards, post-rework: size + context ratchets, language scan, encoding)
 ```
 
 The ratchet went red twice during the branch and both times the number
