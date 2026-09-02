@@ -3035,9 +3035,6 @@ impl QuantickApp {
         }
     }
 
-    /// Flip a slot's render-side eye, wherever the slot lives. Addressed by
-    /// [`TabSlot`], never by focus: the legend acts on the pane it is drawn
-    /// on, and the toolbar path builds its target from focus before calling.
     /// Open the dialog for whichever indicator a gesture on a pane asked
     /// about: the pane header, a collapsed strip, or an overlay's own line.
     ///
@@ -3129,6 +3126,9 @@ impl QuantickApp {
         self.set_legend_collapsed(tab_id, side, collapsed);
     }
 
+    /// Flip a slot's render-side eye, wherever the slot lives. Addressed by
+    /// [`TabSlot`], never by focus: the legend acts on the pane it is drawn
+    /// on, and the toolbar path builds its target from focus before calling.
     fn toggle_indicator_hidden_at(&mut self, target: TabSlot) {
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) else {
             return;
