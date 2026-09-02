@@ -455,10 +455,14 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     // alone, with no file walk.
     if relative == BASELINE_FILE {
         return match baseline(root) {
-            Ok(recorded) => POLICY
-                .budget_verdict(&recorded, &measure(root).counts)
-                .into_iter()
-                .collect(),
+            // `&[]`, not a scan. On [`Basis::Ceilings`] the counts are
+            // ignored, so measuring here would walk every `.rs` file in
+            // `crates/`, decode it and count its production lines only to
+            // throw the result away — inside the advisory hook that runs
+            // after every write, which is the cost this crate was extracted
+            // to avoid. The sentence above is the contract, and passing a
+            // scan quietly broke it.
+            Ok(recorded) => POLICY.budget_verdict(&recorded, &[]).into_iter().collect(),
             Err(problem) => vec![POLICY.unparsed(&problem)],
         };
     }

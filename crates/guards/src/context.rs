@@ -305,22 +305,35 @@ pub fn measure(root: &Path) -> Measured {
     found
 }
 
+/// The refusal both surfaces open with when the tree cannot be measured, so
+/// they can never contradict each other about it.
+///
+/// A missing skills directory measures as *empty*, and an empty measurement
+/// makes every baseline entry look stale — whose stated remedy is to delete
+/// it, the one edit that switches the ratchet off for every instruction file
+/// at once. It also makes the budget total meaningless.
+fn unmeasurable(root: &Path) -> Option<Finding> {
+    let skills = root.join(SKILLS);
+    if skills.is_dir() {
+        return None;
+    }
+    Some(Finding::new(
+        format!(
+            "  {} is not a readable directory — there is nothing to measure, and every baseline \
+             entry would otherwise be reported stale",
+            skills.display()
+        ),
+        BASELINE_REMEDY,
+    ))
+}
+
 /// Every way the recorded baseline and the context files on disk disagree.
 pub fn check(root: &Path) -> Vec<Finding> {
-    // Checked before anything is measured, because a missing skills directory
-    // measures as *empty* — and an empty measurement makes every baseline
-    // entry look stale, whose stated remedy is to delete it. That one edit
-    // switches the ratchet off for every instruction file at once.
-    let skills = root.join(SKILLS);
-    if !skills.is_dir() {
-        return vec![Finding::new(
-            format!(
-                "  {} is not a readable directory — there is nothing to measure, and every \
-                 baseline entry would otherwise be reported stale",
-                skills.display()
-            ),
-            BASELINE_REMEDY,
-        )];
+    // Checked before anything is measured. Worded once, in `unmeasurable`,
+    // so this surface and the hook's cannot describe the same tree
+    // differently.
+    if let Some(refusal) = unmeasurable(root) {
+        return vec![refusal];
     }
     let recorded = match POLICY.baseline(root) {
         Ok(recorded) => recorded,
@@ -343,27 +356,14 @@ pub fn check(root: &Path) -> Vec<Finding> {
 /// The same verdict for one file, without walking the tree — what the
 /// edit-time hook calls after a write.
 pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
-    // The same refusal `check` opens with, for the same reason and so the two
-    // surfaces cannot contradict each other. Both answer the budget from a
-    // scan now, so an unmeasurable tree would have this one reporting "good
-    // news, tighten the budget" from a walk that saw nothing while the suite
-    // reported the tree unmeasurable — the hook handing an author a number
-    // the suite refuses to compute.
-    if !root.join(SKILLS).is_dir() {
-        return vec![Finding::new(
-            format!(
-                "  {} is not a readable directory — nothing can be measured, so no verdict here \
-                 is worth anything",
-                root.join(SKILLS).display()
-            ),
-            BASELINE_REMEDY,
-        )];
-    }
     // The baseline is not a context file, so `tracked` rejects it — but it is
     // where a raise is actually written, and a hook that saw every skill edit
     // while missing the one edit that spends the budget would report the
     // symptom and never the act.
     if relative == BASELINE_FILE {
+        if let Some(refusal) = unmeasurable(root) {
+            return vec![refusal];
+        }
         return match POLICY.baseline(root) {
             // The budget covers files with no entry, so answering it needs the
             // scan. It is fifteen `stat` calls over known paths, not a walk
@@ -382,6 +382,20 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     }
     if !tracked(relative) {
         return Vec::new();
+    }
+    // The refusal `check` opens with, but *below* the two returns above so a
+    // path this guard does not read stays silent whatever the tree looks
+    // like. Placed first, it made `--file crates/probe/src/a.rs` on a tree
+    // with no `.claude/skills/` exit 1 with a context finding — and with
+    // BASELINE_REMEDY attached, telling the author their baseline had a
+    // syntax error when the real problem was a missing directory.
+    //
+    // For a path this guard *does* read, the refusal is the point: both
+    // surfaces answer the budget from a scan, so an unmeasurable tree would
+    // have this one reporting "good news, tighten the budget" from a walk
+    // that saw nothing while the suite called the tree unmeasurable.
+    if let Some(refusal) = unmeasurable(root) {
+        return vec![refusal];
     }
     let actual = match fs::metadata(root.join(relative)) {
         Ok(meta) => meta.len() as usize,

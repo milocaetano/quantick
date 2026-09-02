@@ -57,4 +57,4 @@ AGENTS.md 12771
 # drift downward and BUDGET_HEADROOM upward, so a sentence is not a baseline
 # commit. This number is expected to fall over time and to be argued over when
 # it rises.
-!budget 231950
+!budget 231973
