@@ -82,11 +82,19 @@ const ALLOWED: &[&str] = &[
     "crates/guards/src/language.rs",
     // A full UX specification written in Portuguese, ~46 non-English lines.
     "docs/ux/drawing-tools-ux-spec.html",
-    // Two doc comments quoting the trader's own bug reports verbatim. These
-    // are exempt under the quotation rule anyway — translating a report would
-    // put words in the reporter's mouth — and are listed so a future reader
-    // does not have to rediscover why.
-    "crates/app/src/app.rs",
+    // Doc comments quoting the trader's own bug reports verbatim. These are
+    // exempt under the quotation rule anyway — translating a report would put
+    // words in the reporter's mouth — and are listed so a future reader does
+    // not have to rediscover why.
+    //
+    // The first two paths were a single entry, `crates/app/src/app.rs`, until
+    // that file's test module was split by subsystem. The two quotations moved
+    // with the tests they explain, and `app.rs` now carries no non-English
+    // line at all, so the exemption followed them instead of staying behind on
+    // a file that no longer needs it. Still two quotations: the list got
+    // longer without the debt growing.
+    "crates/app/src/app/tests/drawings_tests.rs",
+    "crates/app/src/app/tests/input_ui_tests.rs",
     "crates/app/src/drawings/fib.rs",
 ];
 
