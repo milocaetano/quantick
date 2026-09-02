@@ -17,22 +17,38 @@ you first: see step 0.
 
 Correctness outranks architecture (priority 0), so the bug pass starts before
 the shape pass and the review never closes without it. Run the bundled
-`code-review` — the skill that takes a target plus an effort level
-(`low`…`ultra`). A plugin command of the same name appears prefixed,
+`code-review` — the skill that takes an effort level (`low`…`ultra`) and then
+a target, in that order. A plugin command of the same name appears prefixed,
 `code-review:code-review`; that one posts to the PR by itself and is not what
 this step calls.
 
 ```
-Skill(code-review), args: "<target> <effort>"      one string, in that order
+Skill(code-review), args: "<effort> <target>"      one string, effort FIRST
 
-  <target>   a PR number once one exists — the least ambiguous target there
-             is — otherwise a branch name, or omitted for the working diff.
-             Never a revision range: `main...HEAD` is not a target it parses.
   <effort>   `high` for a branch or PR, `medium` for a working diff.
              Never omit it: with no level the skill reuses whatever was typed
              last, in some other session, and this review has to name the
              level it used.
+  <target>   a PR number once one exists — the least ambiguous target there
+             is — otherwise a branch name, or omitted for the working diff.
+             Never a revision range: `main...HEAD` is not a target it parses.
 ```
+
+**The order is load-bearing, not stylistic, and this file taught it backwards
+until 2026-09-01.** The bundled skill reads the level from the **first token
+only**. A first token that is not a level is not an error it reports: the level
+silently becomes "not given", *and the whole argument string — effort word
+included — becomes the target*. So the `"<target> <effort>"` form documented
+here lost both halves at once. The review fell back to the level cached in
+`~/.claude.json` from some other session, and it went looking for a target
+named `my-branch medium`. That second half is what the *Check the scope it
+comes back with* warning below had been catching for months without ever naming
+its cause.
+
+Measured on this repository, not inferred:
+`.claude/evidence/arch-review-effort-level/reproduction.md` records the CLI's
+own published argument hint, the cached level actually sitting on this machine,
+and two live invocations differing only in token order.
 
 **A mission's tier overrides that default**, because the tier is the trader's
 own statement of how much this change is worth reviewing: **`low` for `small`
@@ -80,6 +96,43 @@ defaults above rather than guessing at a middle level.
 short pass is never mistaken for a thorough one — and say so when this file and
 the goal file's `**Tier:**` line disagree. Two surfaces disagreeing about one
 branch is a finding in itself, and this review is what sees it.
+
+**Then prove it, because naming it is what failed.** The old rule stopped at
+the header, and a header is written by the same agent that got the invocation
+wrong: on PR #274 it faithfully recorded `xhigh` on a branch whose tier had
+bought `medium`, and the record changed nothing. Proof here is two things
+together, and neither alone is enough:
+
+- **By construction** — the level went in as the first token, so the parser
+  took it as explicit and never consulted the cached one. That is what the
+  block above buys.
+- **By the absence of a notice** — when the bundled skill falls back to the
+  cached level it *says so*, in a line of the shape "No effort level given —
+  reusing `<level>`, the level the user typed last time". Read the returned
+  report for that line before reading it for findings. It is the one signal
+  this repository gets, and a report carrying it is a failed invocation whatever
+  else it found.
+
+**On divergence, the re-run is asymmetric and bounded to one.** If the notice
+says the pass ran **below** the level the tier bought, re-invoke once,
+effort-first, at the tier's level — a shallower pass has not answered the
+question the tier asked. If it ran **above** — the `xhigh`-for-`medium` case,
+and the likelier one — **accept it and do not re-run.** A deeper pass has
+already answered; a second pass would spend the very budget this rule exists to
+protect. Record the overspend instead: name it in the header and carry it into
+the PR body beside the deferred findings, so the cost is visible and arguable
+rather than absorbed in silence. One retry, never two — if a second invocation
+still comes back reused, that is a finding to report, not a third attempt.
+
+**Say what cannot be proven, rather than implying it was.** `code-review` is
+bundled — it does not live in `.claude/skills/`, so this repository cannot make
+it state the level it ran at. The level is established by construction and by
+the absence of a fallback notice, never by a positive statement from the pass
+itself. The header claims exactly that much and no more: the level requested,
+that it was passed as the first token, and that no reuse notice came back — or,
+when the report is silent in a way that settles nothing, that the level is
+**unverified**, which is a thing to write down rather than a thing to round up
+to a pass.
 
 **Check the scope it comes back with.** When the target does not pin a range
 the skill derives one, so it can end up reviewing another branch's merged work
@@ -714,10 +767,20 @@ A clean change gets a short review saying it is clean and why. Never pad.
 
 ## Output
 
-Open with one line for step 0: the effort level it ran at and how many findings
-came back, including zero — `step 0: code-review at high, 12 findings, 3
-confirmed` — or why it did not run. On the `ReportFindings` path that line is
-the text accompanying the call, since the tool carries no header field. It is
+Open with one line for step 0: the effort level it ran at, **how that level was
+proven**, and how many findings came back, including zero — `step 0:
+code-review at high (effort-first, no reuse notice), 12 findings, 3 confirmed`
+— or why it did not run. The parenthetical is not decoration: `at high` alone
+is the claim that failed on PR #274, and the two words after it are the whole
+difference between a level that was requested and one that ran. When the pass
+diverged, the line says so and says which way — `step 0: code-review at xhigh
+(tier bought medium; reuse notice, accepted per the asymmetric rule), …` — and
+when the report settles nothing either way, it says that instead of rounding it
+up: `step 0: code-review at medium (effort-first; level unverified), …`. Three
+shapes, and the header always carries exactly one of them.
+
+On the `ReportFindings` path that line is the text accompanying the call, since
+the tool carries no header field. It is
 the only signal that the bug pass was skipped, so it is never dropped — and it
 goes into the PR body too, next to the deferred findings `CLAUDE.md` already
 requires there. Chat scrolls away; the PR is where the next reader looks.

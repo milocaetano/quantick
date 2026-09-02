@@ -436,7 +436,7 @@ Acceptance (plan PR 5c = MVP acceptance):
 
 ## 6. Gates for every pull request in section 5
 
-Beyond CLAUDE.md's four checks, `arch-review` with step 0 `code-review <PR> high`,
+Beyond CLAUDE.md's four checks, `arch-review` with step 0 `code-review high <PR>`,
 the `pr-gate` marker written before `gh pr create`, and CI watched with
 `gh pr checks <n> --watch`:
 
