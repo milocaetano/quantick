@@ -208,7 +208,7 @@ proves.
 - **A7** — commit `790fbca`, `git show --stat`: `app.rs | 2 +-`,
   `harness.rs | 10 ++++++++++`.
 - **A8** — `.claude/evidence/harness-hook-owner/visual-qa.md`, verdict PASS,
-  with fourteen screenshots under `shots/`. The control-plane leg is reported
+  with sixteen screenshots under `shots/`. The control-plane leg is reported
   BLOCKED there rather than counted as a pass, and an incident is recorded.
 - **A9** — `git diff --stat origin/main...HEAD`: 26 files, one of them the new
   module; no file was split, and no field outside D1 moved.
@@ -223,9 +223,12 @@ proves.
 - **G4** — see the PR body.
 - **G5** — every hook driven from a fresh launch by environment variable alone
   across the 64 captures; no registry row changed, because no hook was renamed.
-- **G6** — the ratchet reported `app.rs` down to 9,355 from 9,890 and
-  `cargo run -p quantick-guards -- --tighten` wrote it; `harness.rs` is under
-  the 1,500-line threshold, so it earns no baseline entry.
+- **G6** — `app.rs` ships at 9,362 production lines against `main`'s 9,890, so
+  the baseline entry is a tightening rather than a raise, and `!budget` moves
+  with it (61,467 → 60,939). The first review round is why the figure is 9,362
+  and not the 9,355 an earlier `--tighten` recorded: a fix in that round added
+  seven lines back, and the entry follows the branch rather than the other way
+  round. `harness.rs` is under the 1,500-line threshold, so it earns no entry.
 
 ## Not applicable, and why
 

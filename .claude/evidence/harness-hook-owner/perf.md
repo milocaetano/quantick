@@ -13,9 +13,15 @@ three budgeted hooks (`QUANTICK_LOAD_OLDER`, `QUANTICK_LOAD_OLDER_CANDLES`,
 per-depth: nothing in `harness.rs` is reached from the feed or the book.
 
 **What changed on those paths.** A field read on `QuantickApp` became a method
-call on a struct one level in. No allocation, no lock, no clone of anything
-larger than an `Option<f32>` — the one `clone()` in the module is
-`DrawingsDemo`'s, on a path that runs once per session and owns a `String`.
+call on a struct one level in. No allocation, no lock and **no `clone()` at
+all** — the module contains none.
+
+It did, briefly. The first draft answered "is the drawings demo still owed?"
+by handing back the request, which owns a `String`, so a hook waiting for bars
+allocated sixty times a second to say "not yet". The first review round caught
+it, and the shape it left is the one to copy: a `bool` peek
+(`drawings_demo_armed`) for the question asked every frame, and a `take` for
+the one frame that acts.
 
 **What was measured.** `APP_HEALTH_SUMMARY`, seven samples per launch, newest
 taken, across 32 scenes captured on both an `origin/main` control build and this
