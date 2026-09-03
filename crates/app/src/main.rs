@@ -56,6 +56,7 @@ mod pane;
 mod paper_calendar;
 mod paper_home;
 mod paper_hud;
+mod paper_report;
 mod paper_state;
 mod paper_trading;
 mod pointer_compass;
