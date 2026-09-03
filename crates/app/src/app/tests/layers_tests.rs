@@ -101,8 +101,9 @@ fn layer_visibility_survives_a_restart() {
     let _ = std::fs::remove_file(&path);
 
     let (mut app, _events, _commands, _book) = test_app();
-    app.chart_layers_path = path.clone();
-    app.saved_layer_mask = app.layer_mask();
+    app.workspace.set_chart_layers_path(path.clone());
+    let mask = app.layer_mask();
+    app.workspace.layers_mut().record(mask);
     switch_layer(&mut app, ChartLayer::Crosshair, false);
     switch_layer(&mut app, ChartLayer::PaperTrading, false);
     switch_layer(&mut app, ChartLayer::Grid, false);
@@ -119,13 +120,13 @@ fn layer_visibility_survives_a_restart() {
     switch_layer(&mut app, ChartLayer::TapeChart, false);
     app.maintain_chart_layers();
     assert_eq!(
-        app.saved_layer_mask,
+        app.workspace.layers().mask(),
         app.layer_mask(),
         "a settled canvas writes nothing further"
     );
 
     let (mut restored, _events, _commands, _book) = test_app();
-    restored.chart_layers_path = path.clone();
+    restored.workspace.set_chart_layers_path(path.clone());
     restored.restore_chart_layers();
     for (layer, expected) in [
         (ChartLayer::Crosshair, false),
@@ -166,13 +167,14 @@ fn a_new_tab_opens_on_the_layers_the_user_left_showing() {
     let _ = std::fs::remove_file(&path);
 
     let (mut app, _events, _commands, _book) = test_app();
-    app.chart_layers_path = path.clone();
-    app.saved_layer_mask = app.layer_mask();
+    app.workspace.set_chart_layers_path(path.clone());
+    let mask = app.layer_mask();
+    app.workspace.layers_mut().record(mask);
     switch_layer(&mut app, ChartLayer::Crosshair, false);
     app.maintain_chart_layers();
     // A fresh app reads the file, then opens a second market.
     let (mut restored, _events, _commands, _book) = test_app();
-    restored.chart_layers_path = path.clone();
+    restored.workspace.set_chart_layers_path(path.clone());
     restored.restore_chart_layers();
     let (_evt_tx, evt_rx) = mpsc::channel(4);
     let (_book_tx, book_rx) = mpsc::channel(4);
@@ -243,7 +245,7 @@ fn a_new_tab_inherits_the_live_layers_not_the_startup_file() {
     let _ = std::fs::remove_file(&path);
 
     let (mut app, _events, _commands, _book) = test_app();
-    app.chart_layers_path = path.clone();
+    app.workspace.set_chart_layers_path(path.clone());
     // Boot on a file that says the crosshair is off...
     std::fs::write(
         &path,
@@ -294,7 +296,7 @@ fn the_layer_menu_offers_every_layer_and_its_switches_work() {
     let ctx = egui::Context::default();
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 700.0));
     let (mut app, _events, _commands, _book) = test_app();
-    app.chart_layers_path = path.clone();
+    app.workspace.set_chart_layers_path(path.clone());
 
     let menu_frame = |app: &mut QuantickApp, events: Vec<egui::Event>| {
         with_flow_pane(app, |pane, chrome| {

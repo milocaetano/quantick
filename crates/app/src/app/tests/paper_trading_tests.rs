@@ -1285,7 +1285,7 @@ fn autosave_off_means_the_popup_position_is_not_written_either() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
     with_a_saved_workspace(&mut app, &ctx, "popup-no-autosave");
-    app.save_on_exit = false;
+    *app.workspace.session_mut().save_on_exit_mut() = false;
     draw_horizontal_line(&mut app, &ctx, 300.0);
 
     let parked = park_the_popup(&mut app, &ctx, egui::vec2(150.0, 90.0));
@@ -1296,14 +1296,14 @@ fn autosave_off_means_the_popup_position_is_not_written_either() {
         "the window still went where it was dragged"
     );
     assert_eq!(
-        ui_state::load(&app.ui_state_path)
+        ui_state::load(app.workspace.ui_state_path())
             .chrome
             .expect("the chrome is still there")
             .inspector_position,
         None,
         "but autosave off leaves the saved workspace untouched"
     );
-    let _ = std::fs::remove_file(&app.ui_state_path);
+    let _ = std::fs::remove_file(app.workspace.ui_state_path());
 }
 
 /// One window, every tool: a position remembered from a *previous session*
@@ -1313,7 +1313,8 @@ fn autosave_off_means_the_popup_position_is_not_written_either() {
 fn a_remembered_position_greets_the_next_drawing_too() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
-    app.ui_state_path = scratch_ui_state("popup-next-drawing");
+    app.workspace
+        .set_ui_state_path(scratch_ui_state("popup-next-drawing"));
     run_frame(&mut app, &ctx);
     draw_horizontal_line(&mut app, &ctx, 250.0);
     draw_horizontal_line(&mut app, &ctx, 400.0);
@@ -1347,7 +1348,8 @@ fn a_remembered_position_greets_the_next_drawing_too() {
 fn a_remembered_position_outranks_the_narrow_chart_auto_pin() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
-    app.ui_state_path = scratch_ui_state("popup-auto-pin");
+    app.workspace
+        .set_ui_state_path(scratch_ui_state("popup-auto-pin"));
     // A chart under INSPECTOR_AUTO_PIN_CHART_WIDTH_PX, which is what a
     // split canvas gives the pane a drawing lives on.
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
@@ -1383,7 +1385,8 @@ fn a_remembered_position_outranks_the_narrow_chart_auto_pin() {
 fn a_workspace_with_no_remembered_position_leaves_the_auto_pin_alone() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
-    app.ui_state_path = scratch_ui_state("popup-auto-pin-default");
+    app.workspace
+        .set_ui_state_path(scratch_ui_state("popup-auto-pin-default"));
     // A previous cockpit that *did* park the popup, so this proves the
     // silence is adopted rather than merely never contradicted.
     app.surfaces
@@ -1422,7 +1425,8 @@ fn a_workspace_with_no_remembered_position_leaves_the_auto_pin_alone() {
 fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
-    app.ui_state_path = scratch_ui_state("popup-clamp");
+    app.workspace
+        .set_ui_state_path(scratch_ui_state("popup-clamp"));
     // The auto-pin owns a chart this narrow until the trader touches the
     // pin; this test is about the floating window, so say they have.
     app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
@@ -1472,7 +1476,8 @@ fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file()
 fn a_temporary_squeeze_never_edits_the_parked_position() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
-    app.ui_state_path = scratch_ui_state("popup-ratchet");
+    app.workspace
+        .set_ui_state_path(scratch_ui_state("popup-ratchet"));
     app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     app.toolrail
@@ -1970,14 +1975,15 @@ fn a_reset_that_failed_leaves_the_entry_live() {
     let (mut app, _commands) = app_with_history(50);
     // A path inside a directory that does not exist: the write fails,
     // which is the case a read-only home or a full disk produces.
-    app.ui_state_path = scratch_ui_state("reset-fails").join("nope.toml");
+    app.workspace
+        .set_ui_state_path(scratch_ui_state("reset-fails").join("nope.toml"));
     app.toolrail.set_favorites(&["measure".to_owned()]);
-    app.workspace_saved = true;
+    app.workspace.session_mut().set_saved(true);
 
     app.forget_workspace();
 
     assert!(
-        app.workspace_saved,
+        app.workspace.session().saved(),
         "a reset that did not happen must stay retryable"
     );
 }

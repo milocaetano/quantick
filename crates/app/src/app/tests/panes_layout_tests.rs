@@ -1498,16 +1498,16 @@ fn the_watched_market_wins_the_slot() {
 fn resetting_the_startup_layout_leaves_this_session_alone() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.ui_state_path = scratch_ui_state("reset");
+    app.workspace.set_ui_state_path(scratch_ui_state("reset"));
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
     app.save_workspace("test");
-    assert!(app.ui_state_path.exists());
+    assert!(app.workspace.ui_state_path().exists());
 
     app.forget_workspace();
 
     assert!(
-        !app.ui_state_path.exists(),
+        !app.workspace.ui_state_path().exists(),
         "the next launch opens on config"
     );
     assert_eq!(
@@ -1572,20 +1572,21 @@ fn a_window_that_opens_on_the_split_focuses_the_flow_chart() {
 #[test]
 fn resetting_the_startup_layout_keeps_the_other_standing_choices() {
     let (mut app, _commands) = app_with_history(50);
-    app.ui_state_path = scratch_ui_state("reset-standing");
-    app.recent_workspaces = vec!["D:/desk/scalp.qws.toml".to_owned()];
+    app.workspace
+        .set_ui_state_path(scratch_ui_state("reset-standing"));
+    *app.workspace.session_mut().recent_mut() = vec!["D:/desk/scalp.qws.toml".to_owned()];
     app.save_workspace("test");
 
     app.forget_workspace();
 
-    let file = ui_state::load(&app.ui_state_path);
+    let file = ui_state::load(app.workspace.ui_state_path());
     assert_eq!(
         file.recent_workspaces,
         vec!["D:/desk/scalp.qws.toml".to_owned()],
         "the Open-recent menu is not part of the layout being reset"
     );
     assert!(file.tabs.is_empty(), "and the layout really was reset");
-    let _ = std::fs::remove_file(&app.ui_state_path);
+    let _ = std::fs::remove_file(app.workspace.ui_state_path());
 }
 
 /// Switching layouts focuses the pane the switch reveals, so the first
@@ -2150,9 +2151,9 @@ fn per_pane_layouts_are_recorded_and_restored() {
     assert_eq!(tabs[0].flow_layout, Some(first.0));
     assert_eq!(tabs[0].context_layouts, vec![second.0]);
 
-    let path = app.layouts_path.clone();
+    let path = app.workspace.layouts_path().to_path_buf();
     let (mut again, _commands2) = split_app(&ctx, 200);
-    again.layouts_path = path;
+    again.workspace.set_layouts_path(path.to_path_buf());
     again.active_tab_mut().flow_pane.layout = Some(first);
     again.active_tab_mut().pane_mut(PaneSide::Time(0)).layout = Some(second);
     again.reload_layouts(&[]);
@@ -2197,7 +2198,7 @@ fn layouts_come_back_after_a_restart() {
     app.rename_layout(second, "open").expect("renamed");
     app.flush_layouts();
 
-    let path = app.layouts_path.clone();
+    let path = app.workspace.layouts_path().to_path_buf();
     let crate::layouts::Loaded::Book(book) = crate::layouts::load(&path) else {
         panic!("the book was written");
     };
@@ -2213,7 +2214,7 @@ fn layouts_come_back_after_a_restart() {
 
     // A second app on the same home — the same file — opens on the book.
     let (mut again, _commands2) = split_app(&ctx, 200);
-    again.layouts_path = path.clone();
+    again.workspace.set_layouts_path(path.to_path_buf());
     again.reload_layouts(&[]);
     assert_eq!(again.layouts().active().name, "open");
     again.switch_layout(book.layouts()[0].id).expect("layout 1");
@@ -2730,7 +2731,7 @@ fn removing_a_symbol_updates_the_file_and_leaves_open_tabs_alone() {
     let (mut app, _cmd_rx) = app_with_history(50);
     let path = symbols_scratch("removed");
     let _ = std::fs::remove_file(&path);
-    app.symbols_path = path.clone();
+    app.workspace.set_symbols_path(path.clone());
     app.add_symbol("binance", "WINQ26")
         .expect("the catalog takes a symbol that fits");
     app.adopt_tab(
@@ -2774,8 +2775,8 @@ fn removing_a_symbol_updates_the_file_and_leaves_open_tabs_alone() {
 fn a_symbol_a_tab_is_showing_is_not_offered_for_removal() {
     let ctx = egui::Context::default();
     let (mut app, _cmd_rx) = app_with_history(50);
-    app.symbols_path = symbols_scratch("guard");
-    let _ = std::fs::remove_file(&app.symbols_path);
+    app.workspace.set_symbols_path(symbols_scratch("guard"));
+    let _ = std::fs::remove_file(app.workspace.symbols_path());
     app.add_symbol("binance", "WINQ26")
         .expect("the catalog takes a symbol that fits");
     app.adopt_tab(
@@ -2806,7 +2807,7 @@ fn a_symbol_a_tab_is_showing_is_not_offered_for_removal() {
         "WINQ26",
         "removing a symbol never moves a tab off its market"
     );
-    let _ = std::fs::remove_file(&app.symbols_path);
+    let _ = std::fs::remove_file(app.workspace.symbols_path());
 }
 
 /// (a) The `+` opens the picker, and choosing a market adds a tab that

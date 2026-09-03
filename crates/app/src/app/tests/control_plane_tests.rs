@@ -501,7 +501,7 @@ fn bubble_toggle_needs_no_feed_command_and_leaves_capture_alone() {
 fn the_saved_workspace_describes_the_window_that_saved_it() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.ui_state_path = scratch_ui_state("capture");
+    app.workspace.set_ui_state_path(scratch_ui_state("capture"));
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);

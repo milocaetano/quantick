@@ -1882,7 +1882,7 @@ fn adding_a_symbol_opens_it_and_writes_it_to_the_sidecar() {
     let (mut app, _cmd_rx) = app_with_history(50);
     let path = symbols_scratch("added");
     let _ = std::fs::remove_file(&path);
-    app.symbols_path = path.clone();
+    app.workspace.set_symbols_path(path.clone());
     let tabs_before = app.tabs.len();
 
     // The real dialog: open it, type the contract, press Add.
@@ -1964,7 +1964,7 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
     );
     let path = symbols_scratch("refused");
     let _ = std::fs::remove_file(&path);
-    app.symbols_path = path.clone();
+    app.workspace.set_symbols_path(path.clone());
     let tabs_before = app.tabs.len();
 
     // The real dialog, on the B3 feed, typing the Tickmill instrument.

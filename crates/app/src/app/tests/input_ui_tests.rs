@@ -328,7 +328,7 @@ fn a_parked_popup_comes_back_after_a_restart() {
     // before the app adopts it.
     let (mut next, _commands) = app_with_history(200);
     let config = next.config.clone();
-    next.restore_workspace(ui_state::load(&app.ui_state_path).restore(&config));
+    next.restore_workspace(ui_state::load(app.workspace.ui_state_path()).restore(&config));
 
     assert_eq!(
         next.surfaces.drawing_chrome.inspector_pos(),
@@ -339,7 +339,7 @@ fn a_parked_popup_comes_back_after_a_restart() {
         next.surfaces.drawing_chrome.inspector_moved(),
         "and counts as hand-placed, so nothing places it again"
     );
-    let _ = std::fs::remove_file(&app.ui_state_path);
+    let _ = std::fs::remove_file(app.workspace.ui_state_path());
 }
 
 #[test]
