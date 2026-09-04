@@ -1,13 +1,13 @@
 # Pixels golden - the nine paper surfaces, main against the branch
 
-Base: origin/main d3cf317, branch refactor/paper-policy-out-of-the-ticket.
+Base: origin/main d3cf317. Branch head: 1017484.
 Fixture: a 4,000-print recording played to its end at speed 1000, held 45s,
 __COMPAT_LAYER=DPIUNAWARE, every QUANTICK_* store at a per-scene scratch path.
 
 The mask - rows 0-30 and 662-672, full width - was measured, not chosen: two
 runs of the SAME origin/main build differ in exactly those rows and nowhere
-else. They carry the clock and the tape position. See the main-against-main
-block below, which is the control that makes the other two mean anything.
+else. They carry the clock and the tape position. The main-against-main block
+below is the control that makes the other two mean anything.
 
 ## main against main (the control)
 ```
@@ -27,11 +27,11 @@ toast_paper                 OK  9d977cdb37ff0324 / 9d977cdb37ff0324
 9/9 identical outside the mask
 ```
 
-## branch against main, run 1
+## the branch head against main, run 1
 ```
 mask: rows [(0, 30), (662, 672)] blanked, full width
 
-scene                    match  mainC1 / branchC
+scene                    match  mainC1 / branchFinal
 paper_orders                OK  3696c0caaeccf8cb / 3696c0caaeccf8cb
 paper_order_bracket         OK  9830f0b144efde59 / 9830f0b144efde59
 paper_order_hover           OK  6699abbfdbaf5861 / 6699abbfdbaf5861
@@ -45,11 +45,11 @@ toast_paper                 OK  9d977cdb37ff0324 / 9d977cdb37ff0324
 9/9 identical outside the mask
 ```
 
-## branch against main, run 2
+## the branch head against main, run 2
 ```
 mask: rows [(0, 30), (662, 672)] blanked, full width
 
-scene                    match  mainC2 / branchC
+scene                    match  mainC2 / branchFinal
 paper_orders                OK  3696c0caaeccf8cb / 3696c0caaeccf8cb
 paper_order_bracket         OK  9830f0b144efde59 / 9830f0b144efde59
 paper_order_hover           OK  6699abbfdbaf5861 / 6699abbfdbaf5861
