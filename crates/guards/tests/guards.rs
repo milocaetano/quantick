@@ -1,4 +1,4 @@
-//! The seven repository guards, as the tests CI runs.
+//! The nine repository guards, as the tests CI runs.
 //!
 //! Each is a thin shell over the library: the logic, its rationale and its
 //! unit tests live in the module the failure names, and this file exists so
@@ -17,7 +17,7 @@ use quantick_guards::{GUARDS, remedies, workspace_root};
 /// instead of a green suite over a guard CI never runs — which is the failure
 /// the check exists to prevent, and which a hand-kept list of names invites by
 /// making "add the string" the obvious fix.
-const TESTED: [&str; 7] = [
+const TESTED: [&str; 9] = [
     "size",
     "language",
     "encoding",
@@ -25,6 +25,8 @@ const TESTED: [&str; 7] = [
     "cycle",
     "generated",
     "scratch",
+    "graph",
+    "headless",
 ];
 
 /// Run one named guard and fail with everything it found.
@@ -314,4 +316,22 @@ fn run_report() -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).expect("the report is UTF-8")
+}
+
+/// The one-way crate graph. It lived under `crates/pine/tests/` until this
+/// guard replaced it, where it ran only when a session happened to be
+/// building `pine` — so the check that answers "did I just add a reverse
+/// edge?" was the most expensive question in the repository to ask.
+#[test]
+fn the_crate_graph_runs_one_way() {
+    assert_clean(TESTED[7]);
+}
+
+/// Everything below `app` stays headless. Enforced by nothing at all until
+/// this guard, which is how `quantick-orderflow` was extracted *as a headless
+/// crate* carrying `Instant::now()` with fmt, clippy, the build and the whole
+/// suite green.
+#[test]
+fn the_crates_below_app_stay_headless() {
+    assert_clean(TESTED[8]);
 }

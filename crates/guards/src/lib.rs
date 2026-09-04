@@ -6,8 +6,10 @@
 //! cycle ([`cycle`]), everything written into a tracked file is English
 //! ([`language`]), sources are UTF-8 without a BOM and without welded doc
 //! comments ([`encoding`]), the generated indexes still say what the code
-//! says ([`generated`]), and a test's temporary directory is minted by its
-//! crate's scratch module rather than spelled by hand ([`scratch`]).
+//! says ([`generated`]), a test's temporary directory is minted by its
+//! crate's scratch module rather than spelled by hand ([`scratch`]), the
+//! crate graph runs one way ([`graph`]), and everything below `app` stays
+//! headless ([`headless`]).
 //!
 //! Each is a rule `CLAUDE.md` states and each fails invisibly — fmt, clippy,
 //! build and the whole suite stay green while it is broken. Counting them
@@ -45,6 +47,8 @@ pub mod context;
 pub mod cycle;
 pub mod encoding;
 pub mod generated;
+pub mod graph;
+pub mod headless;
 pub mod language;
 pub mod ratchet;
 pub mod report;
@@ -212,6 +216,25 @@ pub const GUARDS: &[Guard] = &[
         name: "encoding",
         check: encoding::check,
         check_file: encoding::check_file,
+        ratchet: None,
+    },
+    Guard {
+        // No ratchet: an edge either points the way the graph allows or it
+        // does not, and a recorded count of reverse edges would be a number
+        // to negotiate with.
+        name: "graph",
+        check: graph::check,
+        check_file: graph::check_file,
+        ratchet: None,
+    },
+    Guard {
+        // No ratchet, and deliberately: the tree is clean from the commit
+        // that added this guard, and every remaining site is signed in
+        // `headless-allowlist.txt` with a reason. A recorded finding count
+        // would let the rule drift back one entry at a time.
+        name: "headless",
+        check: headless::check,
+        check_file: headless::check_file,
         ratchet: None,
     },
     Guard {

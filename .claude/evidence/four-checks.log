@@ -1,0 +1,52 @@
+=== G2: the four checks, each run on its own, after rebasing onto latest main ===
+
+Base: 900f882 (Merge pull request #295 from milocaetano/refactor/app-rs-sidecars).
+An earlier identical run against 7dc2e15 is superseded by this one.
+
+$ cargo fmt --all -- --check
+exit 0
+
+$ cargo clippy --workspace --all-targets
+    Finished `dev` profile [optimized + debuginfo] target(s) in 12.29s
+exit 0
+
+$ cargo build --workspace
+    Finished `dev` profile [optimized + debuginfo] target(s) in 1m 04s
+exit 0
+
+$ cargo test --workspace
+93 "test result: ok" lines. Filtering the result lines for any that do not
+report "0 failed" returns nothing, and the log holds no "failures:" block and
+no compiler error line. Largest binaries:
+    1894 passed; 0 failed; 4 ignored   (quantick-app)
+     184 passed; 0 failed; 2 ignored
+     134 passed; 0 failed; 0 ignored   (quantick-guards lib)
+      16 passed; 0 failed; 0 ignored   (quantick-guards tests/guards.rs)
+exit 0
+
+Run separately rather than chained: a trailing `|| echo` once reported success
+while clippy had failed. The failing-result filter is used rather than `head`
+on a grep, which once hid a second FAILED line and shipped a red CI.
+
+=== the guards over the rebased tree ===
+
+$ cargo run -p quantick-guards
+exit 0   (no finding from any of the nine guards, the two new ones included)
+
+=== re-run after the arch-review step 0 fixes ===
+
+$ cargo fmt --all -- --check            exit 0
+$ cargo clippy --workspace --all-targets exit 0
+$ cargo build --workspace                exit 0
+$ cargo run -p quantick-guards           exit 0
+
+$ cargo test --workspace
+First run: 1 failure, in a crate this branch does not touch --
+app::tests::control_plane_tests::gateway_a_client_that_never_reads_does_not_stall_another.
+That is the known gateway/control-plane contention flake; `main` drops the same
+tests at the same rate. Re-run alone three times: 3 x ok. Full suite re-run:
+93 "test result: ok" lines, no result line with a non-zero failure count, no
+"failures:" block. exit 0.
+
+Reported rather than quietly re-run once: a suite that needed a second run is
+not the same claim as one that passed first time.
