@@ -31,7 +31,11 @@ jobs:
         # logged-in terminal nobody has in CI. `--select F` is pyflakes' rule
         # set — the one that catches a name that cannot resolve — and it runs
         # before the slow steps so this class of bug fails in seconds.
-        run: pipx run ruff check --select F tools/mt5/ bridge/mt5/
+        # The glob is `tools/`, not `tools/mt5/`: a Python file that lands
+        # anywhere under tools/ is linted the moment it exists, rather than when
+        # somebody remembers to widen this line. `tools/heatmap-lab/` arrived
+        # that way.
+        run: pipx run ruff check --select F tools/ bridge/mt5/
       - name: Exporter tests
         # Drives export_session.py end to end against a fake terminal: no
         # MetaTrader, no network, no credentials, nothing to install.
