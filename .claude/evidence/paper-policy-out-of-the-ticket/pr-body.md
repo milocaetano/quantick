@@ -81,33 +81,38 @@ SHA-256 after  the split: ab74859479f2f1e471dfb5a1556a15d2891d440c7c119db49c0e2a
 The test's body did not change across the split, and did not change across a
 rebase onto a main that had itself moved 87 lines of this file.
 
-## Pixels: what the fixture can and cannot prove
+## Pixels: the criterion's literal form is impossible, and here is why
 
-The criterion asked for captures identical between `origin/main` and this
-branch. **The fixture cannot deliver that reliably, and its own control runs
-are what say so** — read
-`.claude/evidence/paper-policy-out-of-the-ticket/pixels-golden.txt` for the
-full account, including the round that looked perfect and did not repeat.
+A10 asked for nine captures on each build shown identical by SHA-256 pairs.
+**`origin/main` does not meet that against itself.** Three runs of the same
+`origin/main` build, same fixture, same machine, differ by up to **2,366
+pixels** on one scene and 63-1,169 on most others. A build that cannot
+reproduce itself cannot be asked for a matching hash, and nor can anything
+compared to it.
 
-Two inputs move under the capture and neither is the tape. The clock and tape
-position, in two bands measured rather than chosen (rows 0–30 and 662–672),
-which are masked. And the **depth book**, which arrives from a live venue
-independently of the replay: one run paints a book, the next says "no book",
-and that is a 58×200 px block of chart. It was found by cropping the region
-two runs disagreed on and looking at it.
+So the mask is *derived*, never chosen: the union of every pixel the three
+control runs disagree on - a pixel main cannot reproduce is not evidence about
+a branch. It covers **0.06% of the frame**, which is what makes the remaining
+99.94% worth comparing.
 
-| Round | Control (main vs main) | Branch vs main |
-| --- | --- | --- |
-| Book unpinned | 9/9 | 9/9, twice |
-| Book unpinned, later | 9/9 | 4/9, then 6/9 — the book had arrived |
-| Book pinned (`QUANTICK_FEED_STALL`) | 6/9 | 7/9 against each control |
+| | run-to-run spread |
+| --- | --- |
+| `origin/main` against itself | 0-2,366 px |
+| this branch against itself | 0-71 px |
+| this branch against `origin/main` | 1, 1, 4 and 66 px on four scenes; exact on the other five |
 
-In the last round the branch matches main on **every scene where main matches
-itself**. That is the most this fixture can honestly assert, and it is what is
-asserted — not the flattering first row.
+The branch is, by this measurement, **more** reproducible than main. Stated
+exactly: *the branch's captures are indistinguishable from `origin/main`'s
+within main's own reproducibility, on all nine surfaces* - the honest form of
+the claim, not the literal one.
 
-What *is* proven, by evidence that does not move: the journal golden's
-byte-identical SHA-256, the control-plane snapshot below, and the test counts.
+Getting there took four fixtures, each removing one uncontrolled input and
+revealing the next: the clock bands; the depth book (it comes from whichever
+venue the default feed dials, not the replay - `offline.toml` dials a port
+nothing answers); and the window size (one launch returned 2576x1408, so the
+script now asserts the size and retries rather than compare a broken picture).
+All 45 captures behind the table are the right size. Full account in
+`.claude/evidence/paper-policy-out-of-the-ticket/pixels-golden.txt`.
 
 ## The control plane reads policy, not pixels
 
