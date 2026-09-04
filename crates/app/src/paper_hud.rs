@@ -17,9 +17,10 @@ use quantick_engine::Side;
 use rust_decimal::prelude::ToPrimitive;
 
 use crate::chart::PriceScale;
-use crate::paper_trading::{
-    PaperTrading, PositionSummary, fmt_decimal, fmt_signed_points, points_color, position_word,
+use crate::paper_chrome::{
+    PositionSummary, fmt_decimal, fmt_signed_points, points_color, position_word,
 };
+use crate::paper_trading::PaperTrading;
 use crate::theme;
 
 /// Gap between the pane's corner and the HUD card, in pixels.

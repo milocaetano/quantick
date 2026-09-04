@@ -1,4 +1,4 @@
-//! The four repository guards, as the tests CI runs.
+//! The five repository guards, as the tests CI runs.
 //!
 //! Each is a thin shell over the library: the logic, its rationale and its
 //! unit tests live in the module the failure names, and this file exists so
@@ -17,7 +17,7 @@ use quantick_guards::{GUARDS, remedies, workspace_root};
 /// instead of a green suite over a guard CI never runs — which is the failure
 /// the check exists to prevent, and which a hand-kept list of names invites by
 /// making "add the string" the obvious fix.
-const TESTED: [&str; 4] = ["size", "language", "encoding", "context"];
+const TESTED: [&str; 5] = ["size", "language", "encoding", "context", "cycle"];
 
 /// Run one named guard and fail with everything it found.
 fn assert_clean(name: &str) {
@@ -75,4 +75,12 @@ fn every_guard_in_the_registry_has_a_test_here() {
 #[test]
 fn no_context_file_grows_past_its_recorded_ceiling() {
     assert_clean(TESTED[3]);
+}
+
+/// The one this repository learned the hard way twice: a refactor that
+/// welds two modules into a cycle leaves fmt, clippy, the build and the
+/// whole suite green. This is the test that stops being green.
+#[test]
+fn no_crate_grows_a_module_cycle_past_its_recorded_ceiling() {
+    assert_clean(TESTED[4]);
 }

@@ -871,7 +871,7 @@ pub(crate) struct RiskBlock<'a> {
 pub(crate) fn draw_risk_block(ui: &mut eframe::egui::Ui, block: RiskBlock<'_>) -> bool {
     use eframe::egui;
 
-    use crate::paper_trading::{caption, pill_toggle};
+    use crate::paper_chrome::{caption, pill_toggle};
     use crate::theme;
 
     let mut changed = false;

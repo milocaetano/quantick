@@ -14,7 +14,7 @@ use quantick_sim::{ClosedTrade, Order};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{app::QuantickApp, paper_trading::PositionSummary, tab::Tab};
+use crate::{app::QuantickApp, paper_chrome::PositionSummary, tab::Tab};
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},

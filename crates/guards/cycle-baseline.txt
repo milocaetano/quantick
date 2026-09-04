@@ -1,0 +1,45 @@
+# The recorded ceiling, in module cycles, for every crate that has one. One
+# `path ceiling` pair per line; `#` starts a comment.
+#
+# A module cycle is two or more of a crate's top-level modules that import
+# each other, directly or the long way round. Cargo forbids this between
+# crates and permits it inside one, so nothing in a green build says it has
+# happened — which is how the repository acquired the three below without
+# anyone deciding to.
+#
+# Every crate not listed here is capped at zero. That is the point of the
+# file: a new cycle anywhere fails the build in the change that introduces
+# it, instead of being found by hand months later.
+#
+# These are defects, not budgets. The only direction an entry should ever
+# move is down, and `cargo run -p quantick-guards -- --tighten` writes the
+# lower number once a cycle is actually broken.
+
+# `app.rs` defines `QuantickApp`, which every control-plane call operates on;
+# `QuantickApp` draws `surfaces`; and `surfaces/agent_popup.rs` reaches back
+# into `control` for the popup's own state. So `app -> surfaces -> control ->
+# app`. Untouched by the branch that introduced this guard: the fix is a
+# port for the control plane to hold its own surface state behind, which is
+# a design change, not a move. Recorded so it cannot grow while it waits.
+crates/app 1
+
+# `wire.rs` names `error::ControlError` and `error.rs` names
+# `wire::ModuleRevision` — an error type that carries a wire value, and a wire
+# type that returns errors. Found by this guard rather than by anyone reading
+# the crate: the prototype that measured the repository before the guard was
+# written used a regular expression and missed it, because both imports are
+# written as grouped `use crate::{...}` trees. That miss is why the parser is
+# written by hand.
+crates/control 1
+
+# `events.rs` names `position::ClosedTrade` and `position.rs` names
+# `events::ExitReason` — two type definitions that reference each other
+# across a module boundary. Pre-existing, in a headless crate this branch had
+# no reason to open. Breaking it means one more module below both, the same
+# shape as `paper_chrome`.
+crates/trading 1
+
+# The whole tracked weight: every signed cycle, plus any in a crate with no
+# entry (there are none, and the threshold of zero is what keeps it that
+# way). Paying for a new cycle means breaking an old one in the same change.
+!budget 3

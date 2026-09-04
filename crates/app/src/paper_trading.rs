@@ -26,7 +26,11 @@ use rust_decimal::prelude::ToPrimitive;
 
 use crate::chart::PriceScale;
 // One date law for every trade surface - see `paper_calendar`.
-use crate::paper_calendar::{CivilDate, DaySelection, civil_utc};
+use crate::paper_calendar::{DaySelection, civil_utc};
+use crate::paper_chrome::{
+    PositionSummary, caption, fmt_decimal, fmt_points, fmt_signed_points, pill_toggle,
+    points_color, position_word, sanitize_symbol,
+};
 use crate::theme;
 use crate::timezone::TzOffset;
 
@@ -255,20 +259,6 @@ const CHIP_CLEAR_PX: f32 = 16.0;
 pub struct ArmedPlacement {
     side: Side,
     kind: EntryKind,
-}
-
-/// The open position, read-only, as every chrome surface reports it — the
-/// HUD, the dock badge and the status cell all describe the same trade.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PositionSummary {
-    /// Which way the position points.
-    pub side: Side,
-    /// Contracts/units held.
-    pub quantity: Decimal,
-    /// Average entry price.
-    pub avg_price: Decimal,
-    /// Open profit at the current mark; `None` before any mark exists.
-    pub open_points: Option<Decimal>,
 }
 
 /// Which simulated line the pointer is dragging.
@@ -5986,45 +5976,6 @@ fn kind_short(kind: EntryKind) -> &'static str {
     }
 }
 
-/// Uppercase section caption — the ledger's group labels and column header.
-pub(crate) fn caption(text: &str) -> egui::RichText {
-    egui::RichText::new(text)
-        .size(10.0)
-        .color(theme::TEXT_FAINT)
-}
-
-/// A pill-shaped toggle chip: accent fill while on, quiet control while off.
-pub(crate) fn pill_toggle(ui: &mut egui::Ui, label: &str, on: bool, hover: &str) -> egui::Response {
-    let (fill, ink, stroke) = if on {
-        (theme::ACCENT, theme::CHIP_INK, egui::Stroke::NONE)
-    } else {
-        (
-            theme::CONTROL,
-            theme::TEXT_MUTED,
-            egui::Stroke::new(1.0_f32, theme::BORDER),
-        )
-    };
-    ui.add(
-        egui::Button::new(egui::RichText::new(label).color(ink).small())
-            .fill(fill)
-            .stroke(stroke)
-            .rounding(egui::Rounding::same(9.0)),
-    )
-    .on_hover_text(hover)
-}
-
-/// `38s`, `4m 18s`, `1h 02m` — a trade's age in venue time.
-pub(crate) fn fmt_duration_ms(ms: i64) -> String {
-    let seconds = (ms / 1000).max(0);
-    if seconds < 60 {
-        format!("{seconds}s")
-    } else if seconds < 3600 {
-        format!("{}m {:02}s", seconds / 60, seconds % 60)
-    } else {
-        format!("{}h {:02}m", seconds / 3600, (seconds % 3600) / 60)
-    }
-}
-
 /// Keep a gutter chip legible when it would land on the last-price chip:
 /// push it just clear of the reserved row, towards its own side of the
 /// price, clamped into the pane. At the exact fill price (no distance at
@@ -6074,69 +6025,11 @@ fn side_word_upper(side: Side) -> &'static str {
     }
 }
 
-/// `LONG`/`SHORT` — shared with the HUD so every surface uses one register.
-pub(crate) fn position_word(side: Side) -> &'static str {
-    match side {
-        Side::Buy => "LONG",
-        Side::Sell => "SHORT",
-    }
-}
-
 fn kind_word(kind: EntryKind) -> &'static str {
     match kind {
         EntryKind::Market => "market",
         EntryKind::Limit => "limit",
         EntryKind::Stop => "stop",
-    }
-}
-
-/// Green gains, red losses, muted zero — shared with the HUD.
-pub(crate) fn points_color(points: Decimal) -> egui::Color32 {
-    match points.cmp(&Decimal::ZERO) {
-        std::cmp::Ordering::Greater => theme::BUY,
-        std::cmp::Ordering::Less => theme::SELL,
-        std::cmp::Ordering::Equal => theme::TEXT_MUTED,
-    }
-}
-
-/// Exact value, trailing zeros stripped — prices and quantities.
-pub(crate) fn fmt_decimal(value: Decimal) -> String {
-    value.normalize().to_string()
-}
-
-/// Points rounded to two places for display (the stored value stays exact).
-pub(crate) fn fmt_points(value: Decimal) -> String {
-    value.round_dp(2).normalize().to_string()
-}
-
-/// Signed points: an explicit `+` on gains so a green `12` can never be
-/// misread as a count.
-pub(crate) fn fmt_signed_points(value: Decimal) -> String {
-    if value > Decimal::ZERO {
-        format!("+{}", fmt_points(value))
-    } else {
-        fmt_points(value)
-    }
-}
-
-/// Keep the characters real venue symbols use (`WDO$`, `WIN@N`… stay
-/// recognizable); anything else becomes `_` so a symbol can never traverse
-/// paths.
-pub(crate) fn sanitize_symbol(symbol: &str) -> String {
-    let cleaned: String = symbol
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || "-_.$#".contains(character) {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if cleaned.is_empty() {
-        "_".to_owned()
-    } else {
-        cleaned
     }
 }
 
@@ -6152,26 +6045,6 @@ fn utc_compact(timestamp_ms: i64) -> String {
 fn fmt_utc_date(timestamp_ms: i64) -> String {
     let (year, month, day, ..) = civil_utc(timestamp_ms);
     format!("{year:04}-{month:02}-{day:02}")
-}
-
-/// `YYYY-MM-DD HH:MM` in the display timezone — the equity curve's hover
-/// stamp, on the same clock as every trade row beneath it.
-pub(crate) fn fmt_offset_minute(timestamp_ms: i64, tz: TzOffset) -> String {
-    let (year, month, day, hour, minute, _) =
-        civil_utc(timestamp_ms.saturating_add(tz.offset_ms()));
-    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
-}
-
-/// Today's civil date on the display clock. The app layer may read a wall
-/// clock — the engine and the pure modules may not — and this is the one
-/// place it does so for a date: the calendar's fallback when no saved
-/// trade names a month to open on.
-pub(crate) fn today(tz: TzOffset) -> CivilDate {
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(0))
-        .unwrap_or(0);
-    CivilDate::from_ms(now_ms, tz)
 }
 
 /// A protective price the ticket's offset away from the average entry:
@@ -6384,20 +6257,6 @@ fn test_scratch_dir() -> PathBuf {
     ))
 }
 
-/// The symbol folders under the history dir, for the report's combo box.
-pub(crate) fn list_symbol_folders(dir: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut folders: Vec<String> = entries
-        .flatten()
-        .filter(|entry| entry.path().is_dir())
-        .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
-        .collect();
-    folders.sort();
-    folders
-}
-
 #[cfg(test)]
 mod risk_tests {
     use super::*;
@@ -6590,6 +6449,9 @@ mod risk_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Journalling tests read back the folders the writer created; the
+    // helper that lists them lives with the rest of the shared chrome.
+    use crate::paper_chrome::list_symbol_folders;
     use crate::paper_report::{load_history, report_from_history};
 
     /// One journal row: the trade, the folder it came from, the source its
@@ -6618,29 +6480,6 @@ mod tests {
         assert_eq!(utc_compact(1_773_666_068_000), "20260316-130108");
         // The epoch itself.
         assert_eq!(utc_compact(0), "19700101-000000");
-    }
-
-    #[test]
-    fn symbols_sanitize_without_losing_venue_spellings() {
-        assert_eq!(sanitize_symbol("WDO$"), "WDO$");
-        assert_eq!(sanitize_symbol("BTCUSDT"), "BTCUSDT");
-        assert_eq!(sanitize_symbol("../evil"), ".._evil");
-        assert_eq!(sanitize_symbol(""), "_");
-    }
-
-    #[test]
-    fn signed_points_always_carry_their_sign() {
-        assert_eq!(fmt_signed_points(Decimal::from(12)), "+12");
-        assert_eq!(fmt_signed_points(Decimal::from(-3)), "-3");
-        assert_eq!(fmt_signed_points(Decimal::ZERO), "0");
-    }
-
-    #[test]
-    fn durations_format_by_magnitude() {
-        assert_eq!(fmt_duration_ms(38_000), "38s");
-        assert_eq!(fmt_duration_ms(258_000), "4m 18s");
-        assert_eq!(fmt_duration_ms(3_720_000), "1h 02m");
-        assert_eq!(fmt_duration_ms(-5), "0s", "clock skew never explodes");
     }
 
     #[test]
@@ -6750,15 +6589,6 @@ mod tests {
     #[test]
     fn utc_dates_format_from_the_same_civil_math() {
         assert_eq!(fmt_utc_date(1_773_666_068_000), "2026-03-16");
-        assert_eq!(
-            fmt_offset_minute(1_773_666_068_000, TzOffset::new(0)),
-            "2026-03-16 13:01"
-        );
-        assert_eq!(
-            fmt_offset_minute(1_773_666_068_000, TzOffset::new(-180)),
-            "2026-03-16 10:01",
-            "the curve's stamp reads on the display clock"
-        );
     }
 
     #[test]

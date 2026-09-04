@@ -364,7 +364,7 @@ fn copy_loose_file(path: &Path, dest: &Path, summary: &mut ImportSummary) {
         .and_then(|parsed| parsed.symbol);
     match symbol {
         Some(symbol) => {
-            let folder = dest.join(crate::paper_trading::sanitize_symbol(&symbol));
+            let folder = dest.join(crate::paper_chrome::sanitize_symbol(&symbol));
             copy_one(path, &folder, summary);
         }
         None => {

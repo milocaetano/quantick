@@ -33,7 +33,7 @@ use quantick_sim::ClosedTrade;
 use rust_decimal::prelude::ToPrimitive;
 
 use crate::chart::PriceScale;
-use crate::paper_trading::{
+use crate::paper_chrome::{
     fmt_decimal, fmt_duration_ms, fmt_signed_points, points_color, position_word,
 };
 use crate::theme;

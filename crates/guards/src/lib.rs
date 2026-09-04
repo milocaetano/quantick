@@ -1,7 +1,8 @@
 //! Repository guards for the things the compiler cannot see.
 //!
-//! Three rules hold in this repo that no amount of `cargo build` can check: a
-//! file may not silently absorb a crate ([`size`]), everything written into a
+//! Four rules hold in this repo that no amount of `cargo build` can check: a
+//! file may not silently absorb a crate ([`size`]), a crate's modules may not
+//! weld themselves into a cycle ([`cycle`]), everything written into a
 //! tracked file is English ([`language`]), and sources are UTF-8 without a BOM
 //! and without welded doc comments ([`encoding`]). Each is a rule
 //! `CLAUDE.md` states and each fails invisibly — fmt, clippy, build and the
@@ -35,6 +36,7 @@
 //! was born inside.
 
 pub mod context;
+pub mod cycle;
 pub mod encoding;
 pub mod language;
 pub mod ratchet;
@@ -100,6 +102,25 @@ pub fn remedies(findings: &[Finding]) -> Vec<&'static str> {
     out
 }
 
+/// The half of a guard that rations a measurable quantity and can therefore
+/// lower its own recorded numbers.
+///
+/// Carried on the [`Guard`] rather than listed a second time in the binary.
+/// The first version of the cycle ratchet was registered in three places —
+/// [`GUARDS`], the tighten list in `main.rs`, and the CI test file — and only
+/// the third had a drift check. A ratchet added to the registry and forgotten
+/// in the binary tightens nothing, silently, which is the failure shape this
+/// crate exists to remove.
+pub struct Ratchet {
+    /// Lower every entry whose measurement has fallen, and the budget with
+    /// them. One line per entry rewritten.
+    pub tighten: fn(&Path) -> Result<Vec<String>, String>,
+    /// The baseline it rewrites, workspace-relative, for the success line.
+    pub baseline_file: &'static str,
+    /// The gap below the budget it tolerates, for the nothing-to-do line.
+    pub budget_slack: usize,
+}
+
 /// One guard, so the binary and the tests name the same things in the same
 /// order.
 pub struct Guard {
@@ -109,6 +130,9 @@ pub struct Guard {
     pub check: fn(&Path) -> Vec<Finding>,
     /// Every violation in one file, for the edit-time hook.
     pub check_file: fn(&Path, &str) -> Vec<Finding>,
+    /// Present only for a guard built on [`ratchet::Policy`]. `None` for the
+    /// scans — [`language`] and [`encoding`] have no numbers to lower.
+    pub ratchet: Option<Ratchet>,
 }
 
 /// Every guard this crate runs.
@@ -117,20 +141,42 @@ pub const GUARDS: &[Guard] = &[
         name: "size",
         check: size::check,
         check_file: size::check_file,
+        ratchet: Some(Ratchet {
+            tighten: size::tighten,
+            baseline_file: size::BASELINE_FILE,
+            budget_slack: size::BUDGET_SLACK,
+        }),
     },
     Guard {
         name: "context",
         check: context::check,
         check_file: context::check_file,
+        ratchet: Some(Ratchet {
+            tighten: context::tighten,
+            baseline_file: context::BASELINE_FILE,
+            budget_slack: context::BUDGET_SLACK,
+        }),
+    },
+    Guard {
+        name: "cycle",
+        check: cycle::check,
+        check_file: cycle::check_file,
+        ratchet: Some(Ratchet {
+            tighten: cycle::tighten,
+            baseline_file: cycle::BASELINE_FILE,
+            budget_slack: cycle::BUDGET_SLACK,
+        }),
     },
     Guard {
         name: "language",
         check: language::check,
         check_file: language::check_file,
+        ratchet: None,
     },
     Guard {
         name: "encoding",
         check: encoding::check,
         check_file: encoding::check_file,
+        ratchet: None,
     },
 ];

@@ -216,12 +216,24 @@ fn baseline(root: &Path) -> Result<Baseline, String> {
 /// Test code above the module therefore costs nothing, and production code
 /// below it is counted — which is the direction a ratchet should err in.
 pub fn production_lines(source: &str) -> usize {
+    production_source(source).len()
+}
+
+/// The production lines themselves, in file order — the same law as
+/// [`production_lines`], which is now a count of what this returns.
+///
+/// Split out for [`crate::cycle`], which reads `use crate::` statements and
+/// must not see the ones a test module writes to reach a fixture. Two copies
+/// of "where does the test code start?" would drift, and the first symptom
+/// would be a cycle guard that fires on a test import — the false positive
+/// that gets a guard switched off.
+pub fn production_source(source: &str) -> Vec<&str> {
     let lines: Vec<&str> = source.lines().collect();
-    let mut production = 0;
+    let mut production = Vec::new();
     let mut index = 0;
     while index < lines.len() {
         if lines[index] != "#[cfg(test)]" {
-            production += 1;
+            production.push(lines[index]);
             index += 1;
             continue;
         }

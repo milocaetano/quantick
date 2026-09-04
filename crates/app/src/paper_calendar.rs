@@ -22,6 +22,7 @@ use egui_phosphor::regular as icons;
 use quantick_sim::ClosedTrade;
 use rust_decimal::Decimal;
 
+use crate::paper_chrome::{fmt_signed_points, points_color};
 use crate::theme;
 use crate::timezone::TzOffset;
 
@@ -198,6 +199,32 @@ impl CivilDate {
         let (other_year, other_month, _) = other.ymd();
         (year, month) == (other_year, other_month)
     }
+}
+
+/// `YYYY-MM-DD HH:MM` in the display timezone — the equity curve's hover
+/// stamp, on the same clock as every trade row beneath it.
+///
+/// Here rather than beside the report's other formatters because it is
+/// civil-date arithmetic, and this module is where that law lives; a copy
+/// in `paper_chrome` would have had to import `civil_utc` from here while
+/// this module imports colours from there, which is the cycle the split
+/// exists to prevent.
+pub(crate) fn fmt_offset_minute(timestamp_ms: i64, tz: TzOffset) -> String {
+    let (year, month, day, hour, minute, _) =
+        civil_utc(timestamp_ms.saturating_add(tz.offset_ms()));
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
+}
+
+/// Today's civil date on the display clock. The app layer may read a wall
+/// clock — the engine and the pure modules may not — and this is the one
+/// place it does so for a date: the calendar's fallback when no saved
+/// trade names a month to open on.
+pub(crate) fn today(tz: TzOffset) -> CivilDate {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(0))
+        .unwrap_or(0);
+    CivilDate::from_ms(now_ms, tz)
 }
 
 /// `Jan`…`Dec`; anything outside 1..=12 is a bug upstream, and `???` says
@@ -600,7 +627,7 @@ fn draw_day_cell(
         // a single number is. A day that netted exactly zero is neither —
         // the same verdict `points_color` gives it everywhere else, and
         // painting a scratch green would be the optimistic lie.
-        let base = crate::paper_trading::points_color(stat.net);
+        let base = points_color(stat.net);
         ui.painter().rect_filled(
             body,
             egui::Rounding::same(3.0),
@@ -651,7 +678,7 @@ fn draw_day_cell(
                 "{} · {} trade(s) · {} pts · {} win",
                 date.iso(),
                 stat.trades,
-                crate::paper_trading::fmt_signed_points(stat.net),
+                fmt_signed_points(stat.net),
                 stat.wins,
             ),
             None => format!("{} · no trades", date.iso()),
@@ -679,6 +706,22 @@ mod tests {
     /// shows up here first.
     fn sao_paulo() -> TzOffset {
         TzOffset::new(-180)
+    }
+
+    /// Travelled here with `fmt_offset_minute`: the curve's hover stamp
+    /// and the ledger's rows must read on one clock, and that clock is
+    /// this module's.
+    #[test]
+    fn display_stamps_read_on_the_display_clock() {
+        assert_eq!(
+            fmt_offset_minute(1_773_666_068_000, utc()),
+            "2026-03-16 13:01"
+        );
+        assert_eq!(
+            fmt_offset_minute(1_773_666_068_000, sao_paulo()),
+            "2026-03-16 10:01",
+            "the curve's stamp reads on the display clock"
+        );
     }
 
     fn trade(closed_ms: i64, pnl: i64) -> ClosedTrade {
