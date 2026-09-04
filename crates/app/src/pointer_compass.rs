@@ -295,7 +295,7 @@ pub(crate) fn paint_time_mark(
     // written at. The strip drops seconds when it runs out of room for six
     // labels; there is only ever one of these, and a trader who points at a
     // bar to ask when it happened is asking to the second.
-    let text = crate::app::fmt_time_as(bar.open_time_unix_ms, tz, TimeLabelFormat::Full);
+    let text = crate::plot_area::fmt_time_as(bar.open_time_unix_ms, tz, TimeLabelFormat::Full);
     let galley = painter.layout_no_wrap(
         text,
         egui::FontId::monospace(chart::TIME_LABEL_FONT_PX),
