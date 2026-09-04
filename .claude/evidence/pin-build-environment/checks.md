@@ -46,11 +46,12 @@ checks it against its own manifest. It read `crates/app/Cargo.toml`, where the
 `eframe` feature list used to live. After the move that file says only
 `eframe = { workspace = true }`, and the feature list is in the root.
 
-Repointed at the workspace manifest. The `expect` on the split is what keeps
-the fix honest: aimed at the wrong file the test would now find no feature list
-at all and pass by finding nothing, which would be a worse failure than the one
-it just had. Only `cargo test` could catch this — `cargo clippy --all-targets`
-compiles tests but does not run them.
+Repointed at the workspace manifest. The failure mode is the good one: aimed at
+the wrong manifest the test does not quietly pass, because both `expect`s still
+find something and the assertion fails naming what it actually read — which is
+exactly how the move was caught. Only `cargo test` could catch it at all;
+`cargo clippy --all-targets` compiles tests but does not run them, which is why
+the first three checks were green while this was broken.
 
 ## A1 — the toolchain is pinned, and the pin is what gets used
 

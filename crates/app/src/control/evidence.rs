@@ -2084,10 +2084,10 @@ mod tests {
     /// The manifest to read is the workspace root's, not this crate's: every
     /// third-party version and feature set is stated once under
     /// `[workspace.dependencies]`, so `crates/app/Cargo.toml` now says only
-    /// `eframe = { workspace = true }`. The `expect` below is what holds that
-    /// — pointed at the crate manifest this test would find no feature list at
-    /// all, and a test that passes by finding nothing is worse than one that
-    /// fails.
+    /// `eframe = { workspace = true }`. Aimed at the crate manifest this test
+    /// does not quietly pass — both `expect`s still find something, and the
+    /// assertion below fails naming what it read instead, which is how the
+    /// move was caught.
     #[test]
     fn the_reported_graphics_backend_is_the_one_the_manifest_selects() {
         let manifest = include_str!("../../../../Cargo.toml");
