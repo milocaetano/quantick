@@ -38,7 +38,6 @@ use crate::indicators::preset_file;
 use crate::indicators::state_file::{self, SavedInput, SavedKind};
 use crate::loading::{self, LoadingScope, LoadingTask};
 use crate::metrics::{self, FrameStats};
-use crate::orderflow::LaneWindow;
 use crate::pane::{self, ChartPane, DRAWING_ANCHOR_RADIUS_PX, PaneSide};
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::state::BarSpec;
@@ -54,6 +53,7 @@ use crate::toolrail::{Tool, ToolRail, ToolboxDock};
 use crate::ui_state;
 use crate::window_scale;
 use crate::workspace_store::{LayoutStore, StorePaths, WorkspacePick, WorkspaceStore};
+use quantick_orderflow::LaneWindow;
 use smallvec::SmallVec;
 
 /// Id of the tab the window opens with.
@@ -5179,11 +5179,11 @@ impl QuantickApp {
             // freezes rather than growing — `feed_arrival_ms` above is the one
             // that answers "is anything still arriving".
             tape_age_ms = book.tape_age.map(|age| match age {
-                crate::orderflow::TapeAge::Behind(ms) | crate::orderflow::TapeAge::NothingYet(ms) => ms,
+                quantick_orderflow::TapeAge::Behind(ms) | quantick_orderflow::TapeAge::NothingYet(ms) => ms,
             }),
             tape_age_kind = book.tape_age.map(|age| match age {
-                crate::orderflow::TapeAge::Behind(_) => "behind",
-                crate::orderflow::TapeAge::NothingYet(_) => "nothing_yet",
+                quantick_orderflow::TapeAge::Behind(_) => "behind",
+                quantick_orderflow::TapeAge::NothingYet(_) => "nothing_yet",
             }),
             book_updates_per_s = book_rate,
             book_updates_total = book.depth_updates,

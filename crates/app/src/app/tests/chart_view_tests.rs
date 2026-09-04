@@ -51,7 +51,7 @@ fn the_pointer_hook_parks_the_mouse_among_the_candles() {
 
 #[test]
 fn the_lane_axis_reads_its_window_in_a_human_unit() {
-    use crate::orderflow::format_window_ms;
+    use quantick_orderflow::format_window_ms;
     // One duration, one wording. The tape's axis and the menu that sets
     // its window sit a hand's width apart, so "1.5 min" under the tape
     // while the menu reads "1 min 30 s" is two languages for one number.

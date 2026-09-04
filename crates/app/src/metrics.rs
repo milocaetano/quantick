@@ -97,15 +97,9 @@ pub fn wall_clock_ms() -> i64 {
         })
 }
 
-/// Source-to-consumer delay observed when an event arrives.
-///
-/// `None` when there is no event timestamp to compare. Can be slightly negative
-/// if the local clock is behind the source's — reported as-is (honest), not
-/// clamped.
-#[must_use]
-pub fn feed_lag_ms(received_at_ms: i64, event_time_ms: Option<i64>) -> Option<i64> {
-    event_time_ms.map(|timestamp_ms| received_at_ms.saturating_sub(timestamp_ms))
-}
+// Lives with the order-flow engine, which observes the same lag on depth
+// events; re-exported so the tape's callers keep one name for it.
+pub use quantick_orderflow::feed_lag_ms;
 
 #[cfg(test)]
 mod tests {
@@ -138,13 +132,5 @@ mod tests {
         s.record(20.0); // evicts 100
         assert!((s.avg_ms().unwrap() - 15.0).abs() < 0.001);
         assert!((s.worst_ms().unwrap() - 20.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn lag_is_observation_minus_event_time() {
-        assert_eq!(feed_lag_ms(1_000, Some(600)), Some(400));
-        assert_eq!(feed_lag_ms(1_000, None), None);
-        // Local clock behind the exchange: negative lag, reported honestly.
-        assert_eq!(feed_lag_ms(500, Some(600)), Some(-100));
     }
 }

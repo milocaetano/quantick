@@ -29,13 +29,11 @@ use quantick_orderbook::BookLevel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use quantick_orderflow::{DisplayGrouping, LaneWindow};
+
 use crate::{
-    app::QuantickApp,
-    footprint_config::FootprintStyle,
-    orderflow::{DisplayGrouping, LaneWindow},
-    orderflow_view::OrderflowView,
-    pane::ChartPane,
-    tab::Tab,
+    app::QuantickApp, footprint_config::FootprintStyle, orderflow_view::OrderflowView,
+    pane::ChartPane, tab::Tab,
 };
 
 use super::{

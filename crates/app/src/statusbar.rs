@@ -33,9 +33,9 @@ use egui_phosphor::regular as icons;
 use crate::feed::{FeedConnectionState, FeedLatency};
 use crate::feed_notice;
 use crate::metrics;
-use crate::orderflow;
 use crate::theme;
 use crate::timezone::TzOffset;
+use quantick_orderflow as orderflow;
 
 /// Height of the status line, in pixels (§5 zone 7).
 pub const STATUS_BAR_HEIGHT: f32 = 28.0;

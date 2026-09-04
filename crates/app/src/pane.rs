@@ -33,10 +33,6 @@ use crate::indicator_worker::{
     IndicatorCommand, IndicatorSource, IndicatorWorker, MAX_LANE_RUNGS, SlotId,
 };
 use crate::indicators::{IndicatorViews, MIN_PANE_HEIGHT_PX, PaneSizing};
-use crate::orderflow::{
-    LANE_WINDOW_PRESETS_MS, LaneWindow, MAX_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_WINDOW_MS,
-    format_window_ms, lane_lag_label, lane_window_label, reserved_span_ms, same_lane_window,
-};
 use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
 use crate::paper_trading::{ChartInput, PaperTrading};
 use crate::plot_area::{self, PlotAreas, fmt_time_as, plot_split, split_time_strip};
@@ -48,6 +44,10 @@ use crate::theme;
 use crate::timezone::TzOffset;
 use crate::toolrail::{Tool, ToolRail};
 use crate::viewport::Viewport;
+use quantick_orderflow::{
+    LANE_WINDOW_PRESETS_MS, LaneWindow, MAX_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_WINDOW_MS,
+    format_window_ms, lane_lag_label, lane_window_label, reserved_span_ms, same_lane_window,
+};
 
 /// Hit radius for selecting a drawing anchor, in logical pixels.
 const DRAWING_SELECT_RADIUS_PX: f32 = 10.0;
@@ -5481,7 +5481,7 @@ impl ChartPane {
                 timeline,
                 lane_width_px > 0.0,
                 end == total,
-                Some(crate::orderflow::reserved_span_ms(self.state.bars())),
+                Some(quantick_orderflow::reserved_span_ms(self.state.bars())),
                 scale.range(),
             )
         });
@@ -6258,7 +6258,7 @@ impl ChartPane {
         painter: &egui::Painter,
         lane_strip: Option<egui::Rect>,
         window_ms: i64,
-        tape_age: Option<crate::orderflow::TapeAge>,
+        tape_age: Option<quantick_orderflow::TapeAge>,
     ) {
         let Some(strip) = lane_strip else {
             return;
@@ -7934,7 +7934,7 @@ mod tests {
     /// no lane" — no divider, so no carve, no rungs, no tape time axis.
     #[test]
     fn a_tape_that_is_off_publishes_no_divider_for_anything_to_hang_off() {
-        use crate::orderflow::LiveLaneStyle;
+        use quantick_orderflow::LiveLaneStyle;
         let chart = egui::Rect::from_min_max(egui::pos2(60.0, 80.0), egui::pos2(1_000.0, 700.0));
 
         let mut lane = LiveLaneStyle::default();
@@ -8047,11 +8047,11 @@ mod tests {
             egui::pos2(600.0, 980.0),
             egui::pos2(600.0 + roomy_px + 1.0, 1000.0),
         );
-        let axis = |age: Option<crate::orderflow::TapeAge>| {
+        let axis = |age: Option<quantick_orderflow::TapeAge>| {
             painted(|painter| pane.draw_lane_time_axis(painter, Some(strip), 30_000, age))
         };
 
-        let late_by = |ms| Some(crate::orderflow::TapeAge::Behind(ms));
+        let late_by = |ms| Some(quantick_orderflow::TapeAge::Behind(ms));
         let current = axis(None);
         assert!(
             current.contains("tape") && !current.contains("print"),
@@ -8153,7 +8153,7 @@ mod tests {
                 painter,
                 Some(hair),
                 30_000,
-                Some(crate::orderflow::TapeAge::NothingYet(90_000)),
+                Some(quantick_orderflow::TapeAge::NothingYet(90_000)),
             )
         });
         for x in painted_positions(&squeezed) {

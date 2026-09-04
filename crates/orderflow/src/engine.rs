@@ -3,7 +3,7 @@
 //! Owns the authoritative [`LiquidityHistory`], synchronization status,
 //! diagnostic counters and the projection cache. It has no egui, no channels
 //! and no clock other than projection-cache aging, so tests drive it
-//! synchronously; at runtime [`crate::orderflow_worker`] owns one instance on a
+//! synchronously; at runtime the chart's `orderflow_worker` owns one instance on a
 //! dedicated thread and the UI only reads published snapshots.
 
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use quantick_orderbook::{BookLevel, DepthEvent, DepthResyncReason, DepthStatus};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
-use crate::orderflow::{
+use crate::{
     BarTimeline, HeatmapConfig, HeatmapProjection, HistoryStatus, LiquidityHistory, LiveEdge,
     PriceWindow, SettledProjection, project_live, project_settled, reserved_span_ms,
 };
@@ -24,14 +24,14 @@ use crate::orderflow::{
 /// History or bar-boundary changes mark the projection dirty. This cadence
 /// coalesces a burst of updates, while a clean projection remains cached
 /// indefinitely. The live half ignores this interval entirely — see
-/// [`BookEngine::project`].
-pub(crate) const PROJECTION_INTERVAL: Duration = Duration::from_millis(220);
+/// [`BookEngine::project_at`].
+pub const PROJECTION_INTERVAL: Duration = Duration::from_millis(220);
 
 /// Maximum raw book levels per side copied into a published [`BookLadder`].
 /// Bounds the per-batch copy in [`BookEngine::published`] and the memory the
 /// UI clones per frame; deeper books stay fully captured in history, they are
 /// just not republished level-by-level.
-pub(crate) const LADDER_LEVELS_PER_SIDE: usize = 128;
+pub const LADDER_LEVELS_PER_SIDE: usize = 128;
 
 /// Quantize the price window before it keys the projection cache, so a
 /// sub-pixel wiggle of the auto-fit range (which happens almost every frame on a
@@ -111,9 +111,9 @@ fn adaptive_base(price: f64) -> Decimal {
 /// One visible, already-projected order-flow frame.
 #[derive(Clone)]
 pub struct VisibleOrderflow {
-    pub(crate) projection: Arc<HeatmapProjection>,
-    pub(crate) first_bar_index: usize,
-    pub(crate) slot_count: usize,
+    pub projection: Arc<HeatmapProjection>,
+    pub first_bar_index: usize,
+    pub slot_count: usize,
 }
 
 impl VisibleOrderflow {
@@ -147,7 +147,7 @@ impl VisibleOrderflow {
 /// Visual identity of one projection request; cache revisions separately prove
 /// that equal layouts still describe the same market history and bar timeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ProjectionLayout {
+pub struct ProjectionLayout {
     first_bar_index: usize,
     slot_count: usize,
     lane: bool,
@@ -164,7 +164,7 @@ pub(crate) struct ProjectionLayout {
 
 impl ProjectionLayout {
     #[must_use]
-    pub(crate) fn new(
+    pub fn new(
         first_bar_index: usize,
         slot_count: usize,
         lane: bool,
@@ -186,7 +186,7 @@ impl ProjectionLayout {
 /// Everything the projection needs from one chart frame, owned so it can cross
 /// the worker channel.
 #[derive(Debug, Clone)]
-pub(crate) struct ProjectionRequest {
+pub struct ProjectionRequest {
     /// O(1) identity of the chart's current temporal bar partition.
     pub timeline_revision: u64,
     pub first_bar_index: usize,
@@ -212,7 +212,7 @@ pub(crate) struct ProjectionRequest {
 
 impl ProjectionRequest {
     #[must_use]
-    pub(crate) fn layout(&self) -> ProjectionLayout {
+    pub fn layout(&self) -> ProjectionLayout {
         ProjectionLayout::new(
             self.first_bar_index,
             self.closed.len() + usize::from(self.partial.is_some()),
@@ -258,7 +258,7 @@ pub struct OrderflowHealth {
     /// How old the newest mark on the tape is, or that there is none — the
     /// gap the trader reads as bubbles trailing the tape's right edge.
     /// See [`LiquidityHistory::tape_age`].
-    pub tape_age: Option<crate::orderflow::TapeAge>,
+    pub tape_age: Option<crate::TapeAge>,
     pub bid_levels: usize,
     pub ask_levels: usize,
     pub active_levels: usize,
@@ -555,13 +555,13 @@ impl BookEngine {
     }
 
     #[cfg(test)]
-    pub(crate) fn enabled(&self) -> bool {
+    pub fn enabled(&self) -> bool {
         self.config.enabled
     }
 
     /// Whether the depth map is both recording and allowed to draw.
     #[cfg(test)]
-    pub(crate) fn depth_visible(&self) -> bool {
+    pub fn depth_visible(&self) -> bool {
         self.config.depth_visible()
     }
 
@@ -572,7 +572,7 @@ impl BookEngine {
     }
 
     #[cfg(test)]
-    pub(crate) fn base_capture_grouping(&self) -> Decimal {
+    pub fn base_capture_grouping(&self) -> Decimal {
         self.config.price_grouping
     }
 
@@ -878,7 +878,7 @@ impl BookEngine {
                     self.status = CaptureStatus::Error;
                 } else {
                     self.latest_arrival_latency_ms =
-                        crate::metrics::feed_lag_ms(received_at_ms, Some(observed_at_ms));
+                        crate::feed_lag_ms(received_at_ms, Some(observed_at_ms));
                     self.mark_settled_dirty();
                     tracing::info!(
                         target: "quantick::app",
@@ -904,7 +904,7 @@ impl BookEngine {
                 match self.history.apply_delta(event_time_ms, &delta) {
                     Ok(_) => {
                         self.latest_arrival_latency_ms =
-                            crate::metrics::feed_lag_ms(received_at_ms, Some(event_time_ms));
+                            crate::feed_lag_ms(received_at_ms, Some(event_time_ms));
                         self.depth_updates = self.depth_updates.saturating_add(1);
                         self.depth_updates_since_summary =
                             self.depth_updates_since_summary.saturating_add(1);
@@ -1015,7 +1015,7 @@ impl BookEngine {
     /// user is looking at. Separate from [`Self::project`] on purpose: the
     /// worker notes the window for every request, so the ladder keeps
     /// following the view even while every heatmap layer is toggled off.
-    pub(crate) fn note_price_window(&mut self, price_range: (f64, f64)) {
+    pub fn note_price_window(&mut self, price_range: (f64, f64)) {
         self.visible_price_window = match (
             Decimal::from_f64(price_range.0),
             Decimal::from_f64(price_range.1),
@@ -1052,18 +1052,16 @@ impl BookEngine {
         })
     }
 
-    /// Build the frame for `request`.
+    /// Build the frame for `request`, as of `cache_now`.
     ///
     /// The finished half rebuilds only after its history or bar timeline changes,
     /// with the cadence above coalescing a burst. The half that is still moving
     /// is rebuilt here every single time, because it is cheap and because a print
     /// the engine has already accepted has no business waiting for a cadence.
-    pub(crate) fn project(&mut self, request: &ProjectionRequest) -> Option<Arc<VisibleOrderflow>> {
-        self.project_at(request, Instant::now())
-    }
-
-    /// Clock-injected projection entry point for deterministic cache tests.
-    fn project_at(
+    ///
+    /// The caller passes the instant: this crate never reads a clock to decide
+    /// an output, so a test drives the cache with any instant it likes.
+    pub fn project_at(
         &mut self,
         request: &ProjectionRequest,
         cache_now: Instant,
@@ -1397,7 +1395,16 @@ fn resync_reason_code(reason: &DepthResyncReason) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orderflow::LiveLaneStyle;
+
+    impl BookEngine {
+        /// The tests' shorthand for "as of now": the production caller passes
+        /// its own instant to [`BookEngine::project_at`], and a test that does
+        /// not care about the cache cadence reads the clock here instead.
+        fn project(&mut self, request: &ProjectionRequest) -> Option<Arc<VisibleOrderflow>> {
+            self.project_at(request, Instant::now())
+        }
+    }
+    use crate::LiveLaneStyle;
     use quantick_engine::Side;
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
 
@@ -1406,9 +1413,9 @@ mod tests {
     /// profile's paint cuts from fill to silhouette.
     #[test]
     fn first_heat_slot_names_the_oldest_covered_bar() {
-        use crate::orderflow::grouping::EffectiveGrouping;
-        use crate::orderflow::history::RestingSide;
-        use crate::orderflow::projection::{HeatmapCell, HeatmapProjection};
+        use crate::grouping::EffectiveGrouping;
+        use crate::history::RestingSide;
+        use crate::projection::{HeatmapCell, HeatmapProjection};
 
         let grouping = EffectiveGrouping {
             base_width: Decimal::ONE,

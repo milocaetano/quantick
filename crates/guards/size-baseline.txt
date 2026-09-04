@@ -146,10 +146,10 @@ crates/app/src/footprint_render.rs 2234
 # `history_start` opened; the slicing itself lives in the bridge.
 crates/feed-mt5/src/stream.rs 2200
 crates/app/src/toolrail.rs 2114
-crates/app/src/orderflow/projection.rs 1850
+crates/orderflow/src/projection.rs 1850
 crates/app/src/control/contract.rs 1718
 crates/app/src/control/evidence.rs 1708
 crates/pine/src/eval.rs 1669
 crates/app/src/app/layout_wiring.rs 1557
 crates/pine/src/compile.rs 1540
-crates/app/src/orderflow/config.rs 1523
+crates/orderflow/src/config.rs 1523

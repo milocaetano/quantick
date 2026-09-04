@@ -1,7 +1,7 @@
 //! egui facade for the asynchronous order-flow heatmap.
 //!
 //! All book state (history, synchronization, projection) lives in
-//! [`crate::orderflow_engine::BookEngine`] on the worker thread owned by
+//! [`quantick_orderflow::engine::BookEngine`] on the worker thread owned by
 //! [`crate::orderflow_worker::BookWorker`]. This layer only forwards commands,
 //! mirrors the published snapshot for the current frame and converts
 //! normalized primitives into egui shapes. Nothing here can block the UI on a
@@ -19,18 +19,6 @@ use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 use crate::bubble_presets::{self, BubblePreset, BubblePresetFile, PresetSource};
 use crate::chart::PriceScale;
 use crate::live_strip;
-use crate::orderflow::projection::normalized_area_size;
-use crate::orderflow::{
-    BubbleRenderMode, BubbleSizeReference, ConsumptionMark, DisplayGrouping, HeatmapConfig,
-    HeatmapTheme, IntensityMode, LANE_WINDOW_PRESETS_MS, LaneWindow, MAX_BUBBLE_MAX_RADIUS,
-    MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE,
-    MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
-    MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms,
-    lane_window_label, reserved_span_ms, same_lane_window,
-};
-use crate::orderflow_engine::{
-    BookLadder, BookPublished, CaptureStatus, OrderflowHealth, ProjectionRequest, VisibleOrderflow,
-};
 use crate::orderflow_render::{
     OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
     draw_compact_legend, draw_heatmap_background, draw_liquidity_events, draw_live_lane_marks,
@@ -38,6 +26,18 @@ use crate::orderflow_render::{
 };
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
+use quantick_orderflow::engine::{
+    BookLadder, BookPublished, CaptureStatus, OrderflowHealth, ProjectionRequest, VisibleOrderflow,
+};
+use quantick_orderflow::projection::normalized_area_size;
+use quantick_orderflow::{
+    BubbleRenderMode, BubbleSizeReference, ConsumptionMark, DisplayGrouping, HeatmapConfig,
+    HeatmapTheme, IntensityMode, LANE_WINDOW_PRESETS_MS, LaneWindow, MAX_BUBBLE_MAX_RADIUS,
+    MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE,
+    MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
+    MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms,
+    lane_window_label, reserved_span_ms, same_lane_window,
+};
 
 fn status_color(status: &CaptureStatus) -> egui::Color32 {
     match status {
@@ -754,7 +754,7 @@ impl OrderflowView {
     /// `None` also when no pane draws the bubbles: an empty tape the trader
     /// emptied themselves needs no explanation.
     #[must_use]
-    pub fn tape_age(&self) -> Option<crate::orderflow::TapeAge> {
+    pub fn tape_age(&self) -> Option<quantick_orderflow::TapeAge> {
         // Asked only when a pane still draws the bubbles. The depth map and
         // the aggression layer switch apart, so a tape showing liquidity with
         // its bubbles deliberately off has no missing marks to explain —
@@ -2486,8 +2486,8 @@ fn color_override(ui: &mut egui::Ui, label: &str, value: &mut Option<[u8; 3]>, f
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orderflow::{BubbleSizeReference, BubbleStyle};
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
+    use quantick_orderflow::{BubbleSizeReference, BubbleStyle};
 
     /// The ask, in one test: the toolbar governs the candles and nothing else.
     /// Every one of the four movements — each layer switched off *and* back on
@@ -2722,7 +2722,7 @@ mod tests {
 
     #[test]
     fn presets_apply_only_the_bubble_section() {
-        use crate::orderflow::LiveLaneStyle;
+        use quantick_orderflow::LiveLaneStyle;
         let mut view = OrderflowView::new("BTCUSDT");
         let before = view.config.clone();
         view.presets.upsert(BubblePreset {
@@ -3090,7 +3090,7 @@ mod tests {
         view.flush_for_test();
         assert_eq!(
             view.tape_age(),
-            Some(crate::orderflow::TapeAge::Behind(14_000)),
+            Some(quantick_orderflow::TapeAge::Behind(14_000)),
             "the chart reports the age it observed: 26 s of book, 12 s of tape"
         );
 
