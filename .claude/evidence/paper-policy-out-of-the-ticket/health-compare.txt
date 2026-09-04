@@ -1,0 +1,14 @@
+APP_HEALTH_SUMMARY under a dense tape: the whole recorded day at speed
+1000 with QUANTICK_PAPER_DEMO=1 trading through it, so the per-trade
+path the split touched is actually exercised. 70s per run, two runs each.
+
+run          n  fps mean  fps min  frame_avg_ms  frame_cpu_ms
+main-1      34     59.15    52.00        16.731         2.453
+main-2      34     58.21    22.00        17.532         3.196
+branch-1    34     59.06    51.00        16.758         2.738
+branch-2    34     59.12    54.00        16.721         2.177
+
+pooled  fps: main 58.68  branch 59.09  delta +0.41
+pooled  frame_cpu_ms: main 2.825  branch 2.458  delta -0.367
+
+run-to-run spread on main alone: fps 59.15 vs 58.21 — the noise floor any delta must clear.

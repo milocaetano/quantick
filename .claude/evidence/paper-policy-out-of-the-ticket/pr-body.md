@@ -146,6 +146,23 @@ The seam adds no allocation on the per-trade path: `AccountEnv` is built only
 where an entry is being sized, and `TicketForm`'s complaint string is formatted
 only in the branch that already formatted it.
 
+**Measured, not asserted.** `APP_HEALTH_SUMMARY` under a dense tape — the whole
+recorded day at speed 1000 with `QUANTICK_PAPER_DEMO=1` trading through it, so
+the per-trade path the split touched is exercised — 70 s per run, two runs per
+build:
+
+| | fps (mean) | frame_cpu_ms (mean) |
+| --- | --- | --- |
+| `origin/main` | 58.68 | 2.825 |
+| this branch | 59.09 | 2.458 |
+| delta | **+0.41** | **−0.367** |
+
+The branch is marginally *faster* on both, and both deltas sit inside main's
+own run-to-run spread (59.15 against 58.21 fps between its two runs). The
+honest reading is **flat**: the field hop the seam added is not measurable.
+Numbers and the script are in
+`.claude/evidence/paper-policy-out-of-the-ticket/health-compare.txt`.
+
 ## Baselines
 
 `paper_trading.rs` falls **1,730** production lines, 6,407 → 4,677.
