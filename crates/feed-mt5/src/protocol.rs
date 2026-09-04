@@ -354,6 +354,15 @@ pub struct Hello {
     /// fine to try", it is a hard "do not".
     #[serde(default)]
     pub history_paging: Option<bool>,
+    /// Whether this session stamps its live ticks with the venue's session
+    /// deal counter ([`Tick::deals`]).
+    ///
+    /// Only a trades tape whose terminal reports `SYMBOL_SESSION_DEALS`; a
+    /// quoted CFD prints no deals. `None` or `Some(false)` is a session
+    /// whose ticks carry no reading — an older bridge, or a venue without a
+    /// counter — and a consumer must not wait for one.
+    #[serde(default)]
+    pub deal_counter: Option<bool>,
 }
 
 /// One tick. `time_ms` is **server-time** epoch milliseconds (see [`Hello`]).
@@ -387,6 +396,17 @@ pub struct Tick {
     pub volume: u64,
     /// Raw `MqlTick.flags` word (see [`flags`]).
     pub flags: u32,
+    /// The venue's session deal counter as the bridge read it for the pump
+    /// round that fetched this tick (`SYMBOL_SESSION_DEALS`).
+    ///
+    /// MetaTrader folds several exchange deals into one tick and keeps no
+    /// count per tick; this running total is the only deal count it has.
+    /// Every tick of one round carries the same number, and it is at or past
+    /// every print it stamps. `None` on history and paged ticks, and on a
+    /// bridge older than the field — never a zero nobody read. See
+    /// [`crate::DealSampler`] for how the stamps become a sample series.
+    #[serde(default)]
+    pub deals: Option<u64>,
 }
 
 /// One price level on the wire: `["price", "quantity"]`.

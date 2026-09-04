@@ -348,6 +348,8 @@ pub enum Mt5Status {
         /// rest — the same quantick build talks to a bridge that pages and to
         /// one that does not, and the provider's name cannot tell them apart.
         history_paging: bool,
+        /// Whether live ticks carry the venue's deal counter (`Tick::deals`).
+        deal_counter: bool,
     },
     /// The bridge went away; the server is looping back to waiting.
     Lost {
@@ -366,6 +368,10 @@ pub enum Mt5Event {
     Backfilled(Vec<Trade>),
     /// One live trade.
     Live(Trade),
+    /// A new deal-counter reading, ahead of the print that carried it — see
+    /// [`crate::DealSampler`] for the reduction and the engine's deal builder
+    /// for the join.
+    DealCounter(quantick_engine::DealSample),
     /// Where the tape's delay is being spent, measured at the socket.
     ///
     /// Sent at a bounded rate — at most once every
@@ -1048,6 +1054,7 @@ async fn serve_connection(
             book_levels: hello.book_levels,
             rates: hello.rates.unwrap_or(false),
             history_paging: can_page,
+            deal_counter: hello.deal_counter.unwrap_or(false),
         }))
         .await
         .is_err()
@@ -1082,6 +1089,7 @@ async fn serve_connection(
         TickMapper::new(config.side_mode, hello.server_utc_offset_s).with_tape(hello.tape);
     let mut tracker = SeqTracker::new();
     let mut latency = LatencyTracker::new();
+    let mut deals = crate::deals::DealSampler::new(hello.server_utc_offset_s);
     // Whether the tape has already been reported late. Edge-triggered, so a
     // session that stays behind logs the diagnosis once instead of once per
     // sample, and its recovery is logged too — a report with no matching
@@ -1258,6 +1266,12 @@ async fn serve_connection(
             }
             Ok(BridgeMsg::Tick(tick)) => {
                 let _ = tracker.observe(tick.seq);
+                // Ahead of the print it stamps; quote-only ticks carry it too.
+                if let Some(sample) = deals.observe(&tick)
+                    && tx.send(Mt5Event::DealCounter(sample)).await.is_err()
+                {
+                    break ConnEnd::UiGone;
+                }
                 if let MapOutcome::Trade { trade, .. } = mapper.map(&tick) {
                     // A tick belongs to whichever block is open around it. The
                     // paged block is checked first because it is the one that
