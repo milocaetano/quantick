@@ -140,4 +140,9 @@ AGENTS.md 13179
 # generated file only. Not one `Reaches` cell was shortened -- the long ones
 # say which class of defect is invisible without that hook, which is the most
 # valuable content in the harness and the thing a grep cannot supply.
-!budget 232885
+# +2,235 for `ai-review`, a new skill: 1,949 for the six-question checklist a
+# session loads on `/ai-review`, 286 for its Codex adapter. A raise, not a
+# trade: nothing left the tree. The skill is one screen by design - each
+# question is a sentence plus the test that decides it - so there was no
+# reference file to extract and no sibling prose this branch owned to cut.
+!budget 235120
