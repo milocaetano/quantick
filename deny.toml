@@ -1,0 +1,98 @@
+# Supply-chain policy for `cargo deny`.
+#
+# Two of the three checks it configures block a pull request, and one does not,
+# and the split is the whole design:
+#
+#   * `bans` and `licenses` are pure functions of the committed `Cargo.lock`.
+#     They can only change when a commit changes the dependency graph, so they
+#     run in the pull-request job and go red only when the code changed.
+#   * `advisories` is a function of the RustSec database, which moves on its
+#     own. An advisory published overnight would otherwise redden a pull
+#     request that never touched the dependency — the exact failure this
+#     repository's pinning work exists to abolish. It runs on a schedule
+#     instead, where a new advisory opens a report rather than blocking a
+#     change that did not cause it.
+#
+# `.github/workflows/ci.yml` owns which command runs where.
+
+[graph]
+# Every target, not just the one CI happens to run on. The Windows-only audio
+# path pulls the MPL-2.0 `symphonia` family, and a license check that cannot
+# see it on a Linux runner is a license check that reports a comfortable lie.
+all-features = true
+
+[advisories]
+version = 2
+# One entry, and it is meant to be deleted. An ignore is a decision to keep
+# something the database has flagged, so each one states what it is, why it
+# could not be fixed where it was found, and the issue that removes it. An
+# entry without those three is how a policy file turns into a list of things
+# nobody intends to do.
+ignore = [
+    # `ttf-parser` is unmaintained. Nothing here chooses it: it arrives five
+    # levels down, inside the GUI stack, as
+    # `eframe → egui → epaint → ab_glyph → owned_ttf_parser → ttf-parser`.
+    # No `eframe 0.29` exists without it, so the only available fix is a major
+    # upgrade of the whole egui stack — which is not the business of the branch
+    # that added this check. It is `unmaintained` rather than a vulnerability:
+    # there is no exploit and no patched version to move to.
+    # Removed by https://github.com/milocaetano/quantick/issues/283.
+    { id = "RUSTSEC-2026-0192", reason = "transitive, via eframe 0.29's font stack; no fix exists short of a major egui upgrade — see issue #283" },
+]
+
+[licenses]
+version = 2
+# Every licence the tree actually contains today, rather than an aspirational
+# policy. Adding a dependency under a licence not on this list fails the
+# pull-request job, which is the point: the decision to take on a new licence
+# gets made by a person, once, in a diff.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    # Weak, file-level copyleft, and it reaches the tree twice: `option-ext`
+    # under `dirs`, and the `symphonia` family under `rodio` for decoding the
+    # shipped alarm clips on Windows. Both are consumed as unmodified library
+    # dependencies, which carries no obligation for the code that links them.
+    # Modifying either crate's own sources would, so this entry is a licence
+    # allowance and not a licence to vendor-and-patch.
+    "MPL-2.0",
+    # The Open Font Licence and the Ubuntu Font Licence, both from
+    # `epaint_default_fonts` — the typefaces eframe ships. Font licences, on
+    # fonts. `LicenseRef-UFL-1.0` is not an SPDX-listed identifier, so it has
+    # to be named literally.
+    "LicenseRef-UFL-1.0",
+    "OFL-1.1",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[bans]
+# Forty-nine crates in this tree resolve to more than one version — the
+# ordinary shape of a graph containing a GUI stack, where `windows-sys` alone
+# appears at four. Denying that would mean a forty-nine-entry skip list that
+# goes stale on its own and reddens a pull request whenever a transitive
+# dependency bumps something two levels down. That is drift wearing a policy's
+# clothes, so duplicates are reported and not enforced.
+multiple-versions = "warn"
+# This one keeps its teeth. A `*` version requirement means the build resolves
+# to whatever was published most recently, which is the purest form of the
+# problem this repository is pinning its way out of.
+wildcards = "deny"
+# …with one exemption, for the seventeen `quantick-*` crates that depend on
+# each other by `path` and carry no version requirement. cargo-deny reads a
+# version-less path dependency as a wildcard, which for an intra-workspace edge
+# it is not: the path resolves to the source in this repository and to nothing
+# else, so there is no registry publishing a surprise into it. The teeth this
+# setting keeps are for a `*` aimed at crates.io, which is the real form of the
+# problem.
+allow-wildcard-paths = true
