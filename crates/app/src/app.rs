@@ -103,8 +103,6 @@ const DEMO_FALLBACK_BAND_FRACTION: f64 = 0.004;
 /// mark. Any distance the tab cannot possibly hold would do; an hour is
 /// unambiguous at every timeframe the chart offers.
 const DEMO_OFF_SERIES_LEAD_MS: i64 = 3_600_000;
-/// Length of the EMA the toolbar's hardcoded M1 entry adds (the settings UI
-/// generated from `InputSpec` replaces this in M4).
 /// The natives `QUANTICK_INDICATORS_AUTOSTART` opens with: the overlay and
 /// the pane, so a scripted run photographs both shapes. Named by catalog id
 /// rather than "all of them", because the hook's contract is a fixed,

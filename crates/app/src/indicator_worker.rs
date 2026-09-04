@@ -131,7 +131,15 @@ impl IndicatorSource {
                 // values back is generated too, via the trait, so a new
                 // native's settings cannot be silently ignored for want of a
                 // match arm here.
-                Ok(entry.build_with(values.unwrap_or(saved)))
+                // An empty set means "never given one" — the same reading
+                // the script arm below takes — so it falls back to the values
+                // this source was restored with rather than silently
+                // resetting a tuned native to its declared defaults.
+                let bind = match values {
+                    Some(values) if !values.is_empty() => values,
+                    _ => saved,
+                };
+                Ok(entry.build_with(bind))
             }
             IndicatorSource::Script { name, text } => match quantick_pine::compile(text, name) {
                 Ok(compiled) => Ok(Box::new(match values {
@@ -1492,6 +1500,37 @@ mod set_inputs_tests {
     use super::*;
     use crate::indicators::IndicatorViews;
     use quantick_indicators::{IndicatorHost, PlotId, SourceId, native::Ema};
+
+    /// An empty value set is a slot that was never given one, not an
+    /// instruction to forget the values it holds.
+    ///
+    /// The two readings are indistinguishable at the call site and differ
+    /// only when a native has been tuned: taking "empty" literally rebuilds
+    /// it at its declared defaults, which a trader reads as their period
+    /// resetting itself. The script arm has always made this distinction;
+    /// this asserts the native arm makes the same one.
+    #[test]
+    fn an_empty_value_set_keeps_a_natives_restored_values() {
+        let source = IndicatorSource::Native {
+            id: "native.ema".to_owned(),
+            values: vec![InputValue::Int(21), InputValue::Source(SourceId::Delta)],
+        };
+
+        let built = source
+            .build_with(Some(&[]))
+            .expect("the EMA is in the catalog");
+        assert_eq!(
+            built.descriptor().title,
+            "EMA(21, delta)",
+            "an empty set falls back to what the source carries"
+        );
+
+        // And a real set still wins over the carried one.
+        let rebound = source
+            .build_with(Some(&[InputValue::Int(5)]))
+            .expect("the EMA is in the catalog");
+        assert_eq!(rebound.descriptor().title, "EMA(5)");
+    }
 
     /// Applying settings = construct anew + replace + replay: the columns
     /// The second implementer of the input port: a script's bound values must
