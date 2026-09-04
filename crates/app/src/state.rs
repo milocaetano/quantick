@@ -466,9 +466,16 @@ impl ChartState {
     /// reading already held is not held twice.
     pub fn observe_deals(&mut self, sample: DealSample) {
         match self.deal_samples.last() {
-            Some(last) if sample.time_ms < last.time_ms => {
+            Some(last)
+                if sample.time_ms < last.time_ms
+                    || (sample.time_ms == last.time_ms
+                        && sample.session_deals < last.session_deals) =>
+            {
                 // Older than the newest held — a bridge that restarted with
-                // another clock offset. The live builder does not place it
+                // another clock offset — or the same millisecond with a lower
+                // count, a regression the sampler forwards, which the builder
+                // would read as a session rollover. The live builder does not
+                // place it
                 // (the engine drops a sample going back in time), and the
                 // live edge is not re-cut for it either: a clock that went
                 // backwards can deliver one such reading per poll for an
@@ -476,9 +483,12 @@ impl ChartState {
                 // It lands at its place in the series, which the next
                 // rebuild replays in order — held once, whichever of the
                 // readings sharing its millisecond it equals.
-                let at = self
-                    .deal_samples
-                    .partition_point(|held| held.time_ms <= sample.time_ms);
+                // Its place is by time *and* reading, the order the batch
+                // path sorts into, so a rebuild never sees the count go down
+                // inside one millisecond.
+                let at = self.deal_samples.partition_point(|held| {
+                    (held.time_ms, held.session_deals) <= (sample.time_ms, sample.session_deals)
+                });
                 let same_ms = self.deal_samples[..at]
                     .iter()
                     .rev()
@@ -1235,6 +1245,29 @@ mod tests {
     /// A reading older than the newest held is kept for the next rebuild,
     /// not cut in at once — the live edge is never re-cut per reading —
     /// and is held once however many readings share its millisecond.
+    /// A reading at the newest held millisecond with a *lower* count is a
+    /// regression the sampler forwards; fed to the live builder it would
+    /// read as a session rollover and cut a bar the venue never cut. It is
+    /// held at its sorted place instead, ahead of the higher reading.
+    #[test]
+    fn a_lower_reading_at_the_same_millisecond_is_held_not_cut_as_a_rollover() {
+        let mut s = ChartState::new(BarSpec::Trades(2));
+        let at = |time_ms: i64, session_deals: u64| DealSample {
+            time_ms,
+            session_deals,
+        };
+        s.observe_deals(at(1_099, 5));
+        s.observe_deals(at(1_099, 3));
+        s.ingest_live(&trade(1));
+        assert!(s.bars().is_empty(), "no rollover bar: {:?}", s.bars());
+        let held: Vec<(i64, u64)> = s
+            .deal_samples()
+            .iter()
+            .map(|d| (d.time_ms, d.session_deals))
+            .collect();
+        assert_eq!(held, [(1_099, 3), (1_099, 5)]);
+    }
+
     #[test]
     fn an_out_of_order_reading_is_held_for_the_next_rebuild() {
         let mut s = ChartState::new(BarSpec::Trades(2));

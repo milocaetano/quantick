@@ -204,6 +204,15 @@ fn set(
     let (tab, _config) = app
         .control_tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
+    // A replay is another tape: the live market's recorder is not reachable
+    // over it, and the answer says so rather than reading as "no counter".
+    if tab.replay.is_some() {
+        return Err(ControlError::invalid_request(format!(
+            "tab {} is replaying; the live market's deal recorder is reachable again when the \
+             replay closes",
+            tab.id
+        )));
+    }
     // Only where a REC control would be drawn: a feed with no counter is
     // reported as such, never started into writing nothing.
     if let Some(view) = tab.deal_recording_view() {

@@ -302,7 +302,7 @@ impl Recording {
             Some(last) => writeln!(
                 self.writer,
                 "+{} {}{}",
-                sample.time_ms - last.time_ms,
+                sample.time_ms.saturating_sub(last.time_ms),
                 if sample.session_deals >= last.session_deals {
                     "+"
                 } else {
@@ -600,7 +600,11 @@ impl DealRecorder {
     /// prints and must not join to them, and the reset that clears the panes
     /// for it would otherwise lose a morning counted with REC off.
     pub fn stash(&mut self, readings: Vec<DealSample>) {
-        self.stash = readings;
+        // A replay opened over a replay hands in the first one's empty
+        // panes; the live readings already put aside are the ones to keep.
+        if !readings.is_empty() || self.stash.is_empty() {
+            self.stash = readings;
+        }
     }
 
     /// The readings put aside, for the panes now that the market is back.
@@ -664,7 +668,6 @@ impl DealRecorder {
     /// Start recording. Returns the readings today's file already held, for
     /// the caller to hand to its panes — a restart resumes the day.
     pub fn start(&mut self, now_ms: i64) -> Vec<DealSample> {
-        self.auto_started = true;
         if !self.configured {
             // A placeholder has no folder: writing would land beside the
             // working directory. Said, and refused, until the app hands the
@@ -681,6 +684,9 @@ impl DealRecorder {
             self.error = Some("this source declares no deal counter; nothing to record".to_owned());
             return Vec::new();
         }
+        // Decided only now: a start refused above — before the hello, on a
+        // placeholder — must leave the config's default to fire later.
+        self.auto_started = true;
         self.enabled = true;
         self.error = None;
         // The tape's day while the reading in hand is current, the clock's
@@ -1110,11 +1116,25 @@ mod tests {
 
     /// The readings a replay puts aside come back whole.
     #[test]
-    fn the_stash_round_trips() {
+    fn the_stash_round_trips_and_an_empty_one_keeps_what_was_put_aside() {
         let mut rec = DealRecorder::placeholder("WINV26");
         rec.stash(vec![sample(1, 1), sample(2, 2)]);
+        // A second replay opened over the first hands in empty panes.
+        rec.stash(Vec::new());
         assert_eq!(rec.take_stash(), vec![sample(1, 1), sample(2, 2)]);
         assert!(rec.take_stash().is_empty());
+    }
+
+    /// A start refused before the hello does not spend the config's
+    /// default: the counter arrives, and the default fires as configured.
+    #[test]
+    fn a_refused_start_does_not_spend_the_default() {
+        let dir = scratch("refused-default");
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), true);
+        rec.set_available(false);
+        assert!(rec.start(LATE_EVENING_BRT_MS).is_empty());
+        rec.set_available(true);
+        assert!(rec.auto_start_due(), "the default is still to be applied");
     }
 
     #[test]
