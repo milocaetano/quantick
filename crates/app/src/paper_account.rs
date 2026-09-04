@@ -2125,3 +2125,134 @@ fn fmt_utc_iso(timestamp_ms: i64) -> String {
     let (year, month, day, hour, minute, second) = civil_utc(timestamp_ms);
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A form with a quantity typed and no protective offsets — the state a
+    /// ticket is in when the trader has touched nothing but the size box.
+    fn plain_form() -> TicketForm {
+        TicketForm {
+            quantity: Ok(Decimal::ONE),
+            offsets: Some((None, None)),
+        }
+    }
+
+    fn plain_env() -> AccountEnv {
+        AccountEnv {
+            ruler_levels: None,
+            form: plain_form(),
+        }
+    }
+
+    fn print(agg_id: u64, price: i64) -> Trade {
+        Trade {
+            agg_id,
+            timestamp_ms: i64::try_from(agg_id).expect("small test ids") * 1000,
+            price: Decimal::from(price),
+            quantity: Decimal::ONE,
+            side: Side::Buy,
+        }
+    }
+
+    /// An account with nothing but a scratch folder and a symbol: no ticket,
+    /// no window, no egui. That this compiles and trades at all is the point
+    /// of the split, and this module is where it is proved.
+    fn account(dir: &crate::scratch::ScratchDir, symbol: &str) -> PaperAccount {
+        let mut account = PaperAccount::with_trades_dir(dir.path().to_path_buf());
+        account.set_symbol(symbol);
+        account
+    }
+
+    /// A round trip driven entirely through the account, and journaled.
+    ///
+    /// The ticket is not constructed anywhere in this test. That is the whole
+    /// claim of the extraction: the money path runs without one.
+    #[test]
+    fn the_account_trades_and_journals_without_a_ticket() {
+        let dir = crate::scratch::ScratchDir::new("account-round-trip");
+        let mut account = account(&dir, "ACCTX");
+
+        account.seed(&print(0, 100));
+        account.market(Side::Buy, Decimal::from(100), Bracket::none(), &plain_env());
+        account.on_trade(&print(1, 100));
+        let events = account.dispatch(Command::ClosePosition);
+        account.handle_events(events);
+        account.on_trade(&print(2, 105));
+
+        assert!(account.is_flat(), "the position closed");
+        assert_eq!(account.session_trades().len(), 1, "one round trip");
+        assert_eq!(
+            account.session_trades()[0].pnl_points,
+            Decimal::from(5),
+            "100 to 105 is five points"
+        );
+
+        let folder = dir.path().join("ACCTX");
+        let files: Vec<_> = std::fs::read_dir(&folder)
+            .expect("the symbol folder exists")
+            .flatten()
+            .collect();
+        assert_eq!(files.len(), 1, "one session, one file");
+        let text = std::fs::read_to_string(files[0].path()).expect("readable");
+        assert!(
+            text.contains("# symbol=ACCTX"),
+            "the journal names the instrument: {text}"
+        );
+    }
+
+    /// The risk lock refuses an oversized entry, and says so through the
+    /// outbox rather than by reaching for a toast lane it does not own.
+    #[test]
+    fn the_lock_refuses_through_the_outbox() {
+        let dir = crate::scratch::ScratchDir::new("account-risk-refusal");
+        let mut account = account(&dir, "WIN$N");
+        account.seed(&print(0, 100));
+
+        // The lock measures money, so the instrument's has to be declared -
+        // WIN$N's, twenty centavos a point.
+        let mut book = crate::risk_sizing::InstrumentBook::new();
+        book.insert(
+            "WIN$N".to_owned(),
+            quantick_sim::InstrumentMoney {
+                point_value: Decimal::new(20, 2),
+                size_step: Decimal::ONE,
+                min_size: Decimal::ONE,
+                max_size: None,
+                currency: quantick_sim::Currency::new("BRL").expect("BRL"),
+                source: quantick_sim::MoneySource::Declared,
+            },
+        );
+        account.set_instrument_money(book);
+        let mut risk = account.risk_settings().clone();
+        risk.lock = true;
+        risk.basis = crate::risk_sizing::RiskBasis::Amount;
+        risk.amount = Decimal::from(1);
+        account.set_risk_settings(risk);
+
+        // 99 points of stop x 0.20 x 1000 contracts is far past a 1 BRL budget.
+        let intent = OrderIntent::market(Side::Buy, Decimal::from(1000))
+            .with_bracket(Bracket::whole(Some(Decimal::from(1)), None));
+        let events = account.place_intent(intent);
+
+        assert!(events.is_empty(), "nothing reached the venue");
+        assert!(
+            account.peek_toast().is_some(),
+            "and the refusal is waiting in the outbox, not on a lane"
+        );
+    }
+
+    /// Leaving an instrument is a switch; arriving at the first one is not.
+    /// The caller needs the two told apart, because one forgets the ruler
+    /// and the other must not.
+    #[test]
+    fn set_symbol_tells_arriving_apart_from_switching() {
+        let dir = crate::scratch::ScratchDir::new("account-symbol");
+        let mut account = PaperAccount::with_trades_dir(dir.path().to_path_buf());
+
+        assert_eq!(account.set_symbol("FIRST"), Some(true), "arriving");
+        assert_eq!(account.set_symbol("SECOND"), Some(false), "a real switch");
+        assert_eq!(account.set_symbol("SECOND"), None, "no change at all");
+    }
+}
