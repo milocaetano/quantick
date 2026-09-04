@@ -162,7 +162,7 @@ class Canvas:
         ys, xs = np.mgrid[yi0:yi1, xi0:xi1]
         dist = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2)
         if fill:
-            mask = clamp01(r - dist + 0.5) if False else np.clip(r - dist + 0.5, 0.0, 1.0)
+            mask = np.clip(r - dist + 0.5, 0.0, 1.0)
         else:
             mask = np.clip(width * 0.5 - np.abs(dist - r) + 0.5, 0.0, 1.0)
         a = mask * clamp01(alpha)
