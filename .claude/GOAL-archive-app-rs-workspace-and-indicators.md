@@ -39,6 +39,7 @@ surface, so it does not earn `high`.
 | R14 | Verify each claim in the brief's evidence ledger before acting on it, rather than trusting it. |
 | R15 | Respect the parallel branch: run the brief's ledger-#6 diff before the first move and again before the PR. Whichever of the two lands second re-runs `--tighten` and resolves the `!budget` line by hand (brief ledger #7). |
 | R16 | Stay out of the declared out-of-scope: `new_with_workspace`, `draw_menu_bar`, `draw_frame`, `draw_toolbar`, `apply_toolbar_action`, `adopt_tab`, `arm_strategy_instance` and every `persist_*`; turning any sidecar into a port or surface; `QuantickApp`'s fields; the menu-bar constants and shortcuts at `app.rs:4757-4860`. |
+| R18 | **Method names kept** — every moved method keeps the name it had, so every caller, test and control-plane entry point reads the same. *(Added by the delivery review's completeness pass, which found it unledgered: the request's sentence "Bodies unchanged, method names kept, ceiling tightened, budget lowered" carries four asks and the ledger had built only three of them — R5, R10 and R11. Numbered R18 rather than inserted, because ledger numbers are stable for the life of a mission. Evidence: `docs/evidence/app-rs-workspace-and-indicators/names-kept.txt` — 61 method signatures removed, 61 added, neither column carrying a name the other lacks.)* |
 | R17 | *(purpose — the ask that judges the others)* `app.rs` stops being the first and largest file every agent must read, and what remains is the port-shaped core for the mission after this one. |
 
 ## Decisions taken by the trader
@@ -96,19 +97,19 @@ surface, so it does not earn `high`.
       *Evidence:* a grep for each of the 24 method names showing one
       definition each, in the new file.
       → `docs/evidence/app-rs-workspace-and-indicators/moved-methods.txt`
-      *(R1, D1)*
+      *(R1, R18, D1)*
 - [ ] **A2** — The indicator manager's ~800 lines, including
       `attach_script_indicator` and `detach_script_indicator`, live in
       `crates/app/src/app/indicator_manager.rs`, and none remains in `app.rs`.
       *Evidence:* the same grep.
       → `docs/evidence/app-rs-workspace-and-indicators/moved-methods.txt`
-      *(R2)*
+      *(R2, R18)*
 - [ ] **A3** — The chart-layer maintenance's ~250 lines live in
       `crates/app/src/app/chart_layers_wiring.rs`, whose name shadows nothing:
       `crate::chart_layers` still resolves.
       *Evidence:* the same grep, plus `cargo check -p quantick-app` exit 0.
       → `docs/evidence/app-rs-workspace-and-indicators/moved-methods.txt`
-      *(R3)*
+      *(R3, R18)*
 - [ ] **A4** — Three `mod` lines sit beside the existing five in `app.rs`.
       *Evidence:* the quoted `mod` block from the final `app.rs`.
       → the PR body *(R4)*
