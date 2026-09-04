@@ -1,0 +1,30 @@
+# Does the suite still run the same tests?
+
+## The number
+
+    before (origin/main, e0ae2ac) : 1894 passed; 0 failed; 4 ignored
+    after  (this branch)          : 1894 passed; 0 failed; 4 ignored
+
+Identical. No test was added, removed, renamed or skipped: the twelve files in
+`crates/app/src/app/tests/` are byte-identical to `origin/main`, and the only
+change under that directory is two import lines and a comment in `mod.rs`
+(see `generated.txt` and `ledger-check.md`).
+
+## One dropped test, and why it is not this branch
+
+Seven runs of `cargo test -p quantick-app` were made on the finished branch.
+Six reported `1894 passed; 0 failed; 4 ignored`. One reported
+`1893 passed; 1 failed` -- the run started while `cargo test --workspace` was
+still releasing the machine, and the name was lost to a pipe. Four consecutive
+runs immediately afterwards were clean:
+
+    run 1: ok. 1894 passed; 0 failed; 4 ignored
+    run 2: ok. 1894 passed; 0 failed; 4 ignored
+    run 3: ok. 1894 passed; 0 failed; 4 ignored
+    run 4: ok. 1894 passed; 0 failed; 4 ignored
+
+This matches a known intermittent in this repo: the app crate drops one test
+at random under CPU contention, at the same rate on `main` as on a branch.
+It is recorded rather than hidden, because a green claim built on one run is
+not evidence. `cargo test --workspace`, the fourth of the four checks, passed
+whole: 93 `test result: ok` lines, no `FAILED`, exit 0.

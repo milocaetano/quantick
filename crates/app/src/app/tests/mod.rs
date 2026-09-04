@@ -30,8 +30,13 @@
 // `DrawingsDemo` reached these files through `app.rs`'s own imports until the
 // demo appliers moved to `app::demo_hooks`. Bound here, beside the other
 // test-only binding, so the one `use super::*` per file still carries it.
+// `CandlePreset` and `IndicatorEvent` are here for the same reason one cut
+// later: the indicator manager took the last production reader of each out of
+// `app.rs`, and the tests that still name them are the only ones left.
 use crate::harness::DrawingsDemo;
+use crate::indicator_worker::IndicatorEvent;
 use crate::plot_area::plot_split;
+use crate::style::CandlePreset;
 
 mod chart_view_tests;
 mod control_plane_tests;

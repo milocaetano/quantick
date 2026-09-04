@@ -1,0 +1,33 @@
+# What the branch widened, and the one constant that travelled
+
+## The travelling constant
+
+$ grep -rn SCRIPT_RELOAD_POLL_INTERVAL crates/
+crates/app/src/app/indicator_manager.rs:28:const SCRIPT_RELOAD_POLL_INTERVAL: Duration = Duration::from_millis(1_000);
+crates/app/src/app/indicator_manager.rs:730:            || self.last_script_poll.elapsed() < SCRIPT_RELOAD_POLL_INTERVAL
+
+Defined in indicator_manager.rs beside its only reader, poll_script_files.
+It is gone from app.rs entirely -- one definition, one use, one file.
+
+## Visibility changes
+
+46 methods gained pub(super), and nothing else changed visibility.
+A method moved to a child module that app.rs still calls must be visible to
+app.rs; pub(super) is the narrowest that works and is what the five existing
+siblings already use (workspace_restore.rs).
+
+$ git diff --cached origin/main -- crates | grep -c '^+.*pub(super) fn '
+46
+
+Three already-public signatures appear as added lines. None is a widening:
+each was removed from app.rs with the same visibility it now has, so the move
+audit matches all three as verbatim moves.
+
+$ git diff --cached origin/main -- crates | grep -E '^\+' | grep -cE 'pub(\(crate\))? (fn|struct|enum|const|static|mod) '
+3
+
+The pub(crate) methods that moved kept exactly the visibility they had:
+
+36:    pub(crate) fn attach_script_indicator(
+71:    pub(crate) fn detach_script_indicator(&mut self, slot: u64) -> Result<bool, ()> {
+1045:    pub fn attach_surface(&mut self, handle: &impl raw_window_handle::HasWindowHandle) {

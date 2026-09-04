@@ -1,0 +1,174 @@
+# Is this a move? Every added line matched against the removed ones
+
+`git diff --color-moved=zebra` is in `colour-moved.txt`; this file is the
+same question answered without needing a colour terminal. Each line the
+branch adds is looked up in the multiset of lines the branch removes.
+
+    added lines, whole branch ........................ 2274
+    same text removed elsewhere: a verbatim move ..... 1812
+    same text but for a new `pub(super) ` prefix ..... 46
+    blank lines and bare braces (not evidence) ....... 329
+    genuinely new lines .............................. 87
+
+No moved body is among the genuinely-new lines: every one below is a module
+doc comment, an import, an `impl QuantickApp {` wrapper, a `mod` line, or
+prose in the size baseline. The list is exhaustive, not a sample.
+
+## The 46 methods that gained `pub(super)`
+
+A method moved to a child module still called by `app.rs` must be visible to
+it. This is the visibility the five existing siblings already use.
+
+### crates/app/src/app/chart_layers_wiring.rs
+    apply_layer_actions(&mut self)
+    settle_paper_panels(&mut self, now: Instant)
+    apply_footprint_change(&mut self, change: crate::surfaces::FootprintChange)
+    layer_mask(&self) -> u32
+    maintain_chart_layers(&mut self)
+    restore_chart_layers(&mut self)
+
+### crates/app/src/app/indicator_manager.rs
+    open_requested_indicator_settings(&mut self)
+    focused_legend_collapsed(&self) -> bool
+    set_focused_legend_collapsed(&mut self, collapsed: bool)
+    toggle_indicator_hidden_at(&mut self, target: TabSlot)
+    remove_indicator_at(&mut self, target: TabSlot)
+    open_indicator_settings_at(&mut self, target: TabSlot)
+    draw_indicator_legends(&mut self, ctx: &egui::Context)
+    draw_indicator_settings(&mut self, ctx: &egui::Context)
+    apply_indicator_settings_draft(&mut self)
+    preview_indicator_settings_draft(&mut self)
+    add_script_indicator(&mut self, index: usize) -> Option<SlotId>
+    emit_style_changed(&mut self, applied_preset: Option<CandlePreset>)
+    poll_script_files(&mut self)
+    add_native_indicator(&mut self, id: &str) -> SlotId
+    mark_indicator_state_dirty(&mut self)
+    forget_last_indicator_state_change(&mut self)
+    maintain_indicator_state(&mut self)
+
+### crates/app/src/app/workspace_save.rs
+    capture_workspace(&self) -> ui_state::Workspace
+    starred_tool_ids(&self) -> Vec<String>
+    restore_chrome(&mut self, chrome: &ui_state::SavedChrome)
+    capture_arrangement(&self) -> (Vec<ui_state::SavedTab>, ui_state::SavedChrome)
+    open_workspace_export_picker(&mut self)
+    open_workspace_import_picker(&mut self)
+    poll_workspace_picker(&mut self)
+    export_workspace_to(&mut self, path: &std::path::Path)
+    import_workspace_from(&mut self, path: &std::path::Path)
+    refresh_recent_workspaces(&mut self)
+    clear_indicators(&mut self)
+    reveal_cockpit_home(&mut self)
+    save_workspace(&mut self, reason: &'static str)
+    write_replay_folder(&mut self, folder: Option<&str>)
+    write_replay_day_before(&mut self, enabled: bool)
+    write_favorites(&mut self)
+    save_named_workspace(&mut self, name: &str)
+    open_named_workspace(&mut self, name: &str)
+    delete_named_workspace(&mut self, name: &str)
+    forget_workspace(&mut self)
+    apply_maximize_hook(&mut self, ctx: &egui::Context)
+    maintain_workspace(&mut self, ctx: &egui::Context)
+    note_workspace(&mut self, message: String)
+
+## The genuinely new lines, in full
+
+### crates/app/src/app.rs  (17)
+    mod chart_layers_wiring;
+    mod indicator_manager;
+    mod workspace_save;
+    use crate::chart_layers;
+    // `ChartLayer` left this file's production code with `maintain_chart_layers`
+    // and lives in `app::chart_layers_wiring` now. The one name still read here is
+    // read by `heatmap_lamp_on`, which is itself test-only, so the import is gated
+    // the same way rather than kept alive by a `chart_layers::` prefix that would
+    // appear on exactly one line of the file.
+    #[cfg(test)]
+    use crate::chart_layers::ChartLayer;
+    use crate::indicator_panel::SettingsDialog;
+    use crate::indicator_worker::{IndicatorSource, SlotId};
+    use crate::indicators::state_file::{self, SavedKind};
+    use crate::style::ChartStyle;
+    use crate::tab::{CanvasChrome, CanvasLayout, Tab};
+    use crate::workspace_store::{LayoutStore, StorePaths, WorkspaceStore};
+
+### crates/app/src/app/chart_layers_wiring.rs  (11)
+    //! Keeping the chart layers and what the panes do with them in step.
+    //!
+    //! The layer actions a pane's menu could not apply itself, the footprint
+    //! change, the mask the panes read, and the restore that puts the saved layer
+    //! states back. Named `chart_layers_wiring` rather than `chart_layers`
+    //! because [`crate::chart_layers`] is the layer model itself: this is the
+    //! window's side of the wire, and one name for both would make the import
+    //! at the top of `app.rs` ambiguous to a reader.
+    use std::time::Instant;
+    use super::QuantickApp;
+    impl QuantickApp {
+
+### crates/app/src/app/indicator_manager.rs  (18)
+    //! The indicator manager: what the window does about the slots on its panes.
+    //!
+    //! Attaching and detaching, the legends and their folds, the settings dialog
+    //! and its draft, the presets, the script hot-reload poll and the state file
+    //! that remembers it all. They are together because they are one feature seen
+    //! from several surfaces: the legend, the dialog and the control plane's
+    //! `indicator.script.attach` all reach the same slots through the same
+    //! [`crate::indicator_worker`] commands, and a change to what a slot is has
+    //! to be made in one file rather than found in six places in `app.rs`.
+    use std::time::{Duration, Instant};
+    use eframe::egui;
+    use smallvec::SmallVec;
+    use crate::canvas_layout::MAX_CANVAS_PANES;
+    use crate::indicators::state_file::{SavedInput, SavedKind};
+    use crate::pane::PaneSide;
+    use crate::style::CandlePreset;
+    use super::{QuantickApp, TabSlot};
+    impl QuantickApp {
+
+### crates/app/src/app/tests/mod.rs  (5)
+    // `CandlePreset` and `IndicatorEvent` are here for the same reason one cut
+    // later: the indicator manager took the last production reader of each out of
+    // `app.rs`, and the tests that still name them are the only ones left.
+    use crate::indicator_worker::IndicatorEvent;
+    use crate::style::CandlePreset;
+
+### crates/app/src/app/workspace_save.rs  (25)
+    //! Writing the cockpit down: what a saved workspace is made of.
+    //!
+    //! The write half of the round trip whose read half is
+    //! [`super::workspace_restore`]. `capture_workspace` reads the arrangement
+    //! off the live window, the named-workspace methods put it on disk under a
+    //! name and take it back off again, the `write_*` methods edit one section of
+    //! one cockpit store in place, and the export/import pair moves a whole
+    //! cockpit between machines. They are together because they share the
+    //! stores, the pickers and the one acknowledgement lane -- `note_workspace`
+    //! -- and because nothing outside the window calls any of them.
+    use std::time::Instant;
+    use eframe::egui;
+    use crate::drawings;
+    use crate::indicator_worker::{IndicatorCommand, SlotId};
+    use crate::indicators::preset_file;
+    use crate::state::BarSpec;
+    use crate::symbols_file;
+    use crate::tab::{CanvasLayout, LegendFold};
+    use crate::timezone::TzOffset;
+    use crate::ui_state;
+    use crate::window_scale;
+    use crate::workspace_store::WorkspacePick;
+    use quantick_feed::history_reach;
+    use super::{QuantickApp, saved_context_intervals};
+    impl QuantickApp {
+
+### crates/guards/size-baseline.txt  (11)
+    #
+    # Then lowered by 2,160 more -- `app.rs` from 7,499 to 5,339 -- by `--tighten`
+    # after the second cut of the same sprint moved three more `impl QuantickApp`
+    # groups to siblings: the workspace store's write half, the indicator manager
+    # and the chart-layer wiring. Same trade as the first cut and the same reason
+    # it costs nothing here: `workspace_save.rs` (1,136 lines),
+    # `indicator_manager.rs` (835) and `chart_layers_wiring.rs` (270) are each
+    # under the 1,500-line threshold, so none of them takes an entry. None of the
+    # three carries a test module, so those are production counts entire.
+    !budget 57387
+    crates/app/src/app.rs 5339
+

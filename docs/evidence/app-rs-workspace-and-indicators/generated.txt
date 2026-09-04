@@ -1,0 +1,25 @@
+# Generated files, tests and hooks: branch against origin/main
+
+## Every file the branch changes (evidence directory excluded)
+ crates/app/src/app.rs           | 2192 +--------------------------------------
+ crates/app/src/app/tests/mod.rs |    5 +
+ crates/guards/size-baseline.txt |   13 +-
+ 3 files changed, 33 insertions(+), 2177 deletions(-)
+ M crates/app/src/app.rs
+ M crates/app/src/app/tests/mod.rs
+ M crates/guards/size-baseline.txt
+?? crates/app/src/app/chart_layers_wiring.rs
+?? crates/app/src/app/indicator_manager.rs
+?? crates/app/src/app/workspace_save.rs
+
+## The generated hook registry and the capability inventory
+$ git diff --stat origin/main -- .claude/skills/ui-harness/references/hook-registry.md docs/control-plane/capability-inventory.md schemas/control/
+(no output above: all byte-identical to origin/main)
+
+## The declare_hooks! slice in app.rs is untouched
+$ git diff origin/main -- crates/app/src/app.rs | grep -c 'QUANTICK_'
+5
+
+## crates/app/src/app/tests/
+ crates/app/src/app/tests/mod.rs | 5 +++++
+ 1 file changed, 5 insertions(+)
