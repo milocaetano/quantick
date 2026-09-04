@@ -18,6 +18,7 @@ use eframe::egui;
 
 use crate::canvas_layout::{MAX_CANVAS_PANES, PaneIdAllocator};
 
+mod deal_recording_wiring;
 mod layout_wiring;
 use crate::chart_layers::{self, ChartLayer};
 use crate::config::AppConfig;
@@ -489,6 +490,11 @@ pub struct QuantickApp {
     /// the only way such a chart can show yesterday at all, since a candle
     /// cannot be folded into a tick bar and must never pretend to be one.
     venue_lead_in: bool,
+    /// Whether a MetaTrader tab starts recording the venue's deal counter
+    /// on its own: the workspace's saved choice, or `None` to follow the
+    /// feed's `record_deals` in the config. Owned by
+    /// `app/deal_recording_wiring.rs`.
+    record_deals: Option<bool>,
 
     // Fixed UTC offset the time axis is displayed in (default UTC−03:00).
     tz: TzOffset,
@@ -714,6 +720,7 @@ impl QuantickApp {
             history_reach: crate::history_reach::HistoryReach::default(),
             history_reach_span_minutes: reach_span_minutes,
             venue_lead_in: false,
+            record_deals: None,
             feed_chip_rect: None,
             // The hook stands in for a click on the opening tab's chip, which
             // is the first tab there is.
@@ -2634,6 +2641,9 @@ impl QuantickApp {
         // One shot: the hook opens the popover on the first drawn frame and
         // then gets out of the way, so a trader's click can close it.
         let layout_picker_autostart = self.harness.take_layout_picker_autostart();
+        let deal_recording = self.active_tab().deal_recording_view();
+        let deal_recording_menu =
+            deal_recording.is_some() && self.harness.take_deal_recording_menu();
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
         let pane = match focused {
@@ -2652,6 +2662,9 @@ impl QuantickApp {
             replay,
             kind: &mut pane.kind,
             tick_n: &mut pane.tick_n,
+            deals_n: &mut pane.deals_n,
+            deal_recording,
+            deal_recording_menu,
             volume_units: &mut pane.volume_units,
             dollar_notional: &mut pane.dollar_notional,
             time_interval_ms: &mut pane.time_interval_ms,
@@ -2740,6 +2753,9 @@ impl QuantickApp {
             ToolbarAction::LoadOlder => {
                 let (tab, config) = self.active_with_config();
                 tab.request_older_history(config);
+            }
+            ToolbarAction::DealRecording(action) => {
+                self.active_tab_mut().apply_deal_recording(action);
             }
             ToolbarAction::LoadOlderCandles => {
                 // Read before the tab is borrowed mutably — and the capability
@@ -3880,6 +3896,7 @@ impl QuantickApp {
         self.toolrail.set_dock(chrome.rail_dock.into());
         self.toolrail.set_visible(chrome.rail_visible);
         self.show_perf = chrome.perf_readings;
+        self.record_deals = chrome.record_deals;
         self.progressive_history = chrome.progressive_history;
         // A token this release does not know keeps the reach it had — the
         // default on startup, whatever the trader picked when a bookmark is
@@ -3956,6 +3973,7 @@ impl QuantickApp {
             // at the top of the file. An arrangement that carried a copy would
             // be an arrangement that could overwrite them on open.
             legacy_favorite_tools: Vec::new(),
+            record_deals: self.record_deals,
             progressive_history: self.progressive_history,
             // The default writes no key: a workspace that says nothing about
             // the reach restores the press the button has always had, which is
@@ -5340,6 +5358,7 @@ impl QuantickApp {
                 .state
                 .progress()
                 .map(|(progress, unit)| fmt_progress(&progress, unit)),
+            deal_recording: self.active_tab().deal_status_cell(),
             venue_bars,
             backfilled_bars: backfilled,
             live_bars: live,
@@ -6066,6 +6085,7 @@ impl QuantickApp {
                             self.surfaces.style_panel.open();
                             ui.close_menu();
                         }
+                        self.draw_record_deals_toggle(ui);
                         let access_label = self
                             .control_access
                             .as_ref()
@@ -8865,6 +8885,8 @@ impl QuantickApp {
                 // history block already have the loading overlay above, and a
                 // second badge beside it would be the interface talking about
                 // itself twice.
+                // The deal-recording chip, left of the offline chip's corner.
+                crate::deal_recording_ui::draw_corner(ui, area, tab, stall.as_ref());
                 if let Some(report) = feed_notice::report(&tab.notice, stall.as_ref())
                     && report.is_offline()
                 {
@@ -8963,6 +8985,9 @@ impl QuantickApp {
     /// indicator workers are fed on the same pass, so a tab brought forward is
     /// already current rather than rebuilding on the frame it appears.
     fn drain_tabs(&mut self) {
+        // Before the drain: a reading that arrives this frame lands on a
+        // recorder built for the market it belongs to.
+        self.ensure_deal_recorders();
         let config = &self.config;
         let progressive_history = self.progressive_history;
         let history_reach = self.history_reach;

@@ -91,6 +91,10 @@ pub(crate) struct FeedTabSnapshot {
     /// never reconnected — which is nearly all of them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tape_gaps: Vec<FeedGapSnapshot>,
+    /// The deal recorder, where the feed carries a deal counter; absent on
+    /// a feed without one. The same view the REC control draws.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deal_recording: Option<super::deal_recording::DealRecordingSnapshot>,
 }
 
 /// A feed the chart has decided is stalled.
@@ -133,6 +137,7 @@ pub(crate) struct FeedCapabilitiesSnapshot {
     pub book_capture: bool,
     pub history_paging: bool,
     pub traded_volume: bool,
+    pub deal_counter: bool,
     pub venue_ohlcv_history: bool,
     pub venue_ohlcv_generation: WireU64,
 }
@@ -241,6 +246,7 @@ fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
                         book_capture: capabilities.book_capture,
                         history_paging: capabilities.history_paging,
                         traded_volume: capabilities.traded_volume,
+                        deal_counter: capabilities.deal_counter,
                         venue_ohlcv_history: capabilities.ohlcv_history,
                         venue_ohlcv_generation: WireU64::new(capabilities.ohlcv_generation),
                     },
@@ -271,6 +277,10 @@ fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
                             duration_ms: gap.duration_ms(),
                         })
                         .collect(),
+                    deal_recording: tab
+                        .deal_recording_view()
+                        .as_ref()
+                        .map(super::deal_recording::snapshot),
                 }
             })
             .collect(),

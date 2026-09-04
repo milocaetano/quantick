@@ -250,6 +250,8 @@ Landing with the offline-corner goal (`feat/offline-corner-last-session`):
 | Hook | Reaches |
 | --- | --- |
 | `QUANTICK_FEED_POPUP=1` | the **recovery popup** the offline chip opens: the headline, the next step, `Reconnect` and `Reload` (the one that fixes this stall filled, the other beside it) and the caption saying what Reload costs. Pair it with `QUANTICK_FEED_STALL` — the popup draws only while there is an offline report to draw, and a popup about a healthy feed is a thing the application must never show, so the hook shows nothing on its own. It stands in for the click and for nothing else: what opens is the popup a click opens, from the same report, closing the same ways. Read once at startup, so a run that goes on to click the chip is not fighting an environment variable |
+| `QUANTICK_DEAL_RECORDING=on\|off\|menu` | the **REC control** beside the symbol on a MetaTrader B3 tab, with the corner chip, the status cell and the `trades` bar kind it governs. `on` records the deal counter as soon as the bridge declares one; `off` keeps the default from starting, for the plain button and the disabled `trades` entry; `menu` opens the REC popover through the click's own `open_popup`. Pair with `QUANTICK_DEALS_DIR` |
+| `QUANTICK_DEALS_DIR=<dir>` | where deal recordings go this run (`<dir>/WINV26/2026-09-03.deals`). **Always a scratchpad**: unhooked, a capture writes into the trader's `Documents/Quantick/deals/` and lists a day in their history menu. A folder holding a recorded day photographs `RECORDED · day` |
 
 Once merged, move it into the table above.
 

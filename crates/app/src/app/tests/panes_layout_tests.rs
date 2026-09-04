@@ -1562,6 +1562,7 @@ fn a_feed_declaring_layout_and_bars_opens_wearing_them() {
                 book_capture: false,
                 history_paging: true,
                 traded_volume: true,
+                deal_counter: false,
                 ohlcv_history: true,
                 ohlcv_generation: 0,
             }),
@@ -1610,6 +1611,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         symbol_bubble_presets: Default::default(),
         default_layout: Some(crate::config::DeclaredLayout::TimeAndFlow),
         default_bars: Some("tick:7".to_string()),
+        record_deals: false,
     });
     let mut app = app_on(config, "binance", "TESTUSDT");
     assert_eq!(app.active_tab().layout, CanvasLayout::Single);
@@ -2475,6 +2477,7 @@ fn the_flow_pane_cutting_time_bars_earns_the_venue_prefix() {
                 book_capture: false,
                 history_paging: true,
                 traded_volume: true,
+                deal_counter: false,
                 ohlcv_history: true,
                 ohlcv_generation: 0,
             }),

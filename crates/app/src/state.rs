@@ -14,8 +14,8 @@
 /// unit next to [`BarSpec`], not off in the engine.
 pub use quantick_engine::ImbalanceUnit;
 use quantick_engine::{
-    Bar, BarBuilder, BarFootprint, BarProgress, DollarBarBuilder, ImbalanceBarBuilder, PriceGrid,
-    TickBarBuilder, TimeBarBuilder, Trade, VolumeBarBuilder,
+    Bar, BarBuilder, BarFootprint, BarProgress, DealBarBuilder, DealSample, DollarBarBuilder,
+    ImbalanceBarBuilder, PriceGrid, TickBarBuilder, TimeBarBuilder, Trade, VolumeBarBuilder,
 };
 use rust_decimal::Decimal;
 
@@ -35,16 +35,21 @@ pub enum BarKind {
     /// Close when aggressor imbalance beats an adaptive threshold
     /// (López de Prado tick imbalance bars).
     Imbalance,
+    /// Close every N exchange deals, as the venue counts them — ProfitChart's
+    /// *Trades* periodicity. Distinct from [`Tick`](Self::Tick) wherever a
+    /// print folds several deals, which on MetaTrader is every print.
+    Trades,
 }
 
 impl BarKind {
     /// All bar kinds, for building a selector.
-    pub const ALL: [BarKind; 5] = [
+    pub const ALL: [BarKind; 6] = [
         BarKind::Tick,
         BarKind::Volume,
         BarKind::Dollar,
         BarKind::Time,
         BarKind::Imbalance,
+        BarKind::Trades,
     ];
 
     /// A short display label.
@@ -56,7 +61,20 @@ impl BarKind {
             BarKind::Dollar => "dollar",
             BarKind::Time => "time",
             BarKind::Imbalance => "imbalance",
+            BarKind::Trades => "trades",
         }
+    }
+
+    /// Whether this rule counts the venue's deals, and so needs a feed whose
+    /// prints come with that count ([`crate::config::FeedCapabilities::deal_counter`]).
+    ///
+    /// Not offered elsewhere rather than greyed out: without a counter the
+    /// rule has nothing to cut on, and a selector entry that can never work
+    /// would only invite the reading "tick is the same thing", which is the
+    /// misunderstanding this kind exists to correct.
+    #[must_use]
+    pub fn needs_deal_counter(self) -> bool {
+        matches!(self, BarKind::Trades)
     }
 
     /// Whether this rule measures traded size, and so needs a venue that
@@ -74,7 +92,7 @@ impl BarKind {
     pub fn needs_traded_volume(self) -> bool {
         match self {
             BarKind::Volume | BarKind::Dollar => true,
-            BarKind::Tick | BarKind::Time | BarKind::Imbalance => false,
+            BarKind::Tick | BarKind::Time | BarKind::Imbalance | BarKind::Trades => false,
         }
     }
 
@@ -86,6 +104,7 @@ impl BarKind {
             BarKind::Volume => "vol",
             BarKind::Dollar => "notional",
             BarKind::Time => "ms",
+            BarKind::Trades => "deals",
         }
     }
 }
@@ -106,6 +125,9 @@ pub enum BarSpec {
     /// or dollar — López de Prado's TIB/VIB/DIB) and the target trades per
     /// bar, which counts trades in every unit.
     Imbalance(ImbalanceUnit, u64),
+    /// N exchange deals per bar, joined to prints through the venue's session
+    /// counter ([`ChartState::observe_deals`]).
+    Trades(u64),
 }
 
 impl BarSpec {
@@ -118,6 +140,7 @@ impl BarSpec {
             BarSpec::Dollar(_) => BarKind::Dollar,
             BarSpec::Time(_) => BarKind::Time,
             BarSpec::Imbalance(..) => BarKind::Imbalance,
+            BarSpec::Trades(_) => BarKind::Trades,
         }
     }
 
@@ -133,6 +156,7 @@ impl BarSpec {
             BarSpec::Imbalance(unit, target) => {
                 Box::new(ImbalanceBarBuilder::with_unit(*target, *unit))
             }
+            BarSpec::Trades(n) => Box::new(DealBarBuilder::new(*n)),
         }
     }
 
@@ -159,6 +183,7 @@ impl BarSpec {
             BarSpec::Time(ms) => format!("time({})", fmt_time_interval(*ms)),
             BarSpec::Imbalance(ImbalanceUnit::Trades, target) => format!("imbalance({target})"),
             BarSpec::Imbalance(unit, target) => format!("imbalance({} {target})", unit.as_str()),
+            BarSpec::Trades(n) => format!("trades({n})"),
         }
     }
 
@@ -182,6 +207,7 @@ impl BarSpec {
             // same chart.
             BarSpec::Imbalance(ImbalanceUnit::Trades, target) => format!("imbalance:{target}"),
             BarSpec::Imbalance(unit, target) => format!("imbalance:{}:{target}", unit.as_str()),
+            BarSpec::Trades(n) => format!("trades:{n}"),
         }
     }
 
@@ -221,6 +247,7 @@ impl BarSpec {
         };
         match kind {
             "tick" => Ok(BarSpec::Tick(positive_count("tick")?)),
+            "trades" => Ok(BarSpec::Trades(positive_count("trades")?)),
             "imbalance" => {
                 // The parameter is `target` or `unit:target`. The unit picks
                 // what θ accumulates; the target counts trades in every unit.
@@ -259,7 +286,7 @@ impl BarSpec {
                 Ok(BarSpec::Time(ms))
             }
             _ => Err(format!(
-                "unknown bar kind '{kind}'; one of tick, volume, dollar, time, imbalance"
+                "unknown bar kind '{kind}'; one of tick, volume, dollar, time, imbalance, trades"
             )),
         }
     }
@@ -376,6 +403,11 @@ pub struct ChartState {
     /// nobody asked for must not tax every ingest. Enabling refolds the
     /// retained trades, so nothing is lost by having been off.
     footprint_enabled: bool,
+    /// Every reading of the venue's deal counter this chart has seen,
+    /// ascending by time, retained beside the trades for the same reason
+    /// they are: a rebuild replays both through a fresh builder. Empty on
+    /// every feed without a counter, so it costs nothing there.
+    deal_samples: Vec<DealSample>,
 }
 
 impl ChartState {
@@ -398,7 +430,56 @@ impl ChartState {
             price_grid: PriceGrid::new(),
             tape_reference_price: None,
             footprint_enabled: false,
+            deal_samples: Vec::new(),
         }
+    }
+
+    /// Hand the chart one reading of the venue's deal counter.
+    ///
+    /// Retained and fed to the builder in one motion: a deal builder joins
+    /// the prints that follow to it, every other builder ignores it, and a
+    /// later rebuild — a spec switch, a page of history — replays the
+    /// retained series ahead of the trades so the join is the same one.
+    /// The live feed delivers samples in time order and they append; a
+    /// recorded day loaded behind the live tape is older, and lands at its
+    /// place in the series instead — the next rebuild replays the whole
+    /// series in order, which is how those readings reach the bars. A
+    /// reading already held is not held twice.
+    pub fn observe_deals(&mut self, sample: DealSample) {
+        match self.deal_samples.last() {
+            Some(last) if sample.time_ms < last.time_ms => {
+                let at = self
+                    .deal_samples
+                    .partition_point(|held| held.time_ms <= sample.time_ms);
+                if self.deal_samples[..at].last() != Some(&sample) {
+                    self.deal_samples.insert(at, sample);
+                }
+            }
+            Some(last) if *last == sample => {}
+            _ => {
+                self.deal_samples.push(sample);
+                self.builder.observe_deals(sample);
+            }
+        }
+    }
+
+    /// Cut the bars again from the retained prints and readings — after a
+    /// recorded day's readings were loaded under prints already folded.
+    pub fn rebuild_bars(&mut self) {
+        self.rebuild();
+    }
+
+    /// The counter readings this chart holds, ascending by time.
+    #[must_use]
+    pub fn deal_samples(&self) -> &[DealSample] {
+        &self.deal_samples
+    }
+
+    /// Prints the current rule could place in no bar — a deal bar's prints
+    /// before its first counter reading. Zero for every other rule.
+    #[must_use]
+    pub fn uncounted_trades(&self) -> u64 {
+        self.builder.uncounted_trades()
     }
 
     /// Ingest the backfilled history as one batch (call once, before any live
@@ -502,6 +583,12 @@ impl ChartState {
     /// recomputing the bars and the backfill/live boundary.
     fn rebuild(&mut self) {
         let mut builder = self.spec.build();
+        // Readings first, prints after: the builder joins each print to the
+        // newest reading at or before it, so the order between the two
+        // streams is immaterial as long as every reading is in hand.
+        for sample in &self.deal_samples {
+            builder.observe_deals(*sample);
+        }
         let mut bars = Vec::new();
         let mut boundary = None;
         self.footprints.reset(self.footprints.base_group());
@@ -780,6 +867,7 @@ mod tests {
     fn every_bar_spec_survives_the_config_round_trip() {
         for spec in [
             BarSpec::Tick(50),
+            BarSpec::Trades(2000),
             BarSpec::Imbalance(ImbalanceUnit::Trades, 100),
             BarSpec::Imbalance(ImbalanceUnit::Volume, 500),
             BarSpec::Imbalance(ImbalanceUnit::Dollar, 2500),
@@ -1044,6 +1132,7 @@ mod tests {
             BarSpec::Imbalance(ImbalanceUnit::Trades, 1),
             BarSpec::Imbalance(ImbalanceUnit::Volume, 1),
             BarSpec::Imbalance(ImbalanceUnit::Dollar, 1),
+            BarSpec::Trades(1),
         ] {
             let kind = spec.kind();
             let mut builder = spec.build();
@@ -1052,6 +1141,93 @@ mod tests {
                 assert!(closed.is_some(), "{kind:?}(1) closes immediately");
             }
         }
+    }
+
+    /// A recorded day loaded behind the live tape is older than the live
+    /// readings: it lands in order and the rebuild cuts from the whole
+    /// series, while a reading delivered twice is held once.
+    #[test]
+    fn older_readings_land_in_order_and_duplicates_are_held_once() {
+        let mut s = ChartState::new(BarSpec::Trades(2));
+        let at = |time_ms: i64, session_deals: u64| DealSample {
+            time_ms,
+            session_deals,
+        };
+        s.observe_deals(at(1_500, 10));
+        s.observe_deals(at(1_500, 10));
+        s.observe_deals(at(1_100, 3));
+        s.observe_deals(at(1_300, 6));
+        s.observe_deals(at(1_100, 3));
+        let times: Vec<i64> = s.deal_samples().iter().map(|d| d.time_ms).collect();
+        assert_eq!(times, [1_100, 1_300, 1_500]);
+        // Prints at 1100..1500 (see `trade`): after a rebuild every one is
+        // counted, and the readings cut two bars (at 4 and 6) plus a partial.
+        for id in 1..=5 {
+            s.ingest_live(&trade(id));
+        }
+        s.rebuild_bars();
+        assert_eq!(s.uncounted_trades(), 0);
+        assert_eq!(s.bars().len(), 2, "{:?}", s.bars());
+    }
+
+    /// Recording belongs to the asset: the readings a tab retains survive
+    /// every switch of the bar rule, so `tick → trades → tick → trades`
+    /// cuts the same deal bars each time, and the prints before the first
+    /// reading are counted rather than folded into a bar nobody cut.
+    #[test]
+    fn deal_readings_survive_a_switch_of_the_bar_rule() {
+        let mut s = ChartState::new(BarSpec::Tick(2));
+        // Prints at 1100, 1200, ... (see `trade`); readings from 1300 on.
+        s.ingest_backfill(&[trade(1), trade(2)]);
+        s.observe_deals(DealSample {
+            time_ms: 1300,
+            session_deals: 3_990,
+        });
+        s.ingest_live(&trade(3));
+        s.ingest_live(&trade(4));
+        s.observe_deals(DealSample {
+            time_ms: 1500,
+            session_deals: 4_003,
+        });
+        s.ingest_live(&trade(5));
+        assert_eq!(s.bars().len(), 2, "two tick bars of two prints");
+        assert_eq!(
+            s.uncounted_trades(),
+            0,
+            "a tick rule counts nothing as uncounted"
+        );
+
+        s.set_spec(BarSpec::Trades(2_000));
+        assert_eq!(
+            s.bars().len(),
+            1,
+            "one deal bar closed at the 4 000 boundary"
+        );
+        assert_eq!(
+            s.bars()[0].trade_count,
+            3,
+            "the prints at 1300, 1400 and 1500"
+        );
+        assert_eq!(
+            s.uncounted_trades(),
+            2,
+            "the two prints before the first reading"
+        );
+        assert_eq!(s.deal_samples().len(), 2);
+
+        s.set_spec(BarSpec::Tick(2));
+        assert_eq!(s.bars().len(), 2);
+        s.set_spec(BarSpec::Trades(2_000));
+        assert_eq!(
+            s.bars().len(),
+            1,
+            "the readings were retained across both switches"
+        );
+        assert_eq!(s.uncounted_trades(), 2);
+        // Prints with a reading advance the countdown in deals, not prints.
+        let (progress, unit) = s.progress().expect("a deal bar runs toward a fixed count");
+        assert_eq!(unit, "deals");
+        assert_eq!(progress.done, Decimal::from(3));
     }
 
     #[test]

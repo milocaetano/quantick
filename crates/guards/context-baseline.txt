@@ -30,7 +30,12 @@
 # `CLAUDE.md` delegates the crate map to, so it is load-bearing rather than
 # merely long — but it is loaded all the same, and PR #279 moved weight into
 # it, which is exactly why it is rationed here.
-.claude/skills/ui-harness/references/hook-registry.md 69177
+# Raised 742 for the trades-bars branch: two rows, `QUANTICK_DEAL_RECORDING`
+# and `QUANTICK_DEALS_DIR`, for the REC control and the recording folder a
+# capture must point away from the trader's home. A surface with no row is
+# one nobody can reach, so the rows are part of the feature; kept to two
+# sentences each rather than the paragraph the older rows run to.
+.claude/skills/ui-harness/references/hook-registry.md 69919
 .claude/skills/ui-harness/SKILL.md 13377
 # Raised by 54 bytes, for one line: `cargo deny check bans licenses` joined the
 # list of CI steps `cargo` cannot see, and a list that omits a step is worse

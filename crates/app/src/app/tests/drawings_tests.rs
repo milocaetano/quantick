@@ -20,6 +20,7 @@ fn a_quote_driven_feed_says_so_where_the_side_note_goes() {
                 book_capture: false,
                 history_paging: false,
                 traded_volume: false,
+                deal_counter: false,
                 ohlcv_history: false,
                 ohlcv_generation: 0,
             }),

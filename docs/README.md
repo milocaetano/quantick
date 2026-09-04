@@ -56,6 +56,7 @@ The generated wire schemas live outside this tree, in
 
 | Document | What it covers |
 | --- | --- |
+| [`deal-recording.md`](deal-recording.md) | Trades bars on MetaTrader B3: why a tick is not a deal, where the count comes from feed by feed, and the recording that lets a day reopen |
 | [`footprint-design.md`](footprint-design.md) | Footprint / candle tape reading, distilled from a survey of ATAS, Sierra Chart, Bookmap, exocharts and Quantower |
 | [`order-flow-and-cross-venue-execution-ideas.md`](order-flow-and-cross-venue-execution-ideas.md) | Research note on cross-venue execution — not an approved implementation plan |
 

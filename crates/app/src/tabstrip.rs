@@ -377,9 +377,11 @@ mod tests {
                 symbol_bubble_presets: Default::default(),
                 default_layout: None,
                 default_bars: None,
+                record_deals: false,
             }],
             metatrader: MetaTraderSettings::default(),
             paper: Default::default(),
+            deals: Default::default(),
             history: Default::default(),
         }
     }

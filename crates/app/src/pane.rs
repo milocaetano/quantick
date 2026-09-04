@@ -1169,6 +1169,8 @@ pub struct ChartPane {
     pub time_interval_ms: i64,
     pub imbalance_target: u64,
     pub imbalance_unit: ImbalanceUnit,
+    /// Deals per bar for [`BarKind::Trades`] (ProfitChart's `2000T`).
+    pub deals_n: u64,
 
     // Pan/zoom navigation over the bar series. It owns the history pane only:
     // the live lane is a band of screen to its right that answers to nothing
@@ -1419,8 +1421,10 @@ impl ChartPane {
         let mut time_interval_ms = crate::time_header::DEFAULT_INTERVAL_MS;
         let mut imbalance_target = 100;
         let mut imbalance_unit = ImbalanceUnit::Trades;
+        let mut deals_n = 2_000;
         match &spec {
             BarSpec::Tick(n) => tick_n = *n,
+            BarSpec::Trades(n) => deals_n = *n,
             BarSpec::Volume(u) => volume_units = u.to_f64().unwrap_or(volume_units),
             BarSpec::Dollar(d) => dollar_notional = d.to_f64().unwrap_or(dollar_notional),
             BarSpec::Time(ms) => time_interval_ms = *ms,
@@ -1465,6 +1469,7 @@ impl ChartPane {
             time_interval_ms,
             imbalance_target,
             imbalance_unit,
+            deals_n,
             viewport: Viewport::new(),
             last_lane_divider_x: None,
             last_chart_rect: None,
@@ -1557,6 +1562,7 @@ impl ChartPane {
         self.kind = spec.kind();
         match &spec {
             BarSpec::Tick(n) => self.tick_n = *n,
+            BarSpec::Trades(n) => self.deals_n = *n,
             BarSpec::Volume(units) => {
                 self.volume_units = units.to_f64().unwrap_or(self.volume_units);
             }
@@ -2718,6 +2724,7 @@ impl ChartPane {
             BarKind::Imbalance => {
                 BarSpec::Imbalance(self.imbalance_unit, self.imbalance_target.max(1))
             }
+            BarKind::Trades => BarSpec::Trades(self.deals_n.max(1)),
         }
     }
 

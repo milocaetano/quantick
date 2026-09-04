@@ -10,6 +10,7 @@ mod analysis;
 mod annotate;
 pub(crate) mod chart;
 mod contract;
+mod deal_recording;
 mod events;
 mod evidence;
 mod feed;

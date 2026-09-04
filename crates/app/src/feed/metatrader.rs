@@ -233,6 +233,7 @@ fn session_capabilities(
     has_block: bool,
     ohlcv_generation: u64,
     history_paging: bool,
+    deal_counter: bool,
 ) -> FeedCapabilities {
     FeedCapabilities {
         book_capture: book_levels.is_some_and(|levels| levels > 0),
@@ -243,6 +244,10 @@ fn session_capabilities(
         // silently returns nothing.
         history_paging,
         traded_volume: tape == TapeKind::Trades,
+        // Whether this session's bridge stamps its live ticks with the
+        // venue's deal counter — the only count a deal bar can be cut from.
+        // A fact about the session like `history_paging`, never the provider.
+        deal_counter,
         ohlcv_history: has_block,
         // Carried across the hello rather than reset: a reconnect does not
         // un-deliver the blocks that came before it.
@@ -416,6 +421,7 @@ async fn feed_task(
                                 tape,
                                 book_levels,
                                 history_paging,
+                                deal_counter,
                                 ..
                             } => {
                                 bridge_connected.store(true, Ordering::Relaxed);
@@ -433,6 +439,7 @@ async fn feed_task(
                                     candles.is_some(),
                                     ohlcv_generation,
                                     *history_paging,
+                                    *deal_counter,
                                 ));
                                 FeedNotice::Connected
                             }
@@ -785,6 +792,13 @@ async fn feed_task(
                         // one instead of a backlog, and a consumer that has
                         // gone away does not stop the feed.
                         latency_tx.send_replace(Some(neutral_latency(&sample)));
+                    }
+                    Some(Mt5Event::DealCounter(sample)) => {
+                        // Ahead of the prints it stamps, in the same channel,
+                        // so the consumer holds the reading before the print.
+                        if tx.send(FeedEvent::DealCounter(sample)).await.is_err() {
+                            break; // UI gone
+                        }
                     }
                     Some(Mt5Event::Live(trade)) => {
                         forwarded_any = true;
@@ -1229,6 +1243,7 @@ fn log_status(symbol: &str, status: &Mt5Status) {
             book_levels,
             rates,
             history_paging,
+            deal_counter,
         } => info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -1243,6 +1258,8 @@ fn log_status(symbol: &str, status: &Mt5Status) {
             rates,
             // And the one that decides whether "load older" does anything.
             history_paging,
+            // And the one that decides whether `trades` bars are offered.
+            deal_counter,
             "bridge connected and streaming"
         ),
         Mt5Status::Lost { reason } => warn!(
@@ -1741,7 +1758,7 @@ mod tests {
     fn a_session_reports_exactly_what_its_symbol_offers() {
         // An exchange contract on the Python bridge: prints trades, publishes
         // a book, sends candles, answers "load older".
-        let exchange = session_capabilities(TapeKind::Trades, Some(10), true, 0, true);
+        let exchange = session_capabilities(TapeKind::Trades, Some(10), true, 0, true, false);
         assert!(exchange.traded_volume);
         assert!(exchange.book_capture);
         assert!(exchange.ohlcv_history);
@@ -1750,7 +1767,7 @@ mod tests {
         // A broker-quoted CFD behind the Expert Advisor: none of the four.
         // Every fact comes from the same hello, and none is inferable from the
         // provider being MetaTrader.
-        let cfd = session_capabilities(TapeKind::Quotes, None, false, 0, false);
+        let cfd = session_capabilities(TapeKind::Quotes, None, false, 0, false, false);
         assert!(!cfd.traded_volume);
         assert!(!cfd.book_capture);
         assert!(!cfd.ohlcv_history);
@@ -1758,18 +1775,22 @@ mod tests {
 
         // A bridge that subscribed to a DOM with no levels in it has no book
         // either — "declared" is not "has".
-        assert!(!session_capabilities(TapeKind::Trades, Some(0), true, 0, true).book_capture);
+        assert!(
+            !session_capabilities(TapeKind::Trades, Some(0), true, 0, true, false).book_capture
+        );
 
         // The four are independent: a CFD the Python bridge serves still has
         // candles and still pages, because the terminal keeps rates and ticks
         // for quoted symbols too.
-        let quoted = session_capabilities(TapeKind::Quotes, None, true, 0, true);
+        let quoted = session_capabilities(TapeKind::Quotes, None, true, 0, true, false);
         assert!(quoted.ohlcv_history);
         assert!(quoted.history_paging);
 
         // And paging follows the bridge, not the venue: the same exchange
         // contract behind a bridge too old to read its socket offers no button.
-        assert!(!session_capabilities(TapeKind::Trades, Some(10), true, 0, false).history_paging);
+        assert!(
+            !session_capabilities(TapeKind::Trades, Some(10), true, 0, false, false).history_paging
+        );
     }
 
     #[tokio::test]

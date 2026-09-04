@@ -22,6 +22,7 @@ use crate::canvas_layout::{
 };
 use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::{AppConfig, FeedCapabilities};
+use crate::deal_recording::DealRecorder;
 use crate::feed::stall::{self, Stall, StallInput};
 use crate::feed::{
     self, FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedHandle, FeedLatency,
@@ -451,6 +452,8 @@ pub struct Tab {
     /// What the running feed can really do, read fresh every frame. The feed
     /// narrows it once a session tells it what the symbol actually offers.
     pub feed_capabilities: watch::Receiver<FeedCapabilities>,
+    /// The venue's deal counter, kept and written down; `deal_recording_tab`.
+    pub deal_recorder: DealRecorder,
     /// Where this feed's delay is being spent, read fresh every frame.
     ///
     /// A reading rather than an event, so a frame that skipped three samples
@@ -899,6 +902,7 @@ impl Tab {
             feed_gaps: Vec::new(),
             feed_connection: FeedConnectionState::Connecting,
             feed_capabilities: feed.capabilities,
+            deal_recorder: DealRecorder::placeholder(symbol.clone()),
             feed_latency: feed.latency,
             forced_latency: crate::feed::forced_latency_split(),
             commands: feed.commands,
@@ -3127,6 +3131,7 @@ impl Tab {
                         live = true;
                     }
                 }
+                Ok(FeedEvent::DealCounter(sample)) => self.observe_deal_counter(sample),
                 Ok(FeedEvent::Reset) => self.reset_market_state(),
                 Ok(FeedEvent::OhlcvHistory {
                     interval_ms,
@@ -3155,6 +3160,7 @@ impl Tab {
         for pane in self.panes_mut() {
             pane.settle_pending_reanchor();
         }
+        self.tick_deal_recording();
     }
 
     /// Take the newest feed notice, if the feed sent any this frame.
@@ -4986,6 +4992,7 @@ mod collapse_path_tests {
             feeds: vec![],
             metatrader: Default::default(),
             paper: Default::default(),
+            deals: Default::default(),
             history: Default::default(),
         };
         let style = crate::style::ChartStyle::default();

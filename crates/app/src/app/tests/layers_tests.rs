@@ -909,6 +909,7 @@ fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
                 book_capture: false,
                 history_paging: false,
                 traded_volume: false,
+                deal_counter: false,
                 ohlcv_history: false,
                 ohlcv_generation: 0,
             }),

@@ -139,6 +139,9 @@ pub struct StatusModel {
     /// chart never says whether the next print completes the bar or the
     /// fiftieth does.
     pub bar_progress: Option<String>,
+    /// The deal recorder's cell — `REC 2 301 455 · 09:00:00 · file`, `REC
+    /// off`, `RECORDED · day` — or none where the feed has no counter.
+    pub deal_recording: Option<String>,
     /// Bars that came from the venue's own candle history, in front of
     /// everything this app built from prints. Zero on any pane without a
     /// venue prefix, which is every flow pane.
@@ -466,6 +469,15 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
                 .color(theme::AMBER),
         )
         .on_hover_text("how far the forming bar is from closing");
+    }
+    if let Some(cell) = &model.deal_recording {
+        let color = if cell.starts_with("REC ") && !cell.starts_with("REC off") {
+            theme::REC
+        } else {
+            theme::TEXT_MUTED
+        };
+        ui.label(egui::RichText::new(cell).monospace().color(color))
+            .on_hover_text("the venue's deal counter: counted live and written to disk");
     }
     ui.label(
         egui::RichText::new(bars_text(
@@ -823,6 +835,7 @@ mod tests {
                 tape_age_ms: (!replaying).then_some(200),
                 spec_summary: "tick(50)".to_owned(),
                 bar_progress: Some("37/50 ticks".to_owned()),
+                deal_recording: None,
                 venue_bars: 0,
                 backfilled_bars: 240,
                 live_bars: 61,
@@ -872,6 +885,7 @@ mod tests {
             tape_age_ms: Some(150),
             spec_summary: "tick(50)".to_owned(),
             bar_progress: Some("37/50 ticks".to_owned()),
+            deal_recording: None,
             venue_bars: 0,
             backfilled_bars: 3_999,
             live_bars: 17,

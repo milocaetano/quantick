@@ -618,6 +618,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 symbol_bubble_presets: Default::default(),
                 default_layout: None,
                 default_bars: None,
+                record_deals: false,
             },
             FeedConfig {
                 id: "b".to_string(),
@@ -628,10 +629,12 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 symbol_bubble_presets: Default::default(),
                 default_layout: None,
                 default_bars: None,
+                record_deals: false,
             },
         ],
         metatrader: Default::default(),
         paper: Default::default(),
+        deals: Default::default(),
         history: Default::default(),
     };
     let mut app = QuantickApp::new(
@@ -1714,6 +1717,7 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
         book_capture: false,
         history_paging: true,
         traded_volume: true,
+        deal_counter: false,
         ohlcv_history: false,
         ohlcv_generation: 0,
     });

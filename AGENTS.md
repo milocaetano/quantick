@@ -74,7 +74,7 @@ A capability the trader did not grant is refused at the gate with
 tool it came through — `quantick_invoke` is checked exactly like a named tool.
 
 As [`schemas/control/observer-capability-catalog-v1.json`](schemas/control/observer-capability-catalog-v1.json)
-records it, the surface is **34 capabilities across 20 modules, with 17
+records it, the surface is **39 capabilities across 20 modules, with 17
 snapshot scopes and 27 selectable permissions**. Recount from that file rather
 than trusting this sentence: the schemas are generated from the Rust contracts
 and guarded by a snapshot test, but this prose is hand-typed and has no guard.
