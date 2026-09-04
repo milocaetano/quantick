@@ -423,8 +423,15 @@ fn fold_print<B: BarBuilder + ?Sized>(
 ) -> Option<Bar> {
     let uncounted_before = builder.uncounted_trades();
     let closed = builder.push(trade);
-    if footprint_enabled && builder.uncounted_trades() == uncounted_before {
-        footprints.observe(trade, closed.as_ref());
+    if footprint_enabled {
+        let uncounted = builder.uncounted_trades() != uncounted_before;
+        match (&closed, uncounted) {
+            (_, false) => footprints.observe(trade, closed.as_ref()),
+            // A rollover ended the bar and this print counts for nothing:
+            // the ladder closes on what it held, the print folds nowhere.
+            (Some(bar), true) => footprints.close_without(bar),
+            (None, true) => {}
+        }
     }
     closed
 }
@@ -466,26 +473,19 @@ impl ChartState {
     /// reading already held is not held twice.
     pub fn observe_deals(&mut self, sample: DealSample) {
         match self.deal_samples.last() {
-            Some(last)
-                if sample.time_ms < last.time_ms
-                    || (sample.time_ms == last.time_ms
-                        && sample.session_deals < last.session_deals) =>
-            {
+            Some(last) if sample.time_ms < last.time_ms => {
                 // Older than the newest held — a bridge that restarted with
-                // another clock offset — or the same millisecond with a lower
-                // count, a regression the sampler forwards, which the builder
-                // would read as a session rollover. The live builder does not
-                // place it
+                // another clock offset. The live builder does not place it
                 // (the engine drops a sample going back in time), and the
                 // live edge is not re-cut for it either: a clock that went
                 // backwards can deliver one such reading per poll for an
                 // hour, and a rebuild per reading would freeze the chart.
                 // It lands at its place in the series, which the next
                 // rebuild replays in order — held once, whichever of the
-                // readings sharing its millisecond it equals.
-                // Its place is by time *and* reading, the order the batch
-                // path sorts into, so a rebuild never sees the count go down
-                // inside one millisecond.
+                // readings sharing its millisecond it equals. Its place is
+                // by time *and* reading, the order the batch path sorts
+                // into. A lower reading at the newest millisecond is fed as
+                // any other: the builder reads a small dip as a late poll.
                 let at = self.deal_samples.partition_point(|held| {
                     (held.time_ms, held.session_deals) <= (sample.time_ms, sample.session_deals)
                 });
@@ -1246,26 +1246,70 @@ mod tests {
     /// not cut in at once — the live edge is never re-cut per reading —
     /// and is held once however many readings share its millisecond.
     /// A reading at the newest held millisecond with a *lower* count is a
-    /// regression the sampler forwards; fed to the live builder it would
-    /// read as a session rollover and cut a bar the venue never cut. It is
-    /// held at its sorted place instead, ahead of the higher reading.
+    /// regression the sampler forwards — a late poll. The builder reads a
+    /// small dip as exactly that, live and rebuilt alike: no bar ends.
     #[test]
-    fn a_lower_reading_at_the_same_millisecond_is_held_not_cut_as_a_rollover() {
+    fn a_lower_reading_at_the_same_millisecond_is_a_late_poll_live_and_rebuilt() {
         let mut s = ChartState::new(BarSpec::Trades(2));
         let at = |time_ms: i64, session_deals: u64| DealSample {
             time_ms,
             session_deals,
         };
         s.observe_deals(at(1_099, 5));
-        s.observe_deals(at(1_099, 3));
+        s.observe_deals(at(1_099, 4));
         s.ingest_live(&trade(1));
         assert!(s.bars().is_empty(), "no rollover bar: {:?}", s.bars());
-        let held: Vec<(i64, u64)> = s
-            .deal_samples()
-            .iter()
-            .map(|d| (d.time_ms, d.session_deals))
-            .collect();
-        assert_eq!(held, [(1_099, 3), (1_099, 5)]);
+        assert_eq!(
+            s.deal_samples().len(),
+            2,
+            "held, for the file and the rebuild"
+        );
+        s.rebuild_bars();
+        assert!(s.bars().is_empty(), "the rebuild agrees: {:?}", s.bars());
+    }
+
+    /// A rollover that ends the bar on a print the builder leaves uncounted
+    /// — last night's bar, this morning's first print — closes the ladder
+    /// on what it held and folds the print nowhere, so ladders and bars
+    /// keep the same indices.
+    #[test]
+    fn a_rollover_on_an_uncounted_print_keeps_the_ladders_aligned() {
+        let mut s = ChartState::new(BarSpec::Trades(1_000));
+        s.set_footprint_enabled(true);
+        // Two readings around the first print give the rate (100 per
+        // contract); the second print is credited it and forms a bar.
+        s.observe_deals(DealSample {
+            time_ms: 999,
+            session_deals: 5_000_300,
+        });
+        s.ingest_live(&trade(1));
+        s.observe_deals(DealSample {
+            time_ms: 1_199,
+            session_deals: 5_000_400,
+        });
+        s.ingest_live(&trade(2));
+        assert_eq!(
+            s.partial_footprint().map(|_| ()),
+            Some(()),
+            "a ladder is forming"
+        );
+        // The session restarts, and the next print is far behind the
+        // reading that ended it — beyond what a reading holds for.
+        s.observe_deals(DealSample {
+            time_ms: 1_299,
+            session_deals: 3,
+        });
+        s.ingest_live(&Trade {
+            agg_id: 3,
+            timestamp_ms: 1_300 + 11 * 60_000,
+            price: dec("100"),
+            quantity: dec("1.0"),
+            side: Side::Buy,
+        });
+        assert_eq!(s.bars().len(), 1, "last night's bar ended");
+        assert_eq!(s.bar_footprints().len(), 1, "and its ladder with it");
+        assert_eq!(s.uncounted_trades(), 2, "the first print, and this one");
+        assert!(s.partial_footprint().is_none(), "nothing opened the next");
     }
 
     #[test]
@@ -1327,15 +1371,14 @@ mod tests {
             .map(|d| (d.time_ms, d.session_deals))
             .collect();
         assert_eq!(tail, [(1_600, 12), (1_600, 14)]);
-        // Prints at 1100..1500 (see `trade`): after a rebuild every one is
-        // counted, and the readings cut three bars (at 2, 4 and 6) plus a
-        // partial — the reading at 1 500 joins the print after it, never
-        // the one at its own millisecond.
+        // Prints at 1100..1500 (see `trade`): after a rebuild the first —
+        // under the first window, no rate yet — is uncounted, and the
+        // readings cut three bars from the rest.
         for id in 1..=5 {
             s.ingest_live(&trade(id));
         }
         s.rebuild_bars();
-        assert_eq!(s.uncounted_trades(), 0);
+        assert_eq!(s.uncounted_trades(), 1);
         assert_eq!(s.bars().len(), 3, "{:?}", s.bars());
     }
 
@@ -1364,13 +1407,20 @@ mod tests {
             session_deals: 3_990,
         });
         s.ingest_live(&trade(3));
+        // The window completes at 9 deals over one contract: the next
+        // print is credited 9 and crosses 4 000.
         s.observe_deals(DealSample {
             time_ms: 1_399,
-            session_deals: 4_003,
+            session_deals: 3_999,
         });
         s.ingest_live(&trade(4));
         assert_eq!(s.bars().len(), 1);
-        assert_eq!(s.bars()[0].trade_count, 2);
+        assert_eq!(s.bars()[0].trade_count, 1);
+        assert_eq!(
+            s.uncounted_trades(),
+            3,
+            "two before any reading, one before a rate"
+        );
         assert_eq!(s.bar_footprints().len(), 1);
         // A refold and a rebuild keep the alignment too.
         s.set_footprint_group(dec("2"));
@@ -1389,11 +1439,15 @@ mod tests {
         });
         s.observe_deals(DealSample {
             time_ms: 1_150,
-            session_deals: 4_003,
+            session_deals: 3_999,
         });
         s.ingest_live(&trade(1));
         s.ingest_live(&trade(2));
-        assert_eq!(s.bars().len(), 1, "the print at 1 200 sees 4 003");
+        assert_eq!(
+            s.bars().len(),
+            1,
+            "the print at 1 200 is credited the window's 9 and crosses 4 000"
+        );
 
         s.reset_series(BarSpec::Trades(2_000));
         assert!(s.bars().is_empty(), "the series is gone");
@@ -1427,20 +1481,19 @@ mod tests {
         );
 
         s.set_spec(BarSpec::Trades(2_000));
-        assert_eq!(
-            s.bars().len(),
-            1,
-            "one deal bar closed at the 4 000 boundary"
+        assert!(
+            s.bars().is_empty(),
+            "4 003 plus one print's estimate reaches no multiple"
         );
         assert_eq!(
-            s.bars()[0].trade_count,
-            3,
-            "the prints at 1300, 1400 and 1500"
+            s.partial().map(|bar| bar.trade_count),
+            Some(1),
+            "the print at 1500, credited the first window's rate"
         );
         assert_eq!(
             s.uncounted_trades(),
-            2,
-            "the two prints before the first reading"
+            4,
+            "two before the first reading, two before the first rate"
         );
         assert_eq!(s.deal_samples().len(), 2);
 
@@ -1448,15 +1501,16 @@ mod tests {
         assert_eq!(s.bars().len(), 2);
         s.set_spec(BarSpec::Trades(2_000));
         assert_eq!(
-            s.bars().len(),
-            1,
+            s.uncounted_trades(),
+            4,
             "the readings were retained across both switches"
         );
-        assert_eq!(s.uncounted_trades(), 2);
-        // Prints with a reading advance the countdown in deals, not prints.
+        // Prints with a rate advance the countdown in estimated deals, not
+        // prints: the window's 13 deals over two contracts credit the print
+        // at 1500 six and a half, past the re-anchored 4 003.
         let (progress, unit) = s.progress().expect("a deal bar runs toward a fixed count");
         assert_eq!(unit, "deals");
-        assert_eq!(progress.done, Decimal::from(3));
+        assert_eq!(progress.done, dec("9.5"));
     }
 
     #[test]

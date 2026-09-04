@@ -7,71 +7,54 @@
 //! deals, so the two charts cut in different places. This builder counts what
 //! the venue counts.
 //!
-//! # The join: prints on one side, a counter on the other
+//! # The counter, and what it resolves
 //!
 //! MetaTrader exposes no deal count per tick, only the session's running
-//! total (`SYMBOL_SESSION_DEALS`). The bridge samples it every poll and the
-//! feed hands each reading here as a [`DealSample`]. A print is joined to the
-//! latest sample **strictly before its own timestamp** — the counter as the
-//! venue had it when that print was read — and a bar closes on the first
-//! print whose reading reaches the next multiple of `N`.
+//! total (`SYMBOL_SESSION_DEALS`) — and the terminal refreshes that total
+//! about every 31 seconds (measured over a whole B3 session on 2026-09-04:
+//! 592 readings, median interval 31.2 s, 1 500 to 10 000 deals apart). The
+//! bridge forwards each new reading as a [`DealSample`] on the tape's own
+//! clock. Between two readings the venue's count is unknown print by print;
+//! what is known exactly is the total at each reading.
 //!
-//! Three consequences, all deliberate:
+//! # The estimate
 //!
-//! - **Bars are the session's multiples of `N`**, never "N deals since the
-//!   chart connected". A chart that connects at reading 2 300 411 closes its
-//!   first bar at 2 302 000, exactly where a chart that ran since the open
-//!   does — the same alignment ProfitChart shows.
-//! - **A print before the first sample is uncounted.** It is reported through
-//!   [`BarBuilder::uncounted_trades`] and folded into no bar: the venue never
-//!   said how many deals it held, and guessing would put a price on a bar
-//!   the market did not cut. The data-honesty rule.
-//! - **Resolution is one sample.** Every print read in the same poll carries
-//!   the same reading, so the boundary lands on the last print of the poll
-//!   that crossed it. A bar can therefore overshoot by up to one poll's
-//!   worth of deals, and never carries the overshoot into the next bar — the
-//!   next boundary is the next multiple above the reading that closed it.
+//! Each print between two readings is credited an **estimated** number of
+//! deals: its contracts times the *rate* — deals per contract — of the last
+//! completed reading window. The running total is re-anchored to the exact
+//! reading every time one arrives, so the day's total, and with it the
+//! number of bars, is the venue's; only where inside a window each bar
+//! closes is an estimate, off by the difference between two consecutive
+//! windows' rates. A bar closes on the first print whose estimated total
+//! reaches the next multiple of `N` — the session's multiples, so a chart
+//! that connects at reading 2 300 411 closes its first bar at 2 302 000, as
+//! one that ran since the open does. A reading that reaches a multiple the
+//! estimate had not closes the forming bar on the next print; a multiple the
+//! estimate closed early is not closed twice.
 //!
-//! # Between readings
+//! The estimate uses only what came *before* the print — the last completed
+//! window's rate and the newest reading strictly before it — so readings fed
+//! just ahead of their prints (the live feed) and readings fed all at once
+//! before the prints (a rebuild) cut identical bars: the property a chart
+//! and its rebuilt twin are held to, and what lets a change of `N` recut the
+//! whole day from the recorded readings.
 //!
-//! A print is joined to the newest reading strictly before it, however far
-//! back that reading is. That is the one rule, and it is the same whether
-//! the readings arrive just ahead of their prints (the live feed) or all at
-//! once before the prints are replayed (a rebuild): the join looks only at
-//! what is before the print, so the two orders cut identical bars — the
-//! property a chart and its rebuilt twin are held to.
-//!
-//! *Strictly* before, never at the print's own millisecond, because two
-//! readings can share one: ticks do across poll rounds, so a round's reading
-//! is stamped at the millisecond the previous round's last prints carry.
-//! Live, those prints were placed before the later reading existed; a
-//! rebuild holds both readings when it places them. A join that admitted a
-//! reading at the print's own millisecond would put the two orders one
-//! reading apart there. Excluding it costs one print of resolution — the
-//! first print of a round joins the round before — inside the one-poll
-//! tolerance the boundary already carries.
-//!
-//! A reading holds for [`READING_MAX_AGE_MS`] of tape. A print further
-//! behind the newest reading before it than that — the application was
-//! down, the bridge stalled and caught up in one round, yesterday's last
-//! reading under today's first prints — is **uncounted**, like a print
-//! before the first reading: the counter said nothing about it, and a bar
-//! that folded it in would claim `N` deals it never counted. Still one
-//! rule, and still order-free: the age is measured against the reading in
-//! force, which both orders have in hand. The stretch resumes cutting at
-//! the first reading after it, and the application says how many prints
-//! it holds. A counter that stands still while prints keep coming is the
-//! same shape at the live edge: after four seconds its prints have no
-//! count, and REC turns amber.
+//! Prints before the first reading, or before the first completed window
+//! (no rate yet), or further behind the newest reading than
+//! [`READING_MAX_AGE_MS`] — last night's reading under this morning's
+//! prints — are **uncounted**: reported through
+//! [`BarBuilder::uncounted_trades`], folded into no bar. The venue never said
+//! how many deals they held, and guessing would put a price on a bar the
+//! market did not cut.
 //!
 //! # Session rollover
 //!
-//! The counter restarts at the next session. A sample that reads *lower*
-//! than the reading in force closes the forming bar — the exchange stopped
-//! counting, which is a real end — and starts counting again from the new
-//! reading. Samples that merely go backwards in time are ignored: the feed
-//! promises monotonic samples and a late one carries no information the
-//! builder can place.
+//! A reading lower than the one in force by more than a bar's worth of deals
+//! closes the forming bar — the exchange restarted its count, which is a
+//! real end — and counts on from the new reading. A smaller dip is the
+//! terminal answering a poll late and changes nothing. Samples that merely
+//! go backwards in time are ignored: the feed promises monotonic samples and
+//! a late one carries no information the builder can place.
 
 use std::collections::VecDeque;
 
@@ -79,14 +62,13 @@ use rust_decimal::Decimal;
 
 use crate::{Bar, BarBuilder, BarProgress, Trade};
 
-/// How long a reading holds for the prints after it. A live bridge samples
-/// every 20 ms and a recorded day holds one reading per change, so four
-/// seconds of prints under one reading is the counter having stopped, or
-/// the application having been away, not a quiet tape. A print further
-/// behind its reading than this is uncounted rather than folded into a bar
-/// the counter never cut; the application calls the counter stale at the
-/// same age.
-pub const READING_MAX_AGE_MS: i64 = 4_000;
+/// How long a reading holds for the prints after it. The terminal refreshes
+/// the counter about every 31 seconds, so ten minutes of prints under one
+/// reading is the counter having stopped, or the application having been
+/// away — last night's reading under this morning's prints — not a slow
+/// terminal. A print further behind its reading than this is uncounted
+/// rather than credited a stale rate.
+pub const READING_MAX_AGE_MS: i64 = 600_000;
 
 /// One reading of the venue's session deal counter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +80,8 @@ pub struct DealSample {
     pub session_deals: u64,
 }
 
-/// Builds deal bars: one closed [`Bar`] per `N` deals of the venue's counter.
+/// Builds deal bars: one closed [`Bar`] per `N` deals of the venue's counter,
+/// the deals between readings estimated per print. See the module doc.
 ///
 /// Feed samples with [`observe_deals`](BarBuilder::observe_deals) and prints
 /// with [`push`](BarBuilder::push), each in time order. A sample may arrive
@@ -112,11 +95,18 @@ pub struct DealBarBuilder {
     pending: VecDeque<DealSample>,
     /// The newest sample accepted, joined or not; the monotonicity guard.
     newest: Option<DealSample>,
-    /// The reading in force for the print being pushed.
-    reading: Option<u64>,
-    /// When that reading was taken, on the tape's clock: a print further
-    /// behind it than [`READING_MAX_AGE_MS`] is uncounted.
-    reading_time_ms: Option<i64>,
+    /// The newest reading in force: the venue's exact total, and when it was
+    /// taken on the tape's clock.
+    reading: Option<DealSample>,
+    /// Deals per contract over the last completed window between two
+    /// readings; none until a window has completed.
+    rate: Option<Decimal>,
+    /// Contracts printed since the reading in force — the divisor of the
+    /// next rate.
+    window_volume: Decimal,
+    /// The running total: the reading in force plus the deals estimated for
+    /// the prints since it. Re-anchored to every reading.
+    total: Decimal,
     /// The counter value that closes the forming bar.
     next_boundary: u64,
     current: Option<Bar>,
@@ -138,7 +128,9 @@ impl DealBarBuilder {
             pending: VecDeque::new(),
             newest: None,
             reading: None,
-            reading_time_ms: None,
+            rate: None,
+            window_volume: Decimal::ZERO,
+            total: Decimal::ZERO,
             next_boundary: 0,
             current: None,
             uncounted: 0,
@@ -151,11 +143,17 @@ impl DealBarBuilder {
         self.n
     }
 
-    /// The counter reading joined to the last print pushed, if any print
-    /// has been counted yet.
+    /// The venue's newest reading joined to the prints, if any print has
+    /// been counted yet.
     #[must_use]
     pub fn reading(&self) -> Option<u64> {
-        self.reading
+        self.reading.map(|sample| sample.session_deals)
+    }
+
+    /// Deals per contract over the last completed window, once one has.
+    #[must_use]
+    pub fn rate(&self) -> Option<Decimal> {
+        self.rate
     }
 
     /// The first multiple of `n` strictly above `reading`.
@@ -172,25 +170,57 @@ impl DealBarBuilder {
                 break;
             }
             self.pending.pop_front();
-            match self.reading {
-                Some(current) if sample.session_deals < current => {
-                    // The venue restarted its count: a new session. The bar
-                    // forming under the old count ends here.
+            let deals = sample.session_deals;
+            match self.reading.map(|r| r.session_deals) {
+                None => {
+                    self.next_boundary = self.boundary_above(deals);
+                }
+                // Lower by more than a bar's worth of deals: the venue
+                // restarted its count, a new session, and the bar forming
+                // under the old count ends here. The rate carries over — a
+                // new session's deals per contract are no different.
+                Some(current) if deals < current.saturating_sub(self.n) => {
                     if let Some(bar) = self.current.take() {
                         closed = Some(bar);
                     }
-                    self.reading = Some(sample.session_deals);
-                    self.next_boundary = self.boundary_above(sample.session_deals);
+                    self.next_boundary = self.boundary_above(deals);
                 }
-                Some(_) => self.reading = Some(sample.session_deals),
-                None => {
-                    self.reading = Some(sample.session_deals);
-                    self.next_boundary = self.boundary_above(sample.session_deals);
+                // A smaller dip is the terminal answering a poll late —
+                // polls are milliseconds apart, a bar is minutes — and
+                // changes nothing: acting on it would end the bar and cut a
+                // second one the venue never counted.
+                Some(current) if deals < current => continue,
+                Some(current) => {
+                    // A completed window: its exact deals over its contracts
+                    // is the rate the next window's prints are estimated at.
+                    // A window with prints of no volume — a quoted tape —
+                    // keeps the rate it had.
+                    if self.window_volume > Decimal::ZERO {
+                        self.rate = Some(Decimal::from(deals - current) / self.window_volume);
+                    }
+                    // A multiple crossed while nothing was forming — its
+                    // prints uncounted — has no bar to close: the count
+                    // moves on. Otherwise the boundary stands: a multiple
+                    // the estimate missed is below the re-anchored total
+                    // and closes on the next print; one it closed early is
+                    // above it and is not cut twice — the next window fills
+                    // up to it.
+                    if self.current.is_none() && deals >= self.next_boundary {
+                        self.next_boundary = self.boundary_above(deals);
+                    }
                 }
             }
-            self.reading_time_ms = Some(sample.time_ms);
+            self.reading = Some(sample);
+            self.total = Decimal::from(deals);
+            self.window_volume = Decimal::ZERO;
         }
         closed
+    }
+
+    /// Whether the running total has reached the boundary — the estimate
+    /// crossed a multiple, or a reading did.
+    fn crossed_boundary(&self) -> bool {
+        self.total >= Decimal::from(self.next_boundary)
     }
 }
 
@@ -198,8 +228,7 @@ impl BarBuilder for DealBarBuilder {
     fn push(&mut self, trade: &Trade) -> Option<Bar> {
         // A rollover can close a bar before this print is placed; that bar
         // is returned and the print opens the next one. At most one bar
-        // closes per print either way, because a rollover resets the
-        // boundary above the new reading.
+        // closes per print either way.
         let rolled = self.advance_to(trade.timestamp_ms);
         let Some(reading) = self.reading else {
             self.uncounted = self.uncounted.saturating_add(1);
@@ -207,15 +236,19 @@ impl BarBuilder for DealBarBuilder {
         };
         // The counter's silence: a print further behind the reading in
         // force than a reading holds has no count, and says so, rather than
-        // folding into a bar that would claim deals the venue never counted
-        // under it. See the module doc, *Between readings*.
-        let age_ms = self
-            .reading_time_ms
-            .map_or(0, |taken| trade.timestamp_ms.saturating_sub(taken));
-        if age_ms > READING_MAX_AGE_MS {
+        // being credited a rate from another day.
+        if trade.timestamp_ms.saturating_sub(reading.time_ms) > READING_MAX_AGE_MS {
             self.uncounted = self.uncounted.saturating_add(1);
             return rolled;
         }
+        self.window_volume += trade.quantity;
+        let Some(rate) = self.rate else {
+            // No window has completed yet: nothing says how many deals a
+            // contract is worth on this tape. Counted from the next reading.
+            self.uncounted = self.uncounted.saturating_add(1);
+            return rolled;
+        };
+        self.total += trade.quantity * rate;
         if rolled.is_some() {
             self.current = Some(Bar::opened_by(trade));
             return rolled;
@@ -224,8 +257,17 @@ impl BarBuilder for DealBarBuilder {
             Some(bar) => bar.extend(trade),
             None => self.current = Some(Bar::opened_by(trade)),
         }
-        if reading >= self.next_boundary {
-            self.next_boundary = self.boundary_above(reading);
+        if self.crossed_boundary() {
+            // Overshoot — an estimate past the multiple, a reading past it —
+            // is not carried into the next bar: the next boundary is the
+            // next multiple above where the total stands.
+            let floor = self
+                .total
+                .max(Decimal::ZERO)
+                .trunc()
+                .try_into()
+                .unwrap_or(u64::MAX);
+            self.next_boundary = self.boundary_above(floor);
             return self.current.take();
         }
         None
@@ -236,10 +278,10 @@ impl BarBuilder for DealBarBuilder {
     }
 
     fn progress(&self) -> Option<BarProgress> {
-        let reading = self.reading?;
+        self.reading?;
         let floor = self.next_boundary.saturating_sub(self.n);
         Some(BarProgress {
-            done: Decimal::from(reading.saturating_sub(floor)),
+            done: (self.total - Decimal::from(floor)).max(Decimal::ZERO),
             target: Decimal::from(self.n),
         })
     }
@@ -266,11 +308,15 @@ mod tests {
     use std::str::FromStr as _;
 
     fn trade(agg_id: u64, ts: i64, price: &str) -> Trade {
+        trade_of(agg_id, ts, price, "1")
+    }
+
+    fn trade_of(agg_id: u64, ts: i64, price: &str, quantity: &str) -> Trade {
         Trade {
             agg_id,
             timestamp_ms: ts,
             price: Decimal::from_str(price).unwrap(),
-            quantity: Decimal::ONE,
+            quantity: Decimal::from_str(quantity).unwrap(),
             side: Side::Buy,
         }
     }
@@ -282,30 +328,42 @@ mod tests {
         }
     }
 
-    /// The fixture every test below reads: a chart that connects with the
-    /// counter at 1 990, deals per bar 2 000. Each reading is taken a
-    /// millisecond ahead of the prints it stamps, as the live feed sends it.
-    /// Prints at 50 and 60 predate the first reading; the reading at 299
-    /// crosses 2 000 for the print at 300; the one at 899 jumps clean over
-    /// 4 000.
+    /// The fixture every test below reads: readings at the terminal's
+    /// cadence, prints of ten contracts between them, deals per bar 2 000.
+    ///
+    /// - Prints at 50 and 60 predate the first reading: uncounted.
+    /// - Window 1 (reading 1 000 000 at 99, prints at 100..=400): no rate
+    ///   yet, so its four prints are uncounted too; it completes at the
+    ///   reading 1 003 000 at 30 099 — 3 000 deals over 40 contracts, a
+    ///   rate of 75 deals per contract.
+    /// - Window 2 (prints at 30 100..=30 400): each print is worth 750
+    ///   estimated deals; the total reaches 1 004 000 on the second print
+    ///   (bar A) and 1 006 000 on the fourth (bar B), where the reading
+    ///   1 006 000 at 60 099 then re-anchors it exactly.
+    /// - Window 3 (prints at 60 100, 60 200): the rate is still 75, the
+    ///   total stands at 1 007 500 with a bar forming.
     fn fixture() -> (Vec<DealSample>, Vec<Trade>) {
         let samples = vec![
-            sample(99, 1_990),
-            sample(299, 2_003),
-            sample(499, 2_010),
-            sample(899, 4_100),
+            sample(99, 1_000_000),
+            sample(30_099, 1_003_000),
+            sample(60_099, 1_006_000),
         ];
-        let trades = vec![
-            trade(1, 50, "100"),
-            trade(2, 60, "101"),
-            trade(3, 100, "102"),
-            trade(4, 200, "103"),
-            trade(5, 300, "104"),
-            trade(6, 400, "105"),
-            trade(7, 500, "106"),
-            trade(8, 900, "107"),
-            trade(9, 1_000, "108"),
-        ];
+        let mut trades = vec![trade_of(1, 50, "100", "10"), trade_of(2, 60, "101", "10")];
+        let mut id = 3;
+        for window in [100, 30_100, 60_100] {
+            for k in 0..4 {
+                if window == 60_100 && k >= 2 {
+                    break;
+                }
+                trades.push(trade_of(
+                    id,
+                    window + k * 100,
+                    &(100 + id).to_string(),
+                    "10",
+                ));
+                id += 1;
+            }
+        }
         (samples, trades)
     }
 
@@ -316,6 +374,25 @@ mod tests {
             b.observe_deals(*s);
         }
         let bars = trades.iter().filter_map(|t| b.push(t)).collect();
+        (b, bars)
+    }
+
+    /// Each reading just ahead of the prints it precedes — the live order.
+    fn run_live(samples: &[DealSample], trades: &[Trade], n: u64) -> (DealBarBuilder, Vec<Bar>) {
+        let mut b = DealBarBuilder::new(n);
+        let mut bars = Vec::new();
+        let mut next = 0;
+        for t in trades {
+            while next < samples.len() && samples[next].time_ms <= t.timestamp_ms {
+                b.observe_deals(samples[next]);
+                next += 1;
+            }
+            bars.extend(b.push(t));
+        }
+        while next < samples.len() {
+            b.observe_deals(samples[next]);
+            next += 1;
+        }
         (b, bars)
     }
 
@@ -333,33 +410,39 @@ mod tests {
         assert_eq!(
             bars.len(),
             2,
-            "two boundaries were crossed: 2 000 and 4 000"
+            "two multiples crossed: 1 004 000 and 1 006 000"
         );
-        // Bar A: prints at 100, 200, 300 — closed by the reading 2 003.
-        assert_eq!((bars[0].open_time, bars[0].close_time), (100, 300));
-        assert_eq!(bars[0].trade_count, 3);
-        assert_eq!(bars[0].open, Decimal::from(102));
-        assert_eq!(bars[0].close, Decimal::from(104));
-        // Bar B: prints at 400, 500, 900 — closed by the jump to 4 100, which
-        // overshoots 4 000 by one poll and is not carried forward.
-        assert_eq!((bars[1].open_time, bars[1].close_time), (400, 900));
-        assert_eq!(bars[1].trade_count, 3);
-        // The print at 1 000 opens bar C; the next boundary is 6 000.
-        let partial = b.partial().expect("bar C is forming");
-        assert_eq!((partial.open_time, partial.trade_count), (1_000, 1));
-        assert_eq!(b.reading(), Some(4_100));
+        // Bar A: the first two prints of window 2 — 1 500 estimated deals on
+        // top of 1 003 000 reach 1 004 000 on the second.
+        assert_eq!((bars[0].open_time, bars[0].close_time), (30_100, 30_200));
+        assert_eq!(bars[0].trade_count, 2);
+        assert_eq!(bars[0].open, Decimal::from(107));
+        assert_eq!(bars[0].close, Decimal::from(108));
+        // Bar B: the next two, reaching 1 006 000 on the fourth.
+        assert_eq!((bars[1].open_time, bars[1].close_time), (30_300, 30_400));
+        assert_eq!(bars[1].trade_count, 2);
+        // Window 3 is forming: two prints, 1 500 estimated deals past the
+        // re-anchored 1 006 000, toward 1 008 000.
+        let partial = b.partial().expect("a bar is forming");
+        assert_eq!((partial.open_time, partial.trade_count), (60_100, 2));
+        assert_eq!(b.reading(), Some(1_006_000));
+        assert_eq!(b.rate(), Some(Decimal::from(75)));
         let progress = b.progress().expect("a deal bar runs toward a fixed count");
         assert_eq!(
             (progress.done, progress.target),
-            (Decimal::from(100), Decimal::from(2_000))
+            (Decimal::from(1_500), Decimal::from(2_000))
         );
     }
 
     #[test]
-    fn prints_before_the_first_sample_are_uncounted_not_guessed() {
+    fn prints_before_the_first_completed_window_are_uncounted_not_guessed() {
         let (samples, trades) = fixture();
         let (b, bars) = run(&samples, &trades, 2_000);
-        assert_eq!(b.uncounted_trades(), 2, "the prints at 50 and 60");
+        assert_eq!(
+            b.uncounted_trades(),
+            6,
+            "the two before the first reading, and window 1's four"
+        );
         let counted: u64 = bars.iter().map(|bar| bar.trade_count).sum::<u64>()
             + b.partial().map_or(0, |bar| bar.trade_count);
         assert_eq!(counted + b.uncounted_trades(), trades.len() as u64);
@@ -382,83 +465,131 @@ mod tests {
         assert_eq!(first, second);
     }
 
-    /// The live order — each poll's reading arrives just ahead of its prints
-    /// — cuts exactly where the rebuild order does.
+    /// The live order — each reading arrives just ahead of its prints —
+    /// cuts exactly where the rebuild order does, and leaves the same
+    /// prints uncounted.
     #[test]
     fn interleaved_samples_cut_where_a_rebuild_cuts() {
         let (samples, trades) = fixture();
-        let (_, rebuilt) = run(&samples, &trades, 2_000);
-
-        let mut b = DealBarBuilder::new(2_000);
-        let mut live = Vec::new();
-        let mut next_sample = 0;
-        for t in &trades {
-            while next_sample < samples.len() && samples[next_sample].time_ms <= t.timestamp_ms {
-                b.observe_deals(samples[next_sample]);
-                next_sample += 1;
-            }
-            live.extend(b.push(t));
-        }
+        let (rebuilt_builder, rebuilt) = run(&samples, &trades, 2_000);
+        let (live_builder, live) = run_live(&samples, &trades, 2_000);
         assert_eq!(live, rebuilt);
+        assert_eq!(
+            live_builder.uncounted_trades(),
+            rebuilt_builder.uncounted_trades()
+        );
+        assert_eq!(live_builder.partial(), rebuilt_builder.partial());
     }
 
+    /// Another `N` over the same readings and prints recuts the day: what a
+    /// change of the bar size on the chart does, from the recorded readings.
+    #[test]
+    fn another_n_recuts_the_same_day() {
+        let (samples, trades) = fixture();
+        let (_, at_2000) = run(&samples, &trades, 2_000);
+        let (_, at_1000) = run(&samples, &trades, 1_000);
+        assert_eq!(at_2000.len(), 2);
+        assert_eq!(at_1000.len(), 4, "twice the multiples, twice the bars");
+        let counts: Vec<u64> = at_1000.iter().map(|bar| bar.trade_count).collect();
+        assert_eq!(counts, [2, 1, 1, 2]);
+    }
+
+    /// Connected with the counter at 2 300 411: the first bar must close at
+    /// 2 302 000, not 2 000 deals after connecting.
     #[test]
     fn a_chart_that_connects_late_still_cuts_at_the_sessions_multiples() {
-        // Connected with the counter at 2 300 411: the first bar must close
-        // at 2 302 000, not 2 000 deals after connecting.
         let mut b = DealBarBuilder::new(2_000);
         b.observe_deals(sample(9, 2_300_411));
-        b.observe_deals(sample(19, 2_301_999));
-        b.observe_deals(sample(29, 2_302_000));
-        assert!(b.push(&trade(1, 10, "100")).is_none());
-        assert!(b.push(&trade(2, 20, "100")).is_none());
+        // Window 1: one print of ten contracts, no rate yet — uncounted.
+        assert!(b.push(&trade_of(1, 10, "100", "10")).is_none());
+        // Its reading: 1 000 deals over 10 contracts, a rate of 100.
+        b.observe_deals(sample(19, 2_301_411));
+        // Six contracts: 600 estimated, total 2 302 011 — past the multiple.
         let bar = b
-            .push(&trade(3, 30, "100"))
-            .expect("closes on the multiple");
-        assert_eq!(bar.trade_count, 3);
+            .push(&trade_of(2, 20, "100", "6"))
+            .expect("closes on the session's multiple");
+        assert_eq!(bar.trade_count, 1);
+        assert_eq!(b.progress().map(|p| p.done), Some(Decimal::from(11)));
     }
 
-    /// One join rule, whatever the order: readings fed all at once before
-    /// the prints (a rebuild) and readings fed just ahead of their prints
-    /// (the live feed) cut the same bars — across a stretch with no
-    /// readings, whose prints are uncounted rather than folded, and across
-    /// a round of prints that spans far longer than the readings' cadence.
+    /// A reading that reaches a multiple the estimate had not closes the
+    /// forming bar on the next print; one the estimate closed early is not
+    /// closed twice — the day's bar count is the venue's total over `N`.
+    #[test]
+    fn a_reading_corrects_the_estimate_without_cutting_twice() {
+        let mut b = DealBarBuilder::new(1_000);
+        b.observe_deals(sample(99, 10_000));
+        b.push(&trade_of(1, 100, "100", "10"));
+        b.observe_deals(sample(30_099, 10_500)); // rate 50 per contract
+        // Window 2 estimates 5 contracts at 250: total 10 750, no bar.
+        assert!(b.push(&trade_of(2, 30_100, "100", "5")).is_none());
+        // The reading says 11 200: the multiple 11 000 was crossed. The next
+        // print closes the bar, and the total re-anchors.
+        b.observe_deals(sample(60_099, 11_200));
+        let late = b
+            .push(&trade_of(3, 60_100, "100", "1"))
+            .expect("the missed multiple closes on the next print");
+        assert_eq!(late.trade_count, 2);
+        // Window 3's rate is 700 over 5 contracts = 140: the print that
+        // closed 11 000 counted 140 (total 11 340), two contracts are 280
+        // (11 620) and three more are 420 — the estimate closes 12 000 on
+        // the third print, early.
+        b.push(&trade_of(4, 60_200, "100", "2"));
+        let early = b
+            .push(&trade_of(5, 60_300, "100", "3"))
+            .expect("the estimate reaches 12 000");
+        assert_eq!(early.trade_count, 2);
+        // The reading says 11 900: 12 000 was not crossed after all. The bar
+        // that closed stays closed and 12 000 is not cut again — the next
+        // window fills toward 13 000 from the re-anchored 11 900.
+        b.observe_deals(sample(90_099, 11_900));
+        assert!(b.push(&trade_of(6, 90_100, "100", "1")).is_none());
+        b.observe_deals(sample(120_099, 12_050));
+        assert!(
+            b.push(&trade_of(7, 120_100, "100", "1")).is_none(),
+            "12 000 was cut already; the reading past it cuts nothing"
+        );
+        assert!(b.partial().is_some_and(|bar| bar.trade_count == 2));
+        assert_eq!(b.progress().map(|p| p.target), Some(Decimal::from(1_000)));
+    }
+
+    /// A stretch with no readings — quantick was down, the day's file has a
+    /// hole — is uncounted once it runs past what a reading holds for, in
+    /// both orders; cutting resumes at the next completed window.
     #[test]
     fn a_stretch_without_readings_cuts_the_same_bars_live_and_rebuilt() {
         let samples = vec![
             sample(99, 5_000_400),
-            // Nothing for forty seconds, then the counter has moved past the
-            // next boundary.
-            sample(40_099, 5_001_005),
-            sample(40_199, 5_001_009),
+            sample(30_099, 5_001_400),
+            // Nothing for twenty minutes, then the counter is back.
+            sample(1_230_099, 5_050_000),
+            sample(1_260_099, 5_050_100),
         ];
-        let trades: Vec<Trade> = [100, 200, 10_000, 30_000, 40_100, 40_150, 40_200]
-            .into_iter()
-            .enumerate()
-            .map(|(i, ts)| trade(i as u64 + 1, ts, "100"))
-            .collect();
+        let trades: Vec<Trade> = [
+            100, 200, 30_100, 30_200, 700_000, 900_000, 1_230_100, 1_260_100,
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, ts)| trade_of(i as u64 + 1, ts, "100", "10"))
+        .collect();
         let (rebuilt_builder, rebuilt) = run(&samples, &trades, 1_000);
-
-        let mut live = DealBarBuilder::new(1_000);
-        let mut cut = Vec::new();
-        let mut next = 0;
-        for t in &trades {
-            while next < samples.len() && samples[next].time_ms <= t.timestamp_ms {
-                live.observe_deals(samples[next]);
-                next += 1;
-            }
-            cut.extend(live.push(t));
-        }
-        assert_eq!(cut, rebuilt);
-        assert_eq!(live.uncounted_trades(), rebuilt_builder.uncounted_trades());
-        // The prints at 10 000 and 30 000 sit far behind the reading at 99:
-        // uncounted, in both orders. The bar that reading was forming
-        // closes on the print at 40 100, the first under the reading that
-        // ended the stretch, with the three prints it counted.
-        assert_eq!(rebuilt.len(), 1);
-        assert_eq!((rebuilt[0].open_time, rebuilt[0].close_time), (100, 40_100));
-        assert_eq!(rebuilt[0].trade_count, 3);
-        assert_eq!(rebuilt_builder.uncounted_trades(), 2);
+        let (live_builder, live) = run_live(&samples, &trades, 1_000);
+        assert_eq!(live, rebuilt);
+        assert_eq!(
+            live_builder.uncounted_trades(),
+            rebuilt_builder.uncounted_trades()
+        );
+        // Window 1's two prints have no rate; window 2's two are counted at
+        // 50 per contract (500 each, closing 5 002 000 on the second); the
+        // prints at 700 000 and 900 000 are beyond what the reading at
+        // 30 099 holds for; the print at 1 230 100 is credited the rate the
+        // stretch's window gives and closes a bar of its own.
+        assert_eq!(rebuilt_builder.uncounted_trades(), 4);
+        assert_eq!(rebuilt.len(), 2, "{rebuilt:?}");
+        assert_eq!(
+            (rebuilt[0].open_time, rebuilt[0].close_time),
+            (30_100, 30_200)
+        );
     }
 
     /// Yesterday's last reading under today's first prints — a chart left
@@ -468,60 +599,28 @@ mod tests {
     #[test]
     fn a_reading_from_last_night_counts_no_print_this_morning() {
         let mut b = DealBarBuilder::new(2_000);
-        b.observe_deals(sample(99, 5_000_400));
-        assert!(b.push(&trade(1, 100, "100")).is_none());
-        // The next morning: fourteen hours later, prints before any reading.
+        b.observe_deals(sample(99, 5_000_000));
+        b.push(&trade(1, 100, "100"));
+        b.observe_deals(sample(30_099, 5_000_500)); // rate 500 per contract
+        assert!(b.push(&trade(2, 30_100, "100")).is_none());
         let morning = 100 + 14 * 3_600_000;
-        assert!(b.push(&trade(2, morning, "101")).is_none());
-        assert!(b.push(&trade(3, morning + 100, "102")).is_none());
-        assert_eq!(b.uncounted_trades(), 2);
+        assert!(b.push(&trade(3, morning, "101")).is_none());
+        assert!(b.push(&trade(4, morning + 100, "102")).is_none());
+        assert_eq!(
+            b.uncounted_trades(),
+            3,
+            "window 1's print, and the two of this morning"
+        );
         // The session's first reading is lower: a rollover. The bar it ends
         // holds last night's one counted print, nothing of this morning.
         b.observe_deals(sample(morning + 199, 120_000));
         let ended = b
-            .push(&trade(4, morning + 200, "103"))
+            .push(&trade(5, morning + 200, "103"))
             .expect("last night's bar ends");
         assert_eq!(
             (ended.open_time, ended.close_time, ended.trade_count),
-            (100, 100, 1)
+            (30_100, 30_100, 1)
         );
-        assert_eq!(b.partial().map(|bar| bar.trade_count), Some(1));
-    }
-
-    /// Two readings in one millisecond — a round's reading stamped at the
-    /// millisecond the previous round's last prints carry — with prints on
-    /// both sides of the later one. Live, the earlier prints were placed
-    /// before that reading existed; a rebuild holds both when it places
-    /// them. The strict join makes the two orders agree.
-    #[test]
-    fn two_readings_in_one_millisecond_cut_the_same_bars_live_and_rebuilt() {
-        let samples = vec![sample(50, 1_990), sample(100, 1_999), sample(100, 2_001)];
-        let trades = vec![
-            trade(1, 100, "100"),
-            trade(2, 100, "101"),
-            trade(3, 101, "102"),
-        ];
-        let (_, rebuilt) = run(&samples, &trades, 2_000);
-
-        // The live order: the first reading at 100 ahead of the first print,
-        // the second between the two prints that share the millisecond.
-        let mut live = DealBarBuilder::new(2_000);
-        live.observe_deals(samples[0]);
-        live.observe_deals(samples[1]);
-        let mut cut = Vec::new();
-        cut.extend(live.push(&trades[0]));
-        live.observe_deals(samples[2]);
-        cut.extend(live.push(&trades[1]));
-        cut.extend(live.push(&trades[2]));
-
-        assert_eq!(cut, rebuilt);
-        assert_eq!(
-            rebuilt.len(),
-            1,
-            "the print at 101 sees 2 001 and closes 2 000"
-        );
-        assert_eq!(rebuilt[0].trade_count, 3);
-        assert_eq!(live.uncounted_trades(), 0);
     }
 
     #[test]
@@ -533,31 +632,30 @@ mod tests {
         assert_eq!(b.reading(), Some(3));
     }
 
+    /// A reading a little lower than the one in force is the terminal
+    /// answering a poll late, not a session restart: no bar ends, none is
+    /// cut. A drop of more than a bar's worth of deals is the restart.
     #[test]
-    fn a_counter_that_restarts_closes_the_forming_bar_and_counts_on() {
+    fn a_small_dip_is_a_late_poll_and_a_large_one_a_restart() {
         let mut b = DealBarBuilder::new(1_000);
         b.observe_deals(sample(99, 5_000_400));
-        assert!(b.push(&trade(1, 100, "100")).is_none());
-        assert!(b.push(&trade(2, 200, "101")).is_none());
-        // Next session: the venue counts from 3 again.
-        b.observe_deals(sample(999, 3));
-        let ended = b
-            .push(&trade(3, 1_000, "200"))
-            .expect("the old session's bar ends");
-        assert_eq!(
-            (ended.open_time, ended.close_time, ended.trade_count),
-            (100, 200, 2)
-        );
-        let forming = b
-            .partial()
-            .expect("the print at 1 000 opens the new session's bar");
-        assert_eq!((forming.open_time, forming.trade_count), (1_000, 1));
-        assert_eq!(b.reading(), Some(3));
-        b.observe_deals(sample(1_999, 1_000));
+        b.push(&trade(1, 100, "100"));
+        b.observe_deals(sample(30_099, 5_000_500)); // rate 100
+        assert!(b.push(&trade(2, 30_100, "101")).is_none());
+        b.observe_deals(sample(31_099, 5_000_450)); // a dip: ignored
         assert!(
-            b.push(&trade(4, 2_000, "201")).is_some(),
-            "closes at the new session's 1 000"
+            b.push(&trade(3, 31_100, "102")).is_none(),
+            "a dip ends nothing"
         );
+        assert_eq!(b.reading(), Some(5_000_500));
+        assert_eq!(b.partial().map(|bar| bar.trade_count), Some(2));
+        b.observe_deals(sample(60_099, 3)); // the restart
+        let ended = b
+            .push(&trade(4, 60_100, "103"))
+            .expect("the restart ends the bar");
+        assert_eq!(ended.trade_count, 2);
+        assert_eq!(b.reading(), Some(3));
+        assert_eq!(b.rate(), Some(Decimal::from(100)), "the rate carries over");
     }
 
     #[test]
@@ -566,5 +664,9 @@ mod tests {
         tick.observe_deals(sample(1, 1));
         assert!(tick.push(&trade(1, 1, "100")).is_none());
         assert_eq!(tick.uncounted_trades(), 0);
+        assert!(
+            tick.push(&trade(2, 2, "100")).is_some(),
+            "a tick bar counts ticks"
+        );
     }
 }

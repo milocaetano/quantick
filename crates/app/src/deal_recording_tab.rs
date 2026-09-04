@@ -17,10 +17,13 @@ impl Tab {
     /// One reading from the feed: written down if recording, retained by
     /// every pane either way, so a later switch to `trades` cuts from it.
     pub fn observe_deal_counter(&mut self, sample: DealSample) {
-        self.deal_recorder.observe(sample, metrics::wall_clock_ms());
+        let resumed = self.deal_recorder.observe(sample, metrics::wall_clock_ms());
         for pane in self.panes_mut() {
             pane.state.observe_deals(sample);
         }
+        // A rotation into a day whose file exists resumes it, as a start
+        // does: what the file holds reaches the panes.
+        self.retain_deal_samples(&resumed);
     }
 
     /// Per drain: learn what the feed can count, honour the default once,

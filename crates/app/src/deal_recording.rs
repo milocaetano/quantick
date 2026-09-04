@@ -58,11 +58,12 @@ pub const DEALS_DIR: &str = "deals";
 /// override the default the tab would otherwise open with; `menu` opens the
 /// REC popover on the first frame, for a capture.
 pub const RECORDING_HOOK_ENV: &str = "QUANTICK_DEAL_RECORDING";
-/// The tape flows but the counter has not moved for this long: the venue is
-/// not counting, and the bars must wait rather than close by estimate. The
-/// engine's own limit, so the chip turns amber at the instant the builder
-/// stops counting — one rule, stated once.
-pub const STALE_AFTER_MS: i64 = quantick_engine::READING_MAX_AGE_MS;
+/// How long the counter may stand still while prints keep coming before
+/// REC calls it stale: three of the terminal's readings, which refresh about
+/// every 31 seconds (measured over a whole B3 session). Distinct from the
+/// engine's `READING_MAX_AGE_MS`, which is how long a reading still counts
+/// prints: the interface warns long before the builder gives up.
+pub const STALE_AFTER_MS: i64 = 90_000;
 /// How often the file buffer reaches the disk while recording.
 pub const FLUSH_EVERY_MS: i64 = 1_000;
 /// A day whose first reading is below this counted from the open: the
@@ -761,12 +762,14 @@ impl DealRecorder {
         self.days = scan_days(&self.dir, &self.symbol, &mut self.day_cache);
     }
 
-    /// One reading from the feed, at wall-clock `now_ms`.
-    pub fn observe(&mut self, sample: DealSample, now_ms: i64) {
+    /// One reading from the feed, at wall-clock `now_ms`. Returns the
+    /// readings a day file already held when this reading rotated into it
+    /// — a resumed day, like [`Self::start`] — for the caller's panes.
+    pub fn observe(&mut self, sample: DealSample, now_ms: i64) -> Vec<DealSample> {
         self.first_reading.get_or_insert(sample);
         self.latest = Some(sample);
         if !self.enabled {
-            return;
+            return Vec::new();
         }
         // Judged in the open file's own offset while one is open, so a
         // display timezone changed mid-session names the *next* day's file
@@ -786,9 +789,16 @@ impl DealRecorder {
             self.recording_since_ms = resumed.first().map(|s| s.time_ms);
             if self.recording.is_none() {
                 self.enabled = false;
-                return;
+                return resumed;
             }
+            self.append(sample, now_ms);
+            return resumed;
         }
+        self.append(sample, now_ms);
+        Vec::new()
+    }
+
+    fn append(&mut self, sample: DealSample, now_ms: i64) {
         if let Some(recording) = self.recording.as_mut() {
             match recording.append(sample, now_ms) {
                 Ok(()) => {
@@ -813,9 +823,20 @@ impl DealRecorder {
     /// Read a recorded day's readings for the caller's panes, by index into
     /// [`Self::days`].
     pub fn load_day(&mut self, index: usize) -> Vec<DealSample> {
-        let Some(day) = self.days.get(index) else {
+        let Some(day) = self.days.get(index).cloned() else {
             return Vec::new();
         };
+        if self.recording.as_ref().is_some_and(|r| r.day == day.day) {
+            // The popover hides this row; the control plane does not. The
+            // day being recorded is on the chart already, and marking it
+            // loaded would read "recorded" after a Stop while live readings
+            // keep cutting.
+            self.error = Some(format!(
+                "{} is the day being recorded; its readings are already on the chart",
+                day.day
+            ));
+            return Vec::new();
+        }
         match read_file(&day.path) {
             Ok(file) => {
                 if !self.loaded_days.contains(&file.day) {
@@ -874,6 +895,7 @@ impl DealRecorder {
             since_ms: self.recording_since_ms,
             first_reading_ms: self.first_reading.map(|s| s.time_ms),
             counter_age_ms: self.counter_age_ms(latest_trade_ms),
+            default_on: self.default_on,
             written: self.recording.as_ref().map_or(0, |r| r.written),
             path: self.recording.as_ref().map(|r| r.path.clone()),
             dir: self.dir.clone(),
@@ -911,6 +933,8 @@ pub struct RecordingView {
     /// Days whose readings were loaded into the panes this session.
     pub loaded_days: Vec<String>,
     pub tz_minutes: i32,
+    /// The standing choice this recorder opens on: record by default.
+    pub default_on: bool,
 }
 
 impl RecordingView {
@@ -1135,6 +1159,51 @@ mod tests {
         assert!(rec.start(LATE_EVENING_BRT_MS).is_empty());
         rec.set_available(true);
         assert!(rec.auto_start_due(), "the default is still to be applied");
+    }
+
+    /// A reading that rotates the recording into a day whose file exists
+    /// hands that file's readings back, as a start does: the panes hold
+    /// what the file holds.
+    #[test]
+    fn a_rotation_into_an_existing_day_hands_its_readings_back() {
+        let dir = scratch("rotate-existing");
+        let (mut earlier, _) = Recording::open(dir.path(), "WINV26", "2026-09-04", -180).unwrap();
+        earlier
+            .append(sample(LATE_EVENING_BRT_MS + 4 * 3_600_000, 7), 0)
+            .unwrap();
+        earlier.flush().unwrap();
+        drop(earlier);
+
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
+        rec.set_timezone(-180);
+        rec.set_available(true);
+        rec.start(LATE_EVENING_BRT_MS);
+        assert!(rec.observe(sample(LATE_EVENING_BRT_MS, 10), 0).is_empty());
+        // 01:00 on the 4th in UTC-3: the next day's file, which exists.
+        let resumed = rec.observe(sample(LATE_EVENING_BRT_MS + 2 * 3_600_000, 12), 0);
+        assert_eq!(
+            resumed,
+            vec![sample(LATE_EVENING_BRT_MS + 4 * 3_600_000, 7)]
+        );
+    }
+
+    /// The day being recorded cannot be loaded as a recorded day: its
+    /// readings are on the chart, and "recorded" after a Stop would lie.
+    #[test]
+    fn the_day_being_recorded_is_not_loadable() {
+        let dir = scratch("load-recording-day");
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
+        rec.set_timezone(-180);
+        rec.set_available(true);
+        rec.start(LATE_EVENING_BRT_MS);
+        rec.observe(sample(LATE_EVENING_BRT_MS, 10), 0);
+        rec.stop();
+        assert_eq!(rec.view(None).days.len(), 1);
+        rec.start(LATE_EVENING_BRT_MS + 1_000);
+        assert!(rec.load_day(0).is_empty());
+        assert!(rec.view(None).loaded_days.is_empty());
+        assert!(rec.view(None).error.is_some());
+        assert_eq!(rec.state(None), RecState::Recording);
     }
 
     #[test]
@@ -1392,7 +1461,7 @@ mod tests {
         // The tape kept printing four seconds past the newest reading.
         let view = rec.view(Some(pressed + STALE_AFTER_MS));
         assert_eq!(view.state, RecState::Stale);
-        assert_eq!(view.button_label(), "REC · counter stale 4 s");
+        assert_eq!(view.button_label(), "REC · counter stale 90 s");
         // A quiet tape is not a stale counter.
         assert_eq!(rec.state(Some(pressed + 900)), RecState::Recording);
         assert_eq!(rec.state(None), RecState::Recording);

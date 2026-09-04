@@ -330,7 +330,8 @@ pub fn chip_for(
         RecState::Recording => (
             format!("recording · {since} →"),
             format!(
-                "{} deals counted since {since} and written to disk",
+                "{} deals counted since {since} and written to disk; the counter reads \
+                 every ~31 s, and the deals of each print in between are estimated",
                 view.symbol
             ),
         ),
@@ -404,10 +405,10 @@ pub fn chip_for(
             fmt_count(uncounted_prints)
         );
         hover = format!(
-            "{hover}. {} prints came before the first reading, or more than {} s after the \
-             newest one before them, and form no trades bar",
+            "{hover}. {} prints came before the first two readings, or more than {} min \
+             after the newest one before them, and form no trades bar",
             fmt_count(uncounted_prints),
-            crate::deal_recording::STALE_AFTER_MS / 1000
+            quantick_engine::READING_MAX_AGE_MS / 60_000
         );
     }
     if pane_kind == BarKind::Trades && !reading_in_pane && view.state == RecState::Recording {
@@ -541,6 +542,7 @@ mod tests {
             days: std::rc::Rc::from(Vec::new()),
             loaded_days: vec!["2026-09-03".to_owned()],
             tz_minutes: -180,
+            default_on: false,
         }
     }
 
@@ -551,7 +553,7 @@ mod tests {
         let mut off = view(RecState::Off);
         off.loaded_days.clear();
         off.reading = Some(0);
-        off.counter_age_ms = Some(5_000);
+        off.counter_age_ms = Some(100_000);
         let chip = chip_for(&off, BarKind::Trades, true, 0).unwrap();
         assert_eq!(chip.text, "no deal count · counter stuck at 0");
         off.reading = Some(2_301_455);

@@ -23,7 +23,7 @@ kind counts what the venue counts.
 
 | Feed | `trades` kind | REC | Count |
 | --- | --- | --- | --- |
-| MetaTrader 5 — B3 (`WIN`, `WDO`) | yes | yes, beside the symbol | the session counter, read by the bridge every poll (≈ 20 ms) and stamped on every live tick (`deals` in `bridge/mt5/PROTOCOL.md`) |
+| MetaTrader 5 — B3 (`WIN`, `WDO`) | yes | yes, beside the symbol | the session counter, which the terminal refreshes about every 31 s (measured over a whole session: 592 readings, median interval 31.2 s, 1 500 to 10 000 deals apart); the bridge reads it every poll and stamps every live tick (`deals` in `bridge/mt5/PROTOCOL.md`), so a new reading reaches the chart within one poll of the terminal publishing it |
 | MetaTrader 5 — a quoted CFD (`XAUUSD`, `US500`) | not offered | none | the broker prints no deals; the hello says `deal_counter: false` |
 | Binance, Hyperliquid | not offered | none | out of scope for now. Binance's aggTrades carry the first and last deal id of every print, so the count would need no recording there — a later mission |
 | Replay | not offered | none | later: read the `.deals` file beside an exported tape |
@@ -37,34 +37,44 @@ selector can name — and the config loader refuses `trades:N` and
 
 ## What the counter can and cannot give
 
-- **Live, yes.** The counter is a running total the terminal keeps; the bridge
-  reads it after each pump round, so it is at or past every print it stamps.
-  The feed keeps one sample per change (`DealSampler`), and the engine joins
-  each print to the newest sample strictly before it (`DealBarBuilder`). A bar
-  closes on the first print whose reading reaches the next multiple of N.
-- **Aligned with ProfitChart.** Bars are the session's multiples of N, never
-  "N deals since the chart connected": a chart that connects at reading
-  2 300 411 closes its first bar at 2 302 000.
-- **Resolution is one poll.** Every print of a round carries the same reading,
-  so a bar can overshoot by one round's deals — a handful on a normal tape —
-  and never carries the overshoot forward.
-- **Backwards, no.** MetaTrader stores only the folded ticks. Prints before the
-  first reading form no trades bar; the chart says how many they are, and
-  never guesses.
-- **One join rule.** A print is joined to the newest reading strictly before
-  it, however far back — the same whether readings arrive just ahead of
-  their prints (live) or all at once before a rebuild, so a chart and its
-  rebuilt twin cut identical bars. A reading holds for four seconds of tape
-  (`READING_MAX_AGE_MS`): a print further behind the newest reading before
-  it than that — quantick was down, the bridge stalled and caught up in one
-  round, last night's reading under this morning's prints — is *uncounted*,
-  like a print before the first reading, and the chip counts it. Nothing is
-  folded into a bar the counter never cut; cutting resumes at the next
-  reading. A counter that stands still while prints keep coming is the same
-  case at the live edge: REC turns amber (`REC · counter stale 4 s`; `REC ·
+- **Live, yes — at the terminal's resolution.** The counter is a running
+  total the terminal keeps and refreshes about every 31 seconds. The feed
+  keeps one sample per change (`DealSampler`); the engine (`DealBarBuilder`)
+  knows the exact total at each reading and nothing print by print between
+  two readings.
+- **Between readings, an estimate.** Each print is credited its contracts
+  times the *rate* of the last completed window — deals per contract,
+  exact for that window — and the running total is re-anchored to the exact
+  reading every time one arrives. So the day's total and the number of bars
+  are the venue's; where inside a 31-second window each bar closes is an
+  estimate, off by the difference between two consecutive windows' rates. A
+  bar closes on the first print whose estimated total reaches the next
+  multiple of N. A reading that reaches a multiple the estimate had not
+  closes the forming bar on the next print; a multiple the estimate closed
+  early is not closed twice. The chip and the REC hover say *estimated*.
+- **Aligned with ProfitChart in count, not to the deal.** Bars are the
+  session's multiples of N, never "N deals since the chart connected": a
+  chart that connects at reading 2 300 411 closes its first bar at
+  2 302 000. ProfitChart's 2000T cuts on its own per-deal feed; this chart
+  cuts the same number of bars, each boundary within a window of it.
+- **Backwards, no.** MetaTrader stores only the folded ticks. Prints before
+  the first reading, and the prints of the first window (no rate yet), form
+  no trades bar; the chart says how many they are, and never guesses.
+- **One rule, order-free.** The estimate uses only what came before the
+  print — the last completed window's rate and the newest reading strictly
+  before it — so readings fed just ahead of their prints (live) and readings
+  fed all at once before a rebuild cut identical bars. That is what lets a
+  change of N recut the whole day from the recorded readings. A reading
+  holds for ten minutes of tape (`READING_MAX_AGE_MS`): a print further
+  behind the newest reading before it than that — quantick was down, last
+  night's reading under this morning's prints — is *uncounted*, and the chip
+  counts it. A counter that stands still while prints keep coming turns REC
+  amber after three missed readings (`REC · counter stale 90 s`; `REC ·
   counter stuck at 0` when it never moved, which is what a broker that does
   not report the counter looks like), and with REC off the trades pane's chip
-  says the same.
+  says the same. A reading lower than the one in force by less than a bar's
+  worth of deals is the terminal answering a poll late and changes nothing;
+  lower by more is the session restarting, which ends the forming bar.
 
 ## Recording
 
@@ -94,14 +104,15 @@ encoded; see `crates/app/src/deal_recording.rs`). The directory is
 
 | You… | …and quantick |
 | --- | --- |
-| switch the pane from `tick` to `trades` with REC on since the open | rebuilds the day's bars every N deals; the recording is untouched |
+| switch the pane from `tick` to `trades` with REC on since the open | rebuilds the day's bars every N deals from the recorded readings; the recording is untouched |
+| change N | the whole day is recut from the same readings and ticks: as many bars as the session's total over N, boundaries estimated within each 31-second window |
 | switch to `trades` with REC on since 12:36 | trades bars from 12:36 on; the prints before are counted and reported as *no deal count*, and form no bar |
 | switch to `trades` with no count at all | the option is disabled with the reason — press REC, or load a recorded day |
 | switch from `trades` back to `tick` | only the drawing changes; REC keeps writing |
 | open another B3 symbol | it has its own REC and its own files |
 | open a Binance tab | no `trades`, no REC |
-| close quantick at 14:00 and reopen at 14:20 | today's file is resumed; the 20 minutes without readings are uncounted prints (see *One join rule*), and the bar forming at 14:00 closes on the first reading after 14:20 with only what it counted |
-| the bridge stalls for 30 s and catches up in one round | the round's one reading is dated at its first tick; the prints more than four seconds after it are uncounted, and the chip says how many |
+| close quantick at 14:00 and reopen at 14:20 | today's file is resumed; the 20 minutes without readings are uncounted prints once they run past what a reading holds for (see *One rule, order-free*), and cutting resumes at the first completed window after 14:20 |
+| the bridge stalls for 30 s and catches up in one round | the round's one reading is dated at its first tick; the prints of the stall are credited the rate of the window before it, and the reading re-anchors the total |
 | leave the app open overnight, or press Reload in the morning | last night's last reading counts nothing of this morning's prints; the session's first reading starts the day |
 | press Reload on the feed | every pane is rebuilt from the new session's backfill; the readings it held stay with it, so the morning's prints cut as before |
 | switch the tab to another symbol, or open a replay | every pane starts clean: the old market's readings go with its series, and the new market's REC starts on its own default |

@@ -53,6 +53,11 @@ pub(crate) struct DealRecordingInput {
     /// click, as a call. A day that is not recorded is refused by name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub load_day: Option<String>,
+    /// The standing choice — record by default on every tab whose feed
+    /// carries a counter — the Tools menu's checkbox, as a call. Saved with
+    /// the workspace. Omitted leaves it as it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_by_default: Option<bool>,
 }
 
 /// The recorder as the chrome reads it, on the wire.
@@ -70,6 +75,10 @@ pub(crate) struct DealRecordingSnapshot {
     /// When the first reading of this run arrived, written to a file or not.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_reading_unix_ms: Option<i64>,
+    /// The standing choice: record by default wherever a feed carries a
+    /// counter — what the Tools menu's checkbox reads, saved with the
+    /// workspace.
+    pub record_by_default: bool,
     /// The newest reading of the venue's session deal counter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_deals: Option<WireU64>,
@@ -144,6 +153,7 @@ pub(crate) fn snapshot(view: &RecordingView) -> DealRecordingSnapshot {
             .collect(),
         loaded_days: view.loaded_days.clone(),
         error: view.error.clone(),
+        record_by_default: view.default_on,
     }
 }
 
@@ -153,7 +163,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
             id: CapabilityId::new(SET_CAPABILITY_ID).expect("static capability ID is valid"),
             version: CAPABILITY_VERSION,
             title: "Record the venue's deal counter".to_owned(),
-            description: "Starts or stops writing the session deal counter a MetaTrader B3 bridge stamps on its live ticks, so the tab's trades bars cover the day and a recorded day reopens as the same chart, and loads a recorded day's readings into the tab's panes. Starting resumes today's file when there is one; stopping keeps what was written. The same calls the REC control beside the symbol makes. A tab whose feed has no deal counter answers with no recording and changes nothing, unless a day recorded earlier is on disk: then it lists it (state `unsupported`) and `load_day` opens it.".to_owned(),
+            description: "Starts or stops writing the session deal counter a MetaTrader B3 bridge stamps on its live ticks, so the tab's trades bars cover the day and a recorded day reopens as the same chart, and loads a recorded day's readings into the tab's panes. Starting resumes today's file when there is one; stopping keeps what was written. The same calls the REC control beside the symbol makes. A tab whose feed has no deal counter answers with no recording and changes nothing, unless a day recorded earlier is on disk: then it lists it (state `unsupported`) and `load_day` opens it. `record_by_default` sets the standing choice the Tools menu's checkbox sets, saved with the workspace, and every answer reports it.".to_owned(),
             module: ModuleId::new(RECOVERY_MODULE_ID).expect("static module ID is valid"),
             input_schema: generated_schema::<DealRecordingInput>(),
             output_schema: generated_schema::<DealRecordingResult>(),
@@ -201,6 +211,11 @@ fn set(
     let input: DealRecordingInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.tab_id)?;
+    if let Some(on) = input.record_by_default {
+        // The standing choice, before the tab is borrowed: it reaches every
+        // tab's recorder, this one included.
+        app.set_record_deals_default(on);
+    }
     let (tab, _config) = app
         .control_tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
@@ -285,6 +300,7 @@ mod tests {
             }]),
             loaded_days: vec!["2026-09-02".to_owned()],
             tz_minutes: -180,
+            default_on: false,
         }
     }
 
