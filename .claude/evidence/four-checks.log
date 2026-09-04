@@ -1,27 +1,34 @@
-=== G2: the four checks, each run on its own, on 7dc2e15 (origin/main) ===
+=== G2: the four checks, each run on its own, after rebasing onto latest main ===
+
+Base: 900f882 (Merge pull request #295 from milocaetano/refactor/app-rs-sidecars).
+An earlier identical run against 7dc2e15 is superseded by this one.
 
 $ cargo fmt --all -- --check
 exit 0
 
 $ cargo clippy --workspace --all-targets
-    Finished `dev` profile [optimized + debuginfo] target(s) in 2m 30s
+    Finished `dev` profile [optimized + debuginfo] target(s) in 12.29s
 exit 0
 
 $ cargo build --workspace
-    Finished `dev` profile [optimized + debuginfo] target(s) in 6m 55s
+    Finished `dev` profile [optimized + debuginfo] target(s) in 1m 04s
 exit 0
 
 $ cargo test --workspace
-93 "test result: ok" lines; not one result line reports a non-zero failure
-count; the only two lines matching "panicked" are the names of two tests that
-assert something is survived rather than panicked on. Largest binaries:
+93 "test result: ok" lines. Filtering the result lines for any that do not
+report "0 failed" returns nothing, and the log holds no "failures:" block and
+no compiler error line. Largest binaries:
     1894 passed; 0 failed; 4 ignored   (quantick-app)
      184 passed; 0 failed; 2 ignored
      134 passed; 0 failed; 0 ignored   (quantick-guards lib)
-     132 passed; 0 failed; 0 ignored
-     108 passed; 0 failed; 0 ignored
       16 passed; 0 failed; 0 ignored   (quantick-guards tests/guards.rs)
 exit 0
 
 Run separately rather than chained: a trailing `|| echo` once reported success
-while clippy had failed.
+while clippy had failed. The failing-result filter is used rather than `head`
+on a grep, which once hid a second FAILED line and shipped a red CI.
+
+=== the guards over the rebased tree ===
+
+$ cargo run -p quantick-guards
+exit 0   (no finding from any of the nine guards, the two new ones included)
