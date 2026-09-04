@@ -14,9 +14,8 @@ use quantick_engine::Side;
 
 use crate::feed::ReplayLink;
 use crate::orderflow_view::OrderflowView;
-use crate::paper_trading::{
-    LedgerAction, PaperTrading, TradingTabAction, fmt_decimal, position_word,
-};
+use crate::paper_chrome::{fmt_decimal, position_word};
+use crate::paper_trading::{LedgerAction, PaperTrading, TradingTabAction};
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::theme;
 use crate::timezone::TzOffset;

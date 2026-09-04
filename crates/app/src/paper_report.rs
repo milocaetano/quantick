@@ -49,11 +49,11 @@ use rust_decimal::prelude::ToPrimitive;
 // One date law for every trade surface - see `paper_calendar`.
 use crate::paper_calendar::{
     CalendarAction, CalendarState, CivilDate, DAY_MS, DateRange, DayIndex, DaySelection,
+    fmt_offset_minute, today,
 };
-use crate::paper_trading::{
-    PositionSummary, caption, fmt_decimal, fmt_duration_ms, fmt_offset_minute, fmt_points,
-    fmt_signed_points, list_symbol_folders, pill_toggle, points_color, position_word,
-    sanitize_symbol, today,
+use crate::paper_chrome::{
+    PositionSummary, caption, fmt_decimal, fmt_duration_ms, fmt_points, fmt_signed_points,
+    list_symbol_folders, pill_toggle, points_color, position_word, sanitize_symbol,
 };
 use crate::theme;
 use crate::timezone::TzOffset;
