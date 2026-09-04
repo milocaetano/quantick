@@ -43,6 +43,22 @@ impl Tab {
         self.retain_deal_samples(&resumed);
     }
 
+    /// Before a replay replaces the tape: the live market's readings are put
+    /// aside, to come back with it. A replay is another day's prints, and
+    /// the reset that clears the panes for it drops the readings with the
+    /// series.
+    pub fn stash_deal_readings(&mut self) {
+        let readings = self.flow_pane.state.deal_samples().to_vec();
+        self.deal_recorder.stash(readings);
+    }
+
+    /// After the replay closed and the live market is back: its readings
+    /// return to every pane, ahead of the backfill about to arrive.
+    pub fn restore_deal_readings(&mut self) {
+        let readings = self.deal_recorder.take_stash();
+        self.retain_deal_samples(&readings);
+    }
+
     /// Load a recorded day's readings into every pane.
     pub fn load_recorded_day(&mut self, index: usize) {
         let loaded = self.deal_recorder.load_day(index);

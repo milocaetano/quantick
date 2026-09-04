@@ -3685,6 +3685,7 @@ impl Tab {
         // and the view must not keep drawing a book from the live feed.
         let generation = self.next_book_generation();
         self.tape_mut().set_enabled(false, generation);
+        self.stash_deal_readings();
         self.reset_market_state(false);
     }
 
@@ -3711,6 +3712,7 @@ impl Tab {
             // The configuration changed under us; there is nothing to go back
             // to, so the chart stays as it is rather than dying.
             self.reset_market_state(false);
+            self.restore_deal_readings();
             return;
         };
         // Same ordering rule as open_replay: the flatten of a replay
@@ -3721,6 +3723,7 @@ impl Tab {
         let handle = feed::spawn_live(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach(handle);
         self.reset_market_state(false);
+        self.restore_deal_readings();
     }
 
     /// Respawn the transport and keep everything the chart has built:

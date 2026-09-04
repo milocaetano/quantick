@@ -218,6 +218,11 @@ struct Recording {
     /// The last line written, which the next delta is against.
     last: Option<DealSample>,
     written: u64,
+    /// The file's first reading, resumed or written: with `last` and the
+    /// counts, what the day list shows, without reading the file back.
+    first: Option<DealSample>,
+    /// Readings the file held when it was opened.
+    held: u64,
     /// When the first unflushed line was written.
     dirty_since_ms: Option<i64>,
 }
@@ -278,6 +283,8 @@ impl Recording {
                 writer,
                 last,
                 written: 0,
+                first: existing.first().copied(),
+                held: existing.len() as u64,
                 dirty_since_ms: None,
             },
             existing,
@@ -306,6 +313,7 @@ impl Recording {
             None => writeln!(self.writer, "{} {}", sample.time_ms, sample.session_deals)?,
         }
         self.last = Some(sample);
+        self.first.get_or_insert(sample);
         self.written += 1;
         self.dirty_since_ms.get_or_insert(now_ms);
         Ok(())
@@ -542,6 +550,9 @@ pub struct DealRecorder {
     /// Built by the app for this tab's market, as opposed to the placeholder
     /// a tab is constructed with. See [`Self::is_for`].
     configured: bool,
+    /// The live market's readings, put aside while a replay holds the
+    /// panes, to go back when the market does. See [`Self::stash`].
+    stash: Vec<DealSample>,
 }
 
 impl DealRecorder {
@@ -581,7 +592,20 @@ impl DealRecorder {
             day_cache,
             loaded_days: Vec::new(),
             configured: true,
+            stash: Vec::new(),
         }
+    }
+
+    /// Put the live market's readings aside: a replay is another day's
+    /// prints and must not join to them, and the reset that clears the panes
+    /// for it would otherwise lose a morning counted with REC off.
+    pub fn stash(&mut self, readings: Vec<DealSample>) {
+        self.stash = readings;
+    }
+
+    /// The readings put aside, for the panes now that the market is back.
+    pub fn take_stash(&mut self) -> Vec<DealSample> {
+        std::mem::take(&mut self.stash)
     }
 
     /// The scan cache, handed to the recorder that replaces this one.
@@ -651,11 +675,21 @@ impl DealRecorder {
         if self.enabled {
             return Vec::new();
         }
+        if !self.available {
+            // Reachable from the control plane, where a recorded day on disk
+            // keeps the capability answering; the button never offers it.
+            self.error = Some("this source declares no deal counter; nothing to record".to_owned());
+            return Vec::new();
+        }
         self.enabled = true;
         self.error = None;
-        // The tape's day when a reading is in hand, the clock's only before
-        // the first one: a file is named for the day its readings belong to.
-        let day = day_of(self.latest.map_or(now_ms, |s| s.time_ms), self.tz_minutes);
+        // The tape's day while the reading in hand is current, the clock's
+        // otherwise: a file is named for the day its readings belong to, and
+        // a reading left over from last night names yesterday.
+        let current = self
+            .latest
+            .filter(|s| now_ms.saturating_sub(s.time_ms) <= STALE_AFTER_MS);
+        let day = day_of(current.map_or(now_ms, |s| s.time_ms), self.tz_minutes);
         let resumed = self.open_day(&day);
         self.recording_since_ms = resumed.first().map(|s| s.time_ms);
         if self.recording.is_none() {
@@ -695,10 +729,28 @@ impl DealRecorder {
     }
 
     fn close_recording(&mut self) {
-        if let Some(mut recording) = self.recording.take()
-            && let Err(error) = recording.flush()
-        {
-            self.error = Some(format!("cannot write the recording: {error}"));
+        if let Some(mut recording) = self.recording.take() {
+            if let Err(error) = recording.flush() {
+                self.error = Some(format!("cannot write the recording: {error}"));
+            }
+            // What the scan would read the whole file back for, this
+            // recorder already knows: the entry goes into the cache under
+            // the flushed file's stamp, and the scan finds it there instead
+            // of parsing a day of lines on the interface's thread.
+            if let (Some(first), Some(last)) = (recording.first, recording.last) {
+                let stamp = fs::metadata(&recording.path)
+                    .map(|meta| (meta.len(), meta.modified().ok()))
+                    .unwrap_or((0, None));
+                let day = RecordedDay {
+                    day: recording.day.clone(),
+                    first,
+                    last,
+                    samples: recording.held + recording.written,
+                    path: recording.path.clone(),
+                };
+                self.day_cache
+                    .insert(recording.path.clone(), (stamp.0, stamp.1, day));
+            }
         }
         self.days = scan_days(&self.dir, &self.symbol, &mut self.day_cache);
     }
@@ -779,18 +831,14 @@ impl DealRecorder {
     /// so a quiet tape is never mistaken for a stopped counter.
     #[must_use]
     pub fn state(&self, latest_trade_ms: Option<i64>) -> RecState {
-        if !self.available {
-            return if self.loaded_days.is_empty() {
-                RecState::Unsupported
-            } else {
-                RecState::Recorded
-            };
-        }
+        // Writing first: a feed reload resets the capabilities until the
+        // next hello, and a recorder still appending must not read as
+        // "unsupported" for the seconds in between.
         if !self.enabled {
-            return if self.loaded_days.is_empty() {
-                RecState::Off
-            } else {
-                RecState::Recorded
+            return match (self.loaded_days.is_empty(), self.available) {
+                (false, _) => RecState::Recorded,
+                (true, false) => RecState::Unsupported,
+                (true, true) => RecState::Off,
             };
         }
         let stale = self
@@ -996,6 +1044,79 @@ mod tests {
     /// Two feeds can list one symbol; a tab that switches feed under it gets
     /// a new recorder rather than appending the second feed's counter to the
     /// first one's file.
+    /// A recorder still writing says so across a feed reload, which resets
+    /// the capabilities until the next hello.
+    #[test]
+    fn a_reload_that_forgets_the_counter_for_a_moment_keeps_recording() {
+        let dir = scratch("reload-state");
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
+        rec.set_available(true);
+        rec.start(LATE_EVENING_BRT_MS);
+        rec.observe(sample(LATE_EVENING_BRT_MS, 10), LATE_EVENING_BRT_MS);
+        rec.set_available(false);
+        assert_eq!(rec.state(None), RecState::Recording);
+        rec.stop();
+        assert_eq!(rec.state(None), RecState::Unsupported);
+    }
+
+    /// A source that declares no counter has nothing to record: a start
+    /// reached through the control plane is refused with its reason.
+    #[test]
+    fn a_start_on_a_source_with_no_counter_is_refused() {
+        let dir = scratch("no-counter-start");
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
+        rec.set_available(false);
+        assert!(rec.start(LATE_EVENING_BRT_MS).is_empty());
+        assert_eq!(rec.state(None), RecState::Unsupported);
+        assert!(rec.view(None).error.is_some());
+        assert!(rec.view(None).path.is_none(), "no file was opened");
+    }
+
+    /// A reading left over from last night does not name today's file.
+    #[test]
+    fn a_stale_reading_does_not_name_the_days_file() {
+        let dir = scratch("stale-day");
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
+        rec.set_timezone(-180);
+        rec.set_available(true);
+        rec.observe(sample(LATE_EVENING_BRT_MS, 10), LATE_EVENING_BRT_MS);
+        // The next morning, 08:50 in UTC-3, REC is pressed by hand.
+        let morning = LATE_EVENING_BRT_MS + 9 * 3_600_000 + 50 * 60_000;
+        rec.start(morning);
+        let view = rec.view(None);
+        let name = view.path.as_ref().and_then(|p| p.file_name()).unwrap();
+        assert_eq!(name.to_string_lossy(), "2026-09-04.deals");
+    }
+
+    /// Closing a day lists it from what the recorder wrote, and the list
+    /// says exactly what a scan that read the file back would.
+    #[test]
+    fn a_closed_day_is_listed_without_reading_it_back() {
+        let dir = scratch("close-cache");
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
+        rec.set_timezone(-180);
+        rec.set_available(true);
+        rec.start(LATE_EVENING_BRT_MS);
+        for i in 0..5 {
+            rec.observe(sample(LATE_EVENING_BRT_MS + i * 1_000, 10 + i as u64), 0);
+        }
+        rec.stop();
+        let listed = rec.view(None).days.to_vec();
+        let mut cold = DayCache::new();
+        let scanned = scan_days(dir.path(), "WINV26", &mut cold).to_vec();
+        assert_eq!(listed, scanned);
+        assert_eq!(listed[0].samples, 5);
+    }
+
+    /// The readings a replay puts aside come back whole.
+    #[test]
+    fn the_stash_round_trips() {
+        let mut rec = DealRecorder::placeholder("WINV26");
+        rec.stash(vec![sample(1, 1), sample(2, 2)]);
+        assert_eq!(rec.take_stash(), vec![sample(1, 1), sample(2, 2)]);
+        assert!(rec.take_stash().is_empty());
+    }
+
     #[test]
     fn a_recorder_is_for_one_feed_and_one_symbol() {
         let dir = scratch("feed-key");

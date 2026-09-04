@@ -96,7 +96,8 @@
 # is what pays for `tab.rs`'s re-measurement below; measured 9,263 then.
 # Tightened 17 more to pay for `pane.rs`'s reset split below; measured 9,263.
 # Tightened 7 more to pay for `pane.rs`'s rebuild below; measured 9,263.
-crates/app/src/app.rs 9307
+# Tightened 3 more to pay for `tab.rs`'s replay stash below; measured 9,263.
+crates/app/src/app.rs 9304
 
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
@@ -181,7 +182,9 @@ crates/app/src/pane.rs 7808
 # behaviour is `deal_recording_tab.rs`, an `impl Tab` beside this file. Four
 # of the eight are the same lines re-measured after merging the feed crate's
 # extraction, which re-cut this file's imports underneath them.
-crates/app/src/tab.rs 4478
+# +3 by the eighth bug pass: the readings put aside for a replay and
+# restored after it, one call each. Paid by `app.rs` above.
+crates/app/src/tab.rs 4481
 crates/app/src/control/gateway.rs 4142
 crates/app/src/orderflow_render.rs 3075
 crates/app/src/orderflow_view.rs 2485
