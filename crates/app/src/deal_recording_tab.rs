@@ -7,7 +7,7 @@
 
 use quantick_engine::DealSample;
 
-use crate::deal_recording::{DealRecordingAction, RecordingView};
+use crate::deal_recording::{DealRecordingAction, RecState, RecordingView};
 use crate::deal_recording_ui::{self, DealChip};
 use crate::metrics;
 use crate::state::BarKind;
@@ -128,7 +128,14 @@ impl Tab {
     /// nothing to cut on — is exactly the case that view withholds.
     #[must_use]
     pub fn deal_chip(&self) -> Option<DealChip> {
-        let view = self.deal_recorder.view(self.latest_trade_ms);
+        let mut view = self.deal_recorder.view(self.latest_trade_ms);
+        if self.replay.is_some() {
+            // A replay carries no counter and is not this recorder's tape:
+            // the one chip it can earn is the no-count one, on a trades pane
+            // — never "recording" over another day's prints.
+            view.state = RecState::Unsupported;
+            view.loaded_days.clear();
+        }
         let pane = &self.flow_pane;
         deal_recording_ui::chip_for(
             &view,

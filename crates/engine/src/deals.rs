@@ -51,13 +51,18 @@
 //! first print of a round joins the round before — inside the one-poll
 //! tolerance the boundary already carries.
 //!
-//! The price of one rule is that a stretch with no readings — the
-//! application was down, the day's file has a hole — folds into the bar
-//! the last reading was forming, which closes on the first reading after
-//! the stretch. Nothing is cut inside it, nothing is invented; the
-//! application knows where its own recording stopped and is the one that
-//! can say so. A counter that stands still while prints keep coming is the
-//! same shape at the live edge: bars wait, and the application marks it.
+//! A reading holds for [`READING_MAX_AGE_MS`] of tape. A print further
+//! behind the newest reading before it than that — the application was
+//! down, the bridge stalled and caught up in one round, yesterday's last
+//! reading under today's first prints — is **uncounted**, like a print
+//! before the first reading: the counter said nothing about it, and a bar
+//! that folded it in would claim `N` deals it never counted. Still one
+//! rule, and still order-free: the age is measured against the reading in
+//! force, which both orders have in hand. The stretch resumes cutting at
+//! the first reading after it, and the application says how many prints
+//! it holds. A counter that stands still while prints keep coming is the
+//! same shape at the live edge: after four seconds its prints have no
+//! count, and REC turns amber.
 //!
 //! # Session rollover
 //!
@@ -74,12 +79,13 @@ use rust_decimal::Decimal;
 
 use crate::{Bar, BarBuilder, BarProgress, Trade};
 
-/// How long the counter may stand still while prints keep coming before a
-/// consumer calls it stale. A live bridge samples every 20 ms and a
-/// recorded day holds one reading per change, so four seconds of prints
-/// under one reading is the counter having stopped, not a quiet tape. The
-/// builder itself keeps counting against the reading in force — bars wait
-/// rather than close by estimate — and the application says what it sees.
+/// How long a reading holds for the prints after it. A live bridge samples
+/// every 20 ms and a recorded day holds one reading per change, so four
+/// seconds of prints under one reading is the counter having stopped, or
+/// the application having been away, not a quiet tape. A print further
+/// behind its reading than this is uncounted rather than folded into a bar
+/// the counter never cut; the application calls the counter stale at the
+/// same age.
 pub const READING_MAX_AGE_MS: i64 = 4_000;
 
 /// One reading of the venue's session deal counter.
@@ -108,6 +114,9 @@ pub struct DealBarBuilder {
     newest: Option<DealSample>,
     /// The reading in force for the print being pushed.
     reading: Option<u64>,
+    /// When that reading was taken, on the tape's clock: a print further
+    /// behind it than [`READING_MAX_AGE_MS`] is uncounted.
+    reading_time_ms: Option<i64>,
     /// The counter value that closes the forming bar.
     next_boundary: u64,
     current: Option<Bar>,
@@ -129,6 +138,7 @@ impl DealBarBuilder {
             pending: VecDeque::new(),
             newest: None,
             reading: None,
+            reading_time_ms: None,
             next_boundary: 0,
             current: None,
             uncounted: 0,
@@ -178,6 +188,7 @@ impl DealBarBuilder {
                     self.next_boundary = self.boundary_above(sample.session_deals);
                 }
             }
+            self.reading_time_ms = Some(sample.time_ms);
         }
         closed
     }
@@ -194,6 +205,17 @@ impl BarBuilder for DealBarBuilder {
             self.uncounted = self.uncounted.saturating_add(1);
             return rolled;
         };
+        // The counter's silence: a print further behind the reading in
+        // force than a reading holds has no count, and says so, rather than
+        // folding into a bar that would claim deals the venue never counted
+        // under it. See the module doc, *Between readings*.
+        let age_ms = self
+            .reading_time_ms
+            .map_or(0, |taken| trade.timestamp_ms.saturating_sub(taken));
+        if age_ms > READING_MAX_AGE_MS {
+            self.uncounted = self.uncounted.saturating_add(1);
+            return rolled;
+        }
         if rolled.is_some() {
             self.current = Some(Bar::opened_by(trade));
             return rolled;
@@ -399,8 +421,8 @@ mod tests {
     /// One join rule, whatever the order: readings fed all at once before
     /// the prints (a rebuild) and readings fed just ahead of their prints
     /// (the live feed) cut the same bars — across a stretch with no
-    /// readings, and across a round of prints that spans far longer than
-    /// the readings' cadence.
+    /// readings, whose prints are uncounted rather than folded, and across
+    /// a round of prints that spans far longer than the readings' cadence.
     #[test]
     fn a_stretch_without_readings_cuts_the_same_bars_live_and_rebuilt() {
         let samples = vec![
@@ -429,13 +451,41 @@ mod tests {
         }
         assert_eq!(cut, rebuilt);
         assert_eq!(live.uncounted_trades(), rebuilt_builder.uncounted_trades());
-        // The stretch folded into the bar the first reading was forming,
-        // which closed on the reading that ended it: nothing was cut inside
-        // the stretch, and nothing was thrown away.
+        // The prints at 10 000 and 30 000 sit far behind the reading at 99:
+        // uncounted, in both orders. The bar that reading was forming
+        // closes on the print at 40 100, the first under the reading that
+        // ended the stretch, with the three prints it counted.
         assert_eq!(rebuilt.len(), 1);
         assert_eq!((rebuilt[0].open_time, rebuilt[0].close_time), (100, 40_100));
-        assert_eq!(rebuilt[0].trade_count, 5);
-        assert_eq!(rebuilt_builder.uncounted_trades(), 0);
+        assert_eq!(rebuilt[0].trade_count, 3);
+        assert_eq!(rebuilt_builder.uncounted_trades(), 2);
+    }
+
+    /// Yesterday's last reading under today's first prints — a chart left
+    /// open overnight, or a reload that kept its readings — counts none of
+    /// them, and the session's first reading starts the day clean instead
+    /// of closing the whole morning as one bar.
+    #[test]
+    fn a_reading_from_last_night_counts_no_print_this_morning() {
+        let mut b = DealBarBuilder::new(2_000);
+        b.observe_deals(sample(99, 5_000_400));
+        assert!(b.push(&trade(1, 100, "100")).is_none());
+        // The next morning: fourteen hours later, prints before any reading.
+        let morning = 100 + 14 * 3_600_000;
+        assert!(b.push(&trade(2, morning, "101")).is_none());
+        assert!(b.push(&trade(3, morning + 100, "102")).is_none());
+        assert_eq!(b.uncounted_trades(), 2);
+        // The session's first reading is lower: a rollover. The bar it ends
+        // holds last night's one counted print, nothing of this morning.
+        b.observe_deals(sample(morning + 199, 120_000));
+        let ended = b
+            .push(&trade(4, morning + 200, "103"))
+            .expect("last night's bar ends");
+        assert_eq!(
+            (ended.open_time, ended.close_time, ended.trade_count),
+            (100, 100, 1)
+        );
+        assert_eq!(b.partial().map(|bar| bar.trade_count), Some(1));
     }
 
     /// Two readings in one millisecond — a round's reading stamped at the

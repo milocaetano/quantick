@@ -54,15 +54,17 @@ selector can name — and the config loader refuses `trades:N` and
 - **One join rule.** A print is joined to the newest reading strictly before
   it, however far back — the same whether readings arrive just ahead of
   their prints (live) or all at once before a rebuild, so a chart and its
-  rebuilt twin cut identical bars. A stretch with no readings (quantick was
-  down, the day's file has a hole) folds into the bar the last reading was
-  forming, which closes on the first reading after it: nothing is cut inside
-  the stretch and nothing is invented. Marking that stretch explicitly — an
-  end-of-coverage line the recorder writes on stop — is the recorded
-  follow-up. A counter that stands still while prints keep coming makes bars
-  wait, and REC turns amber (`REC · counter stale 4 s`; `REC · counter stuck
-  at 0` when it never moved, which is what a broker that does not report the
-  counter looks like).
+  rebuilt twin cut identical bars. A reading holds for four seconds of tape
+  (`READING_MAX_AGE_MS`): a print further behind the newest reading before
+  it than that — quantick was down, the bridge stalled and caught up in one
+  round, last night's reading under this morning's prints — is *uncounted*,
+  like a print before the first reading, and the chip counts it. Nothing is
+  folded into a bar the counter never cut; cutting resumes at the next
+  reading. A counter that stands still while prints keep coming is the same
+  case at the live edge: REC turns amber (`REC · counter stale 4 s`; `REC ·
+  counter stuck at 0` when it never moved, which is what a broker that does
+  not report the counter looks like), and with REC off the trades pane's chip
+  says the same.
 
 ## Recording
 
@@ -98,7 +100,9 @@ encoded; see `crates/app/src/deal_recording.rs`). The directory is
 | switch from `trades` back to `tick` | only the drawing changes; REC keeps writing |
 | open another B3 symbol | it has its own REC and its own files |
 | open a Binance tab | no `trades`, no REC |
-| close quantick at 14:00 and reopen at 14:20 | today's file is resumed; the 20 minutes without readings fold into the bar that was forming at 14:00, which closes on the first reading after 14:20 (see *One join rule*) |
+| close quantick at 14:00 and reopen at 14:20 | today's file is resumed; the 20 minutes without readings are uncounted prints (see *One join rule*), and the bar forming at 14:00 closes on the first reading after 14:20 with only what it counted |
+| the bridge stalls for 30 s and catches up in one round | the round's one reading is dated at its first tick; the prints more than four seconds after it are uncounted, and the chip says how many |
+| leave the app open overnight, or press Reload in the morning | last night's last reading counts nothing of this morning's prints; the session's first reading starts the day |
 | press Reload on the feed | every pane is rebuilt from the new session's backfill; the readings it held stay with it, so the morning's prints cut as before |
 | switch the tab to another symbol, or open a replay | every pane starts clean: the old market's readings go with its series, and the new market's REC starts on its own default |
 | change the display timezone while recording | the open file keeps the day it was named for (its header's `tz_minutes`); the new offset names the next day's file |

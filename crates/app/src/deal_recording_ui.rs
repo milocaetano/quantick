@@ -336,7 +336,9 @@ pub fn chip_for(
         ),
         RecState::Stale => (
             "recording · counter stale".to_owned(),
-            "the tape flows but the deal counter has not moved; trades bars wait".to_owned(),
+            "the tape flows but the deal counter has not moved; prints meanwhile have no \
+             count, and bars resume at the next reading"
+                .to_owned(),
         ),
         RecState::Recorded => (
             format!("recorded · {}", view.loaded_days.join(", ")),
@@ -356,6 +358,28 @@ pub fn chip_for(
                     "trades bars need MetaTrader B3's session deal counter; this feed declares none"
                         .to_owned(),
                 )
+            } else if view
+                .counter_age_ms
+                .is_some_and(|age| age >= crate::deal_recording::STALE_AFTER_MS)
+            {
+                // The counter stands still while prints keep coming, REC on
+                // or off: the trades pane is the one that suffers, so it is
+                // the one that says so.
+                if view.reading == Some(0) {
+                    (
+                        "no deal count · counter stuck at 0".to_owned(),
+                        "the venue's deal counter reads 0 while the tape moves; this broker may \
+                         not count, and trades bars cannot cut"
+                            .to_owned(),
+                    )
+                } else {
+                    (
+                        "counting · counter stale".to_owned(),
+                        "the tape flows but the deal counter has not moved; prints meanwhile have \
+                         no count, and bars resume at the next reading"
+                            .to_owned(),
+                    )
+                }
             } else if view.reading.is_some() {
                 // Readings arrive and cut bars whether or not REC is on;
                 // what REC adds is the file. Say exactly that.
@@ -376,12 +400,14 @@ pub fn chip_for(
     let mut hover = hover;
     if pane_kind == BarKind::Trades && uncounted_prints > 0 {
         text = format!(
-            "{text} · {} prints before have no count",
+            "{text} · {} prints have no count",
             fmt_count(uncounted_prints)
         );
         hover = format!(
-            "{hover}. {} prints came before the first reading and form no trades bar",
-            fmt_count(uncounted_prints)
+            "{hover}. {} prints came before the first reading, or more than {} s after the \
+             newest one before them, and form no trades bar",
+            fmt_count(uncounted_prints),
+            crate::deal_recording::STALE_AFTER_MS / 1000
         );
     }
     if pane_kind == BarKind::Trades && !reading_in_pane && view.state == RecState::Recording {
@@ -518,6 +544,24 @@ mod tests {
         }
     }
 
+    /// A counter that stands still is reported with REC off too: the
+    /// trades pane is the one that suffers, and "counting" would be a lie.
+    #[test]
+    fn a_stuck_counter_is_named_with_rec_off() {
+        let mut off = view(RecState::Off);
+        off.loaded_days.clear();
+        off.reading = Some(0);
+        off.counter_age_ms = Some(5_000);
+        let chip = chip_for(&off, BarKind::Trades, true, 0).unwrap();
+        assert_eq!(chip.text, "no deal count · counter stuck at 0");
+        off.reading = Some(2_301_455);
+        let chip = chip_for(&off, BarKind::Trades, true, 0).unwrap();
+        assert_eq!(chip.text, "counting · counter stale");
+        off.counter_age_ms = Some(50);
+        let chip = chip_for(&off, BarKind::Trades, true, 0).unwrap();
+        assert_eq!(chip.text, "counting · not written to disk");
+    }
+
     #[test]
     fn the_chip_names_the_three_states_and_the_uncounted_prints() {
         let recording = chip_for(&view(RecState::Recording), BarKind::Trades, true, 0).unwrap();
@@ -526,7 +570,7 @@ mod tests {
             chip_for(&view(RecState::Recording), BarKind::Trades, true, 1_204_118).unwrap();
         assert_eq!(
             with_uncounted.text,
-            "recording · 09:00:00 → · 1 204 118 prints before have no count"
+            "recording · 09:00:00 → · 1 204 118 prints have no count"
         );
         let recorded = chip_for(&view(RecState::Recorded), BarKind::Tick, false, 0).unwrap();
         assert_eq!(recorded.text, "recorded · 2026-09-03");
