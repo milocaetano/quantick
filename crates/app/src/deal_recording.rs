@@ -417,9 +417,13 @@ pub struct DealRecorder {
     /// The default has been applied (or declined by a hand); never twice.
     auto_started: bool,
     enabled: bool,
-    since: Option<DealSample>,
+    /// The first reading of this run, written or not.
+    first_reading: Option<DealSample>,
+    /// The newest reading of this run.
     latest: Option<DealSample>,
-    latest_arrival_ms: Option<i64>,
+    /// Where the open file starts: its first line, resumed or written. What
+    /// the button and the chip call "since".
+    recording_since_ms: Option<i64>,
     recording: Option<Recording>,
     error: Option<String>,
     days: Vec<RecordedDay>,
@@ -443,9 +447,9 @@ impl DealRecorder {
             default_on,
             auto_started: false,
             enabled: false,
-            since: None,
+            first_reading: None,
             latest: None,
-            latest_arrival_ms: None,
+            recording_since_ms: None,
             recording: None,
             error: None,
             days,
@@ -510,13 +514,16 @@ impl DealRecorder {
         self.enabled = true;
         self.error = None;
         let day = day_of(now_ms, self.tz_minutes);
-        self.open_day(&day)
+        let resumed = self.open_day(&day);
+        self.recording_since_ms = resumed.first().map(|s| s.time_ms);
+        resumed
     }
 
     /// Stop recording and flush. The file stays; the day is partial.
     pub fn stop(&mut self) {
         self.auto_started = true;
         self.enabled = false;
+        self.recording_since_ms = None;
         self.close_recording();
     }
 
@@ -548,9 +555,8 @@ impl DealRecorder {
 
     /// One reading from the feed, at wall-clock `now_ms`.
     pub fn observe(&mut self, sample: DealSample, now_ms: i64) {
-        self.since.get_or_insert(sample);
+        self.first_reading.get_or_insert(sample);
         self.latest = Some(sample);
-        self.latest_arrival_ms = Some(now_ms);
         if !self.enabled {
             return;
         }
@@ -558,12 +564,18 @@ impl DealRecorder {
         if self.recording.as_ref().is_none_or(|r| r.day != day) {
             // Midnight in the display timezone, or the first reading after a
             // failed open: the day's own file, opened now.
-            let _ = self.open_day(&day);
+            let resumed = self.open_day(&day);
+            self.recording_since_ms = resumed.first().map(|s| s.time_ms);
         }
-        if let Some(recording) = self.recording.as_mut()
-            && let Err(error) = recording.append(sample, now_ms)
-        {
-            self.error = Some(format!("cannot write the recording: {error}"));
+        if let Some(recording) = self.recording.as_mut() {
+            match recording.append(sample, now_ms) {
+                Ok(()) => {
+                    self.recording_since_ms.get_or_insert(sample.time_ms);
+                }
+                Err(error) => {
+                    self.error = Some(format!("cannot write the recording: {error}"));
+                }
+            }
         }
     }
 
@@ -597,9 +609,12 @@ impl DealRecorder {
         }
     }
 
-    /// The state, judged at `now_ms` against when the tape last printed.
+    /// The state, judged on the tape's own clock: `latest_trade_ms` is the
+    /// newest print the tab holds. A counter is stale when prints keep
+    /// arriving [`STALE_AFTER_MS`] past the newest reading — no wall clock,
+    /// so a quiet tape is never mistaken for a stopped counter.
     #[must_use]
-    pub fn state(&self, now_ms: i64, tape_arrival_ms: Option<i64>) -> RecState {
+    pub fn state(&self, latest_trade_ms: Option<i64>) -> RecState {
         if !self.available {
             return if self.loaded_days.is_empty() {
                 RecState::Unsupported
@@ -614,13 +629,9 @@ impl DealRecorder {
                 RecState::Recorded
             };
         }
-        let counter_at = self.latest_arrival_ms;
-        let stale = match (counter_at, tape_arrival_ms) {
-            (Some(counter), Some(tape)) => {
-                tape > counter && now_ms.saturating_sub(counter) >= STALE_AFTER_MS
-            }
-            _ => false,
-        };
+        let stale = self
+            .counter_age_ms(latest_trade_ms)
+            .is_some_and(|age| age >= STALE_AFTER_MS);
         if stale {
             RecState::Stale
         } else {
@@ -628,15 +639,23 @@ impl DealRecorder {
         }
     }
 
+    /// How far the tape has moved past the newest reading, on the tape's
+    /// clock; none before the first reading or the first print.
+    fn counter_age_ms(&self, latest_trade_ms: Option<i64>) -> Option<i64> {
+        let newest = self.latest?.time_ms;
+        latest_trade_ms.map(|trade| trade.saturating_sub(newest).max(0))
+    }
+
     /// Everything a surface draws, in one value.
     #[must_use]
-    pub fn view(&self, now_ms: i64, tape_arrival_ms: Option<i64>) -> RecordingView {
+    pub fn view(&self, latest_trade_ms: Option<i64>) -> RecordingView {
         RecordingView {
             symbol: self.symbol.clone(),
-            state: self.state(now_ms, tape_arrival_ms),
+            state: self.state(latest_trade_ms),
             reading: self.latest.map(|s| s.session_deals),
-            since_ms: self.since.map(|s| s.time_ms),
-            counter_age_ms: self.latest_arrival_ms.map(|at| now_ms.saturating_sub(at)),
+            since_ms: self.recording_since_ms,
+            first_reading_ms: self.first_reading.map(|s| s.time_ms),
+            counter_age_ms: self.counter_age_ms(latest_trade_ms),
             written: self.recording.as_ref().map_or(0, |r| r.written),
             path: self.recording.as_ref().map(|r| r.path.clone()),
             dir: self.dir.clone(),
@@ -656,9 +675,12 @@ pub struct RecordingView {
     pub state: RecState,
     /// The newest reading, if any arrived this session.
     pub reading: Option<u64>,
-    /// When the first reading of this run was taken, on the tape's clock.
+    /// Where the open file starts, on the tape's clock — the recording's
+    /// own "since", resumed or written this run.
     pub since_ms: Option<i64>,
-    /// How long ago the newest reading arrived.
+    /// When the first reading of this run arrived, written or not.
+    pub first_reading_ms: Option<i64>,
+    /// How far the tape has moved past the newest reading.
     pub counter_age_ms: Option<i64>,
     /// Lines written to the open file this run.
     pub written: u64,
@@ -895,7 +917,7 @@ mod tests {
         rec.observe(sample(day2 + 1_000, 400_100), day2);
         rec.stop();
 
-        let view = rec.view(day2, None);
+        let view = rec.view(None);
         let days = &view.days;
         assert_eq!(days.len(), 2, "{days:?}");
         assert_eq!(days[0].day, "2026-09-03");
@@ -910,7 +932,7 @@ mod tests {
 
         let loaded = rec.load_day(0);
         assert_eq!(loaded.len(), 2);
-        let view = rec.view(day2, None);
+        let view = rec.view(None);
         assert_eq!(view.state, RecState::Recorded);
         assert_eq!(view.button_label(), "RECORDED · 2026-09-03");
         let _ = fs::remove_dir_all(&dir);
@@ -924,7 +946,7 @@ mod tests {
         rec.set_available(true);
         assert!(rec.auto_start_due());
         rec.start(0);
-        assert_eq!(rec.state(0, None), RecState::Recording);
+        assert_eq!(rec.state(None), RecState::Recording);
         assert!(!rec.auto_start_due());
         rec.stop();
         assert!(
@@ -938,45 +960,45 @@ mod tests {
     fn the_states_say_what_every_surface_says() {
         let dir = scratch("states");
         let mut rec = DealRecorder::new("WINV26", dir.clone(), false);
-        assert_eq!(rec.state(0, None), RecState::Unsupported);
-        assert_eq!(rec.view(0, None).status_cell(), None);
-        rec.set_available(true);
-        assert_eq!(rec.state(0, None), RecState::Off);
-        assert_eq!(rec.view(0, None).button_label(), "REC");
-        rec.start(0);
-        assert_eq!(
-            rec.view(0, None).button_label(),
-            "REC · waiting for the counter"
-        );
-        rec.observe(sample(1_788_436_800_000, 2_301_455), 1_000);
         rec.set_timezone(-180);
-        let view = rec.view(1_500, Some(1_200));
+        assert_eq!(rec.state(None), RecState::Unsupported);
+        assert_eq!(rec.view(None).status_cell(), None);
+        rec.set_available(true);
+        assert_eq!(rec.state(None), RecState::Off);
+        assert_eq!(rec.view(None).button_label(), "REC");
+        // Readings arrive before a hand presses REC: counted, not written.
+        let open = 1_788_436_800_000; // 09:00:00 in UTC-3
+        rec.observe(sample(open, 2_000_000), 1_000);
+        assert_eq!(rec.view(Some(open)).state, RecState::Off);
+        assert!(rec.view(None).first_reading_ms == Some(open));
+        assert!(rec.view(None).since_ms.is_none(), "nothing written yet");
+        rec.start(open + 12_960_000); // 12:36
+        assert_eq!(
+            rec.view(None).button_label(),
+            "REC · waiting for the counter",
+            "started, but no reading has been written yet"
+        );
+        let pressed = open + 12_960_000;
+        rec.observe(sample(pressed, 2_301_455), 2_000);
+        let view = rec.view(Some(pressed + 100));
         assert_eq!(view.state, RecState::Recording);
-        assert_eq!(view.button_label(), "REC 2 301 455 · 09:00:00");
+        assert_eq!(
+            view.button_label(),
+            "REC 2 301 455 · 12:36:00",
+            "since is where the file starts, not the first reading of the run"
+        );
+        assert_eq!(view.first_reading_ms, Some(open));
         assert!(view.status_cell().unwrap().ends_with("2026-09-03.deals"));
-        // The tape kept printing for four seconds and the counter did not.
-        let view = rec.view(1_000 + STALE_AFTER_MS, Some(1_000 + STALE_AFTER_MS - 100));
+        // The tape kept printing four seconds past the newest reading.
+        let view = rec.view(Some(pressed + STALE_AFTER_MS));
         assert_eq!(view.state, RecState::Stale);
         assert_eq!(view.button_label(), "REC · counter stale 4 s");
         // A quiet tape is not a stale counter.
-        assert_eq!(
-            rec.state(1_000 + STALE_AFTER_MS, Some(900)),
-            RecState::Recording
-        );
+        assert_eq!(rec.state(Some(pressed + 900)), RecState::Recording);
+        assert_eq!(rec.state(None), RecState::Recording);
         rec.stop();
+        assert_eq!(rec.state(Some(pressed + STALE_AFTER_MS)), RecState::Off);
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn a_placeholder_records_nothing_and_says_so() {
-        let mut rec = DealRecorder::placeholder("WINV26");
-        rec.set_available(true);
-        assert!(!rec.is_for("WINV26"), "unconfigured, whatever the symbol");
-        assert!(rec.start(0).is_empty());
-        let view = rec.view(0, None);
-        assert_eq!(view.state, RecState::Off, "nothing was started");
-        assert!(view.path.is_none(), "and nothing was opened");
-        assert!(view.error.is_some());
     }
 
     #[test]

@@ -57,8 +57,12 @@ impl Tab {
             for sample in samples {
                 pane.state.observe_deals(*sample);
             }
-            // The retained series changed under the bars: cut them again.
-            pane.state.rebuild_bars();
+            // The retained series changed under the bars. Only a pane cutting
+            // by deals reads it now; the others replay it on their next
+            // switch, and a rebuild over a day of prints is not free.
+            if pane.kind == BarKind::Trades {
+                pane.state.rebuild_bars();
+            }
         }
     }
 
@@ -71,7 +75,7 @@ impl Tab {
             // by the same spec sync a toolbar click goes through.
             DealRecordingAction::ShowAsTrades => self.flow_pane.kind = BarKind::Trades,
             DealRecordingAction::OpenFolder => {
-                crate::paper_trading::reveal_folder(&self.deal_recorder.view(0, None).dir);
+                crate::paper_trading::reveal_folder(&self.deal_recorder.view(None).dir);
             }
             DealRecordingAction::LoadDay(index) => self.load_recorded_day(index),
         }
@@ -81,17 +85,19 @@ impl Tab {
     /// counter and nothing loaded — where no REC control is drawn at all.
     #[must_use]
     pub fn deal_recording_view(&self) -> Option<RecordingView> {
-        let view = self
-            .deal_recorder
-            .view(metrics::wall_clock_ms(), self.trade_arrival_ms());
+        // Judged on the tape's clock: the newest print the tab holds.
+        let view = self.deal_recorder.view(self.latest_trade_ms);
         view.supported().then_some(view)
     }
 
     /// The status bar's recording cell.
     #[must_use]
-    pub fn deal_status_cell(&self) -> Option<String> {
-        self.deal_recording_view()
-            .and_then(|view| view.status_cell())
+    pub fn deal_status_cell(&self) -> Option<crate::statusbar::DealCell> {
+        let view = self.deal_recording_view()?;
+        Some(crate::statusbar::DealCell {
+            text: view.status_cell()?,
+            tone: view.state,
+        })
     }
 
     /// The chart-corner chip for the flow pane, when it has something to say.

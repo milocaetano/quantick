@@ -18,6 +18,10 @@ use crate::theme;
 
 /// The popover's width, in points.
 const POPOVER_WIDTH_PX: f32 = 360.0;
+/// The REC button's width, whatever it says: the count grows a digit, the
+/// stale state counts seconds, and the controls to its right — the bar kind,
+/// BUY and SELL — must not move under a hand that has learned where they are.
+pub const REC_BUTTON_MIN_WIDTH_PX: f32 = 196.0;
 /// Height of the corner chip, matching the offline chip beside it.
 const CHIP_HEIGHT_PX: f32 = 18.0;
 const CHIP_PAD_PX: f32 = 7.0;
@@ -62,6 +66,7 @@ pub fn draw_button(
     let button = ui
         .add(
             egui::Button::new(text)
+                .min_size(egui::vec2(REC_BUTTON_MIN_WIDTH_PX, 0.0))
                 .fill(fill)
                 .stroke(egui::Stroke::new(1.0_f32, border))
                 .rounding(egui::Rounding::same(3.0)),
@@ -122,7 +127,13 @@ fn draw_popover(
             );
             row(
                 ui,
-                "counting since",
+                "first reading",
+                view.first_reading_ms
+                    .map_or_else(|| "—".to_owned(), |ms| fmt_hms(ms, view.tz_minutes)),
+            );
+            row(
+                ui,
+                "file since",
                 view.since_ms
                     .map_or_else(|| "—".to_owned(), |ms| fmt_hms(ms, view.tz_minutes)),
             );
@@ -142,7 +153,23 @@ fn draw_popover(
                     ),
                 );
             }
-            row(ui, "folder", view.dir.display().to_string());
+            // The tail of the path, not the whole: a home directory would
+            // stretch the popover across the pane it sits over. The full
+            // path is one hover away, and Open the folder is right below.
+            let tail: Vec<String> = view
+                .dir
+                .components()
+                .rev()
+                .take(2)
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            ui.label(egui::RichText::new("folder").color(theme::TEXT_MUTED));
+            ui.label(egui::RichText::new(format!("…/{}", tail.join("/"))).monospace())
+                .on_hover_text(view.dir.display().to_string());
+            ui.end_row();
             row(
                 ui,
                 "this pane",
@@ -312,10 +339,20 @@ pub fn chip_for(
             if pane_kind != BarKind::Trades {
                 return None;
             }
-            (
-                "no deal count".to_owned(),
-                "press REC to count from now, or load a recorded day".to_owned(),
-            )
+            if view.reading.is_some() {
+                // Readings arrive and cut bars whether or not REC is on;
+                // what REC adds is the file. Say exactly that.
+                (
+                    "counting · not written to disk".to_owned(),
+                    "bars are cut from the live counter; press REC to keep them for a restart"
+                        .to_owned(),
+                )
+            } else {
+                (
+                    "no deal count".to_owned(),
+                    "press REC to count from now, or load a recorded day".to_owned(),
+                )
+            }
         }
     };
     let mut text = text;
@@ -449,6 +486,7 @@ mod tests {
             state,
             reading: Some(2_301_455),
             since_ms: Some(1_788_436_800_000),
+            first_reading_ms: Some(1_788_436_800_000),
             counter_age_ms: Some(50),
             written: 10,
             path: None,
@@ -472,7 +510,11 @@ mod tests {
         );
         let recorded = chip_for(&view(RecState::Recorded), BarKind::Tick, false, 0).unwrap();
         assert_eq!(recorded.text, "recorded · 2026-09-03");
-        let off_on_trades = chip_for(&view(RecState::Off), BarKind::Trades, false, 0).unwrap();
+        let counting = chip_for(&view(RecState::Off), BarKind::Trades, true, 0).unwrap();
+        assert_eq!(counting.text, "counting · not written to disk");
+        let mut no_reading = view(RecState::Off);
+        no_reading.reading = None;
+        let off_on_trades = chip_for(&no_reading, BarKind::Trades, false, 0).unwrap();
         assert_eq!(off_on_trades.text, "no deal count");
     }
 

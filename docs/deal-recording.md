@@ -48,6 +48,12 @@ does not list `trades` where it is false.
 - **Backwards, no.** MetaTrader stores only the folded ticks. Prints before the
   first reading form no trades bar; the chart says how many they are, and
   never guesses.
+- **A counter that goes quiet.** A print more than four seconds past the
+  newest reading has no reading of its own — a stale terminal, a restart, a
+  hole in a recorded day. Such prints are uncounted, the bar forming when the
+  counter stopped is closed as it stands, and counting resumes with the next
+  reading. REC turns amber (`REC · counter stale 4 s`) while the tape keeps
+  printing past a silent counter.
 
 ## Recording
 
@@ -58,7 +64,11 @@ encoded; see `crates/app/src/deal_recording.rs`). The directory is
 
 - **REC** beside the symbol starts and stops it. Red while recording, amber
   while the tape moves and the counter does not, grey `RECORDED · day` when
-  the readings on screen came from a file, plain `REC` when off. Its popover
+  the readings on screen came from a file, plain `REC` when off. The time on
+  the button and the chip is where the open file starts — resumed or written
+  this run; the popover also shows the first reading of the run. Readings
+  arrive and cut bars whether or not REC is on; the chip says `counting · not
+  written to disk` in that case, and what REC adds is the file. Its popover
   shows the reading, the start, the file, and offers *Start/Stop recording*,
   *Show as trades*, *Open the folder* and the recorded days.
 - **Record by default**: `record_deals = true` on the feed entry (the shipped

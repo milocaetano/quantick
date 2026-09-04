@@ -248,6 +248,7 @@ mod tests {
             state,
             reading: Some(2_301_455),
             since_ms: Some(1_788_436_800_000),
+            first_reading_ms: Some(1_788_436_800_000),
             counter_age_ms: Some(20),
             written: 12,
             path: Some(PathBuf::from("deals/WINV26/2026-09-03.deals")),

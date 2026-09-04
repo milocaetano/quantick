@@ -429,8 +429,15 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                 .inner_margin(egui::Margin::symmetric(8.0, 0.0)),
         )
         .show(ctx, |ui| {
+            // REC never folds, so its width comes off the top before the
+            // plan decides what does.
+            let rec_width = if model.deal_recording.is_some() {
+                crate::deal_recording_ui::REC_BUTTON_MIN_WIDTH_PX + ui.spacing().item_spacing.x
+            } else {
+                0.0
+            };
             let plan = collapse_plan(
-                ui.available_width(),
+                ui.available_width() - rec_width,
                 trade_width(&model.paper),
                 param_width(*model.kind),
             );
@@ -596,7 +603,9 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
 fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
     match model.kind {
         BarKind::Tick => {
-            ui.label("N trades");
+            // "ticks", as the status bar counts them: beside a kind that
+            // counts the venue's deals, "trades" would claim the two agree.
+            ui.label("N ticks");
             ui.add(egui::DragValue::new(model.tick_n).range(1.0..=5000.0));
         }
         BarKind::Trades => {

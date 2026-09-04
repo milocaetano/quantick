@@ -32,6 +32,16 @@
 //!   worth of deals, and never carries the overshoot into the next bar — the
 //!   next boundary is the next multiple above the reading that closed it.
 //!
+//! # A counter that goes quiet
+//!
+//! A print more than [`READING_MAX_AGE_MS`] past the newest reading has no
+//! reading of its own: the bridge stopped stamping (a stale terminal, a
+//! restart, a gap in a recorded day). Such prints are uncounted like the
+//! ones before the first reading, and the bar forming when the counter went
+//! quiet is closed as it stands — its deals were counted, the next ones
+//! were not, and one bar spanning both would put a cut where nothing was
+//! counted. Counting resumes with the next reading.
+//!
 //! # Session rollover
 //!
 //! The counter restarts at the next session. A sample that reads *lower*
@@ -46,6 +56,12 @@ use std::collections::VecDeque;
 use rust_decimal::Decimal;
 
 use crate::{Bar, BarBuilder, BarProgress, Trade};
+
+/// How far past the newest reading a print may be and still be counted
+/// against it. A live bridge samples every 20 ms and a recorded day holds
+/// one reading per change, so four seconds without one is the counter
+/// having stopped, not a quiet tape.
+pub const READING_MAX_AGE_MS: i64 = 4_000;
 
 /// One reading of the venue's session deal counter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,8 +87,10 @@ pub struct DealBarBuilder {
     pending: VecDeque<DealSample>,
     /// The newest sample accepted, joined or not; the monotonicity guard.
     newest: Option<DealSample>,
-    /// The reading in force for the print being pushed.
+    /// The reading in force for the print being pushed, and when it was
+    /// taken.
     reading: Option<u64>,
+    reading_time_ms: i64,
     /// The counter value that closes the forming bar.
     next_boundary: u64,
     current: Option<Bar>,
@@ -94,6 +112,7 @@ impl DealBarBuilder {
             pending: VecDeque::new(),
             newest: None,
             reading: None,
+            reading_time_ms: 0,
             next_boundary: 0,
             current: None,
             uncounted: 0,
@@ -127,6 +146,7 @@ impl DealBarBuilder {
                 break;
             }
             self.pending.pop_front();
+            self.reading_time_ms = sample.time_ms;
             match self.reading {
                 Some(current) if sample.session_deals < current => {
                     // The venue restarted its count: a new session. The bar
@@ -162,6 +182,13 @@ impl BarBuilder for DealBarBuilder {
             self.uncounted = self.uncounted.saturating_add(1);
             return None;
         };
+        if trade.timestamp_ms.saturating_sub(self.reading_time_ms) > READING_MAX_AGE_MS {
+            // The counter went quiet: this print is uncounted, and the bar
+            // that was forming under the last reading ends where the
+            // counting did.
+            self.uncounted = self.uncounted.saturating_add(1);
+            return self.current.take();
+        }
         match self.current.as_mut() {
             Some(bar) => bar.extend(trade),
             None => self.current = Some(Bar::opened_by(trade)),
@@ -356,6 +383,40 @@ mod tests {
             .push(&trade(3, 30, "100"))
             .expect("closes on the multiple");
         assert_eq!(bar.trade_count, 3);
+    }
+
+    /// A restart, a stale terminal, a hole in a recorded day: the prints
+    /// with no reading of their own are counted as uncounted, the bar that
+    /// was forming ends where the counting did, and counting resumes with
+    /// the next reading.
+    #[test]
+    fn a_quiet_counter_ends_the_forming_bar_and_leaves_the_gap_uncounted() {
+        let mut b = DealBarBuilder::new(1_000);
+        b.observe_deals(sample(100, 5_000_400));
+        assert!(b.push(&trade(1, 100, "100")).is_none());
+        assert!(b.push(&trade(2, 200, "101")).is_none());
+        let quiet_at = 200 + READING_MAX_AGE_MS + 1;
+        let ended = b
+            .push(&trade(3, quiet_at, "102"))
+            .expect("the forming bar ends");
+        assert_eq!(
+            (ended.open_time, ended.close_time, ended.trade_count),
+            (100, 200, 2)
+        );
+        assert!(b.push(&trade(4, quiet_at + 50, "103")).is_none());
+        assert!(
+            b.partial().is_none(),
+            "nothing forms while the counter is quiet"
+        );
+        assert_eq!(b.uncounted_trades(), 2);
+        // The counter comes back, past the next boundary: the first counted
+        // print opens a bar that closes on the boundary its reading crossed.
+        b.observe_deals(sample(20_000, 5_001_005));
+        let resumed = b
+            .push(&trade(5, 20_000, "104"))
+            .expect("closes at 5 001 000");
+        assert_eq!(resumed.trade_count, 1);
+        assert_eq!(b.uncounted_trades(), 2);
     }
 
     #[test]
