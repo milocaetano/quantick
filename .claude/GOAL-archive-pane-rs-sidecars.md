@@ -45,6 +45,7 @@ any work; its evidence ledger #1–#10 is the source of every line number below.
 | **R17** | Verify each of the brief's evidence-ledger claims #1–#10 against the tree before acting, rather than trusting them. |
 | **R18** | Respect the out-of-scope list: `handle_navigation` `:4254-5214` and `draw_chart` `:5223-6161` untouched; `ChartPane`'s 77 fields untouched; no change to hit-testing, magnet or placement arithmetic; no behaviour a capture could see; the gesture helpers of brief ledger #10 (`pane_divider_gesture`, `pane_pan_gesture`, `axis_zoom_gesture`) and `draw_dashed_vertical` stay. |
 | **R19** | Re-run the `refactor/paper-policy-out-of-the-ticket` diff before the PR (brief ledger #6) to confirm the one line it edits, `:5996`, is still inside code that does not move. |
+| **R21** | Respect the other parallel branch, `refactor/app-rs-workspace-and-indicators` (proposed): a different file, meeting this mission only at the `!budget` line of `size-baseline.txt` — "whichever lands second re-runs `--tighten`". |
 | **R20** | *Purpose, and the ask that judges the others:* the next `pane` mission — the one that gives `handle_navigation` and `draw_chart` a shape — opens a file of ~5,500 lines, not 7,800, with the four groups gone from around them. |
 
 ## Decisions taken by the trader
@@ -84,6 +85,16 @@ reading of any of them throws away work. They are recorded as `S1`–`S4`.
 - **S5** — R15's "before" `--report` is captured from `origin/main` in this
   worktree before the first edit, and both reports are written into the
   branch's evidence directory, so the diff is reproducible rather than recalled.
+
+## Amendment, after the delivery review
+
+`R21` and `A19` were added after `delivery-review`'s completeness pass found
+the brief's second "Parallel work to respect" bullet carried by no `R` line:
+the ledger had taken the paper branch (`R19`) and dropped the
+`app-rs-workspace-and-indicators` one. The numbers are stable — nothing was
+renumbered — and the gap is recorded here rather than quietly closed, because
+an ask that reached the branch without reaching the ledger is the one failure
+the rest of the pipeline is blind to.
 
 ## Acceptance criteria
 
@@ -163,6 +174,13 @@ reading of any of them throws away work. They are recorded as `S1`–`S4`.
       contiguous and intact within it.
       *Evidence:* `wc -l` plus the line ranges of `handle_navigation` and
       `draw_chart` after the move. → same file *(R20)*
+
+- [ ] **A19** — The `!budget` coordination with
+      `refactor/app-rs-workspace-and-indicators` is settled in writing: which
+      branch lands first, and who therefore owes the re-run of `--tighten`.
+      *Evidence:* `git log --oneline origin/main..refactor/app-rs-workspace-and-indicators`
+      showing whether it is ahead, and the resulting statement in the PR body.
+      → `.claude/evidence/pane-rs-sidecars/numbers.md` and the PR body *(R21)*
 
 ### Injected gates
 

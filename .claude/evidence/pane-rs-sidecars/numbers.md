@@ -115,3 +115,28 @@ size:
 Together they are 1,900 of the file's 5,620 lines — 34%, against 24% before.
 That concentration is the point: what is left in `pane.rs` is much closer to
 being only the pane's own two hard problems plus the state they read.
+
+## The other parallel branch (A19 / R21)
+
+The brief asks this mission to respect
+`refactor/app-rs-workspace-and-indicators`, which meets it only at the
+`!budget` line of `size-baseline.txt`: "whichever lands second re-runs
+`--tighten`".
+
+```
+$ git log --oneline origin/main..refactor/app-rs-workspace-and-indicators
+(no output -- zero commits ahead)
+$ git log --oneline -1 refactor/app-rs-workspace-and-indicators
+e0ae2ac Merge pull request #296 from milocaetano/docs/codex-skill-compatibility
+```
+
+That branch is still sitting on `origin/main` and has written nothing, so
+**this branch lands first** and owes no re-run. `origin/main`'s baseline still
+reads `!budget 59547`, which is the number this branch tightened from, so the
+`--tighten` recorded here is against current truth.
+
+The obligation therefore passes to `app-rs-workspace-and-indicators`: after
+this merges, it must re-run `cargo run -p quantick-guards -- --tighten` before
+its own PR, because the budget it will find is 57,394 rather than the 59,547
+it was planned against. That is called out in this PR's body so the next
+branch's author reads it without having to reconstruct it.
