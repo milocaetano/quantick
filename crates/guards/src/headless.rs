@@ -301,7 +301,9 @@ fn collect(dir: &Path, root: &Path, paths: &mut Vec<String>, findings: &mut Vec<
             continue;
         }
         let relative = relative_to(&path, root);
-        if relative.ends_with(".rs") {
+        // Through `in_scope`, so the walk and `check_file` cannot disagree --
+        // which they did while this arm carried its own `.rs` test.
+        if in_scope(&relative) {
             paths.push(relative);
         }
     }
@@ -321,11 +323,36 @@ fn relative_to(path: &Path, root: &Path) -> String {
 /// The single owner of that question, called by the walk and by
 /// [`check_file`], so the whole-repo run and the edit-time hook can never
 /// disagree about scope.
+///
+/// A path under a `tests/` directory, and a `*_tests.rs` file, are out of
+/// scope, for the reason this module's own header gives: test code never
+/// ships, so reporting it would teach an author to write fewer tests.
+/// [`size::production_source`] already drops an *inline* `#[cfg(test)]`
+/// module, which covered every test in the repository while every test lived
+/// inside its host. A test module that moves out to `<host>/tests/mod.rs` is
+/// a whole file the slice cannot see into, and without this the guard would
+/// read a `#[test]` fn that reaches `Instant::now` as shipping production
+/// code -- a finding against a file compiled out of the binary entirely.
+///
+/// Both spellings, because both are this repository's: `app/tests/` holds
+/// twelve `*_tests.rs` files beside its `mod.rs`. [`crate::cycle::module_of`]
+/// is the existing owner of that pair and the rule copied here; excluding
+/// only the directory would leave the guard blind to the other half the day
+/// a headless crate splits a suite the way `app` did.
 fn in_scope(relative: &str) -> bool {
     relative.ends_with(".rs")
+        && !is_test_path(relative)
         && HEADLESS_CRATES
             .iter()
             .any(|name| relative.starts_with(&format!("crates/{name}/src/")))
+}
+
+/// Whether a crate-relative path holds test code rather than shipping source.
+///
+/// The same pair [`crate::cycle::module_of`] excludes. Stated once here so
+/// the two arms of `in_scope` read as one rule.
+fn is_test_path(relative: &str) -> bool {
+    relative.split('/').any(|part| part == "tests") || relative.ends_with("_tests.rs")
 }
 
 /// Every hit in one file's production source.
@@ -811,6 +838,12 @@ fn z() { let f = std::collections::HashSet::new(); }
     fn the_hook_reads_headless_sources_and_nothing_else() {
         assert!(in_scope("crates/engine/src/lib.rs"));
         assert!(in_scope("crates/control-local/src/client.rs"));
+        // A test module that moved out of its host is still test code, in
+        // either spelling the repository uses for one.
+        assert!(!in_scope("crates/orderflow/src/projection/tests/mod.rs"));
+        assert!(!in_scope("crates/engine/src/tests/bars.rs"));
+        assert!(!in_scope("crates/orderflow/src/projection_tests.rs"));
+        assert!(!in_scope("crates/engine/src/bars/golden_tests.rs"));
         assert!(!in_scope("crates/app/src/app.rs"));
         assert!(!in_scope("crates/feed/src/lib.rs"));
         assert!(!in_scope("crates/feed-mt5/src/lib.rs"));
