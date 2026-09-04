@@ -109,8 +109,24 @@ impl Drop for OwnedDirs {
 /// A directory belonging to this test's thread, created if it is not there
 /// and removed when the thread ends.
 ///
-/// Stable: the same `label` on the same thread answers the same path every
-/// time, which is what the `cfg!(test)` paths in production modules need.
+/// **Stable per (run, thread), and only that.** The same `label` on the same
+/// thread answers the same path every time, which is what the `cfg!(test)`
+/// paths in production modules need — they are re-resolved on every call and
+/// two resolutions inside one test must agree. A *different* thread gets a
+/// different directory, deliberately: that is what stops two tests sharing a
+/// cockpit, and it is what `store_home::test_path` already keyed on before
+/// this module existed.
+///
+/// Two things follow, and both are the caller's to respect:
+///
+/// - **Do not hand a `thread_dir` path to anything that outlives the test's
+///   thread.** The directory goes when the thread does, so a writer still
+///   running afterwards writes into a tree nothing owns. Every caller here
+///   hands it to something the test itself owns and drops.
+/// - **Do not expect a spawned thread to resolve the same path.** A test that
+///   needs one directory across threads wants a [`ScratchDir`] it passes by
+///   path, not this.
+///
 /// Callers that can hold a value should hold a [`ScratchDir`] instead — its
 /// removal happens at the end of the test rather than the end of the thread.
 pub(crate) fn thread_dir(label: &str) -> PathBuf {
@@ -305,6 +321,22 @@ mod tests {
         let second = thread_dir("stable-label");
         assert_eq!(first, second);
         assert!(first.exists(), "it was created");
+    }
+
+    /// The per-thread contract, pinned rather than left to be discovered: a
+    /// spawned thread gets its *own* directory, not the spawning test's. It
+    /// is what keeps two tests out of one cockpit, and it is the reason a
+    /// path from here must not be handed across a thread boundary.
+    #[test]
+    fn another_thread_gets_its_own_directory_for_the_same_label() {
+        let here = thread_dir("shared-label");
+        let there = std::thread::spawn(|| thread_dir("shared-label"))
+            .join()
+            .expect("the thread finished");
+        assert_ne!(
+            here, there,
+            "two threads must not resolve one directory for one label"
+        );
     }
 
     #[test]
