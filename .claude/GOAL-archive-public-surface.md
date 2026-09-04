@@ -130,7 +130,7 @@ readings that could have been questions are recorded as **S3** and **S4**.
       `ui-harness/SKILL.md` names `tools/capture_window.ps1` at a path no longer
       than the one it replaces. *Evidence:* the grep and a byte count of both
       paths. → `.claude/evidence/public-surface/tree.md`. *(R7, R9)*
-      → **MET.** `git grep -n heatmap-design-ref` exits 1; the path in `ui-harness/SKILL.md` went from 37 bytes to 24; `cargo test -p quantick-guards` green (138 + 16 + 5 passed). Same file.
+      → **MET.** No live reference survives: `git grep -n heatmap-design-ref` scoped past this branch's own two records of the removal (this archive and `tree.md`) exits 1, and nothing under `crates/`, `tools/`, `.github/`, `docs/`, `.claude/hooks/` or `.claude/skills/` names it. The bare grep matches only those two records, which is what an honest record of a deletion looks like. The path in `ui-harness/SKILL.md` went from 37 bytes to 24; `cargo test -p quantick-guards` green (138 + 16 + 5 passed). Same file.
 - [x] **A8** — the README platform sentence and `.github/workflows/ci.yml` name
       the same operating systems, with a `windows-latest` job actually running.
       *Evidence:* both quoted side by side in the PR body, and `gh pr checks`

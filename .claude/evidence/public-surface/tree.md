@@ -110,11 +110,19 @@ line also named a `-TitleMatch` parameter the script has never had; it now names
 `-ProcessName`, which it does. `python -m py_compile` on the moved lab passes.
 `__pycache__/` was already ignored.
 
+No live reference to the folder survives. The bare grep is **not** empty, and
+saying it was would be the dishonest version of this line: an honest record of
+a removal contains the name of what it removed, so this branch's own two
+records — the mission archive and this file — match it. Scoped past them:
+
 ```
-$ git grep -n 'heatmap-design-ref'
+$ git grep -n 'heatmap-design-ref'     -- ':!.claude/GOAL-archive-public-surface.md'        ':!.claude/evidence/public-surface/tree.md'
 $ echo $?
 1
 ```
+
+Nothing under `crates/`, `tools/`, `.github/`, `docs/`, `.claude/hooks/` or
+`.claude/skills/` names it — no script, no skill line, no config path.
 
 **The context budget (A7, R9).** `ui-harness/SKILL.md:71` now names
 `tools/capture_window.ps1` — 24 bytes against the 37 it replaces, so the file
