@@ -1,7 +1,7 @@
 //! The smallest temporary directory that removes itself, so these tests stay
 //! inside the no-dependency rule the whole crate is built on.
 //!
-//! It was three spellings before: `ratchet`'s own `TempDir`, `context`'s
+//! It was three spellings before: `ratchet`'s own `ScratchDir`, `context`'s
 //! process-id-keyed `scratch`, and `size`'s folder named after the *test*
 //! rather than after anything unique at all. The last is the interesting one
 //! — its comment records why it was written that way, "a reused pid leaves a
@@ -32,9 +32,9 @@ fn run_token() -> &'static str {
 }
 
 /// A directory that removes itself, with everything under it, when dropped.
-pub struct TempDir(PathBuf);
+pub struct ScratchDir(PathBuf);
 
-impl TempDir {
+impl ScratchDir {
     /// A fresh directory, unique to this run and this call.
     pub fn new(label: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -53,9 +53,9 @@ impl TempDir {
     }
 }
 
-/// So a `TempDir` stands where the `PathBuf` roots these tests passed around
+/// So a `ScratchDir` stands where the `PathBuf` roots these tests passed around
 /// stood: `root.join(..)`, `check(&root)`.
-impl std::ops::Deref for TempDir {
+impl std::ops::Deref for ScratchDir {
     type Target = Path;
 
     fn deref(&self) -> &Path {
@@ -63,13 +63,13 @@ impl std::ops::Deref for TempDir {
     }
 }
 
-impl AsRef<Path> for TempDir {
+impl AsRef<Path> for ScratchDir {
     fn as_ref(&self) -> &Path {
         &self.0
     }
 }
 
-impl Drop for TempDir {
+impl Drop for ScratchDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
@@ -81,15 +81,15 @@ mod tests {
 
     #[test]
     fn two_directories_with_one_label_never_share_a_path() {
-        let first = TempDir::new("same");
-        let second = TempDir::new("same");
+        let first = ScratchDir::new("same");
+        let second = ScratchDir::new("same");
         assert_ne!(first.path(), second.path());
     }
 
     #[test]
     fn the_tree_goes_when_the_value_does() {
         let path = {
-            let dir = TempDir::new("removed");
+            let dir = ScratchDir::new("removed");
             fs::create_dir_all(dir.join("nested")).expect("nested dirs are creatable");
             fs::write(dir.join("nested/file.txt"), "content").expect("the file is writable");
             dir.path().to_path_buf()

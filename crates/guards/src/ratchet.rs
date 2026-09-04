@@ -446,8 +446,8 @@ mod tests {
     };
 
     /// A scratch workspace holding one baseline file.
-    fn workspace(baseline: &str) -> crate::tempdir::TempDir {
-        let dir = crate::tempdir::TempDir::new("ratchet");
+    fn workspace(baseline: &str) -> crate::scratch_dir::ScratchDir {
+        let dir = crate::scratch_dir::ScratchDir::new("ratchet");
         fs::write(dir.path().join("baseline.txt"), baseline).expect("baseline is writable");
         dir
     }

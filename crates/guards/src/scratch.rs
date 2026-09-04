@@ -40,7 +40,7 @@ use crate::Finding;
 const SCRATCH_MODULES: &[&str] = &[
     "crates/app/src/scratch.rs",
     "crates/control-local/src/scratch.rs",
-    "crates/guards/src/tempdir.rs",
+    "crates/guards/src/scratch_dir.rs",
     // `mcp` needs two: an integration test links the crate as a dependency
     // and cannot see its `#[cfg(test)]` items, so the unit tests and the
     // tests under `tests/` cannot share one module.
@@ -81,7 +81,18 @@ fn scan(dir: &Path, root: &Path, violations: &mut Vec<String>) {
         }
     };
     for entry in entries {
-        let path = entry.expect("dir entry is readable").path();
+        // Reported, not panicked on. A transient IO error on one entry would
+        // otherwise abort the whole scan mid-way, which reads as a crash
+        // rather than as the finding it is — and the `read_dir` failure just
+        // above is already handled that way.
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(e) => {
+                let relative = relative_to(dir, root);
+                violations.push(format!("{relative}/: an entry could not be read: {e}"));
+                continue;
+            }
+        };
         if path.is_dir() {
             if path.file_name().is_some_and(|name| name == "target") {
                 continue;
@@ -119,12 +130,29 @@ fn in_scope(relative: &str) -> bool {
 
 /// The per-file half of the scan, shared with [`check_file`].
 fn inspect(path: &Path, relative: &str, violations: &mut Vec<String>) {
-    let Ok(text) = fs::read_to_string(path) else {
-        return;
+    // A file that will not read is reported rather than skipped. Silence here
+    // would make `check_file` answer "clean" for a file the scan could not
+    // read, which breaks the one property the hook and the scan must share —
+    // and a guard that goes quiet over sources nobody opened is the failure
+    // this whole family exists to make impossible.
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) => {
+            violations.push(format!("{relative}: could not be read: {e}"));
+            return;
+        }
     };
     for (line_no, line) in text.lines().enumerate() {
-        // Comments are prose, and this guard's own documentation names the
-        // call it hunts for. A commented-out call leaks nothing either.
+        // A line comment is prose, and this guard's own documentation names
+        // the call it hunts for. A commented-out call leaks nothing either.
+        //
+        // Line comments only: a `temp_dir(` inside a `/* … */` block would
+        // still be a finding. That is a false positive on paper and none in
+        // practice — this workspace's Rust holds four block comments in
+        // total, none of them near a temporary path — and the alternative is
+        // tracking comment state across lines, which is a parser, in the
+        // crate that is allowed no dependencies. If one ever appears, the
+        // finding says which line and the fix is to reword it.
         if line.trim_start().starts_with("//") {
             continue;
         }
@@ -177,7 +205,7 @@ mod tests {
     /// exists to ask is not, and neither is a file that never asks.
     #[test]
     fn only_a_scratch_module_may_ask_for_the_temporary_directory() {
-        let root = crate::tempdir::TempDir::new("scratch-guard");
+        let root = crate::scratch_dir::ScratchDir::new("scratch-guard");
         fs::create_dir_all(root.join("crates/app/src")).expect("scratch dirs are creatable");
         fs::write(
             root.join("crates/app/src/scratch.rs"),
@@ -214,7 +242,7 @@ mod tests {
     /// exists to prevent could come back by changing an import.
     #[test]
     fn every_spelling_of_the_call_is_caught() {
-        let root = crate::tempdir::TempDir::new("scratch-guard-spellings");
+        let root = crate::scratch_dir::ScratchDir::new("scratch-guard-spellings");
         fs::create_dir_all(root.join("crates/app/src")).expect("scratch dirs are creatable");
         // Built from `NEEDLE` rather than spelled out: a fixture that names
         // the call literally makes this file its own first finding.
@@ -248,7 +276,7 @@ mod tests {
     /// reports what the suite does not is an advisory nobody can clear.
     #[test]
     fn check_file_agrees_with_the_scan_about_every_file() {
-        let root = crate::tempdir::TempDir::new("scratch-guard-agree");
+        let root = crate::scratch_dir::ScratchDir::new("scratch-guard-agree");
         fs::create_dir_all(root.join("crates/app/src")).expect("scratch dirs are creatable");
         for name in ["scratch.rs", "leaky.rs"] {
             fs::write(
@@ -269,6 +297,37 @@ mod tests {
                 "the hook and the scan disagree about {relative}"
             );
         }
+    }
+
+    /// A file the guard cannot read is a finding, and the hook says so too.
+    /// Silence there would let an unreadable source pass as clean — the one
+    /// outcome this guard family exists to make impossible — and would break
+    /// the hook/scan equivalence the test above only checks on readable
+    /// files.
+    #[test]
+    fn a_source_that_cannot_be_read_is_reported_by_both_the_scan_and_the_hook() {
+        let root = crate::scratch_dir::ScratchDir::new("scratch-guard-unreadable");
+        fs::create_dir_all(root.join("crates/app/src")).expect("scratch dirs are creatable");
+        let relative = "crates/app/src/undecodable.rs";
+        // Not UTF-8, so `read_to_string` fails the way a locked or corrupt
+        // file does, without needing platform-specific permissions.
+        fs::write(root.join(relative), [0x66, 0x6e, 0xff, 0xfe, 0x0a])
+            .expect("the fixture is writable");
+
+        let from_scan = check(root.path());
+        assert_eq!(from_scan.len(), 1, "the scan reports it: {from_scan:#?}");
+        assert!(
+            from_scan[0]
+                .line
+                .starts_with(&format!("{relative}: could not be read")),
+            "{}",
+            from_scan[0].line
+        );
+        assert_eq!(
+            check_file(root.path(), relative),
+            from_scan,
+            "the hook and the scan agree on the error path too"
+        );
     }
 
     /// The guard's own source names the call it hunts for, and must not

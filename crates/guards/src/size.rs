@@ -612,10 +612,10 @@ mod tests {
     }
 
     /// A throwaway workspace: a baseline naming one source file, and that
-    /// file. See [`crate::tempdir`] for why the name carries a run token
+    /// file. See [`crate::scratch_dir`] for why the name carries a run token
     /// rather than the test's own name.
-    fn scratch(test: &str, ceiling: usize, lines: usize) -> crate::tempdir::TempDir {
-        let root = crate::tempdir::TempDir::new(test);
+    fn scratch(test: &str, ceiling: usize, lines: usize) -> crate::scratch_dir::ScratchDir {
+        let root = crate::scratch_dir::ScratchDir::new(test);
         fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join("crates/probe/src")).expect("scratch dirs are creatable");
         fs::write(
@@ -778,7 +778,7 @@ mod tests {
     /// its own instructions.
     #[test]
     fn a_file_that_does_not_decode_is_not_reported_as_a_stale_entry() {
-        let root = crate::tempdir::TempDir::new("undecodable");
+        let root = crate::scratch_dir::ScratchDir::new("undecodable");
         fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join("crates/probe/src")).expect("scratch dirs are creatable");
         fs::write(
@@ -812,7 +812,7 @@ mod tests {
     /// delete the entries — would switch the ratchet off repo-wide.
     #[test]
     fn a_missing_sources_directory_is_named_rather_than_read_as_stale_entries() {
-        let root = crate::tempdir::TempDir::new("missing-sources");
+        let root = crate::scratch_dir::ScratchDir::new("missing-sources");
         fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
         fs::write(
             root.join(BASELINE_FILE),
@@ -839,8 +839,8 @@ mod tests {
         first: usize,
         second: usize,
         budget: usize,
-    ) -> crate::tempdir::TempDir {
-        let root = crate::tempdir::TempDir::new(test);
+    ) -> crate::scratch_dir::ScratchDir {
+        let root = crate::scratch_dir::ScratchDir::new(test);
         fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join("crates/probe/src")).expect("scratch dirs are creatable");
         fs::write(

@@ -1,14 +1,18 @@
 //! Repository guards for the things the compiler cannot see.
 //!
-//! Five rules hold in this repo that no amount of `cargo build` can check: a
-//! file may not silently absorb a crate ([`size`]), a crate's modules may not
-//! weld themselves into a cycle ([`cycle`]), everything written into a
-//! tracked file is English ([`language`]), sources are UTF-8 without a BOM
-//! and without welded doc comments ([`encoding`]), and a test's temporary
-//! directory is minted by its crate's scratch module rather than spelled by
-//! hand ([`scratch`]). Each is a rule `CLAUDE.md` states and each fails
-//! invisibly — fmt, clippy, build and the whole suite stay green while it is
-//! broken.
+//! [`GUARDS`] is the list, and deliberately the only one: a file may not
+//! silently absorb a crate ([`size`]), the instructions a session loads may
+//! not either ([`context`]), a crate's modules may not weld themselves into a
+//! cycle ([`cycle`]), everything written into a tracked file is English
+//! ([`language`]), sources are UTF-8 without a BOM and without welded doc
+//! comments ([`encoding`]), the generated indexes still say what the code
+//! says ([`generated`]), and a test's temporary directory is minted by its
+//! crate's scratch module rather than spelled by hand ([`scratch`]).
+//!
+//! Each is a rule `CLAUDE.md` states and each fails invisibly — fmt, clippy,
+//! build and the whole suite stay green while it is broken. Counting them
+//! here was how this paragraph fell a rule behind twice; the registry
+//! counts.
 //!
 //! # Why this is a crate rather than three test files
 //!
@@ -44,9 +48,9 @@ pub mod generated;
 pub mod language;
 pub mod ratchet;
 pub mod scratch;
-pub mod size;
 #[cfg(test)]
-pub mod tempdir;
+pub mod scratch_dir;
+pub mod size;
 
 use std::path::{Path, PathBuf};
 
