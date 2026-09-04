@@ -2962,59 +2962,69 @@ impl Tab {
             // Still moving: wait for the selector to settle for a frame.
             Some(pending) if pending != desired => pane.pending_spec = Some(desired),
             // Settled since last frame: do the rebuild.
-            Some(_) => {
-                // Where the user is looking, in market time — the one thing a
-                // rebuild preserves. The new series cuts the same trades into
-                // a different number of bars, so the old right-edge *index*
-                // may not exist in it at all: keeping it would leave the
-                // window past the end of the data, drawing nothing.
-                let anchor = pane.right_edge_time();
-                // The series the drawings are still anchored to, captured
-                // before it is replaced: their bar indices are meaningless in
-                // the new cut and have to be re-derived from the market time
-                // each anchor carries.
-                let old_slots = pane.slots();
-                pane.set_spec(desired);
-                // The venue prefix folds to the new interval before the view
-                // is reanchored: the market time the user was looking at has
-                // to resolve against the series they will be looking at.
-                // Either pane: `bars → time` on the flow pane is exactly the
-                // spec change this refold exists for (audit S1).
-                //
-                // Installing a prefix rebuilds the indicators over the whole
-                // composed series, so the plain rebuild is only sent when the
-                // refold did not — two rebuilds of ~130k bars per settled drag
-                // frame, with no coalescing in the worker, is the cost of
-                // sending both.
-                let refolded = self.refold_history_prefix();
-                if !refolded && let Some(pane) = self.pane_at_mut(index) {
-                    pane.send_indicator_rebuild();
-                }
-                let Some(pane) = self.pane_at_mut(index) else {
-                    return;
-                };
-                let slot = anchor.and_then(|ms| pane.slot_at_time(ms));
-                let slots = pane.slots();
-                pane.viewport.reanchor(slot, slots);
-                // The marks follow the view: same market time, this pane's
-                // new bar space. Nothing is lost, so there is nothing to
-                // announce.
-                pane.reanchor_drawings(old_slots);
-                // The strategies do not follow: the body average that
-                // defines a force bar means something else under another
-                // bar spec, so the instances disarm and say why. The tape
-                // itself continues, so any pending bot entry is swept here
-                // and now — through the same funnel manual orders use.
-                let cleanup = pane
-                    .strategies
-                    .disarm_all(quantick_strategy::DisarmReason::BarSpecChanged);
-                let _ = pane.take_strategy_bars();
-                for command in cleanup {
-                    let _ = self.paper.apply_strategy_command(command);
-                }
-                self.drop_overlay_gestures();
-            }
+            Some(_) => self.recut_pane_with(index, |pane| pane.set_spec(desired)),
         }
+    }
+
+    /// Re-cut one pane's series through `recut` with the bookkeeping every
+    /// rewrite owes: the view keeps its market time, the marks follow it into
+    /// the new bar space, the indicators are replayed, and the strategies
+    /// disarm. A spec switch passes `set_spec`; readings put under bars
+    /// already folded pass the rebuild.
+    pub(crate) fn recut_pane_with(&mut self, index: PaneIndex, recut: impl FnOnce(&mut ChartPane)) {
+        let Some(pane) = self.pane_at_mut(index) else {
+            return;
+        };
+        // Where the user is looking, in market time — the one thing a
+        // rebuild preserves. The new series cuts the same trades into
+        // a different number of bars, so the old right-edge *index*
+        // may not exist in it at all: keeping it would leave the
+        // window past the end of the data, drawing nothing.
+        let anchor = pane.right_edge_time();
+        // The series the drawings are still anchored to, captured
+        // before it is replaced: their bar indices are meaningless in
+        // the new cut and have to be re-derived from the market time
+        // each anchor carries.
+        let old_slots = pane.slots();
+        recut(pane);
+        // The venue prefix folds to the new interval before the view
+        // is reanchored: the market time the user was looking at has
+        // to resolve against the series they will be looking at.
+        // Either pane: `bars → time` on the flow pane is exactly the
+        // spec change this refold exists for (audit S1).
+        //
+        // Installing a prefix rebuilds the indicators over the whole
+        // composed series, so the plain rebuild is only sent when the
+        // refold did not — two rebuilds of ~130k bars per settled drag
+        // frame, with no coalescing in the worker, is the cost of
+        // sending both.
+        let refolded = self.refold_history_prefix();
+        if !refolded && let Some(pane) = self.pane_at_mut(index) {
+            pane.send_indicator_rebuild();
+        }
+        let Some(pane) = self.pane_at_mut(index) else {
+            return;
+        };
+        let slot = anchor.and_then(|ms| pane.slot_at_time(ms));
+        let slots = pane.slots();
+        pane.viewport.reanchor(slot, slots);
+        // The marks follow the view: same market time, this pane's
+        // new bar space. Nothing is lost, so there is nothing to
+        // announce.
+        pane.reanchor_drawings(old_slots);
+        // The strategies do not follow: the body average that
+        // defines a force bar means something else under another
+        // bar spec, so the instances disarm and say why. The tape
+        // itself continues, so any pending bot entry is swept here
+        // and now — through the same funnel manual orders use.
+        let cleanup = pane
+            .strategies
+            .disarm_all(quantick_strategy::DisarmReason::BarSpecChanged);
+        let _ = pane.take_strategy_bars();
+        for command in cleanup {
+            let _ = self.paper.apply_strategy_command(command);
+        }
+        self.drop_overlay_gestures();
     }
 
     /// Drain every feed event available this frame into the engine, tracking the

@@ -97,7 +97,8 @@
 # Tightened 17 more to pay for `pane.rs`'s reset split below; measured 9,263.
 # Tightened 7 more to pay for `pane.rs`'s rebuild below; measured 9,263.
 # Tightened 3 more to pay for `tab.rs`'s replay stash below; measured 9,263.
-crates/app/src/app.rs 9304
+# Tightened 12 more to pay for `tab.rs`'s shared recut path; measured 9,263.
+crates/app/src/app.rs 9292
 
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
@@ -184,7 +185,10 @@ crates/app/src/pane.rs 7808
 # extraction, which re-cut this file's imports underneath them.
 # +3 by the eighth bug pass: the readings put aside for a replay and
 # restored after it, one call each. Paid by `app.rs` above.
-crates/app/src/tab.rs 4481
+# +12 by the thirteenth bug pass: `recut_pane_with`, the one rewrite path
+# a spec switch and readings put under folded bars now share — the view,
+# the marks, the indicators and the strategies follow both. Paid by `app.rs`.
+crates/app/src/tab.rs 4493
 crates/app/src/control/gateway.rs 4142
 crates/app/src/orderflow_render.rs 3075
 crates/app/src/orderflow_view.rs 2485

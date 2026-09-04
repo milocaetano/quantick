@@ -78,7 +78,17 @@ impl DealSampler {
         // before it, and the round's prints belong to this reading, not the
         // next window's volume. The first reading has no previous tick and
         // is dated at its own.
-        let taken_ms = self.last_tick_ms.unwrap_or(tick.time_ms);
+        // Not across a gap longer than a reading holds for, though: the
+        // first tick of a session on a connection kept alive overnight must
+        // not date the day's first reading at yesterday's last print.
+        let taken_ms = match self.last_tick_ms {
+            Some(last)
+                if tick.time_ms.saturating_sub(last) <= quantick_engine::READING_MAX_AGE_MS =>
+            {
+                last
+            }
+            _ => tick.time_ms,
+        };
         self.last_tick_ms = Some(tick.time_ms);
         if self.last == Some(deals) {
             return None;
@@ -147,6 +157,17 @@ mod tests {
         assert_eq!(sampler.stats.stamped, 4);
         assert_eq!(sampler.stats.samples, 2);
         assert_eq!(sampler.reading(), Some(2_000_007));
+    }
+
+    /// The first reading after a gap longer than a reading holds for — a
+    /// connection kept alive overnight — is dated at its own tick.
+    #[test]
+    fn a_reading_after_a_long_gap_is_dated_at_its_own_tick() {
+        let mut sampler = DealSampler::new(0);
+        sampler.observe(&tick(1, 1_000, Some(5_000_000)));
+        let morning = 1_000 + 15 * 3_600_000;
+        let first = sampler.observe(&tick(2, morning, Some(12))).unwrap();
+        assert_eq!(first.time_ms, morning);
     }
 
     #[test]

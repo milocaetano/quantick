@@ -1583,13 +1583,13 @@ impl ChartPane {
 
     /// Cut every bar again from the retained prints and readings — after a
     /// resumed file or a loaded day put readings under prints already
-    /// folded. The bookkeeping a spec switch does: the closed-bar prefix is
-    /// rewritten, so the pagination revision moves, and the indicators are
-    /// replayed over the new series.
+    /// folded. The closed-bar prefix is rewritten, so the pagination
+    /// revision moves; the rest of a rewrite's bookkeeping — the view, the
+    /// marks, the indicators, the strategies — is the tab's, through
+    /// `Tab::recut_pane_with`, which is how every caller reaches this.
     pub fn rebuild_bars(&mut self) {
         self.state.rebuild_bars();
         self.bump_pagination_revision();
-        self.send_indicator_rebuild();
     }
 
     /// Revision protecting the closed-bar prefix exposed through paginated

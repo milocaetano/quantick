@@ -337,9 +337,12 @@ pub fn chip_for(
         ),
         RecState::Stale => (
             "recording · counter stale".to_owned(),
-            "the tape flows but the deal counter has not moved; prints meanwhile have no \
-             count, and bars resume at the next reading"
-                .to_owned(),
+            format!(
+                "the tape flows but the deal counter has not moved for {} s; prints are still \
+                 estimated at the last rate, and have no count after {} min",
+                crate::deal_recording::STALE_AFTER_MS / 1000,
+                quantick_engine::READING_MAX_AGE_MS / 60_000
+            ),
         ),
         RecState::Recorded => (
             format!("recorded · {}", view.loaded_days.join(", ")),
@@ -373,9 +376,12 @@ pub fn chip_for(
                 } else {
                     (
                         "counting · counter stale".to_owned(),
-                        "the tape flows but the deal counter has not moved; prints meanwhile have \
-                         no count, and bars resume at the next reading"
-                            .to_owned(),
+                        format!(
+                            "the tape flows but the deal counter has not moved for {} s; prints are \
+                             still estimated at the last rate, and have no count after {} min",
+                            crate::deal_recording::STALE_AFTER_MS / 1000,
+                            quantick_engine::READING_MAX_AGE_MS / 60_000
+                        ),
                     )
                 }
             } else if view.reading.is_some() {

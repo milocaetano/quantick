@@ -68,17 +68,24 @@ impl Tab {
         self.retain_deal_samples(&loaded);
     }
 
-    fn retain_deal_samples(&mut self, samples: &[DealSample]) {
+    pub(crate) fn retain_deal_samples(&mut self, samples: &[DealSample]) {
         if samples.is_empty() {
             return;
         }
         for pane in self.panes_mut() {
             pane.state.observe_deals_batch(samples);
-            // The retained series changed under the bars. Only a pane cutting
-            // by deals reads it now; the others replay it on their next
-            // switch, and a rebuild over a day of prints is not free.
-            if pane.kind == BarKind::Trades {
-                pane.rebuild_bars();
+        }
+        // The retained series changed under the bars. Only a pane cutting
+        // by deals reads it now; the others replay it on their next switch,
+        // and a rebuild over a day of prints is not free. A rewrite of the
+        // series is a rewrite: the view, the marks, the indicators and the
+        // strategies follow it the way they follow a spec switch.
+        for index in 0..self.pane_count() {
+            if self
+                .pane_at(index)
+                .is_some_and(|pane| pane.kind == BarKind::Trades)
+            {
+                self.recut_pane_with(index, |pane| pane.rebuild_bars());
             }
         }
     }

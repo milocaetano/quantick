@@ -191,11 +191,15 @@ impl DealBarBuilder {
                 None => {
                     self.next_boundary = self.boundary_above(deals);
                 }
-                // Lower by more than a bar's worth of deals: the venue
-                // restarted its count, a new session, and the bar forming
-                // under the old count ends here. The rate carries over — a
-                // new session's deals per contract are no different.
-                Some(current) if deals < current.saturating_sub(self.n) => {
+                // Lower by more than a bar's worth of deals, or by more
+                // than half (a count still below `N` can restart too): the
+                // venue restarted its count, a new session, and the bar
+                // forming under the old count ends here. The rate carries
+                // over — a new session's deals per contract are no different.
+                Some(current)
+                    if deals < current.saturating_sub(self.n)
+                        || deals.saturating_mul(2) < current =>
+                {
                     if let Some(bar) = self.current.take() {
                         closed = Some(bar);
                     }
@@ -219,13 +223,16 @@ impl DealBarBuilder {
                         self.rate = Some(Decimal::from(deals - current) / self.window_volume);
                     }
                     // A multiple crossed while no print was credited — the
-                    // window's prints uncounted, or none — has no bar to
-                    // close: the count moves on. Otherwise the boundary
+                    // window's prints uncounted, or none, or a stall the
+                    // reading holds no print for — has no bar to close: the
+                    // count moves on. Otherwise the boundary
                     // stands: a multiple the estimate missed is below the
                     // re-anchored total and closes on the next print; one it
                     // closed early is above it and is not cut twice — the
                     // next window fills up to it.
-                    if !self.window_counted && deals >= self.next_boundary {
+                    if (!self.window_counted || self.window_had_uncounted)
+                        && deals >= self.next_boundary
+                    {
                         self.next_boundary = self.boundary_above(deals);
                     }
                 }
@@ -243,6 +250,23 @@ impl DealBarBuilder {
     /// crossed a multiple, or a reading did.
     fn crossed_boundary(&self) -> bool {
         self.total >= Decimal::from(self.next_boundary)
+    }
+
+    /// The boundary after a bar closed on the running total. Overshoot — an
+    /// estimate past the multiple, a reading past it by less than a bar —
+    /// is not carried into the next bar: the next multiple above the total.
+    /// A reading that re-anchored the total two or more multiples past the
+    /// boundary is different: every multiple it crossed gets its bar, one
+    /// per print, until the boundary passes the total — or the day's bar
+    /// count would drift below the venue's total over `N`.
+    fn boundary_after_close(&self) -> u64 {
+        let floor = self.total_floor();
+        let next = self.next_boundary.saturating_add(self.n);
+        if floor >= next {
+            next
+        } else {
+            self.boundary_above(floor)
+        }
     }
 
     /// The running total as a count, for the next multiple above it.
@@ -292,7 +316,7 @@ impl BarBuilder for DealBarBuilder {
             if self.crossed_boundary() {
                 // This print's own estimate reached the multiple: its bar
                 // closes on the next push, before the print after it.
-                self.next_boundary = self.boundary_above(self.total_floor());
+                self.next_boundary = self.boundary_after_close();
                 self.close_next = true;
             }
             return rolled;
@@ -302,10 +326,7 @@ impl BarBuilder for DealBarBuilder {
             None => self.current = Some(Bar::opened_by(trade)),
         }
         if self.crossed_boundary() {
-            // Overshoot — an estimate past the multiple, a reading past it —
-            // is not carried into the next bar: the next boundary is the
-            // next multiple above where the total stands.
-            self.next_boundary = self.boundary_above(self.total_floor());
+            self.next_boundary = self.boundary_after_close();
             return self.current.take();
         }
         None
@@ -620,13 +641,21 @@ mod tests {
         // Window 1's two prints have no rate; window 2's two are counted at
         // 50 per contract (500 each, closing 5 002 000 on the second); the
         // prints at 700 000 and 900 000 are beyond what the reading at
-        // 30 099 holds for; the print at 1 230 100 is credited the rate the
-        // stretch's window gives and closes a bar of its own.
+        // 30 099 holds for. The multiples the counter crossed during the
+        // stall have no print and get no bar: the reading after it moves
+        // the count on, and the prints after it form the next bar at the
+        // rate the window before the stall gave.
         assert_eq!(rebuilt_builder.uncounted_trades(), 4);
-        assert_eq!(rebuilt.len(), 2, "{rebuilt:?}");
+        assert_eq!(rebuilt.len(), 1, "{rebuilt:?}");
         assert_eq!(
             (rebuilt[0].open_time, rebuilt[0].close_time),
             (30_100, 30_200)
+        );
+        assert_eq!(
+            rebuilt_builder
+                .partial()
+                .map(|bar| (bar.open_time, bar.trade_count)),
+            Some((1_230_100, 2))
         );
     }
 
@@ -668,6 +697,59 @@ mod tests {
         b.observe_deals(sample(50, 9)); // late and out of order: dropped
         assert!(b.push(&trade(1, 100, "100")).is_none());
         assert_eq!(b.reading(), Some(3));
+    }
+
+    /// A reading that re-anchors the total two multiples past the boundary
+    /// — the estimate ran behind the venue — gives each multiple its bar,
+    /// one per print, so the day's bar count stays the venue's over `N`.
+    #[test]
+    fn a_reading_two_multiples_ahead_gives_each_its_bar() {
+        let mut b = DealBarBuilder::new(500);
+        b.observe_deals(sample(99, 1_000_000));
+        b.push(&trade_of(1, 100, "100", "10"));
+        b.observe_deals(sample(30_099, 1_000_750)); // rate 75
+        // 100 contracts estimated at 7 500 — fifteen bars at 500, the last
+        // boundary at 1 008 500; the venue counted 10 000, so the reading
+        // lands at 1 010 750, four multiples past the boundary.
+        let mut closed = 0;
+        for i in 0..100_u64 {
+            let print = trade_of(2 + i, 30_100 + i as i64 * 10, "100", "1");
+            closed += usize::from(b.push(&print).is_some());
+        }
+        assert_eq!(
+            closed, 15,
+            "7 500 estimated deals close fifteen bars at 500"
+        );
+        b.observe_deals(sample(60_099, 1_010_750));
+        // Five multiples stand between the boundary and the total (1 008 500
+        // … 1 010 500): each gets its bar on one print; the sixth print's
+        // own 75 then reach 1 011 000, a bar of its own; the seventh stays
+        // forming toward 1 011 500.
+        let mut after = 0;
+        for i in 0..6_u64 {
+            let print = trade_of(200 + i, 60_100 + i as i64 * 100, "100", "1");
+            after += usize::from(b.push(&print).is_some());
+        }
+        assert_eq!(after, 6, "each multiple the reading crossed gets its bar");
+        assert!(b.push(&trade_of(300, 61_000, "100", "1")).is_none());
+        assert_eq!(b.progress().map(|p| p.target), Some(Decimal::from(500)));
+    }
+
+    /// A count still below `N` can restart too: a drop by more than half is
+    /// the session's restart, not a late poll.
+    #[test]
+    fn a_restart_below_n_is_still_a_restart() {
+        let mut b = DealBarBuilder::new(2_000);
+        b.observe_deals(sample(99, 1_000));
+        b.push(&trade_of(1, 100, "100", "10"));
+        b.observe_deals(sample(30_099, 1_500)); // rate 50
+        assert!(b.push(&trade_of(2, 30_100, "100", "1")).is_none());
+        b.observe_deals(sample(60_099, 0)); // the restart
+        let ended = b
+            .push(&trade_of(3, 60_100, "100", "1"))
+            .expect("the restart ends the bar");
+        assert_eq!(ended.trade_count, 1);
+        assert_eq!(b.reading(), Some(0));
     }
 
     /// A reconnect re-emits the reading it finds: an unchanged reading at

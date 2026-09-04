@@ -294,12 +294,13 @@ impl Recording {
 
     fn append(&mut self, sample: DealSample, now_ms: i64) -> io::Result<()> {
         match self.last {
-            // A reading older than the last line, or the very reading the
-            // file ends on (a resumed day re-delivering where it stopped), is
-            // already covered. An equal *time* with a new reading is not:
-            // ticks share milliseconds across poll rounds, and the live chart
-            // joined prints to both readings, so the file keeps both too.
-            Some(last) if sample.time_ms < last.time_ms || sample == last => return Ok(()),
+            // The very reading the file ends on (a resumed day re-delivering
+            // where it stopped) is already covered. A reading older than the
+            // last line is not skipped: a bridge restarted with another clock
+            // offset stamps behind the file for a while, the chart keeps
+            // those readings, and the file must hold what the chart cut from
+            // — the delta goes negative, and the reader accepts it.
+            Some(last) if sample == last => return Ok(()),
             Some(last) => writeln!(
                 self.writer,
                 "+{} {}{}",
@@ -1036,8 +1037,9 @@ impl RecordingView {
 /// `YYYY-MM-DD` of `time_ms` in the display timezone.
 #[must_use]
 pub fn day_of(time_ms: i64, tz_minutes: i32) -> String {
-    let (year, month, day, ..) = crate::paper_calendar::civil_utc(shifted(time_ms, tz_minutes));
-    format!("{year:04}-{month:02}-{day:02}")
+    // The paper journal's own day: one rule for which day a print belongs to.
+    crate::paper_calendar::CivilDate::from_ms(time_ms, crate::timezone::TzOffset::new(tz_minutes))
+        .iso()
 }
 
 /// `HH:MM:SS` of `time_ms` in the display timezone.
@@ -1045,10 +1047,6 @@ pub fn day_of(time_ms: i64, tz_minutes: i32) -> String {
 pub fn fmt_hms(time_ms: i64, tz_minutes: i32) -> String {
     // The time axis's own formatter: one clock, one spelling.
     crate::plot_area::fmt_time(time_ms, crate::timezone::TzOffset::new(tz_minutes))
-}
-
-fn shifted(time_ms: i64, tz_minutes: i32) -> i64 {
-    time_ms.saturating_add(i64::from(tz_minutes).saturating_mul(60_000))
 }
 
 /// `2301455` as `2 301 455` — the grouping the mock uses, readable at a
@@ -1241,6 +1239,23 @@ mod tests {
                 sample(LATE_EVENING_BRT_MS, 10),
                 sample(LATE_EVENING_BRT_MS + 31_000, 12)
             ]
+        );
+    }
+
+    /// A reading stamped behind the file's last line — a bridge restarted
+    /// with another clock offset — is written, not skipped: the chart cuts
+    /// from it, and the file holds what the chart holds.
+    #[test]
+    fn a_reading_behind_the_last_line_is_written() {
+        let dir = scratch("behind-last");
+        let (mut recording, _) = Recording::open(dir.path(), "WINV26", "2026-09-03", -180).unwrap();
+        recording.append(sample(1_000_000, 10), 0).unwrap();
+        recording.append(sample(100_000, 12), 0).unwrap();
+        recording.flush().unwrap();
+        let file = read_file(&dir.path().join("WINV26").join("2026-09-03.deals")).unwrap();
+        assert_eq!(
+            file.samples,
+            vec![sample(1_000_000, 10), sample(100_000, 12)]
         );
     }
 
@@ -1638,7 +1653,12 @@ mod tests {
         recording.append(sample(90, 20), 0).unwrap();
         recording.flush().unwrap();
         let read = read_file(&recording.path).unwrap();
-        assert_eq!(read.samples, vec![sample(100, 10), sample(100, 13)]);
+        // The older reading is written too: the chart holds it, and the file
+        // holds what the chart cut from, in arrival order.
+        assert_eq!(
+            read.samples,
+            vec![sample(100, 10), sample(100, 13), sample(90, 20)]
+        );
     }
 
     /// A file that cannot be opened is reported once, not retried on every
