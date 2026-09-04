@@ -1,26 +1,26 @@
 1c1
 < crate.lines.app	108188
 ---
-> crate.lines.app	108269
+> crate.lines.app	108267
 20c20
 < crate.lines.total	173375
 ---
-> crate.lines.total	173456
+> crate.lines.total	173454
 22c22
 < file.largest.crates/app/src/app.rs	7499
 ---
-> file.largest.crates/app/src/app.rs	5339
+> file.largest.crates/app/src/app.rs	5349
 41,43c41,43
 < ratchet.size.budget	59547
 < ratchet.size.recorded	59547
 < ratchet.size.measured	173375
 ---
-> ratchet.size.budget	57387
-> ratchet.size.recorded	57387
-> ratchet.size.measured	173456
+> ratchet.size.budget	57397
+> ratchet.size.recorded	57397
+> ratchet.size.measured	173454
 52,53c52,53
 < site.cfg_test	604
 < app.lines.without_egui	104495
 ---
 > site.cfg_test	605
-> app.lines.without_egui	104574
+> app.lines.without_egui	104572

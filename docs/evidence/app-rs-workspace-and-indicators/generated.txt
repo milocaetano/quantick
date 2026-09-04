@@ -1,24 +1,40 @@
 # Generated files, tests and hooks: branch against origin/main
 
-## Every file the branch changes (evidence directory excluded)
- crates/app/src/app.rs           | 2192 +--------------------------------------
- crates/app/src/app/tests/mod.rs |    5 +
- crates/guards/size-baseline.txt |   13 +-
- 3 files changed, 33 insertions(+), 2177 deletions(-)
- M crates/app/src/app.rs
- M crates/app/src/app/tests/mod.rs
- M crates/guards/size-baseline.txt
-?? crates/app/src/app/chart_layers_wiring.rs
-?? crates/app/src/app/indicator_manager.rs
-?? crates/app/src/app/workspace_save.rs
+## Every file the branch changes
+ crates/app/src/app.rs                     | 2184 +---------------------------
+ crates/app/src/app/chart_layers_wiring.rs |  270 ++++
+ crates/app/src/app/indicator_manager.rs   |  835 +++++++++++
+ crates/app/src/app/tests/mod.rs           |    5 +
+ crates/app/src/app/workspace_save.rs      | 1124 +++++++++++++++
+ crates/app/src/pane.rs                    | 2223 ++++++++++++++++++++++++++++-
+ crates/app/src/pane/axes_and_chrome.rs    |  744 ----------
+ crates/app/src/pane/drawing_gestures.rs   |  802 -----------
+ crates/app/src/pane/menus.rs              |  353 -----
+ crates/app/src/pane/strategy_badges.rs    |  374 -----
+ crates/guards/size-baseline.txt           |   44 +-
+ 11 files changed, 4468 insertions(+), 4490 deletions(-)
 
-## The generated hook registry and the capability inventory
-$ git diff --stat origin/main -- .claude/skills/ui-harness/references/hook-registry.md docs/control-plane/capability-inventory.md schemas/control/
+## The generated hook registry, the capability inventory and the schemas
+$ git diff --cached --stat origin/main -- .claude/skills/ui-harness/references/hook-registry.md docs/control-plane/capability-inventory.md schemas/control/
 (no output above: all byte-identical to origin/main)
 
-## The declare_hooks! slice in app.rs is untouched
-$ git diff origin/main -- crates/app/src/app.rs | grep -c 'QUANTICK_'
+## No hook read or declaration moved
+
+$ grep -c QUANTICK_ crates/app/src/app.rs      # the declare_hooks! slice, intact
+146
+$ git diff --cached origin/main -- crates/app/src/app.rs | grep -c QUANTICK_
 5
+
+Those five are comment text and assertion messages that travelled with their
+bodies, not hook reads. Where they landed:
+  crates/app/src/app/workspace_save.rs:58:        // `QUANTICK_REPLAY_DIR` must not write a QA scratch path into their
+  crates/app/src/app/workspace_save.rs:734:        // A run under `QUANTICK_TOOL_FAVORITES` is wearing a rail the harness
+  crates/app/src/app/workspace_save.rs:745:                "a run under QUANTICK_TOOL_FAVORITES does not write the rail down"
+  crates/app/src/app/workspace_save.rs:1056:            "QUANTICK_WINDOW_MAXIMIZED asked for the maximised layout"
+  crates/app/src/app/chart_layers_wiring.rs:204:    /// Runs before the autostart env vars so an explicit `QUANTICK_*_AUTOSTART`
+
+cargo test -p quantick-guards, which owns the hook and capability scans:
+  138 + 16 + 5 passed, 0 failed.
 
 ## crates/app/src/app/tests/
  crates/app/src/app/tests/mod.rs | 5 +++++

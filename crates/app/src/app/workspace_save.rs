@@ -6,8 +6,8 @@
 //! name and take it back off again, the `write_*` methods edit one section of
 //! one cockpit store in place, and the export/import pair moves a whole
 //! cockpit between machines. They are together because they share the
-//! stores, the pickers and the one acknowledgement lane -- `note_workspace`
-//! -- and because nothing outside the window calls any of them.
+//! stores, the pickers and the one acknowledgement lane — `note_workspace`
+//! — and because nothing outside the window calls any of them.
 
 use std::time::Instant;
 
@@ -21,7 +21,6 @@ use crate::symbols_file;
 use crate::tab::{CanvasLayout, LegendFold};
 use crate::timezone::TzOffset;
 use crate::ui_state;
-use crate::window_scale;
 use crate::workspace_store::WorkspacePick;
 
 use quantick_feed::history_reach;
@@ -1033,17 +1032,6 @@ impl QuantickApp {
         } else {
             "Workspace could not be reset — see the log".to_owned()
         });
-    }
-
-    /// Hand the app the window it is drawing into.
-    ///
-    /// Called once from `main`, which is where eframe offers the handle: the
-    /// hook that needs it (`raw_input_hook`) is given only the input. One
-    /// registration line rather than a constructor argument, because every
-    /// other construction path — every test — wants the `None` this defaults
-    /// to, which is also what every non-Windows target gets.
-    pub fn attach_surface(&mut self, handle: &impl raw_window_handle::HasWindowHandle) {
-        self.surface = window_scale::SurfaceProbe::new(handle);
     }
 
     /// Take the window manager's own maximise, once, on the first frame.

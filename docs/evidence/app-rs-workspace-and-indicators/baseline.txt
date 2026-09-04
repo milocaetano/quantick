@@ -1,48 +1,56 @@
 # The ceiling and the budget
 
-$ wc -l crates/app/src/app.rs crates/app/src/app/{workspace_save,indicator_manager,chart_layers_wiring}.rs
-  5343 crates/app/src/app.rs
-  1136 crates/app/src/app/workspace_save.rs
+  5353 crates/app/src/app.rs
+  1124 crates/app/src/app/workspace_save.rs
    835 crates/app/src/app/indicator_manager.rs
    270 crates/app/src/app/chart_layers_wiring.rs
-  7584 total
+  7582 total
 
-app.rs: 7,501 lines before, 5,343 after. The guard counts production lines
-only and reads 5,339 -- the four it sets aside are the trailing test module.
-None of the three new files carries a test module, so their totals are
-production counts entire, and all three are under the 1,500 threshold.
+app.rs: 7,501 lines before, 5,353 after; the guard counts production lines
+only and reads 5,349, setting aside the trailing test module. None of the
+three new files carries a test module, so their totals are production
+counts entire, and all three are well under the 1,500 threshold.
 
 ## The baseline diff
 
 diff --git a/crates/guards/size-baseline.txt b/crates/guards/size-baseline.txt
-index 3de0ba2..ee73bbe 100644
+index 3de0ba2..85744f5 100644
 --- a/crates/guards/size-baseline.txt
 +++ b/crates/guards/size-baseline.txt
-@@ -96,9 +96,18 @@
+@@ -96,9 +96,27 @@
  # is a trade of nothing for 1,863: the lines still exist, they are simply no
  # longer in the file the ratchet was written for. The first cut of this
  # sprint that moves this number down rather than sideways.
 -!budget 59547
 +#
-+# Then lowered by 2,160 more -- `app.rs` from 7,499 to 5,339 -- by `--tighten`
-+# after the second cut of the same sprint moved three more `impl QuantickApp`
-+# groups to siblings: the workspace store's write half, the indicator manager
-+# and the chart-layer wiring. Same trade as the first cut and the same reason
-+# it costs nothing here: `workspace_save.rs` (1,136 lines),
-+# `indicator_manager.rs` (835) and `chart_layers_wiring.rs` (270) are each
-+# under the 1,500-line threshold, so none of them takes an entry. None of the
-+# three carries a test module, so those are production counts entire.
-+!budget 57387
++# Then lowered by 2,150 more -- `app.rs` from 7,499 to 5,349 -- after the second
++# cut of the same sprint moved three more `impl QuantickApp` groups to
++# siblings: the workspace store's write half, the indicator manager and the
++# chart-layer wiring. Same trade as the first cut and the same reason it costs
++# nothing here: `workspace_save.rs` (1,124 lines), `indicator_manager.rs` (835)
++# and `chart_layers_wiring.rs` (270) are each under the 1,500-line threshold,
++# so none of them takes an entry. None of the three carries a test module, so
++# those are production counts entire.
++#
++# `--tighten` first wrote 5,339. The ten lines between that and the number
++# above are `attach_surface`, which the mission brief listed with the workspace
++# store because it sits in the middle of that line range. It is a two-line
++# setter for the window handle, called once from `main`, and it has nothing to
++# do with saving a workspace; the pre-PR review sent it back to `app.rs` rather
++# than let `workspace_save.rs`'s name lie about what is in it. Recorded here
++# because a ceiling that moved for a reason should say the reason, even when
++# the reason made it ten lines worse.
++!budget 57397
  
 -crates/app/src/app.rs 7499
-+crates/app/src/app.rs 5339
++crates/app/src/app.rs 5349
  
  # The five entries below `pane.rs` were invisible to the first version of this
  # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
 
 ## Against the criteria
 
-  app.rs at most 5,600 lines ......... 5,343. Met.
-  ceiling tightened to the new size .. 7,499 -> 5,339, written by --tighten. Met.
-  !budget lower by at least 1,800 .... 59,547 -> 57,387, a fall of 2,160. Met.
-  no new baseline entry .............. none of the three new files reaches 1,500. Met.
+  app.rs at most 5,600 lines ......... 5,353. Met.
+  ceiling tightened to the new size .. 7,499 -> 5,349. Met.
+  !budget lower by at least 1,800 .... 59,547 -> 57,397, a fall of 2,150. Met.
+  no new baseline entry .............. none of the three reaches 1,500. Met.
