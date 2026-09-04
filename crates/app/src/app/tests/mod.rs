@@ -27,6 +27,10 @@
 // work around a problem that was really the shadowing. There is no such rule.
 // The suffix fixes it; the second glob was redundant and is gone.
 
+// `DrawingsDemo` reached these files through `app.rs`'s own imports until the
+// demo appliers moved to `app::demo_hooks`. Bound here, beside the other
+// test-only binding, so the one `use super::*` per file still carries it.
+use crate::harness::DrawingsDemo;
 use crate::plot_area::plot_split;
 
 mod chart_view_tests;
