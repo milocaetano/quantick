@@ -3466,7 +3466,7 @@ fn apply_keeps_the_settings_dialog_open_and_lands_the_draft() {
     let (mut app, _commands) = split_app(&ctx, 200);
     let point = pane_point(&app, PaneSide::Flow);
     click_chart(&mut app, &ctx, point);
-    app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
     app.apply_toolbar_action(ToolbarAction::OpenIndicatorSettings(slot.0));
@@ -3756,7 +3756,7 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
         .set_layout(CanvasLayout::TimeTimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     place_level(&mut app, PaneSide::Time(0), 100.0);
     run_frame(&mut app, &ctx);

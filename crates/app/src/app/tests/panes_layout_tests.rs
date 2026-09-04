@@ -1901,7 +1901,7 @@ fn the_status_bar_follows_the_focused_pane() {
 fn two_panes_show_two_layouts_side_by_side() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     let first = app.layouts().active_id();
     assert_eq!(app.layouts().get(first).unwrap().indicators.len(), 1);
@@ -1936,7 +1936,7 @@ fn two_panes_show_two_layouts_side_by_side() {
     );
 
     // An edit on the time pane reaches layout 2 only.
-    app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
     settle_indicators(&mut app);
     assert_eq!(
         app.active_tab()
@@ -1954,7 +1954,7 @@ fn two_panes_show_two_layouts_side_by_side() {
     assert_eq!(app.layouts().get(second).unwrap().indicators.len(), 1);
     assert_eq!(
         app.layouts().get(second).unwrap().indicators[0].kind,
-        crate::indicators::state_file::SavedKind::NativeCvd
+        crate::indicators::state_file::SavedKind::native("native.cvd")
     );
     assert_eq!(app.layouts().get(first).unwrap().indicators.len(), 1);
     assert_eq!(
@@ -2019,7 +2019,7 @@ fn per_pane_layouts_are_recorded_and_restored() {
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
     let second = app.create_layout(Some("levels")).expect("second");
-    app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
     settle_indicators(&mut app);
     app.flush_layouts();
 
@@ -2065,7 +2065,7 @@ fn per_pane_layouts_are_recorded_and_restored() {
 fn layouts_come_back_after_a_restart() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     app.maintain_indicator_state();
     place_level(&mut app, PaneSide::Time(0), 100.0);
@@ -2115,7 +2115,7 @@ fn layouts_come_back_after_a_restart() {
 fn a_previewed_input_never_reaches_the_layout() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
     let target = TabSlot {
@@ -2819,7 +2819,7 @@ fn closing_a_tab_activates_a_neighbour_and_drops_its_market() {
     let second = app.active_tab().id;
     // Register a slot on the tab about to close, so the bookkeeping has
     // something to lose with it.
-    app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
     assert!(app.slot_kinds.iter().any(|(owner, _)| owner.tab == second));
 
     app.apply_tab_action(TabAction::Close(1));

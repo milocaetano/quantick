@@ -723,7 +723,7 @@ mod tests {
 
     fn ema() -> SavedIndicator {
         SavedIndicator {
-            kind: SavedKind::NativeEma,
+            kind: SavedKind::native("native.ema"),
             hidden: false,
             inputs: vec![SavedInput::Int(20), SavedInput::Source("close".to_owned())],
             plot_styles: Vec::new(),

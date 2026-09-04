@@ -29,6 +29,12 @@ One `SavedKind` variant plus 14 call sites across four files. The
 half and omitted the `app` half. Corrected in `new-extension/SKILL.md`, which
 now names all fifteen sites and points at the `.pine` route first.
 
+**Superseded.** The measurement above stands as what was true when it was
+taken; the code no longer is. `refactor/native-indicator-docking` replaced the
+per-native variants with a catalog in `crates/indicators/src/native/mod.rs`,
+so the fifteen sites are gone and a native really is a new file plus one line —
+in `app` too. `new-extension/SKILL.md` states the new truth.
+
 ## 2. The feeds clause in CLAUDE.md's headless bullet (R15)
 
 **Claim:** the feeds are among the crates with "no UI, no network, no async, no

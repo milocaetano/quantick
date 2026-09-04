@@ -19,8 +19,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use quantick_engine::{Bar, Trade};
 use quantick_indicators::{
     EvalError, Indicator, IndicatorDescriptor, IndicatorHost, InputValue, InstanceId,
-    ObjectSnapshot, PreviewFrame, Rgba8, SourceId,
-    native::{Cvd, Ema},
+    ObjectSnapshot, PreviewFrame, Rgba8, native::native,
 };
 
 /// Most rungs a lane ladder is ever walked with.
@@ -82,10 +81,18 @@ pub(crate) struct SlotId(pub u64);
 /// What to instantiate behind a slot.
 #[derive(Debug, Clone)]
 pub(crate) enum IndicatorSource {
-    /// Native EMA over a selectable source series.
-    NativeEma { len: usize, source: SourceId },
-    /// Native cumulative volume delta pane.
-    NativeCvd,
+    /// A native, by its catalog id, with the input values it was restored
+    /// with — empty meaning "whatever the native declares".
+    ///
+    /// One variant for every native there will ever be: the worker resolves
+    /// the id against [`quantick_indicators::native`] and never learns which
+    /// natives exist.
+    Native {
+        /// Stable catalog id (`native.ema`).
+        id: String,
+        /// Saved input values, in binding order.
+        values: Vec<InputValue>,
+    },
     /// A Quantick Pine script: display name + source text (the UI owns
     /// files; the worker only ever sees text).
     Script { name: String, text: String },
@@ -113,18 +120,19 @@ impl IndicatorSource {
     /// falls back to its default rather than panicking the worker.
     fn build_with(&self, values: Option<&[InputValue]>) -> Result<Box<dyn Indicator>, String> {
         match self {
-            IndicatorSource::NativeEma { len, source } => {
-                let base = Ema::new(*len, *source);
-                // The panel is generated from `InputSpec`; binding the values
-                // back is generated too, via the trait, so a future native
-                // cannot forget to extend a match here and have its settings
-                // silently ignored.
-                Ok(match values.and_then(|values| base.rebind(values)) {
-                    Some(bound) => bound,
-                    None => Box::new(base),
-                })
+            IndicatorSource::Native { id, values: saved } => {
+                // An id this build does not ship is an error slot saying so,
+                // never a substitute indicator: silently building a different
+                // native than the workspace named is how a trader ends up
+                // reading an EMA and believing it is something else.
+                let entry = native(id)
+                    .ok_or_else(|| format!("`{id}` is not a native indicator this build ships"))?;
+                // The panel is generated from `InputSpec` and binding the
+                // values back is generated too, via the trait, so a new
+                // native's settings cannot be silently ignored for want of a
+                // match arm here.
+                Ok(entry.build_with(values.unwrap_or(saved)))
             }
-            IndicatorSource::NativeCvd => Ok(Box::new(Cvd::new())),
             IndicatorSource::Script { name, text } => match quantick_pine::compile(text, name) {
                 Ok(compiled) => Ok(Box::new(match values {
                     // An empty set is a slot that has never been given one:
@@ -205,8 +213,7 @@ impl IndicatorSource {
     /// series, not which pane the trader was annotating.
     pub(crate) fn kind_id(&self) -> String {
         match self {
-            IndicatorSource::NativeEma { .. } => "native.ema".to_owned(),
-            IndicatorSource::NativeCvd => "native.cvd".to_owned(),
+            IndicatorSource::Native { id, .. } => id.clone(),
             IndicatorSource::Script { name, .. } => format!("script.{name}"),
         }
     }
@@ -215,8 +222,12 @@ impl IndicatorSource {
     /// instance's title comes from its descriptor).
     fn fallback_title(&self) -> String {
         match self {
-            IndicatorSource::NativeEma { len, .. } => format!("EMA({len})"),
-            IndicatorSource::NativeCvd => "CVD".to_owned(),
+            IndicatorSource::Native { id, values } => native(id).map_or_else(
+                // Nothing shipped under this id, so the id itself is the most
+                // useful thing the error row can say.
+                || id.clone(),
+                |entry| entry.build_with(values).descriptor().title.clone(),
+            ),
             IndicatorSource::Script { name, .. } => name.clone(),
         }
     }
@@ -901,7 +912,7 @@ mod tests {
     use super::*;
     use crate::indicators::IndicatorViews;
     use quantick_engine::{BarBuilder as _, Side, TickBarBuilder, Trade, golden as engine_golden};
-    use quantick_indicators::{PlotId, native::Ema};
+    use quantick_indicators::{PlotId, SourceId, native::Ema};
     use rust_decimal::Decimal;
 
     pub(super) fn trade(i: u64) -> Trade {
@@ -1053,9 +1064,9 @@ mod tests {
         let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
-            source: IndicatorSource::NativeEma {
-                len: 3,
-                source: SourceId::Close,
+            source: IndicatorSource::Native {
+                id: "native.ema".to_owned(),
+                values: vec![InputValue::Int(3), InputValue::Source(SourceId::Close)],
             },
         });
         worker.send(IndicatorCommand::Backfilled(bars[..split].to_vec()));
@@ -1105,7 +1116,10 @@ mod tests {
         let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
-            source: IndicatorSource::NativeCvd,
+            source: IndicatorSource::Native {
+                id: "native.cvd".to_owned(),
+                values: Vec::new(),
+            },
         });
         worker.send(IndicatorCommand::Backfilled(coarse));
         worker.send(IndicatorCommand::Rebuild(
@@ -1138,8 +1152,20 @@ mod tests {
         let doomed = views.allocate_slot("test.indicator");
         let survivor = views.allocate_slot("test.indicator");
         for (slot, source) in [
-            (doomed, IndicatorSource::NativeCvd),
-            (survivor, IndicatorSource::NativeCvd),
+            (
+                doomed,
+                IndicatorSource::Native {
+                    id: "native.cvd".to_owned(),
+                    values: Vec::new(),
+                },
+            ),
+            (
+                survivor,
+                IndicatorSource::Native {
+                    id: "native.cvd".to_owned(),
+                    values: Vec::new(),
+                },
+            ),
         ] {
             worker.send(IndicatorCommand::Add { slot, source });
         }
@@ -1228,7 +1254,10 @@ mod tests {
         let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
-            source: IndicatorSource::NativeCvd,
+            source: IndicatorSource::Native {
+                id: "native.cvd".to_owned(),
+                values: Vec::new(),
+            },
         });
         worker.send(IndicatorCommand::Backfilled(bars.clone()));
         worker.send(IndicatorCommand::PartialUpdated {
@@ -1284,7 +1313,10 @@ mod tests {
         let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
-            source: IndicatorSource::NativeCvd,
+            source: IndicatorSource::Native {
+                id: "native.cvd".to_owned(),
+                values: Vec::new(),
+            },
         });
         worker.send(IndicatorCommand::Backfilled(bars.clone()));
         worker.send(IndicatorCommand::PartialUpdated {
@@ -1459,7 +1491,7 @@ mod object_event_tests {
 mod set_inputs_tests {
     use super::*;
     use crate::indicators::IndicatorViews;
-    use quantick_indicators::{IndicatorHost, PlotId, native::Ema};
+    use quantick_indicators::{IndicatorHost, PlotId, SourceId, native::Ema};
 
     /// Applying settings = construct anew + replace + replay: the columns
     /// The second implementer of the input port: a script's bound values must
@@ -1522,9 +1554,9 @@ plot(close * k)
         let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
             slot,
-            source: IndicatorSource::NativeEma {
-                len: 3,
-                source: SourceId::Close,
+            source: IndicatorSource::Native {
+                id: "native.ema".to_owned(),
+                values: vec![InputValue::Int(3), InputValue::Source(SourceId::Close)],
             },
         });
         worker.send(IndicatorCommand::Backfilled(bars.clone()));
