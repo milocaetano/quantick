@@ -282,6 +282,23 @@ than what is remembered.
 - **S6 note** — one branch, one PR, three commits by layer plus the two
   review follow-ups.
 
+## Deferred
+
+- **G8, the ordering clause** — "A1's test exists before `deals.rs` compiles".
+  What is missing: the engine's golden test and the `DealBarBuilder` it
+  proves were authored in one file write and one commit (`c609573`); no
+  test-only write or commit precedes it, unlike the repo's precedent for the
+  other bar kinds. What stands: the fixture guards determinism
+  (`same_input_same_bars`, live order equals rebuild order, exact cuts
+  asserted) and its expectations were stated from the ProfitChart alignment
+  rule, not copied from output. Why it is deferred rather than fixed: the
+  order cannot be retrofitted honestly — a test-only commit written after the
+  code would be a commit message, not proof. Graded PARTIAL by
+  `delivery-review` (escalation pass) over `47cf9a2`; **deferral approved by
+  the trader on 2026-09-04**, choosing to open the PR with the verdict
+  recorded. The lesson is kept for the next engine mission: the fixture is
+  its own write and its own commit before the implementation.
+
 ## Not applicable
 
 - The docs-only waiver: this is code.
