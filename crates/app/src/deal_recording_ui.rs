@@ -305,7 +305,15 @@ pub fn chip_for(
     uncounted_prints: u64,
 ) -> Option<DealChip> {
     if !view.supported() && view.loaded_days.is_empty() {
-        return None;
+        // A trades pane on a feed with no counter — a spec restored from a
+        // workspace or a config before the hello, or a quoted instrument —
+        // is a blank chart unless something says why.
+        return (pane_kind == BarKind::Trades).then(|| DealChip {
+            text: "no deal count · this source has no deal counter".to_owned(),
+            hover: "trades bars need MetaTrader B3's session deal counter; this feed declares none"
+                .to_owned(),
+            tone: RecState::Unsupported,
+        });
     }
     let since = view
         .since_ms
@@ -523,6 +531,11 @@ mod tests {
         assert!(chip_for(&view(RecState::Off), BarKind::Tick, false, 0).is_none());
         let mut unsupported = view(RecState::Unsupported);
         unsupported.loaded_days.clear();
-        assert!(chip_for(&unsupported, BarKind::Trades, false, 0).is_none());
+        assert!(chip_for(&unsupported, BarKind::Tick, false, 0).is_none());
+        let blank = chip_for(&unsupported, BarKind::Trades, false, 0).unwrap();
+        assert_eq!(
+            blank.text,
+            "no deal count · this source has no deal counter"
+        );
     }
 }

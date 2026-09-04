@@ -30,7 +30,10 @@ kind counts what the venue counts.
 
 The gate is a capability, never a provider name: `FeedCapabilities::deal_counter`
 is true only for a session whose bridge declared it. The bar-kind selector
-does not list `trades` where it is false.
+lists `trades` disabled, with the reason, where it is false — never hidden,
+so a pane restored on `trades` before the hello lands is still a kind the
+selector can name — and the config loader refuses `trades:N` and
+`record_deals` on any provider that is not MetaTrader.
 
 ## What the counter can and cannot give
 
@@ -48,16 +51,18 @@ does not list `trades` where it is false.
 - **Backwards, no.** MetaTrader stores only the folded ticks. Prints before the
   first reading form no trades bar; the chart says how many they are, and
   never guesses.
-- **A hole in the readings.** Prints between two readings more than four
-  seconds apart — a restart, a hole in a recorded day — have no reading of
-  their own: they are uncounted, the bar forming when the readings stopped is
-  closed as it stands, and counting resumes with the reading that ends the
-  hole. At the live edge, where no later reading exists yet, a print is
-  joined to the reading in force however old: a bridge reads the counter
-  *after* fetching a round, so one round after a stall can span minutes under
-  a valid reading. A counter that has really stopped shows as a reading that
-  no longer moves while prints keep coming: bars wait, and REC turns amber
-  (`REC · counter stale 4 s`).
+- **One join rule.** A print is joined to the newest reading at or before
+  it, however far back — the same whether readings arrive just ahead of
+  their prints (live) or all at once before a rebuild, so a chart and its
+  rebuilt twin cut identical bars. A stretch with no readings (quantick was
+  down, the day's file has a hole) folds into the bar the last reading was
+  forming, which closes on the first reading after it: nothing is cut inside
+  the stretch and nothing is invented. Marking that stretch explicitly — an
+  end-of-coverage line the recorder writes on stop — is the recorded
+  follow-up. A counter that stands still while prints keep coming makes bars
+  wait, and REC turns amber (`REC · counter stale 4 s`; `REC · counter stuck
+  at 0` when it never moved, which is what a broker that does not report the
+  counter looks like).
 
 ## Recording
 
@@ -93,7 +98,8 @@ encoded; see `crates/app/src/deal_recording.rs`). The directory is
 | switch from `trades` back to `tick` | only the drawing changes; REC keeps writing |
 | open another B3 symbol | it has its own REC and its own files |
 | open a Binance tab | no `trades`, no REC |
-| close quantick at 14:00 and reopen at 14:20 | today's file is resumed; the 20 minutes without readings form no bars |
+| close quantick at 14:00 and reopen at 14:20 | today's file is resumed; the 20 minutes without readings fold into the bar that was forming at 14:00, which closes on the first reading after 14:20 (see *One join rule*) |
+| press Reload on the feed | every pane is rebuilt from the new session's backfill, and the recorder hands its readings back to them — today's file and every loaded day |
 | press *Stop recording* | the file closes as partial; the day reopens up to where it stopped |
 | open the history menu | the recorded days are listed with their coverage; picking one loads its readings, and the tape paged back to that day cuts as trades bars |
 | ask by script | `feed.status` carries `deal_recording`; `feed.deal_recording.set` starts or stops it; `trades:2000` is a config spec like `tick:2000`, refused on a feed that is not MetaTrader |

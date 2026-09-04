@@ -98,6 +98,25 @@ def test_a_venue_without_a_counter_sends_no_field():
     check("a session that declared no counter stamps nothing", not stamped, len(stamped))
 
 
+def test_a_counter_at_zero_is_stamped_as_zero():
+    """Before the open the counter is 0, and a broker that never counts
+    leaves it there: both are stamped, and the chart tells them apart by
+    whether it ever moves."""
+    term = FakeTerminal(0, NOW)
+    term.ticks = [tick_at((NOW + i) * 1000) for i in range(2)]
+    term.session_deals = 0
+    bridge = load_bridge(term)
+    check("a zero counter is still a counter", bridge.declares_deal_counter("trades", 0) is True)
+    session = session_at(bridge, term, NOW)
+    session.deal_counter = True
+    session.pump_ticks()
+    check(
+        "and its ticks are stamped with the zero",
+        [t.get("deals") for t in live_ticks(session)] == [0, 0],
+        [t.get("deals") for t in live_ticks(session)],
+    )
+
+
 def test_the_hello_declares_the_counter_on_a_trades_tape_only():
     bridge = load_bridge(FakeTerminal(0, NOW))
     check(

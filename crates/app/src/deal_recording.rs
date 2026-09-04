@@ -77,6 +77,10 @@ const EXTENSION: &str = "deals";
 /// other stores live in, then the cwd-relative name for a run with no home.
 #[must_use]
 pub fn resolve_dir(configured: Option<&str>) -> PathBuf {
+    if cfg!(test) {
+        // Never the trader's documents from a test, like every other store.
+        return crate::store_home::test_path(DEALS_DIR);
+    }
     if let Some(explicit) = std::env::var_os(DEALS_DIR_ENV) {
         return PathBuf::from(explicit);
     }
@@ -220,7 +224,11 @@ impl Recording {
         let folder = dir.join(symbol);
         fs::create_dir_all(&folder)?;
         let path = folder.join(format!("{day}.{EXTENSION}"));
-        let (existing, complete_bytes) = if path.exists() {
+        // A file that exists but is empty is a header write that failed —
+        // disk full, a lock — and is fresh again, not a day that refuses to
+        // open until someone deletes it by hand.
+        let len = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+        let (existing, complete_bytes) = if len > 0 {
             let file = read_file(&path)?;
             (file.samples, Some(file.complete_bytes))
         } else {
@@ -234,7 +242,9 @@ impl Recording {
                 file.set_len(complete_bytes)?;
             }
         }
-        let fresh = existing.is_empty();
+        // Fresh means no header yet: a header-only file is a day that has
+        // not printed, and must not gain a second header.
+        let fresh = len == 0;
         let mut writer = BufWriter::new(OpenOptions::new().create(true).append(true).open(&path)?);
         if fresh {
             writeln!(
@@ -435,7 +445,7 @@ fn parse_sample_line(
 /// What a scan remembers per file, so a stop re-reads only the file it
 /// closed: a day file is a million delta lines, and a folder holds a
 /// month of them.
-type DayCache = BTreeMap<PathBuf, (u64, Option<SystemTime>, RecordedDay)>;
+pub type DayCache = BTreeMap<PathBuf, (u64, Option<SystemTime>, RecordedDay)>;
 
 /// Every recorded day under `dir/symbol`, oldest first. Unreadable files are
 /// left out rather than shown as days with numbers nobody can trust. A file
@@ -515,8 +525,19 @@ impl DealRecorder {
     /// A recorder for `symbol`, writing under `dir`, opening on `default_on`.
     #[must_use]
     pub fn new(symbol: impl Into<String>, dir: PathBuf, default_on: bool) -> Self {
+        Self::with_cache(symbol, dir, default_on, DayCache::new())
+    }
+
+    /// [`Self::new`] carrying the scan cache of the recorder it replaces, so
+    /// a market switch does not re-parse a month of day files.
+    #[must_use]
+    pub fn with_cache(
+        symbol: impl Into<String>,
+        dir: PathBuf,
+        default_on: bool,
+        mut day_cache: DayCache,
+    ) -> Self {
         let symbol = symbol.into();
-        let mut day_cache = DayCache::new();
         let days = scan_days(&dir, &symbol, &mut day_cache);
         Self {
             symbol,
@@ -536,6 +557,11 @@ impl DealRecorder {
             loaded_days: Vec::new(),
             configured: true,
         }
+    }
+
+    /// The scan cache, handed to the recorder that replaces this one.
+    pub fn take_day_cache(&mut self) -> DayCache {
+        std::mem::take(&mut self.day_cache)
     }
 
     /// The recorder a tab is constructed with, before the app knows which
@@ -596,7 +622,39 @@ impl DealRecorder {
         let day = day_of(now_ms, self.tz_minutes);
         let resumed = self.open_day(&day);
         self.recording_since_ms = resumed.first().map(|s| s.time_ms);
+        if self.recording.is_none() {
+            // The open failed and said why. Not recording, then — the
+            // surfaces say Off with the reason in the popover, and REC
+            // pressed again retries, instead of a red button over readings
+            // being dropped.
+            self.enabled = false;
+        }
         resumed
+    }
+
+    /// Every reading the panes should hold again after their series was
+    /// rebuilt from scratch — a feed reload, a replay seek: today's file,
+    /// then every recorded day loaded this session.
+    pub fn reload(&mut self) -> Vec<DealSample> {
+        let mut samples = Vec::new();
+        if let Some(recording) = self.recording.as_mut() {
+            let _ = recording.flush();
+            if let Ok(file) = read_file(&recording.path) {
+                samples.extend(file.samples);
+            }
+        }
+        let loaded: Vec<PathBuf> = self
+            .days
+            .iter()
+            .filter(|day| self.loaded_days.contains(&day.day))
+            .map(|day| day.path.clone())
+            .collect();
+        for path in loaded {
+            if let Ok(file) = read_file(&path) {
+                samples.extend(file.samples);
+            }
+        }
+        samples
     }
 
     /// Stop recording and flush. The file stays; the day is partial.
@@ -642,16 +700,16 @@ impl DealRecorder {
         }
         let day = day_of(sample.time_ms, self.tz_minutes);
         if self.recording.as_ref().is_none_or(|r| r.day != day) {
-            if self.recording.is_none() && self.error.is_some() {
-                // The open already failed and said so. Retrying on every
-                // reading would rescan the folder fifty times a second on
-                // the UI thread; REC, pressed again, retries once.
-                return;
-            }
             // Midnight in the display timezone: the day's own file, opened
-            // now.
+            // now. An open that fails turns recording off with its reason,
+            // so no reading retries it fifty times a second; REC, pressed
+            // again, retries once.
             let resumed = self.open_day(&day);
             self.recording_since_ms = resumed.first().map(|s| s.time_ms);
+            if self.recording.is_none() {
+                self.enabled = false;
+                return;
+            }
         }
         if let Some(recording) = self.recording.as_mut() {
             match recording.append(sample, now_ms) {
@@ -808,6 +866,7 @@ impl RecordingView {
                 ),
                 _ => "REC · waiting for the counter".to_owned(),
             },
+            RecState::Stale if self.reading == Some(0) => "REC · counter stuck at 0".to_owned(),
             RecState::Stale => format!(
                 "REC · counter stale {} s",
                 self.counter_age_ms.unwrap_or(0) / 1000
@@ -845,6 +904,10 @@ impl RecordingView {
             RecState::Unsupported => "This source has no deal counter".to_owned(),
             RecState::Off => format!("Not recording {} deals", self.symbol),
             RecState::Recording => format!("Recording {} deals", self.symbol),
+            RecState::Stale if self.reading == Some(0) => format!(
+                "Recording {} deals — the counter never moved; this broker may not report it",
+                self.symbol
+            ),
             RecState::Stale => format!("Recording {} deals — the counter stopped", self.symbol),
             RecState::Recorded => format!("{} deals from a recording", self.symbol),
         }
@@ -1088,6 +1151,44 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// A header write that failed leaves an empty file; a day that never
+    /// printed leaves a header-only file. The first is fresh again, the
+    /// second keeps its one header.
+    #[test]
+    fn an_empty_file_is_fresh_and_a_header_only_file_keeps_one_header() {
+        let dir = scratch("empty");
+        fs::create_dir_all(dir.join("WINV26")).unwrap();
+        let path = dir.join("WINV26").join("2026-09-03.deals");
+        fs::write(&path, "").unwrap();
+        let (recording, existing) = Recording::open(&dir, "WINV26", "2026-09-03", -180).unwrap();
+        assert!(existing.is_empty());
+        drop(recording);
+        let (recording, _) = Recording::open(&dir, "WINV26", "2026-09-03", -180).unwrap();
+        drop(recording);
+        let text = fs::read_to_string(&path).unwrap();
+        assert_eq!(text.matches(HEADER).count(), 1, "{text}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A feed reload rebuilds every pane from nothing: the recorder hands
+    /// back today's file and every day loaded this session.
+    #[test]
+    fn a_reload_hands_back_todays_file_and_the_loaded_days() {
+        let dir = scratch("reload");
+        let today = 1_788_436_800_000;
+        let mut rec = DealRecorder::new("WINV26", dir.clone(), false);
+        rec.set_timezone(-180);
+        rec.set_available(true);
+        rec.start(today);
+        rec.observe(sample(today, 5), today);
+        rec.observe(sample(today + 20, 9), today);
+        let again = rec.reload();
+        assert_eq!(again, vec![sample(today, 5), sample(today + 20, 9)]);
+        rec.stop();
+        assert!(rec.reload().is_empty(), "nothing open, nothing loaded");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn the_hook_reads_three_words_and_nothing_else() {
         assert_eq!(RecordingHook::parse(Some("on")), Some(RecordingHook::On));
@@ -1176,10 +1277,15 @@ mod tests {
             .error
             .clone()
             .expect("the open failed and said so");
+        assert_eq!(rec.state(None), RecState::Off, "not recording, and says so");
         rec.observe(sample(1_788_436_800_000, 1), 0);
         rec.observe(sample(1_788_436_800_020, 2), 0);
         assert_eq!(rec.view(None).error, Some(first));
         assert!(rec.view(None).path.is_none());
+        assert_eq!(
+            rec.state(Some(1_788_436_800_020 + STALE_AFTER_MS)),
+            RecState::Off
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

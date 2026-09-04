@@ -77,7 +77,10 @@ default-on setting, history list of recorded days, B3-only scope).
 - **S1** — Prints before the first counter reading (opened mid-session, no
   file) form no trades bars; the chart labels the stretch *no deal count*
   and reports how many prints it holds. Safe: it is rule 2 of the approved
-  mock and the data-honesty rule leaves no other reading.
+  mock and the data-honesty rule leaves no other reading. A stretch *between*
+  readings (a restart) folds into the bar the last reading was forming —
+  one join rule, the same live and rebuilt; the explicit end-of-coverage
+  marker is a recorded follow-up.
 - **S2** — Recording file: `Documents/Quantick/deals/<SYMBOL>/<YYYY-MM-DD>.deals`,
   append-only text, one `(time_ms, session_deals)` sample per line, under a
   `QUANTICK_DEALS_DIR` hook and a `[deals] dir` config key. Safe: a
@@ -124,7 +127,8 @@ default-on setting, history list of recorded days, B3-only scope).
       `cargo test -p quantick-feed-mt5 deals` green; `PROTOCOL.md` names the
       field. → `bridge/mt5/PROTOCOL.md`, `crates/feed-mt5/src/`. *(R1, R5)*
 - [x] **A3** — `trades` is offered only on a MetaTrader feed whose tape is
-      trades (B3); the selector does not show it elsewhere; `trades:N`
+      trades (B3); elsewhere the selector lists it disabled with the reason
+      (the bug pass showed hiding a selected kind is a lie); `trades:N`
       round-trips through config and workspace and is refused at config load
       on any other feed. *Evidence:* tests in `state.rs`, `config.rs`,
       `toolbar.rs`. *(R1, R9)*
@@ -258,7 +262,18 @@ than what is remembered.
   pass no Blocker, 7 Should-fix. Round 2 fixed every step-0 finding but
   the backtest gap (deferred in the PR body: no headless reader of
   readings yet) and six of the seven Should-fixes (the two integration
-  tests deferred). Round 3 re-ran both over the round-2 head.
+  tests deferred). Round 3 re-ran both over the round-2 head: the shape
+  pass confirmed six fixes, found one Blocker (batch dedup on equal
+  milliseconds) and one Should-fix (a whole bad line read as torn), both
+  fixed in the third commit, and deferred the live-edge/rebuild hole
+  divergence to a follow-up (an end-of-coverage marker in the file).
+  The round-3 bug pass came back with eight confirmed findings, the same
+  count as round 1 — the budget's "go to the trader" shape. A fourth
+  commit resolved them (one join rule identical live and rebuilt, re-seed
+  after Reload, a failed open reads Off, empty and header-only files,
+  tests kept out of Documents, the EA's evaluation order, the chip on a
+  trades pane the feed cannot count); the PR body says so, and the
+  end-of-coverage marker stays the recorded follow-up.
 - **S6 note** — one branch, one PR, three commits by layer plus the two
   review follow-ups.
 

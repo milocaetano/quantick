@@ -565,13 +565,18 @@ bool StartSession()
                                        DoubleToString(tick_size, _Digits)));
      }
 
+   // In this order, as statements: the counter check reads the tape flag
+   // the probe sets, and MQL5 does not promise which argument of a call is
+   // evaluated first.
+   string tape             = DetectTape();
+   bool   has_deal_counter = HasDealCounter();
    string hello = StringFormat(
       "{\"type\":\"hello\",\"schema\":%d,\"bridge\":\"%s\",\"bridge_version\":\"%s\","
       "\"symbol\":\"%s\",\"broker_symbol\":\"%s\",\"digits\":%d,\"server_utc_offset_s\":%I64d,"
       "\"tape\":\"%s\",\"deal_counter\":%s%s}",
       SCHEMA_VERSION, BRIDGE_NAME, BRIDGE_VERSION,
-      _Symbol, basis, _Digits, ServerUtcOffsetSeconds(), DetectTape(),
-      (HasDealCounter() ? "true" : "false"), depth);
+      _Symbol, basis, _Digits, ServerUtcOffsetSeconds(), tape,
+      (has_deal_counter ? "true" : "false"), depth);
    // Written, not merely queued: the feed's contract is that a bridge says
    // hello *the moment it connects* (crates/feed-mt5/src/stream.rs), and it
    // gives the greeting ten seconds before dropping the connection. The next

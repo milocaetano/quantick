@@ -71,10 +71,10 @@
 # path being auditable was worth them.
 !budget 61397
 
-# Tightened 26 by the trades-bars branch to pay for the three raises below.
+# Tightened 27 by the trades-bars branch to pay for the three raises below.
 # That branch docked a bar kind, a REC control, a recorder and a persisted
 # setting with registration lines only: a `mod`, a field, a call each.
-crates/app/src/app.rs 9336
+crates/app/src/app.rs 9335
 
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
@@ -137,17 +137,17 @@ crates/app/src/paper_trading.rs 6396
 # three matches that already enumerate every kind, and the readings a new
 # context pane is seeded with beside the trades it already was. A sixth bar
 # kind costs the pane what the fifth did; the rule lives in the engine.
-# Paid, with tab.rs and stream.rs below, by tightening app.rs 26.
+# Paid, with tab.rs and stream.rs below, by tightening app.rs 27.
 crates/app/src/pane.rs 7784
 # Raised for the same branch: the opening block's own arm in `drain_feed`,
 # which is deliberately not the reply path with a flag -- the two differ in
 # the two lines that matter, and a branch inside the reply arm is how a
 # slice ends up answering a press the trader made.
-# Raised 3 for the trades-bars branch: the `deal_recorder` field, its
-# placeholder in the constructor, one event arm, one per-drain call and the
-# readings handed to a pane being seeded. The behaviour is
+# Raised 4 for the trades-bars branch: the `deal_recorder` field, its
+# placeholder in the constructor, one event arm, one per-drain call, the
+# readings handed to a pane being seeded and the re-seed after a reset. The behaviour is
 # `deal_recording_tab.rs`, an `impl Tab` beside this file.
-crates/app/src/tab.rs 4473
+crates/app/src/tab.rs 4474
 crates/app/src/control/gateway.rs 4142
 crates/app/src/orderflow_render.rs 3075
 crates/app/src/orderflow_view.rs 2485

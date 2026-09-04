@@ -465,9 +465,12 @@ def declares_deal_counter(tape: str, session_deals) -> bool:
 
     Only a trades tape: a quoted CFD prints no deals, and a counter there
     would count something other than what the chart calls a deal. And only
-    when the terminal actually reports the field — an older terminal build,
-    or a symbol the broker does not count, answers `None` and gets no stamp
-    rather than a zero that reads as "no deals today".
+    when the terminal reports the field at all — an older terminal build
+    answers `None` and gets no stamp. A field that reads 0 is declared and
+    stamped: before the open the counter *is* 0, and a broker that never
+    counts leaves it there all day, which the chart shows as a counter that
+    never moves rather than as a session with no deals — the honest shape
+    for a fact this bridge cannot tell apart from the terminal's answer.
     """
     return tape == "trades" and session_deals is not None
 

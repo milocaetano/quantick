@@ -18,16 +18,22 @@ impl QuantickApp {
     /// feed's `record_deals` in the config. A feed with no counter never
     /// starts whatever the default says — the recorder itself waits for the
     /// feed to declare one.
-    pub(crate) fn deal_recorder_for(&mut self, feed_id: &str, symbol: &str) -> DealRecorder {
+    pub(crate) fn deal_recorder_for(
+        &mut self,
+        feed_id: &str,
+        symbol: &str,
+        day_cache: deal_recording::DayCache,
+    ) -> DealRecorder {
         let default_on = self
             .harness
             .deal_recording_default()
             .or(self.record_deals)
             .unwrap_or_else(|| self.config.records_deals(feed_id));
-        let mut recorder = DealRecorder::new(
+        let mut recorder = DealRecorder::with_cache(
             symbol,
             deal_recording::resolve_dir(self.config.deals_dir()),
             default_on,
+            day_cache,
         );
         recorder.set_timezone(self.tz.minutes());
         recorder
@@ -50,7 +56,10 @@ impl QuantickApp {
                 }
                 tab.active.clone()
             };
-            let mut recorder = self.deal_recorder_for(&feed_id, &symbol);
+            // The scan cache outlives the recorder: a month of day files
+            // is parsed once per session, not once per market switch.
+            let day_cache = self.tabs[index].deal_recorder.take_day_cache();
+            let mut recorder = self.deal_recorder_for(&feed_id, &symbol, day_cache);
             let tab = &mut self.tabs[index];
             // What the feed already said it can count, carried over: the
             // drain that would say it again is a frame away, and a REC that

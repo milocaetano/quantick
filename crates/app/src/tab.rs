@@ -3525,6 +3525,7 @@ impl Tab {
         // The simulator flattens at its last mark and says so — a position
         // cannot honestly survive into a rebuilt timeline.
         self.paper.on_timeline_reset();
+        self.reseed_deal_samples();
     }
 
     /// Everything this tab must settle before it is dropped.
