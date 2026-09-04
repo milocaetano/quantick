@@ -26,18 +26,96 @@ pub(crate) const STATE_FILE: &str = "indicators-state.toml";
 const FORMAT_VERSION: u32 = 1;
 
 /// Which constructor an entry restores through.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Natives are named by their catalog id rather than by a variant of their
+/// own: the file then survives a native being added or withdrawn, and nothing
+/// in this crate has to learn which natives exist. See
+/// [`quantick_indicators::native`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SavedKind {
-    /// The native EMA.
-    NativeEma,
-    /// The native CVD pane.
-    NativeCvd,
+    /// A native, by its stable catalog id (`native.ema`).
+    Native {
+        /// The catalog id. An id this build does not ship restores as an
+        /// error slot, never as a different indicator.
+        id: String,
+    },
     /// A library script, by its menu name (`zigzag.pine`).
     Script {
         /// The library entry name.
         name: String,
     },
+}
+
+impl SavedKind {
+    /// A native entry for a catalog id.
+    pub(crate) fn native(id: &str) -> Self {
+        SavedKind::Native { id: id.to_owned() }
+    }
+}
+
+/// The catalog ids the two pre-catalog variants meant. Kept here rather than
+/// read from the catalog: this is a statement about what old *files* say, and
+/// it must stay true even if one of those natives is one day withdrawn.
+const LEGACY_EMA_ID: &str = "native.ema";
+/// See [`LEGACY_EMA_ID`].
+const LEGACY_CVD_ID: &str = "native.cvd";
+
+/// The spelling written by builds before the native catalog: a bare string,
+/// `kind = "native_ema"`, from the unit variants `SavedKind` used to carry.
+///
+/// Read-only, and permanently so — a workspace saved years ago still opens.
+/// This build writes [`SavedKind::Native`] instead, so a file converts the
+/// first time it is saved.
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LegacyNativeKind {
+    /// Became `native.ema`.
+    NativeEma,
+    /// Became `native.cvd`.
+    NativeCvd,
+}
+
+/// The current spelling, derived so [`SavedKind`]'s own `Deserialize` can be
+/// hand-written without recursing into itself.
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CurrentKind {
+    /// `native = { id = "native.ema" }`
+    Native {
+        /// The catalog id.
+        id: String,
+    },
+    /// `script = { name = "zigzag.pine" }`
+    Script {
+        /// The library entry name.
+        name: String,
+    },
+}
+
+/// Either spelling, discriminated by shape: the legacy one is a string, the
+/// current one a table, so `untagged` cannot confuse them.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SavedKindWire {
+    /// Pre-catalog.
+    Legacy(LegacyNativeKind),
+    /// This build's.
+    Current(CurrentKind),
+}
+
+impl<'de> Deserialize<'de> for SavedKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(match SavedKindWire::deserialize(deserializer)? {
+            SavedKindWire::Legacy(LegacyNativeKind::NativeEma) => SavedKind::native(LEGACY_EMA_ID),
+            SavedKindWire::Legacy(LegacyNativeKind::NativeCvd) => SavedKind::native(LEGACY_CVD_ID),
+            SavedKindWire::Current(CurrentKind::Native { id }) => SavedKind::Native { id },
+            SavedKindWire::Current(CurrentKind::Script { name }) => SavedKind::Script { name },
+        })
+    }
 }
 
 /// One persisted input value. Sources are stored by name so the file stays
@@ -272,6 +350,8 @@ pub(crate) fn save(path: &std::path::Path, indicators: &[SavedIndicator]) {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_INDICATORS_STATE"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,7 +359,7 @@ mod tests {
     fn sample() -> Vec<SavedIndicator> {
         vec![
             SavedIndicator {
-                kind: SavedKind::NativeEma,
+                kind: SavedKind::native("native.ema"),
                 hidden: false,
                 inputs: vec![SavedInput::Int(21), SavedInput::Source("delta".to_owned())],
                 plot_styles: Vec::new(),
@@ -299,10 +379,132 @@ mod tests {
         ]
     }
 
+    /// A workspace saved by any build before the native catalog names its
+    /// natives with the unit-variant spelling `native_ema` / `native_cvd`.
+    /// Those files are on traders' disks and must open forever: the fixture
+    /// here is the exact text today's serializer produced for that set.
+    #[test]
+    fn a_workspace_saved_before_the_catalog_still_restores_both_natives() {
+        let dir = crate::scratch::ScratchDir::new("indicator-state");
+        let path = dir.join("pre-catalog-state.toml");
+        std::fs::write(
+            &path,
+            "version = 1
+
+             [[indicators]]
+kind = \"native_ema\"
+hidden = false
+
+             [[indicators.inputs]]
+type = \"int\"
+value = 21
+
+             [[indicators.inputs]]
+type = \"source\"
+value = \"delta\"
+
+             [[indicators]]
+kind = \"native_cvd\"
+hidden = true
+
+             [[indicators]]
+hidden = false
+
+             [indicators.kind.script]
+name = \"zigzag.pine\"
+",
+        )
+        .unwrap();
+
+        let loaded = load(&path);
+        assert_eq!(loaded.len(), 3, "every entry survived: {loaded:?}");
+        assert_eq!(
+            loaded[0].kind,
+            SavedKind::native("native.ema"),
+            "the old EMA spelling names the catalog's EMA"
+        );
+        assert_eq!(
+            loaded[0].inputs,
+            vec![SavedInput::Int(21), SavedInput::Source("delta".to_owned())],
+            "a tuned length and source come back with it"
+        );
+        assert_eq!(loaded[1].kind, SavedKind::native("native.cvd"));
+        assert!(
+            loaded[1].hidden,
+            "the hidden flag is unrelated and survived"
+        );
+        assert_eq!(
+            loaded[2].kind,
+            SavedKind::Script {
+                name: "zigzag.pine".to_owned()
+            },
+            "scripts never had a spelling change and must not have acquired one"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// The migration is read-side and one-way, on purpose: this build writes
+    /// the catalog spelling, so a file converts the first time it is saved.
+    /// Asserted on the text rather than on a round trip, because a round trip
+    /// would pass just as well if nothing had changed.
+    #[test]
+    fn this_build_writes_the_catalog_spelling() {
+        let dir = crate::scratch::ScratchDir::new("indicator-state");
+        let path = dir.join("catalog-spelling-state.toml");
+        save(
+            &path,
+            &[SavedIndicator {
+                kind: SavedKind::native("native.ema"),
+                hidden: false,
+                inputs: Vec::new(),
+                plot_styles: Vec::new(),
+            }],
+        );
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("native.ema"),
+            "the id is what identifies the native now: {text}"
+        );
+        assert!(
+            !text.contains("native_ema"),
+            "the pre-catalog spelling is read, never written: {text}"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// An id no build ships is carried, not corrected. A workspace written by
+    /// a newer build, or one naming a withdrawn native, must reach the worker
+    /// intact so it can say what is missing — the loader silently rewriting it
+    /// to a native that does exist is the failure this whole change removes.
+    #[test]
+    fn an_unknown_native_id_survives_the_file_unchanged() {
+        let dir = crate::scratch::ScratchDir::new("indicator-state");
+        let path = dir.join("unknown-native-state.toml");
+        std::fs::write(
+            &path,
+            "version = 1
+
+[[indicators]]
+hidden = false
+
+             [indicators.kind.native]
+id = \"native.from.the.future\"
+",
+        )
+        .unwrap();
+
+        let loaded = load(&path);
+        assert_eq!(
+            loaded.first().map(|entry| &entry.kind),
+            Some(&SavedKind::native("native.from.the.future")),
+            "loaded: {loaded:?}"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
     #[test]
     fn the_state_round_trips_through_disk() {
-        let dir = std::env::temp_dir().join("quantick-indicator-state-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::scratch::ScratchDir::new("indicator-state");
         let path = dir.join("indicators-state.toml");
         let saved = sample();
         save(&path, &saved);
@@ -316,8 +518,7 @@ mod tests {
     /// unknown shape and take the whole workspace with it.
     #[test]
     fn a_file_written_before_styles_existed_still_loads() {
-        let dir = std::env::temp_dir().join("quantick-indicator-state-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::scratch::ScratchDir::new("indicator-state");
         let path = dir.join("pre-style-state.toml");
         std::fs::write(
             &path,
@@ -340,13 +541,12 @@ mod tests {
     /// user had before this change is the file they have after it.
     #[test]
     fn an_unstyled_workspace_writes_no_style_tables() {
-        let dir = std::env::temp_dir().join("quantick-indicator-state-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::scratch::ScratchDir::new("indicator-state");
         let path = dir.join("unstyled-state.toml");
         save(
             &path,
             &[SavedIndicator {
-                kind: SavedKind::NativeEma,
+                kind: SavedKind::native("native.ema"),
                 hidden: false,
                 inputs: vec![SavedInput::Int(21)],
                 plot_styles: Vec::new(),
@@ -406,8 +606,7 @@ mod tests {
 
     #[test]
     fn unknown_versions_and_garbage_start_empty() {
-        let dir = std::env::temp_dir().join("quantick-indicator-state-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::scratch::ScratchDir::new("indicator-state");
         let path = dir.join("bad-state.toml");
         std::fs::write(&path, "version = 99\n").unwrap();
         assert!(load(&path).is_empty(), "unknown version starts empty");

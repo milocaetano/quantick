@@ -9,6 +9,8 @@
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
 
+use quantick_feed as feed;
+
 use crate::state::BarSpec;
 
 mod app;
@@ -27,7 +29,6 @@ mod deal_recording_tab;
 mod deal_recording_ui;
 mod dock;
 mod drawings;
-mod feed;
 mod feed_notice;
 mod footprint_config;
 mod footprint_panel;
@@ -37,6 +38,7 @@ mod footprint_series;
 mod frvp;
 mod harness;
 mod history_reach;
+mod hooks;
 mod indicator_legend;
 mod indicator_panel;
 mod indicator_render;
@@ -50,8 +52,6 @@ mod live_strip;
 mod loading;
 mod metrics;
 mod order_strategies;
-mod orderflow;
-mod orderflow_engine;
 mod orderflow_render;
 mod orderflow_view;
 mod orderflow_worker;
@@ -73,6 +73,7 @@ mod replay_home;
 mod replay_view;
 mod resample;
 mod risk_sizing;
+mod scratch;
 mod state;
 mod statusbar;
 mod store_home;
@@ -132,8 +133,77 @@ fn init_tracing() {
     }
 }
 
+/// Write a rendered dump, or fail loudly without writing a byte.
+///
+/// Never a panic and never a partial write. A caller redirects this over a
+/// committed file, and the shell truncates that file before the process starts
+/// — so half a document on stdout is a corrupted index the next `git diff`
+/// reports as a real change. Either the whole thing lands, or nothing does and
+/// the exit code says so.
+fn emit(rendered: Result<String, String>) {
+    use std::io::Write as _;
+
+    let markdown = match rendered {
+        Ok(markdown) => markdown,
+        Err(error) => {
+            eprintln!("quantick-app: cannot render the dump: {error}");
+            std::process::exit(1);
+        }
+    };
+    // `print!` swallows the write error and panics on a broken pipe, which
+    // would leave a truncated committed index behind an exit code of 0 — the
+    // opposite of what this function promises.
+    let mut stdout = std::io::stdout();
+    if let Err(error) = stdout.write_all(markdown.as_bytes()) {
+        eprintln!("quantick-app: cannot write the dump: {error}");
+        std::process::exit(1);
+    }
+    if let Err(error) = stdout.flush() {
+        eprintln!("quantick-app: cannot flush the dump: {error}");
+        std::process::exit(1);
+    }
+}
+
+/// Offline dump paths, served before anything opens a window.
+///
+/// The generated indexes under `docs/` and `.claude/skills/` are produced from
+/// here rather than from a separate tool, because the registries they describe
+/// are private to this binary — `crates/app` has no library target, so no
+/// `examples/` binary and no sibling crate can reach them the way
+/// `crates/control/examples/export_schemas.rs` reaches the wire schemas.
+///
+/// Returns whether the argument named a dump, so `main` can exit before
+/// touching a config file or a display.
+fn run_dump_subcommand(argument: &str) -> bool {
+    match argument {
+        "--dump-capability-inventory" => {
+            emit(control::inventory::capability_inventory_markdown());
+            true
+        }
+        "--dump-hook-registry" => {
+            emit(hooks::hook_registry_markdown());
+            true
+        }
+        _ => false,
+    }
+}
+
 fn main() -> eframe::Result {
+    // Before tracing, before the config read, before the window: a dump is a
+    // pure function of the registries and must not depend on a loadable
+    // configuration or a usable display.
+    if let Some(argument) = std::env::args().nth(1)
+        && run_dump_subcommand(&argument)
+    {
+        return Ok(());
+    }
+
     init_tracing();
+
+    // Immediately after the subscriber exists, so a mistyped hook is the first
+    // thing the run says rather than something inferred later from a surface
+    // that never opened.
+    hooks::log_unknown_hooks();
 
     // Feed and asset are configuration, not constants. A malformed external
     // config is fatal and surfaced, never silently ignored.
@@ -223,7 +293,12 @@ fn main() -> eframe::Result {
         .or_else(|| config.startup_spec_for(&feed_id))
         .unwrap_or(BarSpec::Tick(INITIAL_TICK_SIZE));
 
-    let feed = feed::spawn_live(provider, &symbol, &config);
+    let feed = feed::spawn_live(
+        provider,
+        &symbol,
+        &config.metatrader,
+        paper_home::shelf_dir(),
+    );
 
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
         .expect("bundled assets/icon.png is a valid PNG");
@@ -363,6 +438,12 @@ fn parse_window_size(raw: &str) -> Option<[f32; 2]> {
     (width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0)
         .then_some([width, height])
 }
+
+/// The launch hooks read from the crate root; see [`crate::hooks`].
+pub(crate) const MAIN_HOOKS: &[hooks::HookSpec] = &[
+    hooks::HookSpec::new("QUANTICK_LOG_FORMAT"),
+    hooks::HookSpec::new("QUANTICK_WINDOW_SIZE"),
+];
 
 #[cfg(test)]
 mod window_size_tests {

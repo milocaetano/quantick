@@ -5,11 +5,13 @@
 //! discovery, the real `LocalClient`, the real `LocalLink` and the real
 //! `McpServer` run over it — only the application is replaced.
 
+mod common;
+
 use std::{
     collections::BTreeSet,
     io::Write as _,
     net::{Ipv4Addr, TcpListener, TcpStream},
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -206,14 +208,8 @@ fn answer(instance_id: &InstanceId, request: &RequestEnvelope) -> ResponseOutcom
     }
 }
 
-fn scratch_directory(name: &str) -> PathBuf {
-    let directory = std::env::temp_dir().join(format!(
-        "quantick-mcp-gateway-{name}-{}-{}",
-        std::process::id(),
-        line!()
-    ));
-    let _ = std::fs::remove_dir_all(&directory);
-    directory
+fn scratch_directory(name: &str) -> common::ScratchDir {
+    common::ScratchDir::new(name)
 }
 
 fn server_over(directory: &Path) -> McpServer {
@@ -388,7 +384,7 @@ fn a_pinned_adapter_lists_only_its_instance_and_fails_when_it_is_gone() {
     );
     let link = LocalLink::new(
         options,
-        Some(directory.clone()),
+        Some(directory.path().to_path_buf()),
         Some(first.instance_id.clone()),
     );
     let mut server = McpServer::new(Box::new(link), "observer");
@@ -431,7 +427,7 @@ fn a_pinned_adapter_refuses_a_contradicting_routing_id() {
     );
     let link = LocalLink::new(
         options,
-        Some(directory.clone()),
+        Some(directory.path().to_path_buf()),
         Some(gateway.instance_id.clone()),
     );
     let mut server = McpServer::new(Box::new(link), "observer");

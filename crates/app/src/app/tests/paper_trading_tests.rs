@@ -221,9 +221,10 @@ fn the_toolbar_close_action_exits_the_open_position() {
     let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
     // The close journals; without this the test writes a real
     // `paper-trades/` folder into the crate's source tree.
-    let dir = std::env::temp_dir().join(format!("quantick-paper-app-close-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    app.active_tab_mut().paper.redirect_history_dir(dir.clone());
+    let dir = crate::scratch::ScratchDir::new("paper-app-close");
+    app.active_tab_mut()
+        .paper
+        .redirect_history_dir(dir.path().to_path_buf());
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
@@ -260,9 +261,10 @@ fn the_toolbar_close_action_exits_the_open_position() {
 #[test]
 fn a_source_reset_flattens_the_simulated_position_and_journals_it() {
     let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
-    let dir = std::env::temp_dir().join(format!("quantick-paper-app-reset-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    app.active_tab_mut().paper.redirect_history_dir(dir.clone());
+    let dir = crate::scratch::ScratchDir::new("paper-app-reset");
+    app.active_tab_mut()
+        .paper
+        .redirect_history_dir(dir.path().to_path_buf());
     // No `set_symbol` here: the tab's own drain syncs the journal to its
     // symbol before reading a single event, which is what makes the
     // folder assertion below a proof of that wiring too.
@@ -2000,8 +2002,8 @@ fn removing_a_slot_on_one_pane_removes_its_layout_position_everywhere() {
 
     let point = pane_point(&app, PaneSide::Flow);
     click_chart(&mut app, &ctx, point);
-    app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
-    app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
     settle_indicators(&mut app);
     assert_eq!(
         app.slot_kinds.len(),
@@ -2055,9 +2057,9 @@ fn pulling_older_trades_re_trims_the_venue_prefix() {
     let (mut app, events, _commands) = history_app(&ctx);
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -2097,7 +2099,7 @@ fn pulling_older_trades_re_trims_the_venue_prefix() {
         .open_time;
     assert!(
         pane.history_prefix.iter().all(|bar| bar.open_time
-            < crate::resample::bucket_start(first_engine, crate::feed::OHLCV_BASE_INTERVAL_MS)),
+            < crate::resample::bucket_start(first_engine, quantick_feed::OHLCV_BASE_INTERVAL_MS)),
         "no venue candle may cover a minute the engine has now re-cut"
     );
     assert_eq!(
@@ -2134,11 +2136,7 @@ fn pulling_older_trades_re_trims_the_venue_prefix() {
 fn a_replay_switch_flattens_under_the_session_that_owned_the_position() {
     let ctx = egui::Context::default();
     let (mut app, _events, _commands) = history_app(&ctx);
-    let dir = std::env::temp_dir().join(format!(
-        "quantick-switch-source-test-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::scratch::ScratchDir::new("switch-source-test");
     let print = |agg_id: u64, price: i64| quantick_engine::Trade {
         agg_id,
         timestamp_ms: i64::try_from(agg_id).expect("small ids") * 1000,
@@ -2148,7 +2146,7 @@ fn a_replay_switch_flattens_under_the_session_that_owned_the_position() {
     };
     {
         let paper = &mut app.active_tab_mut().paper;
-        paper.redirect_history_dir(dir.clone());
+        paper.redirect_history_dir(dir.path().to_path_buf());
         paper.set_symbol("SWITCHSRC");
         paper.seed(&print(0, 100));
         paper.market(quantick_engine::Side::Buy);
@@ -2170,9 +2168,9 @@ fn a_replay_switch_flattens_under_the_session_that_owned_the_position() {
     with_config(&mut app, |tab, config| {
         tab.open_replay(
             config,
-            crate::feed::ReplayRequest {
+            quantick_feed::ReplayRequest {
                 session: std::sync::Arc::new(session),
-                options: crate::feed::ReplayOptions {
+                options: quantick_feed::ReplayOptions {
                     autoplay: false,
                     ..Default::default()
                 },
@@ -2209,9 +2207,9 @@ fn a_chart_cut_by_trades_takes_the_venue_lead_in_only_when_asked() {
     let (mut app, events, _commands) = history_app(&ctx);
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -2275,13 +2273,10 @@ fn closing_a_tab_flattens_and_journals_its_simulated_position() {
     let ctx = egui::Context::default();
     let (mut app, _cmd_rx) = app_with_history(50);
     let ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
-    let dir = std::env::temp_dir().join(format!(
-        "quantick-paper-tab-close-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    app.active_tab_mut().paper.redirect_history_dir(dir.clone());
+    let dir = crate::scratch::ScratchDir::new("paper-tab-close");
+    app.active_tab_mut()
+        .paper
+        .redirect_history_dir(dir.path().to_path_buf());
 
     // A filled position on the second tab: backfill seeds the mark, the
     // toolbar queues the order, the next live print fills it.

@@ -427,7 +427,7 @@ fn no_day_before_prints() -> WireU64 {
     WireU64::new(0)
 }
 
-fn replay_session_snapshot(link: &crate::feed::replay::ReplayLink) -> ReplaySessionSnapshot {
+fn replay_session_snapshot(link: &quantick_feed::replay::ReplayLink) -> ReplaySessionSnapshot {
     let status = &link.status;
     let joined = link.session.day_before_prints();
     let (day_played, day_total) = link.day_prints();

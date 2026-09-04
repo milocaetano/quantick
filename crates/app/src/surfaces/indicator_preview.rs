@@ -82,6 +82,8 @@ impl Surface for IndicatorPreviewSurface {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_INDICATOR_PREVIEW"];
+
 #[cfg(test)]
 mod tests {
     use std::time::Instant;

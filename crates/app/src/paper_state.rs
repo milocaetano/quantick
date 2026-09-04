@@ -158,11 +158,11 @@ pub(crate) fn validate(text: &str) -> Result<(), String> {
 fn scratch_path() -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    std::env::temp_dir().join(format!(
-        "quantick-paper-state-{}-{}.toml",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ))
+    // Inside the thread's own directory rather than beside it: the file is
+    // then removed with the directory when the test's thread ends, and the
+    // counter only has to separate this thread's files from each other.
+    crate::scratch::thread_dir("paper-state")
+        .join(format!("{}.toml", NEXT.fetch_add(1, Ordering::Relaxed)))
 }
 
 /// The stored state; default (all `None`) when the file is missing,
@@ -246,6 +246,8 @@ pub(crate) fn clear_trades_dir(path: &Path) {
     state.trades_dir = None;
     save(path, &state);
 }
+
+crate::hooks::declare_hooks!["QUANTICK_PAPER_STATE"];
 
 #[cfg(test)]
 mod tests {

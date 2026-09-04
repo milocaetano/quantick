@@ -2250,6 +2250,8 @@ fn draw_legend(
     );
 }
 
+crate::hooks::declare_hooks!["QUANTICK_FOOTPRINT_DEBUG"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

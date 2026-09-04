@@ -1,4 +1,5 @@
 use super::*;
+use quantick_feed::replay::test_support as replay_test_support;
 
 /// The same app, plus the notice sender its feed would hold. The other
 /// ends come back so the caller keeps the channels open, exactly as a live
@@ -10,9 +11,7 @@ use super::*;
 #[test]
 fn a_script_that_no_longer_reads_becomes_a_visible_error_slot() {
     let (mut app, _events, _commands, _book) = test_app();
-    let dir = std::env::temp_dir().join(format!("quantick-app-script-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let dir = crate::scratch::ScratchDir::new("app-script");
     let path = dir.join("vanishing.pine");
     std::fs::write(
         &path,
@@ -60,7 +59,7 @@ plot(close)
 fn the_scene_names_the_corner_and_what_operates_it() {
     let (mut app, _notices, _channels) = test_app_with_notices();
     let ctx = egui::Context::default();
-    app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
 
     let scene = observer_scene(&app);
@@ -179,14 +178,10 @@ fn the_scripted_click_lands_on_the_pane_it_names() {
 #[test]
 fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
     let (mut app, evt_tx, mut cmd_rx, _book_tx) = test_app();
-    let dir = std::env::temp_dir().join(format!(
-        "quantick-replay-restart-hook-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::scratch::ScratchDir::new("replay-restart-hook");
     let journal = dir.join("journal");
     app.active_tab_mut().paper.redirect_history_dir(journal);
-    app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+    app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     while cmd_rx.try_recv().is_ok() {}
     app.harness.arm_replay_restart(1);
 
@@ -627,9 +622,9 @@ fn a_capability_that_rises_later_is_asked_again() {
     // ...and the venue holds nothing after all.
     evt_tx
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: Vec::new(),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -700,9 +695,9 @@ fn a_new_candle_generation_is_asked_for_again_and_installed() {
     // A cold terminal: the block it had was empty.
     evt_tx
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: Vec::new(),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -724,9 +719,9 @@ fn a_new_candle_generation_is_asked_for_again_and_installed() {
 
     evt_tx
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(30),
-            slice: crate::feed::OhlcvSlice::Last { complete: false },
+            slice: quantick_feed::OhlcvSlice::Last { complete: false },
         })
         .unwrap();
     app.drain_tabs();
@@ -753,9 +748,9 @@ fn a_new_generation_replaces_a_block_already_held() {
     let (mut app, events, mut commands) = history_app(&ctx);
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(30),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -775,9 +770,9 @@ fn a_new_generation_replaces_a_block_already_held() {
 
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(90),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -1657,8 +1652,7 @@ fn observer_projects_each_pane_indicator_with_its_inputs_and_latest_reading() {
 
 #[test]
 fn observer_projects_the_replay_playhead_and_its_trace_sidecar() {
-    let dir = std::env::temp_dir().join(format!("quantick-observer-replay-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::scratch::ScratchDir::new("observer-replay");
     let (mut app, _commands) = app_with_history(4);
 
     // A live tab is not replaying, and says so rather than reporting a
@@ -1674,7 +1668,7 @@ fn observer_projects_the_replay_playhead_and_its_trace_sidecar() {
     assert!(live.scopes[&scope].value["tabs"][0]["session"].is_null());
 
     // The same tab, now playing a recording written to disk.
-    app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+    app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     let playing = registry
         .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
         .unwrap()
@@ -3334,21 +3328,17 @@ fn gateway_journals_a_focus_change_the_human_made() {
 #[test]
 fn two_tabs_on_the_same_recording_share_one_trace_walk() {
     let ctx = egui::Context::default();
-    let dir = std::env::temp_dir().join(format!(
-        "quantick-control-trace-two-tabs-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::scratch::ScratchDir::new("control-trace-two-tabs");
     let (mut app, _commands) = app_with_history(12);
-    app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+    app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     hover_bar(&mut app, &ctx, 6);
     app.take_mark(Some("once".to_owned()));
     drop(app);
 
     let (mut app, _commands) = app_with_history(12);
-    app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+    app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
-    app.tabs[1].replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+    app.tabs[1].replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     app.active_tab = 0;
     for _ in 0..3 {
         run_frame(&mut app, &ctx);

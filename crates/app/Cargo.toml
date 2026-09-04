@@ -12,12 +12,16 @@ quantick-control = { path = "../control" }
 # discovery and client halves of the same crate are what the MCP adapter uses.
 quantick-control-local = { path = "../control-local" }
 quantick-engine = { path = "../engine" }
+# The feed host: the FeedEvent/FeedCommand port, the venue adapters that run
+# it, and the feed-shaped config types this crate re-exports.
+quantick-feed = { path = "../feed" }
 quantick-indicators = { path = "../indicators" }
 quantick-pine = { path = "../pine" }
 quantick-feed-binance = { path = "../feed-binance" }
 quantick-feed-hyperliquid = { path = "../feed-hyperliquid" }
 quantick-feed-mt5 = { path = "../feed-mt5" }
 quantick-orderbook = { path = "../orderbook" }
+quantick-orderflow = { path = "../orderflow" }
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
 quantick-strategy = { path = "../strategy" }
@@ -68,6 +72,15 @@ rodio = { workspace = true }
 # catalogue. `MessageBeep` is the sound Windows itself uses, and a platform
 # without one reports that instead of pretending (see `audio/platform.rs`).
 windows-sys = { workspace = true }
+
+[dev-dependencies]
+# The same crate the `[dependencies]` table already carries, asking for the
+# throwaway native the docking port is tested through. Feature resolution
+# keeps a dev-dependency's features out of the normal build, so the binary
+# `cargo build --workspace` produces ships the two real natives and nothing
+# else — while the tests get a third one to prove the app never learned their
+# names. See `crates/indicators/src/native/fake.rs`.
+quantick-indicators = { path = "../indicators", features = ["fake-native"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = { workspace = true }

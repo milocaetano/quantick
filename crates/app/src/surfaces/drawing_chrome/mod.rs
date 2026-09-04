@@ -1137,6 +1137,15 @@ pub(crate) fn clamp_into_chart(
     )
 }
 
+crate::hooks::declare_hooks![
+    "QUANTICK_CONTEXT_BAR_POS",
+    "QUANTICK_DRAWINGS_MANAGER",
+    "QUANTICK_DRAWING_INSPECTOR",
+    "QUANTICK_DRAWING_INSPECTOR_POS",
+    "QUANTICK_DRAWING_INSPECTOR_TAB",
+    "QUANTICK_TEXT_NOTE"
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1147,17 +1156,12 @@ mod tests {
     /// Its own file every call. The store persists on every write, so two
     /// banks sharing a path would let the first call's save leak into the
     /// second and turn a free name into a taken one.
+    /// `thread_dir` rather than a `ScratchFile`: the store outlives the
+    /// expression that built it and keeps saving to this path, so nothing
+    /// here could hold a value that removed the file at the right moment.
     fn bank(tag: &str) -> crate::drawings::presets::PresetStore {
-        let mut store =
-            crate::drawings::presets::PresetStore::load_from(std::env::temp_dir().join(format!(
-                "quantick-drawing-chrome-{}-{:?}-{tag}.toml",
-                std::process::id(),
-                std::thread::current().id()
-            )));
-        // Start from a clean file even if an earlier run left one behind.
-        for name in store.custom_preset_names("fib") {
-            store.delete_custom_preset("fib", &name);
-        }
+        let path = crate::scratch::thread_dir("drawing-chrome").join(format!("{tag}.toml"));
+        let mut store = crate::drawings::presets::PresetStore::load_from(path);
         store.save_custom_preset("fib", "taken", toml::Value::Integer(1), false);
         store
     }

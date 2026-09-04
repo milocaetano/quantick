@@ -147,6 +147,8 @@ impl Surface for WorkspaceNameSurface {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_WORKSPACE_NAME_BOX"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

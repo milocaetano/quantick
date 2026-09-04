@@ -24,7 +24,6 @@ use crate::chart_layers::{self, ChartLayer};
 use crate::config::AppConfig;
 use crate::dock::{Dock, DockEnv, DockTab};
 use crate::drawings::{self, DeleteOutcome, DrawingAuthor};
-use crate::feed::{self, FeedCommand, FeedHandle, ReplayControl};
 use crate::feed_notice;
 use crate::harness::{
     ContextMenuPane, DrawingDraft, DrawingsDemo, FrvpDemo, Harness, ScriptedMenu, StrategyDemoMode,
@@ -39,7 +38,6 @@ use crate::indicators::preset_file;
 use crate::indicators::state_file::{self, SavedInput, SavedKind};
 use crate::loading::{self, LoadingScope, LoadingTask};
 use crate::metrics::{self, FrameStats};
-use crate::orderflow::LaneWindow;
 use crate::pane::{self, ChartPane, DRAWING_ANCHOR_RADIUS_PX, PaneSide};
 use crate::replay_view::{ReplayAction, ReplayView};
 use crate::state::BarSpec;
@@ -55,6 +53,8 @@ use crate::toolrail::{Tool, ToolRail, ToolboxDock};
 use crate::ui_state;
 use crate::window_scale;
 use crate::workspace_store::{LayoutStore, StorePaths, WorkspacePick, WorkspaceStore};
+use quantick_feed::{self as feed, FeedCommand, FeedHandle, ReplayControl};
+use quantick_orderflow::LaneWindow;
 use smallvec::SmallVec;
 
 /// Id of the tab the window opens with.
@@ -104,9 +104,12 @@ const DEMO_FALLBACK_BAND_FRACTION: f64 = 0.004;
 /// mark. Any distance the tab cannot possibly hold would do; an hour is
 /// unambiguous at every timeframe the chart offers.
 const DEMO_OFF_SERIES_LEAD_MS: i64 = 3_600_000;
-/// Length of the EMA the toolbar's hardcoded M1 entry adds (the settings UI
-/// generated from `InputSpec` replaces this in M4).
-const DEFAULT_EMA_LEN: usize = 9;
+/// The natives `QUANTICK_INDICATORS_AUTOSTART` opens with: the overlay and
+/// the pane, so a scripted run photographs both shapes. Named by catalog id
+/// rather than "all of them", because the hook's contract is a fixed,
+/// deterministic pair — a native added later must not silently change what
+/// every existing capture shows.
+const AUTOSTART_NATIVES: &[&str] = &["native.ema", "native.cvd"];
 /// How often the hot-reload poll checks script files for changes.
 const SCRIPT_RELOAD_POLL_INTERVAL: Duration = Duration::from_millis(1_000);
 /// Horizontal offset of a duplicated drawing, so the copy is visibly a copy.
@@ -1096,11 +1099,12 @@ impl QuantickApp {
         // menu takes, so a scripted validation run needs no clicks.
         if std::env::var("QUANTICK_INDICATORS_AUTOSTART").is_ok_and(|value| value == "1") {
             let pane = &mut app.active_tab_mut().flow_pane;
-            pane.add_indicator(IndicatorSource::NativeEma {
-                len: DEFAULT_EMA_LEN,
-                source: quantick_indicators::SourceId::Close,
-            });
-            pane.add_indicator(IndicatorSource::NativeCvd);
+            for id in AUTOSTART_NATIVES {
+                pane.add_indicator(IndicatorSource::Native {
+                    id: (*id).to_owned(),
+                    values: Vec::new(),
+                });
+            }
         }
         // The folded legend, reachable from a clean launch: without it the
         // collapsed state is un-photographable by an agent, and a surface no
@@ -1852,7 +1856,7 @@ impl QuantickApp {
     /// either answer alone, so there is one report and both read it.
     fn feed_offline_accent(
         &self,
-        stall: Option<&crate::feed::stall::Stall>,
+        stall: Option<&quantick_feed::stall::Stall>,
     ) -> Option<egui::Color32> {
         feed_notice::report(&self.active_tab().notice, stall)
             .filter(feed_notice::Report::is_offline)
@@ -2333,7 +2337,12 @@ impl QuantickApp {
         // and means one port for two listeners: the second loses the bind and
         // shows the feed's own MT5_BIND_FAILED notice, which is the honest
         // answer rather than a silently dead chart.
-        let handle = feed::spawn_live(provider, &symbol, &self.config);
+        let handle = feed::spawn_live(
+            provider,
+            &symbol,
+            &self.config.metatrader,
+            crate::paper_home::shelf_dir(),
+        );
         self.adopt_tab(feed_id, symbol, handle, spec);
     }
 
@@ -2798,13 +2807,9 @@ impl QuantickApp {
             // path, the trader's own, and not in `ChartPane::add_indicator`,
             // which the workspace restore and the harness hooks also travel —
             // there it would erase the fold on every launch.
-            ToolbarAction::AddEmaIndicator => {
+            ToolbarAction::AddNative(id) => {
                 self.set_focused_legend_collapsed(false);
-                self.add_native_indicator(SavedKind::NativeEma);
-            }
-            ToolbarAction::AddCvdIndicator => {
-                self.set_focused_legend_collapsed(false);
-                self.add_native_indicator(SavedKind::NativeCvd);
+                self.add_native_indicator(id);
             }
             ToolbarAction::ToggleIndicatorHidden(slot) => {
                 let target = self.target_slot(SlotId(slot));
@@ -3528,15 +3533,16 @@ impl QuantickApp {
 
     /// Add one of the built-in indicators to the focused pane and register how
     /// it restores.
-    fn add_native_indicator(&mut self, kind: SavedKind) -> SlotId {
-        let source = match kind {
-            SavedKind::NativeCvd => IndicatorSource::NativeCvd,
-            // Every other kind is a script, which comes through
-            // `add_script_indicator`; EMA is the remaining native.
-            _ => IndicatorSource::NativeEma {
-                len: DEFAULT_EMA_LEN,
-                source: quantick_indicators::SourceId::Close,
-            },
+    ///
+    /// The kind travels to the worker as-is: an id no build ships becomes an
+    /// error slot naming it, which is why there is no fallback arm here. The
+    /// one this replaced turned every unrecognised kind into an EMA, so a
+    /// mistyped id put an indicator on the chart that nobody had asked for.
+    fn add_native_indicator(&mut self, id: &str) -> SlotId {
+        let kind = SavedKind::native(id);
+        let source = IndicatorSource::Native {
+            id: id.to_owned(),
+            values: Vec::new(),
         };
         let slot = self.focused_pane_mut().add_indicator(source);
         let owner = self.target_slot(slot);
@@ -5197,11 +5203,11 @@ impl QuantickApp {
             // freezes rather than growing — `feed_arrival_ms` above is the one
             // that answers "is anything still arriving".
             tape_age_ms = book.tape_age.map(|age| match age {
-                crate::orderflow::TapeAge::Behind(ms) | crate::orderflow::TapeAge::NothingYet(ms) => ms,
+                quantick_orderflow::TapeAge::Behind(ms) | quantick_orderflow::TapeAge::NothingYet(ms) => ms,
             }),
             tape_age_kind = book.tape_age.map(|age| match age {
-                crate::orderflow::TapeAge::Behind(_) => "behind",
-                crate::orderflow::TapeAge::NothingYet(_) => "nothing_yet",
+                quantick_orderflow::TapeAge::Behind(_) => "behind",
+                quantick_orderflow::TapeAge::NothingYet(_) => "nothing_yet",
             }),
             book_updates_per_s = book_rate,
             book_updates_total = book.depth_updates,
@@ -7461,8 +7467,8 @@ impl QuantickApp {
         }
         self.harness.venue_history_demo_staged();
         let slice = match demo {
-            VenueHistoryDemo::Complete => crate::feed::OhlcvSlice::Last { complete: true },
-            VenueHistoryDemo::Partial => crate::feed::OhlcvSlice::More,
+            VenueHistoryDemo::Complete => quantick_feed::OhlcvSlice::Last { complete: true },
+            VenueHistoryDemo::Partial => quantick_feed::OhlcvSlice::More,
         };
         self.deliver_synthetic_prefix(DEMO_PREFIX_CANDLES, slice);
     }
@@ -7479,13 +7485,13 @@ impl QuantickApp {
     /// in front of there is no seam to anchor on, and a caller that promised a
     /// long history in its caption had better wait rather than photograph a
     /// short one.
-    fn deliver_synthetic_prefix(&mut self, candles: i64, slice: crate::feed::OhlcvSlice) -> bool {
+    fn deliver_synthetic_prefix(&mut self, candles: i64, slice: quantick_feed::OhlcvSlice) -> bool {
         let tab = self.active_tab_mut();
         let Some(first) = tab.flow_pane.state.bars().first() else {
             return false;
         };
         let (first_open, anchor) = (first.open_time, first.open);
-        let interval = crate::feed::OHLCV_BASE_INTERVAL_MS;
+        let interval = quantick_feed::OHLCV_BASE_INTERVAL_MS;
         let bars: Vec<quantick_engine::Bar> = (-candles..0)
             .map(|minute| {
                 let open_time = first_open + minute * interval;
@@ -8041,7 +8047,7 @@ impl QuantickApp {
         if stress
             && !self.deliver_synthetic_prefix(
                 FRVP_STRESS_CANDLES,
-                crate::feed::OhlcvSlice::Last { complete: true },
+                quantick_feed::OhlcvSlice::Last { complete: true },
             )
         {
             return;
@@ -9201,6 +9207,59 @@ fn saved_context_intervals(bars: &[String], time_bars: Option<&str>) -> Vec<i64>
         })
         .collect()
 }
+
+crate::hooks::declare_hooks![
+    "QUANTICK_BOOK_AUTOSTART",
+    "QUANTICK_BUBBLES_AUTOSTART",
+    "QUANTICK_BUBBLE_BUDGET",
+    "QUANTICK_CONTROL_ACCESS",
+    "QUANTICK_CONTROL_ANNOTATE",
+    "QUANTICK_CONTROL_EVIDENCE",
+    "QUANTICK_CONTROL_MARK",
+    "QUANTICK_CONTROL_NOTIFY",
+    "QUANTICK_CONTROL_PANEL",
+    "QUANTICK_CONTROL_SCOPES",
+    "QUANTICK_DOCK_TAB",
+    "QUANTICK_DRAWING_MAGNET",
+    "QUANTICK_DRAWING_TOOL",
+    "QUANTICK_FOOTPRINT_STYLE",
+    "QUANTICK_HISTORY_REACH",
+    "QUANTICK_HISTORY_REACH_SPAN_MINUTES",
+    "QUANTICK_INDICATORS_AUTOSTART",
+    "QUANTICK_INDICATOR_SCRIPTS_AUTOSTART",
+    "QUANTICK_INVERTED",
+    "QUANTICK_LAYOUT",
+    "QUANTICK_LAYOUT_DELETE",
+    "QUANTICK_LAYOUT_RENAME",
+    "QUANTICK_LAYOUT_TAB",
+    "QUANTICK_LEDGER_FOLD",
+    "QUANTICK_LEDGER_PAGES",
+    "QUANTICK_LEDGER_SCOPE",
+    "QUANTICK_LEGEND_COLLAPSED",
+    "QUANTICK_LIVE_STRIP_AUTOSTART",
+    "QUANTICK_PANE_LAYOUTS",
+    "QUANTICK_PAPER_CALENDAR",
+    "QUANTICK_PAPER_REPORT_AUTOSTART",
+    "QUANTICK_PAPER_REPORT_LIST",
+    "QUANTICK_PROGRESSIVE_HISTORY",
+    "QUANTICK_REPLAY_AUTOSTART",
+    "QUANTICK_REPLAY_BROWSER",
+    "QUANTICK_REPLAY_DAY_BEFORE",
+    "QUANTICK_REPLAY_SESSION",
+    "QUANTICK_REPLAY_SPEED",
+    "QUANTICK_TAPE",
+    "QUANTICK_TAPE_LAYERS",
+    "QUANTICK_TAPE_STARVE_AFTER_MS",
+    "QUANTICK_TAPE_WINDOW",
+    "QUANTICK_TOOLBAR_SCROLL",
+    "QUANTICK_TOOLBOX_DOCK",
+    "QUANTICK_TOOLBOX_FLYOUT",
+    "QUANTICK_TOOL_FAVORITES",
+    "QUANTICK_VENUE_LEAD_IN",
+    "QUANTICK_WORKSPACE_EXPORT",
+    "QUANTICK_WORKSPACE_IMPORT",
+    "QUANTICK_WORKSPACE_SAVE"
+];
 
 #[cfg(test)]
 mod tests;

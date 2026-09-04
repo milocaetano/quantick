@@ -51,7 +51,7 @@ fn the_pointer_hook_parks_the_mouse_among_the_candles() {
 
 #[test]
 fn the_lane_axis_reads_its_window_in_a_human_unit() {
-    use crate::orderflow::format_window_ms;
+    use quantick_orderflow::format_window_ms;
     // One duration, one wording. The tape's axis and the menu that sets
     // its window sit a hand's width apart, so "1.5 min" under the tape
     // while the menu reads "1 min 30 s" is two languages for one number.
@@ -120,7 +120,7 @@ fn the_corner_appears_only_while_the_chart_is_not_being_fed() {
         "a chart with nothing wrong with it says nothing"
     );
 
-    app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app
         .control_feed_chip_rect()
@@ -154,7 +154,7 @@ fn the_corner_appears_only_while_the_chart_is_not_being_fed() {
 fn the_empty_chart_never_says_the_same_thing_twice() {
     let (mut app, _notices, _channels) = test_app_with_notices();
     let ctx = egui::Context::default();
-    app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     let output = run_frame(&mut app, &ctx);
     let headline = app
         .active_tab()
@@ -192,7 +192,7 @@ fn the_empty_chart_never_says_the_same_thing_twice() {
 fn a_click_on_the_chart_puts_the_popup_away() {
     let (mut app, _notices, _channels) = test_app_with_notices();
     let ctx = egui::Context::default();
-    app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app.control_feed_chip_rect().expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
@@ -228,7 +228,7 @@ fn nothing_the_corner_does_throws_a_chart_away() {
     let held = app.active_tab().flow_pane.state.trades().len();
     assert!(held > 0, "the chart has something to lose");
 
-    app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app.control_feed_chip_rect().expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
@@ -613,9 +613,9 @@ fn a_reply_at_an_unexpected_base_interval_is_refused() {
         .try_send(FeedEvent::OhlcvHistory {
             // Five-minute candles, from a venue that one day changes its
             // mind about what it serves.
-            interval_ms: 5 * crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: 5 * quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();

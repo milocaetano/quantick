@@ -1,12 +1,18 @@
 //! Repository guards for the things the compiler cannot see.
 //!
-//! Four rules hold in this repo that no amount of `cargo build` can check: a
-//! file may not silently absorb a crate ([`size`]), a crate's modules may not
-//! weld themselves into a cycle ([`cycle`]), everything written into a
-//! tracked file is English ([`language`]), and sources are UTF-8 without a BOM
-//! and without welded doc comments ([`encoding`]). Each is a rule
-//! `CLAUDE.md` states and each fails invisibly — fmt, clippy, build and the
-//! whole suite stay green while it is broken.
+//! [`GUARDS`] is the list, and deliberately the only one: a file may not
+//! silently absorb a crate ([`size`]), the instructions a session loads may
+//! not either ([`context`]), a crate's modules may not weld themselves into a
+//! cycle ([`cycle`]), everything written into a tracked file is English
+//! ([`language`]), sources are UTF-8 without a BOM and without welded doc
+//! comments ([`encoding`]), the generated indexes still say what the code
+//! says ([`generated`]), and a test's temporary directory is minted by its
+//! crate's scratch module rather than spelled by hand ([`scratch`]).
+//!
+//! Each is a rule `CLAUDE.md` states and each fails invisibly — fmt, clippy,
+//! build and the whole suite stay green while it is broken. Counting them
+//! here was how this paragraph fell a rule behind twice; the registry
+//! counts.
 //!
 //! # Why this is a crate rather than three test files
 //!
@@ -38,8 +44,13 @@
 pub mod context;
 pub mod cycle;
 pub mod encoding;
+pub mod generated;
 pub mod language;
 pub mod ratchet;
+pub mod report;
+pub mod scratch;
+#[cfg(test)]
+pub mod scratch_dir;
 pub mod size;
 
 use std::path::{Path, PathBuf};
@@ -115,10 +126,28 @@ pub struct Ratchet {
     /// Lower every entry whose measurement has fallen, and the budget with
     /// them. One line per entry rewritten.
     pub tighten: fn(&Path) -> Result<Vec<String>, String>,
-    /// The baseline it rewrites, workspace-relative, for the success line.
-    pub baseline_file: &'static str,
-    /// The gap below the budget it tolerates, for the nothing-to-do line.
-    pub budget_slack: usize,
+    /// The numbers and wordings this ratchet runs on — the baseline it
+    /// rewrites, the gap below budget it tolerates, and everything else the
+    /// guard rations by.
+    ///
+    /// A borrow of the guard's own [`ratchet::Policy`] rather than a copy of
+    /// two of its fields. The copy was here first, and it was the duplicated
+    /// constant this crate files findings about: `baseline_file` and
+    /// `budget_slack` were stated once in the policy and again in this
+    /// registry, with nothing to fail if the two ever drifted apart — a
+    /// `--tighten` success line naming a file it did not rewrite, or a
+    /// nothing-to-do line quoting a slack the guard does not use.
+    pub policy: &'static ratchet::Policy,
+    /// What the files this ratchet tracks measure today, summed.
+    ///
+    /// Deliberately not derivable from [`Ratchet::policy`]: a policy owns the
+    /// rationing, and each guard measures its own tree — production lines of
+    /// Rust, bytes of markdown and module cycles per crate have nothing in
+    /// common but the number they end at. [`report`] needs that number beside
+    /// the recorded ceilings to show the debt still to be written off, and
+    /// asking the registry for it is what keeps a fourth ratchet from
+    /// appearing in `--tighten` and nowhere else.
+    pub measured: fn(&Path) -> usize,
 }
 
 /// One guard, so the binary and the tests name the same things in the same
@@ -143,8 +172,8 @@ pub const GUARDS: &[Guard] = &[
         check_file: size::check_file,
         ratchet: Some(Ratchet {
             tighten: size::tighten,
-            baseline_file: size::BASELINE_FILE,
-            budget_slack: size::BUDGET_SLACK,
+            policy: &size::POLICY,
+            measured: size::measured,
         }),
     },
     Guard {
@@ -153,8 +182,8 @@ pub const GUARDS: &[Guard] = &[
         check_file: context::check_file,
         ratchet: Some(Ratchet {
             tighten: context::tighten,
-            baseline_file: context::BASELINE_FILE,
-            budget_slack: context::BUDGET_SLACK,
+            policy: &context::POLICY,
+            measured: context::measured,
         }),
     },
     Guard {
@@ -163,9 +192,15 @@ pub const GUARDS: &[Guard] = &[
         check_file: cycle::check_file,
         ratchet: Some(Ratchet {
             tighten: cycle::tighten,
-            baseline_file: cycle::BASELINE_FILE,
-            budget_slack: cycle::BUDGET_SLACK,
+            policy: &cycle::POLICY,
+            measured: cycle::measured,
         }),
+    },
+    Guard {
+        name: "scratch",
+        check: scratch::check,
+        check_file: scratch::check_file,
+        ratchet: None,
     },
     Guard {
         name: "language",
@@ -177,6 +212,15 @@ pub const GUARDS: &[Guard] = &[
         name: "encoding",
         check: encoding::check,
         check_file: encoding::check_file,
+        ratchet: None,
+    },
+    Guard {
+        // No ratchet: a generated file has no number to lower. It either
+        // matches the code it was rendered from or it does not, and the fix is
+        // always to regenerate rather than to record a new ceiling.
+        name: "generated",
+        check: generated::check,
+        check_file: generated::check_file,
         ratchet: None,
     },
 ];

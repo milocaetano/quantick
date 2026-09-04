@@ -950,18 +950,17 @@ pub fn fmt_count(n: u64) -> String {
     out
 }
 
+crate::hooks::declare_hooks!["QUANTICK_DEALS_DIR", "QUANTICK_DEAL_RECORDING"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "quantick-deals-{name}-{}-{}",
-            std::process::id(),
-            crate::metrics::wall_clock_ms()
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        dir
+    use crate::scratch::ScratchDir;
+
+    /// A recording folder of the test's own, gone with the value.
+    fn scratch(name: &str) -> ScratchDir {
+        ScratchDir::new(&format!("deals-{name}"))
     }
 
     fn sample(time_ms: i64, session_deals: u64) -> DealSample {
@@ -1017,14 +1016,13 @@ mod tests {
             text.contains("\n+100 -2003\n"),
             "a drop is written as one: {text}"
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn a_restart_resumes_the_days_file_and_writes_no_line_twice() {
         let dir = scratch("resume");
         let now = 1_788_436_967_023; // 2026-09-03, 09:02:47 UTC-3
-        let mut first = DealRecorder::new("WINV26", dir.clone(), false);
+        let mut first = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
         first.set_timezone(-180);
         first.set_available(true);
         assert!(first.start(now).is_empty(), "nothing recorded yet");
@@ -1032,7 +1030,7 @@ mod tests {
         first.observe(sample(now + 20, 2_003), now + 20);
         first.stop();
 
-        let mut second = DealRecorder::new("WINV26", dir.clone(), false);
+        let mut second = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
         second.set_timezone(-180);
         second.set_available(true);
         let resumed = second.start(now + 60_000);
@@ -1051,14 +1049,13 @@ mod tests {
                 sample(now + 40, 2_011)
             ]
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn the_scan_lists_days_with_their_coverage() {
         let dir = scratch("scan");
         let day1 = 1_788_436_800_000; // 2026-09-03 09:00:00 UTC-3
-        let mut rec = DealRecorder::new("WINV26", dir.clone(), false);
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
         rec.set_timezone(-180);
         rec.set_available(true);
         rec.start(day1);
@@ -1088,13 +1085,12 @@ mod tests {
         let view = rec.view(None);
         assert_eq!(view.state, RecState::Recorded);
         assert_eq!(view.button_label(), "RECORDED · 2026-09-03");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn the_default_starts_once_and_a_hand_that_stopped_it_is_respected() {
         let dir = scratch("default");
-        let mut rec = DealRecorder::new("WINV26", dir.clone(), true);
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), true);
         assert!(!rec.auto_start_due(), "not before the feed can count");
         rec.set_available(true);
         assert!(rec.auto_start_due());
@@ -1106,13 +1102,12 @@ mod tests {
             !rec.auto_start_due(),
             "stopped by a hand: the default does not restart it"
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn the_states_say_what_every_surface_says() {
         let dir = scratch("states");
-        let mut rec = DealRecorder::new("WINV26", dir.clone(), false);
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
         rec.set_timezone(-180);
         assert_eq!(rec.state(None), RecState::Unsupported);
         assert_eq!(rec.view(None).status_cell(), None);
@@ -1151,7 +1146,6 @@ mod tests {
         assert_eq!(rec.state(None), RecState::Recording);
         rec.stop();
         assert_eq!(rec.state(Some(pressed + STALE_AFTER_MS)), RecState::Off);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A header write that failed leaves an empty file; a day that never
@@ -1170,7 +1164,6 @@ mod tests {
         drop(recording);
         let text = fs::read_to_string(&path).unwrap();
         assert_eq!(text.matches(HEADER).count(), 1, "{text}");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A crash in the middle of the header leaves an unterminated first
@@ -1198,7 +1191,6 @@ mod tests {
             "{text}"
         );
         assert_eq!(read_file(&path).unwrap().samples, vec![sample(100, 10)]);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A feed reload rebuilds every pane from nothing: the recorder hands
@@ -1207,7 +1199,7 @@ mod tests {
     fn a_reload_hands_back_todays_file_and_the_loaded_days() {
         let dir = scratch("reload");
         let today = 1_788_436_800_000;
-        let mut rec = DealRecorder::new("WINV26", dir.clone(), false);
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
         rec.set_timezone(-180);
         rec.set_available(true);
         rec.start(today);
@@ -1217,7 +1209,6 @@ mod tests {
         assert_eq!(again, vec![sample(today, 5), sample(today + 20, 9)]);
         rec.stop();
         assert!(rec.reload().is_empty(), "nothing open, nothing loaded");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1247,7 +1238,6 @@ mod tests {
         let error = read_file(&path).unwrap_err().to_string();
         assert!(error.contains("line 2"), "{error}");
         assert!(error.contains("before any absolute line"), "{error}");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A crash mid-write leaves a torn last line. The file reads back to
@@ -1272,7 +1262,6 @@ mod tests {
         recording.flush().unwrap();
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.ends_with("+20 +5\n+20 +6\n"), "{text}");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// Ticks share milliseconds across poll rounds, so two readings can
@@ -1289,7 +1278,6 @@ mod tests {
         recording.flush().unwrap();
         let read = read_file(&recording.path).unwrap();
         assert_eq!(read.samples, vec![sample(100, 10), sample(100, 13)]);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A file that cannot be opened is reported once, not retried on every
@@ -1300,7 +1288,7 @@ mod tests {
         // The symbol's folder is a file, so the folder cannot be created.
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("WINV26"), "not a folder").unwrap();
-        let mut rec = DealRecorder::new("WINV26", dir.clone(), false);
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
         rec.set_available(true);
         rec.start(1_788_436_800_000);
         let first = rec
@@ -1317,6 +1305,5 @@ mod tests {
             rec.state(Some(1_788_436_800_020 + STALE_AFTER_MS)),
             RecState::Off
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 }

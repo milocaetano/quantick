@@ -34,7 +34,7 @@ use super::{
     recovery::{RECOVERY_MODULE_ID, tab_index},
 };
 
-const SET_ID: &str = "feed.deal_recording.set";
+const SET_CAPABILITY_ID: &str = "feed.deal_recording.set";
 
 /// Which tab, and whether to record. Omitted tab means the one the trader is
 /// looking at — the same default every other cockpit call takes.
@@ -148,7 +148,7 @@ pub(crate) fn snapshot(view: &RecordingView) -> DealRecordingSnapshot {
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
     registry.register(
         CapabilityDescriptor {
-            id: CapabilityId::new(SET_ID).expect("static capability ID is valid"),
+            id: CapabilityId::new(SET_CAPABILITY_ID).expect("static capability ID is valid"),
             version: CAPABILITY_VERSION,
             title: "Record the venue's deal counter".to_owned(),
             description: "Starts or stops writing the session deal counter a MetaTrader B3 bridge stamps on its live ticks, so the tab's trades bars cover the day and a recorded day reopens as the same chart, and loads a recorded day's readings into the tab's panes. Starting resumes today's file when there is one; stopping keeps what was written. The same calls the REC control beside the symbol makes. A tab whose feed has no deal counter answers with no recording and changes nothing.".to_owned(),

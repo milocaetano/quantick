@@ -6,7 +6,7 @@ use super::*;
 fn the_chip_is_the_popups_only_door() {
     let (mut app, _notices, _channels) = test_app_with_notices();
     let ctx = egui::Context::default();
-    app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     assert!(
         !app.control_feed_popup_open(),
@@ -36,7 +36,7 @@ fn the_corner_answers_a_hover_without_being_opened() {
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2)]))
         .unwrap();
     app.active_tab_mut().drain_feed();
-    app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app.control_feed_chip_rect().expect("the corner is up");
     let headline = app

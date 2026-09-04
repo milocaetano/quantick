@@ -35,6 +35,23 @@ use crate::Finding;
 /// somebody reflows the file.
 pub const BUDGET_DIRECTIVE: &str = "!budget";
 
+/// What a guard's own walk measured, summed.
+///
+/// One owner for the arithmetic, three one-line callers that each name their
+/// own `measure`. The three copies this replaces were byte-identical, in a
+/// change that elsewhere removed a duplicated constant for exactly this
+/// reason — and the failure they invited is quiet: a guard summing its counts
+/// differently from its siblings makes [`crate::report`] print three totals
+/// that are not comparable, with nothing to fail.
+///
+/// Deliberately the *measurement* and not [`Baseline::recorded`]. The budget
+/// caps what the repository has signed for; this is what its files actually
+/// weigh, and the gap between the two is the debt `--tighten` has yet to
+/// write off.
+pub fn total(counts: &[(String, usize)]) -> usize {
+    counts.iter().map(|(_, count)| count).sum()
+}
+
 /// One recorded ceiling, with the position that lets [`Policy::tighten`]
 /// rewrite it.
 #[derive(Debug)]
@@ -446,44 +463,10 @@ mod tests {
     };
 
     /// A scratch workspace holding one baseline file.
-    fn workspace(baseline: &str) -> tempdir::TempDir {
-        let dir = tempdir::TempDir::new();
+    fn workspace(baseline: &str) -> crate::scratch_dir::ScratchDir {
+        let dir = crate::scratch_dir::ScratchDir::new("ratchet");
         fs::write(dir.path().join("baseline.txt"), baseline).expect("baseline is writable");
         dir
-    }
-
-    /// The smallest temporary directory that removes itself, so these tests
-    /// stay inside the no-dependency rule the whole crate is built on.
-    mod tempdir {
-        use std::path::{Path, PathBuf};
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use std::{fs, process};
-
-        pub struct TempDir(PathBuf);
-
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-
-        impl TempDir {
-            pub fn new() -> Self {
-                let path = std::env::temp_dir().join(format!(
-                    "quantick-ratchet-{}-{}",
-                    process::id(),
-                    NEXT.fetch_add(1, Ordering::Relaxed)
-                ));
-                fs::create_dir_all(&path).expect("temp dir is creatable");
-                Self(path)
-            }
-
-            pub fn path(&self) -> &Path {
-                &self.0
-            }
-        }
-
-        impl Drop for TempDir {
-            fn drop(&mut self) {
-                let _ = fs::remove_dir_all(&self.0);
-            }
-        }
     }
 
     #[test]

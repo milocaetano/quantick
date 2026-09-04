@@ -10,11 +10,11 @@
 use eframe::egui;
 
 use crate::deal_recording::{DealRecordingAction, RecState, RecordingView, fmt_count, fmt_hms};
-use crate::feed::stall::Stall;
 use crate::feed_notice;
 use crate::state::BarKind;
 use crate::tab::Tab;
 use crate::theme;
+use quantick_feed::stall::Stall;
 
 /// The popover's width, in points.
 const POPOVER_WIDTH_PX: f32 = 360.0;

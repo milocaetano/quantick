@@ -30,12 +30,53 @@
 # `CLAUDE.md` delegates the crate map to, so it is load-bearing rather than
 # merely long — but it is loaded all the same, and PR #279 moved weight into
 # it, which is exactly why it is rationed here.
-# Raised 742 for the trades-bars branch: two rows, `QUANTICK_DEAL_RECORDING`
-# and `QUANTICK_DEALS_DIR`, for the REC control and the recording folder a
-# capture must point away from the trader's home. A surface with no row is
-# one nobody can reach, so the rows are part of the feature; kept to two
-# sentences each rather than the paragraph the older rows run to.
-.claude/skills/ui-harness/references/hook-registry.md 69919
+# +935: see the budget note above. Generated, not written.
+# CLAUDE.md crosses the 10,000 threshold for the first time. 105 of the 118
+# bytes over are this branch's: one bullet saying that the three `feed-*`
+# crates are the exception to the headless rule, being async and reading the
+# clock, and that neither may cross the `FeedEvent` channel. `main` had the
+# file at 9,964 — 36 bytes of headroom — so the bullet could not fit.
+#
+# The remaining 13 are `orderflow`, added to the headless crate list by #289
+# while this branch was in review. They are recorded here rather than left for
+# the next branch to trip over, and they are not this branch's to justify.
+#
+# The rule was already false without it. `CLAUDE.md` listed the feeds among the
+# crates with "no async, no wall clock" for as long as the rule existed, while
+# they held 190 `.await` points and three clock reads. A standing exception
+# nobody wrote down is worse than a narrower rule: the first agent to check it
+# finds the rule false and cannot tell which half is wrong, the code or the
+# rule. The reasoning is in `docs/agentic-development.md`, which this tree does
+# not weigh; what stays here is the operative half, and it does not compress
+# below the boundary it names without ceasing to be a rule.
+#
+# +30 for `quantick-feed`. The feed host is a new crate below `app`, and the
+# exception bullet above is the rule that governs it: it had to name `feed`
+# beside the three `feed-*` crates, because `feed` is now the crate that owns
+# the runtimes and the clock they were the sole exception for. Thirty bytes is
+# what naming it costs after the surrounding sentence was compressed to pay
+# for as much of it as it could — the bullet went from "async, and they stamp
+# arrival from the clock" to a shorter clause carrying the same two facts.
+#
+# Nothing was extracted in return, so this is a raise, not a trade, and it is
+# recorded as one. The alternative was a `CLAUDE.md` whose architecture list
+# does not contain a workspace crate, which `claude_md_lists_every_crate`
+# fails on and which is the drift this whole tree exists to prevent.
+CLAUDE.md 10148
+#
+# +55 for `quantick-feed`. Generated, not written: five rows moved from
+# `feed/mod.rs`-style paths relative to the application's source root to the
+# full `crates/feed/src/...` the hooks now live at, and the longer paths are
+# the whole of the difference. Regenerating is the only way to change this
+# file, so the number follows the code rather than the other way round.
+#
+# +786 for the trades-bars branch. Generated, not written: two rows,
+# `QUANTICK_DEAL_RECORDING` and `QUANTICK_DEALS_DIR`, for the REC control and
+# the recording folder a capture must point away from the trader's home. A
+# surface with no row is one nobody can reach, so the rows are part of the
+# feature; kept to two sentences each rather than the paragraph the older
+# rows run to. Measured, 70,167 -> 70,953.
+.claude/skills/ui-harness/references/hook-registry.md 70953
 .claude/skills/ui-harness/SKILL.md 13377
 # Raised by 54 bytes, for one line: `cargo deny check bans licenses` joined the
 # list of CI steps `cargo` cannot see, and a list that omits a step is worse
@@ -48,7 +89,25 @@
 # Paid for in the same change: `arch-review/SKILL.md` below, and the two
 # sub-threshold files `CLAUDE.md` and `ship/SKILL.md`, each 15 bytes lighter
 # for the same flag removal — 45 bytes back against 54 spent.
-AGENTS.md 12825
+#
+# +282 for `quantick-feed`. This file is the crate map, so a new crate costs
+# it: one graph node with the four edges that place it (`feed --> feeds`,
+# `replay`, `orderbook`, `engine`, and `app --> feed` retargeted from `feeds`)
+# and one row in the table saying what it owns. Both were compressed to the
+# shortest form that still answers the question the map exists to answer —
+# the node label is two words, and the row names the port, the adapters and
+# the one property that distinguishes this crate from everything below it.
+#
+# A raise, not a trade: nothing left this file. The alternative is a crate map
+# missing a crate, which is the failure mode the map is rationed to prevent
+# rather than an economy it can make.
+#
+# 72 of the 354 are the clause naming `replay::test_support`, which the review
+# asked for: this repo publishes test support as a documented module rather
+# than behind a cargo feature, and the map is where `control::fake` is named
+# for the same reason. A published module the map does not mention is one a
+# reader has no way to tell from a leak.
+AGENTS.md 13179
 
 # What a session's instructions weigh in total: every ceiling above, plus the
 # measured bytes of every tracked file too small to need one. Raising it means
@@ -67,4 +126,29 @@ AGENTS.md 12825
 # The cost is a total that drifts with ordinary edits. That is what the guard's
 # BUDGET_SLACK absorbs, and why this number is expected to move down over time
 # and to be argued over when it moves up.
-!budget 231950
+# Raised by 935 for the generated hook registry, and this is the whole of that
+# raise. The file stopped being hand-written: existence now comes from the
+# `declare_hooks!` line beside each read and the prose from
+# `docs/ui-harness/hook-prose.md`, fused by
+# `quantick-app --dump-hook-registry`. Measured, 69,177 -> 70,112:
+#
+#   +1,473  three hooks that had no row at all -- `QUANTICK_LOG_FORMAT`,
+#           `QUANTICK_FOOTPRINT` and `QUANTICK_INDICATORS_DIR` -- now described.
+#   +2,206  a `Declared in` column on every row, which is the fact the code
+#           owns and the reason the file can no longer drift.
+#   -2,461  43 stale "Landing with the X goal" / "once merged, move these into
+#           the table above" staging lines, whose branches are long merged.
+#     -726  22 duplicate table headers and separators, now one table.
+#     +443  the rest: a preamble saying how to regenerate rather than asking
+#           the reader to grep `env::var`, and the hook count in the footer.
+#
+# The authored prose is 67 KB and deliberately does NOT live under
+# `.claude/skills/`, so a session is not charged for it twice: it loads the
+# generated file only. Not one `Reaches` cell was shortened -- the long ones
+# say which class of defect is invisible without that hook, which is the most
+# valuable content in the harness and the thing a grep cannot supply.
+# +786 for the trades-bars branch: the two generated hook rows signed on the
+# registry's entry above, and nothing else. A raise, not a trade — `main` was
+# already 1,433 bytes into the headroom when this branch merged it, so the
+# rows could not fit inside it. Measured, 232,885 -> 233,671.
+!budget 233671

@@ -2909,11 +2909,13 @@ dependencies = [
  "quantick-control",
  "quantick-control-local",
  "quantick-engine",
+ "quantick-feed",
  "quantick-feed-binance",
  "quantick-feed-hyperliquid",
  "quantick-feed-mt5",
  "quantick-indicators",
  "quantick-orderbook",
+ "quantick-orderflow",
  "quantick-pine",
  "quantick-replay",
  "quantick-sim",
@@ -2977,6 +2979,25 @@ name = "quantick-engine"
 version = "0.1.0"
 dependencies = [
  "rust_decimal",
+]
+
+[[package]]
+name = "quantick-feed"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "dirs",
+ "quantick-engine",
+ "quantick-feed-binance",
+ "quantick-feed-hyperliquid",
+ "quantick-feed-mt5",
+ "quantick-orderbook",
+ "quantick-replay",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3052,6 +3073,18 @@ name = "quantick-orderbook"
 version = "0.1.0"
 dependencies = [
  "rust_decimal",
+]
+
+[[package]]
+name = "quantick-orderflow"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
+ "quantick-orderbook",
+ "rust_decimal",
+ "serde",
+ "toml 0.8.20",
+ "tracing",
 ]
 
 [[package]]

@@ -101,12 +101,11 @@ pub(crate) fn startup_home(
     if cfg!(test) {
         // Tests must never scan, consolidate into, or journal under a
         // real documents folder — the same scratch discipline
-        // `PaperTrading::new` applies. Per process, like the old
-        // cwd-relative default the app tests already shared.
-        return (
-            std::env::temp_dir().join(format!("quantick-paper-home-{}", std::process::id())),
-            None,
-        );
+        // `PaperTrading::new` applies. Per test thread rather than per
+        // process, which is strictly more isolation than the shared folder
+        // this replaced, and is what lets the directory be removed when the
+        // thread ends instead of accumulating one per run for ever.
+        return (crate::scratch::thread_dir("paper-home"), None);
     }
     if let Some(env) = std::env::var_os(TRADES_DIR_ENV) {
         // An explicit per-run ask — a QA or autostart run must never
@@ -469,20 +468,21 @@ fn import_name(name: &OsStr, suffix: usize) -> PathBuf {
     PathBuf::from(format!("{stem}.imported-{suffix}.{extension}"))
 }
 
+crate::hooks::declare_hooks!["QUANTICK_TRADES_DIR"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// A home path that does not exist yet: several of these tests assert on
+    /// what happens when the folder is missing, so it must not be created.
+    /// It sits inside this thread's own directory, which is removed when the
+    /// thread ends whether or not anything ever wrote there.
     fn scratch() -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "quantick-paper-home-test-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
+        crate::scratch::thread_dir("paper-home-test")
+            .join(NEXT.fetch_add(1, Ordering::Relaxed).to_string())
     }
 
     fn write(path: &Path, text: &str) {

@@ -292,7 +292,7 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2), trade(3)]))
         .unwrap();
     app.active_tab_mut().drain_feed();
-    app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app.control_feed_chip_rect().expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
@@ -352,7 +352,7 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
 fn a_recovered_feed_puts_the_popup_away() {
     let (mut app, _notices, _channels) = test_app_with_notices();
     let ctx = egui::Context::default();
-    app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app.control_feed_chip_rect().expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
@@ -428,7 +428,7 @@ fn a_market_switch_leaves_no_floor_and_no_seam_behind() {
         .unwrap();
     app.active_tab_mut().drain_feed();
     app.active_tab_mut().resume_floor_ms = app.active_tab().latest_trade_ms;
-    app.active_tab_mut().feed_gaps.push(crate::feed::FeedGap {
+    app.active_tab_mut().feed_gaps.push(quantick_feed::FeedGap {
         from_ms: 1,
         to_ms: 1_000_000,
     });
@@ -443,7 +443,7 @@ fn a_market_switch_leaves_no_floor_and_no_seam_behind() {
 /// the escalation exists to end.
 #[test]
 fn an_alternating_supervisor_cannot_hold_the_reconnect_budget_open() {
-    use crate::feed::stall::RECONNECT_BUDGET_MS;
+    use quantick_feed::stall::RECONNECT_BUDGET_MS;
     let (mut app, notices, _feed_ends) = test_app_with_notices();
     notices
         .blocking_send(FeedNotice::reconnecting("bridge lost — reconnecting"))
@@ -719,9 +719,9 @@ fn replay_keeps_the_recorded_symbol_out_of_the_live_feed_snap() {
     with_config(&mut app, |tab, config| {
         tab.open_replay(
             config,
-            crate::feed::ReplayRequest {
+            quantick_feed::ReplayRequest {
                 session: std::sync::Arc::new(session),
-                options: crate::feed::ReplayOptions {
+                options: quantick_feed::ReplayOptions {
                     autoplay: false,
                     ..Default::default()
                 },
@@ -801,13 +801,13 @@ fn asking_for_older_candles_reaches_back_past_the_oldest_held() {
 
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history_range(-120, -20),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
-    let oldest = -120 * crate::feed::OHLCV_BASE_INTERVAL_MS;
+    let oldest = -120 * quantick_feed::OHLCV_BASE_INTERVAL_MS;
     assert_eq!(app.active_tab().venue_candles_held(), 100);
     assert!(
         app.active_tab()
@@ -831,9 +831,9 @@ fn asking_for_older_candles_reaches_back_past_the_oldest_held() {
 
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history_range(-200, -120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -867,9 +867,9 @@ fn a_short_answer_never_retires_the_candle_reach() {
     drain_ohlcv_fetches(&mut commands);
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history_range(-120, -20),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -879,9 +879,9 @@ fn a_short_answer_never_retires_the_candle_reach() {
     // The shape of a failed fetch: nothing, and known to be short.
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: Vec::new(),
-            slice: crate::feed::OhlcvSlice::Last { complete: false },
+            slice: quantick_feed::OhlcvSlice::Last { complete: false },
         })
         .unwrap();
     app.drain_tabs();
@@ -912,9 +912,9 @@ fn a_reach_back_at_a_bad_interval_keeps_the_history_already_paged_in() {
     drain_ohlcv_fetches(&mut commands);
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history_range(-120, -20),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -925,9 +925,9 @@ fn a_reach_back_at_a_bad_interval_keeps_the_history_already_paged_in() {
     drain_ohlcv_fetches(&mut commands);
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: 5 * crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: 5 * quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history_range(-200, -120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -957,9 +957,9 @@ fn a_load_older_that_brings_nothing_older_stops_offering() {
     let held = venue_history_range(-120, -20);
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: held.clone(),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -970,9 +970,9 @@ fn a_load_older_that_brings_nothing_older_stops_offering() {
     // from a block it already holds, and not an empty one.
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: held,
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -998,7 +998,7 @@ fn progressive_slices_paint_as_they_arrive_and_the_wait_ends_on_the_last() {
     let (mut app, events, mut commands) = history_app(&ctx);
     assert_eq!(
         drain_ohlcv_slice_requests(&mut commands),
-        vec![Some(crate::feed::OHLCV_SLICE_SPAN_MS)],
+        vec![Some(quantick_feed::OHLCV_SLICE_SPAN_MS)],
         "the default asks for slices"
     );
 
@@ -1030,9 +1030,9 @@ fn progressive_slices_paint_as_they_arrive_and_the_wait_ends_on_the_last() {
     for (bars, expected_seam) in &slices[..2] {
         events
             .try_send(FeedEvent::OhlcvHistory {
-                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
                 bars: bars.clone(),
-                slice: crate::feed::OhlcvSlice::More,
+                slice: quantick_feed::OhlcvSlice::More,
             })
             .unwrap();
         app.drain_tabs();
@@ -1065,9 +1065,9 @@ fn progressive_slices_paint_as_they_arrive_and_the_wait_ends_on_the_last() {
     let (bars, expected_seam) = &slices[2];
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: bars.clone(),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -1113,9 +1113,9 @@ fn turning_the_switch_off_asks_for_the_whole_span_in_one_reply() {
     // and free to ask again.
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: Vec::new(),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -1132,9 +1132,9 @@ fn turning_the_switch_off_asks_for_the_whole_span_in_one_reply() {
 
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -1157,9 +1157,9 @@ fn a_timeframe_change_refolds_locally_without_asking_again() {
     drain_ohlcv_requests(&mut commands);
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -1168,7 +1168,7 @@ fn a_timeframe_change_refolds_locally_without_asking_again() {
     // 1m → 5m: the same history, folded five ways.
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(0))
-        .time_interval_ms = 5 * crate::feed::OHLCV_BASE_INTERVAL_MS;
+        .time_interval_ms = 5 * quantick_feed::OHLCV_BASE_INTERVAL_MS;
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
 
@@ -1193,9 +1193,9 @@ fn an_unfoldable_interval_drops_the_prefix_and_still_draws() {
     let (mut app, events, _commands) = history_app(&ctx);
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -1223,7 +1223,7 @@ fn an_unfoldable_interval_drops_the_prefix_and_still_draws() {
     // Back to a foldable one, and the history returns from the same base.
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(0))
-        .time_interval_ms = 5 * crate::feed::OHLCV_BASE_INTERVAL_MS;
+        .time_interval_ms = 5 * quantick_feed::OHLCV_BASE_INTERVAL_MS;
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 24);
@@ -1238,9 +1238,9 @@ fn switching_the_feed_drops_the_prefix_and_clears_the_wait() {
     let (mut app, events, _commands) = history_app(&ctx);
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -1296,9 +1296,9 @@ fn installing_the_prefix_keeps_the_view_where_it_was() {
 
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -1351,9 +1351,9 @@ fn a_replay_installs_its_downloaded_context_without_a_press() {
     with_config(&mut app, |tab, config| {
         tab.open_replay(
             config,
-            crate::feed::ReplayRequest {
+            quantick_feed::ReplayRequest {
                 session: std::sync::Arc::new(session),
-                options: crate::feed::ReplayOptions {
+                options: quantick_feed::ReplayOptions {
                     autoplay: false,
                     ..Default::default()
                 },
@@ -1457,7 +1457,7 @@ fn the_previous_session_reach_pages_until_the_lead_past_the_close_lands() {
     // previous session's last print sits a minute further back than the
     // gap threshold, so the stretch between the two sessions is wider than
     // a quiet market ever is; in front of it, exactly the lead.
-    const MINUTE_MS: i64 = crate::feed::OHLCV_BASE_INTERVAL_MS;
+    const MINUTE_MS: i64 = quantick_feed::OHLCV_BASE_INTERVAL_MS;
     let close_minute = -120 - (crate::history_reach::SESSION_GAP_MS / MINUTE_MS) - 1;
     let lead_minutes = crate::history_reach::PREVIOUS_SESSION_LEAD_MS / MINUTE_MS;
     events
@@ -1628,7 +1628,7 @@ fn a_run_that_meets_its_reach_says_nothing() {
     app.drain_tabs();
     drain_load_older(&mut commands);
 
-    const MINUTE_MS: i64 = crate::feed::OHLCV_BASE_INTERVAL_MS;
+    const MINUTE_MS: i64 = quantick_feed::OHLCV_BASE_INTERVAL_MS;
     let close_minute = -120 - (crate::history_reach::SESSION_GAP_MS / MINUTE_MS) - 1;
     let lead_minutes = crate::history_reach::PREVIOUS_SESSION_LEAD_MS / MINUTE_MS;
     events
@@ -1779,9 +1779,9 @@ fn the_status_bar_counts_venue_bars_separately() {
 
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -1824,14 +1824,14 @@ fn the_seam_drops_a_venue_bucket_that_overlaps_the_first_engine_bar() {
     // Two candles before the engine's first bar and one covering it.
     let mut bars = venue_history(2);
     bars.push(venue_candle(
-        first_engine_open / crate::feed::OHLCV_BASE_INTERVAL_MS,
+        first_engine_open / quantick_feed::OHLCV_BASE_INTERVAL_MS,
         0,
     ));
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars,
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -1848,7 +1848,7 @@ fn the_seam_drops_a_venue_bucket_that_overlaps_the_first_engine_bar() {
     // so a profile folding the slot can say so — the alternative is a
     // total that silently omits everything traded before the app
     // connected (36% of a minute, 94% of an hour, measured live).
-    let interval = crate::feed::OHLCV_BASE_INTERVAL_MS;
+    let interval = quantick_feed::OHLCV_BASE_INTERVAL_MS;
     let first_open = pane
         .state
         .bars()

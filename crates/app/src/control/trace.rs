@@ -252,12 +252,7 @@ mod tests {
 
     #[test]
     fn intents_and_results_pair_up_and_an_unfinished_intent_is_reported() {
-        let directory = std::env::temp_dir().join(format!(
-            "quantick-control-trace-{}-{}",
-            std::process::id(),
-            line!()
-        ));
-        std::fs::create_dir_all(&directory).unwrap();
+        let directory = crate::scratch::ScratchDir::new("control-trace");
         let session = directory.join("WINJ26-2026-03-16.csv");
         std::fs::write(&session, "# not read by the trace\n").unwrap();
 
@@ -303,12 +298,7 @@ mod tests {
 
     #[test]
     fn a_result_pairs_with_the_latest_intent_of_its_sequence() {
-        let directory = std::env::temp_dir().join(format!(
-            "quantick-control-trace-{}-{}",
-            std::process::id(),
-            line!()
-        ));
-        std::fs::create_dir_all(&directory).unwrap();
+        let directory = crate::scratch::ScratchDir::new("control-trace");
         let session = directory.join("WINJ26-2026-03-17.csv");
         std::fs::write(&session, "# not read by the trace\n").unwrap();
 

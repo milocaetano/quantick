@@ -77,7 +77,27 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ("mcp", &["control", "control-local"]),
     ("engine", &[]),
     ("orderbook", &[]),
+    // The order-flow engine reads bars from `engine` and depth events from
+    // `orderbook`, and is told the time by its caller. It sits beside
+    // `indicators`: something the chart draws and `backtest` may consume.
+    ("orderflow", &["engine", "orderbook"]),
     ("replay", &["engine"]),
+    // The feed host: the port every venue implements, and the adapters that
+    // run one. It sits above the three `feed-*` venue crates and `replay` —
+    // a recorded session is a source like any other — and below `app`. It is
+    // the one crate below `app` that owns runtimes, threads and the wall
+    // clock; nothing it reaches does.
+    (
+        "feed",
+        &[
+            "engine",
+            "orderbook",
+            "replay",
+            "feed-binance",
+            "feed-hyperliquid",
+            "feed-mt5",
+        ],
+    ),
     // The venue-neutral trading vocabulary sits beside `engine`, not above
     // it: it is what `sim` and any future broker adapter both speak.
     ("trading", &["engine"]),

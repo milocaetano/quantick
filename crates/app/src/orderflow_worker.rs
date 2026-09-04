@@ -14,13 +14,14 @@
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use quantick_engine::Trade;
 use quantick_orderbook::DepthEvent;
 use rust_decimal::Decimal;
 
-use crate::orderflow::HeatmapConfig;
-use crate::orderflow_engine::{BookEngine, BookPublished, ProjectionRequest};
+use quantick_orderflow::HeatmapConfig;
+use quantick_orderflow::engine::{BookEngine, BookPublished, ProjectionRequest};
 
 /// Commands mirror the [`BookEngine`] mutation surface one-to-one.
 pub(crate) enum BookCommand {
@@ -42,7 +43,7 @@ pub(crate) enum BookCommand {
     /// The price grid the tape itself prints on and the magnitude it prints
     /// at, for a chart whose feed never states an instrument tick and whose
     /// book never states a price. Loses to a venue-stated step; see
-    /// [`BookEngine::size_from_tape`](crate::orderflow_engine::BookEngine::size_from_tape).
+    /// [`BookEngine::size_from_tape`](quantick_orderflow::engine::BookEngine::size_from_tape).
     TapePriceGrid {
         step: Decimal,
         reference_price: Option<Decimal>,
@@ -193,7 +194,7 @@ fn run(mut engine: BookEngine, rx: &Receiver<BookCommand>, shared: &Arc<Mutex<Bo
         if let Some(request) = &last_request
             && engine.any_layer_enabled()
         {
-            engine.project(request);
+            engine.project_at(request, Instant::now());
         }
 
         {

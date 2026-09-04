@@ -19,3 +19,5 @@
 
 pub mod client;
 pub mod discovery;
+#[cfg(test)]
+mod scratch;

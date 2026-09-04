@@ -407,15 +407,8 @@ mod tests {
     use super::*;
     use crate::store_home::COCKPIT_STORES;
 
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "quantick-bundle-{name}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch");
-        dir
+    fn scratch(name: &str) -> crate::scratch::ScratchDir {
+        crate::scratch::ScratchDir::new(name)
     }
 
     /// A cockpit on disk: one valid file per store, in a scratch folder.
@@ -474,7 +467,8 @@ mod tests {
             capture("scalp WIN manhã", COCKPIT_STORES, &paths_in(&source)).expect("capture");
         assert_eq!(bundle.len(), bundled(), "every store travels");
 
-        let file = scratch("round-trip-file").join(file_name_for(&bundle.name));
+        let files = scratch("round-trip-file");
+        let file = files.join(file_name_for(&bundle.name));
         write(&file, &bundle).expect("write");
         let reread = read(&file).expect("read");
         assert_eq!(reread, bundle, "the file is a faithful copy");
@@ -779,7 +773,8 @@ mod tests {
 
         let bundle = capture("fake", FAKE_REGISTRY, &paths_in(&source)).expect("capture");
         assert_eq!(bundle.len(), 1);
-        let file = scratch("fake-file").join(file_name_for("fake"));
+        let files = scratch("fake-file");
+        let file = files.join(file_name_for("fake"));
         write(&file, &bundle).expect("write");
         let reread = read(&file).expect("read");
         let written = apply(&reread, FAKE_REGISTRY, &paths_in(&live)).expect("apply");

@@ -95,8 +95,7 @@ fn hiding_a_layer_never_stops_the_data_behind_it() {
 /// back the way it was left — through the same restore the constructor runs.
 #[test]
 fn layer_visibility_survives_a_restart() {
-    let dir = std::env::temp_dir().join(format!("quantick-app-layers-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let dir = crate::scratch::ScratchDir::new("app-layers");
     let path = dir.join("chart-layers.toml");
     let _ = std::fs::remove_file(&path);
 
@@ -161,8 +160,7 @@ fn layer_visibility_survives_a_restart() {
 /// second market is not a request to bring back hidden chrome.
 #[test]
 fn a_new_tab_opens_on_the_layers_the_user_left_showing() {
-    let dir = std::env::temp_dir().join(format!("quantick-app-newtab-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let dir = crate::scratch::ScratchDir::new("app-newtab");
     let path = dir.join("chart-layers.toml");
     let _ = std::fs::remove_file(&path);
 
@@ -239,8 +237,7 @@ fn the_time_pane_opens_on_the_same_layers_as_the_flow_pane() {
 /// own switches on the way past.
 #[test]
 fn a_new_tab_inherits_the_live_layers_not_the_startup_file() {
-    let dir = std::env::temp_dir().join(format!("quantick-app-live-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let dir = crate::scratch::ScratchDir::new("app-live");
     let path = dir.join("chart-layers.toml");
     let _ = std::fs::remove_file(&path);
 
@@ -288,8 +285,7 @@ crosshair = false
 /// checkbox hides the layer behind it.
 #[test]
 fn the_layer_menu_offers_every_layer_and_its_switches_work() {
-    let dir = std::env::temp_dir().join(format!("quantick-app-menu-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let dir = crate::scratch::ScratchDir::new("app-menu");
     let path = dir.join("chart-layers.toml");
     let _ = std::fs::remove_file(&path);
 
@@ -524,10 +520,10 @@ fn the_trade_paint_layer_switch_stops_the_marks() {
     let ctx = egui::Context::default();
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
     let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
-    let dir =
-        std::env::temp_dir().join(format!("quantick-trade-paint-gate-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    app.active_tab_mut().paper.redirect_history_dir(dir.clone());
+    let dir = crate::scratch::ScratchDir::new("trade-paint-gate");
+    app.active_tab_mut()
+        .paper
+        .redirect_history_dir(dir.path().to_path_buf());
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();

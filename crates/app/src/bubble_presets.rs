@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::orderflow::{
+use quantick_orderflow::{
     BubbleStyle, HeatmapConfig, LiveLaneStyle,
     config::{DEFAULT_BUBBLE_CLUSTER_MS, DEFAULT_BUBBLE_DUST_MERGE_MS, DEFAULT_BUBBLE_REGION_MS},
 };
@@ -206,13 +206,13 @@ impl BubblePresetFile {
             seen.push(preset.name.clone());
             preset.cluster_ms = preset
                 .cluster_ms
-                .clamp(0, crate::orderflow::config::MAX_BUBBLE_CLUSTER_MS);
+                .clamp(0, quantick_orderflow::config::MAX_BUBBLE_CLUSTER_MS);
             preset.region_rows = preset
                 .region_rows
-                .clamp(1, crate::orderflow::config::MAX_BUBBLE_REGION_ROWS);
+                .clamp(1, quantick_orderflow::config::MAX_BUBBLE_REGION_ROWS);
             preset.region_ms = preset
                 .region_ms
-                .clamp(0, crate::orderflow::config::MAX_BUBBLE_REGION_MS);
+                .clamp(0, quantick_orderflow::config::MAX_BUBBLE_REGION_MS);
             preset.bubbles.sanitize();
             preset.live_lane.sanitize();
             true
@@ -398,10 +398,12 @@ const PRESET_FILE_HEADER: &str = "\
 
 ";
 
+crate::hooks::declare_hooks!["QUANTICK_BUBBLES"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orderflow::{BubbleSizeReference, ConsumptionMark, INV_PHI};
+    use quantick_orderflow::{BubbleSizeReference, ConsumptionMark, INV_PHI};
 
     #[test]
     fn the_embedded_file_parses_and_carries_a_valid_active_preset() {
@@ -627,7 +629,7 @@ mod tests {
     fn a_preset_carries_the_tapes_look_and_never_its_visibility() {
         let mut config = HeatmapConfig::default();
         config.live_lane.radius_scale = 2.0;
-        config.live_lane.window = crate::orderflow::LaneWindow::Fixed { ms: 120_000 };
+        config.live_lane.window = quantick_orderflow::LaneWindow::Fixed { ms: 120_000 };
         // Captured while the tape was off the canvas and cleared...
         config.live_lane.enabled = false;
         config.live_lane.show_depth = false;
@@ -649,7 +651,7 @@ mod tests {
         );
         assert_eq!(
             other.live_lane.window,
-            crate::orderflow::LaneWindow::Fixed { ms: 120_000 }
+            quantick_orderflow::LaneWindow::Fixed { ms: 120_000 }
         );
         assert!(
             other.live_lane.enabled,
@@ -715,9 +717,9 @@ mod tests {
         assert_eq!(file.presets[0].name, "loud");
         assert_eq!(
             file.presets[0].bubbles.max_radius,
-            crate::orderflow::MAX_BUBBLE_MAX_RADIUS
+            quantick_orderflow::MAX_BUBBLE_MAX_RADIUS
         );
-        assert!(file.presets[0].cluster_ms <= crate::orderflow::config::MAX_BUBBLE_CLUSTER_MS);
+        assert!(file.presets[0].cluster_ms <= quantick_orderflow::config::MAX_BUBBLE_CLUSTER_MS);
         assert!(
             file.active.is_empty(),
             "an active name that resolves to nothing is cleared"

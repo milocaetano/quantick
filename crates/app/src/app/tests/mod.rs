@@ -55,7 +55,6 @@ use crate::config::{AppConfig, FeedCapabilities, FeedConfig, ProviderKind};
 use crate::drawings::{ChartPoint, MAX_DRAWING_WIDTH_PX, PresetHost};
 // The drawing chrome moved out to its own module; the tests that drive it
 // through `QuantickApp` stay here, and reach its numbers by name.
-use crate::feed::{FeedConnectionState, FeedEvent, FeedNotice};
 use crate::pane::DEFAULT_PANE_FRACTION;
 use crate::pane::DrawingDrag;
 use crate::surfaces::drawing_chrome::inline_editor::INLINE_TEXT_HINT;
@@ -66,6 +65,7 @@ use crate::surfaces::drawing_chrome::{
 use crate::tab::BOOK_GENERATION_STRIDE;
 use crate::time_header;
 use crate::viewport::Viewport;
+use quantick_feed::{FeedConnectionState, FeedEvent, FeedNotice};
 
 /// The slot a stored fractional anchor sits on, asked of the one owner.
 ///
@@ -1205,12 +1205,14 @@ fn price_y(app: &QuantickApp, side: PaneSide, price: f64) -> f32 {
 }
 
 /// A scratch workspace path, so a test never writes the real cockpit.
+///
+/// `thread_dir` rather than a `ScratchDir`, because the path is handed to the
+/// app and the caller keeps nothing it could drop: every call site here reads
+/// `set_ui_state_path(scratch_ui_state(..))`, and a value dropped at the end
+/// of that statement would take the folder with it before the app ever wrote
+/// to it. The directory goes when the test's thread ends instead.
 fn scratch_ui_state(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "quantick-app-ui-state-{name}-{}-{:?}.toml",
-        std::process::id(),
-        std::thread::current().id()
-    ))
+    crate::scratch::thread_dir("app-ui-state").join(format!("{name}.toml"))
 }
 
 /// A frame carrying the window's close request, which is the only signal
@@ -1338,10 +1340,10 @@ fn open_second_tab(app: &mut QuantickApp, ctx: &egui::Context, symbol: &str) -> 
 
 /// A minute candle at `minute`, priced so a fold is visible in the result.
 fn venue_candle(minute: i64, seed: i64) -> quantick_engine::Bar {
-    let open_time = minute * crate::feed::OHLCV_BASE_INTERVAL_MS;
+    let open_time = minute * quantick_feed::OHLCV_BASE_INTERVAL_MS;
     quantick_engine::Bar {
         open_time,
-        close_time: open_time + crate::feed::OHLCV_BASE_INTERVAL_MS - 1,
+        close_time: open_time + quantick_feed::OHLCV_BASE_INTERVAL_MS - 1,
         open: Decimal::from(100 + seed),
         high: Decimal::from(110 + seed),
         low: Decimal::from(90 + seed),
@@ -1362,7 +1364,7 @@ fn minute_trade(minute: u64) -> quantick_engine::Trade {
 /// "load older" delivers.
 fn minute_trade_at(minute: i64) -> quantick_engine::Trade {
     let mut trade = trade(minute.unsigned_abs() + 1);
-    trade.timestamp_ms = minute * crate::feed::OHLCV_BASE_INTERVAL_MS + 1_000;
+    trade.timestamp_ms = minute * quantick_feed::OHLCV_BASE_INTERVAL_MS + 1_000;
     trade
 }
 
@@ -1517,7 +1519,7 @@ fn grid_trades(first_price: Decimal, step: Decimal) -> Vec<quantick_engine::Trad
     (0..200)
         .map(|i| quantick_engine::Trade {
             agg_id: i + 1,
-            timestamp_ms: i as i64 * crate::feed::OHLCV_BASE_INTERVAL_MS + 1_000,
+            timestamp_ms: i as i64 * quantick_feed::OHLCV_BASE_INTERVAL_MS + 1_000,
             price: first_price + step * Decimal::from(i % 20),
             quantity: Decimal::ONE,
             side: if i.is_multiple_of(2) {
@@ -1588,13 +1590,11 @@ fn drain_load_older(commands: &mut mpsc::Receiver<FeedCommand>) -> Vec<usize> {
 
 // ---- adding a symbol from the picker (§11) ----
 
-/// A scratch sidecar path, so a test never touches the real one.
+/// A scratch sidecar path, so a test never touches the real one. Handed to
+/// the app, so it takes `thread_dir` for the reason [`scratch_ui_state`]
+/// gives.
 fn symbols_scratch(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "quantick-symbols-app-{}-{}.toml",
-        name,
-        std::process::id()
-    ))
+    crate::scratch::thread_dir("symbols-app").join(format!("{name}.toml"))
 }
 
 /// A config with two MetaTrader feeds, one of them mapping a port — the
@@ -1779,12 +1779,16 @@ fn indicator_kinds(app: &QuantickApp) -> Vec<String> {
         .collect()
 }
 
+/// A gateway directory of this test's own, **not created**: the gateway makes
+/// its own instances directory, and handing it one that already exists is a
+/// different starting state than every one of these tests was written
+/// against. It sits inside this thread's scratch folder, which is removed
+/// when the test's thread ends.
 fn gateway_test_directory(name: &str) -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
-    std::env::temp_dir().join(format!(
-        "quantick-gateway-test-{}-{name}-{}",
-        std::process::id(),
+    crate::scratch::thread_dir("gateway-test").join(format!(
+        "{name}-{}",
         NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
     ))
 }

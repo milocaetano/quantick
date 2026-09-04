@@ -18,12 +18,22 @@ repo's existing ports:
 | --- | --- | --- |
 | Market data source | `FeedEvent` channel + `FeedCapabilities` | new `feed-*` crate; config entry in `crates/app/config/feeds.toml` |
 | Bar/aggregation type | engine aggregator trait | new module in `engine`, one registration |
-| Indicator / kernel | `Indicator` trait (commit/preview + rollback) | `indicators` crate, or a `.pine` script compiled by `pine` |
+| Indicator / kernel | `Indicator` trait (commit/preview + rollback) | a `.pine` script is data only. A **native** is a new file in `crates/indicators/src/native/` plus one `NATIVES` entry beside it — and nothing at all in `app` |
 | Chart layer / overlay | chart layer registry (`QUANTICK_CHART_LAYERS` set) | new layer module in `app` |
 | Panel / dock tab | dock tab set | new module in `app`, one tab registration |
 | Floating UI surface (popup, toast, overlay box) | `Surface` trait + `SurfaceEnv`/`SurfaceResponse` | new module in `app/src/surfaces/`, one field on `Surfaces` |
 | Look / preset | config file (`bubbles.toml`, drawing presets) | data only — no code |
 | Sim/backtest behaviour | `sim` fill model + metrics | `sim` crate, consumed by chart and runner alike |
+
+**A native costs two edits, and the second is one line.** Write the kernel as
+its own file under `crates/indicators/src/native/`, then register it in
+`native/mod.rs`: one `pub use`, and one `NATIVES` entry giving its stable id
+(`native.sma`), the menu label the toolbar prints verbatim, and a
+`fn() -> Box<dyn Indicator>`. Nothing in `app` changes — the toolbar draws the
+catalog, the workspace file stores the id, and the worker resolves it. An id
+no build ships becomes an error slot naming it, never a substitute indicator.
+Prefer a `.pine` script anyway where the dialect can express the kernel: that
+costs no code at all.
 
 **No port fits?** Then the goal has two parts: first carve the port (a
 trait, a registry, a capability flag) as its own reviewable slice, then

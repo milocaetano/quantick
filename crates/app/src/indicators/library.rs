@@ -197,6 +197,8 @@ impl ScriptLibrary {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_INDICATORS_DIR"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,16 +259,9 @@ mod tests {
         }
     }
 
-    /// A private scratch folder, removed and recreated so two runs on one
-    /// machine cannot collide (the shape `drawings::presets` already uses).
-    fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "quantick-script-library-{tag}-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir is creatable");
-        dir
+    /// A private scratch folder that removes itself when the test ends.
+    fn scratch(tag: &str) -> crate::scratch::ScratchDir {
+        crate::scratch::ScratchDir::new(tag)
     }
 
     #[test]
@@ -337,11 +332,9 @@ plot(high)
 
     #[test]
     fn an_unreadable_directory_degrades_to_embedded_only() {
-        let missing = std::env::temp_dir().join(format!(
-            "quantick-script-library-missing-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&missing);
+        // A folder that is not there: inside this thread's scratch directory,
+        // so nothing has to create it and nothing is left behind.
+        let missing = crate::scratch::thread_dir("script-library").join("missing");
         let library = ScriptLibrary::scan_dir(&missing);
         assert_eq!(
             library.entries().len(),

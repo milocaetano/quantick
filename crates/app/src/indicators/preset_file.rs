@@ -218,6 +218,8 @@ pub(crate) fn validate(text: &str) -> Result<(), String> {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_INDICATOR_PRESETS"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,7 +239,11 @@ mod tests {
         let path = default_path();
         let mut store = PresetStore::default();
         assert!(store.insert(&copilot(), "choppy day", choppy()));
-        assert!(store.insert(&SavedKind::NativeEma, "fast", vec![SavedInput::Int(9)]));
+        assert!(store.insert(
+            &SavedKind::native("native.ema"),
+            "fast",
+            vec![SavedInput::Int(9)]
+        ));
         store.save(&path);
 
         let loaded = PresetStore::load(&path);
@@ -248,8 +254,56 @@ mod tests {
         );
         assert_eq!(loaded.get(&copilot(), "choppy day"), Some(&choppy()[..]));
         assert_eq!(
-            loaded.get(&SavedKind::NativeEma, "fast"),
+            loaded.get(&SavedKind::native("native.ema"), "fast"),
             Some(&[SavedInput::Int(9)][..])
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// The presets a trader saved for their EMA are addressed by kind, and
+    /// before the native catalog that kind was spelled `native_ema` in the
+    /// file. Losing the mapping would not error — it would quietly show an
+    /// empty preset menu on an indicator that has presets, which is worse.
+    #[test]
+    fn presets_saved_before_the_catalog_still_belong_to_their_native() {
+        let path = default_path();
+        std::fs::write(
+            &path,
+            "version = 1
+
+             [[presets]]
+kind = \"native_ema\"
+name = \"fast\"
+
+             [[presets.inputs]]
+type = \"int\"
+value = 9
+
+             [[presets]]
+kind = \"native_cvd\"
+name = \"plain\"
+inputs = []
+",
+        )
+        .unwrap();
+
+        let loaded = PresetStore::load(&path);
+        assert_eq!(
+            loaded
+                .names_for(&SavedKind::native("native.ema"))
+                .collect::<Vec<_>>(),
+            ["fast"],
+            "the old spelling names the catalog's EMA"
+        );
+        assert_eq!(
+            loaded.get(&SavedKind::native("native.ema"), "fast"),
+            Some(&[SavedInput::Int(9)][..])
+        );
+        assert_eq!(
+            loaded
+                .names_for(&SavedKind::native("native.cvd"))
+                .collect::<Vec<_>>(),
+            ["plain"]
         );
         std::fs::remove_file(&path).ok();
     }
@@ -294,7 +348,11 @@ mod tests {
             "overwriting an existing name still works when full"
         );
         assert!(
-            store.insert(&SavedKind::NativeEma, "ema", vec![SavedInput::Int(9)]),
+            store.insert(
+                &SavedKind::native("native.ema"),
+                "ema",
+                vec![SavedInput::Int(9)]
+            ),
             "another kind's shelf is not full"
         );
         assert!(store.remove(&copilot(), "p0"));

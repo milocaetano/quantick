@@ -100,9 +100,9 @@ they admit they do not carry, is in [`crates/mcp/README.md`](crates/mcp/README.m
 
 ## The map
 
-A Cargo workspace under `crates/`. The dependency direction is one-way and
-enforced by review; never add a reverse edge. An arrow reads *depends on*, so
-everything flows downward to the pure domain crates at the bottom.
+A Cargo workspace under `crates/`. The dependency direction is one-way,
+enforced by `crates/pine/tests/workspace_deps.rs`; never add a reverse edge.
+An arrow reads *depends on*.
 
 ```mermaid
 graph TD
@@ -119,7 +119,8 @@ graph TD
   app --> sim
   app --> replay
   app --> orderbook
-  app --> feeds
+  app --> orderflow
+  app --> feed
   app --> control
   app --> controllocal
   app --> engine
@@ -141,8 +142,14 @@ graph TD
   sim["sim<br/>paper-trading fills"] --> trading
   sim --> engine
   trading["trading<br/>TradingVenue port"] --> engine
+  feed["feed<br/>feed host"] --> feeds
+  feed --> replay
+  feed --> orderbook
+  feed --> engine
   feeds["feed-binance<br/>feed-hyperliquid<br/>feed-mt5"] --> engine
   feeds --> orderbook
+  orderflow["orderflow<br/>book → heatmap"] --> engine
+  orderflow --> orderbook
 
   subgraph pure["Pure domain — no workspace dependencies"]
     engine["engine<br/>trades → bars"]
@@ -155,24 +162,21 @@ graph TD
 | --- | --- |
 | `engine` | Raw trades in, alternative bars out. Headless, deterministic, no clock. Everything depends on it; it depends on nothing. |
 | `orderbook` | Deterministic local order-book core: validated snapshots, absolute level updates, update-id continuity. |
+| `orderflow` | The order-flow engine: liquidity history, grouping, timeline and the settled/live heatmap projections. Headless; its caller passes it the clock. The chart draws it today, `backtest` may consume it next. |
 | `indicators` | The indicator runtime: the `Indicator` trait (commit/preview with rollback), incremental `ta.*` kernels, draw objects, headless host. |
 | `pine` | "Quantick Pine" — a Pine v5 subset. Hand-rolled lexer, parser, compile passes and interpreter; zero external dependencies. |
 | `replay` | Recorded market-replay sessions: the CSV format, the folder scan, the playback clock. It is *told* how much time passed. |
-| `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements — so a real broker adapter docks where the paper simulator sits, and nothing above learns a second vocabulary. |
+| `feed` | The feed host: the `FeedEvent`/`FeedCommand` port every source implements, the Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters that run one, and the feed-shaped config. The only crate below `app` that owns runtimes, threads and the clock, and `replay::test_support`, published on purpose rather than test-only. |
+| `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements, so a broker adapter docks where the paper simulator sits. |
 | `sim` | Deterministic paper trading: one implementation of `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
 | `strategy` | The strategy kernel: armed price regions, projected brackets, the armed-instance state machine, and the `SignalAlarm` beside it. |
-| `control` | Transport-neutral control-plane contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors, and the `fake` host/client ports — a deliberately published module, not a test-only feature. |
+| `control` | Transport-neutral control-plane contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors, and the `fake` host/client ports, published on purpose rather than test-only. |
 | `control-local` | The local transport: the private instance-descriptor directory and the blocking loopback client. One implementation of the ownership checks serves publisher and client. |
 | `mcp` | The MCP adapter. A leaf: it depends on `control` and `control-local` only, never on `app`, and its stdout carries MCP frames only. |
 | `feed-*` | Binance, Hyperliquid and MetaTrader 5 sources. They produce trades and never link the script language. |
 | `backtest` | The headless harness: recorded sessions in, performance out, over the exact engine and indicator path the chart draws. |
-| `guards` | The guards the compiler cannot see: the size, context and cycle ratchets, the English scan, the encoding check. No dependencies, so asking them costs a second, not a full build of `app`. |
+| `guards` | The guards the compiler cannot see: the size, context and cycle ratchets, the English scan, the encoding check. No dependencies, so asking them costs a second. |
 | `app` | The desktop chart (egui). A consumer of the engine, never the other way around. |
-
-Market replay is a **source**, not a chart mode: it releases a recorded
-session down the same `FeedEvent` channel a live venue uses, so bars,
-navigation and metrics run one code path. UI affordances gate on
-`FeedCapabilities`, never on "is this a replay?".
 
 ## The non-negotiable design rules
 

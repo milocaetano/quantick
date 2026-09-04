@@ -47,7 +47,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::Finding;
-use crate::ratchet::{Baseline, Policy};
+use crate::ratchet::{self, Baseline, Policy};
 
 /// Bytes above which a context file must carry a baseline entry.
 ///
@@ -268,6 +268,13 @@ fn relative_to(root: &Path, path: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
+}
+
+/// What every tracked path measures today, summed, for
+/// [`crate::report`]. The *how* is [`ratchet::total`]; this only names the
+/// walk it sums, which is the one thing that differs per guard.
+pub fn measured(root: &Path) -> usize {
+    ratchet::total(&measure(root).counts)
 }
 
 /// Byte counts for every context file, sorted by path.
@@ -722,14 +729,13 @@ mod tests {
 
     /// A scratch workspace whose baseline names two skill files, so a raise on
     /// one can be paid for — or not — by the other.
-    fn scratch(test: &str, first: usize, second: usize, budget: usize) -> std::path::PathBuf {
-        // Process-unique, like `ratchet::tests::tempdir`: two worktrees running
-        // the suite at once — the workflow `CLAUDE.md` prescribes — would
-        // otherwise have one run `remove_dir_all` the other's fixture
-        // mid-test.
-        let root =
-            std::env::temp_dir().join(format!("quantick-context-{test}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+    fn scratch(
+        test: &str,
+        first: usize,
+        second: usize,
+        budget: usize,
+    ) -> crate::scratch_dir::ScratchDir {
+        let root = crate::scratch_dir::ScratchDir::new(test);
         fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join(".claude/skills/one")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join(".claude/skills/two")).expect("scratch dirs are creatable");

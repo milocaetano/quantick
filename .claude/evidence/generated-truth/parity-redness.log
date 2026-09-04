@@ -1,0 +1,33 @@
+=== A4 / A11: the guard reddens on a hand edit to the generated inventory ===
+Run against the committed generated file, so step 4's revert restores it.
+
+--- 1. clean tree: the generated guard is green ---
+test every_guard_in_the_registry_has_a_test_here ... ok
+test no_context_file_grows_past_its_recorded_ceiling ... ok
+test the_generated_indexes_match_the_code_they_describe ... ok
+test no_tracked_file_grows_past_its_recorded_ceiling ... ok
+test sources_are_utf8_without_a_bom_or_mojibake ... ok
+test tracked_files_are_written_in_english ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+--- 2. hand-edit one row: trade.order.place -> trade.order.plaice ---
+ docs/control-plane/capability-inventory.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- 3. the guard reddens, naming both sides of the divergence ---
+generated guard: 2 finding(s)
+docs/control-plane/capability-inventory.md:61: `trade.order.plaice` is documented but no `*_CAPABILITY_ID` constant under crates/app/src/control declares it
+crates/app/src/control/trade.rs:71: `trade.order.place` is registered but has no row in docs/control-plane/capability-inventory.md
+Regenerate the inventory instead of editing it: `cargo run -p quantick-app -- --dump-capability-inventory > docs/control-plane/capability-inventory.md`, then commit the result.
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+--- 4. a hand edit that only deletes a row is caught by the footer too ---
+Updated 1 path from the index
+crates/app/src/control/trade.rs:78: `trade.ruler.set` is registered but has no row in docs/control-plane/capability-inventory.md
+docs/control-plane/capability-inventory.md: the footer claims 38 capabilities but the table has 37 rows
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+--- 5. revert, guard green again ---
+Updated 1 path from the index
+test the_generated_indexes_match_the_code_they_describe ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s

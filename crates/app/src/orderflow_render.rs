@@ -12,12 +12,12 @@ use quantick_orderbook::BookSide;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
-use crate::orderflow::{
+use crate::viewport::Viewport;
+use quantick_orderflow::{
     AggressionPrimitive, BEFORE_CAPTURE, BubbleRenderMode, BubbleStyle, ConsumptionMark,
     GOLDEN_ANGLE, HeatmapConfig, HeatmapProjection, HeatmapTheme, INV_PHI, INV_PHI_2, INV_PHI_3,
     LiquidityEvidence, LiveLaneStyle,
 };
-use crate::viewport::Viewport;
 
 // A perceptually smoother Bookmap-style thermal ramp. It keeps the signature
 // deep-blue → cyan low end but restores the green and orange phases the classic
@@ -3950,8 +3950,8 @@ mod tests {
         let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 0.0);
         let projection = HeatmapProjection::empty(
             true,
-            crate::orderflow::EffectiveGrouping::resolve(
-                crate::orderflow::DisplayGrouping::Native,
+            quantick_orderflow::EffectiveGrouping::resolve(
+                quantick_orderflow::DisplayGrouping::Native,
                 rust_decimal::Decimal::ONE,
                 rust_decimal::Decimal::from(100),
             ),
@@ -4135,7 +4135,7 @@ mod tests {
             min_radius: 2.2,
             max_radius: 14.0,
             detail_min_radius: 2.0,
-            readable_min_radius: crate::orderflow::config::DEFAULT_READABLE_MIN_RADIUS,
+            readable_min_radius: quantick_orderflow::config::DEFAULT_READABLE_MIN_RADIUS,
             hollow_small_buys: true,
             render_mode: BubbleRenderMode::Sphere,
             ..BubbleStyle::default()
@@ -4196,8 +4196,8 @@ mod tests {
         let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 0.0);
         let mut projection = HeatmapProjection::empty(
             true,
-            crate::orderflow::EffectiveGrouping::resolve(
-                crate::orderflow::DisplayGrouping::Native,
+            quantick_orderflow::EffectiveGrouping::resolve(
+                quantick_orderflow::DisplayGrouping::Native,
                 rust_decimal::Decimal::ONE,
                 rust_decimal::Decimal::from(100),
             ),
@@ -4307,8 +4307,8 @@ mod tests {
         let radii = |live: bool| {
             let mut projection = HeatmapProjection::empty(
                 true,
-                crate::orderflow::EffectiveGrouping::resolve(
-                    crate::orderflow::DisplayGrouping::Native,
+                quantick_orderflow::EffectiveGrouping::resolve(
+                    quantick_orderflow::DisplayGrouping::Native,
                     rust_decimal::Decimal::ONE,
                     rust_decimal::Decimal::from(100),
                 ),
@@ -4380,8 +4380,8 @@ mod tests {
         let clipped = |x: f64, live: bool| {
             let mut projection = HeatmapProjection::empty(
                 true,
-                crate::orderflow::EffectiveGrouping::resolve(
-                    crate::orderflow::DisplayGrouping::Native,
+                quantick_orderflow::EffectiveGrouping::resolve(
+                    quantick_orderflow::DisplayGrouping::Native,
                     rust_decimal::Decimal::ONE,
                     rust_decimal::Decimal::from(100),
                 ),
@@ -4449,8 +4449,8 @@ mod tests {
         // that can separate them is the switch under test.
         let mut projection = HeatmapProjection::empty(
             true,
-            crate::orderflow::EffectiveGrouping::resolve(
-                crate::orderflow::DisplayGrouping::Native,
+            quantick_orderflow::EffectiveGrouping::resolve(
+                quantick_orderflow::DisplayGrouping::Native,
                 rust_decimal::Decimal::ONE,
                 rust_decimal::Decimal::from(100),
             ),
@@ -4635,8 +4635,8 @@ mod tests {
         let style = OrderflowRenderStyle::default();
         let mut projection = HeatmapProjection::empty(
             true,
-            crate::orderflow::EffectiveGrouping::resolve(
-                crate::orderflow::DisplayGrouping::Native,
+            quantick_orderflow::EffectiveGrouping::resolve(
+                quantick_orderflow::DisplayGrouping::Native,
                 rust_decimal::Decimal::ONE,
                 rust_decimal::Decimal::from(100),
             ),
@@ -4852,14 +4852,14 @@ mod tests {
         let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 200.0);
         let mut projection = HeatmapProjection::empty(
             true,
-            crate::orderflow::EffectiveGrouping::resolve(
-                crate::orderflow::DisplayGrouping::Native,
+            quantick_orderflow::EffectiveGrouping::resolve(
+                quantick_orderflow::DisplayGrouping::Native,
                 rust_decimal::Decimal::ONE,
                 rust_decimal::Decimal::from(100),
             ),
         );
         let event = |event_id: u64, x: f64, evidence: LiquidityEvidence| {
-            crate::orderflow::LiquidityEventPrimitive {
+            quantick_orderflow::LiquidityEventPrimitive {
                 event_id,
                 generation: 1,
                 side: quantick_orderbook::BookSide::Bid,

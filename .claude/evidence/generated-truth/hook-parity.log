@@ -1,0 +1,40 @@
+=== A5 / A7 / A11: hook parity, and the guard that keeps it (R7, R8, R10, R18) ===
+
+--- parity: every declared hook is described, and vice versa ---
+hooks declared in code : 126
+hooks described in prose: 126
+declared but undescribed: none
+described but undeclared: none
+
+owning files: 37
+   50  crates/app/src/app.rs
+   24  crates/app/src/harness.rs
+    8  crates/app/src/paper_trading.rs
+    6  crates/app/src/surfaces/drawing_chrome/mod.rs
+    3  crates/app/src/config.rs
+    2  crates/app/src/footprint_config.rs
+
+--- the allowlist: QUANTICK_* that are deliberately not hooks ---
+const ALLOWLIST: &[(&str, &str)] = &[
+    (
+        "QUANTICK_GIT_COMMIT",
+        "build metadata, read through `option_env!` at compile time and \
+         reported in the control plane's system info. Setting it at runtime \
+         does nothing, so a harness row would describe a hook that is not one.",
+    ),
+    (
+        "QUANTICK_TEST_STORE_HOME_ENV",
+        "test plumbing inside `store_home`'s own `#[cfg(test)]` module, which \
+         lets a test redirect the store home without touching the real one. \
+         Never read by a release build.",
+    ),
+    (
+        "QUANTICK_FAKE_STORE",
+        "test plumbing inside `workspace_bundle`'s own `#[cfg(test)]` module. \
+         Never read by a release build.",
+    ),
+];
+
+--- prose preserved: no Reaches cell was shortened ---
+authored prose file: 68537 bytes, 133 table rows
+generated registry : 70112 bytes

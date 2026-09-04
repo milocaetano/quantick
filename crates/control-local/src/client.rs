@@ -647,12 +647,12 @@ mod tests {
 
     #[test]
     fn an_empty_directory_discovers_nothing_and_creates_nothing() {
-        let directory = std::env::temp_dir().join(format!(
-            "quantick-control-local-empty-{}-{}",
-            std::process::id(),
-            line!()
-        ));
-        let _ = std::fs::remove_dir_all(&directory);
+        // A directory that does not exist, inside one that does: discovery
+        // refuses a descriptor directory whose ACL is not already private,
+        // and a folder `ScratchDir` created carries the default one. The
+        // scratch value is still what removes whatever discovery leaves.
+        let scratch = crate::scratch::ScratchDir::new("empty");
+        let directory = scratch.join("instances");
         let live = discover_in(&directory, &options()).unwrap();
         assert!(live.clients.is_empty());
         assert!(!live.next_steps.is_empty());

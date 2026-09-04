@@ -6250,13 +6250,23 @@ fn free_session_path(folder: &Path, stamp: &str) -> PathBuf {
 fn test_scratch_dir() -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    std::env::temp_dir().join(format!(
-        "quantick-paper-host-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ))
+    // Under the thread's own directory, which removes the whole tree when the
+    // test's thread ends. Before this, the folder was named after the process
+    // id alone and never removed: a reused pid handed a later run the earlier
+    // run's journal, and three tests here failed on it.
+    crate::scratch::thread_dir("paper-host").join(NEXT.fetch_add(1, Ordering::Relaxed).to_string())
 }
 
+crate::hooks::declare_hooks![
+    "QUANTICK_CMD_PREVIEW",
+    "QUANTICK_PAPER_DEMO",
+    "QUANTICK_PAPER_ORDERS",
+    "QUANTICK_PAPER_ORDER_BRACKET",
+    "QUANTICK_PAPER_ORDER_HOVER",
+    "QUANTICK_PAPER_RISK",
+    "QUANTICK_PAPER_RULER_TICKS",
+    "QUANTICK_PAPER_STRATEGY_EDITOR"
+];
 #[cfg(test)]
 mod risk_tests {
     use super::*;
@@ -9283,13 +9293,9 @@ mod tests {
 
     #[test]
     fn closed_trades_journal_to_one_session_file_and_reload() {
-        let dir = std::env::temp_dir().join(format!(
-            "quantick-paper-journal-test-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::scratch::ScratchDir::new("paper-journal-test");
         let mut paper = PaperTrading::new();
-        paper.dir.clone_from(&dir);
+        paper.dir = dir.path().to_path_buf();
         paper.set_symbol("TESTUSDT");
         paper.seed(&print(0, 100));
         paper.market(Side::Buy);
@@ -9323,20 +9329,14 @@ mod tests {
         assert_eq!(report_from_history(&history).net_points, Decimal::from(7));
         assert_eq!(history.files, 1);
         assert_eq!(history.unreadable_files, 0);
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn a_second_session_adds_a_file_and_never_touches_the_first() {
-        let dir = std::env::temp_dir().join(format!(
-            "quantick-paper-accumulate-test-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::scratch::ScratchDir::new("paper-accumulate-test");
         // Session one: a round trip closing at t=2s.
         let mut first = PaperTrading::new();
-        first.dir.clone_from(&dir);
+        first.dir = dir.path().to_path_buf();
         first.set_symbol("ACCUM");
         first.seed(&print(0, 100));
         first.market(Side::Buy);
@@ -9355,7 +9355,7 @@ mod tests {
 
         // Session two: a fresh host — a restart — closing hours later.
         let mut second = PaperTrading::new();
-        second.dir.clone_from(&dir);
+        second.dir = dir.path().to_path_buf();
         second.set_symbol("ACCUM");
         second.seed(&print(10_000, 200));
         second.market(Side::Sell);
@@ -9377,17 +9377,13 @@ mod tests {
         let history = load_history(&dir, Some("ACCUM"), &[]);
         assert_eq!(history.files, 2);
         assert_eq!(history.rows.len(), 2, "both sessions' trades load");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn a_timeline_reset_journals_the_flatten_and_clears_the_form_state() {
-        let dir =
-            std::env::temp_dir().join(format!("quantick-paper-reset-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::scratch::ScratchDir::new("paper-reset-test");
         let mut paper = PaperTrading::new();
-        paper.dir.clone_from(&dir);
+        paper.dir = dir.path().to_path_buf();
         paper.set_symbol("RESETX");
         paper.seed(&print(0, 100));
         paper.market(Side::Buy);
@@ -9410,7 +9406,6 @@ mod tests {
             1,
             "the reset exit is a real, journaled trade"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // The stored-pick-vs-configured-base precedence now lives in
@@ -9421,14 +9416,10 @@ mod tests {
     /// and report re-read from it. Files already written stay put.
     #[test]
     fn switching_the_trades_dir_retargets_journal_ledger_and_report() {
-        let dir_a =
-            std::env::temp_dir().join(format!("quantick-paper-dir-a-{}", std::process::id()));
-        let dir_b =
-            std::env::temp_dir().join(format!("quantick-paper-dir-b-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir_a);
-        let _ = std::fs::remove_dir_all(&dir_b);
+        let dir_a = crate::scratch::ScratchDir::new("paper-dir-a");
+        let dir_b = crate::scratch::ScratchDir::new("paper-dir-b");
         let mut paper = PaperTrading::new();
-        paper.dir.clone_from(&dir_a);
+        paper.dir = dir_a.path().to_path_buf();
         paper.set_symbol("SWITCHX");
         paper.seed(&print(0, 100));
         paper.market(Side::Buy);
@@ -9443,8 +9434,8 @@ mod tests {
         };
         assert!(paper.report_state().saved_rows_loaded().is_some());
 
-        paper.set_trades_dir(dir_b.clone());
-        assert_eq!(paper.trades_dir(), dir_b.as_path());
+        paper.set_trades_dir(dir_b.path().to_path_buf());
+        assert_eq!(paper.trades_dir(), dir_b.path());
         assert!(
             paper.journal_path.is_none(),
             "the next close opens a new session file under B"
@@ -9458,8 +9449,6 @@ mod tests {
             dir_a.join("SWITCHX").exists(),
             "files already written stay where they are"
         );
-        let _ = std::fs::remove_dir_all(&dir_a);
-        let _ = std::fs::remove_dir_all(&dir_b);
     }
 
     /// The ledger's cache reads every saved file except the live session's
@@ -9467,11 +9456,9 @@ mod tests {
     /// symbol each row came from.
     #[test]
     fn the_ledger_cache_excludes_the_live_session_file() {
-        let dir =
-            std::env::temp_dir().join(format!("quantick-paper-ledger-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::scratch::ScratchDir::new("paper-ledger-test");
         let mut paper = PaperTrading::new();
-        paper.dir.clone_from(&dir);
+        paper.dir = dir.path().to_path_buf();
         paper.set_symbol("LEDGX");
         paper.seed(&print(0, 100));
         paper.market(Side::Buy);
@@ -9514,19 +9501,16 @@ mod tests {
         assert_eq!(cache[0].symbol, "LEDGX");
         assert_eq!(cache[0].trade, trade);
         assert_eq!(cache[0].source, Some(history::SessionSource::Live));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn a_replay_rerun_lands_beside_its_first_run_never_inside_it() {
-        let dir =
-            std::env::temp_dir().join(format!("quantick-paper-rerun-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::scratch::ScratchDir::new("paper-rerun-test");
         // The same recording replayed twice: identical prints, identical
         // venue times, so both sessions derive the same file stamp.
         for _ in 0..2 {
             let mut paper = PaperTrading::new();
-            paper.dir.clone_from(&dir);
+            paper.dir = dir.path().to_path_buf();
             paper.set_symbol("RERUN");
             paper.set_session_source(history::SessionSource::Replay);
             paper.seed(&print(0, 100));
@@ -9559,7 +9543,6 @@ mod tests {
                 .all(|row| row.source == Some(history::SessionSource::Replay)),
             "both files carry the replay source"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -9599,11 +9582,9 @@ mod tests {
     /// state it exists to photograph was unreachable.
     #[test]
     fn a_revealed_page_survives_the_ledgers_lazy_first_load() {
-        let dir =
-            std::env::temp_dir().join(format!("quantick-paper-pages-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::scratch::ScratchDir::new("paper-pages-test");
         let mut paper = PaperTrading::new();
-        paper.dir.clone_from(&dir);
+        paper.dir = dir.path().to_path_buf();
         paper.set_symbol("PAGEX");
 
         paper.report_state_mut().autostart_ledger_pages(3);
@@ -9636,20 +9617,14 @@ mod tests {
             state.rescope_ledger(&env)
         };
         assert_eq!(paper.report_state().revealed_pages(), 1);
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn the_report_scopes_by_symbol_folder_on_disk() {
-        let dir = std::env::temp_dir().join(format!(
-            "quantick-paper-symbols-test-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::scratch::ScratchDir::new("paper-symbols-test");
         for (symbol, id0, price) in [("AAAUSDT", 0, 100), ("BBBUSDT", 100, 200)] {
             let mut paper = PaperTrading::new();
-            paper.dir.clone_from(&dir);
+            paper.dir = dir.path().to_path_buf();
             paper.set_symbol(symbol);
             paper.seed(&print(id0, price));
             paper.market(Side::Buy);
@@ -9671,8 +9646,6 @@ mod tests {
         let one = load_history(&dir, Some("BBBUSDT"), &[]);
         assert_eq!(one.rows.len(), 1, "a symbol scope reads only its folder");
         assert_eq!(one.rows[0].symbol, "BBBUSDT");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

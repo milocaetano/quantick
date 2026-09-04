@@ -618,15 +618,14 @@ impl StrategyBank {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_STRATEGY_PRESETS"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "quantick-strategy-bank-{}-{name}.toml",
-            std::process::id()
-        ))
+        crate::scratch::thread_dir("strategy-bank").join(format!("{name}.toml"))
     }
 
     #[test]

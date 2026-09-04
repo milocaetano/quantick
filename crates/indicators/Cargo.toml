@@ -13,6 +13,12 @@ rust_decimal = { workspace = true }
 # pow/exp/ln/log10 (see src/fmath.rs and the grep-guard test).
 libm = { workspace = true }
 
+[features]
+# A native that exists only so the docking port can be driven end to end by a
+# test: `quantick-app` turns it on in its `[dev-dependencies]` and nowhere
+# else, so `cargo build --workspace` never ships it. Not for `--all-features`.
+fake-native = []
+
 [[bench]]
 name = "eval"
 harness = false

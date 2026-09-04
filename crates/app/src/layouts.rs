@@ -714,6 +714,8 @@ pub(crate) fn save(path: &Path, book: &LayoutBook) {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_LAYOUTS"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -721,7 +723,7 @@ mod tests {
 
     fn ema() -> SavedIndicator {
         SavedIndicator {
-            kind: SavedKind::NativeEma,
+            kind: SavedKind::native("native.ema"),
             hidden: false,
             inputs: vec![SavedInput::Int(20), SavedInput::Source("close".to_owned())],
             plot_styles: Vec::new(),
@@ -923,13 +925,7 @@ mod tests {
 
     #[test]
     fn the_file_round_trips_and_refuses_what_it_cannot_read() {
-        let dir = std::env::temp_dir().join(format!(
-            "quantick-layouts-test-{}-{}",
-            std::process::id(),
-            line!()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::scratch::ScratchDir::new("layouts");
         let path = dir.join(LAYOUTS_FILE);
         assert_eq!(load(&path), Loaded::Missing);
 

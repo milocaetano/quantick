@@ -140,6 +140,8 @@ impl Surface for StylePanelSurface {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_STYLE_PANEL"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

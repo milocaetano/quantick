@@ -22,9 +22,9 @@ use quantick_replay::clock::SPEEDS;
 use quantick_replay::format::{self, UtcOffset};
 use quantick_replay::{Library, ParseOptions, Session, SessionEntry, SessionError, library};
 
-use crate::feed::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 use crate::replay_get_data::{GetDataAction, GetDataPanel};
 use crate::theme::{AMBER, CHROME, CONTROL, TEXT_MUTED, TEXT_PRIMARY, WARN};
+use quantick_feed::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 
 /// The accent this feature owns: the same amber the chart already uses for the
 /// backfill/live divider, so "this is not live data" reads the same way twice.
@@ -1222,6 +1222,8 @@ fn thousands(value: usize) -> String {
     out
 }
 
+crate::hooks::declare_hooks!["QUANTICK_REPLAY_GET_DATA"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1269,13 +1271,8 @@ mod tests {
     /// joined in front of it. Naming the day is what makes the other reachable.
     #[test]
     fn naming_a_day_selects_it_over_the_one_the_scan_lists_first() {
-        let folder = std::env::temp_dir().join(format!(
-            "quantick-replay-view-select-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let folder = crate::scratch::ScratchDir::new("replay-view-select");
         let instrument = folder.join("WINJ26");
-        let _ = std::fs::remove_dir_all(&folder);
         std::fs::create_dir_all(&instrument).expect("scratch folder");
         for (name, day) in [
             ("20260313.csv", "2026-03-13"),

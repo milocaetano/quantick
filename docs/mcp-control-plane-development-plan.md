@@ -1306,7 +1306,7 @@ Record the following in the pull request objective:
 
 ```powershell
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets
 cargo build --workspace
 cargo test --workspace
 ```

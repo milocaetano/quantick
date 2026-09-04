@@ -252,6 +252,8 @@ impl Surface for ToastSurface {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_TOAST"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -33,11 +33,7 @@ fn a_click_in_an_indicator_pane_draws_on_that_band() {
 #[test]
 fn opening_a_workspace_keeps_the_indicator_set_being_saved() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    let file = std::env::temp_dir().join(format!(
-        "quantick-app-persist-{}-{:?}.qws.toml",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let file = crate::scratch::ScratchFile::new("app-persist", "workspace.qws.toml");
     app.export_workspace_to(&file);
     // A market the live tab is not on, so the import replaces the strip.
     app.open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
@@ -77,13 +73,13 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
         &path,
         &[
             SavedIndicator {
-                kind: SavedKind::NativeEma,
+                kind: SavedKind::native("native.ema"),
                 hidden: false,
                 inputs: vec![SavedInput::Int(21), SavedInput::Source("close".to_owned())],
                 plot_styles: Vec::new(),
             },
             SavedIndicator {
-                kind: SavedKind::NativeCvd,
+                kind: SavedKind::native("native.cvd"),
                 hidden: true,
                 inputs: Vec::new(),
                 plot_styles: Vec::new(),
@@ -110,8 +106,8 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
         3,
         "a script the library lacks takes an error slot saying so, keeping the layout's positions aligned"
     );
-    assert_eq!(app.slot_kinds[0].1, SavedKind::NativeEma);
-    assert_eq!(app.slot_kinds[1].1, SavedKind::NativeCvd);
+    assert_eq!(app.slot_kinds[0].1, SavedKind::native("native.ema"));
+    assert_eq!(app.slot_kinds[1].1, SavedKind::native("native.cvd"));
     assert_eq!(app.pending_hidden.len(), 1, "the hidden flag survived");
     assert!(
         !app.workspace.layouts().is_dirty(),
@@ -231,7 +227,7 @@ fn an_indicator_added_on_one_pane_appears_on_every_pane() {
         "clicking a pane focuses it"
     );
 
-    app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
 
     for side in [PaneSide::Time(0), PaneSide::Flow] {
@@ -270,7 +266,7 @@ fn an_indicator_added_on_one_pane_appears_on_every_pane() {
     assert_eq!(app.layouts().active().indicators.len(), 1);
     assert_eq!(
         app.layouts().active().indicators[0].kind,
-        crate::indicators::state_file::SavedKind::NativeEma
+        crate::indicators::state_file::SavedKind::native("native.ema")
     );
 }
 
@@ -285,7 +281,7 @@ fn a_pane_gesture_opens_the_dialog_once_on_the_indicator_it_named() {
     let (mut app, _commands) = split_app(&ctx, 200);
     let point = pane_point(&app, PaneSide::Flow);
     click_chart(&mut app, &ctx, point);
-    app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
 
@@ -319,7 +315,7 @@ fn a_restyled_plot_comes_back_after_a_restart() {
     let (mut app, _commands) = split_app(&ctx, 200);
     let point = pane_point(&app, PaneSide::Flow);
     click_chart(&mut app, &ctx, point);
-    app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
     app.active_tab_mut()
@@ -376,7 +372,7 @@ fn the_settings_hook_finds_indicators_on_the_flow_pane_while_the_time_pane_has_f
     // Indicators on the flow pane...
     let point = pane_point(&app, PaneSide::Flow);
     click_chart(&mut app, &ctx, point);
-    app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     // ...mirrored onto the time pane by the layout; the hook's index names
     // the same indicator on whichever pane has focus.
@@ -422,7 +418,7 @@ fn legend_actions_land_on_their_own_pane_not_the_focused_one() {
     // An EMA on the time pane...
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
-    app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     let slot = app
         .active_tab()
@@ -521,7 +517,7 @@ fn the_second_context_pane_takes_focus_bars_and_indicators() {
         "and the top chart kept its own"
     );
 
-    app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
     assert_eq!(
         app.active_tab()
@@ -569,14 +565,14 @@ fn the_indicator_rebuild_covers_the_venue_prefix() {
     let (mut app, events, _commands) = history_app(&ctx);
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
-    app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
 
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -602,4 +598,124 @@ fn the_indicator_rebuild_covers_the_venue_prefix() {
         inside.is_some(),
         "and the average is finite over the venue history"
     );
+}
+
+/// The whole point of the native catalog: the application handles a native it
+/// has never heard of.
+///
+/// Driven by iterating the catalog rather than by naming EMA and CVD, so a
+/// native added to `quantick-indicators` is covered here the moment it is
+/// registered — and the `fake-native` feature puts one in the catalog that
+/// this crate demonstrably does not know, so the test is not merely a
+/// restatement of the two it does.
+#[test]
+fn every_native_in_the_catalog_adds_and_registers_without_being_named_here() {
+    assert!(
+        quantick_indicators::native::native("native.fake").is_some(),
+        "the throwaway native is registered under test, or this test proves \
+         only that the two shipped natives work"
+    );
+
+    for entry in quantick_indicators::native::NATIVES {
+        let (mut app, _commands) = app_with_history(200);
+        app.apply_toolbar_action(ToolbarAction::AddNative(entry.id));
+        settle_indicators(&mut app);
+
+        let views = app.active_tab().flow_pane.indicators.all();
+        assert_eq!(views.len(), 1, "{} added exactly one indicator", entry.id);
+        assert!(
+            views[0].error.is_none(),
+            "{} built cleanly: {:?}",
+            entry.id,
+            views[0].error
+        );
+        assert_eq!(
+            views[0].kind.as_ref(),
+            entry.id,
+            "the slot is keyed by the catalog id, which is what a drawing \
+             anchors to and what the control plane reports"
+        );
+
+        app.maintain_indicator_state();
+        assert_eq!(
+            app.layouts().active().indicators[0].kind,
+            crate::indicators::state_file::SavedKind::native(entry.id),
+            "{} registered how it restores",
+            entry.id
+        );
+    }
+}
+
+/// A native the catalog does not have is an error slot naming it — never a
+/// different indicator.
+///
+/// The arm this replaces mapped every unrecognised kind to the EMA, so a
+/// workspace naming a withdrawn native put an EMA on the chart and said
+/// nothing. A trader reading that line would have been reading a moving
+/// average while believing it was something else.
+#[test]
+fn an_unknown_native_id_is_an_error_slot_rather_than_a_silent_ema() {
+    let (mut app, _commands) = app_with_history(200);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.nonesuch"));
+    settle_indicators(&mut app);
+
+    let views = app.active_tab().flow_pane.indicators.all();
+    assert_eq!(
+        views.len(),
+        1,
+        "the slot is kept, so positions stay aligned"
+    );
+    assert!(
+        views[0].error.is_some(),
+        "the slot says it could not build: {:?}",
+        views[0].label()
+    );
+    assert!(
+        !views[0].label().contains("EMA"),
+        "and it is emphatically not an EMA: {}",
+        views[0].label()
+    );
+}
+
+/// The same for the restore path, which reaches natives through the layout
+/// rather than through the menu: a workspace naming a native this build does
+/// not ship keeps its slot and says so.
+#[test]
+fn a_workspace_naming_a_native_this_build_lacks_restores_an_error_slot() {
+    use crate::indicators::state_file::{SavedIndicator, SavedKind};
+
+    let (mut app, _events, _commands, _book) = test_app();
+    let path = crate::indicators::state_file::default_path();
+    let layouts_path = crate::layouts::default_path();
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&layouts_path);
+    app.workspace.set_layouts_path(layouts_path.clone());
+
+    crate::indicators::state_file::save(
+        &path,
+        &[SavedIndicator {
+            kind: SavedKind::native("native.from.the.future"),
+            hidden: false,
+            inputs: Vec::new(),
+            plot_styles: Vec::new(),
+        }],
+    );
+    app.reload_layouts(&[]);
+    settle_indicators(&mut app);
+
+    assert_eq!(
+        app.slot_kinds.len(),
+        1,
+        "the slot is kept so the layout's positions stay aligned"
+    );
+    let views = app.active_tab().flow_pane.indicators.all();
+    assert_eq!(views.len(), 1);
+    assert!(
+        views[0].error.is_some(),
+        "it reports rather than substitutes: {}",
+        views[0].label()
+    );
+    assert!(!views[0].label().contains("EMA"), "{}", views[0].label());
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(&layouts_path);
 }

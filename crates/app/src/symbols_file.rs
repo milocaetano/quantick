@@ -207,16 +207,14 @@ pub fn save(path: &std::path::Path, added: &AddedSymbols) -> Result<(), String> 
         })
 }
 
+crate::hooks::declare_hooks!["QUANTICK_SYMBOLS"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "quantick-symbols-{}-{}.toml",
-            name,
-            std::process::id()
-        ))
+        crate::scratch::thread_dir("symbols").join(format!("{name}.toml"))
     }
 
     #[test]

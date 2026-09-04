@@ -202,7 +202,7 @@ struct ReplayPosition {
 }
 
 impl ReplayPosition {
-    fn of(status: &crate::feed::replay::ReplayStatus) -> Self {
+    fn of(status: &quantick_feed::replay::ReplayStatus) -> Self {
         Self {
             elapsed_ms: status.elapsed_ms(),
             rewinds: status.rewinds(),
@@ -4145,11 +4145,13 @@ pub(crate) fn runtime_id_bytes() -> Result<[u8; CONTROL_RUNTIME_ID_BYTES], Contr
 mod tests {
     use super::*;
 
+    /// A directory that does not exist yet — the only caller asserts exactly
+    /// that — inside this thread's own scratch folder, which is removed when
+    /// the thread ends whether or not anything ever created it.
     fn unique_test_directory(name: &str) -> PathBuf {
         static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(1);
-        std::env::temp_dir().join(format!(
-            "quantick-control-{name}-{}-{}",
-            std::process::id(),
+        crate::scratch::thread_dir("control-gateway").join(format!(
+            "{name}-{}",
             NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
         ))
     }

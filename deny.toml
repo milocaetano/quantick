@@ -88,7 +88,7 @@ multiple-versions = "warn"
 # to whatever was published most recently, which is the purest form of the
 # problem this repository is pinning its way out of.
 wildcards = "deny"
-# …with one exemption, for the seventeen `quantick-*` crates that depend on
+# …with one exemption, for the eighteen `quantick-*` crates that depend on
 # each other by `path` and carry no version requirement. cargo-deny reads a
 # version-less path dependency as a wildcard, which for an intra-workspace edge
 # it is not: the path resolves to the source in this repository and to nothing

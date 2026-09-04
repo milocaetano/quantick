@@ -8,10 +8,11 @@ use quantick_control::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use quantick_orderflow::engine::OrderflowHealth;
+
 use crate::{
     app::QuantickApp,
     loading::LoadingTask,
-    orderflow_engine::OrderflowHealth,
     pane::{ChartPane, PaneSide},
     tab::Tab,
 };

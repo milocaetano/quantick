@@ -1,11 +1,14 @@
 # Documentation index
 
 The documents in this tree, grouped by what they are for. Design records
-state their own status in their first lines, and each sub-tree owns its own
-precedence rule — notably
-[`control-plane/README.md`](control-plane/README.md), where the plan and the
-contract outrank the code until a reconciling change lands, which is the
-opposite of the usual default. Read the document before assuming which wins.
+state their own status in their first lines. **No document here tells you what
+has shipped** — for that, ask the code: the registry under
+`crates/app/src/control/` is authoritative for what exists, and the two indexes
+that describe it are generated from it rather than written beside it. What a
+document does own is the rules the code must satisfy, and
+[`control-plane/README.md`](control-plane/README.md) §Precedence draws that
+line for the control plane: the contract owns wire rules, the code owns what is
+registered.
 
 New here? [`../README.md`](../README.md) is the project introduction and
 [`../AGENTS.md`](../AGENTS.md) is the entry point for an AI agent — reading
@@ -23,16 +26,16 @@ boundary and the evidence each delivery left behind.
 | [`control-plane/control-contract.md`](control-plane/control-contract.md) | Identifier, schema, revision, authority, limit, tool-surface, determinism and trade-annotation rules |
 | [`control-plane/adr-0001-local-transport-and-instance-discovery.md`](control-plane/adr-0001-local-transport-and-instance-discovery.md) | Why the transport is an authenticated loopback socket and how a client discovers a running instance |
 | [`control-plane/observer-threat-model.md`](control-plane/observer-threat-model.md) | Assets, trust boundaries, threats and required controls for the first profile |
-| [`control-plane/capability-inventory.md`](control-plane/capability-inventory.md) | Every production `QUANTICK_*` surface, its owner and its migration target |
-| [`control-plane/roadmap.md`](control-plane/roadmap.md) | The ledger between plan and code: which item is at which stage, in which PR |
+| [`control-plane/capability-inventory.md`](control-plane/capability-inventory.md) | Every registered capability — identifier, version, module, permissions. Generated from the registry and guarded against drift |
+| [`control-plane/roadmap.md`](control-plane/roadmap.md) | Where to look for what shipped, what is planned and what the rules are — it states no delivery status itself |
 
 The per-PR evidence records — what each delivery proved and what it carried
-forward — are [`pr2-performance.md`](control-plane/pr2-performance.md),
-[`pr3-gateway-evidence.md`](control-plane/pr3-gateway-evidence.md),
-[`pr4-mcp-evidence.md`](control-plane/pr4-mcp-evidence.md),
-[`pr5a-events-evidence.md`](control-plane/pr5a-events-evidence.md),
-[`pr5b-annotate-evidence.md`](control-plane/pr5b-annotate-evidence.md) and
-[`pr5c-evidence.md`](control-plane/pr5c-evidence.md).
+forward — are archaeology, kept under `control-plane/history/`: [`pr2-performance.md`](control-plane/history/pr2-performance.md),
+[`pr3-gateway-evidence.md`](control-plane/history/pr3-gateway-evidence.md),
+[`pr4-mcp-evidence.md`](control-plane/history/pr4-mcp-evidence.md),
+[`pr5a-events-evidence.md`](control-plane/history/pr5a-events-evidence.md),
+[`pr5b-annotate-evidence.md`](control-plane/history/pr5b-annotate-evidence.md) and
+[`pr5c-evidence.md`](control-plane/history/pr5c-evidence.md).
 
 The generated wire schemas live outside this tree, in
 [`../schemas/control/`](../schemas/control/).

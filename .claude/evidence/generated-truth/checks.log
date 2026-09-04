@@ -1,0 +1,30 @@
+=== G2: the four checks, each run on its own (never chained) ===
+Chaining with && or || has previously reported a false all-clear here.
+
+--- 1/4  cargo fmt --all -- --check ---
+exit=0
+
+--- 2/4  cargo clippy --workspace --all-targets ---
+(the lint levels live in [workspace.lints]; -D warnings is in force via the
+ table, which is why no flag appears on this line)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.66s
+exit=0
+
+--- 3/4  cargo build --workspace ---
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.47s
+exit=0
+
+--- 4/4  cargo test --workspace ---
+test canvas_layout::row_tests::a_zero_width_canvas_is_survived_rather_than_panicked_on ... ok
+test bridge_log::tests::a_hostile_count_is_grouped_rather_than_panicked_on ... ok
+90
+test-result-ok lines above; failures listed above that (none expected)
+exit=0
+
+--- plus the repository guards, asked separately ---
+test result: ok. 70 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
