@@ -99,7 +99,8 @@ encoded; see `crates/app/src/deal_recording.rs`). The directory is
 | open another B3 symbol | it has its own REC and its own files |
 | open a Binance tab | no `trades`, no REC |
 | close quantick at 14:00 and reopen at 14:20 | today's file is resumed; the 20 minutes without readings fold into the bar that was forming at 14:00, which closes on the first reading after 14:20 (see *One join rule*) |
-| press Reload on the feed | every pane is rebuilt from the new session's backfill; the readings it held stay with it, and the recorder hands back today's file and every loaded day |
+| press Reload on the feed | every pane is rebuilt from the new session's backfill; the readings it held stay with it, so the morning's prints cut as before |
+| switch the tab to another symbol, or open a replay | every pane starts clean: the old market's readings go with its series, and the new market's REC starts on its own default |
 | change the display timezone while recording | the open file keeps the day it was named for (its header's `tz_minutes`); the new offset names the next day's file |
 | open the tab with no bridge connected | a day recorded earlier is still listed under REC and in the history menu, and still opens; nothing records until a bridge declares a counter |
 | press *Stop recording* | the file closes as partial; the day reopens up to where it stopped |

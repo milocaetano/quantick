@@ -3168,6 +3168,19 @@ impl ChartPane {
     /// ([`Self::settle_pending_reanchor`]). The re-anchor waits for bars to
     /// exist, because an empty series can answer nothing.
     pub fn reset_series(&mut self) {
+        self.reset_series_with(false);
+    }
+
+    /// [`Self::reset_series`] for a source that restarts the *same* market —
+    /// a feed reload, a replay seek: the counter readings stay, since the
+    /// prints replayed afterwards join to them as the first pass did. A
+    /// symbol switch or a replay opening takes the plain reset, or the old
+    /// market's readings would cut the new one's prints.
+    pub fn reset_series_keeping_readings(&mut self) {
+        self.reset_series_with(true);
+    }
+
+    fn reset_series_with(&mut self, keep_readings: bool) {
         // A second reset before the first settled must not overwrite the
         // baseline with the empty series it is looking at now.
         let slots = self.slots();
@@ -3176,7 +3189,11 @@ impl ChartPane {
         // and its seam was trimmed against a first bar that is gone. A replay
         // never has one today; the invariant must not depend on that.
         self.history_prefix.clear();
-        self.state.reset_series(self.current_spec());
+        if keep_readings {
+            self.state.reset_series(self.current_spec());
+        } else {
+            self.state = ChartState::new(self.current_spec());
+        }
         self.bump_pagination_revision();
         self.viewport = Viewport::new();
         // Framing dies with the series; orientation is the trader's standing

@@ -4421,7 +4421,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Starts or stops writing the session deal counter a MetaTrader B3 bridge stamps on its live ticks, so the tab's trades bars cover the day and a recorded day reopens as the same chart, and loads a recorded day's readings into the tab's panes. Starting resumes today's file when there is one; stopping keeps what was written. The same calls the REC control beside the symbol makes. A tab whose feed has no deal counter answers with no recording and changes nothing.",
+      "description": "Starts or stops writing the session deal counter a MetaTrader B3 bridge stamps on its live ticks, so the tab's trades bars cover the day and a recorded day reopens as the same chart, and loads a recorded day's readings into the tab's panes. Starting resumes today's file when there is one; stopping keeps what was written. The same calls the REC control beside the symbol makes. A tab whose feed has no deal counter answers with no recording and changes nothing, unless a day recorded earlier is on disk: then it lists it (state `unsupported`) and `load_day` opens it.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -4541,7 +4541,7 @@
                 ]
               },
               "state": {
-                "description": "`off`, `recording`, `stale` (the tape flows, the counter does not) or\n`recorded` (the readings on screen came from a file).",
+                "description": "`off`, `recording`, `stale` (the tape flows, the counter does not),\n`recorded` (the readings on screen came from a file) or `unsupported`\n(the feed declares no counter; a day recorded earlier may still be\nlisted and loaded).",
                 "type": "string"
               }
             },
@@ -9495,7 +9495,7 @@
                 ]
               },
               "state": {
-                "description": "`off`, `recording`, `stale` (the tape flows, the counter does not) or\n`recorded` (the readings on screen came from a file).",
+                "description": "`off`, `recording`, `stale` (the tape flows, the counter does not),\n`recorded` (the readings on screen came from a file) or `unsupported`\n(the feed declares no counter; a day recorded earlier may still be\nlisted and loaded).",
                 "type": "string"
               }
             },

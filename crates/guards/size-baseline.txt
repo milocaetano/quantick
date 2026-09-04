@@ -94,7 +94,8 @@
 # setting with registration lines only: a `mod`, a field, a call each.
 # Tightened 4 more when the branch merged the feed crate's extraction, which
 # is what pays for `tab.rs`'s re-measurement below; measured 9,263 then.
-crates/app/src/app.rs 9331
+# Tightened 17 more to pay for `pane.rs`'s reset split below; measured 9,263.
+crates/app/src/app.rs 9314
 
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
@@ -160,7 +161,11 @@ crates/app/src/paper_trading.rs 6407
 # context pane is seeded with beside the trades it already was. A sixth bar
 # kind costs the pane what the fifth did; the rule lives in the engine.
 # Paid, with tab.rs and stream.rs below, by tightening app.rs 27.
-crates/app/src/pane.rs 7784
+# Raised 17 more by the same branch, sixth bug pass: `reset_series` splits in
+# two — the plain reset for a new market, which drops the counter readings
+# with the series, and a keeping variant for the same market restarting (a
+# reload, a replay seek). Paid by `app.rs` above.
+crates/app/src/pane.rs 7801
 # Raised for the same branch: the opening block's own arm in `drain_feed`,
 # which is deliberately not the reply path with a flag -- the two differ in
 # the two lines that matter, and a branch inside the reply arm is how a

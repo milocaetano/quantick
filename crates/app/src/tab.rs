@@ -3488,7 +3488,7 @@ impl Tab {
     /// because bars that already closed cannot be reopened.
     pub fn reset_market_state(&mut self) {
         for pane in self.panes_mut() {
-            pane.reset_series();
+            pane.reset_series_keeping_readings();
             // Indicators follow the chart into the empty state; the refill's
             // Backfilled event replays them (replay seek funnels through here,
             // so seeking inherits correct indicator behavior for free).
@@ -3526,7 +3526,6 @@ impl Tab {
         // The simulator flattens at its last mark and says so — a position
         // cannot honestly survive into a rebuilt timeline.
         self.paper.on_timeline_reset();
-        self.reseed_deal_samples();
     }
 
     /// Everything this tab must settle before it is dropped.

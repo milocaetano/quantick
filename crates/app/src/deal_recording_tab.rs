@@ -43,14 +43,6 @@ impl Tab {
         self.retain_deal_samples(&resumed);
     }
 
-    /// After every pane's series was rebuilt from nothing — a feed reload,
-    /// a replay seek — the readings the recorder holds go back in, or the
-    /// morning's bars would be gone while REC still said recording.
-    pub fn reseed_deal_samples(&mut self) {
-        let samples = self.deal_recorder.reload();
-        self.retain_deal_samples(&samples);
-    }
-
     /// Load a recorded day's readings into every pane.
     pub fn load_recorded_day(&mut self, index: usize) {
         let loaded = self.deal_recorder.load_day(index);

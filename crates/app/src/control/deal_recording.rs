@@ -58,8 +58,10 @@ pub(crate) struct DealRecordingInput {
 /// The recorder as the chrome reads it, on the wire.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct DealRecordingSnapshot {
-    /// `off`, `recording`, `stale` (the tape flows, the counter does not) or
-    /// `recorded` (the readings on screen came from a file).
+    /// `off`, `recording`, `stale` (the tape flows, the counter does not),
+    /// `recorded` (the readings on screen came from a file) or `unsupported`
+    /// (the feed declares no counter; a day recorded earlier may still be
+    /// listed and loaded).
     pub state: String,
     /// Where the open file starts, on the tape's clock — the recording's own
     /// "since", resumed or written this run. What the REC button shows.
@@ -151,7 +153,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
             id: CapabilityId::new(SET_CAPABILITY_ID).expect("static capability ID is valid"),
             version: CAPABILITY_VERSION,
             title: "Record the venue's deal counter".to_owned(),
-            description: "Starts or stops writing the session deal counter a MetaTrader B3 bridge stamps on its live ticks, so the tab's trades bars cover the day and a recorded day reopens as the same chart, and loads a recorded day's readings into the tab's panes. Starting resumes today's file when there is one; stopping keeps what was written. The same calls the REC control beside the symbol makes. A tab whose feed has no deal counter answers with no recording and changes nothing.".to_owned(),
+            description: "Starts or stops writing the session deal counter a MetaTrader B3 bridge stamps on its live ticks, so the tab's trades bars cover the day and a recorded day reopens as the same chart, and loads a recorded day's readings into the tab's panes. Starting resumes today's file when there is one; stopping keeps what was written. The same calls the REC control beside the symbol makes. A tab whose feed has no deal counter answers with no recording and changes nothing, unless a day recorded earlier is on disk: then it lists it (state `unsupported`) and `load_day` opens it.".to_owned(),
             module: ModuleId::new(RECOVERY_MODULE_ID).expect("static module ID is valid"),
             input_schema: generated_schema::<DealRecordingInput>(),
             output_schema: generated_schema::<DealRecordingResult>(),
@@ -284,6 +286,7 @@ mod tests {
             (RecState::Recording, "recording"),
             (RecState::Stale, "stale"),
             (RecState::Recorded, "recorded"),
+            (RecState::Unsupported, "unsupported"),
         ] {
             assert_eq!(snapshot(&view(state)).state, word);
         }

@@ -71,6 +71,16 @@ pub const FROM_OPEN_MAX_DEALS: u64 = 1_000;
 const HEADER: &str = "# quantick-deals v1";
 const EXTENSION: &str = "deals";
 
+/// Whether the file's first line ends in a newline. A header the crash cut
+/// short does not, and is nothing to resume from rather than a header to
+/// refuse.
+fn first_line_terminated(path: &Path) -> io::Result<bool> {
+    let mut reader = BufReader::new(File::open(path)?);
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    Ok(line.ends_with('\n'))
+}
+
 /// Where recordings go this run.
 ///
 /// The one-run override first, then the config, then the cockpit home the
@@ -228,7 +238,13 @@ impl Recording {
         // disk full, a lock — and is fresh again, not a day that refuses to
         // open until someone deletes it by hand.
         let len = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
-        let (existing, complete_bytes) = if len > 0 {
+        // A header the crash cut short — no newline after it yet — is a torn
+        // line with nothing before it: the file starts over, as an empty one
+        // does, rather than reading as a bad header for the rest of the day.
+        let torn_header = len > 0 && !first_line_terminated(&path)?;
+        let (existing, complete_bytes) = if torn_header {
+            (Vec::new(), Some(0))
+        } else if len > 0 {
             let file = read_file(&path)?;
             (file.samples, Some(file.complete_bytes))
         } else {
@@ -650,33 +666,6 @@ impl DealRecorder {
             self.enabled = false;
         }
         resumed
-    }
-
-    /// Every reading the panes should hold again after their series was
-    /// rebuilt from scratch — a feed reload, a replay seek: today's file,
-    /// then every recorded day loaded this session.
-    pub fn reload(&mut self) -> Vec<DealSample> {
-        let mut samples = Vec::new();
-        if let Some(recording) = self.recording.as_mut() {
-            if let Err(error) = recording.flush() {
-                self.error = Some(format!("cannot write the recording: {error}"));
-            }
-            if let Ok(file) = read_file(&recording.path) {
-                samples.extend(file.samples);
-            }
-        }
-        let loaded: Vec<PathBuf> = self
-            .days
-            .iter()
-            .filter(|day| self.loaded_days.contains(&day.day))
-            .map(|day| day.path.clone())
-            .collect();
-        for path in loaded {
-            if let Ok(file) = read_file(&path) {
-                samples.extend(file.samples);
-            }
-        }
-        samples
     }
 
     /// Stop recording and flush. The file stays; the day is partial.
@@ -1291,6 +1280,26 @@ mod tests {
     /// A crash in the middle of the header leaves an unterminated first
     /// line: the reader keeps nothing, the writer cuts it away and starts
     /// the day with one whole header, never none.
+    /// A header cut before its fields — `# quantick-de` — is not a bad
+    /// header the day refuses to open on; it is nothing, and the day starts
+    /// over with one whole header.
+    #[test]
+    fn a_header_torn_before_its_fields_starts_the_day_over() {
+        let dir = scratch("torn-prefix");
+        fs::create_dir_all(dir.join("WINV26")).unwrap();
+        let path = dir.join("WINV26").join("2026-09-03.deals");
+        fs::write(&path, "# quantick-de").unwrap();
+        let (mut recording, existing) =
+            Recording::open(&dir, "WINV26", "2026-09-03", -180).unwrap();
+        assert!(existing.is_empty());
+        recording.append(sample(100, 10), 0).unwrap();
+        recording.flush().unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert_eq!(text.matches(HEADER).count(), 1, "{text}");
+        assert!(text.starts_with(HEADER), "{text}");
+        assert_eq!(read_file(&path).unwrap().samples, vec![sample(100, 10)]);
+    }
+
     #[test]
     fn a_torn_header_resumes_with_one_whole_header() {
         let dir = scratch("torn-header");
@@ -1313,24 +1322,6 @@ mod tests {
             "{text}"
         );
         assert_eq!(read_file(&path).unwrap().samples, vec![sample(100, 10)]);
-    }
-
-    /// A feed reload rebuilds every pane from nothing: the recorder hands
-    /// back today's file and every day loaded this session.
-    #[test]
-    fn a_reload_hands_back_todays_file_and_the_loaded_days() {
-        let dir = scratch("reload");
-        let today = 1_788_436_800_000;
-        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
-        rec.set_timezone(-180);
-        rec.set_available(true);
-        rec.start(today);
-        rec.observe(sample(today, 5), today);
-        rec.observe(sample(today + 20, 9), today);
-        let again = rec.reload();
-        assert_eq!(again, vec![sample(today, 5), sample(today + 20, 9)]);
-        rec.stop();
-        assert!(rec.reload().is_empty(), "nothing open, nothing loaded");
     }
 
     #[test]

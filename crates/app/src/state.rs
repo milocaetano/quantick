@@ -410,6 +410,25 @@ pub struct ChartState {
     deal_samples: Vec<DealSample>,
 }
 
+/// Push one print through `builder` and, with the footprint layer on, fold
+/// it into the ladders — unless the builder left it *uncounted*. A deal bar
+/// counts nothing before its first reading: such a print belongs to no bar,
+/// so it belongs to no ladder either, or the ladders drift off the bars they
+/// index by and the footprint series asserts on the first close.
+fn fold_print<B: BarBuilder + ?Sized>(
+    builder: &mut B,
+    footprints: &mut FootprintSeries,
+    footprint_enabled: bool,
+    trade: &Trade,
+) -> Option<Bar> {
+    let uncounted_before = builder.uncounted_trades();
+    let closed = builder.push(trade);
+    if footprint_enabled && builder.uncounted_trades() == uncounted_before {
+        footprints.observe(trade, closed.as_ref());
+    }
+    closed
+}
+
 impl ChartState {
     /// A fresh chart building bars per `spec`.
     #[must_use]
@@ -535,10 +554,12 @@ impl ChartState {
         self.backfill_trade_count = self.trades.len();
         self.backfill_done = true;
         for trade in trades {
-            let closed = self.builder.push(trade);
-            if self.footprint_enabled {
-                self.footprints.observe(trade, closed.as_ref());
-            }
+            let closed = fold_print(
+                &mut *self.builder,
+                &mut self.footprints,
+                self.footprint_enabled,
+                trade,
+            );
             if let Some(bar) = closed {
                 self.bars.push(bar);
             }
@@ -584,10 +605,12 @@ impl ChartState {
     pub fn ingest_live(&mut self, trade: &Trade) {
         self.trades.push(trade.clone());
         self.observe_price(trade.price);
-        let closed = self.builder.push(trade);
-        if self.footprint_enabled {
-            self.footprints.observe(trade, closed.as_ref());
-        }
+        let closed = fold_print(
+            &mut *self.builder,
+            &mut self.footprints,
+            self.footprint_enabled,
+            trade,
+        );
         if let Some(bar) = closed {
             self.bars.push(bar);
         }
@@ -639,10 +662,12 @@ impl ChartState {
             if self.backfill_done && i == self.backfill_trade_count {
                 boundary = Some(bars.len());
             }
-            let closed = builder.push(trade);
-            if self.footprint_enabled {
-                self.footprints.observe(trade, closed.as_ref());
-            }
+            let closed = fold_print(
+                &mut *builder,
+                &mut self.footprints,
+                self.footprint_enabled,
+                trade,
+            );
             if let Some(bar) = closed {
                 bars.push(bar);
             }
@@ -818,9 +843,14 @@ impl ChartState {
         self.bump_series_revision();
         self.footprints.reset(group);
         let mut builder = self.spec.build();
+        // Readings first, as `rebuild` does: a deal bar with no readings
+        // counts every print as uncounted, and the ladders would be empty
+        // under bars that are not.
+        for sample in &self.deal_samples {
+            builder.observe_deals(*sample);
+        }
         for trade in &self.trades {
-            let closed = builder.push(trade);
-            self.footprints.observe(trade, closed.as_ref());
+            fold_print(&mut *builder, &mut self.footprints, true, trade);
         }
     }
 
@@ -1238,6 +1268,41 @@ mod tests {
     /// reading are counted rather than folded into a bar nobody cut.
     /// A series reset — a feed reload, a replay seek — keeps the readings:
     /// the prints replayed afterwards join to them as the first pass did.
+    /// A print a deal bar leaves uncounted belongs to no bar, so it belongs
+    /// to no ladder either: the footprint series stays aligned with the bars
+    /// instead of drifting — and asserting — on the first print before a
+    /// reading. Found by the trader's own workspace, footprint on.
+    #[test]
+    fn uncounted_prints_form_no_footprint_ladder() {
+        let mut s = ChartState::new(BarSpec::Trades(2_000));
+        s.set_footprint_enabled(true);
+        s.ingest_backfill(&[trade(1), trade(2)]);
+        assert_eq!(s.uncounted_trades(), 2);
+        assert!(
+            s.partial_footprint().is_none(),
+            "nothing folds before a reading"
+        );
+        s.observe_deals(DealSample {
+            time_ms: 1_299,
+            session_deals: 3_990,
+        });
+        s.ingest_live(&trade(3));
+        s.observe_deals(DealSample {
+            time_ms: 1_399,
+            session_deals: 4_003,
+        });
+        s.ingest_live(&trade(4));
+        assert_eq!(s.bars().len(), 1);
+        assert_eq!(s.bars()[0].trade_count, 2);
+        assert_eq!(s.bar_footprints().len(), 1);
+        // A refold and a rebuild keep the alignment too.
+        s.set_footprint_group(dec("2"));
+        assert_eq!(s.bar_footprints().len(), 1);
+        s.set_spec(BarSpec::Tick(2));
+        s.set_spec(BarSpec::Trades(2_000));
+        assert_eq!(s.bar_footprints().len(), s.bars().len());
+    }
+
     #[test]
     fn a_series_reset_keeps_the_readings() {
         let mut s = ChartState::new(BarSpec::Trades(2_000));

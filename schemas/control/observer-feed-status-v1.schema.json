@@ -67,7 +67,7 @@
           ]
         },
         "state": {
-          "description": "`off`, `recording`, `stale` (the tape flows, the counter does not) or\n`recorded` (the readings on screen came from a file).",
+          "description": "`off`, `recording`, `stale` (the tape flows, the counter does not),\n`recorded` (the readings on screen came from a file) or `unsupported`\n(the feed declares no counter; a day recorded earlier may still be\nlisted and loaded).",
           "type": "string"
         }
       },
