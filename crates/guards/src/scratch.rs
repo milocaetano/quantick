@@ -55,9 +55,19 @@ const SCRATCH_MODULES: &[&str] = &[
 /// path it mints cannot leak and when the entry goes.
 const ALLOWED: &[&str] = &[];
 
-/// The call this guard hunts for. Written split so the guard's own source
-/// does not match it — the file would otherwise be its own first finding.
-const NEEDLE: &str = concat!("env::", "temp_dir()");
+/// The call this guard hunts for.
+///
+/// The bare call rather than `env::temp_dir()`, because the qualified spelling
+/// is only one of the ways to write it: `use std::env::temp_dir;` and a bare
+/// `temp_dir()`, or `std::env :: temp_dir()`, are the same call and were both
+/// invisible to a needle that insisted on the path. Matching the call itself
+/// costs one rule — no source outside a scratch module may name a function
+/// called `temp_dir` — which is why `chart_layers`'s local helper of that name
+/// was renamed rather than exempted.
+///
+/// Written split so the guard's own source does not match it; the file would
+/// otherwise be its own first finding.
+const NEEDLE: &str = concat!("temp_", "dir(");
 
 fn scan(dir: &Path, root: &Path, violations: &mut Vec<String>) {
     let entries = match fs::read_dir(dir) {
@@ -196,6 +206,41 @@ mod tests {
             "the finding names the file and the line: {}",
             findings[0].line
         );
+    }
+
+    /// The spelling does not save a leak. A qualified call, an imported bare
+    /// one, and a spaced-out path are the same call, and a needle that
+    /// insisted on `env::` saw only the first — so the regression this guard
+    /// exists to prevent could come back by changing an import.
+    #[test]
+    fn every_spelling_of_the_call_is_caught() {
+        let root = crate::tempdir::TempDir::new("scratch-guard-spellings");
+        fs::create_dir_all(root.join("crates/app/src")).expect("scratch dirs are creatable");
+        // Built from `NEEDLE` rather than spelled out: a fixture that names
+        // the call literally makes this file its own first finding.
+        fs::write(
+            root.join("crates/app/src/spellings.rs"),
+            format!(
+                "use std::env::temp_dir;
+                 fn a() {{ let _ = std::env::{NEEDLE}); }}
+                 fn b() {{ let _ = {NEEDLE}); }}
+                 fn c() {{ let _ = std::env :: {NEEDLE}); }}
+"
+            ),
+        )
+        .expect("the source is writable");
+
+        let lines: Vec<String> = check(root.path())
+            .into_iter()
+            .map(|finding| finding.line)
+            .collect();
+        assert_eq!(lines.len(), 3, "one per call, not per import: {lines:#?}");
+        for (index, line) in lines.iter().enumerate() {
+            assert!(
+                line.starts_with(&format!("crates/app/src/spellings.rs:{}:", index + 2)),
+                "the calls are on lines 2, 3 and 4: {line}"
+            );
+        }
     }
 
     /// The edit-time hook and the whole-repo scan answer the same for one

@@ -252,18 +252,24 @@ mod tests {
 
     use super::*;
 
-    fn link(pinned: Option<InstanceId>) -> LocalLink {
-        LocalLink::new(
+    /// The scratch directory comes back with the link: built as a temporary
+    /// it would be dropped — and removed — at the end of this expression,
+    /// leaving the link holding a path whose owner is gone, and anything the
+    /// link wrote there afterwards leaking exactly as before.
+    fn link(pinned: Option<InstanceId>) -> (crate::scratch::ScratchDir, LocalLink) {
+        let directory = crate::scratch::ScratchDir::new("link");
+        let link = LocalLink::new(
             ConnectOptions::observer("test", "0", BTreeSet::new()),
-            Some(crate::scratch::ScratchDir::new("link").path().to_path_buf()),
+            Some(directory.path().to_path_buf()),
             pinned,
-        )
+        );
+        (directory, link)
     }
 
     #[test]
     fn a_pin_wins_and_a_contradicting_id_is_refused() {
         let pinned = InstanceId::from_bytes([1; 16]);
-        let link = link(Some(pinned.clone()));
+        let (_directory, link) = link(Some(pinned.clone()));
         assert_eq!(link.wanted(None).unwrap(), Some(pinned.clone()));
         assert_eq!(link.wanted(Some(&pinned)).unwrap(), Some(pinned));
         let other = InstanceId::from_bytes([2; 16]);
@@ -275,7 +281,7 @@ mod tests {
 
     #[test]
     fn an_empty_directory_lists_nothing_with_a_next_step_and_starts_nothing() {
-        let mut link = link(None);
+        let (_directory, mut link) = link(None);
         let directory = link.directory.clone().unwrap();
         let _ = std::fs::remove_dir_all(&directory);
         let instances = link.instances().unwrap();
