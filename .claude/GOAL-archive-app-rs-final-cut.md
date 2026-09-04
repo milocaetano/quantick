@@ -110,7 +110,7 @@ delegates to the mission are recorded as `S2` and `S3` below.
       *Evidence:* neither name occurs in `app.rs` any more. → PR body.
       *(R5, R8)*
 - [x] **A6** — The replay, history and alarm appliers live in
-      `app/replay_and_history.rs` (511), with `DUPLICATE_OFFSET_BARS`.
+      `app/replay_and_history.rs` (518), with `DUPLICATE_OFFSET_BARS`.
       *Evidence:* the file; the identity check. → PR body. *(R6, R8)*
 - [x] **A7** — `draw_frame` lives in `app/frame.rs` (732), with
       `indicator_preview_area`.
@@ -128,7 +128,9 @@ delegates to the mission are recorded as `S2` and `S3` below.
       → PR body. *(R10, R11)*
 - [x] **A10** — The `app.rs` ceiling is tightened from 5,388 to 1,932; the
       largest new file is `menu_bar.rs` at 778, well under 1,500, so none takes
-      a baseline entry.
+      a baseline entry. The seven come to 3,636 against a fall of 3,456; the
+      180-line difference is the seven headers and import blocks, signed in
+      the baseline.
       *Evidence:* `cargo run -p quantick-guards -- --tighten`; the baseline
       diff. → PR body. *(R13, R18)*
 - [x] **A11** — The size `!budget` falls 55,595 to 52,139, a drop of 3,456
@@ -145,9 +147,11 @@ delegates to the mission are recorded as `S2` and `S3` below.
       `the_generated_indexes_match_the_code_they_describe`; the diff is nine
       files. → PR body. *(R16)*
 - [x] **A14** — Free items travelled with their only users, except
-      `DEMO_VISIBLE_SLOTS` (S5). The names kept reachable are one plain import
-      (`saved_context_intervals`) and twelve `#[cfg(test)]` imports, each
-      listed in the PR body.
+      `DEMO_VISIBLE_SLOTS` (S5). The names kept reachable from `app.rs` are one
+      plain import (`saved_context_intervals`) and twelve `#[cfg(test)]`
+      imports, each listed in the PR body. Everything else a module owns is
+      private to it: the review round put thirteen free items and six methods
+      back to private after the cut had given every moved item `pub(super)`.
       *Evidence:* the import block, quoted. → PR body. *(R15)*
 - [x] **A15** — `app/tests/*.rs` are unchanged, and the `#[test]` count across
       `crates/app` is 1,904 on both `origin/main` and the branch.
@@ -183,10 +187,13 @@ delegates to the mission are recorded as `S2` and `S3` below.
       path each execute the same instructions from the same call sites.
       Visibility prefixes and module boundaries are compile-time only.
       *Evidence:* the identity checks under A9 and A17. → PR body.
-- [ ] **G4** — `arch-review` run over `git diff origin/main...HEAD`, its step 0
-      bug pass included, with every Blocker and Should-fix resolved or deferred
-      with its severity.
-      *Evidence:* the review verdict. → PR body.
+- [x] **G4** — `arch-review` run over `git diff origin/main...HEAD`. Step 0's
+      `code-review` at `low` (the tier's level) returned zero findings, with
+      its own line-multiset check corroborating that no body changed. The shape
+      pass raised three findings, all in text the cut authored — two broken
+      intra-doc links, one overclaiming module doc, and over-wide `pub(super)`
+      — all fixed in commit `a5e5693` rather than deferred. Nothing is open.
+      *Evidence:* the review verdict and that commit. → PR body.
 
 ## Not applicable, and why
 
