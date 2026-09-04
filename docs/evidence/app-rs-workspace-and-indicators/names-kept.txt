@@ -1,0 +1,19 @@
+# R18 - every moved method keeps its name
+
+Taken from the branch diff: every `fn` signature line removed, against every
+one added. A rename would appear as one name in each column.
+
+    method signatures removed ....... 61
+    method signatures added ......... 61
+    removed and never re-added ...... 0
+    added that did not exist before .. 0
+
+Removed and never re-added:
+    (none)
+
+Added that did not exist before:
+    (none)
+
+Both columns empty means no method was renamed, dropped or invented: the
+same set of names exists before and after, at different addresses.
+`moved-methods.txt` then shows, name by name, which file each one landed in.

@@ -1,0 +1,30 @@
+# `git diff --color-moved=zebra`: how to see it, and why the numbers are elsewhere
+
+The mission asked for `git diff --color-moved=zebra` as the proof that this
+branch moves code rather than rewrites it. That view is a *terminal* artifact:
+it says "moved" by painting lines in alternating colours, so captured to a file
+it becomes several thousand lines of ANSI escape sequences that no reviewer can
+read and no diff can compare. It was committed that way once and removed again.
+
+To see it, run it:
+
+    git diff --color-moved=zebra --color-moved-ws=allow-indentation-change \
+        origin/main...HEAD -- crates
+
+The same claim, in a form that can be read and checked, is `move-audit.txt`.
+It takes every line the branch adds, looks it up in the multiset of lines the
+branch removes, and reports what is left over:
+
+    added lines, whole branch ........................ 2274
+    same text removed elsewhere: a verbatim move ..... 1812
+    same text but for a new `pub(super) ` prefix ..... 46
+    blank lines and bare braces (not evidence) ....... 329
+    genuinely new lines .............................. 87
+
+`move-audit.txt` then lists all 87 in full — not a sample. Every one is a module
+doc comment, an import, an `impl QuantickApp {` wrapper, a `mod` line, or prose
+in the size baseline. No moved body is among them.
+
+That is a stronger claim than the coloured view, not a weaker one: zebra
+colouring is a heuristic over a diff window, while the audit is an exact
+multiset match over the whole branch.
