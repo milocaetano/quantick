@@ -44,6 +44,9 @@ the trader's, so it does not need `high`.
 | R20 | `cargo test -p quantick-app` runs the same number of tests. | "runs the same number of tests" |
 | R21 | Respect what is deliberately out of scope: `new_with_workspace`, `adopt_tab`, `arm_strategy_instance`, the pickers and `persist_*`, the constructor's hook reads, `QuantickApp`'s fields, the `eframe::App` impl, and anything a capture could see. | "Out of scope, deliberately" |
 | R22 | **(Purpose)** After this mission `app.rs` is the window's definition and nothing else. | "the file is the window's *definition* … and nothing else" |
+| R23 | The four-check loop is green. Added by the completeness pass: the brief asks for this in its own acceptance criteria, so it is the trader's ask and not only an injected gate. Discharged by `G2`. | "The four-check loop green" |
+| R24 | Read the brief in full before anything else, and build the request ledger from it. Discharged by this ledger and by `S1`. | "Read C:\src\mission-app-rs-final-cut.md in full before anything else and build the request ledger from it" |
+| R25 | Verify each of the brief's twelve evidence-ledger claims before acting on it, rather than trusting it. Discharged by `S1`, `S5` and `S6` — three of the twelve needed correcting. | "verify each before acting" |
 
 ## Decisions taken by the trader
 
@@ -57,7 +60,8 @@ delegates to the mission are recorded as `S2` and `S3` below.
   acting rather than trusting it, as the brief itself instructs. Claims 1, 5,
   6, 7, 8, 10 and 12 were verified against `origin/main` at `de9ee04` before
   work started; the rest were verified as their code was touched. Three
-  corrections were found and are recorded as S5, S6 and A14.
+  corrections were found and are recorded as S5, S6 and A14. This discharges
+  R24 and R25.
 - **S2** — *Wanted to ask, decided instead:* the drawing chrome became its own
   `drawing_chrome_wiring.rs` rather than joining `drawing_input.rs`. The brief
   delegates this ("may instead join"); the name follows the repository's
@@ -179,7 +183,7 @@ delegates to the mission are recorded as `S2` and `S3` below.
       --all-targets` exit 0; `cargo build --workspace` exit 0;
       `cargo test --workspace` exit 0, with 1,899 app tests passed and 4
       ignored.
-      *Evidence:* the four exit codes. → PR body.
+      *Evidence:* the four exit codes. → PR body. *(R23)*
 - [x] **G3** — Performance impact declared: no path changes rate. Every moved
       body is byte-identical, every call site keeps its name and its caller,
       and inherent-method dispatch is static, so the per-frame path
