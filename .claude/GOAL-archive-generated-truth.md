@@ -75,6 +75,15 @@ in the final section.
   state"* banner. *(A9)*
 - **R13** — Do not delete them; they are correctly dated and nothing links to
   them as current. *(A9)*
+- **R22** — **No document outside `history/` states a delivery status the
+  registry contradicts.** Added by the completeness pass of `delivery-review`,
+  which found this ask in the brief's acceptance criteria reaching a criterion
+  (A9) without ever reaching the ledger. It is broader than R12 and R13, which
+  only move files: it is a property over every remaining document, and it is
+  what forced `roadmap.md` to be rewritten to state no delivery status at all
+  and the control-plane README's roadmap paragraph to stop describing an open
+  stack. Numbered 22 rather than inserted, because ledger numbers are stable
+  for the life of a mission. *(A9)*
 
 ### Scope item 6 — the four falsified recipes
 
@@ -231,7 +240,7 @@ in the final section.
       *Evidence:* the file listing before and after, the banner text, and a
       grep over the non-`history/` documents for delivery-status claims with
       each surviving claim checked against the registry.
-      → `.claude/evidence/generated-truth/archaeology.md`. *(R12, R13)*
+      → `.claude/evidence/generated-truth/archaeology.md`. *(R12, R13, R22)*
 - [x] **A10** — The four recipes match the code: the `new-extension` indicator
       row is verified against the last real indicator addition and lists every
       site that addition touched; `CLAUDE.md`'s headless bullet states what is
@@ -384,11 +393,16 @@ Recorded here rather than in the pull request alone, because this file is what
 
 Quoted verbatim and untranslated: this is the marked, attributed quotation
 `CLAUDE.md`'s language rule exempts, and the ledger above must remain checkable
-against the trader's own words rather than against a paraphrase of them. The
-first paragraph is the session invocation; the brief it points to is
-`C:\src\mission-generated-truth.md`, whose *Evidence ledger*, *Scope*,
-*Acceptance criteria*, *Out of scope* and *Housekeeping* sections are the rest
-of the request and are reproduced in this file's ledger above.
+against the trader's own words rather than against a paraphrase of them.
+
+The first block is the session invocation. It points at a brief that lived
+outside the repository, at `C:\src\mission-generated-truth.md`, so the
+operative half of the request — the six scope items and the acceptance
+criteria the ledger was built from — is **reproduced in full below** rather
+than referenced. A checklist whose request can only be read on the machine
+that happened to run the mission is exactly the shape of document this mission
+was sent to abolish, and it would leave every future reviewer of this ledger
+unable to check it against anything.
 
 > medium fix/generated-truth — leia C:\src\mission-generated-truth.md por
 > inteiro antes de qualquer outra coisa: é o briefing completo desta missão,
@@ -407,11 +421,57 @@ And from the brief itself, the objective sentence it asks the mission to carry:
 > them, which is why the read contracts cannot drift) to the three indexes
 > where it was never applied.
 
-## Out of scope, from the brief
+### The brief's operative sections, verbatim
 
-- Any `pane.rs` or `crates/app` decomposition.
-- Adding the `crates/app` library target and moving its tests out of the
-  single-binary loop.
-- Narrowing `quantick_describe`'s response size.
-- Deleting the `GOAL-archive-*.md` files or the evidence directories.
-- Any LLM-judged or nondeterministic eval gating a pull request.
+#### Scope
+
+1. **Invert the precedence rule.** In `docs/control-plane/README.md` §Precedence: code
+   is authoritative for *what is registered*; the control contract stays
+   authoritative for *wire rules*. Reconcile `docs/README.md:6-8`. This is the line
+   that turns every other drift below from a nuisance into active damage.
+2. **Generate `capability-inventory.md` from the registry.** Add a dump path — a
+   `quantick-mcp` subcommand, or an `examples/` binary in the shape of
+   `crates/control/examples/export_schemas.rs` — emitting registered IDs, module,
+   permissions and version. Commit the generated table.
+3. **Guard the parity.** A new module in `crates/guards/` — zero dependencies, and
+   the ratchet machinery in `ratchet.rs` is already the right shape — that fails
+   when the committed generated table and the registry diverge, and when a
+   `QUANTICK_*` read in `crates/app/src` has no row in the hook registry or vice
+   versa, with a signed allowlist for non-UI config vars.
+4. **Make the hook registry derived, not authored.** A `HookSpec` declaration at each
+   hook's own definition site (a registration line, per the trunk rule); regenerate
+   the markdown from it; log `UNKNOWN_HOOK` at startup for any `QUANTICK_*` in the
+   environment matching no spec, so a dead hook fails loudly instead of presenting
+   as "the surface did not open".
+5. **Relocate the archaeology.** Move `roadmap.md` §2-§5 and the six
+   `pr*-evidence.md` files under `docs/control-plane/history/` with a one-line
+   "archaeology, not current state" banner. Do not delete them — they are correctly
+   dated and nothing links to them as current. The damage is confined to the two
+   documents that claim currency.
+6. **Fix the four falsified recipes:** the indicator docking row in `new-extension`,
+   the feeds clause in `CLAUDE.md`'s headless bullet, the `harness.rs` ownership
+   claim at `ui-harness/SKILL.md:47-50`, and the three stale `-D warnings` lines.
+
+#### Acceptance criteria
+
+- Documented-capability ↔ registered-capability delta is 0, enforced by
+  `cargo test -p quantick-guards`, which must stay near one second and add no
+  dependency to `crates/guards/Cargo.toml`.
+- Hand-editing either generated file reddens the guard.
+- The dead hook and the nine undocumented ones resolve to zero discrepancies; an
+  unknown `QUANTICK_*` in the environment produces a visible `UNKNOWN_HOOK` line,
+  covered by a test.
+- No document outside `history/` states a delivery status the registry contradicts.
+- The indicator docking row is verified against the last real indicator addition and
+  lists every site it touched.
+- One clippy command across `CLAUDE.md`, `CONTRIBUTING.md` and `AGENTS.md`.
+- The four-check loop plus `cargo test -p quantick-guards` green.
+
+#### Out of scope, deliberately
+
+- Any `pane.rs` or `crates/app` decomposition. Real debt, different mission.
+- Adding the `crates/app` library target and moving its tests out of the 3m15s
+  single-binary loop. That is the recommended *next* mission, not this one.
+- Narrowing `quantick_describe`'s 250KB response. Third priority, its own mission.
+- Deleting the 69 `GOAL-archive-*.md` files or the evidence directories.
+- Any LLM-judged or nondeterministic eval gating a PR.
