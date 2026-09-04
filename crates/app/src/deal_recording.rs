@@ -493,9 +493,15 @@ pub fn scan_days(dir: &Path, symbol: &str, cache: &mut DayCache) -> Rc<[Recorded
 /// The recorder for one asset: what it is doing, and what it wrote.
 #[derive(Debug)]
 pub struct DealRecorder {
+    /// The feed this recorder was built for; see [`Self::is_for`].
+    feed_id: String,
     symbol: String,
     dir: PathBuf,
     tz_minutes: i32,
+    /// The display offset the open file's day was named in, kept for as
+    /// long as that file is open: a display timezone changed mid-session
+    /// must not rotate a running recording into a second file.
+    file_tz_minutes: i32,
     /// The feed says its prints come with a deal counter.
     available: bool,
     /// Start on the first frame the feed can count, unless already decided.
@@ -541,9 +547,11 @@ impl DealRecorder {
         let symbol = symbol.into();
         let days = scan_days(&dir, &symbol, &mut day_cache);
         Self {
+            feed_id: String::new(),
             symbol,
             dir,
             tz_minutes: 0,
+            file_tz_minutes: 0,
             available: false,
             default_on,
             auto_started: false,
@@ -579,8 +587,17 @@ impl DealRecorder {
     /// runs every frame so a restored tab, a market switch and a fresh tab
     /// all end up with a recorder for the market they stream.
     #[must_use]
-    pub fn is_for(&self, symbol: &str) -> bool {
-        self.configured && self.symbol == symbol
+    pub fn is_for(&self, feed_id: &str, symbol: &str) -> bool {
+        self.configured && self.feed_id == feed_id && self.symbol == symbol
+    }
+
+    /// Name the feed this recorder serves. A tab that switches feed under
+    /// the same symbol gets a new recorder: the default and the counter are
+    /// the feed's, and two feeds must not append to one file.
+    #[must_use]
+    pub fn for_feed(mut self, feed_id: impl Into<String>) -> Self {
+        self.feed_id = feed_id.into();
+        self
     }
 
     /// The display timezone the day names and the readouts use.
@@ -620,7 +637,9 @@ impl DealRecorder {
         }
         self.enabled = true;
         self.error = None;
-        let day = day_of(now_ms, self.tz_minutes);
+        // The tape's day when a reading is in hand, the clock's only before
+        // the first one: a file is named for the day its readings belong to.
+        let day = day_of(self.latest.map_or(now_ms, |s| s.time_ms), self.tz_minutes);
         let resumed = self.open_day(&day);
         self.recording_since_ms = resumed.first().map(|s| s.time_ms);
         if self.recording.is_none() {
@@ -672,10 +691,11 @@ impl DealRecorder {
         self.close_recording();
         match Recording::open(&self.dir, &self.symbol, day, self.tz_minutes) {
             Ok((recording, existing)) => {
+                // A resumed day is the recording, not a loaded one: its
+                // readings reach the panes, and a later Stop leaves the chart
+                // counting live rather than "from a recording".
                 self.recording = Some(recording);
-                if !existing.is_empty() && !self.loaded_days.iter().any(|d| d == day) {
-                    self.loaded_days.push(day.to_owned());
-                }
+                self.file_tz_minutes = self.tz_minutes;
                 existing
             }
             Err(error) => {
@@ -701,7 +721,15 @@ impl DealRecorder {
         if !self.enabled {
             return;
         }
-        let day = day_of(sample.time_ms, self.tz_minutes);
+        // Judged in the open file's own offset while one is open, so a
+        // display timezone changed mid-session names the *next* day's file
+        // and never rotates this one.
+        let tz_minutes = if self.recording.is_some() {
+            self.file_tz_minutes
+        } else {
+            self.tz_minutes
+        };
+        let day = day_of(sample.time_ms, tz_minutes);
         if self.recording.as_ref().is_none_or(|r| r.day != day) {
             // Midnight in the display timezone: the day's own file, opened
             // now. An open that fails turns recording off with its reason,
@@ -846,13 +874,16 @@ impl RecordingView {
     /// Whether the feed offers a REC control at all.
     #[must_use]
     pub fn supported(&self) -> bool {
-        self.state != RecState::Unsupported
+        // A recorded day on disk is reachable with no bridge connected —
+        // a weekend, the pre-open — so the control that lists it is drawn.
+        self.state != RecState::Unsupported || !self.days.is_empty()
     }
 
     /// Whether a `trades` pane has anything to cut on right now.
     #[must_use]
     pub fn deal_count_available(&self) -> bool {
-        self.reading.is_some() || !self.loaded_days.is_empty()
+        // A resumed file's readings are on the chart before a live reading.
+        self.reading.is_some() || self.since_ms.is_some() || !self.loaded_days.is_empty()
     }
 
     /// The button's own text: `REC`, `REC 2 301 455 · 09:00:00`,
@@ -968,6 +999,97 @@ mod tests {
             time_ms,
             session_deals,
         }
+    }
+
+    /// 2026-09-04 02:00:00 UTC: 23:00:00 on the 3rd in UTC-3.
+    const LATE_EVENING_BRT_MS: i64 = 1_788_487_200_000;
+
+    /// Two feeds can list one symbol; a tab that switches feed under it gets
+    /// a new recorder rather than appending the second feed's counter to the
+    /// first one's file.
+    #[test]
+    fn a_recorder_is_for_one_feed_and_one_symbol() {
+        let dir = scratch("feed-key");
+        let rec =
+            DealRecorder::new("WINV26", dir.path().to_path_buf(), false).for_feed("metatrader-b3");
+        assert!(rec.is_for("metatrader-b3", "WINV26"));
+        assert!(!rec.is_for("metatrader-tickmill", "WINV26"));
+        assert!(!rec.is_for("metatrader-b3", "WINQ26"));
+        assert!(!DealRecorder::placeholder("WINV26").is_for("", "WINV26"));
+    }
+
+    /// A restart resumes today's file; Stop afterwards is Off — the chart
+    /// keeps counting live — never "recorded", which says nothing is.
+    #[test]
+    fn a_stop_after_a_resume_is_off_not_recorded() {
+        let dir = scratch("resume-stop");
+        let day = day_of(LATE_EVENING_BRT_MS, -180);
+        let (mut earlier, _) = Recording::open(dir.path(), "WINV26", &day, -180).unwrap();
+        earlier.append(sample(LATE_EVENING_BRT_MS, 10), 0).unwrap();
+        earlier.flush().unwrap();
+        drop(earlier);
+
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
+        rec.set_timezone(-180);
+        rec.set_available(true);
+        let resumed = rec.start(LATE_EVENING_BRT_MS + 60_000);
+        assert_eq!(resumed, vec![sample(LATE_EVENING_BRT_MS, 10)]);
+        assert!(
+            rec.view(None).loaded_days.is_empty(),
+            "a resumed day is not a loaded one"
+        );
+        assert!(
+            rec.view(None).deal_count_available(),
+            "its readings are on the chart"
+        );
+        rec.stop();
+        assert_eq!(rec.state(None), RecState::Off);
+    }
+
+    /// The display timezone names the day's file when it opens; changing it
+    /// while the file is open does not rotate the recording into a second
+    /// file for the same session.
+    #[test]
+    fn a_timezone_change_mid_session_keeps_the_days_file() {
+        let dir = scratch("tz-change");
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
+        rec.set_timezone(-180);
+        rec.set_available(true);
+        rec.start(LATE_EVENING_BRT_MS);
+        rec.observe(sample(LATE_EVENING_BRT_MS, 10), LATE_EVENING_BRT_MS);
+        // The trader switches the view to UTC, where it is already the 4th.
+        rec.set_timezone(0);
+        rec.observe(
+            sample(LATE_EVENING_BRT_MS + 1_000, 12),
+            LATE_EVENING_BRT_MS + 1_000,
+        );
+        let view = rec.view(None);
+        let name = view.path.as_ref().and_then(|p| p.file_name()).unwrap();
+        assert_eq!(name.to_string_lossy(), "2026-09-03.deals");
+        assert_eq!(view.written, 2, "both readings went to the one file");
+    }
+
+    /// With no bridge connected — a weekend, the pre-open — a day recorded
+    /// earlier is still listed and still opens.
+    #[test]
+    fn a_recorded_day_opens_with_no_counter_declared() {
+        let dir = scratch("offline-day");
+        let (mut earlier, _) = Recording::open(dir.path(), "WINV26", "2026-09-03", -180).unwrap();
+        earlier.append(sample(1_788_436_800_000, 10), 0).unwrap();
+        earlier.flush().unwrap();
+        drop(earlier);
+
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), true);
+        rec.set_available(false);
+        let view = rec.view(None);
+        assert_eq!(view.state, RecState::Unsupported);
+        assert!(view.supported(), "the day on disk keeps the control drawn");
+        assert_eq!(view.days.len(), 1);
+        assert!(!rec.auto_start_due(), "nothing to record without a counter");
+
+        let loaded = rec.load_day(0);
+        assert_eq!(loaded, vec![sample(1_788_436_800_000, 10)]);
+        assert_eq!(rec.state(None), RecState::Recorded);
     }
 
     #[test]

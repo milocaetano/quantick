@@ -12,7 +12,7 @@
 //! MetaTrader exposes no deal count per tick, only the session's running
 //! total (`SYMBOL_SESSION_DEALS`). The bridge samples it every poll and the
 //! feed hands each reading here as a [`DealSample`]. A print is joined to the
-//! latest sample **at or before its own timestamp** — the counter as the
+//! latest sample **strictly before its own timestamp** — the counter as the
 //! venue had it when that print was read — and a bar closes on the first
 //! print whose reading reaches the next multiple of `N`.
 //!
@@ -34,12 +34,22 @@
 //!
 //! # Between readings
 //!
-//! A print is joined to the newest reading at or before it, however far
+//! A print is joined to the newest reading strictly before it, however far
 //! back that reading is. That is the one rule, and it is the same whether
 //! the readings arrive just ahead of their prints (the live feed) or all at
 //! once before the prints are replayed (a rebuild): the join looks only at
-//! what is at or before the print, so the two orders cut identical bars —
-//! the property a chart and its rebuilt twin are held to.
+//! what is before the print, so the two orders cut identical bars — the
+//! property a chart and its rebuilt twin are held to.
+//!
+//! *Strictly* before, never at the print's own millisecond, because two
+//! readings can share one: ticks do across poll rounds, so a round's reading
+//! is stamped at the millisecond the previous round's last prints carry.
+//! Live, those prints were placed before the later reading existed; a
+//! rebuild holds both readings when it places them. A join that admitted a
+//! reading at the print's own millisecond would put the two orders one
+//! reading apart there. Excluding it costs one print of resolution — the
+//! first print of a round joins the round before — inside the one-poll
+//! tolerance the boundary already carries.
 //!
 //! The price of one rule is that a stretch with no readings — the
 //! application was down, the day's file has a hole — folds into the bar
@@ -143,12 +153,12 @@ impl DealBarBuilder {
         (reading / self.n).saturating_add(1).saturating_mul(self.n)
     }
 
-    /// Join every pending sample at or before `time_ms` into the reading.
-    /// Returns a closed bar when a rollover ended the forming one.
+    /// Join every pending sample strictly before `time_ms` into the
+    /// reading. Returns a closed bar when a rollover ended the forming one.
     fn advance_to(&mut self, time_ms: i64) -> Option<Bar> {
         let mut closed = None;
         while let Some(sample) = self.pending.front().copied() {
-            if sample.time_ms > time_ms {
+            if sample.time_ms >= time_ms {
                 break;
             }
             self.pending.pop_front();
@@ -251,15 +261,17 @@ mod tests {
     }
 
     /// The fixture every test below reads: a chart that connects with the
-    /// counter at 1 990, deals per bar 2 000. Prints at 50 and 60 predate the
-    /// first sample; the poll at 300 crosses 2 000; the poll at 900 jumps
-    /// clean over 4 000.
+    /// counter at 1 990, deals per bar 2 000. Each reading is taken a
+    /// millisecond ahead of the prints it stamps, as the live feed sends it.
+    /// Prints at 50 and 60 predate the first reading; the reading at 299
+    /// crosses 2 000 for the print at 300; the one at 899 jumps clean over
+    /// 4 000.
     fn fixture() -> (Vec<DealSample>, Vec<Trade>) {
         let samples = vec![
-            sample(100, 1_990),
-            sample(300, 2_003),
-            sample(500, 2_010),
-            sample(900, 4_100),
+            sample(99, 1_990),
+            sample(299, 2_003),
+            sample(499, 2_010),
+            sample(899, 4_100),
         ];
         let trades = vec![
             trade(1, 50, "100"),
@@ -373,9 +385,9 @@ mod tests {
         // Connected with the counter at 2 300 411: the first bar must close
         // at 2 302 000, not 2 000 deals after connecting.
         let mut b = DealBarBuilder::new(2_000);
-        b.observe_deals(sample(10, 2_300_411));
-        b.observe_deals(sample(20, 2_301_999));
-        b.observe_deals(sample(30, 2_302_000));
+        b.observe_deals(sample(9, 2_300_411));
+        b.observe_deals(sample(19, 2_301_999));
+        b.observe_deals(sample(29, 2_302_000));
         assert!(b.push(&trade(1, 10, "100")).is_none());
         assert!(b.push(&trade(2, 20, "100")).is_none());
         let bar = b
@@ -392,11 +404,11 @@ mod tests {
     #[test]
     fn a_stretch_without_readings_cuts_the_same_bars_live_and_rebuilt() {
         let samples = vec![
-            sample(100, 5_000_400),
+            sample(99, 5_000_400),
             // Nothing for forty seconds, then the counter has moved past the
             // next boundary.
-            sample(40_100, 5_001_005),
-            sample(40_200, 5_001_009),
+            sample(40_099, 5_001_005),
+            sample(40_199, 5_001_009),
         ];
         let trades: Vec<Trade> = [100, 200, 10_000, 30_000, 40_100, 40_150, 40_200]
             .into_iter()
@@ -426,10 +438,46 @@ mod tests {
         assert_eq!(rebuilt_builder.uncounted_trades(), 0);
     }
 
+    /// Two readings in one millisecond — a round's reading stamped at the
+    /// millisecond the previous round's last prints carry — with prints on
+    /// both sides of the later one. Live, the earlier prints were placed
+    /// before that reading existed; a rebuild holds both when it places
+    /// them. The strict join makes the two orders agree.
+    #[test]
+    fn two_readings_in_one_millisecond_cut_the_same_bars_live_and_rebuilt() {
+        let samples = vec![sample(50, 1_990), sample(100, 1_999), sample(100, 2_001)];
+        let trades = vec![
+            trade(1, 100, "100"),
+            trade(2, 100, "101"),
+            trade(3, 101, "102"),
+        ];
+        let (_, rebuilt) = run(&samples, &trades, 2_000);
+
+        // The live order: the first reading at 100 ahead of the first print,
+        // the second between the two prints that share the millisecond.
+        let mut live = DealBarBuilder::new(2_000);
+        live.observe_deals(samples[0]);
+        live.observe_deals(samples[1]);
+        let mut cut = Vec::new();
+        cut.extend(live.push(&trades[0]));
+        live.observe_deals(samples[2]);
+        cut.extend(live.push(&trades[1]));
+        cut.extend(live.push(&trades[2]));
+
+        assert_eq!(cut, rebuilt);
+        assert_eq!(
+            rebuilt.len(),
+            1,
+            "the print at 101 sees 2 001 and closes 2 000"
+        );
+        assert_eq!(rebuilt[0].trade_count, 3);
+        assert_eq!(live.uncounted_trades(), 0);
+    }
+
     #[test]
     fn a_sample_going_back_in_time_is_ignored() {
         let mut b = DealBarBuilder::new(5);
-        b.observe_deals(sample(100, 3));
+        b.observe_deals(sample(99, 3));
         b.observe_deals(sample(50, 9)); // late and out of order: dropped
         assert!(b.push(&trade(1, 100, "100")).is_none());
         assert_eq!(b.reading(), Some(3));
@@ -438,11 +486,11 @@ mod tests {
     #[test]
     fn a_counter_that_restarts_closes_the_forming_bar_and_counts_on() {
         let mut b = DealBarBuilder::new(1_000);
-        b.observe_deals(sample(100, 5_000_400));
+        b.observe_deals(sample(99, 5_000_400));
         assert!(b.push(&trade(1, 100, "100")).is_none());
         assert!(b.push(&trade(2, 200, "101")).is_none());
         // Next session: the venue counts from 3 again.
-        b.observe_deals(sample(1_000, 3));
+        b.observe_deals(sample(999, 3));
         let ended = b
             .push(&trade(3, 1_000, "200"))
             .expect("the old session's bar ends");
@@ -455,7 +503,7 @@ mod tests {
             .expect("the print at 1 000 opens the new session's bar");
         assert_eq!((forming.open_time, forming.trade_count), (1_000, 1));
         assert_eq!(b.reading(), Some(3));
-        b.observe_deals(sample(2_000, 1_000));
+        b.observe_deals(sample(1_999, 1_000));
         assert!(
             b.push(&trade(4, 2_000, "201")).is_some(),
             "closes at the new session's 1 000"

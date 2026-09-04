@@ -34,7 +34,8 @@ impl QuantickApp {
             deal_recording::resolve_dir(self.config.deals_dir()),
             default_on,
             day_cache,
-        );
+        )
+        .for_feed(feed_id);
         recorder.set_timezone(self.tz.minutes());
         recorder
     }
@@ -51,7 +52,7 @@ impl QuantickApp {
                 // The display timezone names the day files; it follows the
                 // trader's setting rather than the one at construction.
                 tab.deal_recorder.set_timezone(tz_minutes);
-                if tab.deal_recorder.is_for(&tab.active.1) {
+                if tab.deal_recorder.is_for(&tab.active.0, &tab.active.1) {
                     continue;
                 }
                 tab.active.clone()

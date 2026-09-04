@@ -3176,7 +3176,7 @@ impl ChartPane {
         // and its seam was trimmed against a first bar that is gone. A replay
         // never has one today; the invariant must not depend on that.
         self.history_prefix.clear();
-        self.state = ChartState::new(self.current_spec());
+        self.state.reset_series(self.current_spec());
         self.bump_pagination_revision();
         self.viewport = Viewport::new();
         // Framing dies with the series; orientation is the trader's standing

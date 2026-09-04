@@ -109,9 +109,13 @@ impl Tab {
     }
 
     /// The chart-corner chip for the flow pane, when it has something to say.
+    ///
+    /// Straight from the recorder, not through [`Self::deal_recording_view`]:
+    /// the one chip a feed with no counter owes — a `trades` pane with
+    /// nothing to cut on — is exactly the case that view withholds.
     #[must_use]
     pub fn deal_chip(&self) -> Option<DealChip> {
-        let view = self.deal_recording_view()?;
+        let view = self.deal_recorder.view(self.latest_trade_ms);
         let pane = &self.flow_pane;
         deal_recording_ui::chip_for(
             &view,

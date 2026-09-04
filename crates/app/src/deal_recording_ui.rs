@@ -222,7 +222,14 @@ fn draw_popover(
                     ui.close_menu();
                 }
             }
-            RecState::Unsupported => {}
+            RecState::Unsupported => {
+                ui.label(
+                    egui::RichText::new("no deal counter on this source yet")
+                        .small()
+                        .color(theme::TEXT_MUTED),
+                )
+                .on_hover_text("a recorded day still opens from the list below");
+            }
         }
         if pane_kind != BarKind::Trades
             && view.deal_count_available()
@@ -258,6 +265,7 @@ pub fn draw_days(
 ) {
     for (index, day) in view.days.iter().enumerate() {
         let loaded = view.loaded_days.contains(&day.day);
+        let recording_now = view.path.as_deref() == Some(day.path.as_path());
         ui.horizontal(|ui| {
             let text = format!(
                 "{}  {}  {}",
@@ -265,15 +273,19 @@ pub fn draw_days(
                 day.coverage(view.tz_minutes),
                 day.label(view.tz_minutes)
             );
-            let label = egui::RichText::new(text)
-                .monospace()
-                .small()
-                .color(if loaded {
-                    theme::TEXT_PRIMARY
-                } else {
-                    theme::TEXT_MUTED
-                });
-            if loaded {
+            let label =
+                egui::RichText::new(text)
+                    .monospace()
+                    .small()
+                    .color(if loaded || recording_now {
+                        theme::TEXT_PRIMARY
+                    } else {
+                        theme::TEXT_MUTED
+                    });
+            if recording_now {
+                ui.label(label)
+                    .on_hover_text("recording: today's file, its readings are on the chart");
+            } else if loaded {
                 ui.label(label)
                     .on_hover_text("loaded: its trades bars are on the chart");
             } else if ui
@@ -304,17 +316,6 @@ pub fn chip_for(
     reading_in_pane: bool,
     uncounted_prints: u64,
 ) -> Option<DealChip> {
-    if !view.supported() && view.loaded_days.is_empty() {
-        // A trades pane on a feed with no counter — a spec restored from a
-        // workspace or a config before the hello, or a quoted instrument —
-        // is a blank chart unless something says why.
-        return (pane_kind == BarKind::Trades).then(|| DealChip {
-            text: "no deal count · this source has no deal counter".to_owned(),
-            hover: "trades bars need MetaTrader B3's session deal counter; this feed declares none"
-                .to_owned(),
-            tone: RecState::Unsupported,
-        });
-    }
     let since = view
         .since_ms
         .map(|ms| fmt_hms(ms, view.tz_minutes))
@@ -347,7 +348,16 @@ pub fn chip_for(
             if pane_kind != BarKind::Trades {
                 return None;
             }
-            if view.reading.is_some() {
+            if view.state == RecState::Unsupported {
+                // A trades pane on a feed with no counter — a spec restored
+                // from a workspace or a config before the hello, or a quoted
+                // instrument — is a blank chart unless something says why.
+                (
+                    "no deal count · this source has no deal counter".to_owned(),
+                    "trades bars need MetaTrader B3's session deal counter; this feed declares none"
+                        .to_owned(),
+                )
+            } else if view.reading.is_some() {
                 // Readings arrive and cut bars whether or not REC is on;
                 // what REC adds is the file. Say exactly that.
                 (

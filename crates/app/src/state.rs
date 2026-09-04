@@ -487,6 +487,25 @@ impl ChartState {
         self.deal_samples.dedup();
     }
 
+    /// Start the series over under `spec`, keeping the counter readings.
+    ///
+    /// They are the venue's history, not this series': a feed reload or a
+    /// replay seek replays prints that join to the same readings the first
+    /// pass joined to, and dropping them would leave the morning uncounted
+    /// wherever nothing on disk holds them — REC off, or a day not yet
+    /// flushed.
+    pub fn reset_series(&mut self, spec: BarSpec) {
+        let readings = std::mem::take(&mut self.deal_samples);
+        *self = Self::new(spec);
+        // Into the fresh builder too, ahead of the prints that will come:
+        // the retained series is what a rebuild replays, and the live path
+        // feeds the builder as each reading arrives.
+        for sample in &readings {
+            self.builder.observe_deals(*sample);
+        }
+        self.deal_samples = readings;
+    }
+
     /// Cut the bars again from the retained prints and readings — after a
     /// recorded day's readings were loaded under prints already folded.
     pub fn rebuild_bars(&mut self) {
@@ -608,7 +627,7 @@ impl ChartState {
     fn rebuild(&mut self) {
         let mut builder = self.spec.build();
         // Readings first, prints after: the builder joins each print to the
-        // newest reading at or before it, so the order between the two
+        // newest reading strictly before it, so the order between the two
         // streams is immaterial as long as every reading is in hand.
         for sample in &self.deal_samples {
             builder.observe_deals(*sample);
@@ -1202,33 +1221,59 @@ mod tests {
             .collect();
         assert_eq!(tail, [(1_600, 12), (1_600, 14)]);
         // Prints at 1100..1500 (see `trade`): after a rebuild every one is
-        // counted, and the five readings cut four bars (at 2, 4, 6 and 8)
-        // plus a partial.
+        // counted, and the readings cut three bars (at 2, 4 and 6) plus a
+        // partial — the reading at 1 500 joins the print after it, never
+        // the one at its own millisecond.
         for id in 1..=5 {
             s.ingest_live(&trade(id));
         }
         s.rebuild_bars();
         assert_eq!(s.uncounted_trades(), 0);
-        assert_eq!(s.bars().len(), 4, "{:?}", s.bars());
+        assert_eq!(s.bars().len(), 3, "{:?}", s.bars());
     }
 
     /// Recording belongs to the asset: the readings a tab retains survive
     /// every switch of the bar rule, so `tick → trades → tick → trades`
     /// cuts the same deal bars each time, and the prints before the first
     /// reading are counted rather than folded into a bar nobody cut.
+    /// A series reset — a feed reload, a replay seek — keeps the readings:
+    /// the prints replayed afterwards join to them as the first pass did.
+    #[test]
+    fn a_series_reset_keeps_the_readings() {
+        let mut s = ChartState::new(BarSpec::Trades(2_000));
+        s.observe_deals(DealSample {
+            time_ms: 1_000,
+            session_deals: 3_990,
+        });
+        s.observe_deals(DealSample {
+            time_ms: 1_150,
+            session_deals: 4_003,
+        });
+        s.ingest_live(&trade(1));
+        s.ingest_live(&trade(2));
+        assert_eq!(s.bars().len(), 1, "the print at 1 200 sees 4 003");
+
+        s.reset_series(BarSpec::Trades(2_000));
+        assert!(s.bars().is_empty(), "the series is gone");
+        assert_eq!(s.deal_samples().len(), 2, "the readings are not");
+        s.ingest_backfill(&[trade(1), trade(2)]);
+        assert_eq!(s.bars().len(), 1, "the replayed prints cut the same bar");
+    }
+
     #[test]
     fn deal_readings_survive_a_switch_of_the_bar_rule() {
         let mut s = ChartState::new(BarSpec::Tick(2));
-        // Prints at 1100, 1200, ... (see `trade`); readings from 1300 on.
+        // Prints at 1100, 1200, ... (see `trade`); readings just ahead of
+        // the prints at 1300 and 1500, as the feed sends them.
         s.ingest_backfill(&[trade(1), trade(2)]);
         s.observe_deals(DealSample {
-            time_ms: 1300,
+            time_ms: 1299,
             session_deals: 3_990,
         });
         s.ingest_live(&trade(3));
         s.ingest_live(&trade(4));
         s.observe_deals(DealSample {
-            time_ms: 1500,
+            time_ms: 1499,
             session_deals: 4_003,
         });
         s.ingest_live(&trade(5));

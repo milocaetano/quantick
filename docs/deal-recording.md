@@ -40,7 +40,7 @@ selector can name — and the config loader refuses `trades:N` and
 - **Live, yes.** The counter is a running total the terminal keeps; the bridge
   reads it after each pump round, so it is at or past every print it stamps.
   The feed keeps one sample per change (`DealSampler`), and the engine joins
-  each print to the newest sample at or before it (`DealBarBuilder`). A bar
+  each print to the newest sample strictly before it (`DealBarBuilder`). A bar
   closes on the first print whose reading reaches the next multiple of N.
 - **Aligned with ProfitChart.** Bars are the session's multiples of N, never
   "N deals since the chart connected": a chart that connects at reading
@@ -51,7 +51,7 @@ selector can name — and the config loader refuses `trades:N` and
 - **Backwards, no.** MetaTrader stores only the folded ticks. Prints before the
   first reading form no trades bar; the chart says how many they are, and
   never guesses.
-- **One join rule.** A print is joined to the newest reading at or before
+- **One join rule.** A print is joined to the newest reading strictly before
   it, however far back — the same whether readings arrive just ahead of
   their prints (live) or all at once before a rebuild, so a chart and its
   rebuilt twin cut identical bars. A stretch with no readings (quantick was
@@ -99,7 +99,9 @@ encoded; see `crates/app/src/deal_recording.rs`). The directory is
 | open another B3 symbol | it has its own REC and its own files |
 | open a Binance tab | no `trades`, no REC |
 | close quantick at 14:00 and reopen at 14:20 | today's file is resumed; the 20 minutes without readings fold into the bar that was forming at 14:00, which closes on the first reading after 14:20 (see *One join rule*) |
-| press Reload on the feed | every pane is rebuilt from the new session's backfill, and the recorder hands its readings back to them — today's file and every loaded day |
+| press Reload on the feed | every pane is rebuilt from the new session's backfill; the readings it held stay with it, and the recorder hands back today's file and every loaded day |
+| change the display timezone while recording | the open file keeps the day it was named for (its header's `tz_minutes`); the new offset names the next day's file |
+| open the tab with no bridge connected | a day recorded earlier is still listed under REC and in the history menu, and still opens; nothing records until a bridge declares a counter |
 | press *Stop recording* | the file closes as partial; the day reopens up to where it stopped |
 | open the history menu | the recorded days are listed with their coverage; picking one loads its readings, and the tape paged back to that day cuts as trades bars |
 | ask by script | `feed.status` carries `deal_recording`; `feed.deal_recording.set` starts or stops it; `trades:2000` is a config spec like `tick:2000`, refused on a feed that is not MetaTrader |
