@@ -1,10 +1,19 @@
-//! The dependency direction `CLAUDE.md` states, checked against the
-//! manifests.
+//! What the crate manifests are required to say, checked against them.
 //!
-//! That line is the contract a reviewer cites to call a reverse edge a
-//! blocker, and nothing failed when it stopped matching the workspace: it
-//! shipped claiming `feed-* → pine`, an edge that must never exist. The same
-//! drift habit `dialect_doc` exists to break, applied to the crate graph.
+//! Two rules live here, and both guard against drift nobody notices.
+//!
+//! The dependency direction `CLAUDE.md` states. That line is the contract a
+//! reviewer cites to call a reverse edge a blocker, and nothing failed when it
+//! stopped matching the workspace: it shipped claiming `feed-* → pine`, an
+//! edge that must never exist. The same drift habit `dialect_doc` exists to
+//! break, applied to the crate graph.
+//!
+//! And where a third-party version may be written down — in
+//! `[workspace.dependencies]` in the root manifest, inherited from there, so
+//! that a version and its feature set are stated once. Nothing failed when
+//! `tokio` was declared in seven places with four different feature sets
+//! either. It simply cost a reader all seven openings to learn whether they
+//! agreed.
 
 use std::path::{Path, PathBuf};
 
@@ -159,5 +168,99 @@ fn claude_md_lists_every_crate() {
     assert!(
         missing.is_empty(),
         "crates absent from CLAUDE.md's architecture list: {missing:?}"
+    );
+}
+
+/// Every crate manifest, paired with its directory name.
+fn crate_manifests() -> Vec<(String, String)> {
+    let root = workspace_root().join("crates");
+    let mut manifests = Vec::new();
+    for entry in std::fs::read_dir(&root).expect("crates/ is readable") {
+        let dir = entry.expect("entry is readable").path();
+        let manifest = dir.join("Cargo.toml");
+        if !manifest.exists() {
+            continue;
+        }
+        let name = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let text = std::fs::read_to_string(&manifest)
+            .unwrap_or_else(|e| panic!("{} is readable: {e}", manifest.display()));
+        manifests.push((name, text));
+    }
+    assert!(!manifests.is_empty(), "crates/ holds at least one manifest");
+    manifests
+}
+
+/// Whether a section header opens a table of dependencies — plain, dev, build,
+/// or any of the `[target.'cfg(…)'.…]` variants.
+fn is_dependency_section(header: &str) -> bool {
+    header.ends_with("dependencies]")
+}
+
+/// Both of the tests below iterate `crates/` rather than a list, for the same
+/// reason `every_crate_is_covered_by_a_dependency_rule` exists: a new crate
+/// nobody remembered to add to a whitelist is not a failure, it is simply
+/// unguarded, which looks green and is worse.
+#[test]
+fn third_party_versions_are_stated_only_in_the_root_manifest() {
+    let mut offenders = Vec::new();
+    for (crate_name, text) in crate_manifests() {
+        let mut in_dependencies = false;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') {
+                in_dependencies = is_dependency_section(trimmed);
+                continue;
+            }
+            if !in_dependencies || trimmed.starts_with('#') || trimmed.is_empty() {
+                continue;
+            }
+            let Some((name, value)) = trimmed.split_once(" = ") else {
+                continue;
+            };
+            // The `quantick-*` crates depend on each other by path and state no
+            // version, which is the point: the tests above read exactly those
+            // lines to enforce the one-way direction.
+            if name.starts_with("quantick-") {
+                continue;
+            }
+            // A bare `foo = "1"`, or an inline table carrying its own
+            // `version =`, is a third-party version stated outside the root.
+            if value.starts_with('"') || value.contains("version = ") {
+                offenders.push(format!("{crate_name}: {trimmed}"));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these lines state a third-party version outside the root manifest: \
+         {offenders:#?}\n\nMove the version into `[workspace.dependencies]` in \
+         the root `Cargo.toml` and inherit it here with `{{ workspace = true }}`. \
+         A version stated in two places is a version that can disagree with \
+         itself, and the second place is the one nobody updates."
+    );
+}
+
+#[test]
+fn every_crate_inherits_the_workspace_lints() {
+    let mut missing = Vec::new();
+    for (crate_name, text) in crate_manifests() {
+        let inherits = text
+            .split("[lints]")
+            .skip(1)
+            .any(|rest| rest.lines().any(|line| line.trim() == "workspace = true"));
+        if !inherits {
+            missing.push(crate_name);
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "these crates do not inherit `[workspace.lints]`: {missing:?}\n\nAdd \
+         `[lints]` with `workspace = true` to each. Without it a crate is \
+         checked at a different strictness from the rest of the workspace, so \
+         `cargo clippy -p <crate>` can pass on code CI rejects — which is the \
+         whole failure the lints table was introduced to end."
     );
 }

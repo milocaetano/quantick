@@ -24,6 +24,152 @@ members = [
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+# None of these crates is published to crates.io — quantick is an
+# application, not a set of libraries — and saying so is what lets
+# `deny.toml` keep `wildcards = "deny"` with teeth. cargo-deny reads a
+# version-less `path` dependency as a wildcard and will only exempt one
+# for a crate that cannot be published, which is a fair demand: for a
+# published crate the path would resolve to nothing on the other end.
+publish = false
+
+# Every third-party dependency in the workspace, stated once.
+#
+# Before this table, `tokio` was declared in seven places with four different
+# feature sets, and the only way to know whether they agreed was to open all
+# seven. A crate manifest now says `{ workspace = true }` and nothing else, so
+# a version bump is one line here rather than a search-and-replace that misses
+# the sixth occurrence.
+#
+# **The feature set here is the union of what the dependents need**, not the
+# per-crate minimum. That costs nothing in a workspace build — cargo's feature
+# resolver already unifies a shared dependency across the graph, so the
+# artifact `cargo build --workspace` produces is the same one it produced
+# before this table existed. It changes only a single-crate build, which now
+# compiles the same tokio the workspace build does instead of a second,
+# narrower copy.
+#
+# **`default-features` belongs here and nowhere else.** A member that writes
+# `default-features = false` beside `workspace = true` is ignored by cargo with
+# a warning, so an entry below carries the setting of whichever dependent needs
+# the *most* features, and no crate manifest states the key at all.
+#
+# The `quantick-*` path dependencies are deliberately absent: they are not
+# third-party, and `crates/pine/tests/workspace_deps.rs` enforces the one-way
+# dependency direction by reading the `path = "../…"` lines out of the crate
+# manifests. Hoisting them here would blind that guard.
+[workspace.dependencies]
+base64 = "0.22"
+crossbeam-channel = "0.5"
+dirs = "6"
+eframe = { version = "0.29", default-features = false, features = [
+    "glow",
+    "wayland",
+    "x11",
+    "default_fonts",
+] }
+egui-phosphor = "0.7"
+futures-util = { version = "0.3", default-features = false }
+getrandom = "0.3"
+# Exact pin, carried over unchanged from `crates/control` where it was
+# introduced with the control contract.
+jsonschema = { version = "=0.49.9", default-features = false }
+libc = "0.2"
+libm = "0.2"
+png = "0.18"
+raw-window-handle = "0.6"
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+] }
+rfd = { version = "0.15", default-features = false, features = [
+    "xdg-portal",
+    "tokio",
+] }
+rodio = { version = "0.22", default-features = false, features = [
+    "playback",
+    "mp4",
+] }
+rust_decimal = "1"
+# Exact pin, and it earns the pin: this crate *generates* the wire contracts
+# committed under `schemas/control`, which `crates/app/src/app/tests/
+# control_plane_tests.rs` compares byte for byte. A patch release that changed
+# one line of emitted JSON would fail that test on a branch that never touched
+# the control plane — precisely the failure this whole file exists to prevent.
+schemars = { version = "=1.2.2", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+smallvec = "1"
+subtle = "2.6"
+# The union of what `app` and the three feeds ask for. `test-util` is
+# deliberately *not* here: it swaps tokio's clock for a pausable one, which is
+# right for a test and wrong for anything else, so the one crate that needs it
+# adds it on its own dev-dependency line.
+tokio = { version = "1", features = [
+    "io-util",
+    "macros",
+    "net",
+    "process",
+    "rt",
+    "rt-multi-thread",
+    "sync",
+    "time",
+] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = [
+    "connect",
+    "rustls-tls-webpki-roots",
+] }
+toml = "0.8"
+tracing = "0.1"
+# Default features stay on, because `app` needs them. The one other dependent
+# is a dev-dependency in `feed-binance` that asked for `default-features =
+# false` when it stood alone; a member cannot turn defaults off once this entry
+# leaves them on, and it does not matter — any workspace build already unifies
+# this crate with `app`, so only a lone `cargo test -p quantick-feed-binance`
+# compiles more of it than before.
+tracing-subscriber = { version = "0.3", features = [
+    "fmt",
+    "env-filter",
+    "json",
+] }
+# The union of the Win32 areas `app` and `control-local` bind. These features
+# gate which declarations the crate exposes and nothing else, so the union
+# costs a compile-time symbol table rather than anything in the binary.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+winresource = "0.1"
+zeroize = "1.8"
+
+# The lint levels, stated once, for every crate that writes
+# `[lints] workspace = true`.
+#
+# These are the levels CI used to pass on the command line as `cargo clippy
+# --workspace --all-targets -- -D warnings`. Living there, they were invisible
+# to `cargo clippy -p <crate>`, so a session could get a clean local run and a
+# red CI out of the same code and go looking for the difference in its own
+# diff. This table is now the single owner, and the CI step passes no lint
+# flags at all.
+#
+# `warnings` is the group of every lint that is warn-by-default, which is where
+# clippy registers its own, so the one line covers both tools. It applies to
+# every cargo command rather than only to clippy — `cargo check`, `cargo build`
+# and `cargo test` fail on a warning too. That is deliberate: a warning that
+# only fails in CI is one the session finds last instead of first.
+#
+# A lint that starts firing gets fixed, never allow-ed. If one genuinely cannot
+# be fixed in the branch that surfaced it, it is recorded here with a reason
+# and a link to the follow-up that removes it — an entry with no expiry is how
+# a lint table rots into a list of things nobody intends to do. There are no
+# such entries today.
+[workspace.lints.rust]
+warnings = "deny"
 
 # `cargo run` is how the chart is actually used day to day, and a dense L2
 # book pushes tens of thousands of cells/runs through hot loops per frame.

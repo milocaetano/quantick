@@ -4,6 +4,7 @@ description = "Quantick Pine: the Pine v5 subset dialect frontend for scripted i
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # Hand-rolled lexer/parser/compiler — the one permitted dependency is the
 # indicator runtime, whose InputSpec/PlotSpec the compile passes produce
@@ -14,3 +15,6 @@ quantick-indicators = { path = "../indicators" }
 [[bench]]
 name = "interp"
 harness = false
+
+[lints]
+workspace = true

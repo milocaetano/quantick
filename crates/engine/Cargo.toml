@@ -4,9 +4,10 @@ description = "Deterministic alternative-bar engine: raw trades in, bars out"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [dependencies]
-rust_decimal = "1"
+rust_decimal = { workspace = true }
 
 [[bench]]
 name = "hot_path"
@@ -15,3 +16,6 @@ harness = false
 [[bench]]
 name = "profile_fold"
 harness = false
+
+[lints]
+workspace = true

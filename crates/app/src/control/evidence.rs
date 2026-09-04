@@ -2076,21 +2076,28 @@ mod tests {
 
     /// The renderer a bundle names is the renderer the build links.
     ///
-    /// The feature is chosen in the manifest and is invisible to this crate as
-    /// a `cfg`, so the constant is checked against the manifest itself — the
-    /// repo's own answer for a rule the compiler cannot see. Switching to
-    /// `wgpu` without touching the constant would have every bundle blame the
-    /// wrong backend.
+    /// The feature is chosen in a manifest and is invisible to this crate as a
+    /// `cfg`, so the constant is checked against that manifest — the repo's own
+    /// answer for a rule the compiler cannot see. Switching to `wgpu` without
+    /// touching the constant would have every bundle blame the wrong backend.
+    ///
+    /// The manifest to read is the workspace root's, not this crate's: every
+    /// third-party version and feature set is stated once under
+    /// `[workspace.dependencies]`, so `crates/app/Cargo.toml` now says only
+    /// `eframe = { workspace = true }`. The `expect` below is what holds that
+    /// — pointed at the crate manifest this test would find no feature list at
+    /// all, and a test that passes by finding nothing is worse than one that
+    /// fails.
     #[test]
     fn the_reported_graphics_backend_is_the_one_the_manifest_selects() {
-        let manifest = include_str!("../../Cargo.toml");
+        let manifest = include_str!("../../../../Cargo.toml");
         let eframe = manifest
             .split("eframe = ")
             .nth(1)
-            .expect("the manifest depends on eframe");
+            .expect("the workspace manifest depends on eframe");
         let features = eframe
             .split_once(']')
-            .expect("the eframe dependency lists features")
+            .expect("the eframe workspace dependency lists features")
             .0;
         assert!(
             features.contains(&format!("\"{GRAPHICS_BACKEND}\"")),

@@ -4,6 +4,7 @@ description = "Headless backtest harness: recorded sessions in, per-session and 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # The second of the three consumers CLAUDE.md names. It links the domain
 # crates and nothing else: no UI, no network, no async, no CLI framework —
@@ -16,8 +17,11 @@ quantick-pine = { path = "../pine" }
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
 quantick-strategy = { path = "../strategy" }
-rust_decimal = "1"
+rust_decimal = { workspace = true }
 
 [[bin]]
 name = "quantick-backtest"
 path = "src/main.rs"
+
+[lints]
+workspace = true

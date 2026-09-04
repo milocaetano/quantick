@@ -4,6 +4,7 @@ description = "Desktop chart for quantick (egui/wgpu planned)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [dependencies]
 quantick-control = { path = "../control" }
@@ -20,45 +21,40 @@ quantick-orderbook = { path = "../orderbook" }
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
 quantick-strategy = { path = "../strategy" }
-rust_decimal = "1"
-schemars = { version = "=1.2.2", features = ["derive"] }
+rust_decimal = { workspace = true }
+schemars = { workspace = true }
 # The user's documents folder (Known Folders on Windows, XDG on Linux) —
 # the paper-trading journal's durable default home. Path lookup only; no
 # path is ever invented when the platform reports none.
-dirs = "6"
+dirs = { workspace = true }
 # Bounded non-blocking queues between gateway workers and the application thread.
-crossbeam-channel = "0.5"
+crossbeam-channel = { workspace = true }
 # Operating-system entropy for per-process IDs, nonces, and ephemeral bearer tokens.
-getrandom = "0.3"
+getrandom = { workspace = true }
 # Native folder picker for Market Replay. Runs off the UI thread, so the OS
 # dialog never blocks a frame.
-rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
-serde = { version = "1", features = ["derive"] }
+rfd = { workspace = true }
+serde = { workspace = true }
 # The replay exporter reports progress as NDJSON, the same shape the MT5
 # bridge already speaks — read with the same parser rather than a second,
 # hand-rolled one.
-serde_json = "1"
-smallvec = "1"
-toml = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "net", "time", "process"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "json"] }
-eframe = { version = "0.29", default-features = false, features = [
-    "glow",
-    "wayland",
-    "x11",
-    "default_fonts",
-] }
-egui-phosphor = "0.7"
+serde_json = { workspace = true }
+smallvec = { workspace = true }
+toml = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+eframe = { workspace = true }
+egui-phosphor = { workspace = true }
 # The window handle eframe hands out at startup, so `window_scale` can ask the
 # platform for the client area it actually has. Already in the tree as eframe's
 # own dependency; named here because this crate calls it directly.
-raw-window-handle = "0.6"
+raw-window-handle = { workspace = true }
 # PNG encoding for the optional evidence screenshot. Already compiled as part
 # of this crate's tree (eframe -> image -> png); named here because the
 # control plane calls it directly, and because a raster no viewer accepts
 # would make an evidence image useless to the human reading the bundle.
-png = "0.18"
+png = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 # Playback of the shipped alarm clips (`assets/alarms/`, see `audio/`). The
@@ -67,15 +63,14 @@ png = "0.18"
 # Windows only, like the platform sound beside it: on Linux cpal links ALSA,
 # which the CI runner does not carry, and a build there reports "no audio
 # backend" for a clip exactly as it already does for a system sound.
-rodio = { version = "0.22", default-features = false, features = ["playback", "mp4"] }
+rodio = { workspace = true }
 # The platform's own attention sounds — the system-scheme half of the alarm
 # catalogue. `MessageBeep` is the sound Windows itself uses, and a platform
 # without one reports that instead of pretending (see `audio/platform.rs`).
-windows-sys = { version = "0.61", features = [
-    "Win32_Foundation",
-    "Win32_System_Diagnostics_Debug",
-    "Win32_UI_WindowsAndMessaging",
-] }
+windows-sys = { workspace = true }
 
 [target.'cfg(windows)'.build-dependencies]
-winresource = "0.1"
+winresource = { workspace = true }
+
+[lints]
+workspace = true
