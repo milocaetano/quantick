@@ -81,47 +81,33 @@ SHA-256 after  the split: ab74859479f2f1e471dfb5a1556a15d2891d440c7c119db49c0e2a
 The test's body did not change across the split, and did not change across a
 rebase onto a main that had itself moved 87 lines of this file.
 
-## Pixels golden — nothing a trader sees moved
+## Pixels: what the fixture can and cannot prove
 
-The criterion as written could not be met by **any** branch, and that was
-measured before a line was moved: the nine hooks captured twice on the *same*
-`origin/main` build, identical env, matched **zero of nine**. The wall clock
-and the tape position are painted on screen and no hook turns them off.
+The criterion asked for captures identical between `origin/main` and this
+branch. **The fixture cannot deliver that reliably, and its own control runs
+are what say so** — read
+`.claude/evidence/paper-policy-out-of-the-ticket/pixels-golden.txt` for the
+full account, including the round that looked perfect and did not repeat.
 
-So the mask was measured rather than chosen. Two runs of the same build differ
-in exactly two horizontal bands — rows **0–30** and **662–672** — and nowhere
-else. Outside them the chart, the ticket, the orders, the brackets, the risk
-panel, the strategy editor and the toast are bit-identical run to run, which is
-what makes it fair to demand they be bit-identical build to build.
+Two inputs move under the capture and neither is the tape. The clock and tape
+position, in two bands measured rather than chosen (rows 0–30 and 662–672),
+which are masked. And the **depth book**, which arrives from a live venue
+independently of the replay: one run paints a book, the next says "no book",
+and that is a 58×200 px block of chart. It was found by cropping the region
+two runs disagreed on and looking at it.
 
-| Comparison | Result |
-| --- | --- |
-| `origin/main` vs `origin/main` (the control) | **9/9 identical outside the mask** |
-| branch vs `origin/main`, run 1 | **9/9 identical outside the mask** |
-| branch vs `origin/main`, run 2 | **9/9 identical outside the mask** |
-
-Fixture: a 4,000-print recording played to its end (a drained tape is a
-deterministic screen; a playing one is not), `__COMPAT_LAYER=DPIUNAWARE`, every
-`QUANTICK_*` store at a per-scene scratch path. Hashes, the mask and the
-scripts are in `.claude/evidence/paper-policy-out-of-the-ticket/`.
-
-### And the same answer from the application itself
-
-A picture says what the window looks like; the control plane says what the
-application *believes* is there, and that does not move when a colour does. The
-`session.paper` snapshot — orders, position, risk, ruler, tick size, trades —
-read from both builds through `quantick-mcp`:
-
-| Scene | Stable fields | Result |
+| Round | Control (main vs main) | Branch vs main |
 | --- | --- | --- |
-| `paper_orders` | 64 | **identical** |
-| `paper_order_bracket` | 72 | **identical** |
-| `paper_risk` | 42 | **identical** |
-| `paper_demo` | 84 | **identical** |
+| Book unpinned | 9/9 | 9/9, twice |
+| Book unpinned, later | 9/9 | 4/9, then 6/9 — the book had arrived |
+| Book pinned (`QUANTICK_FEED_STALL`) | 6/9 | 7/9 against each control |
 
-Four fields are excluded as environment rather than state, and they are the
-only ones that differed: `instance_id` (a fresh process per launch),
-`captured_at_unix_ms` and `capture_elapsed_us`.
+In the last round the branch matches main on **every scene where main matches
+itself**. That is the most this fixture can honestly assert, and it is what is
+asserted — not the flattering first row.
+
+What *is* proven, by evidence that does not move: the journal golden's
+byte-identical SHA-256, the control-plane snapshot below, and the test counts.
 
 ## The control plane reads policy, not pixels
 
