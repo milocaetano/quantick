@@ -90,6 +90,55 @@ fn bar_spec_change_defers_one_frame_and_shows_the_rebuild() {
 }
 
 #[test]
+fn a_deal_count_change_recuts_the_bars() {
+    use quantick_engine::{DealSample, Side, Trade};
+
+    let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
+    {
+        let pane = &mut app.active_tab_mut().flow_pane;
+        pane.kind = crate::state::BarKind::Trades;
+        pane.deals_n = 2;
+    }
+    app.active_tab_mut().apply_spec_changes();
+    app.active_tab_mut().apply_spec_changes();
+    assert_eq!(app.active_tab().flow_pane.state.spec(), &BarSpec::Trades(2));
+
+    // Readings a millisecond ahead of the prints they stamp, as the feed
+    // sends them: the counter reads 1, 2, 4, 6 across four prints.
+    let tab = app.active_tab_mut();
+    for (i, deals) in [1_u64, 2, 4, 6].into_iter().enumerate() {
+        let at = 1_000 + i as i64 * 100;
+        tab.observe_deal_counter(DealSample {
+            time_ms: at - 1,
+            session_deals: deals,
+        });
+        tab.flow_pane.state.ingest_live(&Trade {
+            agg_id: i as u64 + 1,
+            timestamp_ms: at,
+            price: rust_decimal::Decimal::from(100),
+            quantity: rust_decimal::Decimal::ONE,
+            side: Side::Buy,
+        });
+    }
+    assert_eq!(
+        tab.flow_pane.state.bars().len(),
+        3,
+        "every 2 deals: 2, 4, 6"
+    );
+
+    // The trader types a new count: the selector settles, the bars re-cut.
+    app.active_tab_mut().flow_pane.deals_n = 4;
+    app.active_tab_mut().apply_spec_changes();
+    app.active_tab_mut().apply_spec_changes();
+    assert_eq!(app.active_tab().flow_pane.state.spec(), &BarSpec::Trades(4));
+    assert_eq!(
+        app.active_tab().flow_pane.state.bars().len(),
+        1,
+        "every 4 deals: one bar closed at 4, one forming"
+    );
+}
+
+#[test]
 fn a_still_moving_selector_keeps_deferring_the_rebuild() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
     app.active_tab_mut().flow_pane.tick_n = 100;
