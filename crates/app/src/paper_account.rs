@@ -507,6 +507,72 @@ pub(crate) struct PaperAccount {
     outbox: AccountResponse,
 }
 impl PaperAccount {
+    /// Rest an entry at `price`, protected by `ticket`. Answers whether
+    /// anything is actually resting, which is what the caller paints.
+    pub(crate) fn place_resting(
+        &mut self,
+        side: Side,
+        kind: EntryKind,
+        price: Decimal,
+        ticket: Bracket,
+        env: &AccountEnv,
+    ) -> bool {
+        let Some((quantity, bracket)) = self.entry_size(side, price, ticket, env) else {
+            return false;
+        };
+        let command = match kind {
+            EntryKind::Limit => Command::PlaceLimit {
+                side,
+                quantity,
+                price,
+                bracket,
+                cancel_at: None,
+                flat_only: false,
+            },
+            EntryKind::Stop => Command::PlaceStop {
+                side,
+                quantity,
+                trigger: price,
+                bracket,
+            },
+            // Market never rests; the buttons fire it directly.
+            EntryKind::Market => return false,
+        };
+        let events = self.dispatch(command);
+        let placed = events
+            .iter()
+            .any(|event| matches!(event, VenueEvent::Placed(_)));
+        self.handle_events(events);
+        placed
+    }
+
+    /// The side and mark a reversal would be taken at, or `None` when flat.
+    /// Split out because the caller must know the side *before* it can
+    /// resolve the protection for it.
+    pub(crate) fn reverse_aim(&self) -> Option<(Side, Decimal)> {
+        let position = self.venue.position()?;
+        let side = match position.side {
+            Side::Buy => Side::Sell,
+            Side::Sell => Side::Buy,
+        };
+        Some((side, self.venue.mark_price().unwrap_or_default()))
+    }
+
+    /// Turn the open position around: close it and take the same size the
+    /// other way, in one order, protected by `bracket`.
+    pub(crate) fn reverse_position(&mut self, bracket: Bracket) {
+        let (Some(position), Some((side, _))) =
+            (self.venue.position().cloned(), self.reverse_aim())
+        else {
+            return;
+        };
+        let events = self.venue.submit(
+            OrderIntent::market(side, position.quantity.saturating_add(position.quantity))
+                .with_bracket(bracket),
+        );
+        self.handle_events(events);
+    }
+
     /// Test-only: the report state *and* the environment this host would
     /// hand it, together.
     ///

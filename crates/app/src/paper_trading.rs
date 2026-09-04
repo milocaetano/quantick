@@ -1111,22 +1111,15 @@ impl PaperTrading {
     /// form's protective offsets apply to the new entry, exactly as they do
     /// to any market order.
     pub fn reverse_position(&mut self) {
-        let Some(position) = self.account.venue.position().cloned() else {
+        // The account says which way and at what mark; the ticket resolves
+        // the protection for that side, because the offsets are its text.
+        let Some((side, reference)) = self.account.reverse_aim() else {
             return;
         };
-        let side = match position.side {
-            Side::Buy => Side::Sell,
-            Side::Sell => Side::Buy,
-        };
-        let reference = self.account.venue.mark_price().unwrap_or_default();
         let Some(bracket) = self.parse_bracket(side, reference) else {
             return;
         };
-        let events = self.account.venue.submit(
-            OrderIntent::market(side, position.quantity.saturating_add(position.quantity))
-                .with_bracket(bracket),
-        );
-        self.account.handle_events(events);
+        self.account.reverse_position(bracket);
     }
 
     /// The form quantity, parsed without side effects — the label builders
@@ -2618,36 +2611,13 @@ impl PaperTrading {
     /// and offsets; returns whether the simulator accepted it.
     fn place_resting(&mut self, side: Side, kind: EntryKind, raw_price: f64) -> bool {
         let price = self.account.snap(raw_price);
+        // The offsets are read here because an unreadable one is a message
+        // beside the box the trader typed in. Everything after is placement.
         let Some(ticket) = self.parse_bracket(side, price) else {
             return false;
         };
-        let Some((quantity, bracket)) = self.entry_size(side, price, ticket) else {
-            return false;
-        };
-        let command = match kind {
-            EntryKind::Limit => Command::PlaceLimit {
-                side,
-                quantity,
-                price,
-                bracket,
-                cancel_at: None,
-                flat_only: false,
-            },
-            EntryKind::Stop => Command::PlaceStop {
-                side,
-                quantity,
-                trigger: price,
-                bracket,
-            },
-            // Market never rests; the buttons fire it directly.
-            EntryKind::Market => return false,
-        };
-        let events = self.account.dispatch(command);
-        let placed = events
-            .iter()
-            .any(|event| matches!(event, VenueEvent::Placed(_)));
-        self.account.handle_events(events);
-        placed
+        let env = self.account_env(side, price);
+        self.account.place_resting(side, kind, price, ticket, &env)
     }
 
     /// The chart context menu's trade section, anchored at the clicked
