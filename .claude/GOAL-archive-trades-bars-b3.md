@@ -299,6 +299,24 @@ than what is remembered.
   recorded. The lesson is kept for the next engine mission: the fixture is
   its own write and its own commit before the implementation.
 
+## Decided on the live tape, 2026-09-04
+
+- **D-late** — The venue's counter refreshes about every 31 s, not every
+  poll (measured over the whole session: 592 readings, median interval
+  31.2 s, 1 500 to 10 000 deals apart). A bar cut from the readings alone
+  closes once per reading whatever N is, which is what the trader saw when
+  changing N. The trader chose, over stopping or cutting at the counter's
+  resolution, to **estimate the deals of each print between readings** —
+  contracts times the last completed window's deals-per-contract rate,
+  re-anchored to the exact reading each time one arrives — so the day's
+  total and bar count are the venue's, each boundary is an estimate within
+  its window, the chip says *estimated*, and a change of N recuts the whole
+  day from the recorded readings and the retained ticks. The trader's words:
+  "quero que vc faça do jeito que fica bom para poder trocar de trades e
+  ver mudando" (a marked, attributed quotation, kept as spoken). A1's
+  alignment claim is read under this decision: the same number of bars as
+  ProfitChart's, boundaries within a window of it.
+
 ## Not applicable
 
 - The docs-only waiver: this is code.
