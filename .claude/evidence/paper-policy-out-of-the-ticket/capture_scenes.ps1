@@ -16,7 +16,9 @@ param(
     [int]$SettleSeconds = 25,
     [string]$Autostart = "paused",
     [string]$Speed = "",
-    [int]$HoldSeconds = 0
+    [int]$HoldSeconds = 0,
+    [int]$ExpectWidth = 0,
+    [int]$ExpectHeight = 0
 )
 
 Add-Type -AssemblyName System.Drawing
@@ -65,6 +67,8 @@ function Stop-Ours($proc) {
 }
 
 foreach ($scene in $scenes) {
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    $retry = $false
     $name = $scene.name
     $log = Join-Path $logs "$Label-$name.log"
     $png = Join-Path $OutDir "$Label-$name.png"
@@ -145,6 +149,12 @@ foreach ($scene in $scenes) {
         continue
     }
 
+    if ($ExpectWidth -gt 0 -and ($w -ne $ExpectWidth -or $h -ne $ExpectHeight)) {
+        Write-Output "$Label/$name WRONG_SIZE ${w}x${h} (wanted ${ExpectWidth}x${ExpectHeight}) - retrying"
+        Stop-Ours $proc
+        $retry = $true
+        continue
+    }
     $bmp = New-Object System.Drawing.Bitmap $w, $h
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $hdc = $g.GetHdc()
@@ -156,4 +166,6 @@ foreach ($scene in $scenes) {
     Stop-Ours $proc
     $hash = (Get-FileHash $png -Algorithm SHA256).Hash
     Write-Output "$Label/$name ${w}x${h} healthy=$healthy printwindow=$ok $hash"
+    break
+  }
 }
