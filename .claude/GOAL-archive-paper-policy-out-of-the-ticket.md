@@ -191,8 +191,13 @@ Measured against `origin/main` at `d551813`, the sha the brief names:
      and `parse_bracket`. Every one of these has a clean body and is tainted
      only through what it calls.
 
-  So `AccountEnv` carries **the ticket's resolved order form and its ruler
-  distance** — the two things the account genuinely cannot know — and the
+  So `AccountEnv` carries **the ticket's resolved order form and the ruler's
+  two resolved prices**. (This assumption was written saying "ruler distance";
+  what shipped is `ruler_levels: Option<(Decimal, Decimal)>`, the stop and
+  target themselves. The wording is corrected here rather than in the built
+  code because the reason is the same either way — the wheel, its travel and
+  the step it walks are pixels, and resolving them in the ticket is what keeps
+  the account from needing any of the three.) — the two things the account genuinely cannot know — and the
   account keeps everything it already owns. `tick_scale` goes to the **account**
   and not the ticket: it is the instrument's own decimal precision, learned
   from the tape by `observe_precision`, and it is not a pixel. Ledger #4 assigns

@@ -162,21 +162,36 @@ only in the branch that already formatted it.
 
 ## Baselines
 
-`paper_trading.rs` falls **1,740** production lines, 6,407 → 4,667.
-`paper_account.rs` arrives at **1,981**. `tab.rs` takes **2** for the receivers.
-The `!budget` rises by the difference, **243**, signed in the entry with the
+`paper_trading.rs` falls **1,730** production lines, 6,407 → 4,677.
+`paper_account.rs` arrives at **2,000**. `tab.rs` takes **2** for the receivers.
+The `!budget` rises by the difference, **272**, signed in the entry with the
 reason.
 
-## Deviations, stated
+## Deferred, with the trader's approval
 
-1. **`paper_trading.rs` is 4,667, not the ≤3,500 the brief asked for.**
+Both released in session, after the measurement that prompted them, and both
+written into the archived goal file under `## Deferred`.
+
+1. **`paper_trading.rs` is 4,677, not the ≤3,500 the brief asked for.**
    Measured, not estimated: what remains is ~3,100 lines of genuine drawing and
    gesture plus ~1,500 of types, constants and `impl PaintCtx`. Reaching 3,500
    needs a *third* module (a paint module) that the brief did not ask for. The
-   trader was asked and chose to accept 4,667 and record the deviation rather
+   trader was asked and chose to accept 4,677 and record the deviation rather
    than grow the change. The purpose the ceiling served — the money path reads
-   without egui — is met in full.
-2. **The generated hook registry moved two rows.** `QUANTICK_PAPER_DEMO` and
+   without egui — is met in full, and the rest of the criterion is: the account
+   is 2,000 against its own 3,500 ceiling, and the `!budget` rises 272 with a
+   signed reason, inside the 300 the criterion allows.
+
+2. **The `visual-qa` pass over the nine surfaces.** They are byte-for-byte
+   identical to `origin/main` outside the measured mask on both control runs,
+   and the control plane agrees on 4/4 scenes. A defect checklist over images
+   identical to main's grades *main's* design, not this change — anything it
+   found was already there. The trader released the criterion on that reading;
+   `pixels-golden.txt` and `scene-compare.txt` are the evidence that replaces
+   it.
+## Other deviations, stated
+
+1. **The generated hook registry moved two rows.** `QUANTICK_PAPER_DEMO` and
    `QUANTICK_PAPER_RISK` are now declared beside their reads in
    `paper_account.rs`, so the *Declared in* column changed. Hook names and prose
    are untouched; the alternative was a reverse module edge that
@@ -192,13 +207,40 @@ exist; the baseline read 6,407, not 6,396; the tests are at
 `fix/tests-own-their-scratch` had **no PR open** when this branch was cut — it
 has since merged, and this branch rebased onto it and adopted its `ScratchDir`.
 
+
+## Review chain
+
+- **`arch-review`** — step 0 ran `code-review` at `medium` (effort-first, no
+  reuse notice), the level this branch's `high` tier buys. It verified the move
+  function by function: it normalised `self.` against `self.account.` and
+  diffed roughly 119 bodies, finding no reordered statements, no altered
+  conditions, no dropped guards and no changed arithmetic.
+- **One correctness finding, fixed on the branch**: the seam's first
+  `ticket_form()` read the two offset boxes independently where `ticket_bracket`
+  read them as a pair with `?`. A stop of `1,5` — a comma decimal — would have
+  projected and risk-sized against a bracket the old code discarded while the
+  BUY button still refused it. `TicketForm::offsets` is now all-or-nothing and
+  `one_unreadable_offset_stands_the_whole_bracket_down` fails without it.
+- **Three documentation findings, fixed**: a dangling `Self::drain_account`
+  link whose sentence was also false, a `AccountResponse::toasts` link for a
+  field named `toast`, and a signed baseline entry whose prose had drifted from
+  its own numbers.
+- **One shape finding, partly fixed**: the split widened all 25 account fields
+  to `pub(crate)`. Seven that nothing outside reads, plus the outbox, are now
+  private behind two test-only accessors; the remaining 18 are read by the
+  ticket's drawing code.
+- **One deferred to a follow-up**: the module's no-egui property is enforced
+  only by the absence of an import, not by a `crates/guards` entry. Worth
+  making mechanical, the way `language.rs` and `cycle.rs` already are.
+
 ## Verification
 
 - [x] `cargo fmt --all -- --check`
 - [x] `cargo clippy --workspace --all-targets`
 - [x] `cargo build --workspace`
-- [x] `cargo test --workspace` — 1,936 passed in the app bin against 1,935 on
-      `origin/main`: exactly the one test this branch added.
+- [x] `cargo test --workspace` — 1,937 passed in the app bin against 1,935 on
+      `origin/main`, and `cargo test -p quantick-app paper` gives 206 against
+      204: exactly the two tests this branch added, and none lost.
 - [x] `cargo test -p quantick-guards`
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
