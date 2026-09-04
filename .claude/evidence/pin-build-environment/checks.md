@@ -154,6 +154,40 @@ Both tests walk `crates/` rather than a list, so a crate added later is covered
 without anyone remembering to register it — the lesson the neighbouring
 `every_crate_is_covered_by_a_dependency_rule` was written to record.
 
+### The guard's first version could be walked around, and `arch-review` step 0 said so
+
+Two findings, both against the guard this branch added, and both real:
+
+- It split each line on `" = "`, spaces required. A perfectly valid
+  `rust_decimal="1"` was skipped outright — the exact thing the guard exists to
+  catch, waved through on whitespace.
+- It read one physical line at a time, so an inline table written across lines
+  hid everything below its first. The same lax parse ignored `git`/`tag`/`rev`
+  pins, which is the same drift reaching outside the registry entirely.
+
+Rewritten to split on the first `=` wherever it falls, to keep taking lines
+until the brackets close, and to reject any of `version`, `git`, `tag`, `rev`,
+`branch` or `path` stated on a third-party entry. Both former bypasses now
+fail:
+
+```
+$ # rust_decimal="1"  — valid TOML, no spaces
+these entries state a third-party source outside the root manifest: [
+    "orderbook: rust_decimal = \"1\"",
+]
+
+$ # version on a continuation line of a multi-line inline table
+these entries state a third-party source outside the root manifest: [
+    "orderbook: rust_decimal = { version = \"1\", }",
+]
+```
+
+The second message shows the joined value, which is what proves the
+continuation lines were read rather than skipped. A `git` pin cannot be
+demonstrated the same way — cargo refuses to resolve the fake remote before any
+test runs, which is its own kind of guard — so it is covered by the same
+`SOURCE_PINNING_KEYS` path the `version` case exercises.
+
 ## A7 / A9 — what the supply-chain checks found
 
 `cargo deny check advisories` was red on arrival, which is the best available

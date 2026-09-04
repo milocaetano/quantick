@@ -199,6 +199,78 @@ fn is_dependency_section(header: &str) -> bool {
     header.ends_with("dependencies]")
 }
 
+/// Whether every bracket a value opened has been closed.
+///
+/// Counting characters is enough here and would not be in general: it would
+/// miscount a bracket inside a quoted string. No dependency value in this
+/// workspace contains one, and a guard that over-reports a manifest is a guard
+/// somebody will read — it fails loudly rather than passing quietly, which is
+/// the direction an approximation is allowed to be wrong in.
+fn brackets_balance(value: &str) -> bool {
+    let opened = value.chars().filter(|c| *c == '{' || *c == '[').count();
+    let closed = value.chars().filter(|c| *c == '}' || *c == ']').count();
+    opened == closed
+}
+
+/// Every dependency entry in a manifest, as `(name, value)`, with a value
+/// spanning several lines joined into one.
+///
+/// Reading a manifest a physical line at a time is what an earlier version of
+/// this guard did, and it let two things through. A perfectly valid
+/// `rust_decimal="1"` has no spaces around its `=` and was skipped outright,
+/// and an inline table written across lines hid everything below its first one.
+/// Both are exactly the shape the guard exists to catch, so it now splits on
+/// the first `=` wherever it falls and keeps taking lines until the brackets
+/// close.
+fn dependency_entries(text: &str) -> Vec<(String, String)> {
+    let mut entries = Vec::new();
+    let mut in_dependencies = false;
+    let mut unclosed: Option<(String, String)> = None;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+
+        // A value still waiting for its closing bracket swallows this line,
+        // comments and all, rather than letting it be read as a new key.
+        if let Some((name, value)) = unclosed.take() {
+            let value = format!("{value} {trimmed}");
+            if brackets_balance(&value) {
+                entries.push((name, value));
+            } else {
+                unclosed = Some((name, value));
+            }
+            continue;
+        }
+
+        if trimmed.starts_with('[') {
+            in_dependencies = is_dependency_section(trimmed);
+            continue;
+        }
+        if !in_dependencies || trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+        let Some((name, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let entry = (name.trim().to_owned(), value.trim().to_owned());
+        if brackets_balance(&entry.1) {
+            entries.push(entry);
+        } else {
+            unclosed = Some(entry);
+        }
+    }
+    // A manifest whose last entry never closed is malformed; report what was
+    // read rather than dropping it, so the assertion below can say so.
+    entries.extend(unclosed);
+    entries
+}
+
+/// The keys by which a dependency pins its own source, rather than inheriting
+/// one. `version` is the common case; the others are how a dependency escapes
+/// the registry entirely, and a third-party crate pinned to a git revision
+/// outside the root manifest is the same drift wearing different clothes.
+const SOURCE_PINNING_KEYS: &[&str] = &["version", "git", "tag", "rev", "branch", "path"];
+
 /// Both of the tests below iterate `crates/` rather than a list, for the same
 /// reason `every_crate_is_covered_by_a_dependency_rule` exists: a new crate
 /// nobody remembered to add to a whitelist is not a failure, it is simply
@@ -207,35 +279,28 @@ fn is_dependency_section(header: &str) -> bool {
 fn third_party_versions_are_stated_only_in_the_root_manifest() {
     let mut offenders = Vec::new();
     for (crate_name, text) in crate_manifests() {
-        let mut in_dependencies = false;
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('[') {
-                in_dependencies = is_dependency_section(trimmed);
-                continue;
-            }
-            if !in_dependencies || trimmed.starts_with('#') || trimmed.is_empty() {
-                continue;
-            }
-            let Some((name, value)) = trimmed.split_once(" = ") else {
-                continue;
-            };
+        for (name, value) in dependency_entries(&text) {
             // The `quantick-*` crates depend on each other by path and state no
             // version, which is the point: the tests above read exactly those
             // lines to enforce the one-way direction.
             if name.starts_with("quantick-") {
                 continue;
             }
-            // A bare `foo = "1"`, or an inline table carrying its own
-            // `version =`, is a third-party version stated outside the root.
-            if value.starts_with('"') || value.contains("version = ") {
-                offenders.push(format!("{crate_name}: {trimmed}"));
+            // A bare `foo = "1"`, or an inline table carrying any key by which
+            // a dependency pins its own source, states outside the root what
+            // only the root may state.
+            let pins_its_own_source = value.starts_with('"')
+                || SOURCE_PINNING_KEYS.iter().any(|key| {
+                    value.contains(&format!("{key} =")) || value.contains(&format!("{key}="))
+                });
+            if pins_its_own_source {
+                offenders.push(format!("{crate_name}: {name} = {value}"));
             }
         }
     }
     assert!(
         offenders.is_empty(),
-        "these lines state a third-party version outside the root manifest: \
+        "these entries state a third-party source outside the root manifest: \
          {offenders:#?}\n\nMove the version into `[workspace.dependencies]` in \
          the root `Cargo.toml` and inherit it here with `{{ workspace = true }}`. \
          A version stated in two places is a version that can disagree with \
