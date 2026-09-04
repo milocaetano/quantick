@@ -85,13 +85,21 @@ jobs:
         # changing, and the session that inherited the red went looking for the
         # bug in a diff that never had one.
         #
-        # `rustup show` acts on the file, so the install gets its own named
-        # step rather than happening invisibly inside whichever cargo command
-        # runs first. The versions are echoed because the log is where a future
-        # reader checks which toolchain a given run actually used.
+        # `rustc --version` comes first and is what does the installing: it
+        # goes through the rustup shim, which reads the toolchain file and
+        # fetches the pinned version if the runner does not have it. Newer
+        # rustup releases changed whether `rustup show` installs on its own, so
+        # the step does not depend on that either way — it runs afterwards, for
+        # the summary, once the toolchain is certainly present.
+        #
+        # Every version is echoed because the log is where a future reader
+        # checks which toolchain a given run actually used, and because a
+        # missing component should fail here, by name, rather than four steps
+        # later inside `cargo fmt`.
         run: |
-          rustup show
           rustc --version
+          rustup show
+          cargo --version
           cargo clippy --version
           cargo fmt --version
       - uses: Swatinem/rust-cache@v2
