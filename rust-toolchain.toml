@@ -1,0 +1,21 @@
+# The toolchain every build of this repository uses — CI, the trader's
+# machine, and an agent session's worktree alike.
+#
+# Before this file, CI installed whatever `stable` meant on the morning the job
+# ran. A toolchain release could therefore turn a pull request red without a
+# line of its code changing, and the session that inherited the red spent
+# itself looking for the bug in a diff that never had one. Pinning moves that
+# cost to one deliberate commit: the version changes when somebody raises the
+# number here, and the change is reviewable like any other.
+#
+# Raising it is a change like any other: bump `channel`, run the four checks
+# from `CLAUDE.md`, and fix whatever new lints the release brought — the same
+# rule the `[workspace.lints]` table in `Cargo.toml` states, since a new
+# rustc's new warnings are denied by that table the moment this line moves.
+#
+# `components` are the two the verification loop needs. rustup installs them
+# with the toolchain, so `cargo clippy` and `cargo fmt` work in a fresh
+# worktree without a second command.
+[toolchain]
+channel = "1.98.0"
+components = ["clippy", "rustfmt"]
