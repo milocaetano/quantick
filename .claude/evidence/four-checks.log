@@ -1,0 +1,27 @@
+=== G2: the four checks, each run on its own, on 7dc2e15 (origin/main) ===
+
+$ cargo fmt --all -- --check
+exit 0
+
+$ cargo clippy --workspace --all-targets
+    Finished `dev` profile [optimized + debuginfo] target(s) in 2m 30s
+exit 0
+
+$ cargo build --workspace
+    Finished `dev` profile [optimized + debuginfo] target(s) in 6m 55s
+exit 0
+
+$ cargo test --workspace
+93 "test result: ok" lines; not one result line reports a non-zero failure
+count; the only two lines matching "panicked" are the names of two tests that
+assert something is survived rather than panicked on. Largest binaries:
+    1894 passed; 0 failed; 4 ignored   (quantick-app)
+     184 passed; 0 failed; 2 ignored
+     134 passed; 0 failed; 0 ignored   (quantick-guards lib)
+     132 passed; 0 failed; 0 ignored
+     108 passed; 0 failed; 0 ignored
+      16 passed; 0 failed; 0 ignored   (quantick-guards tests/guards.rs)
+exit 0
+
+Run separately rather than chained: a trailing `|| echo` once reported success
+while clippy had failed.

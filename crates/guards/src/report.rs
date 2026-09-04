@@ -36,7 +36,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use crate::{GUARDS, size};
+use crate::{GUARDS, graph, headless, size};
 
 /// How many of the largest production files the report names.
 ///
@@ -140,6 +140,12 @@ pub fn render(root: &Path) -> String {
         format!("{TRUNK_CRATE}.lines.without_{UI_IDENTIFIER}"),
         scanned.portable_trunk_lines,
     );
+    // The two architecture invariants, as numbers a merge can be diffed on:
+    // how wide the graph is, and whether the headless rule still holds. Both
+    // are measurements here and enforcement elsewhere -- `--report` describes
+    // the tree, it does not judge it.
+    row(&mut out, "graph.edges", graph::edges());
+    row(&mut out, "headless.findings", headless::findings(root));
     row(&mut out, "scan.unreadable", sizes.unreadable.len());
     row(&mut out, "scan.undecodable", sizes.undecodable.len());
     row(&mut out, "scan.blind", sizes.blind.len());

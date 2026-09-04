@@ -1,0 +1,39 @@
+=== A6: two invariants broken on purpose, then reverted ===
+
+--- 1. a reverse edge: engine depends on pine ---
+$ git diff --unified=0 -- crates/engine/Cargo.toml
+--- a/crates/engine/Cargo.toml
++++ b/crates/engine/Cargo.toml
+@@ -9,0 +10 @@ publish.workspace = true
++quantick-pine = { path = "../pine" }
+
+$ quantick-guards
+graph: 1 finding(s)
+crates/engine/Cargo.toml: depends on `pine`, which reverses the one-way direction — CLAUDE.md: Architecture, dependency direction
+
+A crate manifest declares an edge the one-way dependency direction forbids. Remove it and reach the capability the other way — through a port the lower crate defines and the higher one implements. If the edge is genuinely correct, the graph changed, and `ALLOWED` in `crates/guards/src/graph.rs` is where that argument is signed.
+
+exit=1
+
+--- 2. a wall-clock read in crates/sim/src ---
+$ git diff --unified=0 -- crates/sim/src/lib.rs
++++ b/crates/sim/src/lib.rs
+@@ -98,0 +99,4 @@ pub use simulator::{Command, QueuedAction, Simulator};
++
++fn stamp() -> std::time::SystemTime {
++    std::time::SystemTime::now()
++}
+
+$ quantick-guards
+headless: 1 finding(s)
+crates/sim/src/lib.rs:101: reaches `SystemTime::now` — the wall clock in a crate the headless rule names — CLAUDE.md: Architecture, headless
+
+Production source in a crate `CLAUDE.md` calls headless reaches a runtime, a thread, the wall clock, the UI toolkit or a non-deterministic map. Invert it: let the caller in `app` or `feed` own the runtime and *tell* this crate what it needs, the way `replay` and `strategy` are told how much time passed, and use `BTreeMap`/`Vec` where order must be stable. If the site genuinely cannot ship a wrong answer, sign it in `crates/guards/headless-allowlist.txt` with the file, the identifier and the reason.
+
+exit=1
+
+--- reverted; the tree is clean under both guards again ---
+$ git status --short -- crates/engine/Cargo.toml crates/sim/src/lib.rs
+(no output above means both files are back as committed)
+$ quantick-guards
+exit=0

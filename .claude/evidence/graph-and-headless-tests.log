@@ -1,0 +1,55 @@
+=== A1: the six pine tests on origin/main, and what replaced them ===
+
+--- before: crates/pine/tests/workspace_deps.rs on origin/main ---
+  feeds_depend_on_the_domain_crates_only
+  the_domain_crates_never_depend_upwards
+  every_crate_is_covered_by_a_dependency_rule
+  claude_md_lists_every_crate
+  third_party_versions_are_stated_only_in_the_root_manifest
+  every_crate_inherits_the_workspace_lints
+
+--- after: the graph guard's tests in quantick-guards ---
+  graph::tests::a_crate_absent_from_the_architecture_list_is_a_finding
+  graph::tests::a_crate_that_does_not_inherit_the_lints_is_a_finding
+  graph::tests::a_crate_with_no_rule_is_reported_rather_than_left_unguarded
+  graph::tests::a_feed_may_not_reach_past_the_domain_or_another_feed
+  graph::tests::a_multi_line_inline_table_cannot_hide_its_pin
+  graph::tests::a_reverse_edge_is_a_finding_that_names_the_rule
+  graph::tests::a_third_party_version_outside_the_root_manifest_is_a_finding
+  graph::tests::a_workspace_that_obeys_every_rule_is_clean
+  graph::tests::the_edge_count_is_the_sum_of_what_every_crate_may_reach
+  graph::tests::the_hook_reads_manifests_and_the_architecture_list_and_nothing_else
+  graph::tests::this_workspace_obeys_the_graph
+  the_crate_graph_runs_one_way   (tests/guards.rs, over the real workspace)
+
+--- the mapping, rule by rule ---
+  feeds_depend_on_the_domain_crates_only        -> a_feed_may_not_reach_past_the_domain_or_another_feed
+  the_domain_crates_never_depend_upwards        -> a_reverse_edge_is_a_finding_that_names_the_rule
+  every_crate_is_covered_by_a_dependency_rule   -> a_crate_with_no_rule_is_reported_rather_than_left_unguarded
+  claude_md_lists_every_crate                   -> a_crate_absent_from_the_architecture_list_is_a_finding
+  third_party_versions_are_stated_only_in_...   -> a_third_party_version_outside_the_root_manifest_is_a_finding
+                                                   + a_multi_line_inline_table_cannot_hide_its_pin
+  every_crate_inherits_the_workspace_lints      -> a_crate_that_does_not_inherit_the_lints_is_a_finding
+
+  All six asserted against the real workspace only. Each now has a fixture
+  test that proves the rule fires, plus this_workspace_obeys_the_graph and
+  the CI-level the_crate_graph_runs_one_way, which assert what the six did.
+
+=== A3/A4/A5: the headless guard's tests ===
+  headless::tests::a_clock_read_in_a_headless_crate_is_a_finding_that_names_the_rule
+  headless::tests::a_clock_read_inside_a_test_module_is_not_a_hit
+  headless::tests::a_forbidden_identifier_inside_a_comment_is_not_a_hit
+  headless::tests::a_missing_allowlist_still_reports_the_hits
+  headless::tests::a_shortened_spelling_is_the_same_hit
+  headless::tests::a_signed_entry_silences_exactly_its_own_hit
+  headless::tests::a_slash_pair_inside_a_string_does_not_hide_the_rest_of_the_line
+  headless::tests::a_word_that_merely_contains_a_needle_is_not_a_hit
+  headless::tests::an_entry_that_no_longer_matches_anything_is_itself_a_finding
+  headless::tests::an_entry_with_no_reason_is_refused
+  headless::tests::every_forbidden_identifier_is_found
+  headless::tests::the_hook_does_not_report_a_stale_entry_for_another_file
+  headless::tests::the_hook_reads_headless_sources_and_nothing_else
+  headless::tests::the_line_number_survives_a_test_module_in_the_middle
+  headless::tests::the_scanned_crates_are_the_ones_the_rule_names
+  headless::tests::this_workspace_is_headless
+  the_crates_below_app_stay_headless   (tests/guards.rs, over the real workspace)
