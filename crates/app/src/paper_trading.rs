@@ -687,8 +687,15 @@ impl PaperTrading {
                     self.qty_text.trim(),
                 )),
             },
-            stop_offset: parse_offset(&self.stop_offset_text).ok().flatten(),
-            profit_offset: parse_offset(&self.profit_offset_text).ok().flatten(),
+            // Both boxes or neither: one that does not parse fails the pair,
+            // which is what `ticket_bracket`'s `?` did.
+            offsets: match (
+                parse_offset(&self.stop_offset_text),
+                parse_offset(&self.profit_offset_text),
+            ) {
+                (Ok(stop), Ok(profit)) => Some((stop, profit)),
+                _ => None,
+            },
         }
     }
 
@@ -715,8 +722,7 @@ impl PaperTrading {
         };
         let form = crate::paper_account::TicketForm {
             quantity: Ok(Decimal::ONE),
-            stop_offset,
-            profit_offset,
+            offsets: Some((stop_offset, profit_offset)),
         };
         Some(form.bracket(side, reference))
     }
@@ -800,8 +806,12 @@ impl PaperTrading {
         &self.account
     }
 
-    /// The policy half, mutably. Every call is followed by a drain of the
-    /// account's outbox - see [`Self::drain_account`].
+    /// The policy half, mutably.
+    ///
+    /// Nothing drains the outbox per call, and nothing needs to: the account
+    /// holds the one toast slot the ticket used to hold, and the per-frame
+    /// `settle` loop takes it the same way it always did. A caller here posts
+    /// an acknowledgement by acting, not by remembering to hand one on.
     pub(crate) fn account_mut(&mut self) -> &mut crate::paper_account::PaperAccount {
         &mut self.account
     }
@@ -6182,6 +6192,41 @@ mod tests {
         let preview = paper.cmd_preview.expect("still aiming");
         assert_eq!(preview.bracket.stop_loss(), Some(Decimal::from(93)));
         assert_eq!(preview.bracket.take_profit(), Some(Decimal::from(97)));
+    }
+
+    /// One unreadable offset box stands the whole bracket down, rather than
+    /// projecting the other one on its own.
+    ///
+    /// The two boxes are a pair. A ticket whose stop says `abc` and whose
+    /// target says `5` must project nothing: showing a target-only bracket
+    /// there would put protection on the chart that the trader never typed,
+    /// and it is the trade they would take it for. `ticket_bracket` read both
+    /// with `?` and one bad box failed the call; the seam carries that as
+    /// `TicketForm::offsets` being all-or-nothing, and this is what says so.
+    #[test]
+    fn one_unreadable_offset_stands_the_whole_bracket_down() {
+        let mut paper = PaperTrading::new();
+        paper.seed(&print(0, 100));
+        let reference = Decimal::from(100);
+
+        paper.stop_offset_text = "2".to_owned();
+        paper.profit_offset_text = "5".to_owned();
+        let both = paper.armed_bracket(Side::Buy, reference, Decimal::ONE);
+        assert_eq!(both.stop_loss(), Some(Decimal::from(98)));
+        assert_eq!(both.take_profit(), Some(Decimal::from(105)));
+
+        paper.stop_offset_text = "abc".to_owned();
+        let spoiled = paper.armed_bracket(Side::Buy, reference, Decimal::ONE);
+        assert_eq!(
+            spoiled.stop_loss(),
+            None,
+            "an unreadable stop projects no stop"
+        );
+        assert_eq!(
+            spoiled.take_profit(),
+            None,
+            "and takes the readable target down with it"
+        );
     }
 
     /// A short's ruler mirrors: the stop goes above the aim, the target

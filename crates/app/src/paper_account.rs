@@ -60,10 +60,14 @@ pub(crate) struct TicketForm {
     /// the box irrelevant. Carrying the sentence lets each decide its own
     /// half, and keeps the message a trader sees exactly what it was.
     pub quantity: Result<Decimal, String>,
-    /// The stop offset in price, if the box holds one.
-    pub stop_offset: Option<Decimal>,
-    /// The target offset in price, if the box holds one.
-    pub profit_offset: Option<Decimal>,
+    /// The two protective offsets, or `None` when **either** box holds text
+    /// that is not a positive number.
+    ///
+    /// All-or-nothing, because `ticket_bracket` was: it read both boxes with
+    /// `?` and one bad box failed the whole call. Reading them independently
+    /// would project a target-only bracket from a ticket whose stop says
+    /// `abc`, which is a protection the trader never typed.
+    pub offsets: Option<(Option<Decimal>, Option<Decimal>)>,
 }
 
 impl Default for TicketForm {
@@ -71,8 +75,7 @@ impl Default for TicketForm {
     fn default() -> Self {
         Self {
             quantity: Err("SIM: quantity must be a positive number - got ``".to_owned()),
-            stop_offset: None,
-            profit_offset: None,
+            offsets: Some((None, None)),
         }
     }
 }
@@ -81,18 +84,17 @@ impl TicketForm {
     /// The protective bracket the typed offsets describe around `reference`.
     /// A long's stop sits below and its target above; a short's the other way.
     pub(crate) fn bracket(&self, side: Side, reference: Decimal) -> Bracket {
+        let Some((stop_offset, profit_offset)) = self.offsets else {
+            return Bracket::none();
+        };
         let (stop_loss, take_profit) = match side {
             Side::Buy => (
-                self.stop_offset
-                    .map(|offset| reference.saturating_sub(offset)),
-                self.profit_offset
-                    .map(|offset| reference.saturating_add(offset)),
+                stop_offset.map(|offset| reference.saturating_sub(offset)),
+                profit_offset.map(|offset| reference.saturating_add(offset)),
             ),
             Side::Sell => (
-                self.stop_offset
-                    .map(|offset| reference.saturating_add(offset)),
-                self.profit_offset
-                    .map(|offset| reference.saturating_sub(offset)),
+                stop_offset.map(|offset| reference.saturating_add(offset)),
+                profit_offset.map(|offset| reference.saturating_sub(offset)),
             ),
         };
         Bracket::whole(stop_loss, take_profit)
@@ -725,7 +727,7 @@ impl PaperAccount {
 
     /// Post an acknowledgement for the host to hand on. An outbox, not a
     /// toast: this module owns no lane and no clock, and the message leaves
-    /// through [`AccountResponse::toasts`].
+    /// through [`AccountResponse::toast`].
     fn push_toast(&mut self, message: String) {
         self.outbox.toast = Some(message);
     }
