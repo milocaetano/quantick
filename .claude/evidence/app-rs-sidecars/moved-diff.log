@@ -3,8 +3,10 @@ A5 -- bodies unchanged: the branch diff is moves, not edits.
   git diff --color-moved=zebra --color-moved-ws=allow-indentation-change \
       origin/main...HEAD -- crates/app/src
 
+Measured at 7d776df, the branch head.
+
 Lines git paired as moved:      1717 added / 1726 removed
-Lines git could not pair:        113 added /   19 removed
+Lines git could not pair:        107 added /   19 removed
 
 Every unpaired line, and why it is not a body edit:
 
@@ -28,8 +30,10 @@ Every unpaired line, and why it is not a body edit:
        pub(super) is what app/layout_wiring.rs already uses (:75, :132,
        :142, :402), and it reaches app::tests, so no test file needed one.
 
- ~76 +  the four new files' own frames: a module doc comment, an import
-       block, 'impl QuantickApp {' and its closing brace, per file.
+ ~70 +  the four new files' own frames: a module doc comment, an import
+       block, 'impl QuantickApp {' and its closing brace, per file. The
+       import blocks brace-group their leaves the way app.rs and
+       app/layout_wiring.rs do (7d776df, a self-review fix).
 
   4 +  the test-only binding in app/tests/mod.rs and its three-line
        comment: DrawingsDemo reached the test files through app.rs's
