@@ -177,48 +177,82 @@ pub fn module_of(relative: &str) -> Option<String> {
 /// The first path segment of every `use crate::…` statement in a source
 /// file, in order, with duplicates kept so a caller can count them.
 ///
-/// A statement, not a substring: the scan starts only where a line *begins*
-/// a `use` (after an optional visibility), so `crate::` inside a doc
-/// comment or a string is never mistaken for an import. From there it reads
-/// the use-tree across however many lines it spans, which is why the parse
-/// is written by hand rather than by line.
+/// A statement, not a substring: a scan position is only ever the start of
+/// a statement — the beginning of a line, or whatever follows a `;` on one
+/// that already began with a `use` — so `crate::` inside a doc comment or a
+/// string is never mistaken for an import. From there it reads the use-tree
+/// across however many lines it spans, which is why the parse is written by
+/// hand rather than by line.
 ///
 /// Grouped imports are the whole reason it is not a regular expression:
 /// `use crate::{app::QuantickApp, tab::Tab};` is two edges, and
 /// `use crate::pane::{Pane, Split};` is one. The parser tracks, per brace
 /// level, whether the next identifier is still the head of its path.
+///
+/// Two statements on one line are two edges. `rustfmt` splits them and
+/// `cargo fmt --check` gates CI, so the repository has none today — but a
+/// guard that reads only the first is silently wrong, and being silently
+/// wrong is the one thing this guard may not be. Its whole claim is that a
+/// clean run means clean.
 pub fn use_targets(source: &str) -> Vec<String> {
     let lines: Vec<&str> = source.lines().collect();
     let mut targets = Vec::new();
     for (index, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        let head = trimmed
-            .strip_prefix("pub(crate) ")
-            .or_else(|| trimmed.strip_prefix("pub(super) "))
-            .or_else(|| trimmed.strip_prefix("pub "))
-            .unwrap_or(trimmed);
-        let Some(rest) = head.strip_prefix("use crate::") else {
-            continue;
-        };
-        // A use tree may span lines. Rebuilding the tail from the line list
-        // rather than indexing into `source` keeps the parse correct on a
-        // file with CRLF endings, where `str::lines` has already dropped a
-        // byte the offsets would still have counted.
-        let mut tail = String::from(rest);
-        let mut next = index + 1;
-        while !tail.contains(';') && next < lines.len() {
-            tail.push('\n');
-            tail.push_str(lines[next]);
-            next += 1;
+        let mut cursor = code(line);
+        while let Some(rest) = statement(cursor) {
+            // A use tree may span lines. Rebuilding the tail from the line
+            // list rather than indexing into `source` keeps the parse
+            // correct on a file with CRLF endings, where `str::lines` has
+            // already dropped a byte the offsets would still have counted.
+            let mut tail = String::from(rest);
+            let mut next = index + 1;
+            while !tail.contains(';') && next < lines.len() {
+                tail.push('\n');
+                tail.push_str(code(lines[next]));
+                next += 1;
+            }
+            let consumed = read_use_tree(&tail, &mut targets);
+            // Past the end of this line means the statement ran on into the
+            // ones already folded into `tail`; there is nothing left here.
+            // Otherwise step over the `;` the parser stopped on and look for
+            // another statement beside it.
+            let Some(remainder) = rest.get(consumed + 1..) else {
+                break;
+            };
+            cursor = remainder;
         }
-        read_use_tree(&tail, &mut targets);
     }
     targets
 }
 
+/// The part of a line that is code: everything before a `//`.
+///
+/// A `use` path can never contain `//`, so this cannot truncate a real
+/// import. It exists so that a comment beside or inside a use tree —
+/// `use crate::{a, // b, c` — cannot contribute `b` as a module.
+fn code(line: &str) -> &str {
+    line.split("//").next().unwrap_or(line)
+}
+
+/// Whatever follows `use crate::` at the head of `text`, or `None` when
+/// `text` does not begin a `use crate::` statement.
+fn statement(text: &str) -> Option<&str> {
+    let trimmed = text.trim_start();
+    let head = trimmed
+        .strip_prefix("pub(crate) ")
+        .or_else(|| trimmed.strip_prefix("pub(super) "))
+        .or_else(|| trimmed.strip_prefix("pub "))
+        .unwrap_or(trimmed);
+    head.strip_prefix("use crate::")
+}
+
 /// Read one use-tree, starting immediately after `crate::`, pushing the
 /// head segment of every path it names.
-fn read_use_tree(rest: &str, targets: &mut Vec<String>) {
+///
+/// Returns the byte offset it stopped at — the terminating `;`, or the end
+/// of the text — so the caller can look for a second statement beside the
+/// first.
+fn read_use_tree(rest: &str, targets: &mut Vec<String>) -> usize {
     // Per brace level: whether identifiers at this level are path heads
     // (`crate::{a, b}` — yes; `a::{X, Y}` — no), and whether the next
     // identifier is still the first of its path.
@@ -265,6 +299,7 @@ fn read_use_tree(rest: &str, targets: &mut Vec<String>) {
             _ => index += 1,
         }
     }
+    index
 }
 
 /// Every strongly connected component larger than one module, sorted.
@@ -769,6 +804,47 @@ mod tests {
                       /// The remedy mentions crate::ratchet too.\n\
                       let name = \"use crate::pane\";\n";
         assert!(use_targets(source).is_empty(), "{:?}", use_targets(source));
+    }
+
+    /// The false negative round 2 of the review found: a second statement
+    /// beside the first was never read, and a missed edge is a missed
+    /// cycle — the one way this guard may not be wrong.
+    #[test]
+    fn two_statements_on_one_line_are_two_edges() {
+        assert_eq!(
+            use_targets(
+                "use crate::a::X; use crate::b::Y;
+"
+            ),
+            vec!["a", "b"]
+        );
+    }
+
+    /// And the hole that reading past the first  would have opened if
+    /// comments were not cut first.
+    #[test]
+    fn a_comment_beside_a_use_names_no_module() {
+        assert_eq!(
+            use_targets(
+                "use crate::a::X; // like use crate::b::Y;
+"
+            ),
+            vec!["a"]
+        );
+    }
+
+    #[test]
+    fn a_comment_inside_a_use_tree_names_no_module() {
+        assert_eq!(
+            use_targets(
+                "use crate::{
+    a, // b, c
+    d,
+};
+"
+            ),
+            vec!["a", "d"]
+        );
     }
 
     #[test]
