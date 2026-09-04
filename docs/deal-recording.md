@@ -112,7 +112,8 @@ encoded; see `crates/app/src/deal_recording.rs`). The directory is
 | open another B3 symbol | it has its own REC and its own files |
 | open a Binance tab | no `trades`, no REC |
 | close quantick at 14:00 and reopen at 14:20 | today's file is resumed; the 20 minutes without readings are uncounted prints once they run past what a reading holds for (see *One rule, order-free*), and cutting resumes at the first completed window after 14:20 |
-| the bridge stalls for 30 s and catches up in one round | the round's one reading is dated at its first tick; the prints of the stall are credited the rate of the window before it, and the reading re-anchors the total |
+| the bridge stalls for 30 s and catches up in one round | the round's one reading is dated at the round's last tick — it was read after the round was fetched, so it covers every print of it; the stall's prints are credited the rate of the window before it, and the reading re-anchors the total |
+| load a recorded day while the live counter is arriving | its readings join the series; the state stays *counting live* (REC off) rather than *recorded*, since the live readings keep cutting — *recorded* is what the chart says once the counter stops |
 | leave the app open overnight, or press Reload in the morning | last night's last reading counts nothing of this morning's prints; the session's first reading starts the day |
 | press Reload on the feed | every pane is rebuilt from the new session's backfill; the readings it held stay with it, so the morning's prints cut as before |
 | switch the tab to another symbol, or open a replay | every pane starts clean: the old market's readings go with its series, and the new market's REC starts on its own default |

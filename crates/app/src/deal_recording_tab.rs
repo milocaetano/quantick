@@ -87,7 +87,13 @@ impl Tab {
                 .pane_at(index)
                 .is_some_and(|pane| pane.state.spec().kind() == BarKind::Trades);
             if cutting_deals {
-                self.recut_pane_with(index, |pane| pane.rebuild_bars());
+                // The series was rewritten under the bars, not the rule
+                // that cuts them: what a replay seek says when it disarms.
+                self.recut_pane_with(
+                    index,
+                    quantick_strategy::DisarmReason::TimelineReset,
+                    |pane| pane.rebuild_bars(),
+                );
             }
         }
     }

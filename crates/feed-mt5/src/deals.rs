@@ -27,12 +27,22 @@ pub struct DealSampler {
     offset_ms: i64,
     /// The last reading turned into a sample; the dedupe.
     last: Option<u64>,
-    /// When the last stamped tick was printed, on the tape's clock: the
-    /// instant a new reading is dated at, being the last print the previous
-    /// reading is known to cover.
-    last_tick_ms: Option<i64>,
+    /// A new reading, waiting for its round to end so it can be dated at
+    /// the round's last tick — the last print the reading is known to
+    /// cover, since the bridge reads the counter after it fetched the round.
+    pending: Option<PendingReading>,
     /// How many ticks carried a stamp, and how many of those became samples.
     pub stats: DealSampleStats,
+}
+
+/// A reading first carried by a round whose end is not known yet.
+#[derive(Debug, Clone, Copy)]
+struct PendingReading {
+    deals: u64,
+    /// The round, by the send time every tick of it shares.
+    round_sent_ms: i64,
+    /// The newest tick of the round so far, on the bridge's clock.
+    last_tick_ms: i64,
 }
 
 /// Counters for the health view: how the stamps reduced.
@@ -58,7 +68,7 @@ impl DealSampler {
             // declared by any process that dials the port.
             offset_ms: server_utc_offset_s.saturating_mul(1000),
             last: None,
-            last_tick_ms: None,
+            pending: None,
             stats: DealSampleStats::default(),
         }
     }
@@ -67,41 +77,60 @@ impl DealSampler {
     ///
     /// Ticks without a stamp — history pages, an older bridge — contribute
     /// nothing and are not counted as stamped.
+    /// The sample this tick contributes, if a stamp became a new reading.
+    ///
+    /// Ticks without a stamp — history pages, an older bridge — contribute
+    /// nothing and are not counted as stamped. A reading is dated at the
+    /// last tick of the round that first carried it: the bridge reads the
+    /// counter after it fetched the round, so the reading covers every tick
+    /// of that round, and the engine — joining a print to the reading
+    /// strictly before it — must see those prints under it, not credited
+    /// again on top of a total that already holds them. The round's end is
+    /// known when a tick of the next round arrives (ticks share `sent_ms`
+    /// within a round), which is when the sample is emitted — ahead of that
+    /// tick, as the stream sends it. A tick without `sent_ms` (an older
+    /// bridge) has no round and is dated at its own time.
     pub fn observe(&mut self, tick: &Tick) -> Option<DealSample> {
         let deals = tick.deals?;
         self.stats.stamped += 1;
-        // The bridge reads the counter after it fetched a round's ticks, so
-        // a reading covers every tick up to the last one of its round. A
-        // new reading is therefore dated at the previous stamped tick — the
-        // last print the previous reading covered — not at the tick that
-        // carries it: the engine joins a print to the reading strictly
-        // before it, and the round's prints belong to this reading, not the
-        // next window's volume. The first reading has no previous tick and
-        // is dated at its own.
-        // Not across a gap longer than a reading holds for, though: the
-        // first tick of a session on a connection kept alive overnight must
-        // not date the day's first reading at yesterday's last print.
-        let taken_ms = match self.last_tick_ms {
-            Some(last)
-                if tick.time_ms.saturating_sub(last) <= quantick_engine::READING_MAX_AGE_MS =>
-            {
-                last
+        let mut emitted = None;
+        if let Some(pending) = self.pending {
+            if tick.sent_ms == Some(pending.round_sent_ms) {
+                self.pending = Some(PendingReading {
+                    last_tick_ms: tick.time_ms,
+                    ..pending
+                });
+            } else {
+                self.pending = None;
+                emitted = Some(self.emit(pending.deals, pending.last_tick_ms));
             }
-            _ => tick.time_ms,
-        };
-        self.last_tick_ms = Some(tick.time_ms);
-        if self.last == Some(deals) {
-            return None;
         }
+        if self.pending.is_none() && self.last != Some(deals) {
+            match tick.sent_ms {
+                Some(round_sent_ms) => {
+                    self.pending = Some(PendingReading {
+                        deals,
+                        round_sent_ms,
+                        last_tick_ms: tick.time_ms,
+                    });
+                }
+                None => emitted = Some(self.emit(deals, tick.time_ms)),
+            }
+        }
+        emitted
+    }
+
+    /// Turn a reading into the sample the engine joins prints against.
+    fn emit(&mut self, deals: u64, taken_ms: i64) -> DealSample {
         if self.last.is_some_and(|last| deals < last) {
             self.stats.regressions += 1;
         }
         self.last = Some(deals);
         self.stats.samples += 1;
-        Some(DealSample {
+        DealSample {
             time_ms: taken_ms.saturating_sub(self.offset_ms),
             session_deals: deals,
-        })
+        }
     }
 
     /// The reading in force after the last stamped tick, if any.
@@ -123,10 +152,14 @@ mod tests {
     use super::*;
 
     fn tick(seq: u64, time_ms: i64, deals: Option<u64>) -> Tick {
+        tick_in_round(seq, time_ms, deals, None)
+    }
+
+    fn tick_in_round(seq: u64, time_ms: i64, deals: Option<u64>, sent_ms: Option<i64>) -> Tick {
         Tick {
             seq,
             time_ms,
-            sent_ms: None,
+            sent_ms,
             bid: "0".into(),
             ask: "0".into(),
             last: "100".into(),
@@ -139,35 +172,56 @@ mod tests {
     #[test]
     fn one_sample_per_change_on_the_tapes_own_clock() {
         let mut sampler = DealSampler::new(-10_800);
-        let first = sampler.observe(&tick(1, 1_000, Some(2_000_000)));
+        // Round 1 (sent at 1 500) first carries 2 000 000; the reading is
+        // dated at the round's last tick, once round 2 begins.
+        assert!(
+            sampler
+                .observe(&tick_in_round(1, 1_000, Some(2_000_000), Some(1_500)))
+                .is_none()
+        );
+        assert!(
+            sampler
+                .observe(&tick_in_round(2, 1_005, Some(2_000_000), Some(1_500)))
+                .is_none()
+        );
+        assert!(
+            sampler
+                .observe(&tick_in_round(3, 1_010, Some(2_000_000), Some(1_500)))
+                .is_none()
+        );
+        let first = sampler.observe(&tick_in_round(4, 1_020, Some(2_000_000), Some(1_520)));
         assert_eq!(
             first,
             Some(DealSample {
-                time_ms: 1_000 + 10_800_000,
+                time_ms: 1_010 + 10_800_000,
                 session_deals: 2_000_000
             })
         );
-        assert!(sampler.observe(&tick(2, 1_005, Some(2_000_000))).is_none());
-        assert!(sampler.observe(&tick(3, 1_010, Some(2_000_000))).is_none());
-        let next = sampler.observe(&tick(4, 1_020, Some(2_000_007)));
-        assert_eq!(next.map(|s| s.session_deals), Some(2_000_007));
-        // Dated at the last tick the previous reading covered, not at the
-        // tick that carries the new one.
-        assert_eq!(next.map(|s| s.time_ms), Some(1_010 + 10_800_000));
-        assert_eq!(sampler.stats.stamped, 4);
+        // Round 3 carries a new reading; round 4's first tick dates it.
+        assert!(
+            sampler
+                .observe(&tick_in_round(5, 1_040, Some(2_000_007), Some(1_540)))
+                .is_none()
+        );
+        let next = sampler.observe(&tick_in_round(6, 1_060, Some(2_000_007), Some(1_560)));
+        assert_eq!(
+            next.map(|s| (s.time_ms, s.session_deals)),
+            Some((1_040 + 10_800_000, 2_000_007))
+        );
+        assert_eq!(sampler.stats.stamped, 6);
         assert_eq!(sampler.stats.samples, 2);
         assert_eq!(sampler.reading(), Some(2_000_007));
     }
 
-    /// The first reading after a gap longer than a reading holds for — a
-    /// connection kept alive overnight — is dated at its own tick.
+    /// An older bridge stamps no round: a reading is dated at its own tick.
     #[test]
-    fn a_reading_after_a_long_gap_is_dated_at_its_own_tick() {
+    fn a_tick_with_no_round_dates_the_reading_at_itself() {
         let mut sampler = DealSampler::new(0);
-        sampler.observe(&tick(1, 1_000, Some(5_000_000)));
-        let morning = 1_000 + 15 * 3_600_000;
-        let first = sampler.observe(&tick(2, morning, Some(12))).unwrap();
-        assert_eq!(first.time_ms, morning);
+        let first = sampler.observe(&tick(1, 1_000, Some(5)));
+        assert_eq!(first.map(|s| s.time_ms), Some(1_000));
+        assert!(sampler.observe(&tick(2, 1_005, Some(5))).is_none());
+        let next = sampler.observe(&tick(3, 1_010, Some(6)));
+        assert_eq!(next.map(|s| s.time_ms), Some(1_010));
     }
 
     #[test]

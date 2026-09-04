@@ -2962,16 +2962,25 @@ impl Tab {
             // Still moving: wait for the selector to settle for a frame.
             Some(pending) if pending != desired => pane.pending_spec = Some(desired),
             // Settled since last frame: do the rebuild.
-            Some(_) => self.recut_pane_with(index, |pane| pane.set_spec(desired)),
+            Some(_) => self.recut_pane_with(
+                index,
+                quantick_strategy::DisarmReason::BarSpecChanged,
+                |pane| pane.set_spec(desired),
+            ),
         }
     }
 
     /// Re-cut one pane's series through `recut` with the bookkeeping every
     /// rewrite owes: the view keeps its market time, the marks follow it into
     /// the new bar space, the indicators are replayed, and the strategies
-    /// disarm. A spec switch passes `set_spec`; readings put under bars
-    /// already folded pass the rebuild.
-    pub(crate) fn recut_pane_with(&mut self, index: PaneIndex, recut: impl FnOnce(&mut ChartPane)) {
+    /// disarm, saying why. A spec switch passes `set_spec`; readings put
+    /// under bars already folded pass the rebuild.
+    pub(crate) fn recut_pane_with(
+        &mut self,
+        index: PaneIndex,
+        reason: quantick_strategy::DisarmReason,
+        recut: impl FnOnce(&mut ChartPane),
+    ) {
         let Some(pane) = self.pane_at_mut(index) else {
             return;
         };
@@ -3017,9 +3026,7 @@ impl Tab {
         // bar spec, so the instances disarm and say why. The tape
         // itself continues, so any pending bot entry is swept here
         // and now — through the same funnel manual orders use.
-        let cleanup = pane
-            .strategies
-            .disarm_all(quantick_strategy::DisarmReason::BarSpecChanged);
+        let cleanup = pane.strategies.disarm_all(reason);
         let _ = pane.take_strategy_bars();
         for command in cleanup {
             let _ = self.paper.apply_strategy_command(command);

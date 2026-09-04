@@ -576,7 +576,13 @@ impl DealRecorder {
         mut day_cache: DayCache,
     ) -> Self {
         let symbol = symbol.into();
-        let days = scan_days(&dir, &symbol, &mut day_cache);
+        // A placeholder has no folder and scans nothing; a real recorder
+        // lists its symbol's days.
+        let days = if dir.as_os_str().is_empty() {
+            Rc::from(Vec::new())
+        } else {
+            scan_days(&dir, &symbol, &mut day_cache)
+        };
         Self {
             feed_id: String::new(),
             symbol,
@@ -792,7 +798,10 @@ impl DealRecorder {
             self.tz_minutes
         };
         let day = day_of(sample.time_ms, tz_minutes);
-        if self.recording.as_ref().is_none_or(|r| r.day != day) {
+        // Forward only: a reading stamped behind the open file — a bridge
+        // restarted with another clock offset — belongs to the open day,
+        // where `append` keeps it, never to a file rotated back to.
+        if self.recording.as_ref().is_none_or(|r| day > r.day) {
             // Midnight in the display timezone: the day's own file, opened
             // now. An open that fails turns recording off with its reason,
             // so no reading retries it fifty times a second; REC, pressed
@@ -874,7 +883,16 @@ impl DealRecorder {
         // next hello, and a recorder still appending must not read as
         // "unsupported" for the seconds in between.
         if !self.enabled {
-            return match (self.loaded_days.is_empty(), self.available) {
+            // "Recorded" — the counts on screen come from a file — only
+            // while no live counter is arriving: a loaded day beside a
+            // moving counter is a chart counting live, not written to disk.
+            // Live means a reading fresh against the tape: no print yet, or
+            // no reading, is not live, and a counter that stopped is not.
+            let live = self.available
+                && self
+                    .counter_age_ms(latest_trade_ms)
+                    .is_some_and(|age| age < STALE_AFTER_MS);
+            return match (self.loaded_days.is_empty() || live, self.available) {
                 (false, _) => RecState::Recorded,
                 (true, false) => RecState::Unsupported,
                 (true, true) => RecState::Off,
@@ -1259,6 +1277,52 @@ mod tests {
             file.samples,
             vec![sample(1_000_000, 10), sample(100_000, 12)]
         );
+    }
+
+    /// A loaded day beside a moving live counter is a chart counting live:
+    /// Off, and the chip says "not written to disk", not "recorded".
+    #[test]
+    fn a_loaded_day_beside_a_live_counter_is_not_recorded() {
+        let dir = scratch("loaded-beside-live");
+        let (mut earlier, _) = Recording::open(dir.path(), "WINV26", "2026-09-03", -180).unwrap();
+        earlier.append(sample(1_788_436_800_000, 10), 0).unwrap();
+        earlier.flush().unwrap();
+        drop(earlier);
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
+        rec.set_available(true);
+        assert!(!rec.load_day(0).is_empty());
+        assert_eq!(rec.state(None), RecState::Recorded, "nothing live yet");
+        rec.observe(sample(LATE_EVENING_BRT_MS, 20), LATE_EVENING_BRT_MS);
+        assert_eq!(
+            rec.state(Some(LATE_EVENING_BRT_MS + 1_000)),
+            RecState::Off,
+            "the live counter is what the bars cut from"
+        );
+        assert_eq!(
+            rec.state(Some(LATE_EVENING_BRT_MS + STALE_AFTER_MS + 1)),
+            RecState::Recorded,
+            "and once it stops, the loaded day is what is on screen"
+        );
+    }
+
+    /// A reading stamped behind the open file's day stays in the open file:
+    /// the day rotates forward only.
+    #[test]
+    fn the_day_rotates_forward_only() {
+        let dir = scratch("forward-only");
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
+        rec.set_timezone(-180);
+        rec.set_available(true);
+        // 01:00 on the 4th in UTC-3 opens the 4th's file.
+        let early = LATE_EVENING_BRT_MS + 2 * 3_600_000;
+        rec.start(early);
+        rec.observe(sample(early, 10), early);
+        // A reading stamped an hour behind — the 3rd, 23:00 — lands there.
+        rec.observe(sample(LATE_EVENING_BRT_MS, 12), early + 1_000);
+        let view = rec.view(None);
+        let name = view.path.as_ref().and_then(|p| p.file_name()).unwrap();
+        assert_eq!(name.to_string_lossy(), "2026-09-04.deals");
+        assert_eq!(view.written, 2);
     }
 
     #[test]

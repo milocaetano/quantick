@@ -124,6 +124,10 @@ pub struct DealBarBuilder {
     /// The bar opened by a rollover print whose own estimate already
     /// reached the multiple closes on the next push, before that print.
     close_next: bool,
+    /// The forming bar closes at its multiple and the count then moves on
+    /// past the multiples an empty or uncounted stretch crossed, rather
+    /// than catching each of them up one print at a time.
+    skip_catch_up: bool,
     current: Option<Bar>,
     uncounted: u64,
 }
@@ -151,6 +155,7 @@ impl DealBarBuilder {
             window_counted: false,
             window_had_uncounted: false,
             close_next: false,
+            skip_catch_up: false,
             current: None,
             uncounted: 0,
         }
@@ -241,10 +246,17 @@ impl DealBarBuilder {
                     // re-anchored total and closes on the next print; one it
                     // closed early is above it and is not cut twice — the
                     // next window fills up to it.
-                    if (!self.window_counted || self.window_had_uncounted)
-                        && deals >= self.next_boundary
-                    {
-                        self.next_boundary = self.boundary_above(deals);
+                    let counted_window = self.window_counted && !self.window_had_uncounted;
+                    if !counted_window && deals >= self.next_boundary {
+                        if self.current.is_none() {
+                            self.next_boundary = self.boundary_above(deals);
+                        } else {
+                            // A bar is forming from before the empty or
+                            // uncounted stretch: it closes at its multiple on
+                            // the next print, and the count moves on from
+                            // there rather than catching every multiple up.
+                            self.skip_catch_up = true;
+                        }
                     }
                 }
             }
@@ -271,7 +283,17 @@ impl DealBarBuilder {
     /// per print, until the boundary passes the total; either way the next
     /// multiple is the boundary, or the day's bar count would drift below
     /// the venue's total over `N`.
-    fn boundary_after_close(&self) -> u64 {
+    fn boundary_after_close(&mut self) -> u64 {
+        if self.skip_catch_up {
+            self.skip_catch_up = false;
+            let floor: u64 = self
+                .total
+                .max(Decimal::ZERO)
+                .trunc()
+                .try_into()
+                .unwrap_or(u64::MAX);
+            return self.boundary_above(floor);
+        }
         self.next_boundary.saturating_add(self.n)
     }
 }
@@ -799,6 +821,33 @@ mod tests {
                 progress.target
             );
         }
+    }
+
+    /// A reading past the boundary while a bar is forming from before an
+    /// empty window closes that bar at its multiple on the next print, and
+    /// the count then moves on past the multiples the empty window crossed.
+    #[test]
+    fn a_forming_bar_closes_at_its_multiple_after_an_empty_window() {
+        let mut b = DealBarBuilder::new(1_000);
+        b.observe_deals(sample(99, 10_000));
+        for i in 0..5 {
+            b.push(&trade_of(1 + i, 100 + i as i64 * 100, "100", "10"));
+        }
+        b.observe_deals(sample(30_099, 10_500)); // rate 10
+        assert!(b.push(&trade_of(10, 30_100, "100", "5")).is_none());
+        assert!(b.push(&trade_of(11, 30_200, "100", "5")).is_none()); // total 10 600, forming
+        b.observe_deals(sample(60_099, 10_900));
+        b.observe_deals(sample(90_099, 11_200)); // an empty window crossed 11 000
+        let closed = b
+            .push(&trade_of(12, 90_100, "100", "1"))
+            .expect("the forming bar closes at 11 000");
+        assert_eq!(closed.trade_count, 3);
+        assert_eq!(
+            b.progress().map(|p| p.target),
+            Some(Decimal::from(1_000)),
+            "and the count moves on toward 12 000"
+        );
+        assert!(b.push(&trade_of(13, 90_200, "100", "1")).is_none());
     }
 
     /// A reconnect re-emits the reading it finds: an unchanged reading at
