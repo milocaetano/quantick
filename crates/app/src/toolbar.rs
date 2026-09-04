@@ -25,6 +25,7 @@ use crate::dock::DockTab;
 use crate::state::{BarKind, ImbalanceUnit};
 use crate::theme;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
+use quantick_feed::history_reach;
 
 /// Height of the toolbar, in pixels (§5 zone 2).
 pub const TOOLBAR_HEIGHT: f32 = 44.0;
@@ -256,7 +257,7 @@ pub struct ToolbarModel<'a> {
     /// How far one "+ older" press reaches: one page, or the previous session
     /// with a lead into it. Written straight through, as the page size is —
     /// the reach is a stored choice, not an event.
-    pub history_reach: &'a mut crate::history_reach::HistoryReach,
+    pub history_reach: &'a mut history_reach::HistoryReach,
     /// Whether a reach beyond one page is paging right now, so the button can
     /// say it is working instead of looking idle while pages land.
     pub history_reach_running: bool,
@@ -912,7 +913,7 @@ fn draw_history_menu(
         // run of them, and the page size below is the size of each request
         // either way.
         ui.label("one press reaches");
-        for reach in crate::history_reach::HistoryReach::ALL {
+        for reach in history_reach::HistoryReach::ALL {
             // While a run is in flight the reach is also the way out of it, and
             // this is where the trader would look — it is the control that
             // started the run. Said on the chip rather than only in the log.
@@ -927,14 +928,14 @@ fn draw_history_menu(
             ui.selectable_value(model.history_reach, reach, reach.label())
                 .on_hover_text(hover);
         }
-        if *model.history_reach == crate::history_reach::HistoryReach::Span {
+        if *model.history_reach == history_reach::HistoryReach::Span {
             // Shown only under the reach that reads it. A duration sitting
             // beside a reach that ignores it is a control that looks broken:
             // the trader sets it, presses, and nothing about the press changes.
             ui.label("tape per press");
             ui.add(
                 egui::DragValue::new(model.history_reach_span_minutes)
-                    .range(1.0..=(crate::history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000) as f64)
+                    .range(1.0..=(history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000) as f64)
                     .speed(15.0)
                     .custom_formatter(|minutes, _| format_tape_span(minutes as i64))
                     // egui seeds keyboard editing from the formatter's own
@@ -1635,7 +1636,7 @@ mod tests {
         let mut history_step = 2_000_usize;
         let mut span_minutes = 120_u32;
         let mut history_menu_rect = None;
-        let mut history_reach = crate::history_reach::HistoryReach::default();
+        let mut history_reach = history_reach::HistoryReach::default();
         for replaying in [false, true] {
             for _ in 0..2 {
                 let _ = ctx.run(egui::RawInput::default(), |ctx| {
@@ -1727,7 +1728,7 @@ mod tests {
         let mut history_step = 2_000_usize;
         let mut span_minutes = 120_u32;
         let mut history_menu_rect = None;
-        let mut history_reach = crate::history_reach::HistoryReach::default();
+        let mut history_reach = history_reach::HistoryReach::default();
         // Wide enough that the §6 plan folds nothing — the point is the
         // inline chip row, not the overflow menu.
         let input = || egui::RawInput {
@@ -1818,7 +1819,7 @@ mod tests {
         let mut history_step = 2_000_usize;
         let mut span_minutes = 120_u32;
         let mut history_menu_rect = None;
-        let mut history_reach = crate::history_reach::HistoryReach::default();
+        let mut history_reach = history_reach::HistoryReach::default();
         // Every kind, including the two the feed cannot back: selecting one is
         // still possible from config or a previous session, and the toolbar
         // must draw it rather than panic.
@@ -1892,7 +1893,7 @@ mod tests {
         let mut history_step = 2_000_usize;
         let mut span_minutes = 120_u32;
         let mut history_menu_rect = None;
-        let mut history_reach = crate::history_reach::HistoryReach::default();
+        let mut history_reach = history_reach::HistoryReach::default();
         let mut painted = String::new();
         // Wide enough that the §6 plan folds nothing — the point is the
         // inline button, not the overflow menu.

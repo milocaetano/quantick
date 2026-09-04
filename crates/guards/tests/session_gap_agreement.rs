@@ -3,7 +3,7 @@
 //! Two pieces of software read the same tape and both have to decide the same
 //! thing from it. `bridge/mt5/quantick_bridge.py` walks back from the newest
 //! print to find where the session started, so it knows what the opening block
-//! is; `crates/app/src/history_reach.rs` walks back from the chart's oldest bar
+//! is; `crates/feed/src/history_reach.rs` walks back from the chart's oldest bar
 //! for the same reason, so it knows when one press of *load older* has arrived.
 //! If those two ever disagree, a chart opens on a block whose left edge the
 //! campaign does not recognise as a session edge — and the trader sees a
@@ -100,7 +100,7 @@ fn rust_constant(source: &str, name: &str) -> i64 {
         .unwrap_or_else(|| {
             panic!(
                 "`{name}` is not declared as a `pub const … : i64` in \
-                 crates/app/src/history_reach.rs. If it was renamed or retyped, say so here \
+                 crates/feed/src/history_reach.rs. If it was renamed or retyped, say so here \
                  too — that is what this test is for."
             )
         });
@@ -112,7 +112,7 @@ fn rust_constant(source: &str, name: &str) -> i64 {
         .next()
         .expect("a split always yields a first part")
         .trim();
-    product_of_literals(expression, name, "crates/app/src/history_reach.rs")
+    product_of_literals(expression, name, "crates/feed/src/history_reach.rs")
 }
 
 /// Evaluate `a * b * c`, which is all either side writes these as.
@@ -143,7 +143,7 @@ fn the_bridge_and_the_app_measure_a_session_the_same_way() {
     let root = repo_root();
     let source = std::fs::read_to_string(root.join("bridge/mt5/quantick_bridge.py"))
         .expect("the MetaTrader bridge is part of this repository");
-    let rust_source = std::fs::read_to_string(root.join("crates/app/src/history_reach.rs"))
+    let rust_source = std::fs::read_to_string(root.join("crates/feed/src/history_reach.rs"))
         .expect("the chart's history reach is part of this repository");
 
     let agreements = [

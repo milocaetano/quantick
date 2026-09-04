@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 
 use crate::config::ProviderKind;
-use quantick_feed::mt5_bridge;
+use crate::mt5_bridge;
 
 /// Where `export_session.py` lives, relative to the repository root.
 const EXPORT_SCRIPT: &str = "tools/mt5/export_session.py";
@@ -310,23 +310,30 @@ pub struct Mt5SessionSource {
 
 impl Mt5SessionSource {
     /// A source that resolves Python and the script the way the bridge does.
+    ///
+    /// `shelf_dir` is the trader's own folder, handed in rather than looked
+    /// up: where a machine keeps a user's documents is the application's
+    /// question, and this crate does not get to ask it. `None` means the
+    /// platform has no durable home for the cache, which is a normal answer
+    /// and not an error — the same contract [`mt5_bridge::clock_cache_path`]
+    /// already states.
     #[must_use]
-    pub fn new(interpreter: &str) -> Self {
+    pub fn new(interpreter: &str, shelf_dir: Option<&Path>) -> Self {
         Self {
             interpreter: interpreter.to_string(),
             roots: mt5_bridge::default_search_roots(),
-            clock_cache: mt5_bridge::clock_cache_path(crate::paper_home::shelf_dir().as_deref()),
+            clock_cache: mt5_bridge::clock_cache_path(shelf_dir),
         }
     }
 
     /// The same, looking for the script under `roots` — for tests.
     #[cfg(test)]
     #[must_use]
-    pub fn with_roots(interpreter: &str, roots: Vec<PathBuf>) -> Self {
+    pub fn with_roots(interpreter: &str, roots: Vec<PathBuf>, shelf_dir: Option<&Path>) -> Self {
         Self {
             interpreter: interpreter.to_string(),
             roots,
-            clock_cache: mt5_bridge::clock_cache_path(crate::paper_home::shelf_dir().as_deref()),
+            clock_cache: mt5_bridge::clock_cache_path(shelf_dir),
         }
     }
 
@@ -412,7 +419,6 @@ pub struct DownloadJob {
     cancelled: Arc<AtomicBool>,
 }
 
-#[cfg(test)]
 impl DownloadJob {
     /// A job whose worker is already gone: the receiver end alone, with
     /// nothing behind it.
@@ -421,7 +427,13 @@ impl DownloadJob {
     /// to the panel draining it — a channel that only ever says
     /// `Disconnected`. Lets the paths that have to survive that be tested
     /// without a process, which is the only way they are exercised at all.
-    pub(crate) fn stopped_for_test(events: Receiver<DownloadEvent>) -> Self {
+    ///
+    /// Test support, published on purpose rather than `#[cfg(test)]`, for the
+    /// reason [`crate::replay::test_support`] spells out in full: the attribute
+    /// is false when this crate is compiled as a dependency, and the panel that
+    /// needs this constructor is in `app`, one crate up.
+    #[must_use]
+    pub fn stopped_for_test(events: Receiver<DownloadEvent>) -> Self {
         Self {
             events,
             cancelled: Arc::new(AtomicBool::new(true)),
@@ -755,7 +767,7 @@ mod tests {
 
     #[test]
     fn a_missing_script_says_where_to_put_it() {
-        let source = Mt5SessionSource::with_roots("python", vec![PathBuf::from("/nowhere")]);
+        let source = Mt5SessionSource::with_roots("python", vec![PathBuf::from("/nowhere")], None);
         let err = source
             .commands(&request())
             .expect_err("there is no exporter under /nowhere");

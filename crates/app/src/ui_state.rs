@@ -312,7 +312,7 @@ pub struct SavedChrome {
     #[serde(default = "yes")]
     pub progressive_history: bool,
     /// How far one press of *load older* reaches, as
-    /// [`crate::history_reach::HistoryReach::token`] writes it.
+    /// [`quantick_feed::history_reach::HistoryReach::token`] writes it.
     ///
     /// A token rather than a variant name, so a release may reword the menu
     /// label without orphaning every saved workspace. Absent — or a token a

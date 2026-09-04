@@ -30,11 +30,11 @@ use quantick_replay::Library;
 use quantick_replay::format::{CivilTime, UtcOffset};
 
 use crate::config::ProviderKind;
-use crate::replay_download::{
-    DEFAULT_CONTEXT_SESSIONS, DEFAULT_JOIN_DAY_BEFORE, DownloadEvent, DownloadJob, DownloadRequest,
-    Mt5SessionSource, SessionSource,
-};
 use crate::theme::{AMBER, TEXT_MUTED, TEXT_PRIMARY, WARN};
+use quantick_feed::replay_download::{
+    self, DEFAULT_CONTEXT_SESSIONS, DEFAULT_JOIN_DAY_BEFORE, DownloadEvent, DownloadJob,
+    DownloadRequest, Mt5SessionSource, SessionSource,
+};
 
 /// Context choices offered. A week is the default; the ends are there because
 /// "just yesterday" and "the whole fortnight" are both real ways to prepare.
@@ -260,7 +260,10 @@ impl GetDataPanel {
             // The interpreter is the bridge's default, which already falls
             // back from `python` to `py`. A machine that can stream
             // MetaTrader can download from it.
-            source: Box::new(Mt5SessionSource::new("python")),
+            source: Box::new(Mt5SessionSource::new(
+                "python",
+                crate::paper_home::shelf_dir().as_deref(),
+            )),
         }
     }
 
@@ -613,7 +616,7 @@ impl GetDataPanel {
             out_dir,
             utc_offset_s: self.declared_clock,
         };
-        match crate::replay_download::run(self.source.as_ref(), &request) {
+        match replay_download::run(self.source.as_ref(), &request) {
             Ok(job) => {
                 tracing::info!(
                     target: "quantick::app",
@@ -685,7 +688,7 @@ impl GetDataPanel {
         self.chain_day = None;
         self.request_out_dir = Some(request.out_dir.clone());
         let source = &self.source;
-        match crate::replay_download::run(source.as_ref(), &request) {
+        match replay_download::run(source.as_ref(), &request) {
             Ok(job) => {
                 tracing::info!(
                     target: "quantick::app",
