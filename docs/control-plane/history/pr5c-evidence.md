@@ -1,8 +1,12 @@
 # PR 5c evidence: evidence bundles
 
+> **Archaeology, not current state.** This document records what was true
+> when it was written and is kept for the reasoning it carries. For what
+> has shipped, ask the registry — see [Precedence](../README.md#precedence).
+
 **Branch:** `feat/control-evidence`, cut from `origin/main`.
 
-**Plan:** [PR 5c](../mcp-control-plane-development-plan.md) §8 · **Roadmap:**
+**Plan:** [PR 5c](../../mcp-control-plane-development-plan.md) §8 · **Roadmap:**
 §5.4 · **Contract:** §3 (canonical digests), §5 (`retained_resource`
 pagination), §7 (limits), §8 (tool surface) ·
 **Threat model:** O-17, O-18, O-21, O-25.

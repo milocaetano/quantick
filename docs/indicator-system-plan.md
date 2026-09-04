@@ -680,7 +680,8 @@ Test-first, engine-style: fixtures + expected outputs before implementation.
 ## 7. Milestones
 
 Each milestone = one or more PRs, each PR passing the full verification loop
-(`fmt --check`, `clippy -D warnings`, `build`, `test`, all `--workspace`).
+(`fmt --check`, `clippy`, `build`, `test`, all `--workspace`; the lint
+levels live in `[workspace.lints]`, not on the command line).
 Branch names `feat/indicators-*`. Each milestone leaves `main` shippable.
 
 ### M1 — `indicators` crate + native EMA/CVD rendered (proves the whole pipe)

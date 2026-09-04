@@ -714,6 +714,8 @@ pub(crate) fn save(path: &Path, book: &LayoutBook) {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_LAYOUTS"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

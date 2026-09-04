@@ -1,0 +1,35 @@
+=== A7: the registry is regenerated, and no prose was lost (R10, R18) ===
+
+--- regenerate over the committed file, then ask git whether it moved ---
+$ cargo run -q -p quantick-app -- --dump-hook-registry > .claude/skills/ui-harness/references/hook-registry.md
+exit=0
+git diff --exit-code = 0   (0 = the committed copy is exactly what the generator emits)
+
+--- and the authoritative test, which compares the whole file ---
+test hooks::tests::the_committed_registry_is_what_the_generator_emits ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2196 filtered out; finished in 0.00s
+
+--- prose preserved, cell by cell, against the hand-written original ---
+Reaches cells, hand-written original: 128 - 59228 bytes
+Reaches cells, generated           : 131 - 60594 bytes
+
+cells lost   : 1
+   - one **agent-authored label** placed on the first frame at the newest bar, through `annotate.label.create` with
+cells added  : 4
+   + **newline-delimited JSON on stderr** instead of the human format, one object per event with the span list flat
+   + the **hand-written footprint preset** the app reads and must never rewrite, default `config/footprint.toml`. D
+   + where the `.pine` script library is scanned from, default `./indicators` beside the working directory — the sa
+   + one **agent-authored label** placed on the first frame at the newest bar, through `annotate.label.create` with
+
+--- reading that result ---
+128 Reaches cells before, 131 after. Nothing was dropped:
+
+  * The one cell counted "lost" is `QUANTICK_CONTROL_ANNOTATE`'s, and it is
+    also in the "added" list. It differs by exactly the defect this mission
+    was sent to fix: it told the reader to "pair with `QUANTICK_DRAWING_MANAGER=1`",
+    a variable nothing has ever read. It now names the plural the code reads.
+  * The other three added cells are the three hooks that had no row at all.
+
+So: no cell shortened, no cell removed, one cell corrected, three added. The
+prose grew by 1,366 bytes and the file as a whole by 935, because generation
+also removed 43 stale staging lines and 22 duplicate table headers.

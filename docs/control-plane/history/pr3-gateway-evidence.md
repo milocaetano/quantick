@@ -1,5 +1,9 @@
 # PR 3 local gateway evidence
 
+> **Archaeology, not current state.** This document records what was true
+> when it was written and is kept for the reasoning it carries. For what
+> has shipped, ask the registry — see [Precedence](../README.md#precedence).
+
 **Branch:** `feat/control-gateway`
 
 **Rate class:** Startup and infrequent requests.

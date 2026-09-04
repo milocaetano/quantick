@@ -4460,6 +4460,8 @@ impl Tab {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_PANE_COLLAPSED"];
+
 #[cfg(test)]
 mod shared_routing_tests {
     use super::*;

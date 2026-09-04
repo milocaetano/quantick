@@ -340,6 +340,8 @@ fn lower_first(text: &str) -> String {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_FEED_STALL"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

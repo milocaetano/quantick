@@ -38,6 +38,7 @@
 pub mod context;
 pub mod cycle;
 pub mod encoding;
+pub mod generated;
 pub mod language;
 pub mod ratchet;
 pub mod size;
@@ -177,6 +178,15 @@ pub const GUARDS: &[Guard] = &[
         name: "encoding",
         check: encoding::check,
         check_file: encoding::check_file,
+        ratchet: None,
+    },
+    Guard {
+        // No ratchet: a generated file has no number to lower. It either
+        // matches the code it was rendered from or it does not, and the fix is
+        // always to regenerate rather than to record a new ceiling.
+        name: "generated",
+        check: generated::check,
+        check_file: generated::check_file,
         ratchet: None,
     },
 ];

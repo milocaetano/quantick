@@ -469,6 +469,8 @@ fn import_name(name: &OsStr, suffix: usize) -> PathBuf {
     PathBuf::from(format!("{stem}.imported-{suffix}.{extension}"))
 }
 
+crate::hooks::declare_hooks!["QUANTICK_TRADES_DIR"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

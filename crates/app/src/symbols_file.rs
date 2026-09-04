@@ -207,6 +207,8 @@ pub fn save(path: &std::path::Path, added: &AddedSymbols) -> Result<(), String> 
         })
 }
 
+crate::hooks::declare_hooks!["QUANTICK_SYMBOLS"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

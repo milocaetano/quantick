@@ -1222,6 +1222,8 @@ fn thousands(value: usize) -> String {
     out
 }
 
+crate::hooks::declare_hooks!["QUANTICK_REPLAY_GET_DATA"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

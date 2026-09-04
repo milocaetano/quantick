@@ -272,6 +272,8 @@ pub(crate) fn save(path: &std::path::Path, indicators: &[SavedIndicator]) {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_INDICATORS_STATE"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

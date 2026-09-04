@@ -46,8 +46,8 @@ use super::{
 /// The module both recovery capabilities belong to.
 pub(crate) const RECOVERY_MODULE_ID: &str = "feed";
 
-const RECONNECT_ID: &str = "feed.reconnect";
-const RELOAD_ID: &str = "feed.reload";
+const RECONNECT_CAPABILITY_ID: &str = "feed.reconnect";
+const RELOAD_CAPABILITY_ID: &str = "feed.reload";
 
 /// The capability a recovery control calls.
 ///
@@ -57,8 +57,8 @@ const RELOAD_ID: &str = "feed.reload";
 /// be a string that goes stale the day either ID changes.
 pub(crate) const fn capability_id(recovery: Recovery) -> &'static str {
     match recovery {
-        Recovery::Reconnect => RECONNECT_ID,
-        Recovery::Reload => RELOAD_ID,
+        Recovery::Reconnect => RECONNECT_CAPABILITY_ID,
+        Recovery::Reload => RELOAD_CAPABILITY_ID,
     }
 }
 
@@ -89,7 +89,7 @@ pub(crate) struct RecoveryResult {
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
     registry.register(
         descriptor(
-            RECONNECT_ID,
+            RECONNECT_CAPABILITY_ID,
             "Reconnect a stalled feed",
             "Respawns the transport and keeps everything the chart has built: bars, drawings, indicators, armed strategies and any open paper position. The window the new session replays is dropped rather than counted twice, and a silence long enough to leave a hole in the tape is marked on the chart. The same call the Reconnect button in the chart's offline corner makes.",
             false,
@@ -99,7 +99,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )?;
     registry.register(
         descriptor(
-            RELOAD_ID,
+            RELOAD_CAPABILITY_ID,
             "Reload a chart from a new feed session",
             "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button in the chart's offline corner makes.",
             true,

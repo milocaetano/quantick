@@ -6257,6 +6257,16 @@ fn test_scratch_dir() -> PathBuf {
     ))
 }
 
+crate::hooks::declare_hooks![
+    "QUANTICK_CMD_PREVIEW",
+    "QUANTICK_PAPER_DEMO",
+    "QUANTICK_PAPER_ORDERS",
+    "QUANTICK_PAPER_ORDER_BRACKET",
+    "QUANTICK_PAPER_ORDER_HOVER",
+    "QUANTICK_PAPER_RISK",
+    "QUANTICK_PAPER_RULER_TICKS",
+    "QUANTICK_PAPER_STRATEGY_EDITOR"
+];
 #[cfg(test)]
 mod risk_tests {
     use super::*;

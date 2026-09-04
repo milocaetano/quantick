@@ -1032,6 +1032,8 @@ pub fn forget(path: &Path) -> bool {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_UI_STATE"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

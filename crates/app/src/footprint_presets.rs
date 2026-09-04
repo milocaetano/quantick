@@ -187,6 +187,8 @@ pub(crate) fn validate(text: &str) -> Result<(), String> {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_FOOTPRINT_PRESETS"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

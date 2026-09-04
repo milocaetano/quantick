@@ -1,4 +1,4 @@
-//! The five repository guards, as the tests CI runs.
+//! The six repository guards, as the tests CI runs.
 //!
 //! Each is a thin shell over the library: the logic, its rationale and its
 //! unit tests live in the module the failure names, and this file exists so
@@ -17,7 +17,14 @@ use quantick_guards::{GUARDS, remedies, workspace_root};
 /// instead of a green suite over a guard CI never runs — which is the failure
 /// the check exists to prevent, and which a hand-kept list of names invites by
 /// making "add the string" the obvious fix.
-const TESTED: [&str; 5] = ["size", "language", "encoding", "context", "cycle"];
+const TESTED: [&str; 6] = [
+    "size",
+    "language",
+    "encoding",
+    "context",
+    "cycle",
+    "generated",
+];
 
 /// Run one named guard and fail with everything it found.
 fn assert_clean(name: &str) {
@@ -83,4 +90,13 @@ fn no_context_file_grows_past_its_recorded_ceiling() {
 #[test]
 fn no_crate_grows_a_module_cycle_past_its_recorded_ceiling() {
     assert_clean(TESTED[4]);
+}
+
+/// The generated indexes — the capability inventory and the hook registry —
+/// must still say what the code says. A hand edit to either, a capability
+/// registered without regenerating, or a hook read without being declared,
+/// fails here.
+#[test]
+fn the_generated_indexes_match_the_code_they_describe() {
+    assert_clean(TESTED[5]);
 }

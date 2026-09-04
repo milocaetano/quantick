@@ -115,6 +115,8 @@ impl Surface for SourcePickerSurface {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_SOURCE_PICKER"];
+
 #[cfg(test)]
 mod tests {
     use std::time::Instant;

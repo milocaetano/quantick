@@ -69,7 +69,25 @@
 # than hidden inside a signed entry: a reader of the budget alone should be
 # able to see that this branch cost 458 lines and ask whether the money
 # path being auditable was worth them.
-!budget 61397
+# Raised by 13 for the hook self-declaration, and this is the whole of that
+# raise: `paper_trading.rs` +11 and `footprint_render.rs` +2, one line per
+# hook those two files read plus one for the call. Every other owning module
+# absorbed its own within an existing ceiling.
+#
+# What the 13 lines buy is that the hook registry can no longer lie. It was a
+# hand-kept file that had drifted both ways -- six hooks the application reads
+# had no row, and one row named `QUANTICK_DRAWING_MANAGER`, which nothing has
+# ever read, so a capture run setting it got a window that simply did not open
+# and read as a defect in the surface. Each module now declares the hooks it
+# reads beside the reads, one `declare_hooks!` line, and the registry is
+# generated from those declarations fused with the prose. A hook read but not
+# described, or described but not read, fails `cargo test -p quantick-guards`.
+#
+# Paid here rather than hidden in the two signed entries, because a reader of
+# the budget alone should be able to see that this branch cost 13 lines and ask
+# whether an index that cannot drift was worth them. Nothing was extracted in
+# return, and that is the honest shape of it: this is a raise, not a trade.
+!budget 61410
 
 crates/app/src/app.rs 9362
 
@@ -119,7 +137,9 @@ crates/app/src/app.rs 9362
 # did not change - same SHA-256 before and after.
 crates/app/src/paper_report.rs 3300
 
-crates/app/src/paper_trading.rs 6396
+# +11: the eight `QUANTICK_PAPER_*` hooks this file reads, declared beside
+# them. See the budget note above.
+crates/app/src/paper_trading.rs 6407
 
 # Raised by 14 for the strategy badge, and deliberately: not a capability
 # docking by trunk-edit, but a repair to `badge_text_for`, which reached only
@@ -139,7 +159,8 @@ crates/app/src/control/gateway.rs 4142
 crates/app/src/orderflow_render.rs 3075
 crates/app/src/orderflow_view.rs 2485
 crates/app/src/drawings/mod.rs 2283
-crates/app/src/footprint_render.rs 2234
+# +2: the `QUANTICK_FOOTPRINT_DEBUG` declaration. See the budget note above.
+crates/app/src/footprint_render.rs 2236
 # Raised for the same branch: an `Mt5Event::OpeningPage` variant and one
 # branch in the block state machine deciding whether a block settles a
 # request. The session loop is the only place that knows what a

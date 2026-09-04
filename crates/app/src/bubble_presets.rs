@@ -398,6 +398,8 @@ const PRESET_FILE_HEADER: &str = "\
 
 ";
 
+crate::hooks::declare_hooks!["QUANTICK_BUBBLES"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

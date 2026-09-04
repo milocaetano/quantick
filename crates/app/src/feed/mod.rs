@@ -676,6 +676,8 @@ pub fn spawn_live(
     )
 }
 
+crate::hooks::declare_hooks!["QUANTICK_BACKFILL", "QUANTICK_FEED_GAP"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

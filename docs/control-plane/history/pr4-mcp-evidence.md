@@ -1,5 +1,9 @@
 # PR 4 MCP adapter evidence
 
+> **Archaeology, not current state.** This document records what was true
+> when it was written and is kept for the reasoning it carries. For what
+> has shipped, ask the registry — see [Precedence](../README.md#precedence).
+
 **Branch:** `feat/mcp-observer`
 
 **Rate class:** Per tool call, in a separate process. Nothing in this PR runs

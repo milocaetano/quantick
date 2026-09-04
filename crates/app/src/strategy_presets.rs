@@ -618,6 +618,8 @@ impl StrategyBank {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_STRATEGY_PRESETS"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

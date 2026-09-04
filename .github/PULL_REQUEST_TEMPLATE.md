@@ -9,7 +9,7 @@ Closes #
 <!-- All four must pass locally before requesting review (see CONTRIBUTING.md). -->
 
 - [ ] `cargo fmt --all -- --check`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
+- [ ] `cargo clippy --workspace --all-targets`
 - [ ] `cargo build --workspace`
 - [ ] `cargo test --workspace`
 

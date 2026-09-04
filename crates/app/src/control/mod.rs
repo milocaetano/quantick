@@ -16,6 +16,7 @@ mod feed;
 mod gateway;
 mod health;
 mod interaction;
+pub(crate) mod inventory;
 mod journal;
 mod layout;
 mod notify;

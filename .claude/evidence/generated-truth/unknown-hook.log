@@ -1,0 +1,32 @@
+=== A8: the UNKNOWN_HOOK diagnostic (R11) ===
+
+--- the tests ---
+test hooks::tests::an_unrecognised_hook_is_reported_rather_than_ignored ... ok
+test hooks::tests::every_declared_hook_is_accepted ... ok
+test hooks::tests::no_hook_is_declared_by_two_modules ... ok
+test hooks::tests::variables_outside_the_prefix_are_not_this_guard_s_business ... ok
+test hooks::tests::the_committed_registry_is_what_the_generator_emits ... ok
+test hooks::tests::every_owner_path_is_a_real_file ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2191 filtered out; finished in 0.00s
+
+--- the diagnostic, in the code ---
+pub(crate) fn log_unknown_hooks() {
+    let declared = declared_names();
+    let environment: Vec<String> = std::env::vars().map(|(name, _)| name).collect();
+    for name in unknown_hooks(environment.iter().map(String::as_str), &declared) {
+        tracing::warn!(
+            target: "quantick::app",
+            event_code = "UNKNOWN_HOOK",
+            hook = %name,
+            "no launch hook by this name is registered; it will do nothing. \
+             Check the spelling against .claude/skills/ui-harness/references/hook-registry.md"
+        );
+    }
+}
+
+--- and where it is called, before anything opens ---
+173-
+174-    // Immediately after the subscriber exists, so a mistyped hook is the first
+175-    // thing the run says rather than something inferred later from a surface
+176-    // that never opened.
+177:    hooks::log_unknown_hooks();

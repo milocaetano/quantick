@@ -1251,6 +1251,12 @@ pub fn load() -> Result<(AppConfig, ConfigSource), ConfigError> {
     Ok((config, ConfigSource::Embedded))
 }
 
+crate::hooks::declare_hooks![
+    "QUANTICK_CONFIG",
+    "QUANTICK_DEFAULT_FEED",
+    "QUANTICK_DEFAULT_SYMBOL"
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
