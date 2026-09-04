@@ -176,6 +176,14 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
 }
 
 /// Whether a workspace-relative path is one this guard reads.
+///
+/// The root `Cargo.toml` is here although no check reads its tables, and that
+/// is deliberate rather than an oversight: moving a version into
+/// `[workspace.dependencies]` is how a caller *fixes* a
+/// [`RULE_WORKSPACE_DEPENDENCIES`] finding, and an author who edits the root
+/// and is told nothing cannot tell a fix from a no-op. The edit re-runs the
+/// checks over the crates, where the finding they were fixing lives, and
+/// watching it disappear is the answer they came for.
 fn in_scope(relative: &str) -> bool {
     relative == "CLAUDE.md"
         || relative == "Cargo.toml"
@@ -218,16 +226,33 @@ fn crate_manifests(root: &Path) -> Vec<Manifest> {
     manifests
 }
 
-/// The `path = "../x"` dependencies a manifest declares, by directory name.
+/// The sibling crates a manifest depends on by path, by directory name.
+///
+/// Read through [`dependency_entries`] rather than by scanning raw lines for
+/// the literal `path = "../`. That literal is the exact defect the version
+/// rule below already had to fix once: a perfectly valid `rust_decimal="1"`
+/// has no spaces around its `=`, and a `path="../pine"` written the same way
+/// would have yielded no dependency at all — a reverse edge passing green,
+/// which is the silent pass [`REMEDY_COVERAGE`] itself warns about. One
+/// parser also means an inline table spread over several lines is understood
+/// here exactly as it is there.
 fn path_dependencies(text: &str) -> Vec<String> {
-    text.lines()
-        .filter_map(|line| {
-            let start = line.find("path = \"../")? + "path = \"../".len();
-            let rest = &line[start..];
-            let end = rest.find('"')?;
-            Some(rest[..end].to_owned())
-        })
+    dependency_entries(text)
+        .iter()
+        .filter_map(|(_, value)| path_target(value))
         .collect()
+}
+
+/// The sibling crate a dependency's value points at, if it points at one.
+///
+/// Whitespace-tolerant on both sides of the `=`, which is the whole reason
+/// this exists as its own function rather than as a `find` on a literal.
+fn path_target(value: &str) -> Option<String> {
+    let after_key = value.split_once("path")?.1;
+    let after_equals = after_key.trim_start().strip_prefix('=')?;
+    let inside = after_equals.trim_start().strip_prefix('"')?;
+    let sibling = inside.strip_prefix("../")?;
+    Some(sibling.split('"').next()?.to_owned())
 }
 
 /// A feed produces trades and links nothing else — and no feed depends on
@@ -665,6 +690,66 @@ mod tests {
             findings[0].line.contains("tokio"),
             "the finding names the dependency: {}",
             findings[0].line
+        );
+    }
+
+    /// The spelling that would have walked past the old line scan: no spaces
+    /// around the `=`, which this workspace already writes for versions.
+    #[test]
+    fn a_reverse_edge_written_without_spaces_is_still_a_finding() {
+        let root = workspace(
+            "graph-tight-spelling",
+            &[
+                (
+                    "engine",
+                    "quantick-pine={path=\"../pine\"}
+",
+                ),
+                ("indicators", &edge("engine")),
+                ("pine", &edge("indicators")),
+                ("app", ""),
+            ],
+        );
+        let findings = check(root.path());
+        assert_eq!(
+            findings.len(),
+            1,
+            "the tight spelling is read: {findings:#?}"
+        );
+        assert!(
+            findings[0]
+                .line
+                .starts_with("crates/engine/Cargo.toml: depends on `pine`"),
+            "the finding names the edge: {}",
+            findings[0].line
+        );
+    }
+
+    /// An edge in an inline table spread over several lines is one edge, and
+    /// the shared parser is what makes it visible here as it is to the
+    /// version rule.
+    #[test]
+    fn a_multi_line_path_dependency_is_still_an_edge() {
+        let root = workspace(
+            "graph-multiline-edge",
+            &[
+                (
+                    "engine",
+                    "quantick-pine = {
+    path = \"../pine\",
+    optional = true,
+}
+",
+                ),
+                ("app", ""),
+            ],
+        );
+        let findings = check(root.path());
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.line.contains("depends on `pine`")),
+            "the edge is seen across the line break: {findings:#?}"
         );
     }
 

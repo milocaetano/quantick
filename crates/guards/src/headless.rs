@@ -385,6 +385,28 @@ fn without_comments(line: &str) -> &str {
     while index < bytes.len() {
         match bytes[index] {
             b'\\' if in_string => index += 1,
+            // A char literal holding a quote -- `'"'`, and `b'"'` -- would
+            // otherwise flip the string state and leave the scanner inside a
+            // string it never entered, so a `//` after it on the same line
+            // stops being stripped and the comment is scanned as code. Eight
+            // lines in the headless crates carry one today, `control`'s
+            // canonical JSON writer and `pine`'s lexer among them; the scan
+            // was clean only because none of them also held a comment naming
+            // a forbidden identifier.
+            //
+            // Only a literal that actually closes is consumed: `'a` is a
+            // lifetime, and swallowing it would be the same desync wearing
+            // the other hat.
+            b'\'' if !in_string => {
+                let after_escape = if bytes.get(index + 1) == Some(&b'\\') {
+                    index + 2
+                } else {
+                    index + 1
+                };
+                if bytes.get(after_escape + 1) == Some(&b'\'') {
+                    index = after_escape + 1;
+                }
+            }
             b'"' => in_string = !in_string,
             b'/' if !in_string && bytes.get(index + 1) == Some(&b'/') => return &line[..index],
             _ => {}
@@ -613,6 +635,35 @@ fn z() { let f = std::collections::HashSet::new(); }
         assert_eq!(check(root.path()), Vec::new());
     }
 
+    /// A char literal holding a quote must not leave the scanner believing it
+    /// is inside a string: the `//` after it would stop being stripped, and
+    /// the comment would be scanned as code. Eight lines in the headless
+    /// crates carry one today.
+    #[test]
+    fn a_char_literal_holding_a_quote_does_not_desync_the_scanner() {
+        let root = workspace(
+            "headless-char-literal",
+            "crates/control/src/canonical.rs",
+            "fn w(o: &mut String) { o.push('\"'); } // no Instant::now here\n\
+             fn b(c: u8) -> bool { c == b'\"' } // nor egui\n",
+        );
+        assert_eq!(check(root.path()), Vec::new());
+    }
+
+    /// The converse: a lifetime is not a char literal and must not be
+    /// swallowed, or the same desync arrives wearing the other hat.
+    #[test]
+    fn a_lifetime_is_not_read_as_a_char_literal() {
+        let root = workspace(
+            "headless-lifetime",
+            "crates/engine/src/lib.rs",
+            "fn f<'a>(s: &'a str) -> &'a str { let t = Instant::now(); s }\n",
+        );
+        let findings = check(root.path());
+        assert_eq!(findings.len(), 1, "{:#?}", lines(&findings));
+        assert!(findings[0].line.contains("Instant::now"));
+    }
+
     /// A `//` inside a string literal must not blind the scan to the rest of
     /// the line: that would be an under-report, the one direction a guard may
     /// not be wrong in.
@@ -789,8 +840,31 @@ fn z() { let f = std::collections::HashSet::new(); }
         assert!(findings[0].line.contains("crates/sim/src/lib.rs:1:"));
     }
 
-    /// The list of crates is `CLAUDE.md`'s list. A crate added to the
-    /// sentence and forgotten here would be unguarded, which looks green.
+    /// The crates named in `CLAUDE.md`'s headless sentence, from the list it
+    /// opens with `That is` and closes before `, and it binds`.
+    ///
+    /// Read out of the sentence rather than trusted, because the check below
+    /// runs both ways and a one-way check is what let this guard be written
+    /// with a hole in it: asserting only that every scanned crate is named
+    /// leaves a crate *added to the sentence* and forgotten here silently
+    /// unscanned — unguarded, which looks green and is worse than a failure.
+    /// That is the same reason `graph`'s `every_crate_is_covered` exists.
+    fn crates_the_sentence_names(sentence: &str) -> Vec<String> {
+        let list = sentence
+            .split_once("That is ")
+            .expect("the headless sentence introduces its crate list with `That is`")
+            .1
+            .split_once(", and it binds")
+            .expect("the crate list ends before `, and it binds`")
+            .0;
+        list.split('`')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// The list of crates is `CLAUDE.md`'s list, in both directions.
     #[test]
     fn the_scanned_crates_are_the_ones_the_rule_names() {
         let doc = fs::read_to_string(crate::workspace_root().join("CLAUDE.md"))
@@ -799,10 +873,18 @@ fn z() { let f = std::collections::HashSet::new(); }
             .lines()
             .find(|line| line.contains("Everything below") && line.contains("is headless"))
             .expect("CLAUDE.md states the headless rule on one line");
+        let named = crates_the_sentence_names(sentence);
+
         for name in HEADLESS_CRATES {
             assert!(
-                sentence.contains(&format!("`{name}`")),
+                named.iter().any(|listed| listed == name),
                 "the headless sentence does not name `{name}`, which this guard scans"
+            );
+        }
+        for name in &named {
+            assert!(
+                HEADLESS_CRATES.contains(&name.as_str()),
+                "`{name}` is named by the headless sentence and is not in HEADLESS_CRATES, so                  nothing scans it -- add it there, or take it out of the sentence"
             );
         }
     }

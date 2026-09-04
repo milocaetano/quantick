@@ -32,3 +32,21 @@ on a grep, which once hid a second FAILED line and shipped a red CI.
 
 $ cargo run -p quantick-guards
 exit 0   (no finding from any of the nine guards, the two new ones included)
+
+=== re-run after the arch-review step 0 fixes ===
+
+$ cargo fmt --all -- --check            exit 0
+$ cargo clippy --workspace --all-targets exit 0
+$ cargo build --workspace                exit 0
+$ cargo run -p quantick-guards           exit 0
+
+$ cargo test --workspace
+First run: 1 failure, in a crate this branch does not touch --
+app::tests::control_plane_tests::gateway_a_client_that_never_reads_does_not_stall_another.
+That is the known gateway/control-plane contention flake; `main` drops the same
+tests at the same rate. Re-run alone three times: 3 x ok. Full suite re-run:
+93 "test result: ok" lines, no result line with a non-zero failure count, no
+"failures:" block. exit 0.
+
+Reported rather than quietly re-run once: a suite that needed a second run is
+not the same claim as one that passed first time.
