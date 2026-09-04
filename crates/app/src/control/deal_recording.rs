@@ -61,9 +61,13 @@ pub(crate) struct DealRecordingSnapshot {
     /// `off`, `recording`, `stale` (the tape flows, the counter does not) or
     /// `recorded` (the readings on screen came from a file).
     pub state: String,
-    /// When the first reading of this run was taken, on the tape's clock.
+    /// Where the open file starts, on the tape's clock — the recording's own
+    /// "since", resumed or written this run. What the REC button shows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub since_unix_ms: Option<i64>,
+    /// When the first reading of this run arrived, written to a file or not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_reading_unix_ms: Option<i64>,
     /// The newest reading of the venue's session deal counter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_deals: Option<WireU64>,
@@ -119,6 +123,7 @@ pub(crate) fn snapshot(view: &RecordingView) -> DealRecordingSnapshot {
         }
         .to_owned(),
         since_unix_ms: view.since_ms,
+        first_reading_unix_ms: view.first_reading_ms,
         session_deals: view.reading.map(WireU64::new),
         file: view.path.as_ref().map(|path| path.display().to_string()),
         samples_written: WireU64::new(view.written),
@@ -254,7 +259,7 @@ mod tests {
             path: Some(PathBuf::from("deals/WINV26/2026-09-03.deals")),
             dir: PathBuf::from("deals"),
             error: None,
-            days: vec![RecordedDay {
+            days: std::rc::Rc::from(vec![RecordedDay {
                 day: "2026-09-02".to_owned(),
                 first: DealSample {
                     time_ms: 1,
@@ -266,7 +271,7 @@ mod tests {
                 },
                 samples: 40_000,
                 path: PathBuf::from("deals/WINV26/2026-09-02.deals"),
-            }],
+            }]),
             loaded_days: vec!["2026-09-02".to_owned()],
             tz_minutes: -180,
         }

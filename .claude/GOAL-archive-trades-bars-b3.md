@@ -228,7 +228,8 @@ than what is remembered.
   capabilities); exercised live over `quantick-mcp` at profile `cockpit`.
 - **G3** — per-print: one `DealSampler` compare in the feed and one
   `Vec::push` per *changed* reading (not per print) in `ChartState`;
-  per-poll: one buffered line append, flushed once a second; per-frame:
+  per-poll: one buffered line append on the UI thread, flushed once a
+  second; per-frame:
   one string compare per tab (`ensure_deal_recorders`), three cheap view
   clones for the toolbar, chip and status cell; rare: `scan_days` on
   start/stop/market switch, a rebuild on loading a day.
@@ -252,8 +253,14 @@ than what is remembered.
   fixed in the follow-up commit; 8 (empty trades pane notice) and 9 (loaded
   day before its tape is paged in) deferred to the PR body with the
   Consider items.
-- **S6 note** — one branch, one PR, three commits by layer plus the UX
-  follow-up.
+- **G5** — `arch-review` at tier `high`: step 0 `code-review` at `medium`
+  (effort-first, no reuse notice), 8 confirmed findings, 3 plausible; shape
+  pass no Blocker, 7 Should-fix. Round 2 fixed every step-0 finding but
+  the backtest gap (deferred in the PR body: no headless reader of
+  readings yet) and six of the seven Should-fixes (the two integration
+  tests deferred). Round 3 re-ran both over the round-2 head.
+- **S6 note** — one branch, one PR, three commits by layer plus the two
+  review follow-ups.
 
 ## Not applicable
 

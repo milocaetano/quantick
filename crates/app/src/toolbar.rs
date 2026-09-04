@@ -559,8 +559,7 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
     };
     let traded_volume = model.capabilities.traded_volume;
     let deal_counter = model.capabilities.deal_counter;
-    // Offered where the venue counts deals; usable once a count exists —
-    // REC has run, or a recorded day is loaded.
+    // Usable once a count exists — REC has run, or a recorded day is loaded.
     let deal_count_available = model
         .deal_recording
         .as_ref()
@@ -569,17 +568,16 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
         .selected_text(selected)
         .show_ui(ui, |ui| {
             for kind in BarKind::ALL {
-                // A rule that counts the venue's deals exists only where the
-                // venue counts them. Not offered at all elsewhere — see
-                // `BarKind::needs_deal_counter` for why not merely greyed.
-                if kind.needs_deal_counter() && !deal_counter {
-                    continue;
-                }
                 // A rule that counts traded size is offered only where size is
                 // real. On a quote-driven feed it would silently become a tick
-                // bar under another name.
+                // bar under another name. The same for a rule that counts the
+                // venue's deals: listed and disabled with its reason, never
+                // hidden — a pane restored on `trades` before the hello lands
+                // is showing a kind the combo must still be able to name.
                 let disabled_reason = if kind.needs_traded_volume() && !traded_volume {
                     Some("this source quotes prices but prints no traded volume")
+                } else if kind.needs_deal_counter() && !deal_counter {
+                    Some("this source has no deal counter — MetaTrader B3 only")
                 } else if kind.needs_deal_counter() && !deal_count_available {
                     Some("no deal count yet — press REC to count from now, or load a recorded day")
                 } else {

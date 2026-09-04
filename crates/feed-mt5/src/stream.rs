@@ -1335,6 +1335,7 @@ async fn serve_connection(
                 if let Some(offset) = hb.server_utc_offset_s {
                     mapper.set_server_utc_offset_s(offset);
                     depth.set_server_utc_offset_s(offset);
+                    deals.set_server_utc_offset_s(offset);
                 }
                 // The beat a thin tape is measured on: a symbol printing once
                 // a minute never reaches the per-print sampling bound, and

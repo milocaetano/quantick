@@ -492,7 +492,7 @@ mod tests {
             path: None,
             dir: PathBuf::from("deals"),
             error: None,
-            days: Vec::new(),
+            days: std::rc::Rc::from(Vec::new()),
             loaded_days: vec!["2026-09-03".to_owned()],
             tz_minutes: -180,
         }

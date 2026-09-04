@@ -463,6 +463,24 @@ impl ChartState {
         }
     }
 
+    /// Hand the chart a whole series of readings at once — a recorded day,
+    /// a resumed file. One sort and one dedup over the union, never an
+    /// insert per reading: a morning's file against an afternoon's live
+    /// readings is half a million inserts into a hundred thousand, each
+    /// shifting the rest.
+    ///
+    /// The builder is not fed here. A pane cutting by deals is rebuilt by
+    /// the caller straight after, and every other rule replays the retained
+    /// series on its next switch.
+    pub fn observe_deals_batch(&mut self, samples: &[DealSample]) {
+        if samples.is_empty() {
+            return;
+        }
+        self.deal_samples.extend_from_slice(samples);
+        self.deal_samples.sort_by_key(|sample| sample.time_ms);
+        self.deal_samples.dedup();
+    }
+
     /// Cut the bars again from the retained prints and readings — after a
     /// recorded day's readings were loaded under prints already folded.
     pub fn rebuild_bars(&mut self) {
@@ -1160,14 +1178,19 @@ mod tests {
         s.observe_deals(at(1_100, 3));
         let times: Vec<i64> = s.deal_samples().iter().map(|d| d.time_ms).collect();
         assert_eq!(times, [1_100, 1_300, 1_500]);
+        // A whole file behind the live readings: one sort, the same series.
+        s.observe_deals_batch(&[at(1_300, 6), at(1_000, 1), at(1_200, 4)]);
+        let times: Vec<i64> = s.deal_samples().iter().map(|d| d.time_ms).collect();
+        assert_eq!(times, [1_000, 1_100, 1_200, 1_300, 1_500]);
         // Prints at 1100..1500 (see `trade`): after a rebuild every one is
-        // counted, and the readings cut two bars (at 4 and 6) plus a partial.
+        // counted, and the five readings cut four bars (at 2, 4, 6 and 8)
+        // plus a partial.
         for id in 1..=5 {
             s.ingest_live(&trade(id));
         }
         s.rebuild_bars();
         assert_eq!(s.uncounted_trades(), 0);
-        assert_eq!(s.bars().len(), 2, "{:?}", s.bars());
+        assert_eq!(s.bars().len(), 4, "{:?}", s.bars());
     }
 
     /// Recording belongs to the asset: the readings a tab retains survive

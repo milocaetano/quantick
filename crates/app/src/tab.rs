@@ -2072,6 +2072,7 @@ impl Tab {
         pane.seed_from(
             self.flow_pane.state.trades(),
             self.flow_pane.state.backfill_trade_count(),
+            self.flow_pane.state.deal_samples(),
         );
         // The pane opens looking like the one it splits away from: a user who
         // switched the crosshair off is not asking for it back by opening a

@@ -71,10 +71,10 @@
 # path being auditable was worth them.
 !budget 61397
 
-# Tightened 18 by the trades-bars branch to pay for the three raises below.
+# Tightened 26 by the trades-bars branch to pay for the three raises below.
 # That branch docked a bar kind, a REC control, a recorder and a persisted
 # setting with registration lines only: a `mod`, a field, a call each.
-crates/app/src/app.rs 9344
+crates/app/src/app.rs 9336
 
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
@@ -132,20 +132,22 @@ crates/app/src/paper_trading.rs 6396
 # and the right-click menu always have. The lines are three short branches and
 # the comment saying why the order matters; there is no new module to carve,
 # because the fix is that this function was reading one input too few.
-# Raised 7 for the trades-bars branch (`feat/trades-bars-b3`): the `deals_n`
-# parameter beside its five siblings, and the `BarSpec::Trades` arm in the
-# three matches that already enumerate every kind. A sixth bar kind costs
-# the pane exactly what the fifth did; the rule itself lives in the engine.
-# Paid, with tab.rs and stream.rs below, by tightening app.rs 18.
-crates/app/src/pane.rs 7778
+# Raised 13 for the trades-bars branch (`feat/trades-bars-b3`): the `deals_n`
+# parameter beside its five siblings, the `BarSpec::Trades` arm in the
+# three matches that already enumerate every kind, and the readings a new
+# context pane is seeded with beside the trades it already was. A sixth bar
+# kind costs the pane what the fifth did; the rule lives in the engine.
+# Paid, with tab.rs and stream.rs below, by tightening app.rs 26.
+crates/app/src/pane.rs 7784
 # Raised for the same branch: the opening block's own arm in `drain_feed`,
 # which is deliberately not the reply path with a flag -- the two differ in
 # the two lines that matter, and a branch inside the reply arm is how a
 # slice ends up answering a press the trader made.
-# Raised 2 for the trades-bars branch: the `deal_recorder` field, its
-# placeholder in the constructor, one event arm and one per-drain call. The
-# behaviour is `deal_recording_tab.rs`, an `impl Tab` beside this file.
-crates/app/src/tab.rs 4472
+# Raised 3 for the trades-bars branch: the `deal_recorder` field, its
+# placeholder in the constructor, one event arm, one per-drain call and the
+# readings handed to a pane being seeded. The behaviour is
+# `deal_recording_tab.rs`, an `impl Tab` beside this file.
+crates/app/src/tab.rs 4473
 crates/app/src/control/gateway.rs 4142
 crates/app/src/orderflow_render.rs 3075
 crates/app/src/orderflow_view.rs 2485
@@ -155,10 +157,11 @@ crates/app/src/footprint_render.rs 2234
 # branch in the block state machine deciding whether a block settles a
 # request. The session loop is the only place that knows what a
 # `history_start` opened; the slicing itself lives in the bridge.
-# Raised 9 for the trades-bars branch: an `Mt5Event::DealCounter` variant,
-# the `deal_counter` hello field and the one send that forwards a reading
-# ahead of its print. The reduction is `deals.rs`; the loop only forwards.
-crates/feed-mt5/src/stream.rs 2209
+# Raised 10 for the trades-bars branch: an `Mt5Event::DealCounter` variant,
+# the `deal_counter` hello field, the one send that forwards a reading ahead
+# of its print and the offset the heartbeat restates. The reduction is
+# `deals.rs`; the loop only forwards.
+crates/feed-mt5/src/stream.rs 2210
 crates/app/src/toolrail.rs 2114
 crates/app/src/orderflow/projection.rs 1850
 crates/app/src/control/contract.rs 1718

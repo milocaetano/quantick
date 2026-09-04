@@ -21,6 +21,14 @@
             "null"
           ]
         },
+        "first_reading_unix_ms": {
+          "description": "When the first reading of this run arrived, written to a file or not.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "loaded_days": {
           "description": "Days whose readings were loaded into the panes this session.",
           "items": {
@@ -51,7 +59,7 @@
           "description": "The newest reading of the venue's session deal counter."
         },
         "since_unix_ms": {
-          "description": "When the first reading of this run was taken, on the tape's clock.",
+          "description": "Where the open file starts, on the tape's clock — the recording's own\n\"since\", resumed or written this run. What the REC button shows.",
           "format": "int64",
           "type": [
             "integer",

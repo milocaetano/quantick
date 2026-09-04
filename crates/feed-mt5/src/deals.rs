@@ -83,6 +83,13 @@ impl DealSampler {
     pub fn reading(&self) -> Option<u64> {
         self.last
     }
+
+    /// Follow the bridge's clock as the tick mapper does: a heartbeat may
+    /// restate the server offset, and a sample and the print it stamps must
+    /// keep sharing one clock or the join lands them hours apart.
+    pub fn set_server_utc_offset_s(&mut self, offset_s: i64) {
+        self.offset_ms = offset_s.saturating_mul(1000);
+    }
 }
 
 #[cfg(test)]
@@ -121,6 +128,14 @@ mod tests {
         assert_eq!(sampler.stats.stamped, 4);
         assert_eq!(sampler.stats.samples, 2);
         assert_eq!(sampler.reading(), Some(2_000_007));
+    }
+
+    #[test]
+    fn the_offset_follows_the_heartbeat() {
+        let mut sampler = DealSampler::new(-10_800);
+        sampler.set_server_utc_offset_s(-7_200);
+        let sample = sampler.observe(&tick(1, 1_000, Some(5))).unwrap();
+        assert_eq!(sample.time_ms, 1_000 + 7_200_000);
     }
 
     #[test]

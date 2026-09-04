@@ -463,6 +463,29 @@ bool SendBook()
 //| and nothing would look broken, and a month of lookback costs the  |
 //| same single tick request as a day.                                |
 //+------------------------------------------------------------------+
+//| Whether the terminal reports the session deal counter for a trades  |
+//| tape. The three-argument form says whether the property exists;    |
+//| the plain one answers 0 for "unsupported" and 0 for "no deals yet",|
+//| and a stamp of 0 where none was read is exactly what PROTOCOL.md   |
+//| forbids.                                                           |
+bool HasDealCounter()
+  {
+   if(!g_tape_trades)
+      return(false);
+   long probe = 0;
+   return(SymbolInfoInteger(_Symbol, SYMBOL_SESSION_DEALS, probe));
+  }
+
+//| The session deal counter for this round, or -1 when the terminal   |
+//| does not report one.                                               |
+long SessionDeals()
+  {
+   long value = 0;
+   if(!g_tape_trades || !SymbolInfoInteger(_Symbol, SYMBOL_SESSION_DEALS, value))
+      return(-1);
+   return(value);
+  }
+
 string DetectTape()
   {
    MqlTick probe[];
@@ -548,7 +571,7 @@ bool StartSession()
       "\"tape\":\"%s\",\"deal_counter\":%s%s}",
       SCHEMA_VERSION, BRIDGE_NAME, BRIDGE_VERSION,
       _Symbol, basis, _Digits, ServerUtcOffsetSeconds(), DetectTape(),
-      (g_tape_trades ? "true" : "false"), depth);
+      (HasDealCounter() ? "true" : "false"), depth);
    // Written, not merely queued: the feed's contract is that a bridge says
    // hello *the moment it connects* (crates/feed-mt5/src/stream.rs), and it
    // gives the greeting ten seconds before dropping the connection. The next
@@ -750,7 +773,7 @@ void Pump()
       // One reading per round, after the ticks it stamps were fetched, so
       // the counter is at or past every print in hand. A quoted instrument
       // has no deals to count.
-      long deals = g_tape_trades ? SymbolInfoInteger(_Symbol, SYMBOL_SESSION_DEALS) : -1;
+      long deals = SessionDeals();
       int at_cursor_seen = 0;
       int forwarded      = 0;
       for(int i = 0; i < n; i++)

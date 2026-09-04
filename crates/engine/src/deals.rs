@@ -32,15 +32,25 @@
 //!   worth of deals, and never carries the overshoot into the next bar — the
 //!   next boundary is the next multiple above the reading that closed it.
 //!
-//! # A counter that goes quiet
+//! # A hole in the readings
 //!
-//! A print more than [`READING_MAX_AGE_MS`] past the newest reading has no
-//! reading of its own: the bridge stopped stamping (a stale terminal, a
-//! restart, a gap in a recorded day). Such prints are uncounted like the
-//! ones before the first reading, and the bar forming when the counter went
-//! quiet is closed as it stands — its deals were counted, the next ones
-//! were not, and one bar spanning both would put a cut where nothing was
-//! counted. Counting resumes with the next reading.
+//! A print that lies between two readings more than [`READING_MAX_AGE_MS`]
+//! apart, and more than that past the earlier one, has no reading of its
+//! own: the recorder was down (a restart), or the day's file has a gap.
+//! Such prints are uncounted like the ones before the first reading, and
+//! the bar forming when the readings stopped is closed as it stands — its
+//! deals were counted, the next ones were not, and one bar spanning both
+//! would put a cut where nothing was counted. Counting resumes with the
+//! reading that ends the hole.
+//!
+//! Only a hole *between* readings counts as one. A print with no later
+//! reading in hand yet — the live edge — is joined to the reading in force
+//! however old it is, because a bridge fetches a round of ticks and reads
+//! the counter *after* them: one round after a stall can span minutes of
+//! tape under one valid reading, and declaring its prints uncounted would
+//! throw away a morning. A counter that has really stopped shows as a
+//! reading that no longer moves while prints keep coming; bars then wait,
+//! and the application says so beside the chart.
 //!
 //! # Session rollover
 //!
@@ -91,6 +101,9 @@ pub struct DealBarBuilder {
     /// taken.
     reading: Option<u64>,
     reading_time_ms: i64,
+    /// The time of the newest sample accepted, joined or pending — a hole
+    /// is measured between this and the next pending one.
+    newest_time_ms: Option<i64>,
     /// The counter value that closes the forming bar.
     next_boundary: u64,
     current: Option<Bar>,
@@ -113,6 +126,7 @@ impl DealBarBuilder {
             newest: None,
             reading: None,
             reading_time_ms: 0,
+            newest_time_ms: None,
             next_boundary: 0,
             current: None,
             uncounted: 0,
@@ -130,6 +144,23 @@ impl DealBarBuilder {
     #[must_use]
     pub fn reading(&self) -> Option<u64> {
         self.reading
+    }
+
+    /// When the newest reading in hand was taken, joined to a print or not.
+    #[must_use]
+    pub fn newest_reading_time_ms(&self) -> Option<i64> {
+        self.newest_time_ms
+    }
+
+    /// Whether a print at `time_ms` lies in a hole: the next reading in hand
+    /// is more than [`READING_MAX_AGE_MS`] past the one in force, and so is
+    /// the print. Never true at the live edge, where no next reading exists.
+    fn in_hole(&self, time_ms: i64) -> bool {
+        let Some(next) = self.pending.front() else {
+            return false;
+        };
+        next.time_ms.saturating_sub(self.reading_time_ms) > READING_MAX_AGE_MS
+            && time_ms.saturating_sub(self.reading_time_ms) > READING_MAX_AGE_MS
     }
 
     /// The first multiple of `n` strictly above `reading`.
@@ -174,20 +205,20 @@ impl BarBuilder for DealBarBuilder {
         // is returned and the print opens the next one. At most one bar
         // closes per print either way, because a rollover resets the
         // boundary above the new reading.
-        if let Some(bar) = self.advance_to(trade.timestamp_ms) {
-            self.current = Some(Bar::opened_by(trade));
-            return Some(bar);
-        }
+        let rolled = self.advance_to(trade.timestamp_ms);
         let Some(reading) = self.reading else {
             self.uncounted = self.uncounted.saturating_add(1);
-            return None;
+            return rolled;
         };
-        if trade.timestamp_ms.saturating_sub(self.reading_time_ms) > READING_MAX_AGE_MS {
-            // The counter went quiet: this print is uncounted, and the bar
-            // that was forming under the last reading ends where the
-            // counting did.
+        if self.in_hole(trade.timestamp_ms) {
+            // No reading covers this print: uncounted, and the bar that was
+            // forming under the last reading ends where the readings did.
             self.uncounted = self.uncounted.saturating_add(1);
-            return self.current.take();
+            return rolled.or_else(|| self.current.take());
+        }
+        if rolled.is_some() {
+            self.current = Some(Bar::opened_by(trade));
+            return rolled;
         }
         match self.current.as_mut() {
             Some(bar) => bar.extend(trade),
@@ -220,6 +251,7 @@ impl BarBuilder for DealBarBuilder {
             return;
         }
         self.newest = Some(sample);
+        self.newest_time_ms = Some(sample.time_ms);
         self.pending.push_back(sample);
     }
 
@@ -385,17 +417,19 @@ mod tests {
         assert_eq!(bar.trade_count, 3);
     }
 
-    /// A restart, a stale terminal, a hole in a recorded day: the prints
-    /// with no reading of their own are counted as uncounted, the bar that
-    /// was forming ends where the counting did, and counting resumes with
-    /// the next reading.
+    /// A restart or a hole in a recorded day: the prints between two readings
+    /// far apart are uncounted, the bar that was forming ends where the
+    /// readings did, and counting resumes with the reading that ends the
+    /// hole. Known only once the later reading is in hand — the rebuild
+    /// order.
     #[test]
-    fn a_quiet_counter_ends_the_forming_bar_and_leaves_the_gap_uncounted() {
+    fn a_hole_between_readings_leaves_its_prints_uncounted() {
         let mut b = DealBarBuilder::new(1_000);
+        let quiet_at = 200 + READING_MAX_AGE_MS + 1;
         b.observe_deals(sample(100, 5_000_400));
+        b.observe_deals(sample(20_000, 5_001_005));
         assert!(b.push(&trade(1, 100, "100")).is_none());
         assert!(b.push(&trade(2, 200, "101")).is_none());
-        let quiet_at = 200 + READING_MAX_AGE_MS + 1;
         let ended = b
             .push(&trade(3, quiet_at, "102"))
             .expect("the forming bar ends");
@@ -404,19 +438,37 @@ mod tests {
             (100, 200, 2)
         );
         assert!(b.push(&trade(4, quiet_at + 50, "103")).is_none());
-        assert!(
-            b.partial().is_none(),
-            "nothing forms while the counter is quiet"
-        );
+        assert!(b.partial().is_none(), "nothing forms inside the hole");
         assert_eq!(b.uncounted_trades(), 2);
-        // The counter comes back, past the next boundary: the first counted
-        // print opens a bar that closes on the boundary its reading crossed.
-        b.observe_deals(sample(20_000, 5_001_005));
+        // The reading that ends the hole is past the next boundary: the first
+        // counted print opens a bar that closes on it.
         let resumed = b
             .push(&trade(5, 20_000, "104"))
             .expect("closes at 5 001 000");
         assert_eq!(resumed.trade_count, 1);
         assert_eq!(b.uncounted_trades(), 2);
+        assert_eq!(b.newest_reading_time_ms(), Some(20_000));
+    }
+
+    /// At the live edge there is no later reading to measure a hole against:
+    /// a round of ticks fetched after a stall can span minutes under one
+    /// valid reading taken after them, and every one of its prints counts.
+    #[test]
+    fn the_live_edge_counts_every_print_against_the_reading_in_force() {
+        let mut b = DealBarBuilder::new(1_000);
+        b.observe_deals(sample(100, 5_000_400));
+        assert!(b.push(&trade(1, 100, "100")).is_none());
+        let much_later = 100 + 10 * READING_MAX_AGE_MS;
+        assert!(b.push(&trade(2, much_later, "101")).is_none());
+        assert_eq!(b.uncounted_trades(), 0);
+        assert_eq!(b.partial().map(|bar| bar.trade_count), Some(2));
+        // The next reading arrives 40 s later and crosses the boundary: the
+        // bar closes on the print that carries it, nothing was thrown away.
+        b.observe_deals(sample(much_later + 10, 5_001_002));
+        let closed = b
+            .push(&trade(3, much_later + 10, "102"))
+            .expect("closes at 5 001 000");
+        assert_eq!(closed.trade_count, 3);
     }
 
     #[test]

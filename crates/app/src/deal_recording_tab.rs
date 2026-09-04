@@ -54,9 +54,7 @@ impl Tab {
             return;
         }
         for pane in self.panes_mut() {
-            for sample in samples {
-                pane.state.observe_deals(*sample);
-            }
+            pane.state.observe_deals_batch(samples);
             // The retained series changed under the bars. Only a pane cutting
             // by deals reads it now; the others replay it on their next
             // switch, and a rebuild over a day of prints is not free.
@@ -71,9 +69,11 @@ impl Tab {
         match action {
             DealRecordingAction::Start => self.start_deal_recording(metrics::wall_clock_ms()),
             DealRecordingAction::Stop => self.deal_recorder.stop(),
-            // The selector's own path: the change is picked up a frame later
-            // by the same spec sync a toolbar click goes through.
-            DealRecordingAction::ShowAsTrades => self.flow_pane.kind = BarKind::Trades,
+            // The selector's own path, on the pane the popover described —
+            // the focused one, like every bar control; the change is picked
+            // up a frame later by the same spec sync a toolbar click goes
+            // through.
+            DealRecordingAction::ShowAsTrades => self.focused_pane_mut().kind = BarKind::Trades,
             DealRecordingAction::OpenFolder => {
                 crate::paper_trading::reveal_folder(&self.deal_recorder.view(None).dir);
             }

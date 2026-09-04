@@ -48,12 +48,16 @@ does not list `trades` where it is false.
 - **Backwards, no.** MetaTrader stores only the folded ticks. Prints before the
   first reading form no trades bar; the chart says how many they are, and
   never guesses.
-- **A counter that goes quiet.** A print more than four seconds past the
-  newest reading has no reading of its own — a stale terminal, a restart, a
-  hole in a recorded day. Such prints are uncounted, the bar forming when the
-  counter stopped is closed as it stands, and counting resumes with the next
-  reading. REC turns amber (`REC · counter stale 4 s`) while the tape keeps
-  printing past a silent counter.
+- **A hole in the readings.** Prints between two readings more than four
+  seconds apart — a restart, a hole in a recorded day — have no reading of
+  their own: they are uncounted, the bar forming when the readings stopped is
+  closed as it stands, and counting resumes with the reading that ends the
+  hole. At the live edge, where no later reading exists yet, a print is
+  joined to the reading in force however old: a bridge reads the counter
+  *after* fetching a round, so one round after a stall can span minutes under
+  a valid reading. A counter that has really stopped shows as a reading that
+  no longer moves while prints keep coming: bars wait, and REC turns amber
+  (`REC · counter stale 4 s`).
 
 ## Recording
 

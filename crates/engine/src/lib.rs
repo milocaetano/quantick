@@ -39,7 +39,7 @@ mod volume;
 
 pub use bar::Bar;
 pub use builder::{BarBuilder, BarProgress};
-pub use deals::{DealBarBuilder, DealSample};
+pub use deals::{DealBarBuilder, DealSample, READING_MAX_AGE_MS};
 pub use dollar::{DollarBarBuilder, DollarMeasure};
 pub use footprint::{
     BarFootprint, DEFAULT_LEVEL_CAP, Extreme, FootprintBuilder, FootprintLevel, Imbalance,
