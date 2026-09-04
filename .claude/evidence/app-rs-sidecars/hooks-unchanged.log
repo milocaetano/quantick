@@ -1,0 +1,51 @@
+A6 -- every hook and control name kept; the generated files unchanged.
+
+1. Neither generated file appears in the branch diff:
+
+   git diff --stat origin/main...HEAD
+      crates/app/src/app.rs                   | 1750 +------------------------------
+      crates/app/src/app/demo_hooks.rs        | 1010 ++++++++++++++++++
+      crates/app/src/app/drawing_input.rs     |  335 ++++++
+      crates/app/src/app/health.rs            |  327 ++++++
+      crates/app/src/app/tests/mod.rs         |    4 +
+      crates/app/src/app/workspace_restore.rs |  157 +++
+      crates/guards/size-baseline.txt         |   13 +-
+      7 files changed, 1849 insertions(+), 1747 deletions(-)
+
+   .claude/skills/ui-harness/references/hook-registry.md   -- absent
+   docs/control-plane/capability-inventory.md              -- absent
+
+2. app.rs's declare_hooks! slice is byte-identical.
+
+   Seventeen lines naming a QUANTICK_* appear in the app.rs diff. Every one
+   of them is a moved doc comment or a moved log message; not one is a
+   declaration. The slice at app.rs:9187 is outside the diff entirely.
+
+3. The set of QUANTICK_* names the app crate declares is unchanged:
+
+   md5 of the sorted QUANTICK_* names in origin/main's app.rs:
+     53b36ed661060f0840053e389768de9e *-
+   md5 of the same across app.rs plus the four new modules:
+     53b36ed661060f0840053e389768de9e *-
+
+4. hooks::OWNERS is untouched:
+   git diff --stat origin/main...HEAD -- crates/app/src/hooks.rs
+   (empty: no owner entry was added, because no declaration moved.)
+
+5. Which QUANTICK_* names ended up in each new module, and how:
+   demo_hooks.rs: QUANTICK_ QUANTICK_AVWAP_DEMO QUANTICK_CONTEXT_MENU QUANTICK_CONTROL_EVIDENCE QUANTICK_DRAWINGS_DEMO QUANTICK_DRAWINGS_DEMO_RECUT QUANTICK_DRAWING_CONSTRAIN QUANTICK_DRAWING_DRAFT QUANTICK_DRAWING_INSPECTOR QUANTICK_DRAWING_TOOL QUANTICK_FRVP_DEMO QUANTICK_FRVP_FOLD_BUDGET QUANTICK_STRATEGY_DEMO QUANTICK_VENUE_HISTORY_DEMO 
+   drawing_input.rs: none
+   health.rs: none
+   workspace_restore.rs: none
+
+   Every one of those is inside a /// doc comment or a tracing message.
+   crates/guards/src/generated.rs::literal_hook_names cuts the // tail
+   before looking for a name, and its check is global rather than
+   per-file, so a read moving between files declares nothing new.
+
+6. cargo test -p quantick-guards: 107 + 14 + 5 passed, 0 failed.
+   cargo test -p quantick-app includes
+   hooks::tests::the_committed_registry_is_what_the_generator_emits,
+   which compares the committed registry byte for byte against what the
+   generator emits today. It passes, which is the strongest form of
+   'the registry is unchanged' available.

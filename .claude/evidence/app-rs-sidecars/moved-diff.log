@@ -1,0 +1,42 @@
+A5 -- bodies unchanged: the branch diff is moves, not edits.
+
+  git diff --color-moved=zebra --color-moved-ws=allow-indentation-change \
+      origin/main...HEAD -- crates/app/src
+
+Lines git paired as moved:      1717 added / 1726 removed
+Lines git could not pair:        113 added /   19 removed
+
+Every unpaired line, and why it is not a body edit:
+
+  4 +  the mod lines in app.rs: mod demo_hooks; mod drawing_input;
+       mod health; mod workspace_restore; beside mod layout_wiring;
+
+  4 -  / 1 +  app.rs's harness import, from
+         use crate::harness::{ContextMenuPane, DrawingDraft, DrawingsDemo,
+             FrvpDemo, Harness, ScriptedMenu, StrategyDemoMode, VenueHistoryDemo};
+       to
+         use crate::harness::{ContextMenuPane, Harness, ScriptedMenu};
+       Five types are now only named by moved code. Not trimming them is
+       not an option: the crate builds with -D warnings.
+
+ 12 -  / 12 +  the signature lines of the twelve methods a caller left
+       behind still reaches, each 'fn NAME(' -> 'pub(super) fn NAME('.
+       This is the whole of the widening the move cost. The four methods
+       only moved code calls -- deliver_synthetic_prefix, seed_band_demo,
+       carry_inspector_across_selection, apply_drawing_demo_recut -- stay
+       private, so nothing gained visibility it had no caller for.
+       pub(super) is what app/layout_wiring.rs already uses (:75, :132,
+       :142, :402), and it reaches app::tests, so no test file needed one.
+
+ ~76 +  the four new files' own frames: a module doc comment, an import
+       block, 'impl QuantickApp {' and its closing brace, per file.
+
+  4 +  the test-only binding in app/tests/mod.rs and its three-line
+       comment: DrawingsDemo reached the test files through app.rs's
+       imports and now needs a binding of its own, beside plot_split.
+
+  4 -  blank lines app.rs kept between items that are no longer there.
+
+No moved line's body text differs. The paired counts are nine apart for
+the same reason: nine blank separators inside the moved regions moved
+into different neighbourhoods and git paired them to different blocks.

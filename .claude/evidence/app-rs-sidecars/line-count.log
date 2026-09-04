@@ -1,0 +1,20 @@
+A2 -- app.rs at most 8,000 lines.
+
+  wc -l crates/app/src/app.rs
+    bc39248 (sprint start)   9181
+    2254039 (the brief)      9239
+    7dc2e15 (origin/main)    9241
+    HEAD    (this branch)    7501
+
+Production lines, which is what the ratchet counts:
+    origin/main              9239
+    HEAD                     7499
+
+Fall: 1,740 lines of file, 1,740 of production. Target was 8,000.
+
+Where they went (wc -l):
+   1010 crates/app/src/app/demo_hooks.rs
+    335 crates/app/src/app/drawing_input.rs
+    327 crates/app/src/app/health.rs
+    157 crates/app/src/app/workspace_restore.rs
+   1829 total

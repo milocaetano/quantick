@@ -1,0 +1,24 @@
+A7 -- the same tests, from wherever they now live.
+
+Names, sorted, before vs after:
+  diff <(names before) <(names after)   ->   exit 0, no output
+  1899 test names on each side, identical sets.
+
+Totals:
+  before: test result: ok. 1894 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 7.12s
+  before: test result:
+  after:  test result: ok. 1894 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.71s
+  after:  test result:
+
+No test moved file: the app crate keeps its unit tests in
+crates/app/src/app/tests/*.rs, which are child modules of crate::app and
+therefore still see the moved methods -- pub(super) on a method in
+app::demo_hooks is visible throughout the app subtree, app::tests
+included. So R7's 'any inline test that exercises a moved method goes to
+the module's own #[cfg(test)]' had nothing to move: app.rs holds no
+inline test of its own, only 'mod tests;' at its foot, and none of the
+twelve test files is per-method. Splitting them by the four new modules
+would have been a second refactor of somebody else's file.
+
+The one change under app/tests/ is the DrawingsDemo binding in mod.rs;
+see moved-diff.log.

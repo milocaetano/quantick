@@ -1,0 +1,72 @@
+Re-measurement of the brief's evidence ledger (C:\src\mission-app-rs-sidecars.md),
+run against origin/main = 7dc2e15 before the first move.
+The brief measured at 2254039; main has since taken PR #293 and PR #294,
+so every line number below is re-derived rather than copied.
+
+#1 app.rs line count across the sprint -- CONFIRMED, and one line further up.
+   git show <rev>:crates/app/src/app.rs | wc -l
+     bc39248  9181     (the brief's 9,181)
+     d551813  9234     (the brief's 9,234)
+     2254039  9239     (the brief's 9,239, the number it called 'today')
+     7dc2e15  9241     (today, two lines above the brief's reading)
+   Production lines, which is what the ratchet counts: 9239 (--report).
+
+#2 The sibling-module precedent -- CONFIRMED.
+   crates/app/src/app/layout_wiring.rs is 1557 lines, opens its imports with
+   'use super::{QuantickApp, TabSlot};' at :53 and holds impl QuantickApp
+   blocks at :64, :1345 and :1481. app.rs:21 declares it: 'mod layout_wiring;'.
+
+#3 Demo hooks -- CONFIRMED as a region, CORRECTED in size.
+   The four named appliers, at today's line numbers:
+     apply_control_evidence_hook   2087-2214   (128 lines with its doc)
+     apply_drawing_demo            7195-7324   (130)
+     apply_strategy_demo           7777-7962   (186)
+     apply_frvp_demo               7964-8114   (151)
+   595 lines, against the brief's 559 -- the brief counted from the fn line,
+   this counts the doc comment that has to travel with it.
+   The brief asked the mission to measure the region rather than the four.
+   Seven more members of 7195-8283 are demos and nothing outside the group
+   calls them: apply_drawing_draft, apply_venue_history_demo,
+   deliver_synthetic_prefix, apply_avwap_demo, carry_inspector_across_selection,
+   seed_band_demo, apply_drawing_demo_recut. They move too (GOAL.md S1).
+   Nine DEMO_* constants at app.rs:67-106 are read only by moved bodies and
+   move with them; DEMO_VISIBLE_SLOTS stays, because place_text_note reads it.
+
+#4 Drawing input -- CONFIRMED, 314 lines rather than 306.
+     handle_drawing_keys           6168-6316   (149)
+     apply_drawing_chrome          6456-6620   (165)
+
+#5 Health -- CONFIRMED, 303 lines rather than 294.
+     maybe_emit_summary            5066-5309   (244)
+     status_model                  5311-5367   (57)
+   SUMMARY_INTERVAL (app.rs:204-205) is read by maybe_emit_summary alone and
+   moves with it.
+
+#6 Workspace restore -- CONFIRMED, 139 lines rather than 127.
+     restore_workspace             3983-4121   (139)
+
+#7 Hook declarations -- CORRECTED. The premise does not hold for these ranges.
+   app.rs's single declare_hooks! is at :9187 (the brief said :9185).
+   No moved body reads a QUANTICK_* at all. Every std::env::var of an
+   app.rs-declared hook is in new_with_workspace -- QUANTICK_CONTROL_EVIDENCE
+   at app.rs:825 -- or in harness.rs; the moved regions name QUANTICK_* only
+   in doc comments and log messages, which crates/guards/src/generated.rs
+   (literal_hook_names, which cuts the // tail) does not count as a read.
+   So no declaration moves, hooks::OWNERS is untouched, and the generated
+   registry stays byte-identical -- which is what the brief wanted. Had a
+   declaration moved, it could not have: the registry's 'Declared in' column
+   is fused from OWNERS at crates/app/src/hooks.rs:337, so moving one
+   rewrites that cell. See GOAL.md S6.
+
+#8 The open branches' regions -- CONFIRMED, and one branch has since merged.
+   refactor/native-indicator-docking is in origin/main already (PR #293,
+   merge d3cf317): git merge-base --is-ancestor says so. Only
+   refactor/paper-policy-out-of-the-ticket is still open against app.rs.
+   Its app.rs hunks, and where they land, are in overlap.log: none is inside
+   a moved range.
+
+#9 Ceiling and budget -- CONFIRMED.
+   crates/guards/size-baseline.txt:92  crates/app/src/app.rs 9362
+   crates/guards/size-baseline.txt:90  !budget 61410
+   9362 - 9239 = 123 below the ceiling, inside the 200 the guard allows,
+   so the ratchet is not complaining today and --tighten is what lowers it.
