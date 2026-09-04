@@ -7823,17 +7823,12 @@ mod tests {
     /// only the flat manual close.
     #[test]
     fn the_journal_bytes_are_fixed() {
-        let dir = std::env::temp_dir().join(format!(
-            "quantick-paper-journal-golden-{}",
-            std::process::id()
-        ));
-        // Removed first, not merely on the way out: a reused process id
-        // would otherwise hand this run the last one's journal and the
-        // golden would fail on a file it never wrote.
-        let _ = std::fs::remove_dir_all(&dir);
-
+        // Its own scratch folder, carrying a run token and removed with the
+        // value: a reused process id would otherwise hand this run the last
+        // one's journal, and the golden would fail on a file it never wrote.
+        let dir = crate::scratch::ScratchDir::new("paper-journal-golden");
         let mut paper = PaperTrading::new();
-        paper.account.dir.clone_from(&dir);
+        paper.account.dir = dir.path().to_path_buf();
         paper.set_symbol("GOLDEN");
         paper.seed(&print(0, 100));
 
@@ -7865,7 +7860,7 @@ mod tests {
         paper.on_trade(&print(7, 101));
         paper.on_trade(&print(8, 107));
 
-        let folder = dir.join("GOLDEN");
+        let folder = dir.path().join("GOLDEN");
         let mut files: Vec<_> = std::fs::read_dir(&folder)
             .expect("the symbol folder exists")
             .flatten()
@@ -7884,8 +7879,6 @@ mod tests {
             text, JOURNAL_GOLDEN,
             "the journal's bytes moved; the money path is not what it was"
         );
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
