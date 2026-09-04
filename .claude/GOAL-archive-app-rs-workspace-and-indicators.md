@@ -250,6 +250,33 @@ surface, so it does not earn `high`.
 - **C1** — `delivery-review` returns PASS.
 - **C2** — The PR is open, naming the tier beside the four verification boxes.
 
+## Deviations, recorded at the end of the mission
+
+Two, both stated rather than absorbed.
+
+**D-1 — `attach_surface` stayed in `app.rs` (against R1's letter).** The
+brief's ledger #3 listed it at `:4663` among the workspace store's methods,
+because it sits inside that line range. It is a two-line setter for the window
+handle (`self.surface = window_scale::SurfaceProbe::new(handle)`), called once
+from `main`, and it has nothing to do with saving a workspace. The pre-PR bug
+pass raised it as a cohesion question and the review agreed: moving it would
+have made `workspace_save.rs`'s name lie about its contents, and `app.rs`'s
+remaining job — the constructor and the plumbing `main` calls — is exactly
+where it belongs. `app.rs` is ten lines larger for it, the ceiling records
+those ten lines, and `size-baseline.txt` says why. Every other method in
+ledger #3 moved. Evidence: `moved-methods.txt`, final section.
+
+**D-2 — the branch was rebased mid-mission, and its base number changed.**
+PR #298 (`refactor/pane-rs-sidecars`), named in the brief under *Parallel work
+to respect*, merged while this work was in progress. `origin/main` moved from
+`e0ae2ac` to `aaf74d3` and `!budget` fell to 57,394 before this branch touched
+it. R11 asked for a fall of at least 1,800; it is measured against 57,394, the
+number that is actually on `main`, not against the 59,547 the brief quoted.
+The fall is 2,150, to 55,244. The four checks were re-run whole on the rebased
+tree, and every evidence number was re-measured against the new base — one of
+them had silently credited this branch with `pane.rs`'s 2,153-line fall.
+Evidence: `ledger-check.md`, rows 7 and the closing section.
+
 ## The request as received
 
 Quoted verbatim and untranslated, as `CLAUDE.md`'s exemption for a marked,
