@@ -1581,6 +1581,17 @@ impl ChartPane {
         }
     }
 
+    /// Cut every bar again from the retained prints and readings — after a
+    /// resumed file or a loaded day put readings under prints already
+    /// folded. The bookkeeping a spec switch does: the closed-bar prefix is
+    /// rewritten, so the pagination revision moves, and the indicators are
+    /// replayed over the new series.
+    pub fn rebuild_bars(&mut self) {
+        self.state.rebuild_bars();
+        self.bump_pagination_revision();
+        self.send_indicator_rebuild();
+    }
+
     /// Revision protecting the closed-bar prefix exposed through paginated
     /// chart-window reads. Live appends do not advance it; rewrites do.
     #[must_use]
@@ -3171,16 +3182,12 @@ impl ChartPane {
         self.reset_series_with(false);
     }
 
-    /// [`Self::reset_series`] for a source that restarts the *same* market —
-    /// a feed reload, a replay seek: the counter readings stay, since the
+    /// [`Self::reset_series`], keeping the counter readings when the source
+    /// restarts the *same* market — a feed reload, a replay seek — since the
     /// prints replayed afterwards join to them as the first pass did. A
-    /// symbol switch or a replay opening takes the plain reset, or the old
-    /// market's readings would cut the new one's prints.
-    pub fn reset_series_keeping_readings(&mut self) {
-        self.reset_series_with(true);
-    }
-
-    fn reset_series_with(&mut self, keep_readings: bool) {
+    /// symbol switch or a replay opening passes `false`, or the old market's
+    /// readings would cut the new one's prints.
+    pub fn reset_series_with(&mut self, keep_readings: bool) {
         // A second reset before the first settled must not overwrite the
         // baseline with the empty series it is looking at now.
         let slots = self.slots();

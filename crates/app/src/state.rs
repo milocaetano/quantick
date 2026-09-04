@@ -467,12 +467,14 @@ impl ChartState {
     pub fn observe_deals(&mut self, sample: DealSample) {
         match self.deal_samples.last() {
             Some(last) if sample.time_ms < last.time_ms => {
-                let at = self
-                    .deal_samples
-                    .partition_point(|held| held.time_ms <= sample.time_ms);
-                if self.deal_samples[..at].last() != Some(&sample) {
-                    self.deal_samples.insert(at, sample);
-                }
+                // Older than the newest held — a bridge that restarted with
+                // another clock offset, a file behind the live tape. The
+                // live builder cannot place it (the engine drops a sample
+                // going back in time), so the series is re-cut from the
+                // retained one: the one order rule, the same the batch path
+                // uses. Rare, and a rebuild is the honest price.
+                self.observe_deals_batch(&[sample]);
+                self.rebuild();
             }
             Some(last) if *last == sample => {}
             _ => {
@@ -1219,6 +1221,29 @@ mod tests {
     /// A recorded day loaded behind the live tape is older than the live
     /// readings: it lands in order and the rebuild cuts from the whole
     /// series, while a reading delivered twice is held once.
+    /// A reading older than the newest held reaches the bars at once, not
+    /// on the next rebuild: the live series and a rebuilt one must not
+    /// differ for as long as nothing happens to trigger one.
+    #[test]
+    fn an_out_of_order_reading_cuts_the_bars_again_at_once() {
+        let mut s = ChartState::new(BarSpec::Trades(2));
+        let at = |time_ms: i64, session_deals: u64| DealSample {
+            time_ms,
+            session_deals,
+        };
+        s.observe_deals(at(1_099, 1));
+        s.observe_deals(at(1_299, 6));
+        for id in 1..=3 {
+            s.ingest_live(&trade(id));
+        }
+        assert_eq!(s.bars().len(), 1, "the print at 1 300 sees 6 and closes 2");
+        // The reading the bridge had missed: 1 199, at 4 — the print at 1 200
+        // now crosses 4 and closes 2, the one at 1 300 crosses 6.
+        s.observe_deals(at(1_199, 4));
+        assert_eq!(s.bars().len(), 2, "{:?}", s.bars());
+        assert_eq!(s.deal_samples().len(), 3);
+    }
+
     #[test]
     fn older_readings_land_in_order_and_duplicates_are_held_once() {
         let mut s = ChartState::new(BarSpec::Trades(2));

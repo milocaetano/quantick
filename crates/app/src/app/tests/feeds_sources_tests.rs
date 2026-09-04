@@ -434,7 +434,7 @@ fn a_market_switch_leaves_no_floor_and_no_seam_behind() {
         to_ms: 1_000_000,
     });
 
-    app.active_tab_mut().reset_market_state();
+    app.active_tab_mut().reset_market_state(true);
     assert_eq!(app.active_tab().resume_floor_ms, None);
     assert!(app.active_tab().feed_gaps.is_empty());
 }

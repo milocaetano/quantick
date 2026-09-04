@@ -608,9 +608,9 @@ impl AppConfig {
                     format!("feed '{}' has an invalid default_bars: {message}", feed.id)
                 })?;
                 // A deal bar needs the venue's deal counter, which only a
-                // MetaTrader session declares. Refused here rather than opened
-                // on a chart that would never cut a bar.
-                if spec.kind().needs_deal_counter() && feed.provider != ProviderKind::MetaTrader {
+                // provider that may carry one can declare. Refused here rather
+                // than opened on a chart that would never cut a bar.
+                if spec.kind().needs_deal_counter() && !feed.provider.may_count_deals() {
                     return Err(format!(
                         "feed '{}' opens on '{bars}', but trades bars need a deal counter and \
                          only MetaTrader feeds carry one",
@@ -618,7 +618,7 @@ impl AppConfig {
                     ));
                 }
             }
-            if feed.record_deals && feed.provider != ProviderKind::MetaTrader {
+            if feed.record_deals && !feed.provider.may_count_deals() {
                 return Err(format!(
                     "feed '{}' sets record_deals, but only MetaTrader feeds carry a deal \
                      counter to record",

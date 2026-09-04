@@ -2709,7 +2709,7 @@ fn a_reset_drops_the_readings_unless_the_market_is_the_same() {
     };
     let mut pane = pane_of_prints(4, 2);
     pane.state.observe_deals(reading);
-    pane.reset_series_keeping_readings();
+    pane.reset_series_with(true);
     assert_eq!(
         pane.state.deal_samples(),
         &[reading],

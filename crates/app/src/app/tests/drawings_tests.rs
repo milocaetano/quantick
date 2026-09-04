@@ -516,7 +516,7 @@ fn a_rebuilt_timeline_does_not_stack_old_marks_on_its_edge() {
 
     // The seek: the bars go, the round trip stays, and the tape refills
     // from a print older than both of its fills.
-    app.active_tab_mut().reset_market_state();
+    app.active_tab_mut().reset_market_state(true);
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(0)]))
         .unwrap();

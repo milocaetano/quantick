@@ -57,8 +57,11 @@ impl QuantickApp {
                 }
                 tab.active.clone()
             };
-            // The scan cache outlives the recorder: a month of day files
-            // is parsed once per session, not once per market switch.
+            // Stopped first, so the scan its flush triggers finds the cache
+            // still warm; then the cache moves on. It outlives the recorder:
+            // a month of day files is parsed once per session, not once per
+            // market switch.
+            self.tabs[index].deal_recorder.stop();
             let day_cache = self.tabs[index].deal_recorder.take_day_cache();
             let mut recorder = self.deal_recorder_for(&feed_id, &symbol, day_cache);
             let tab = &mut self.tabs[index];
@@ -66,7 +69,6 @@ impl QuantickApp {
             // drain that would say it again is a frame away, and a REC that
             // vanished for one frame on every market switch would flicker.
             recorder.set_available(tab.feed_capabilities.borrow().deal_counter);
-            tab.deal_recorder.stop();
             tab.deal_recorder = recorder;
         }
     }

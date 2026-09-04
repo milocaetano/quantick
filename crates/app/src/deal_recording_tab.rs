@@ -59,7 +59,7 @@ impl Tab {
             // by deals reads it now; the others replay it on their next
             // switch, and a rebuild over a day of prints is not free.
             if pane.kind == BarKind::Trades {
-                pane.state.rebuild_bars();
+                pane.rebuild_bars();
             }
         }
     }
@@ -85,6 +85,11 @@ impl Tab {
     /// counter and nothing loaded — where no REC control is drawn at all.
     #[must_use]
     pub fn deal_recording_view(&self) -> Option<RecordingView> {
+        if self.replay.is_some() {
+            // A replay is another tape and declares no counter: the live
+            // market's recorder, and its recorded days, are not for it.
+            return None;
+        }
         // Judged on the tape's clock: the newest print the tab holds.
         let view = self.deal_recorder.view(self.latest_trade_ms);
         view.supported().then_some(view)

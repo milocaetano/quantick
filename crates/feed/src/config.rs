@@ -25,6 +25,20 @@ pub enum ProviderKind {
 }
 
 impl ProviderKind {
+    /// Whether a session of this provider *may* carry the venue's deal
+    /// counter — the static half, narrowed at hello the way
+    /// [`capabilities`](Self::capabilities) is: a MetaTrader session on a
+    /// quoted CFD declares none. What a config validator asks before a
+    /// chart opens on `trades:N` or records; the interface still asks the
+    /// session.
+    #[must_use]
+    pub fn may_count_deals(self) -> bool {
+        match self {
+            ProviderKind::Binance | ProviderKind::Hyperliquid => false,
+            ProviderKind::MetaTrader => true,
+        }
+    }
+
     /// Whether this provider actually streams data today. Future providers
     /// land as config-visible placeholders first, labelled "(soon)" in the UI.
     #[must_use]

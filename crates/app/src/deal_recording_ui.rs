@@ -22,13 +22,12 @@ const POPOVER_WIDTH_PX: f32 = 360.0;
 /// stale state counts seconds, and the controls to its right — the bar kind,
 /// BUY and SELL — must not move under a hand that has learned where they are.
 pub const REC_BUTTON_MIN_WIDTH_PX: f32 = 196.0;
-/// Height of the corner chip, matching the offline chip beside it.
-const CHIP_HEIGHT_PX: f32 = 18.0;
-const CHIP_PAD_PX: f32 = 7.0;
-const CHIP_DOT_PX: f32 = 6.0;
-const CHIP_GAP_PX: f32 = 5.0;
-const CHIP_LABEL_PT: f32 = 10.5;
-const CHIP_MARGIN_PX: f32 = 8.0;
+// The corner chip's geometry is the offline chip's, one set of numbers:
+// the two sit side by side in the same corner and must read as one pill.
+use crate::feed_notice::{
+    CHIP_DOT_DIAMETER_PX as CHIP_DOT_PX, CHIP_DOT_GAP_PX as CHIP_GAP_PX, CHIP_HEIGHT_PX,
+    CHIP_LABEL_PT, CHIP_MARGIN_PX, CHIP_PAD_PX,
+};
 
 /// The popover's persistent id, so a hook can open it the way a click does.
 fn popup_id(ui: &egui::Ui) -> egui::Id {
@@ -432,7 +431,10 @@ pub fn draw_chip(
             area.bottom() - CHIP_MARGIN_PX - CHIP_HEIGHT_PX,
         ),
         egui::vec2(width, CHIP_HEIGHT_PX),
-    );
+    )
+    // Never past the chart, like the offline chip: a narrow pane clips the
+    // pill rather than letting it overrun the axis.
+    .intersect(area);
     let response = ui
         .interact(
             rect,
