@@ -181,8 +181,12 @@ pub const GUARDS: &[Guard] = &[
         ratchet: None,
     },
     Guard {
+        // No ratchet: a generated file has no number to lower. It either
+        // matches the code it was rendered from or it does not, and the fix is
+        // always to regenerate rather than to record a new ceiling.
         name: "generated",
         check: generated::check,
         check_file: generated::check_file,
+        ratchet: None,
     },
 ];

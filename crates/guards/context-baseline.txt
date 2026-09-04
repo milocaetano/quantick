@@ -31,6 +31,21 @@
 # merely long — but it is loaded all the same, and PR #279 moved weight into
 # it, which is exactly why it is rationed here.
 # +935: see the budget note above. Generated, not written.
+# CLAUDE.md crosses the 10,000 threshold for the first time, by 105 bytes, and
+# this entry is the whole of that. `main` had it at 9,964 — 36 bytes of
+# headroom — and this branch adds one bullet: that the three `feed-*` crates
+# are the exception to the headless rule, being async and reading the clock,
+# and that neither may cross the `FeedEvent` channel.
+#
+# The rule was already false without it. `CLAUDE.md` listed the feeds among the
+# crates with "no async, no wall clock" for as long as the rule existed, while
+# they held 190 `.await` points and three clock reads. A standing exception
+# nobody wrote down is worse than a narrower rule: the first agent to check it
+# finds the rule false and cannot tell which half is wrong, the code or the
+# rule. The reasoning is in `docs/agentic-development.md`, which this tree does
+# not weigh; what stays here is the operative half, and it does not compress
+# below the boundary it names without ceasing to be a rule.
+CLAUDE.md 10105
 .claude/skills/ui-harness/references/hook-registry.md 70112
 .claude/skills/ui-harness/SKILL.md 13377
 # Raised by 54 bytes, for one line: `cargo deny check bans licenses` joined the
