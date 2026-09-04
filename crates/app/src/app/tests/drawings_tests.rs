@@ -1,4 +1,5 @@
 use super::*;
+use quantick_feed::replay::test_support as replay_test_support;
 
 #[test]
 fn a_quote_driven_feed_says_so_where_the_side_note_goes() {
@@ -99,7 +100,7 @@ fn a_resumed_session_keeps_the_timeline_and_marks_the_hole() {
     );
     assert_eq!(
         tab.feed_gaps,
-        vec![crate::feed::FeedGap {
+        vec![quantick_feed::FeedGap {
             from_ms: floor,
             to_ms: resumed.timestamp_ms,
         }],
@@ -122,7 +123,7 @@ fn a_reconnect_that_worked_leaves_no_mark() {
 
     let resumed = quantick_engine::Trade {
         agg_id: 2,
-        timestamp_ms: floor + crate::feed::MIN_MARKED_GAP_MS - 1,
+        timestamp_ms: floor + quantick_feed::MIN_MARKED_GAP_MS - 1,
         ..trade(2)
     };
     events
@@ -3980,9 +3981,9 @@ fn the_seam_and_the_backfill_divider_mark_different_slots() {
     let (mut app, events, _commands) = history_app(&ctx);
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -4087,9 +4088,9 @@ fn the_attention_dot_marks_lost_connections_and_nothing_else() {
     with_config(&mut app, |tab, config| {
         tab.open_replay(
             config,
-            crate::feed::ReplayRequest {
+            quantick_feed::ReplayRequest {
                 session: std::sync::Arc::new(session),
-                options: crate::feed::ReplayOptions {
+                options: quantick_feed::ReplayOptions {
                     autoplay: false,
                     ..Default::default()
                 },
@@ -4174,7 +4175,7 @@ fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
 
     // First run: a human takes a mark while the session is linked.
     let (mut app, _commands) = app_with_history(12);
-    app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(session));
+    app.active_tab_mut().replay = Some(replay_test_support::detached_link(session));
     hover_bar(&mut app, &ctx, 6);
     app.take_mark(Some("traced".to_owned()));
     assert!(
@@ -4203,7 +4204,7 @@ fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
     // re-injects the mark at its logical time with no human present, and
     // the replayed mark names the same bar.
     let (mut app, _commands) = app_with_history(12);
-    app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+    app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     let replayed_events = app
@@ -4260,7 +4261,7 @@ fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
     // The playhead moves on, then restarts: the rerun injects the mark
     // again, at its logical time, and the sidecar still does not grow.
     let status = std::sync::Arc::clone(&app.tabs[0].replay.as_ref().unwrap().status);
-    status.set_position_ms_for_test(status.start_ms() + 5_000);
+    replay_test_support::set_position_ms(&status, status.start_ms() + 5_000);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(
@@ -4268,7 +4269,7 @@ fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
         1,
         "moving forward injects nothing new"
     );
-    status.set_position_ms_for_test(status.start_ms());
+    replay_test_support::set_position_ms(&status, status.start_ms());
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(replayed_marks(&app), 2, "a restart replays the mark");
@@ -4282,7 +4283,7 @@ fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
     // A mark the human takes during this run joins the walk: it is not
     // injected back on the spot, and the next rerun replays it beside
     // the recorded one — exactly what a fresh process would do.
-    status.set_position_ms_for_test(status.start_ms() + 7_000);
+    replay_test_support::set_position_ms(&status, status.start_ms() + 7_000);
     run_frame(&mut app, &ctx);
     hover_bar(&mut app, &ctx, 9);
     app.take_mark(Some("this run".to_owned()));
@@ -4296,8 +4297,8 @@ fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
     // A restart whose rerun has already advanced past the last sampled
     // position is still a rewind — the worker counts it and says where
     // it began — and the rerun replays both marks at their times.
-    status.note_rewind(status.start_ms());
-    status.set_position_ms_for_test(status.start_ms() + 7_500);
+    replay_test_support::note_rewind(&status, status.start_ms());
+    replay_test_support::set_position_ms(&status, status.start_ms() + 7_500);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(

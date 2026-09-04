@@ -230,8 +230,7 @@ impl ReplayStatus {
     }
 
     /// Move the published playhead, as a worker's forward play would.
-    #[cfg(test)]
-    pub(crate) fn set_position_ms_for_test(&self, position_ms: i64) {
+    pub(crate) fn set_position_ms(&self, position_ms: i64) {
         self.position_ms.store(position_ms, Ordering::Relaxed);
     }
 
@@ -290,7 +289,6 @@ impl ReplayLink {
     }
 }
 
-#[cfg(test)]
 impl ReplayLink {
     /// A link with no worker behind it: the status a fresh playhead over
     /// `session` publishes, and nothing releasing trades.
@@ -298,7 +296,8 @@ impl ReplayLink {
     /// For tests that need a tab to believe a recording is its source —
     /// `replay.is_some()` is the one flag the rest of the UI reads — without
     /// spawning playback and waiting on a thread.
-    pub(crate) fn for_test(session: Session) -> Self {
+    #[must_use]
+    pub(crate) fn detached(session: Session) -> Self {
         let playhead = Playhead::new(&session.trades, PlaybackConfig::default());
         Self {
             status: Arc::new(ReplayStatus::new(&playhead)),
@@ -444,9 +443,9 @@ fn context_reply(
     let until_ms = before_ms.unwrap_or(first_print_ms);
     let Some(context) = context else {
         return FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: crate::OHLCV_BASE_INTERVAL_MS,
             bars: Vec::new(),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: crate::OhlcvSlice::Last { complete: true },
         };
     };
     let earliest = until_ms.saturating_sub(span_ms);
@@ -474,7 +473,7 @@ fn context_reply(
         // Short for either of two reasons, and both are the same answer to the
         // caller: the download itself was clipped, or this span does not reach
         // the whole of what the file has before it.
-        slice: crate::feed::OhlcvSlice::Last {
+        slice: crate::OhlcvSlice::Last {
             complete: context.complete && bars.len() == reachable,
         },
         bars,
@@ -872,7 +871,7 @@ mod tests {
                 }) => {
                     // A recording always answers once and for all; the helper
                     // would be hiding a second reply if one ever appeared.
-                    let crate::feed::OhlcvSlice::Last { complete } = slice else {
+                    let crate::OhlcvSlice::Last { complete } = slice else {
                         panic!("a recording must answer with a single closing slice");
                     };
                     break (interval_ms, bars, complete);
@@ -979,14 +978,14 @@ mod tests {
         handle
             .commands
             .blocking_send(FeedCommand::FetchOhlcv {
-                span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+                span_ms: crate::TIME_HISTORY_SPAN_MS,
                 before_ms: None,
                 slice_ms: None,
             })
             .expect("worker alive");
 
         let (interval_ms, bars, _complete) = next_candles(&mut handle);
-        assert_eq!(interval_ms, crate::feed::OHLCV_BASE_INTERVAL_MS);
+        assert_eq!(interval_ms, crate::OHLCV_BASE_INTERVAL_MS);
         assert_eq!(
             bars.len(),
             5,
@@ -1039,7 +1038,7 @@ mod tests {
         handle
             .commands
             .blocking_send(FeedCommand::FetchOhlcv {
-                span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+                span_ms: crate::TIME_HISTORY_SPAN_MS,
                 slice_ms: None,
                 before_ms: None,
             })
@@ -1097,7 +1096,7 @@ mod tests {
         handle
             .commands
             .blocking_send(FeedCommand::FetchOhlcv {
-                span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+                span_ms: crate::TIME_HISTORY_SPAN_MS,
                 before_ms: None,
                 slice_ms: None,
             })
@@ -1567,7 +1566,7 @@ mod tests {
         handle
             .commands
             .blocking_send(FeedCommand::FetchOhlcv {
-                span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+                span_ms: crate::TIME_HISTORY_SPAN_MS,
                 slice_ms: None,
                 before_ms: None,
             })
@@ -1587,7 +1586,7 @@ mod tests {
                 }) => {
                     // A recording always answers once and for all; the helper
                     // would be hiding a second reply if one ever appeared.
-                    let crate::feed::OhlcvSlice::Last { complete } = slice else {
+                    let crate::OhlcvSlice::Last { complete } = slice else {
                         panic!("a recording must answer with a single closing slice");
                     };
                     break (interval_ms, bars, complete);
@@ -1608,8 +1607,50 @@ mod tests {
         );
         assert_eq!(
             interval_ms,
-            crate::feed::OHLCV_BASE_INTERVAL_MS,
+            crate::OHLCV_BASE_INTERVAL_MS,
             "the interval is tagged even on an empty answer, so a consumer never              has to guess what it would have been resampling"
         );
+    }
+}
+
+/// Test support, published on purpose.
+///
+/// The tests that need to drive a replay's published state live in
+/// `quantick-app`, which owns the tab the state is published to — so
+/// `#[cfg(test)]` cannot serve them: the attribute is false when this crate is
+/// compiled as a dependency, and the items would vanish exactly where they are
+/// wanted. This repo's answer to that is a module declared as test support and
+/// documented as part of what the crate is, the way `engine::fixture` and
+/// `control::fake` are, rather than a cargo feature — no crate here has a
+/// `[features]` section, and adding one for this would be a second way to do a
+/// solved thing.
+///
+/// Everything here reaches a `pub(crate)` item, so the module boundary is the
+/// only door: a production caller cannot move a playhead by accident, because
+/// nothing outside this module can name the setter at all.
+pub mod test_support {
+    use quantick_replay::Session;
+
+    use super::{ReplayLink, ReplayStatus};
+
+    /// A [`ReplayLink`] with no worker behind it: the status a fresh playhead
+    /// over `session` publishes, and nothing releasing trades.
+    ///
+    /// For a test that needs a tab to believe a recording is its source —
+    /// `replay.is_some()` is the one flag the rest of the UI reads — without
+    /// spawning playback and waiting on a thread.
+    #[must_use]
+    pub fn detached_link(session: Session) -> ReplayLink {
+        ReplayLink::detached(session)
+    }
+
+    /// Move the published playhead, as a worker's forward play would.
+    pub fn set_position_ms(status: &ReplayStatus, position_ms: i64) {
+        status.set_position_ms(position_ms);
+    }
+
+    /// Note a restart or a seek that landed at `target_ms`, as the worker does.
+    pub fn note_rewind(status: &ReplayStatus, target_ms: i64) {
+        status.note_rewind(target_ms);
     }
 }

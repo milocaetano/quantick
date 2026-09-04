@@ -30,11 +30,11 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use crate::feed::{FeedConnectionState, FeedLatency};
 use crate::feed_notice;
 use crate::metrics;
 use crate::theme;
 use crate::timezone::TzOffset;
+use quantick_feed::{FeedConnectionState, FeedLatency};
 use quantick_orderflow as orderflow;
 
 /// Height of the status line, in pixels (§5 zone 7).
@@ -240,7 +240,7 @@ pub fn tape_text(
             // A tape fourteen hours old is the ordinary state of a chart
             // opened before the open, and `stale 50400 s` is a true sentence
             // nobody reads as "yesterday".
-            format!("stale {}", crate::feed::stall::spoken_ms(age))
+            format!("stale {}", quantick_feed::stall::spoken_ms(age))
         }
         (_, Some(arrival)) => {
             // Gated on the figure shown, which is the figure the hop was

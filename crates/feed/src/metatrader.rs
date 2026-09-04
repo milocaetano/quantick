@@ -44,6 +44,7 @@
 //! from trade order, not ids, so the chart is unaffected; anything keying on
 //! `agg_id` across sessions must not, and this is the place that documents it.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -56,8 +57,8 @@ use quantick_feed_mt5::{
     ServerConfig, SideMode, TapeKind, run_bridge_server,
 };
 
+use crate::FeedLatency;
 use crate::config::{FeedCapabilities, MetaTraderSettings, Mt5SideSource, ProviderKind};
-use crate::feed::FeedLatency;
 
 use super::mt5_bridge::{Supervision, supervise};
 use super::{DepthEvent, FeedCommand, FeedEvent, FeedHandle, FeedNotice};
@@ -83,8 +84,17 @@ const BIND_RETRY: Duration = Duration::from_secs(2);
 
 /// Start the MetaTrader feed for `symbol`: listen for the bridge on the
 /// configured address and translate its stream into [`FeedEvent`]s.
+///
+/// `clock_cache_dir` is where an autostarted bridge remembers the broker's
+/// measured clock offset — the trader's own files directory, handed in by the
+/// application rather than located here (see
+/// [`mt5_bridge::clock_cache_path`](crate::mt5_bridge::clock_cache_path)).
 #[must_use]
-pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
+pub fn spawn(
+    symbol: &str,
+    settings: &MetaTraderSettings,
+    clock_cache_dir: Option<PathBuf>,
+) -> FeedHandle {
     let (tx, rx) = mpsc::channel(4096);
     let (book_tx, book_rx) = mpsc::channel::<DepthEvent>(BOOK_EVENT_CHANNEL_CAPACITY);
     let (notice_tx, notice_rx) = mpsc::channel::<FeedNotice>(NOTICE_CHANNEL_CAPACITY);
@@ -107,7 +117,15 @@ pub fn spawn(symbol: &str, settings: &MetaTraderSettings) -> FeedHandle {
                 .build()
                 .expect("build feed runtime");
             runtime.block_on(feed_task(
-                symbol, settings, tx, book_tx, notice_tx, caps_tx, latency_tx, cmd_rx,
+                symbol,
+                settings,
+                clock_cache_dir,
+                tx,
+                book_tx,
+                notice_tx,
+                caps_tx,
+                latency_tx,
+                cmd_rx,
             ));
         })
         .expect("spawn mt5 feed thread");
@@ -268,6 +286,7 @@ fn earlier(current: Option<i64>, candidate: Option<i64>) -> Option<i64> {
 async fn feed_task(
     symbol: String,
     settings: MetaTraderSettings,
+    clock_cache_dir: Option<PathBuf>,
     tx: mpsc::Sender<FeedEvent>,
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
@@ -314,6 +333,7 @@ async fn feed_task(
                 endpoint: endpoint.clone(),
                 connected: Arc::clone(&bridge_connected),
                 notices: notice_tx.clone(),
+                clock_cache_dir,
             },
         ))
     });
@@ -1331,7 +1351,7 @@ mod tests {
             bridge_autostart: false,
             ..MetaTraderSettings::default()
         };
-        spawn(symbol, &settings)
+        spawn(symbol, &settings, None)
     }
 
     #[test]
@@ -1383,7 +1403,7 @@ mod tests {
             bridge_autostart: false,
             ..MetaTraderSettings::default()
         };
-        let mut feed = spawn("WIN$N", &settings);
+        let mut feed = spawn("WIN$N", &settings, None);
         let Some(FeedEvent::Backfilled(empty)) = feed.events.recv().await else {
             panic!("expected the immediate empty backfill");
         };
@@ -1454,7 +1474,7 @@ mod tests {
             bridge_autostart: false,
             ..MetaTraderSettings::default()
         };
-        let mut feed = spawn("XAUUSD", &settings);
+        let mut feed = spawn("XAUUSD", &settings, None);
         let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
             panic!("expected the immediate empty backfill");
         };
@@ -1526,8 +1546,8 @@ mod tests {
         };
 
         // Two tabs' worth of feeds, alive at the same time.
-        let mut gold = spawn("XAUUSD", &settings);
-        let mut index = spawn("US500", &settings);
+        let mut gold = spawn("XAUUSD", &settings, None);
+        let mut index = spawn("US500", &settings, None);
         for feed in [&mut gold, &mut index] {
             let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
                 panic!("expected the immediate empty backfill");
@@ -1666,7 +1686,7 @@ mod tests {
             bridge_autostart: false,
             ..MetaTraderSettings::default()
         };
-        let mut feed = spawn("WIN$N", &settings);
+        let mut feed = spawn("WIN$N", &settings, None);
         let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
             panic!("expected the immediate empty backfill");
         };
@@ -1785,7 +1805,7 @@ mod tests {
             bridge_autostart: false,
             ..MetaTraderSettings::default()
         };
-        let mut feed = spawn("US500", &settings);
+        let mut feed = spawn("US500", &settings, None);
         let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
             panic!("expected the immediate empty backfill");
         };
@@ -1861,7 +1881,7 @@ mod tests {
             bridge_autostart: false,
             ..MetaTraderSettings::default()
         };
-        let mut feed = spawn("WIN$N", &settings);
+        let mut feed = spawn("WIN$N", &settings, None);
         let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
             panic!("expected the immediate empty backfill");
         };
@@ -1959,7 +1979,7 @@ mod tests {
             bridge_autostart: false,
             ..MetaTraderSettings::default()
         };
-        let mut feed = spawn("WIN$N", &settings);
+        let mut feed = spawn("WIN$N", &settings, None);
         let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
             panic!("expected the immediate empty backfill");
         };
@@ -2108,7 +2128,7 @@ mod tests {
             bridge_autostart: false,
             ..MetaTraderSettings::default()
         };
-        let mut feed = spawn("WIN$N", &settings);
+        let mut feed = spawn("WIN$N", &settings, None);
         let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
             panic!("expected the immediate empty backfill");
         };
@@ -2204,7 +2224,7 @@ mod tests {
             bridge_autostart: false,
             ..MetaTraderSettings::default()
         };
-        let mut feed = spawn("WIN$N", &settings);
+        let mut feed = spawn("WIN$N", &settings, None);
         let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
             panic!("expected the immediate empty backfill");
         };
@@ -2296,7 +2316,7 @@ mod tests {
             bridge_autostart: false,
             ..MetaTraderSettings::default()
         };
-        let mut feed = spawn("WIN$N", &settings);
+        let mut feed = spawn("WIN$N", &settings, None);
         let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
             panic!("expected the immediate empty backfill");
         };
@@ -2331,7 +2351,7 @@ mod tests {
             bridge_autostart: false,
             ..MetaTraderSettings::default()
         };
-        let mut feed = spawn("WIN$N", &settings);
+        let mut feed = spawn("WIN$N", &settings, None);
         let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
             panic!("expected the immediate empty backfill");
         };
@@ -2444,7 +2464,7 @@ mod tests {
             bridge_autostart: false,
             ..MetaTraderSettings::default()
         };
-        let mut feed = spawn("WIN$N", &settings);
+        let mut feed = spawn("WIN$N", &settings, None);
         let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
             panic!("expected the immediate empty backfill");
         };
@@ -2456,7 +2476,7 @@ mod tests {
         // Ask before anything exists, as a pane's first frame does.
         feed.commands
             .send(FeedCommand::FetchOhlcv {
-                span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+                span_ms: crate::TIME_HISTORY_SPAN_MS,
                 slice_ms: None,
                 before_ms: None,
             })
@@ -2539,8 +2559,8 @@ mod tests {
         // no venue round trip here for slicing to shorten.
         feed.commands
             .send(FeedCommand::FetchOhlcv {
-                span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
-                slice_ms: Some(crate::feed::OHLCV_SLICE_SPAN_MS),
+                span_ms: crate::TIME_HISTORY_SPAN_MS,
+                slice_ms: Some(crate::OHLCV_SLICE_SPAN_MS),
                 before_ms: None,
             })
             .await
@@ -2567,7 +2587,7 @@ mod tests {
         let (interval_ms, bars, slice) = reply;
         assert_eq!(
             slice,
-            crate::feed::OhlcvSlice::Last { complete: true },
+            crate::OhlcvSlice::Last { complete: true },
             "a held block is answered once, whatever slicing was asked for"
         );
         assert_eq!(interval_ms, 60_000);
@@ -2595,14 +2615,14 @@ mod tests {
             bridge_autostart: false,
             ..MetaTraderSettings::default()
         };
-        let mut feed = spawn("WIN$N", &settings);
+        let mut feed = spawn("WIN$N", &settings, None);
         let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
             panic!("expected the immediate empty backfill");
         };
 
         feed.commands
             .send(FeedCommand::FetchOhlcv {
-                span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+                span_ms: crate::TIME_HISTORY_SPAN_MS,
                 slice_ms: None,
                 before_ms: None,
             })
@@ -2643,7 +2663,7 @@ mod tests {
             bridge_autostart: false,
             ..MetaTraderSettings::default()
         };
-        let mut feed = spawn("WIN$N", &settings);
+        let mut feed = spawn("WIN$N", &settings, None);
         let Some(FeedEvent::Backfilled(_)) = feed.events.recv().await else {
             panic!("expected the immediate empty backfill");
         };
@@ -2690,7 +2710,7 @@ mod tests {
         async fn ask(feed: &mut FeedHandle) -> Vec<quantick_engine::Bar> {
             feed.commands
                 .send(FeedCommand::FetchOhlcv {
-                    span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+                    span_ms: crate::TIME_HISTORY_SPAN_MS,
                     slice_ms: None,
                     before_ms: None,
                 })

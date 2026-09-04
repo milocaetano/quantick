@@ -2057,9 +2057,9 @@ fn pulling_older_trades_re_trims_the_venue_prefix() {
     let (mut app, events, _commands) = history_app(&ctx);
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -2099,7 +2099,7 @@ fn pulling_older_trades_re_trims_the_venue_prefix() {
         .open_time;
     assert!(
         pane.history_prefix.iter().all(|bar| bar.open_time
-            < crate::resample::bucket_start(first_engine, crate::feed::OHLCV_BASE_INTERVAL_MS)),
+            < crate::resample::bucket_start(first_engine, quantick_feed::OHLCV_BASE_INTERVAL_MS)),
         "no venue candle may cover a minute the engine has now re-cut"
     );
     assert_eq!(
@@ -2168,9 +2168,9 @@ fn a_replay_switch_flattens_under_the_session_that_owned_the_position() {
     with_config(&mut app, |tab, config| {
         tab.open_replay(
             config,
-            crate::feed::ReplayRequest {
+            quantick_feed::ReplayRequest {
                 session: std::sync::Arc::new(session),
-                options: crate::feed::ReplayOptions {
+                options: quantick_feed::ReplayOptions {
                     autoplay: false,
                     ..Default::default()
                 },
@@ -2207,9 +2207,9 @@ fn a_chart_cut_by_trades_takes_the_venue_lead_in_only_when_asked() {
     let (mut app, events, _commands) = history_app(&ctx);
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();

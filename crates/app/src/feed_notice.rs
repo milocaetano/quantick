@@ -32,14 +32,14 @@
 //!
 //! The two controls are [`Recovery::Reconnect`] and [`Recovery::Reload`], and
 //! which of them is offered *first* is decided upstream from what the
-//! application already knows (see [`crate::feed::stall`]). The trader is never
+//! application already knows (see [`quantick_feed::stall`]). The trader is never
 //! asked to diagnose their own feed to press the right button.
 
 use eframe::egui;
 
-use crate::feed::FeedNotice;
-use crate::feed::stall::{Recovery, Stall};
 use crate::theme;
+use quantick_feed::FeedNotice;
+use quantick_feed::stall::{Recovery, Stall};
 
 /// The word the chip carries when the chart is not being fed.
 ///
@@ -237,7 +237,7 @@ impl Report<'_> {
 /// Build the report for a feed, or `None` when there is nothing to say.
 ///
 /// `stall` is this application's own judgement, already decided against the
-/// clock by [`crate::feed::stall::assess`]; it wins over a progress notice,
+/// clock by [`quantick_feed::stall::assess`]; it wins over a progress notice,
 /// because a progress notice that has been escalated is exactly the one whose
 /// words stopped being true.
 #[must_use]

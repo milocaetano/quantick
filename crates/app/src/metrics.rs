@@ -7,7 +7,6 @@
 //! deterministic.
 
 use std::collections::VecDeque;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A frame slower than this (≈ 50 FPS) is flagged as a hitch.
 pub const SLOW_FRAME_MS: f32 = 20.0;
@@ -78,24 +77,10 @@ impl FrameStats {
     }
 }
 
-/// Current wall-clock time in epoch milliseconds (app-only; never the engine).
-///
-/// The one place real time enters quantick. The engine is *told* what time it
-/// is by the trades it receives and never asks a clock, which is what keeps one
-/// fixture producing one set of bars; everything that genuinely needs "now" — a
-/// latency observation, the span a candle request covers — comes through here.
-///
-/// Saturates rather than wrapping. `as i64` on a `u128` past the i64 range
-/// would quietly produce a *negative* timestamp, and a clock that wrong should
-/// read as the end of time, not as 1969.
-#[must_use]
-pub fn wall_clock_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
-        })
-}
+// Lives with the feed host, the level of the graph that owns runtimes and so
+// the level where real time enters quantick; re-exported so every caller here
+// keeps one name for it. Nothing below that crate reads a clock at all.
+pub use quantick_feed::clock::wall_clock_ms;
 
 // Lives with the order-flow engine, which observes the same lag on depth
 // events; re-exported so the tape's callers keep one name for it.

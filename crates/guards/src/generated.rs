@@ -64,7 +64,17 @@ pub const REGISTRY_PATH: &str = ".claude/skills/ui-harness/references/hook-regis
 pub const PROSE_PATH: &str = "docs/ui-harness/hook-prose.md";
 
 /// Where the `declare_hooks!` declarations live.
-const APP_SRC: &str = "crates/app/src";
+///
+/// Two trees, not one: the application, and the feed host below it. Four of
+/// the feed adapters read a `QUANTICK_*`, and each declares it beside the read
+/// exactly as an application module does — `quantick-app`'s `OWNERS` table
+/// still names every slice, so the registry stays whole. A tree missing from
+/// this list is a hook the guard cannot see, which is the blind spot this
+/// module exists to close.
+const HOOK_SOURCE_DIRS: &[&str] = &["crates/app/src", "crates/feed/src"];
+
+/// The same two, as the phrase a finding names them by.
+const HOOK_SOURCES: &str = "crates/app/src or crates/feed/src";
 
 /// Where the shared not-a-hook table is declared.
 const HOOKS_MODULE: &str = "crates/app/src/hooks.rs";
@@ -106,7 +116,7 @@ pub fn check_file(path: &Path, _contents: &str) -> Vec<Finding> {
         || relative.contains(CONTROL_DIR)
         || relative.ends_with(PROSE_PATH)
         || relative.ends_with(REGISTRY_PATH)
-        || relative.contains(APP_SRC);
+        || HOOK_SOURCE_DIRS.iter().any(|dir| relative.contains(dir));
     if !relevant {
         return Vec::new();
     }
@@ -250,7 +260,7 @@ fn check_hooks(root: &Path, findings: &mut Vec<Finding>) {
         if !declared.contains_key(name) && !allowed.contains(name) {
             findings.push(Finding::new(
                 format!(
-                    "{PROSE_PATH}: `{name}` is described but no `declare_hooks!` in {APP_SRC} \
+                    "{PROSE_PATH}: `{name}` is described but no `declare_hooks!` in {HOOK_SOURCES} \
                      declares it — a capture setting it would reach nothing"
                 ),
                 REMEDY_HOOKS,
@@ -272,7 +282,9 @@ fn check_hooks(root: &Path, findings: &mut Vec<Finding>) {
 fn read_hooks(root: &Path) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     let mut files = Vec::new();
-    collect_rust_files(&root.join(APP_SRC), &mut files);
+    for dir in HOOK_SOURCE_DIRS {
+        collect_rust_files(&root.join(dir), &mut files);
+    }
     files.sort();
     for file in files {
         let Ok(source) = std::fs::read_to_string(&file) else {
@@ -404,7 +416,9 @@ fn is_test_source(relative: &str) -> bool {
 fn declared_hooks(root: &Path) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     let mut files = Vec::new();
-    collect_rust_files(&root.join(APP_SRC), &mut files);
+    for dir in HOOK_SOURCE_DIRS {
+        collect_rust_files(&root.join(dir), &mut files);
+    }
     files.sort();
     for file in files {
         let Ok(source) = std::fs::read_to_string(&file) else {

@@ -202,7 +202,7 @@ struct ReplayPosition {
 }
 
 impl ReplayPosition {
-    fn of(status: &crate::feed::replay::ReplayStatus) -> Self {
+    fn of(status: &quantick_feed::replay::ReplayStatus) -> Self {
         Self {
             elapsed_ms: status.elapsed_ms(),
             rewinds: status.rewinds(),
