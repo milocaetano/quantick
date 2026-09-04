@@ -81,10 +81,12 @@ impl Tab {
         // series is a rewrite: the view, the marks, the indicators and the
         // strategies follow it the way they follow a spec switch.
         for index in 0..self.pane_count() {
-            if self
+            // The rule the builder cuts under, not the selector: a combo
+            // mid-flick has moved the selector a frame ahead of the bars.
+            let cutting_deals = self
                 .pane_at(index)
-                .is_some_and(|pane| pane.kind == BarKind::Trades)
-            {
+                .is_some_and(|pane| pane.state.spec().kind() == BarKind::Trades);
+            if cutting_deals {
                 self.recut_pane_with(index, |pane| pane.rebuild_bars());
             }
         }

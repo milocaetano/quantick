@@ -237,7 +237,7 @@ impl Recording {
         day: &str,
         tz_minutes: i32,
     ) -> io::Result<(Self, Vec<DealSample>)> {
-        let folder = dir.join(symbol);
+        let folder = dir.join(crate::paper_chrome::sanitize_symbol(symbol));
         fs::create_dir_all(&folder)?;
         let path = folder.join(format!("{day}.{EXTENSION}"));
         // A file that exists but is empty is a header write that failed —
@@ -480,7 +480,9 @@ pub type DayCache = BTreeMap<PathBuf, (u64, Option<SystemTime>, RecordedDay)>;
 /// again.
 #[must_use]
 pub fn scan_days(dir: &Path, symbol: &str, cache: &mut DayCache) -> Rc<[RecordedDay]> {
-    let Ok(entries) = fs::read_dir(dir.join(symbol)) else {
+    // The paper journal's own mapping of a symbol to a folder name, so the
+    // two never disagree about where a symbol lives.
+    let Ok(entries) = fs::read_dir(dir.join(crate::paper_chrome::sanitize_symbol(symbol))) else {
         return Rc::from(Vec::new());
     };
     let mut days = BTreeMap::new();

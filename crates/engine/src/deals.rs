@@ -109,6 +109,10 @@ pub struct DealBarBuilder {
     total: Decimal,
     /// The counter value that closes the forming bar.
     next_boundary: u64,
+    /// The running total when the forming bar opened — what its progress
+    /// counts from, which is the previous boundary except while multiples
+    /// are being caught up one print at a time.
+    bar_opened_at: Decimal,
     /// Whether a print was credited deals since the reading in force —
     /// the difference between "nothing was forming" and "a bar just closed"
     /// when a reading reaches the boundary.
@@ -143,6 +147,7 @@ impl DealBarBuilder {
             window_volume: Decimal::ZERO,
             total: Decimal::ZERO,
             next_boundary: 0,
+            bar_opened_at: Decimal::ZERO,
             window_counted: false,
             window_had_uncounted: false,
             close_next: false,
@@ -177,8 +182,6 @@ impl DealBarBuilder {
 
     /// Join every pending sample strictly before `time_ms` into the
     /// reading. Returns a closed bar when a rollover ended the forming one.
-    /// Join every pending sample strictly before `time_ms` into the
-    /// reading. Returns a closed bar when a rollover ended the forming one.
     fn advance_to(&mut self, time_ms: i64) -> Option<Bar> {
         let mut closed = None;
         while let Some(sample) = self.pending.front().copied() {
@@ -207,10 +210,18 @@ impl DealBarBuilder {
                     self.next_boundary = self.boundary_above(deals);
                 }
                 // A smaller dip is the terminal answering a poll late —
-                // polls are milliseconds apart, a bar is minutes — and an
-                // unchanged reading is a reconnect re-emitting what it
-                // found. Neither is a window: nothing changes.
-                Some(current) if deals <= current => continue,
+                // polls are milliseconds apart, a bar is minutes — and not
+                // a window: nothing changes.
+                Some(current) if deals < current => continue,
+                // An unchanged reading is a reconnect re-emitting what it
+                // found: not a window either, but a reading taken now — the
+                // age the prints after it are judged by starts here, or a
+                // halt longer than a reading holds for would leave every
+                // print uncounted until the venue's count moved.
+                Some(current) if deals == current => {
+                    self.reading = Some(sample);
+                    continue;
+                }
                 Some(current) => {
                     // A completed window: its exact deals over its contracts
                     // is the rate the next window's prints are estimated at
@@ -252,30 +263,16 @@ impl DealBarBuilder {
         self.total >= Decimal::from(self.next_boundary)
     }
 
-    /// The boundary after a bar closed on the running total. Overshoot — an
-    /// estimate past the multiple, a reading past it by less than a bar —
-    /// is not carried into the next bar: the next multiple above the total.
-    /// A reading that re-anchored the total two or more multiples past the
-    /// boundary is different: every multiple it crossed gets its bar, one
-    /// per print, until the boundary passes the total — or the day's bar
-    /// count would drift below the venue's total over `N`.
+    /// The boundary after a bar closed on the running total: the next
+    /// multiple. Overshoot past the multiple by less than a bar is not
+    /// carried into the next bar, and a total two or more multiples past
+    /// the boundary — a reading that re-anchored it ahead of the estimate,
+    /// one print worth more than a bar — gives every multiple its bar, one
+    /// per print, until the boundary passes the total; either way the next
+    /// multiple is the boundary, or the day's bar count would drift below
+    /// the venue's total over `N`.
     fn boundary_after_close(&self) -> u64 {
-        let floor = self.total_floor();
-        let next = self.next_boundary.saturating_add(self.n);
-        if floor >= next {
-            next
-        } else {
-            self.boundary_above(floor)
-        }
-    }
-
-    /// The running total as a count, for the next multiple above it.
-    fn total_floor(&self) -> u64 {
-        self.total
-            .max(Decimal::ZERO)
-            .trunc()
-            .try_into()
-            .unwrap_or(u64::MAX)
+        self.next_boundary.saturating_add(self.n)
     }
 }
 
@@ -313,6 +310,7 @@ impl BarBuilder for DealBarBuilder {
         self.window_counted = true;
         if rolled.is_some() {
             self.current = Some(Bar::opened_by(trade));
+            self.bar_opened_at = self.total - trade.quantity * rate;
             if self.crossed_boundary() {
                 // This print's own estimate reached the multiple: its bar
                 // closes on the next push, before the print after it.
@@ -323,7 +321,10 @@ impl BarBuilder for DealBarBuilder {
         }
         match self.current.as_mut() {
             Some(bar) => bar.extend(trade),
-            None => self.current = Some(Bar::opened_by(trade)),
+            None => {
+                self.current = Some(Bar::opened_by(trade));
+                self.bar_opened_at = self.total - trade.quantity * rate;
+            }
         }
         if self.crossed_boundary() {
             self.next_boundary = self.boundary_after_close();
@@ -338,10 +339,19 @@ impl BarBuilder for DealBarBuilder {
 
     fn progress(&self) -> Option<BarProgress> {
         self.reading?;
-        let floor = self.next_boundary.saturating_sub(self.n);
+        // From where the forming bar opened, never past a bar: while
+        // multiples are caught up one print at a time the total stands
+        // several bars ahead, and a countdown past its own end is what an
+        // alarm's share gate would read as reached on every print.
+        let floor = if self.current.is_some() {
+            self.bar_opened_at
+        } else {
+            Decimal::from(self.next_boundary.saturating_sub(self.n))
+        };
+        let target = Decimal::from(self.n);
         Some(BarProgress {
-            done: (self.total - Decimal::from(floor)).max(Decimal::ZERO),
-            target: Decimal::from(self.n),
+            done: (self.total - floor).clamp(Decimal::ZERO, target),
+            target,
         })
     }
 
@@ -750,6 +760,45 @@ mod tests {
             .expect("the restart ends the bar");
         assert_eq!(ended.trade_count, 1);
         assert_eq!(b.reading(), Some(0));
+    }
+
+    /// An unchanged reading re-emitted after a halt longer than a reading
+    /// holds for is a reading taken now: the prints after it are counted.
+    #[test]
+    fn a_repeated_reading_after_a_halt_renews_the_age() {
+        let mut b = DealBarBuilder::new(1_000);
+        b.observe_deals(sample(99, 100));
+        b.push(&trade_of(1, 100, "100", "10"));
+        b.observe_deals(sample(30_099, 200)); // rate 10
+        b.push(&trade_of(2, 30_100, "100", "1"));
+        // A halt: fifteen minutes later the reconnect re-emits 200.
+        let back = 30_099 + 15 * 60_000;
+        b.observe_deals(sample(back, 200));
+        assert!(b.push(&trade_of(3, back + 1, "100", "1")).is_none());
+        assert_eq!(b.uncounted_trades(), 1, "window 1's print only");
+        assert_eq!(b.partial().map(|bar| bar.trade_count), Some(2));
+    }
+
+    /// While multiples are caught up one print at a time, the countdown
+    /// counts from where the forming bar opened and never past a bar.
+    #[test]
+    fn progress_never_runs_past_a_bar() {
+        let mut b = DealBarBuilder::new(2_000);
+        b.observe_deals(sample(99, 5_000_000));
+        b.push(&trade_of(1, 100, "100", "10"));
+        b.observe_deals(sample(30_099, 5_000_100)); // rate 10
+        b.push(&trade_of(2, 30_100, "100", "10")); // +100
+        b.observe_deals(sample(60_099, 5_009_000)); // four multiples ahead
+        for i in 0..3 {
+            b.push(&trade_of(3 + i, 60_100 + i as i64 * 100, "100", "1"));
+            let progress = b.progress().expect("a countdown");
+            assert!(
+                progress.done <= progress.target,
+                "{} of {}",
+                progress.done,
+                progress.target
+            );
+        }
     }
 
     /// A reconnect re-emits the reading it finds: an unchanged reading at
