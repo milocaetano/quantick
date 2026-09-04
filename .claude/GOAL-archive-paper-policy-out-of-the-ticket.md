@@ -357,28 +357,63 @@ Measured against `origin/main` at `d551813`, the sha the brief names:
 
 ## Deferred
 
-Both granted by the trader, in session, after the measurement that prompted
-them. Neither is a gap the branch failed to notice; each is a criterion the
-trader chose to release once it was measured.
+Six gaps ship, every one granted by the trader in session and after the
+measurement that prompted it. None was granted by this session to itself.
+
+**Granted earlier, when each was first measured:**
 
 - **A11's first clause — `paper_trading.rs` at most 3,500 production lines.**
-  It fell 1,760, from 6,407 to **4,647**, and stopped there. What remains is
-  about 3,100 lines of genuine drawing and gesture plus about 1,500 of types,
-  constants and `impl PaintCtx`; reaching 3,500 needs a **third** module the
-  brief never asked for. Told that, the trader chose to accept 4,647 and record
-  the deviation rather than grow the change. The rest of A11 is delivered:
-  `paper_account.rs` is 2,055, well under its own 3,500, the baseline is
-  tightened, and the `!budget` rises 297 with a signed reason — inside the 300
-  the criterion allows. See **D5**.
-- **G6 — a `visual-qa` pass over the nine surfaces.** The nine are byte-for-byte
-  identical to `origin/main` outside the measured mask, on both control runs,
-  and the control plane's own `session.paper` snapshot agrees on 4/4 scenes.
-  Running a defect checklist over images identical to main's grades *main's*
-  design, not this change: any defect it found was already there and is not
-  this branch's to answer. The trader released the criterion on that reading.
-  The evidence that replaces it is
-  `.claude/evidence/paper-policy-out-of-the-ticket/pixels-golden.txt` and
-  `scene-compare.txt`.
+  It fell **1,818**, from 6,407 to **4,589**, and stopped there. What remains is
+  about 3,100 lines of genuine drawing and gesture plus types, constants and
+  `impl PaintCtx`; reaching 3,500 needs a *third* module the brief never asked
+  for. `paper_account.rs` is 2,128, well under its own 3,500 ceiling. See D5.
+- **G6 — a `visual-qa` pass.** A defect checklist over surfaces that match
+  `origin/main` grades *main's* design, not this change. The evidence that
+  replaces it is `pixels-golden.txt` and `scene-compare.txt`. See D4.
+
+**Granted at the close, on the measurements below:**
+
+- **A11's second clause — the budget rose 350, not at most 300.** The mission's
+  own two criteria pull against each other: it asked for twenty-one named
+  functions on the account *and* a rise under 300, and a function moved across
+  a seam pays for its signature twice — once where it lives, once where the
+  ticket resolves its text before calling it. At seventeen moved the rise was
+  **297**; the last four — `market`, `settle`, `on_trade`, `set_symbol`, all
+  named in R2-R4 — cost the rest, and `app.rs` took 38 more where a receiver
+  wraps a line that used to fit. Eleven lines were already returned from real
+  duplication the move exposed. Reverting the four would buy the number and
+  lose the delivery, so the number gave.
+- **A10 / R18 — "pixel-identical by SHA-256 pairs" is not achievable by any
+  branch.** Three runs of the same `origin/main` build differ from each other
+  by up to **2,366 pixels**. What was measured instead, against a mask derived
+  from that spread rather than chosen: the branch matches the control on five
+  of nine scenes exactly and by 1, 1, 4 and 66 px on the rest, and is *more*
+  reproducible than main (0-71 px between its own runs against main's 0-2,366).
+- **A1 / R3 — two of the twenty-one named functions stayed on the ticket.**
+  `rest_capture_orders` reads `orders_demo` and `order_bracket_demo`;
+  `decide_pending_leg` reads `drag`. All three are ticket fields by ledger #4's
+  own list, so moving the functions would move pixels into the account — the
+  one thing this change exists to prevent. The other nineteen are on the
+  account.
+- **G7 — the generated hook registry changed two rows.**
+  `QUANTICK_PAPER_DEMO` and `QUANTICK_PAPER_RISK` now say `paper_account.rs`
+  in the *Declared in* column, because that is where they are now read. Hook
+  names and prose are untouched. The alternative was a reverse module edge that
+  `crates/guards/src/cycle.rs` fails the build on.
+
+**Two more asks are answered rather than deferred, and belong here so a reader
+does not go looking:**
+
+- **A12's "same test count"** conflicts with R17, which *requires* a new golden
+  test. The paper suite is **209** against `origin/main`'s **204**: the journal
+  golden, the offset regression, and the account's own three. No test was lost,
+  which is what the criterion was protecting.
+- **A8 / R14 — the tests did not travel; the account got its own instead.**
+  `paper_account.rs` carries three tests that construct no `PaperTrading` at
+  all. The ten journal tests stayed because rewriting them to drive the account
+  would change their bodies — and one is `the_journal_bytes_are_fixed`, whose
+  whole value is that its body and expected bytes have *not* changed since
+  before the code moved. R17 outranks R14 for that test.
 
 ## Closing steps
 
