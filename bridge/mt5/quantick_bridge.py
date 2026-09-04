@@ -915,7 +915,7 @@ class Session:
         would be a second source of truth about every exchange's hours, wrong
         the first time a holiday moved — and wrong immediately for the CFDs
         this same bridge serves. The app already reads a session boundary this
-        way in `crate::history_reach`; this is that rule applied one hop
+        way in `quantick_feed::history_reach`; this is that rule applied one hop
         earlier, so the two ends of one tape cannot disagree about where a day
         began.
 

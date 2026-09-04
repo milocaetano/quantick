@@ -166,7 +166,7 @@ graph TD
 | `indicators` | The indicator runtime: the `Indicator` trait (commit/preview with rollback), incremental `ta.*` kernels, draw objects, headless host. |
 | `pine` | "Quantick Pine" — a Pine v5 subset. Hand-rolled lexer, parser, compile passes and interpreter; zero external dependencies. |
 | `replay` | Recorded market-replay sessions: the CSV format, the folder scan, the playback clock. It is *told* how much time passed. |
-| `feed` | The feed host: the `FeedEvent`/`FeedCommand` port every source implements, the Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters that run one, and the feed-shaped config. The only crate below `app` that owns runtimes, threads and the clock, and `replay::test_support`, published on purpose rather than test-only. |
+| `feed` | The feed host: the `FeedEvent`/`FeedCommand` port every source implements, the Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters that run one, the feed-shaped config, the by-time history reach and its campaign, and the session exporter. The one crate below `app` owns runtimes, threads and the clock. |
 | `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements, so a broker adapter docks where the paper simulator sits. |
 | `sim` | Deterministic paper trading: one implementation of `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
 | `strategy` | The strategy kernel: armed price regions, projected brackets, the armed-instance state machine, and the `SignalAlarm` beside it. |

@@ -71,8 +71,8 @@
 
 use eframe::egui;
 
-use crate::history_reach::CampaignEnd;
 use crate::indicator_panel::SettingsTab;
+use quantick_feed::history_reach::CampaignEnd;
 
 /// Frames the `QUANTICK_LOAD_OLDER` hook waits for a chart worth paging from.
 ///

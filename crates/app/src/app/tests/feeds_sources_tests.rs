@@ -1,4 +1,5 @@
 use super::*;
+use quantick_feed::history_reach;
 
 #[test]
 fn the_newest_notice_wins_and_clear_puts_the_chart_back() {
@@ -1427,7 +1428,7 @@ fn the_previous_session_reach_pages_until_the_lead_past_the_close_lands() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history_reach = crate::history_reach::HistoryReach::PreviousSession;
+    app.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
@@ -1455,8 +1456,8 @@ fn the_previous_session_reach_pages_until_the_lead_past_the_close_lands() {
     // gap threshold, so the stretch between the two sessions is wider than
     // a quiet market ever is; in front of it, exactly the lead.
     const MINUTE_MS: i64 = quantick_feed::OHLCV_BASE_INTERVAL_MS;
-    let close_minute = -120 - (crate::history_reach::SESSION_GAP_MS / MINUTE_MS) - 1;
-    let lead_minutes = crate::history_reach::PREVIOUS_SESSION_LEAD_MS / MINUTE_MS;
+    let close_minute = -120 - (history_reach::SESSION_GAP_MS / MINUTE_MS) - 1;
+    let lead_minutes = history_reach::PREVIOUS_SESSION_LEAD_MS / MINUTE_MS;
     events
         .try_send(FeedEvent::HistoryPrepended(
             (close_minute - lead_minutes..=close_minute)
@@ -1488,7 +1489,7 @@ fn a_venue_answering_empty_without_saying_so_stops_the_run_early() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history_reach = crate::history_reach::HistoryReach::PreviousSession;
+    app.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
@@ -1496,7 +1497,7 @@ fn a_venue_answering_empty_without_saying_so_stops_the_run_early() {
     assert_eq!(asked, 1, "the press");
     // Answer every request with nothing, as a refusing venue does. The
     // capability stays true throughout — that is the whole point.
-    for _ in 0..crate::history_reach::MAX_CAMPAIGN_PAGES {
+    for _ in 0..history_reach::MAX_CAMPAIGN_PAGES {
         if !app.active_tab().history_reach_running() {
             break;
         }
@@ -1511,10 +1512,10 @@ fn a_venue_answering_empty_without_saying_so_stops_the_run_early() {
         "the run gave up rather than spending its whole budget"
     );
     assert!(
-        asked <= crate::history_reach::MAX_IDLE_PAGES as usize,
+        asked <= history_reach::MAX_IDLE_PAGES as usize,
         "one press cost {asked} requests; the idle budget is \
              {}",
-        crate::history_reach::MAX_IDLE_PAGES
+        history_reach::MAX_IDLE_PAGES
     );
     assert!(
         !app.active_tab().loading.is_active(LoadingTask::History),
@@ -1533,7 +1534,7 @@ fn the_settled_reach_paints_its_sentence_over_the_chart() {
     let (mut app, _commands) = app_with_history(200);
     run_frame(&mut app, &ctx);
     let quiet = painted_text(&run_frame(&mut app, &ctx));
-    let sentence = crate::history_reach::CampaignEnd::NothingComingBack
+    let sentence = history_reach::CampaignEnd::NothingComingBack
         .notice()
         .expect("the ending's own sentence");
     assert!(
@@ -1571,7 +1572,7 @@ fn a_run_that_reaches_nothing_says_so_where_the_trader_is_looking() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history_reach = crate::history_reach::HistoryReach::PreviousSession;
+    app.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
@@ -1580,7 +1581,7 @@ fn a_run_that_reaches_nothing_says_so_where_the_trader_is_looking() {
         app.active_tab().history_note().is_none(),
         "a run under way has nothing to report yet"
     );
-    for _ in 0..crate::history_reach::MAX_CAMPAIGN_PAGES {
+    for _ in 0..history_reach::MAX_CAMPAIGN_PAGES {
         if !app.active_tab().history_reach_running() {
             break;
         }
@@ -1596,7 +1597,7 @@ fn a_run_that_reaches_nothing_says_so_where_the_trader_is_looking() {
     );
     assert_eq!(
         app.active_tab().history_note(),
-        crate::history_reach::CampaignEnd::NothingComingBack.notice(),
+        history_reach::CampaignEnd::NothingComingBack.notice(),
         "and it says the reason the campaign actually stopped for"
     );
 }
@@ -1609,7 +1610,7 @@ fn a_run_that_meets_its_reach_says_nothing() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history_reach = crate::history_reach::HistoryReach::PreviousSession;
+    app.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
@@ -1626,8 +1627,8 @@ fn a_run_that_meets_its_reach_says_nothing() {
     drain_load_older(&mut commands);
 
     const MINUTE_MS: i64 = quantick_feed::OHLCV_BASE_INTERVAL_MS;
-    let close_minute = -120 - (crate::history_reach::SESSION_GAP_MS / MINUTE_MS) - 1;
-    let lead_minutes = crate::history_reach::PREVIOUS_SESSION_LEAD_MS / MINUTE_MS;
+    let close_minute = -120 - (history_reach::SESSION_GAP_MS / MINUTE_MS) - 1;
+    let lead_minutes = history_reach::PREVIOUS_SESSION_LEAD_MS / MINUTE_MS;
     events
         .try_send(FeedEvent::HistoryPrepended(
             (close_minute - lead_minutes..=close_minute)
@@ -1658,7 +1659,7 @@ fn a_single_page_press_that_brings_nothing_back_says_so() {
     drain_load_older(&mut commands);
     assert_eq!(
         app.active_tab().history_reach,
-        crate::history_reach::HistoryReach::Page,
+        history_reach::HistoryReach::Page,
         "the default reach, unchanged"
     );
 
@@ -1737,7 +1738,7 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
         .unwrap();
     app.drain_tabs();
     run_frame(&mut app, &ctx);
-    app.history_reach = crate::history_reach::HistoryReach::PreviousSession;
+    app.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
     drain_load_older(&mut cmd_rx);
 

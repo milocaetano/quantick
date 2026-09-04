@@ -1,0 +1,68 @@
+A8 — AGENTS.md names both responsibilities and stays under its ceiling.
+
+Recorded ceiling, unchanged by this branch:
+103:AGENTS.md 13179
+
+Measured now: 13167
+(13,179 is the ceiling; the file is smaller than it was, so no raise is
+ needed and context-baseline.txt is untouched.)
+
+$ git diff origin/main...HEAD -- AGENTS.md crates/guards/context-baseline.txt crates/guards/size-baseline.txt
+diff --git a/AGENTS.md b/AGENTS.md
+index 5895c30..dd914da 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -166,7 +166,7 @@ graph TD
+ | `indicators` | The indicator runtime: the `Indicator` trait (commit/preview with rollback), incremental `ta.*` kernels, draw objects, headless host. |
+ | `pine` | "Quantick Pine" — a Pine v5 subset. Hand-rolled lexer, parser, compile passes and interpreter; zero external dependencies. |
+ | `replay` | Recorded market-replay sessions: the CSV format, the folder scan, the playback clock. It is *told* how much time passed. |
+-| `feed` | The feed host: the `FeedEvent`/`FeedCommand` port every source implements, the Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters that run one, and the feed-shaped config. The only crate below `app` that owns runtimes, threads and the clock, and `replay::test_support`, published on purpose rather than test-only. |
++| `feed` | The feed host: the `FeedEvent`/`FeedCommand` port every source implements, the Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters that run one, the feed-shaped config, the by-time history reach and its campaign, and the session exporter. The one crate below `app` owns runtimes, threads and the clock. |
+ | `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements, so a broker adapter docks where the paper simulator sits. |
+ | `sim` | Deterministic paper trading: one implementation of `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
+ | `strategy` | The strategy kernel: armed price regions, projected brackets, the armed-instance state machine, and the `SignalAlarm` beside it. |
+
+The dropped clause is not lost information: crates/feed/src/replay.rs
+documents why test_support is public, at length, at the definition —
+which is where this repo says a rule belongs.
+    }
+}
+
+/// Test support, published on purpose.
+///
+/// The tests that need to drive a replay's published state live in
+/// `quantick-app`, which owns the tab the state is published to — so
+/// `#[cfg(test)]` cannot serve them: the attribute is false when this crate is
+/// compiled as a dependency, and the items would vanish exactly where they are
+/// wanted. This repo's answer to that is a module declared as test support and
+/// documented as part of what the crate is, the way `engine::fixture` and
+/// `control::fake` are, rather than a cargo feature — no crate here has a
+/// `[features]` section, and adding one for this would be a second way to do a
+/// solved thing.
+///
+/// Everything here reaches a `pub(crate)` item, so the module boundary is the
+/// only door: a production caller cannot move a playhead by accident, because
+/// nothing outside this module can name the setter at all.
+pub mod test_support {
+A8 — the ratchet numbers, after.
+
+ratchet.size.budget	61410
+ratchet.size.recorded	61410
+ratchet.size.measured	172168
+ratchet.context.budget	232885
+ratchet.context.recorded	166538
+ratchet.context.measured	233987
+
+Before this branch (measured on origin/main at d3cf317):
+  ratchet.context.budget    232885
+  ratchet.context.recorded  166538
+  ratchet.context.measured  233999
+
+!budget is unchanged and the measured total is 12 bytes lower, which is
+the AGENTS.md row paying for itself.
+
+$ cargo run -p quantick-guards -- --tighten
+nothing to tighten in the size ratchet: no tracked file has shrunk past its slack, and the tracked total is within 500 of the !budget
+nothing to tighten in the context ratchet: no tracked file has shrunk past its slack, and the tracked total is within 4000 of the !budget
+nothing to tighten in the cycle ratchet: no tracked file has shrunk past its slack, and the tracked total is within 0 of the !budget
+(nothing to lower: the 12-byte shrink sits inside the ratchet's slack)

@@ -1,0 +1,14 @@
+A3 — the documents-folder reach is handed in, not looked up.
+
+$ grep -rn "paper_home" crates/feed/src
+(no matches — the feed crate never names it)
+
+The constructors now take it:
+321:    pub fn new(interpreter: &str, shelf_dir: Option<&Path>) -> Self {
+332:    pub fn with_roots(interpreter: &str, roots: Vec<PathBuf>, shelf_dir: Option<&Path>) -> Self {
+
+And the one production caller passes what it already has:
+263:            source: Box::new(Mt5SessionSource::new(
+264-                "python",
+265-                crate::paper_home::shelf_dir().as_deref(),
+266-            )),

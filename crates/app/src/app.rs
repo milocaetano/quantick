@@ -52,6 +52,7 @@ use crate::toolrail::{Tool, ToolRail, ToolboxDock};
 use crate::ui_state;
 use crate::window_scale;
 use crate::workspace_store::{LayoutStore, StorePaths, WorkspacePick, WorkspaceStore};
+use quantick_feed::history_reach;
 use quantick_feed::{self as feed, FeedCommand, FeedHandle, ReplayControl};
 use quantick_orderflow::LaneWindow;
 use smallvec::SmallVec;
@@ -472,7 +473,7 @@ pub struct QuantickApp {
     /// A standing choice of the window rather than of a market: a trader who
     /// wants to see yesterday wants it in the tab they open next too. Mirrored
     /// onto every tab each frame, which is where the press is actually served.
-    history_reach: crate::history_reach::HistoryReach,
+    history_reach: history_reach::HistoryReach,
     /// Minutes of *traded* time one press of the `by time` reach pulls.
     ///
     /// On the window beside the reach it belongs to, and mirrored onto every
@@ -714,7 +715,7 @@ impl QuantickApp {
             style_revision: 0,
             show_perf: true,
             progressive_history: true,
-            history_reach: crate::history_reach::HistoryReach::default(),
+            history_reach: history_reach::HistoryReach::default(),
             history_reach_span_minutes: reach_span_minutes,
             venue_lead_in: false,
             feed_chip_rect: None,
@@ -895,7 +896,7 @@ impl QuantickApp {
         // rather than silently leaving the default in place, which would look
         // like a press that ignored the run it was told to make.
         if let Ok(token) = std::env::var("QUANTICK_HISTORY_REACH") {
-            match crate::history_reach::HistoryReach::from_token(&token) {
+            match history_reach::HistoryReach::from_token(&token) {
                 Some(reach) => app.set_history_reach(reach),
                 None => tracing::warn!(
                     target: "quantick::app",
@@ -1894,7 +1895,7 @@ impl QuantickApp {
     /// mouse sets what a click sets. Mirrored onto every tab by `drain_tabs`,
     /// where a run in flight also reads it: withdrawing the longer reach is
     /// how a trader calls that run off.
-    pub(crate) fn set_history_reach(&mut self, reach: crate::history_reach::HistoryReach) {
+    pub(crate) fn set_history_reach(&mut self, reach: history_reach::HistoryReach) {
         self.history_reach = reach;
     }
 
@@ -1907,7 +1908,7 @@ impl QuantickApp {
     /// anyway, so accepting a larger number would be promising a reach the
     /// budgets forbid.
     pub(crate) fn set_history_reach_span_minutes(&mut self, minutes: u32) {
-        let ceiling = (crate::history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000) as u32;
+        let ceiling = (history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000) as u32;
         self.history_reach_span_minutes = minutes.clamp(1, ceiling);
     }
 
@@ -1922,7 +1923,7 @@ impl QuantickApp {
     /// Both are choices an operator without a mouse has to be able to read
     /// back after setting them — the reach especially, since it decides
     /// whether one press is one request or a run of them.
-    pub(crate) fn control_history_settings(&self) -> (crate::history_reach::HistoryReach, bool) {
+    pub(crate) fn control_history_settings(&self) -> (history_reach::HistoryReach, bool) {
         (self.history_reach, self.venue_lead_in)
     }
 
@@ -3894,7 +3895,7 @@ impl QuantickApp {
         if let Some(reach) = chrome
             .history_reach
             .as_deref()
-            .and_then(crate::history_reach::HistoryReach::from_token)
+            .and_then(history_reach::HistoryReach::from_token)
         {
             self.history_reach = reach;
         }
@@ -3971,7 +3972,7 @@ impl QuantickApp {
             history_reach_span_minutes: (self.history_reach_span_minutes
                 != self.config.history.reach_span_minutes)
                 .then_some(self.history_reach_span_minutes),
-            history_reach: (self.history_reach != crate::history_reach::HistoryReach::default())
+            history_reach: (self.history_reach != history_reach::HistoryReach::default())
                 .then(|| self.history_reach.token().to_owned()),
             venue_lead_in: self.venue_lead_in,
             inspector_position: self.surfaces.drawing_chrome.remembered_inspector_position(),

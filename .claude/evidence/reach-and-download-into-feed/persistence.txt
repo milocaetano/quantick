@@ -1,0 +1,44 @@
+A5 — a workspace saved by today's build still loads.
+
+The persisted shape is untouched. The only change in ui_state.rs is a
+doc link; no #[serde] attribute, field name or saved token moved:
+
+$ git diff origin/main...HEAD -- crates/app/src/ui_state.rs
+diff --git a/crates/app/src/ui_state.rs b/crates/app/src/ui_state.rs
+index 4ee8f78..d677626 100644
+--- a/crates/app/src/ui_state.rs
++++ b/crates/app/src/ui_state.rs
+@@ -312,7 +312,7 @@ pub struct SavedChrome {
+     #[serde(default = "yes")]
+     pub progressive_history: bool,
+     /// How far one press of *load older* reaches, as
+-    /// [`crate::history_reach::HistoryReach::token`] writes it.
++    /// [`quantick_feed::history_reach::HistoryReach::token`] writes it.
+     ///
+     /// A token rather than a variant name, so a release may reword the menu
+     /// label without orphaning every saved workspace. Absent — or a token a
+
+The reach is saved as a string token, not as a serialised enum, so the
+module's crate cannot reach the file format at all:
+321-    /// answer that is never a surprise.
+322-    #[serde(default, skip_serializing_if = "Option::is_none")]
+323:    pub history_reach: Option<String>,
+
+The round-trip test that pins it, unchanged by this branch:
+1413:    fn the_history_reach_survives_a_save_and_a_reload() {
+1414-        let path = temp_path("history-reach-chrome");
+1415-        let mut workspace = sample();
+1416-        let chrome = workspace.chrome.as_mut().expect("the sample has chrome");
+1417-        chrome.history_reach = Some("previous-session".to_owned());
+1418-        chrome.venue_lead_in = true;
+1419-        save(&path, &workspace);
+1420-        let text = std::fs::read_to_string(&path).expect("the file was written");
+1421-        assert!(
+1422-            text.contains("previous-session"),
+1423-            "the token is what is written, never the menu's wording:\n{text}"
+1424-        );
+1425-        let reloaded = load(&path).chrome.expect("the chrome came back");
+1426-        assert_eq!(reloaded.history_reach.as_deref(), Some("previous-session"));
+1427-        assert!(reloaded.venue_lead_in);
+1428-
+1429-        // The default is silence.

@@ -24,6 +24,7 @@ use quantick_replay::{Library, ParseOptions, Session, SessionEntry, SessionError
 
 use crate::replay_get_data::{GetDataAction, GetDataPanel};
 use crate::theme::{AMBER, CHROME, CONTROL, TEXT_MUTED, TEXT_PRIMARY, WARN};
+use quantick_feed::replay_download;
 use quantick_feed::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 
 /// The accent this feature owns: the same amber the chart already uses for the
@@ -67,7 +68,7 @@ const HANDLE_RADIUS_HOVERED: f32 = 6.0;
 /// MetaTrader exporter is never offered a Binance pair just because the chart
 /// behind the window happens to show one.
 ///
-/// [`SessionSource::provider`]: crate::replay_download::SessionSource::provider
+/// [`SessionSource::provider`]: replay_download::SessionSource::provider
 pub struct MarketMenu<'a> {
     /// What the active chart is showing, when the source can serve it — the
     /// likeliest answer to "which instrument", and the one the Get data tab
@@ -201,7 +202,7 @@ impl ReplayView {
             // Paused: a recording opens on its first print and waits. See
             // `feed::replay::ReplayOptions::autoplay`.
             autoplay: false,
-            day_before: day_before.unwrap_or(crate::replay_download::DEFAULT_JOIN_DAY_BEFORE),
+            day_before: day_before.unwrap_or(replay_download::DEFAULT_JOIN_DAY_BEFORE),
             day_before_dirty: false,
             day_before_stored: day_before,
             scrub: None,

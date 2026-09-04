@@ -1,0 +1,88 @@
+A9 — nothing on the out-of-scope list moved.
+
+$ git diff --stat origin/main...HEAD -- crates/app/src/paper_home.rs crates/app/src/replay_get_data.rs crates/app/src/replay_view.rs
+ crates/app/src/replay_get_data.rs | 17 ++++++++++-------
+ crates/app/src/replay_view.rs     |  5 +++--
+ 2 files changed, 13 insertions(+), 9 deletions(-)
+(paper_home.rs absent above = untouched)
+
+diff --git a/crates/app/src/replay_get_data.rs b/crates/app/src/replay_get_data.rs
+index 796e5db..fa8c0df 100644
+--- a/crates/app/src/replay_get_data.rs
++++ b/crates/app/src/replay_get_data.rs
+@@ -30,11 +30,11 @@ use quantick_replay::Library;
+ use quantick_replay::format::{CivilTime, UtcOffset};
+ 
+ use crate::config::ProviderKind;
+-use crate::replay_download::{
+-    DEFAULT_CONTEXT_SESSIONS, DEFAULT_JOIN_DAY_BEFORE, DownloadEvent, DownloadJob, DownloadRequest,
+-    Mt5SessionSource, SessionSource,
+-};
+ use crate::theme::{AMBER, TEXT_MUTED, TEXT_PRIMARY, WARN};
++use quantick_feed::replay_download::{
++    self, DEFAULT_CONTEXT_SESSIONS, DEFAULT_JOIN_DAY_BEFORE, DownloadEvent, DownloadJob,
++    DownloadRequest, Mt5SessionSource, SessionSource,
++};
+ 
+ /// Context choices offered. A week is the default; the ends are there because
+ /// "just yesterday" and "the whole fortnight" are both real ways to prepare.
+@@ -260,7 +260,10 @@ impl GetDataPanel {
+             // The interpreter is the bridge's default, which already falls
+             // back from `python` to `py`. A machine that can stream
+             // MetaTrader can download from it.
+-            source: Box::new(Mt5SessionSource::new("python")),
++            source: Box::new(Mt5SessionSource::new(
++                "python",
++                crate::paper_home::shelf_dir().as_deref(),
++            )),
+         }
+     }
+ 
+@@ -613,7 +616,7 @@ impl GetDataPanel {
+             out_dir,
+             utc_offset_s: self.declared_clock,
+         };
+-        match crate::replay_download::run(self.source.as_ref(), &request) {
++        match replay_download::run(self.source.as_ref(), &request) {
+             Ok(job) => {
+                 tracing::info!(
+                     target: "quantick::app",
+@@ -685,7 +688,7 @@ impl GetDataPanel {
+         self.chain_day = None;
+         self.request_out_dir = Some(request.out_dir.clone());
+         let source = &self.source;
+-        match crate::replay_download::run(source.as_ref(), &request) {
++        match replay_download::run(source.as_ref(), &request) {
+             Ok(job) => {
+                 tracing::info!(
+                     target: "quantick::app",
+diff --git a/crates/app/src/replay_view.rs b/crates/app/src/replay_view.rs
+index 3b74244..6a0889d 100644
+--- a/crates/app/src/replay_view.rs
++++ b/crates/app/src/replay_view.rs
+@@ -24,6 +24,7 @@ use quantick_replay::{Library, ParseOptions, Session, SessionEntry, SessionError
+ 
+ use crate::replay_get_data::{GetDataAction, GetDataPanel};
+ use crate::theme::{AMBER, CHROME, CONTROL, TEXT_MUTED, TEXT_PRIMARY, WARN};
++use quantick_feed::replay_download;
+ use quantick_feed::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
+ 
+ /// The accent this feature owns: the same amber the chart already uses for the
+@@ -67,7 +68,7 @@ const HANDLE_RADIUS_HOVERED: f32 = 6.0;
+ /// MetaTrader exporter is never offered a Binance pair just because the chart
+ /// behind the window happens to show one.
+ ///
+-/// [`SessionSource::provider`]: crate::replay_download::SessionSource::provider
++/// [`SessionSource::provider`]: replay_download::SessionSource::provider
+ pub struct MarketMenu<'a> {
+     /// What the active chart is showing, when the source can serve it — the
+     /// likeliest answer to "which instrument", and the one the Get data tab
+@@ -201,7 +202,7 @@ impl ReplayView {
+             // Paused: a recording opens on its first print and waits. See
+             // `feed::replay::ReplayOptions::autoplay`.
+             autoplay: false,
+-            day_before: day_before.unwrap_or(crate::replay_download::DEFAULT_JOIN_DAY_BEFORE),
++            day_before: day_before.unwrap_or(replay_download::DEFAULT_JOIN_DAY_BEFORE),
+             day_before_dirty: false,
+             day_before_stored: day_before,
+             scrub: None,

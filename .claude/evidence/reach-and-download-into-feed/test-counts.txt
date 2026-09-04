@@ -1,0 +1,19 @@
+A4 — the tests travelled, and they run without the UI crate.
+
+quantick-feed on this branch: 132 tests, measured.
+quantick-feed on origin/main:  91 tests, derived as 132 - 41 rather than
+  measured in a second checkout, and cross-checked two independent ways below.
+
+41 is exactly what the two files held:
+  #[test] in crates/feed/src/history_reach.rs:   26
+  #[test] in crates/feed/src/replay_download.rs: 15
+  26 + 15 = 41.
+
+Counted from the branch, so the arithmetic is checkable both ways:
+$ cargo test -p quantick-feed -- --list | grep -cE "^history_reach::|^replay_download::"
+41
+
+And the UI crate is not in the feed crate build graph, so those 132
+tests never compile quantick-app:
+$ cargo tree -p quantick-feed -e normal | grep -c quantick-app
+0
