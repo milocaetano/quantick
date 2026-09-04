@@ -797,7 +797,7 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
     let ctx = egui::Context::default();
     app.open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
     for tab in &mut app.tabs {
-        tab.forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+        tab.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     }
     app.active_tab = 0;
     run_frame(&mut app, &ctx);
@@ -2348,9 +2348,9 @@ fn a_time_pane_asks_for_venue_history_once_and_renders_the_reply() {
 
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -2387,9 +2387,9 @@ fn slices_of_a_superseded_answer_are_dropped_and_the_tab_asks_again() {
 
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history_range(-20, 0),
-            slice: crate::feed::OhlcvSlice::More,
+            slice: quantick_feed::OhlcvSlice::More,
         })
         .unwrap();
     app.drain_tabs();
@@ -2406,12 +2406,12 @@ fn slices_of_a_superseded_answer_are_dropped_and_the_tab_asks_again() {
     // it folded in, the base would be the two older weeks with the newest
     // one — the part already thrown away — missing from the middle.
     for slice in [
-        crate::feed::OhlcvSlice::More,
-        crate::feed::OhlcvSlice::Last { complete: true },
+        quantick_feed::OhlcvSlice::More,
+        quantick_feed::OhlcvSlice::Last { complete: true },
     ] {
         events
             .try_send(FeedEvent::OhlcvHistory {
-                interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+                interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
                 bars: venue_history_range(-60, -20),
                 slice,
             })
@@ -2438,9 +2438,9 @@ fn slices_of_a_superseded_answer_are_dropped_and_the_tab_asks_again() {
     // The replacement answer installs cleanly over what was left.
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history_range(-45, 0),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -2512,9 +2512,9 @@ fn the_flow_pane_cutting_time_bars_earns_the_venue_prefix() {
 
     evt_tx
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -2558,9 +2558,9 @@ fn a_replaying_tab_with_no_context_asks_for_no_venue_history() {
     with_config(&mut app, |tab, config| {
         tab.open_replay(
             config,
-            crate::feed::ReplayRequest {
+            quantick_feed::ReplayRequest {
                 session: std::sync::Arc::new(session),
-                options: crate::feed::ReplayOptions {
+                options: quantick_feed::ReplayOptions {
                     autoplay: false,
                     ..Default::default()
                 },
@@ -2904,9 +2904,9 @@ fn the_transport_shows_only_while_the_active_tab_replays() {
     with_config(&mut app, |tab, config| {
         tab.open_replay(
             config,
-            crate::feed::ReplayRequest {
+            quantick_feed::ReplayRequest {
                 session: std::sync::Arc::new(session),
-                options: crate::feed::ReplayOptions {
+                options: quantick_feed::ReplayOptions {
                     autoplay: false,
                     ..Default::default()
                 },

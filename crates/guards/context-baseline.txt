@@ -49,8 +49,27 @@
 # rule. The reasoning is in `docs/agentic-development.md`, which this tree does
 # not weigh; what stays here is the operative half, and it does not compress
 # below the boundary it names without ceasing to be a rule.
-CLAUDE.md 10118
-.claude/skills/ui-harness/references/hook-registry.md 70112
+#
+# +30 for `quantick-feed`. The feed host is a new crate below `app`, and the
+# exception bullet above is the rule that governs it: it had to name `feed`
+# beside the three `feed-*` crates, because `feed` is now the crate that owns
+# the runtimes and the clock they were the sole exception for. Thirty bytes is
+# what naming it costs after the surrounding sentence was compressed to pay
+# for as much of it as it could — the bullet went from "async, and they stamp
+# arrival from the clock" to a shorter clause carrying the same two facts.
+#
+# Nothing was extracted in return, so this is a raise, not a trade, and it is
+# recorded as one. The alternative was a `CLAUDE.md` whose architecture list
+# does not contain a workspace crate, which `claude_md_lists_every_crate`
+# fails on and which is the drift this whole tree exists to prevent.
+CLAUDE.md 10148
+#
+# +55 for `quantick-feed`. Generated, not written: five rows moved from
+# `feed/mod.rs`-style paths relative to the application's source root to the
+# full `crates/feed/src/...` the hooks now live at, and the longer paths are
+# the whole of the difference. Regenerating is the only way to change this
+# file, so the number follows the code rather than the other way round.
+.claude/skills/ui-harness/references/hook-registry.md 70167
 .claude/skills/ui-harness/SKILL.md 13377
 # Raised by 54 bytes, for one line: `cargo deny check bans licenses` joined the
 # list of CI steps `cargo` cannot see, and a list that omits a step is worse
@@ -63,7 +82,19 @@ CLAUDE.md 10118
 # Paid for in the same change: `arch-review/SKILL.md` below, and the two
 # sub-threshold files `CLAUDE.md` and `ship/SKILL.md`, each 15 bytes lighter
 # for the same flag removal — 45 bytes back against 54 spent.
-AGENTS.md 12825
+#
+# +282 for `quantick-feed`. This file is the crate map, so a new crate costs
+# it: one graph node with the four edges that place it (`feed --> feeds`,
+# `replay`, `orderbook`, `engine`, and `app --> feed` retargeted from `feeds`)
+# and one row in the table saying what it owns. Both were compressed to the
+# shortest form that still answers the question the map exists to answer —
+# the node label is two words, and the row names the port, the adapters and
+# the one property that distinguishes this crate from everything below it.
+#
+# A raise, not a trade: nothing left this file. The alternative is a crate map
+# missing a crate, which is the failure mode the map is rationed to prevent
+# rather than an economy it can make.
+AGENTS.md 13107
 
 # What a session's instructions weigh in total: every ceiling above, plus the
 # measured bytes of every tracked file too small to need one. Raising it means

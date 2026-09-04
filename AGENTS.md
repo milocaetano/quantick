@@ -120,7 +120,7 @@ graph TD
   app --> replay
   app --> orderbook
   app --> orderflow
-  app --> feeds
+  app --> feed
   app --> control
   app --> controllocal
   app --> engine
@@ -142,6 +142,10 @@ graph TD
   sim["sim<br/>paper-trading fills"] --> trading
   sim --> engine
   trading["trading<br/>TradingVenue port"] --> engine
+  feed["feed<br/>feed host"] --> feeds
+  feed --> replay
+  feed --> orderbook
+  feed --> engine
   feeds["feed-binance<br/>feed-hyperliquid<br/>feed-mt5"] --> engine
   feeds --> orderbook
   orderflow["orderflow<br/>book → heatmap"] --> engine
@@ -162,6 +166,7 @@ graph TD
 | `indicators` | The indicator runtime: the `Indicator` trait (commit/preview with rollback), incremental `ta.*` kernels, draw objects, headless host. |
 | `pine` | "Quantick Pine" — a Pine v5 subset. Hand-rolled lexer, parser, compile passes and interpreter; zero external dependencies. |
 | `replay` | Recorded market-replay sessions: the CSV format, the folder scan, the playback clock. It is *told* how much time passed. |
+| `feed` | The feed host: the `FeedEvent`/`FeedCommand` port every source implements, the Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters that run one, and the feed-shaped config. The only crate below `app` that owns runtimes, threads and the clock. |
 | `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements, so a broker adapter docks where the paper simulator sits. |
 | `sim` | Deterministic paper trading: one implementation of `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
 | `strategy` | The strategy kernel: armed price regions, projected brackets, the armed-instance state machine, and the `SignalAlarm` beside it. |

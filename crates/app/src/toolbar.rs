@@ -969,7 +969,7 @@ fn draw_history_menu(
         // The reach is named from the constant that owns it, never spelled out
         // beside it: the span was ninety days one release ago, and a sentence
         // carrying its own copy of that number starts lying the day it moves.
-        let reach = fmt_history_span(crate::feed::TIME_HISTORY_SPAN_MS);
+        let reach = fmt_history_span(quantick_feed::TIME_HISTORY_SPAN_MS);
         let older = ui
             .add_enabled(
                 model.older_candles.is_available(),

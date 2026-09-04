@@ -99,7 +99,7 @@ fn a_resumed_session_keeps_the_timeline_and_marks_the_hole() {
     );
     assert_eq!(
         tab.feed_gaps,
-        vec![crate::feed::FeedGap {
+        vec![quantick_feed::FeedGap {
             from_ms: floor,
             to_ms: resumed.timestamp_ms,
         }],
@@ -122,7 +122,7 @@ fn a_reconnect_that_worked_leaves_no_mark() {
 
     let resumed = quantick_engine::Trade {
         agg_id: 2,
-        timestamp_ms: floor + crate::feed::MIN_MARKED_GAP_MS - 1,
+        timestamp_ms: floor + quantick_feed::MIN_MARKED_GAP_MS - 1,
         ..trade(2)
     };
     events
@@ -3980,9 +3980,9 @@ fn the_seam_and_the_backfill_divider_mark_different_slots() {
     let (mut app, events, _commands) = history_app(&ctx);
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(120),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -4087,9 +4087,9 @@ fn the_attention_dot_marks_lost_connections_and_nothing_else() {
     with_config(&mut app, |tab, config| {
         tab.open_replay(
             config,
-            crate::feed::ReplayRequest {
+            quantick_feed::ReplayRequest {
                 session: std::sync::Arc::new(session),
-                options: crate::feed::ReplayOptions {
+                options: quantick_feed::ReplayOptions {
                     autoplay: false,
                     ..Default::default()
                 },

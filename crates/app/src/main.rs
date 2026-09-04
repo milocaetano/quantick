@@ -9,6 +9,8 @@
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
 
+use quantick_feed as feed;
+
 use crate::state::BarSpec;
 
 mod app;
@@ -24,7 +26,6 @@ mod config;
 mod control;
 mod dock;
 mod drawings;
-mod feed;
 mod feed_notice;
 mod footprint_config;
 mod footprint_panel;
@@ -289,7 +290,12 @@ fn main() -> eframe::Result {
         .or_else(|| config.startup_spec_for(&feed_id))
         .unwrap_or(BarSpec::Tick(INITIAL_TICK_SIZE));
 
-    let feed = feed::spawn_live(provider, &symbol, &config);
+    let feed = feed::spawn_live(
+        provider,
+        &symbol,
+        &config.metatrader,
+        paper_home::shelf_dir(),
+    );
 
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
         .expect("bundled assets/icon.png is a valid PNG");

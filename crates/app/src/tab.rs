@@ -22,11 +22,6 @@ use crate::canvas_layout::{
 };
 use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::{AppConfig, FeedCapabilities};
-use crate::feed::stall::{self, Stall, StallInput};
-use crate::feed::{
-    self, FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedHandle, FeedLatency,
-    FeedNotice, MAX_REMEMBERED_GAPS, MIN_MARKED_GAP_MS, ReplayLink, past_resume_floor,
-};
 use crate::history_reach::{
     Campaign, CampaignEnd, CampaignStep, EMPTY_PAGE_NOTICE, HistoryReach, REQUEST_REFUSED_NOTICE,
 };
@@ -37,12 +32,18 @@ use crate::pane::{
     CANVAS_DIVIDER_HANDLE_PX, ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneChrome, PaneIndex,
     PaneSide, SharedEdit, SharedInteraction, SharedPick, clamp_pane_fraction, split_time_pane,
 };
+use crate::paper_home::shelf_dir;
 use crate::paper_trading::PaperTrading;
 use crate::state::{BarKind, BarSpec};
 use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
+use quantick_feed::stall::{self, Stall, StallInput};
+use quantick_feed::{
+    self as feed, FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedHandle, FeedLatency,
+    FeedNotice, MAX_REMEMBERED_GAPS, MIN_MARKED_GAP_MS, ReplayLink, past_resume_floor,
+};
 use std::path::PathBuf;
 
 /// Each UI capture epoch reserves room for reconnect generations. This keeps
@@ -426,7 +427,7 @@ pub struct Tab {
     /// replays and is dropped rather than counted twice; the first print past
     /// it clears the floor and decides whether a gap has to be marked. `None`
     /// on a session that started from an empty chart, which has nothing to
-    /// overlap with. See [`crate::feed::past_resume_floor`].
+    /// overlap with. See [`quantick_feed::past_resume_floor`].
     pub resume_floor_ms: Option<i64>,
     /// A stall forced by `QUANTICK_FEED_STALL`, for a scripted run that has to
     /// photograph the recovery controls without breaking a real feed.
@@ -900,7 +901,7 @@ impl Tab {
             feed_connection: FeedConnectionState::Connecting,
             feed_capabilities: feed.capabilities,
             feed_latency: feed.latency,
-            forced_latency: crate::feed::forced_latency_split(),
+            forced_latency: quantick_feed::forced_latency_split(),
             commands: feed.commands,
             replay: feed.replay,
             history_step: 2000,
@@ -1145,9 +1146,9 @@ impl Tab {
         {
             return;
         }
-        let slice_ms = progressive.then_some(crate::feed::OHLCV_SLICE_SPAN_MS);
+        let slice_ms = progressive.then_some(quantick_feed::OHLCV_SLICE_SPAN_MS);
         let command = FeedCommand::FetchOhlcv {
-            span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+            span_ms: quantick_feed::TIME_HISTORY_SPAN_MS,
             slice_ms,
             // The opening request: back from the live edge. Reaching further
             // than one span is `request_older_ohlcv_history`'s job.
@@ -1165,7 +1166,7 @@ impl Tab {
                     event_code = "OHLCV_REQUESTED",
                     tab = self.id,
                     symbol = %self.symbol,
-                    span_ms = crate::feed::TIME_HISTORY_SPAN_MS,
+                    span_ms = quantick_feed::TIME_HISTORY_SPAN_MS,
                     slice_ms = slice_ms.unwrap_or(0),
                     action = if progressive { "await_slices" } else { "await_single_reply" },
                     "asked the venue for candle history"
@@ -1258,7 +1259,7 @@ impl Tab {
         &mut self,
         interval_ms: i64,
         bars: Vec<quantick_engine::Bar>,
-        slice: crate::feed::OhlcvSlice,
+        slice: quantick_feed::OhlcvSlice,
     ) {
         let last = slice.is_last();
         if self.ohlcv_stale {
@@ -1287,7 +1288,7 @@ impl Tab {
             return;
         }
         self.ohlcv_pending = false;
-        if slice == crate::feed::OhlcvSlice::Refused {
+        if slice == quantick_feed::OhlcvSlice::Refused {
             // Nobody looked, so nothing is known. End the wait — the spinner
             // was raised before the command left — and touch nothing else: no
             // short-answer warning about a venue that never answered, no
@@ -1306,7 +1307,7 @@ impl Tab {
             );
             return;
         }
-        let complete = matches!(slice, crate::feed::OhlcvSlice::Last { complete } if complete);
+        let complete = matches!(slice, quantick_feed::OhlcvSlice::Last { complete } if complete);
         if !complete {
             // Known-short, not merely short: a venue that stopped answering
             // partway, or a block clipped to a cap. An instrument younger than
@@ -1396,7 +1397,7 @@ impl Tab {
     /// span, and assigning it over the base would throw away the twelve that
     /// had already been drawn.
     fn take_ohlcv_slice(&mut self, interval_ms: i64, bars: Vec<quantick_engine::Bar>) -> bool {
-        if interval_ms != crate::feed::OHLCV_BASE_INTERVAL_MS && !bars.is_empty() {
+        if interval_ms != quantick_feed::OHLCV_BASE_INTERVAL_MS && !bars.is_empty() {
             // The event tags its own interval so a consumer never has to
             // guess; a base this fold was not written for is refused rather
             // than folded wrongly.
@@ -1405,7 +1406,7 @@ impl Tab {
                 schema_version = 1_u8,
                 event_code = "OHLCV_UNEXPECTED_BASE",
                 interval_ms,
-                expected_ms = crate::feed::OHLCV_BASE_INTERVAL_MS,
+                expected_ms = quantick_feed::OHLCV_BASE_INTERVAL_MS,
                 action = if self.ohlcv_base.is_some() {
                     "refuse_slice_keep_prefix"
                 } else {
@@ -1446,7 +1447,7 @@ impl Tab {
         &mut self,
         interval_ms: i64,
         bars: Vec<quantick_engine::Bar>,
-        slice: crate::feed::OhlcvSlice,
+        slice: quantick_feed::OhlcvSlice,
     ) {
         if !self.ohlcv_pending {
             self.ohlcv_pending = true;
@@ -1514,7 +1515,7 @@ impl Tab {
         self.older_candles(capabilities).is_available()
     }
 
-    /// Reach one more [`crate::feed::TIME_HISTORY_SPAN_MS`] into the past and
+    /// Reach one more [`quantick_feed::TIME_HISTORY_SPAN_MS`] into the past and
     /// prepend what comes back.
     ///
     /// The whole reason a chart opens on a week rather than a quarter: the
@@ -1550,9 +1551,9 @@ impl Tab {
         let before_ms = oldest.saturating_sub(1);
         let slice_ms = self
             .progressive_history
-            .then_some(crate::feed::OHLCV_SLICE_SPAN_MS);
+            .then_some(quantick_feed::OHLCV_SLICE_SPAN_MS);
         let command = FeedCommand::FetchOhlcv {
-            span_ms: crate::feed::TIME_HISTORY_SPAN_MS,
+            span_ms: quantick_feed::TIME_HISTORY_SPAN_MS,
             slice_ms,
             before_ms: Some(before_ms),
         };
@@ -1567,7 +1568,7 @@ impl Tab {
                     event_code = "OHLCV_OLDER_REQUESTED",
                     tab = self.id,
                     symbol = %self.symbol,
-                    span_ms = crate::feed::TIME_HISTORY_SPAN_MS,
+                    span_ms = quantick_feed::TIME_HISTORY_SPAN_MS,
                     before_ms,
                     slice_ms = slice_ms.unwrap_or(0),
                     action = "await_prepend",
@@ -1649,7 +1650,7 @@ impl Tab {
                     base,
                     pane.state.bars().first(),
                     pane.state.partial(),
-                    crate::feed::OHLCV_BASE_INTERVAL_MS,
+                    quantick_feed::OHLCV_BASE_INTERVAL_MS,
                 ),
                 None => Vec::new(),
             };
@@ -2623,7 +2624,7 @@ impl Tab {
 
         // Dropping the old handle stops the old feed thread. The new feed starts
         // with a fresh backfill in flight.
-        let handle = feed::spawn_live(provider, &self.symbol, config);
+        let handle = feed::spawn_live(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach(handle);
 
         // Rebuild every pane from scratch for the new stream, each keeping its
@@ -3235,7 +3236,7 @@ impl Tab {
     ///
     /// Deterministic half: the caller supplies wall clock, exactly as
     /// [`Self::tape_age_at`] does. The decision itself lives in
-    /// [`crate::feed::stall`] and touches no clock at all.
+    /// [`quantick_feed::stall`] and touches no clock at all.
     #[must_use]
     pub fn stall_at(&self, config: &AppConfig, now_ms: i64) -> Option<Stall> {
         let provider = config.provider_of(&self.feed_id)?;
@@ -3645,7 +3646,7 @@ impl Tab {
     /// Make a recorded session the chart's source, replacing whatever feed is
     /// running. The live selection is untouched, so closing the replay comes
     /// back to exactly the feed and symbol that were streaming before.
-    pub fn open_replay(&mut self, config: &AppConfig, request: crate::feed::ReplayRequest) {
+    pub fn open_replay(&mut self, config: &AppConfig, request: quantick_feed::ReplayRequest) {
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -3665,7 +3666,8 @@ impl Tab {
         // new session's name — a live trade laundered into the practice
         // record. (reset_market_state below flattens again: a no-op.)
         self.paper.on_timeline_reset();
-        let handle = feed::spawn(feed::FeedSource::Replay(Box::new(request)), config);
+        let source = feed::FeedSource::Replay(Box::new(request));
+        let handle = feed::spawn(source, &config.metatrader, shelf_dir());
         self.attach(handle);
 
         if let Some(link) = &self.replay {
@@ -3709,7 +3711,7 @@ impl Tab {
         // flips the journal back to live — or a practice trade counts in
         // the real track record.
         self.paper.on_timeline_reset();
-        let handle = feed::spawn_live(provider, &self.symbol, config);
+        let handle = feed::spawn_live(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach(handle);
         self.reset_market_state();
     }
@@ -3726,7 +3728,7 @@ impl Tab {
     ///
     /// The new session replays its own recent window, so the market time the
     /// chart had already reached becomes a floor
-    /// ([`crate::feed::past_resume_floor`]): everything at or before it is
+    /// ([`quantick_feed::past_resume_floor`]): everything at or before it is
     /// overlap and is dropped, and the first print past it decides whether the
     /// silence was long enough to be a marked gap. A replay owns the chart
     /// while it plays and has no transport to recover.
@@ -3755,7 +3757,7 @@ impl Tab {
         // Taken before the handle is swapped: it is a fact about the chart, not
         // about the session, and it has to survive the attach.
         self.resume_floor_ms = self.latest_trade_ms;
-        let handle = feed::spawn_live(provider, &self.symbol, config);
+        let handle = feed::spawn_live(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach_resuming(handle);
         // The book from the dropped socket is gone with it. Nothing is reset
         // here on purpose: the new session opens with a complete snapshot, and
@@ -3797,7 +3799,7 @@ impl Tab {
         );
         // A rebuild has no timeline to resume onto, so no floor and no seam.
         self.resume_floor_ms = None;
-        let handle = feed::spawn_live(provider, &self.symbol, config);
+        let handle = feed::spawn_live(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach(handle);
         self.reset_market_state();
         // The live market is back and it can stream depth again; start
@@ -4465,8 +4467,8 @@ crate::hooks::declare_hooks!["QUANTICK_PANE_COLLAPSED"];
 #[cfg(test)]
 mod shared_routing_tests {
     use super::*;
-    use crate::feed;
     use crate::state::BarSpec;
+    use quantick_feed as feed;
     use tokio::sync::mpsc;
 
     /// Hands each test tab its own trades directory. A tab opens a
@@ -4655,8 +4657,8 @@ mod shared_routing_tests {
 #[cfg(test)]
 mod move_pane_tests {
     use super::*;
-    use crate::feed;
     use crate::state::BarSpec;
+    use quantick_feed as feed;
     use tokio::sync::mpsc;
 
     static NEXT_DIR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1000);
@@ -4897,8 +4899,8 @@ mod move_pane_tests {
 #[cfg(test)]
 mod collapse_path_tests {
     use super::*;
-    use crate::feed;
     use crate::state::BarSpec;
+    use quantick_feed as feed;
     use tokio::sync::mpsc;
 
     static NEXT_DIR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(2000);

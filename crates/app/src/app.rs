@@ -23,7 +23,6 @@ use crate::chart_layers::{self, ChartLayer};
 use crate::config::AppConfig;
 use crate::dock::{Dock, DockEnv, DockTab};
 use crate::drawings::{self, DeleteOutcome, DrawingAuthor};
-use crate::feed::{self, FeedCommand, FeedHandle, ReplayControl};
 use crate::feed_notice;
 use crate::harness::{
     ContextMenuPane, DrawingDraft, DrawingsDemo, FrvpDemo, Harness, ScriptedMenu, StrategyDemoMode,
@@ -53,6 +52,7 @@ use crate::toolrail::{Tool, ToolRail, ToolboxDock};
 use crate::ui_state;
 use crate::window_scale;
 use crate::workspace_store::{LayoutStore, StorePaths, WorkspacePick, WorkspaceStore};
+use quantick_feed::{self as feed, FeedCommand, FeedHandle, ReplayControl};
 use quantick_orderflow::LaneWindow;
 use smallvec::SmallVec;
 
@@ -1845,7 +1845,7 @@ impl QuantickApp {
     /// either answer alone, so there is one report and both read it.
     fn feed_offline_accent(
         &self,
-        stall: Option<&crate::feed::stall::Stall>,
+        stall: Option<&quantick_feed::stall::Stall>,
     ) -> Option<egui::Color32> {
         feed_notice::report(&self.active_tab().notice, stall)
             .filter(feed_notice::Report::is_offline)
@@ -2326,7 +2326,12 @@ impl QuantickApp {
         // and means one port for two listeners: the second loses the bind and
         // shows the feed's own MT5_BIND_FAILED notice, which is the honest
         // answer rather than a silently dead chart.
-        let handle = feed::spawn_live(provider, &symbol, &self.config);
+        let handle = feed::spawn_live(
+            provider,
+            &symbol,
+            &self.config.metatrader,
+            crate::paper_home::shelf_dir(),
+        );
         self.adopt_tab(feed_id, symbol, handle, spec);
     }
 
@@ -7441,8 +7446,8 @@ impl QuantickApp {
         }
         self.harness.venue_history_demo_staged();
         let slice = match demo {
-            VenueHistoryDemo::Complete => crate::feed::OhlcvSlice::Last { complete: true },
-            VenueHistoryDemo::Partial => crate::feed::OhlcvSlice::More,
+            VenueHistoryDemo::Complete => quantick_feed::OhlcvSlice::Last { complete: true },
+            VenueHistoryDemo::Partial => quantick_feed::OhlcvSlice::More,
         };
         self.deliver_synthetic_prefix(DEMO_PREFIX_CANDLES, slice);
     }
@@ -7459,13 +7464,13 @@ impl QuantickApp {
     /// in front of there is no seam to anchor on, and a caller that promised a
     /// long history in its caption had better wait rather than photograph a
     /// short one.
-    fn deliver_synthetic_prefix(&mut self, candles: i64, slice: crate::feed::OhlcvSlice) -> bool {
+    fn deliver_synthetic_prefix(&mut self, candles: i64, slice: quantick_feed::OhlcvSlice) -> bool {
         let tab = self.active_tab_mut();
         let Some(first) = tab.flow_pane.state.bars().first() else {
             return false;
         };
         let (first_open, anchor) = (first.open_time, first.open);
-        let interval = crate::feed::OHLCV_BASE_INTERVAL_MS;
+        let interval = quantick_feed::OHLCV_BASE_INTERVAL_MS;
         let bars: Vec<quantick_engine::Bar> = (-candles..0)
             .map(|minute| {
                 let open_time = first_open + minute * interval;
@@ -8021,7 +8026,7 @@ impl QuantickApp {
         if stress
             && !self.deliver_synthetic_prefix(
                 FRVP_STRESS_CANDLES,
-                crate::feed::OhlcvSlice::Last { complete: true },
+                quantick_feed::OhlcvSlice::Last { complete: true },
             )
         {
             return;

@@ -12,7 +12,6 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::Side;
 
-use crate::feed::ReplayLink;
 use crate::orderflow_view::OrderflowView;
 use crate::paper_chrome::{fmt_decimal, position_word};
 use crate::paper_trading::{LedgerAction, PaperTrading, TradingTabAction};
@@ -20,6 +19,7 @@ use crate::replay_view::{ReplayAction, ReplayView};
 use crate::theme;
 use crate::timezone::TzOffset;
 use crate::widgets::{IconButton, RAIL_ICON};
+use quantick_feed::ReplayLink;
 
 /// Width of the always-visible tab strip, in pixels.
 pub const TAB_STRIP_WIDTH: f32 = 36.0;

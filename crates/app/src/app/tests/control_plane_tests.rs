@@ -58,7 +58,7 @@ plot(close)
 fn the_scene_names_the_corner_and_what_operates_it() {
     let (mut app, _notices, _channels) = test_app_with_notices();
     let ctx = egui::Context::default();
-    app.active_tab_mut().forced_stall = Some(crate::feed::stall::ForcedStall::Silent);
+    app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
 
     let scene = observer_scene(&app);
@@ -620,9 +620,9 @@ fn a_capability_that_rises_later_is_asked_again() {
     // ...and the venue holds nothing after all.
     evt_tx
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: Vec::new(),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -692,9 +692,9 @@ fn a_new_candle_generation_is_asked_for_again_and_installed() {
     // A cold terminal: the block it had was empty.
     evt_tx
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: Vec::new(),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -716,9 +716,9 @@ fn a_new_candle_generation_is_asked_for_again_and_installed() {
 
     evt_tx
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(30),
-            slice: crate::feed::OhlcvSlice::Last { complete: false },
+            slice: quantick_feed::OhlcvSlice::Last { complete: false },
         })
         .unwrap();
     app.drain_tabs();
@@ -745,9 +745,9 @@ fn a_new_generation_replaces_a_block_already_held() {
     let (mut app, events, mut commands) = history_app(&ctx);
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(30),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();
@@ -767,9 +767,9 @@ fn a_new_generation_replaces_a_block_already_held() {
 
     events
         .try_send(FeedEvent::OhlcvHistory {
-            interval_ms: crate::feed::OHLCV_BASE_INTERVAL_MS,
+            interval_ms: quantick_feed::OHLCV_BASE_INTERVAL_MS,
             bars: venue_history(90),
-            slice: crate::feed::OhlcvSlice::Last { complete: true },
+            slice: quantick_feed::OhlcvSlice::Last { complete: true },
         })
         .unwrap();
     app.drain_tabs();

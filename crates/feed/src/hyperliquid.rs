@@ -93,7 +93,7 @@ async fn feed_task(
     // Candle history runs off this loop: see `spawn_ohlcv` for what awaiting it
     // in a command arm used to cost the live trade stream.
     let (ohlcv_tx, mut ohlcv_rx) =
-        mpsc::channel::<(Vec<quantick_engine::Bar>, crate::feed::OhlcvSlice)>(1);
+        mpsc::channel::<(Vec<quantick_engine::Bar>, crate::OhlcvSlice)>(1);
     let mut ohlcv_task: Option<JoinHandle<()>> = None;
     let mut ever_connected = false;
     let mut recovery_pending = true;
@@ -199,7 +199,7 @@ async fn feed_task(
                             // fetched because nobody looked, which is not a
                             // statement about the venue's record.
                             if ohlcv_tx
-                                .send((Vec::new(), crate::feed::OhlcvSlice::Refused))
+                                .send((Vec::new(), crate::OhlcvSlice::Refused))
                                 .await
                                 .is_err()
                             {
@@ -354,14 +354,14 @@ fn spawn_ohlcv(
     span_ms: i64,
     slice_ms: Option<i64>,
     before_ms: Option<i64>,
-    reply: mpsc::Sender<(Vec<quantick_engine::Bar>, crate::feed::OhlcvSlice)>,
+    reply: mpsc::Sender<(Vec<quantick_engine::Bar>, crate::OhlcvSlice)>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let symbol = symbol.as_str();
         // See the Binance twin: the live edge, or the instant a *load older*
         // wants the reply to end at.
-        let now_ms = before_ms.unwrap_or_else(crate::metrics::wall_clock_ms);
-        let windows = crate::feed::ohlcv_plan::plan(now_ms, span_ms, slice_ms);
+        let now_ms = before_ms.unwrap_or_else(crate::clock::wall_clock_ms);
+        let windows = crate::ohlcv_plan::plan(now_ms, span_ms, slice_ms);
         info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -427,9 +427,9 @@ fn spawn_ohlcv(
                 }
             };
             let slice = if window.last {
-                crate::feed::OhlcvSlice::Last { complete }
+                crate::OhlcvSlice::Last { complete }
             } else {
-                crate::feed::OhlcvSlice::More
+                crate::OhlcvSlice::More
             };
             // A closed channel means the feed loop is gone, which is not this
             // task's problem to report: it is already being reported there.

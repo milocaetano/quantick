@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 
 use crate::config::ProviderKind;
-use crate::feed::mt5_bridge;
+use quantick_feed::mt5_bridge;
 
 /// Where `export_session.py` lives, relative to the repository root.
 const EXPORT_SCRIPT: &str = "tools/mt5/export_session.py";
@@ -315,7 +315,7 @@ impl Mt5SessionSource {
         Self {
             interpreter: interpreter.to_string(),
             roots: mt5_bridge::default_search_roots(),
-            clock_cache: mt5_bridge::clock_cache_path(),
+            clock_cache: mt5_bridge::clock_cache_path(crate::paper_home::shelf_dir().as_deref()),
         }
     }
 
@@ -326,7 +326,7 @@ impl Mt5SessionSource {
         Self {
             interpreter: interpreter.to_string(),
             roots,
-            clock_cache: mt5_bridge::clock_cache_path(),
+            clock_cache: mt5_bridge::clock_cache_path(crate::paper_home::shelf_dir().as_deref()),
         }
     }
 

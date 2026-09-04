@@ -128,12 +128,15 @@ const CLOCK_CACHE_FILE: &str = "mt5-clock.json";
 /// offset refuses to run — so a cache that moves with the code turns "download
 /// yesterday's session" into a coin flip decided by the working directory.
 ///
-/// `None` when the platform reports no documents folder; the scripts then keep
+/// `shelf` is that folder, handed in by the application rather than looked up
+/// here: which directory holds the trader's files is a question about the
+/// installation, and this crate knows about feeds. `None` — the platform
+/// reports no documents folder — gives `None` back, and the scripts then keep
 /// their own legacy default, which is the honest old behaviour rather than an
 /// invented path.
 #[must_use]
-pub fn clock_cache_path() -> Option<PathBuf> {
-    crate::paper_home::shelf_dir().map(|shelf| shelf.join(CLOCK_CACHE_FILE))
+pub fn clock_cache_path(shelf: Option<&Path>) -> Option<PathBuf> {
+    shelf.map(|shelf| shelf.join(CLOCK_CACHE_FILE))
 }
 
 /// The directories a bridge script is looked for under, most specific first:
@@ -174,6 +177,10 @@ pub struct Supervision {
     pub connected: Arc<AtomicBool>,
     /// Where user-facing reports go.
     pub notices: mpsc::Sender<FeedNotice>,
+    /// The trader's own files directory, in which the broker's measured clock
+    /// offset is remembered (see [`clock_cache_path`]). Handed in by the
+    /// application; `None` where the platform reports no documents folder.
+    pub clock_cache_dir: Option<PathBuf>,
 }
 
 /// Launch a bridge when nothing else is feeding us, and keep it alive.
@@ -317,7 +324,7 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
             None => candidates.clone(),
         };
         let mut child = None;
-        let clock_cache = clock_cache_path();
+        let clock_cache = clock_cache_path(sup.clock_cache_dir.as_deref());
         for program in try_now {
             let mut command = Command::new(&program);
             command
@@ -794,6 +801,7 @@ mod tests {
             Supervision {
                 symbol: "WINQ26".to_string(),
                 endpoint,
+                clock_cache_dir: None,
                 connected: Arc::new(AtomicBool::new(false)),
                 notices: tx,
             },

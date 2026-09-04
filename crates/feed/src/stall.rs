@@ -112,7 +112,7 @@ pub struct Stall {
     /// permanently amber control is one the trader learns to stop seeing, so
     /// the quiet case offers the same two controls in the interface's ordinary
     /// colours and lets the tape cell — which already turns
-    /// [`crate::theme::WARN`] past ten seconds — carry the warning it has
+    /// the theme's warning colour past ten seconds — carry the warning it has
     /// always carried.
     pub needs_attention: bool,
 }
@@ -308,7 +308,7 @@ const HOURS_ABOVE_MIN: i64 = 90;
 ///
 /// See [`MINUTES_ABOVE_S`] and [`HOURS_ABOVE_MIN`] for where the readings meet.
 #[must_use]
-pub(crate) fn spoken_ms(ms: i64) -> String {
+pub fn spoken_ms(ms: i64) -> String {
     let seconds = ms.max(0) / 1_000;
     let minutes = seconds / 60;
     if seconds < MINUTES_ABOVE_S {

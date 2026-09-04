@@ -49,48 +49,17 @@
 
 use std::collections::BTreeSet;
 
-/// One hook, declared where it is read.
-///
-/// A named struct rather than a bare `&str` so a later field — a surface, a
-/// deprecation, a since-version — is added here and not at a hundred and
-/// twenty-nine call sites. It deliberately does **not** carry the hook's value
-/// grammar: `docs/ui-harness/hook-prose.md` already states it, and a second
-/// copy kept by hand in the code is exactly the duplicated truth this module
-/// exists to end.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct HookSpec {
-    /// The environment variable, exactly as the application reads it.
-    pub name: &'static str,
-}
-
-impl HookSpec {
-    pub(crate) const fn new(name: &'static str) -> Self {
-        Self { name }
-    }
-}
-
-/// Declare the launch hooks a module reads.
-///
-/// One line where the reads are:
-///
-/// ```ignore
-/// crate::hooks::declare_hooks!["QUANTICK_TOAST"];
-/// ```
-///
-/// A macro rather than a hand-written `const` in forty files because that is
-/// what "a registration line" means here. The doc comment, the type, the
-/// visibility and the `use` are the same in every one of them, so writing them
-/// out forty times spends the size ratchet's budget on boilerplate and gives a
-/// reader forty chances to write a subtly different one.
-macro_rules! declare_hooks {
-    ($($name:literal),+ $(,)?) => {
-        /// The launch hooks this module reads; see [`crate::hooks`].
-        pub(crate) const HOOKS: &[$crate::hooks::HookSpec] =
-            &[$($crate::hooks::HookSpec::new($name)),+];
-    };
-}
-
-pub(crate) use declare_hooks;
+// The declaration half — the `HookSpec` type and the `declare_hooks!` macro
+// that writes a module's slice — is defined in `quantick-feed` and re-exported
+// here, so every module in the workspace declares its hooks the same way and
+// `OWNERS` below can hold them all in one array.
+//
+// It sits there rather than here because four of that crate's adapters read a
+// hook and it cannot depend on this one; the graph runs the other way. This
+// module is still where the registry is: `OWNERS`, `NOT_HOOKS` and the
+// startup warning are all below, and this is the file to open to find out
+// which hooks exist.
+pub(crate) use quantick_feed::hooks::{HookSpec, declare_hooks};
 
 /// `QUANTICK_*` variables that are deliberately **not** launch hooks.
 ///
@@ -139,16 +108,13 @@ pub(crate) const OWNERS: &[(&str, &[HookSpec])] = &[
         "crates/app/src/drawings/presets.rs",
         crate::drawings::presets::HOOKS,
     ),
+    ("crates/feed/src/binance.rs", quantick_feed::binance::HOOKS),
     (
-        "crates/app/src/feed/binance.rs",
-        crate::feed::binance::HOOKS,
+        "crates/feed/src/metatrader.rs",
+        quantick_feed::metatrader::HOOKS,
     ),
-    (
-        "crates/app/src/feed/metatrader.rs",
-        crate::feed::metatrader::HOOKS,
-    ),
-    ("crates/app/src/feed/mod.rs", crate::feed::HOOKS),
-    ("crates/app/src/feed/stall.rs", crate::feed::stall::HOOKS),
+    ("crates/feed/src/lib.rs", quantick_feed::HOOKS),
+    ("crates/feed/src/stall.rs", quantick_feed::stall::HOOKS),
     ("crates/app/src/feed_notice.rs", crate::feed_notice::HOOKS),
     (
         "crates/app/src/footprint_config.rs",

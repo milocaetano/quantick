@@ -22,9 +22,9 @@ use quantick_replay::clock::SPEEDS;
 use quantick_replay::format::{self, UtcOffset};
 use quantick_replay::{Library, ParseOptions, Session, SessionEntry, SessionError, library};
 
-use crate::feed::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 use crate::replay_get_data::{GetDataAction, GetDataPanel};
 use crate::theme::{AMBER, CHROME, CONTROL, TEXT_MUTED, TEXT_PRIMARY, WARN};
+use quantick_feed::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 
 /// The accent this feature owns: the same amber the chart already uses for the
 /// backfill/live divider, so "this is not live data" reads the same way twice.

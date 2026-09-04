@@ -1,25 +1,37 @@
-//! Bridges an async market-data feed to the synchronous egui UI.
+//! The feed host: the port every market-data source implements, and the
+//! adapters that run one.
 //!
 //! A feed runs on a background thread and pushes [`FeedEvent`]s onto a channel
-//! the UI drains each frame via `try_recv` — no async on the UI thread. The UI
-//! can send [`FeedCommand`]s back (e.g. "load older history"), serviced between
-//! live trades.
+//! its consumer drains — the desktop chart drains it once a frame with
+//! `try_recv`, so no async ever reaches the UI thread. The consumer can send
+//! [`FeedCommand`]s back (e.g. "load older history"), serviced between live
+//! trades.
 //!
 //! Which backend runs is chosen at [`spawn`] time from a [`FeedSource`], so the
-//! UI is provider-agnostic: it drains the same [`FeedHandle`] regardless of
-//! where the trades come from. [`binance`] streams public aggTrades directly;
-//! [`hyperliquid`] streams public perpetual trades and complete L2 images;
-//! [`metatrader`] listens for the local QuantickBridge EA (see `bridge/mt5/`);
-//! [`replay`] plays a recorded session back through the very same channel, which
-//! is what lets market replay reuse the whole chart untouched.
+//! consumer is provider-agnostic: it drains the same [`FeedHandle`] regardless
+//! of where the trades come from. [`binance`] streams public aggTrades
+//! directly; [`hyperliquid`] streams public perpetual trades and complete L2
+//! images; [`metatrader`] listens for the local QuantickBridge EA (see
+//! `bridge/mt5/`); [`replay`] plays a recorded session back through the very
+//! same channel, which is what lets market replay reuse the whole chart
+//! untouched.
+//!
+//! This is the level of the graph that owns runtimes, threads and the wall
+//! clock (see [`clock`]); everything below it stays clock-free. `README.md`
+//! states the rule in full.
 
 pub mod binance;
+pub mod clock;
+pub mod config;
+pub mod hooks;
 pub mod hyperliquid;
 pub mod metatrader;
 pub mod mt5_bridge;
 pub mod ohlcv_plan;
 pub mod replay;
 pub mod stall;
+
+use std::path::PathBuf;
 
 use tokio::sync::{mpsc, watch};
 
@@ -29,7 +41,7 @@ use quantick_engine::{Bar, Trade};
 // venue's re-export is the name the next feed author would copy.
 pub use quantick_orderbook::DepthEvent;
 
-use crate::config::{FeedCapabilities, ProviderKind};
+use crate::config::{FeedCapabilities, MetaTraderSettings, ProviderKind};
 
 pub use metatrader::forced_latency_split;
 pub use replay::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
@@ -343,7 +355,7 @@ pub enum FeedConnectionState {
 /// A stretch of market time no print covers, left by a reconnect that kept the
 /// chart's timeline instead of rebuilding it.
 ///
-/// [`Tab::reconnect_feed`](crate::tab::Tab::reconnect_feed) exists so a feed
+/// `Tab::reconnect_feed` in the application exists so a feed
 /// that hiccuped costs the trader nothing: the bars, drawings, indicators,
 /// armed strategies and any open paper position all survive the new session.
 /// What cannot survive is the market that traded while nobody was listening,
@@ -373,7 +385,7 @@ impl FeedGap {
 /// back with real market time missing in between, which a scripted run cannot
 /// arrange: it would have to break a live venue mid-capture and wait. So the
 /// hook asks for one, and the tab records it through
-/// [`Tab::record_gap`](crate::tab::Tab::record_gap) — the same function the
+/// `Tab::record_gap` in the application — the same function the
 /// real path calls, at a market time taken from bars the chart really built,
 /// so the mark lands where a real silence of that length would have put it.
 ///
@@ -574,7 +586,7 @@ impl FeedNotice {
 /// Translate the boolean lifecycle emitted by a provider reconnect loop into
 /// the app's notice protocol. `ever_connected` distinguishes first-connect
 /// retries from a real reconnect without consulting trade arrival.
-pub(super) fn connection_notice(
+pub(crate) fn connection_notice(
     connected: bool,
     ever_connected: &mut bool,
     provider: &str,
@@ -644,17 +656,26 @@ pub fn initial_backfill_target() -> usize {
 
 /// Start the feed for `source` on a background thread, returning the handle the
 /// UI drains and sends commands through. Dropping the handle stops the feed.
-/// Provider-specific settings come from `config`.
 ///
 /// This is the whole "source → backend" dispatch: one place, mirroring the
 /// [`FeedSource`] variants. Adding a source is a new arm here plus its module.
+///
+/// It takes the slice of configuration it reads — `mt5_settings`, the only one
+/// any arm below looks at — rather than the whole application config, which
+/// lives a crate above this one. `clock_cache_dir` is the same inversion for a
+/// directory: where an autostarted MT5 bridge remembers the broker's clock
+/// offset is a fact about the installation, so the application hands it in.
 #[must_use]
-pub fn spawn(source: FeedSource, config: &crate::config::AppConfig) -> FeedHandle {
+pub fn spawn(
+    source: FeedSource,
+    mt5_settings: &MetaTraderSettings,
+    clock_cache_dir: Option<PathBuf>,
+) -> FeedHandle {
     match source {
         FeedSource::Live { provider, symbol } => match provider {
             ProviderKind::Binance => binance::spawn(&symbol),
             ProviderKind::Hyperliquid => hyperliquid::spawn(&symbol),
-            ProviderKind::MetaTrader => metatrader::spawn(&symbol, &config.metatrader),
+            ProviderKind::MetaTrader => metatrader::spawn(&symbol, mt5_settings, clock_cache_dir),
         },
         FeedSource::Replay(request) => replay::spawn(*request),
     }
@@ -665,14 +686,16 @@ pub fn spawn(source: FeedSource, config: &crate::config::AppConfig) -> FeedHandl
 pub fn spawn_live(
     provider: ProviderKind,
     symbol: &str,
-    config: &crate::config::AppConfig,
+    mt5_settings: &MetaTraderSettings,
+    clock_cache_dir: Option<PathBuf>,
 ) -> FeedHandle {
     spawn(
         FeedSource::Live {
             provider,
             symbol: symbol.to_string(),
         },
-        config,
+        mt5_settings,
+        clock_cache_dir,
     )
 }
 

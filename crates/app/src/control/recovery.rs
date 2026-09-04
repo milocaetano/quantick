@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::app::QuantickApp;
-use crate::feed::stall::Recovery;
+use quantick_feed::stall::Recovery;
 
 use super::{
     actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},

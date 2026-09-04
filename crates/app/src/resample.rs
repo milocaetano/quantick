@@ -1,7 +1,7 @@
 //! Folding venue candles up to a coarser interval.
 //!
 //! [`fold`] groups **by time**: every provider delivers candle history at one
-//! interval ([`crate::feed::OHLCV_BASE_INTERVAL_MS`], a minute) and the time
+//! interval ([`quantick_feed::OHLCV_BASE_INTERVAL_MS`], a minute) and the time
 //! pane shows whatever its header asks for, so folding locally is what makes
 //! changing that free — a chip click is a different fold over bars already
 //! held, not a round trip to a venue. The row merge lives in [`merge_into`],
@@ -21,7 +21,7 @@
 
 use quantick_engine::Bar;
 
-use crate::feed::OHLCV_BASE_INTERVAL_MS;
+use quantick_feed::OHLCV_BASE_INTERVAL_MS;
 
 /// Whether `interval_ms` can be folded to from the base interval at all.
 ///

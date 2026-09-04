@@ -12,6 +12,9 @@ quantick-control = { path = "../control" }
 # discovery and client halves of the same crate are what the MCP adapter uses.
 quantick-control-local = { path = "../control-local" }
 quantick-engine = { path = "../engine" }
+# The feed host: the FeedEvent/FeedCommand port, the venue adapters that run
+# it, and the feed-shaped config types this crate re-exports.
+quantick-feed = { path = "../feed" }
 quantick-indicators = { path = "../indicators" }
 quantick-pine = { path = "../pine" }
 quantick-feed-binance = { path = "../feed-binance" }

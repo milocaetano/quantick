@@ -26,7 +26,7 @@ Crates under `crates/`; `AGENTS.md` *The map* owns the descriptions and the grap
 - **Dependency direction is one-way; never add a reverse edge.** `app` → `pine` → `indicators` → `engine`; `sim` → `trading` → `engine`; `control-local` → `control`. Inside a crate too: cargo cannot see a module cycle, so `guards/src/cycle.rs` fails the build on a new one.
 - **Leaves stay leaves** — nothing depends on `app`, `backtest`, `mcp` or `guards`.
 - **Everything below `app` is headless** — no UI, no network, no async, no wall clock. That is `engine`, `orderbook`, `orderflow`, `trading`, `control`, `control-local`, `indicators`, `pine`, `replay`, `sim` and `strategy`, and it binds third-party crates too: an async runtime or a `SystemTime` read in `sim` breaks determinism as surely as one in `engine`. `replay` and `strategy` are *told* how much time passed rather than reading a clock. `backtest` and `mcp` are headless too; `backtest`'s only wall-clock read is the stopwatch in its `main.rs`, whose numbers reach stderr and never a report.
-- **The three `feed-*` crates are the exception** — async, and they stamp arrival from the clock; neither crosses the `FeedEvent` channel.
+- **`feed` and the `feed-*` crates are the exception** — `feed` owns the runtimes, threads and clock, the venues stamp arrival; neither crosses the `FeedEvent` channel.
 - **`feed-binance`, `feed-hyperliquid` and `feed-mt5` never depend on each other**, and never on the script language. A feed produces trades.
 - **`guards` has no dependencies at all** — its `dependencies` tables stay empty.
 - **Replay is a source, not a chart mode** — same `FeedEvent` channel a live venue uses. UI gates on `FeedCapabilities`, never on "is this a replay?".

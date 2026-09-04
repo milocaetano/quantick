@@ -55,7 +55,6 @@ use crate::config::{AppConfig, FeedCapabilities, FeedConfig, ProviderKind};
 use crate::drawings::{ChartPoint, MAX_DRAWING_WIDTH_PX, PresetHost};
 // The drawing chrome moved out to its own module; the tests that drive it
 // through `QuantickApp` stay here, and reach its numbers by name.
-use crate::feed::{FeedConnectionState, FeedEvent, FeedNotice};
 use crate::pane::DEFAULT_PANE_FRACTION;
 use crate::pane::DrawingDrag;
 use crate::surfaces::drawing_chrome::inline_editor::INLINE_TEXT_HINT;
@@ -66,6 +65,7 @@ use crate::surfaces::drawing_chrome::{
 use crate::tab::BOOK_GENERATION_STRIDE;
 use crate::time_header;
 use crate::viewport::Viewport;
+use quantick_feed::{FeedConnectionState, FeedEvent, FeedNotice};
 
 /// The slot a stored fractional anchor sits on, asked of the one owner.
 ///
@@ -1337,10 +1337,10 @@ fn open_second_tab(app: &mut QuantickApp, ctx: &egui::Context, symbol: &str) -> 
 
 /// A minute candle at `minute`, priced so a fold is visible in the result.
 fn venue_candle(minute: i64, seed: i64) -> quantick_engine::Bar {
-    let open_time = minute * crate::feed::OHLCV_BASE_INTERVAL_MS;
+    let open_time = minute * quantick_feed::OHLCV_BASE_INTERVAL_MS;
     quantick_engine::Bar {
         open_time,
-        close_time: open_time + crate::feed::OHLCV_BASE_INTERVAL_MS - 1,
+        close_time: open_time + quantick_feed::OHLCV_BASE_INTERVAL_MS - 1,
         open: Decimal::from(100 + seed),
         high: Decimal::from(110 + seed),
         low: Decimal::from(90 + seed),
@@ -1361,7 +1361,7 @@ fn minute_trade(minute: u64) -> quantick_engine::Trade {
 /// "load older" delivers.
 fn minute_trade_at(minute: i64) -> quantick_engine::Trade {
     let mut trade = trade(minute.unsigned_abs() + 1);
-    trade.timestamp_ms = minute * crate::feed::OHLCV_BASE_INTERVAL_MS + 1_000;
+    trade.timestamp_ms = minute * quantick_feed::OHLCV_BASE_INTERVAL_MS + 1_000;
     trade
 }
 
@@ -1515,7 +1515,7 @@ fn grid_trades(first_price: Decimal, step: Decimal) -> Vec<quantick_engine::Trad
     (0..200)
         .map(|i| quantick_engine::Trade {
             agg_id: i + 1,
-            timestamp_ms: i as i64 * crate::feed::OHLCV_BASE_INTERVAL_MS + 1_000,
+            timestamp_ms: i as i64 * quantick_feed::OHLCV_BASE_INTERVAL_MS + 1_000,
             price: first_price + step * Decimal::from(i % 20),
             quantity: Decimal::ONE,
             side: if i.is_multiple_of(2) {

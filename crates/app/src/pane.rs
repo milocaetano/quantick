@@ -1005,14 +1005,14 @@ pub struct PaneChrome<'a> {
     /// that owns it.
     pub shared: SharedInteraction,
     /// Stretches of market time this tab's tape does not cover, left by a
-    /// reconnect that kept the timeline (see [`crate::feed::FeedGap`]).
+    /// reconnect that kept the timeline (see [`quantick_feed::FeedGap`]).
     ///
     /// Passed per frame rather than held per pane: the holes belong to the
     /// tab's one tape, and every pane cuts its own bars from that same tape.
     /// A copy per pane would be the same list written twice, and two lists
     /// that can disagree about where the market went quiet is exactly the
     /// class of bug the honesty rule exists to prevent.
-    pub feed_gaps: &'a [crate::feed::FeedGap],
+    pub feed_gaps: &'a [quantick_feed::FeedGap],
     /// What the running source can actually produce. The layer menu offers a
     /// layer this feed has no data for as disabled-with-a-reason rather than as
     /// a switch that would do nothing — the wording the toolbar already uses.
@@ -7589,7 +7589,7 @@ impl ChartPane {
     /// Only the trade-derived series is searched. A gap is left by a live
     /// reconnect, and the venue prefix in front of it is candle history the
     /// venue summarized long before this session opened its socket.
-    fn gap_slot(&self, gap: crate::feed::FeedGap) -> Option<usize> {
+    fn gap_slot(&self, gap: quantick_feed::FeedGap) -> Option<usize> {
         let bars = self.state.bars();
         let index = bars.partition_point(|bar| bar.open_time < gap.to_ms);
         (index < bars.len()).then(|| self.history_prefix.len() + index)
@@ -7609,7 +7609,7 @@ impl ChartPane {
         pane: egui::Rect,
         total: usize,
         candle_width: f32,
-        gaps: &[crate::feed::FeedGap],
+        gaps: &[quantick_feed::FeedGap],
     ) {
         for gap in gaps {
             let Some(slot) = self.gap_slot(*gap) else {
@@ -7629,7 +7629,7 @@ impl ChartPane {
             painter.text(
                 egui::pos2(x + SEAM_LABEL_INSET_PX, pane.top() + SEAM_LABEL_INSET_PX),
                 egui::Align2::LEFT_TOP,
-                format!("{} gap", crate::feed::stall::spoken_ms(gap.duration_ms())),
+                format!("{} gap", quantick_feed::stall::spoken_ms(gap.duration_ms())),
                 egui::FontId::proportional(SEAM_LABEL_PT),
                 theme::GAP_LABEL,
             );
