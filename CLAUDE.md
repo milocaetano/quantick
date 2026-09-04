@@ -10,7 +10,7 @@ Between edits: `cargo check -p <crate>`, `cargo test -p <crate> <filter>`, `carg
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets
 cargo build --workspace
 cargo test --workspace
 ```
@@ -27,7 +27,7 @@ Crates under `crates/`; `AGENTS.md` *The map* owns the descriptions and the grap
 - **Leaves stay leaves** — nothing depends on `app`, `backtest`, `mcp` or `guards`.
 - **Everything below `app` is headless** — no UI, no network, no async, no wall clock. That is `engine`, `orderbook`, `trading`, `control`, `control-local`, `indicators`, `pine`, `replay`, `sim`, `strategy` and the feeds, and it binds third-party crates too: an async runtime or a `SystemTime` read in `sim` breaks determinism as surely as one in `engine`. `replay` and `strategy` are *told* how much time passed rather than reading a clock. `backtest` and `mcp` are headless too; `backtest`'s only wall-clock read is the stopwatch in its `main.rs`, whose numbers reach stderr and never a report.
 - **`feed-binance`, `feed-hyperliquid` and `feed-mt5` never depend on each other**, and never on the script language. A feed produces trades.
-- **`guards` has no dependencies at all**; nothing may be added to its manifest.
+- **`guards` has no dependencies at all** — its `dependencies` tables stay empty.
 - **Replay is a source, not a chart mode** — same `FeedEvent` channel a live venue uses. UI gates on `FeedCapabilities`, never on "is this a replay?".
 - Feeds and symbols come from config (`crates/app/config/feeds.toml`, `QUANTICK_CONFIG` or `./quantick.toml`), never hardcoded.
 

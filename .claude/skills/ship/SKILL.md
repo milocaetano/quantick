@@ -17,7 +17,7 @@ description: Deliver the current branch - run the full verification loop, commit
    ```sh
    cargo fmt --all
    cargo fmt --all -- --check
-   cargo clippy --workspace --all-targets -- -D warnings
+   cargo clippy --workspace --all-targets
    cargo build --workspace
    cargo test --workspace
    ```

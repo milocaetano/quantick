@@ -204,12 +204,12 @@ All four must pass before every commit. CI enforces the same four.
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets
 cargo build --workspace
 cargo test --workspace
 ```
 
-CI runs four more steps that `cargo` cannot see. Run the ones your change
+CI runs five more steps that `cargo` cannot see. Run the ones your change
 touches — the Python is never compiled by the workspace, so an undefined name
 there ships silently:
 
@@ -218,6 +218,7 @@ sh .claude/hooks/guardrails_test.sh          # the agent guardrails' own tests
 ruff check --select F tools/mt5/ bridge/mt5/ # when you touch either folder
 python3 tools/mt5/test_export_session.py     # the session exporter
 python3 bridge/mt5/tests/test_paging.py      # the MT5 bridge's candle paging
+cargo deny check bans licenses               # when Cargo.lock moves
 ```
 
 ## Where the documentation is

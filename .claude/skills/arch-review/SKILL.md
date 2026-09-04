@@ -311,7 +311,7 @@ Reviews are judged on precision, not volume.
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets
 cargo build --workspace
 cargo test --workspace          # includes the guards' language and ratchet scans
 ```

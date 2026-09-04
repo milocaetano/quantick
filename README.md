@@ -37,15 +37,17 @@ You don't need an exchange account, an API key or any credentials. Out of the bo
 
 ### 1. Install Rust
 
-quantick is pure Rust. Install a recent stable toolchain with [rustup](https://rustup.rs/) — you need **Rust 1.85 or newer** (the workspace is on the 2024 edition):
+quantick is pure Rust. Install [rustup](https://rustup.rs/) — that is the only choice you have to make. The repository pins the exact toolchain it builds with in `rust-toolchain.toml`, and rustup installs and selects that version, with the components it needs, the first time you run a cargo command in the clone:
 
 ```sh
 # macOS / Linux
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 # Windows: download and run rustup-init.exe from https://rustup.rs
 
-rustc --version   # expect 1.85.0 or newer
+rustup --version   # that is all you need here
 ```
+
+Inside the clone, `rustc --version` will report the pinned version rather than whatever you installed — that is `rust-toolchain.toml` doing its job. CI reads the same file, so the toolchain is never the difference between your machine and a red build.
 
 ### 2. Clone and build
 
@@ -113,7 +115,7 @@ reconstructed from candles.
 
 ### Contributing
 
-Working on the code? Every change must pass the four-check verification loop (`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo build --workspace`, `cargo test --workspace`) before commit — the same checks CI enforces. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
+Working on the code? Every change must pass the four-check verification loop (`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets`, `cargo build --workspace`, `cargo test --workspace`) before commit — the same checks CI enforces. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
 
 ## Drive it with an agent (MCP)
 

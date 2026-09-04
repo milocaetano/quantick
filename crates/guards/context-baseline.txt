@@ -19,7 +19,7 @@
 # dimension. Each of these three is still the single largest thing a session
 # loads when it invokes the skill, so each is debt, not a target.
 .claude/skills/mission/SKILL.md 22007
-.claude/skills/arch-review/SKILL.md 19588
+.claude/skills/arch-review/SKILL.md 19573
 .claude/skills/delivery-review/SKILL.md 18087
 
 # Pre-existing debt this branch measured rather than paid. `ui-harness` and its
@@ -32,7 +32,18 @@
 # it, which is exactly why it is rationed here.
 .claude/skills/ui-harness/references/hook-registry.md 69177
 .claude/skills/ui-harness/SKILL.md 13377
-AGENTS.md 12771
+# Raised by 54 bytes, for one line: `cargo deny check bans licenses` joined the
+# list of CI steps `cargo` cannot see, and a list that omits a step is worse
+# than a list that costs 54 bytes — an agent reading it would find the step in
+# CI instead of on its machine, which is the failure the branch that added the
+# step exists to end. The reasoning behind that step, and behind dropping
+# `-D warnings` from the clippy line above it, went to
+# `docs/agentic-development.md`; only the operative line landed here.
+#
+# Paid for in the same change: `arch-review/SKILL.md` below, and the two
+# sub-threshold files `CLAUDE.md` and `ship/SKILL.md`, each 15 bytes lighter
+# for the same flag removal — 45 bytes back against 54 spent.
+AGENTS.md 12825
 
 # What a session's instructions weigh in total: every ceiling above, plus the
 # measured bytes of every tracked file too small to need one. Raising it means
