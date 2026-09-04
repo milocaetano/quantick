@@ -350,6 +350,31 @@ Measured against `origin/main` at `d551813`, the sha the brief names:
   not apply by crate. Its substance is discharged anyway: A9 is a fixture-first
   golden written before the code moves, which is what the row asks for.
 
+## Deferred
+
+Both granted by the trader, in session, after the measurement that prompted
+them. Neither is a gap the branch failed to notice; each is a criterion the
+trader chose to release once it was measured.
+
+- **A11's first clause — `paper_trading.rs` at most 3,500 production lines.**
+  It fell 1,730, from 6,407 to **4,677**, and stopped there. What remains is
+  about 3,100 lines of genuine drawing and gesture plus about 1,500 of types,
+  constants and `impl PaintCtx`; reaching 3,500 needs a **third** module the
+  brief never asked for. Told that, the trader chose to accept 4,677 and record
+  the deviation rather than grow the change. The rest of A11 is delivered:
+  `paper_account.rs` is 2,000, well under its own 3,500, the baseline is
+  tightened, and the `!budget` rises 272 with a signed reason — inside the 300
+  the criterion allows. See **D5**.
+- **G6 — a `visual-qa` pass over the nine surfaces.** The nine are byte-for-byte
+  identical to `origin/main` outside the measured mask, on both control runs,
+  and the control plane's own `session.paper` snapshot agrees on 4/4 scenes.
+  Running a defect checklist over images identical to main's grades *main's*
+  design, not this change: any defect it found was already there and is not
+  this branch's to answer. The trader released the criterion on that reading.
+  The evidence that replaces it is
+  `.claude/evidence/paper-policy-out-of-the-ticket/pixels-golden.txt` and
+  `scene-compare.txt`.
+
 ## Closing steps
 
 - [ ] **C1** — `delivery-review` returns PASS.
