@@ -1,0 +1,46 @@
+name: Supply chain
+
+# The advisories half of `cargo deny`, kept deliberately away from the pull
+# request.
+#
+# `bans` and `licenses` run in `ci.yml` and block, because both are pure
+# functions of the committed `Cargo.lock` — they go red only when a commit
+# changed the dependency graph. `advisories` is different in kind: it reads the
+# RustSec database, which gains entries on its own schedule. Run on a pull
+# request it would eventually fail a branch that touched nothing near the
+# dependency named, and the session that inherited that red would spend itself
+# proving its own diff innocent. That is the exact cost this repository's
+# pinning work exists to remove, so the check runs here instead, where a new
+# advisory is news rather than a blocked change.
+#
+# A failure here notifies the repository owner the way any failed scheduled run
+# does. Acting on it — bumping the dependency, or recording a considered
+# `[advisories] ignore` entry in `deny.toml` — is then a normal change, made by
+# a person, in a diff somebody reviews.
+
+on:
+  schedule:
+    # Daily. Deliberately not on the hour: scheduled jobs queue behind the
+    # crowd that picks midnight, and this one has nobody waiting on it.
+    - cron: "17 5 * * *"
+  # So the check can be asked for on demand — after taking on a new
+  # dependency, say, without waiting for tomorrow. There is deliberately no
+  # `pull_request` trigger, not even one filtered to `Cargo.lock`: a lockfile
+  # touch would then inherit whatever the database learned overnight about
+  # some other package entirely, which is the failure this split exists to
+  # prevent. Somebody bumping a dependency runs `cargo deny check advisories`
+  # locally, or dispatches this workflow, and reads the answer.
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  advisories:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Known vulnerabilities (advisories)
+        uses: EmbarkStudios/cargo-deny-action@v2.1.1
+        with:
+          command: check advisories

@@ -4,22 +4,29 @@ description = "Live aggTrades feed from Binance public endpoints"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [dependencies]
 quantick-engine = { path = "../engine" }
 quantick-orderbook = { path = "../orderbook" }
-rust_decimal = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
-futures-util = { version = "0.3", default-features = false }
-tracing = "0.1"
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 # `test-util` gives the tests a pausable clock: the page-budget test walks 512
 # pages, each paying the inter-page delay, which is thirteen real seconds of
-# waiting for a scripted source that does no I/O at all.
-tokio = { version = "1", features = ["rt", "macros", "net", "test-util"] }
-tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
+# waiting for a scripted source that does no I/O at all. It is the one
+# feature the workspace entry deliberately withholds — a paused clock must
+# never reach a production build — so this is the only place in the
+# workspace where a feature is still added by hand.
+tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

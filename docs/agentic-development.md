@@ -55,13 +55,33 @@ Four things stand between a change and `main`, and none of them is the
 agent's own judgement that it is finished.
 
 **The four-check verification loop.** `cargo fmt --all -- --check`, then
-clippy with `-D warnings`, then `cargo build --workspace`, then
+`cargo clippy --workspace --all-targets`, then `cargo build --workspace`, then
 `cargo test --workspace`. CI runs the same four on every PR and on every push
-to `main`, plus four steps the workspace cannot see: the guardrails' own
+to `main`, plus five steps the workspace cannot see: the guardrails' own
 test script, `ruff check --select F` over the Python under `tools/mt5/` and
-`bridge/mt5/`, the session exporter's tests, and the MT5 bridge's paging
+`bridge/mt5/`, the session exporter's tests, the MT5 bridge's paging
 tests — whose own comment records that without that step a revert ships
-green. A PR with red CI is never merged.
+green — and `cargo deny check bans licenses`. A PR with red CI is never
+merged.
+
+The clippy line carries no `-D warnings`, and used to. The levels moved into
+`[workspace.lints]` in the root `Cargo.toml`, which every crate inherits, and
+the move is worth understanding because the failure it fixed is the one this
+whole document is about. A flag on a command line is only in force when
+somebody types that command — so `cargo clippy -p <crate>`, the narrow fast
+form a session actually runs between edits, was checking at a laxer level than
+the gate it eventually had to pass. The difference arrived as a red CI on code
+that had been clean locally, and the session then spent itself looking for the
+cause in its own diff, where it was not. In the table the level applies to
+every cargo invocation, `cargo check` included, so a warning surfaces at the
+first edit that causes it rather than at the gate.
+
+`rust-toolchain.toml` pins the compiler for the same reason, one layer down.
+CI used to install whatever `stable` meant on the morning the job ran, which
+made a toolchain release indistinguishable from a regression until somebody
+read the log closely enough to notice the version had moved. Both changes buy
+the same property: a red means the change is wrong, so an agent can trust the
+signal instead of first proving the repository innocent.
 
 **`arch-review` over `git diff origin/main...HEAD`.** Every Blocker and
 Should-fix finding is resolved before the PR opens. A finding deliberately

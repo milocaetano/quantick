@@ -4,7 +4,11 @@ description = "Venue-neutral order vocabulary and the TradingVenue port every ex
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [dependencies]
 quantick-engine = { path = "../engine" }
-rust_decimal = "1"
+rust_decimal = { workspace = true }
+
+[lints]
+workspace = true

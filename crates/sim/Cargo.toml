@@ -4,8 +4,12 @@ description = "Deterministic paper-trading simulator: trades in, simulated fills
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 [dependencies]
 quantick-engine = { path = "../engine" }
 quantick-trading = { path = "../trading" }
-rust_decimal = "1"
+rust_decimal = { workspace = true }
+
+[lints]
+workspace = true

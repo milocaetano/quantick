@@ -58,6 +58,17 @@ jobs:
             python3 "$suite" || failed=1
           done
           exit "$failed"
+      - name: Supply chain (bans, licenses)
+        # Deliberately not `advisories`. These two checks are pure functions of
+        # the committed `Cargo.lock`: they can only change when a commit
+        # changes the dependency graph, so they belong on the pull request,
+        # where a red means this branch did something. `advisories` reads the
+        # RustSec database, which moves on its own and would redden a change
+        # that never touched the dependency — it runs on a schedule instead,
+        # in `supply-chain.yml`. `deny.toml` owns the policy both read.
+        uses: EmbarkStudios/cargo-deny-action@v2.1.1
+        with:
+          command: check bans licenses
       - name: Install desktop GUI dependencies
         # quantick-app (egui/eframe + winit) needs these to build/link on Linux.
         run: |
@@ -65,14 +76,43 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libwayland-dev \
             libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
+      - name: Install the pinned toolchain
+        # `rust-toolchain.toml` at the repository root names the exact version
+        # and the two components, so nothing is installed by name here. This
+        # step used to be `dtolnay/rust-toolchain@stable`, which fetched
+        # whatever `stable` meant on the morning the job ran: a toolchain
+        # release could turn a pull request red without a line of its code
+        # changing, and the session that inherited the red went looking for the
+        # bug in a diff that never had one.
+        #
+        # `rustc --version` comes first and is what does the installing: it
+        # goes through the rustup shim, which reads the toolchain file and
+        # fetches the pinned version if the runner does not have it. Newer
+        # rustup releases changed whether `rustup show` installs on its own, so
+        # the step does not depend on that either way — it runs afterwards, for
+        # the summary, once the toolchain is certainly present.
+        #
+        # Every version is echoed because the log is where a future reader
+        # checks which toolchain a given run actually used, and because a
+        # missing component should fail here, by name, rather than four steps
+        # later inside `cargo fmt`.
+        run: |
+          rustc --version
+          rustup show
+          cargo --version
+          cargo clippy --version
+          cargo fmt --version
       - uses: Swatinem/rust-cache@v2
       - name: Format
         run: cargo fmt --all -- --check
       - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        # No `-D warnings` here any more. The levels live in the
+        # `[workspace.lints]` table in the root `Cargo.toml`, which every crate
+        # inherits, so `cargo clippy -p <crate>` on a laptop fails on exactly
+        # what this step fails on. While the flag lived here, a session could
+        # get a clean local run and a red CI out of the same code, and spend
+        # itself looking for the difference in its own diff.
+        run: cargo clippy --workspace --all-targets
       - name: Build
         run: cargo build --workspace
       - name: Test

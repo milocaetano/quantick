@@ -7,7 +7,11 @@ Thanks for your interest! The whole point of this project is to open up tooling 
 
 ## Getting started
 
-You need a stable Rust toolchain ([rustup](https://rustup.rs/)).
+You need [rustup](https://rustup.rs/). You do not need to pick a Rust version:
+`rust-toolchain.toml` at the repository root pins the exact one, and rustup
+installs and selects it — with the `clippy` and `rustfmt` components — the
+first time you run a cargo command in this directory. CI reads the same file,
+so a toolchain release can never turn your pull request red on its own.
 
 ```sh
 git clone https://github.com/milocaetano/quantick.git
@@ -32,10 +36,21 @@ All four must pass before every commit — no exceptions:
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets
 cargo build --workspace
 cargo test --workspace
 ```
+
+There is no `-D warnings` on that clippy line, and its absence is deliberate.
+The lint levels live in `[workspace.lints]` in the root `Cargo.toml`, which
+every crate inherits, so a warning is an error for every cargo command —
+`cargo check -p <crate>` included — and `cargo clippy -p <crate>` on your
+machine fails on exactly what CI fails on. While the flag lived on the command
+line, a clean local run and a red CI could come out of the same code.
+
+A lint that starts firing gets fixed, never allow-ed. If one genuinely cannot
+be fixed where it surfaced, it is recorded in that lints table with a reason
+and a link to the follow-up that removes it.
 
 ## Commit style
 

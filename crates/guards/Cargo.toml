@@ -4,6 +4,7 @@ description = "Repository guards the compiler cannot see: file size, language, s
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 
 # Deliberately empty, and the whole point of this crate. These guards read
 # files and count lines; they need nothing from the workspace. Living under
@@ -11,3 +12,6 @@ license.workspace = true
 # repo first, so the cheapest checks in the codebase were the slowest to ask.
 # A dependency added here gives that back.
 [dependencies]
+
+[lints]
+workspace = true
