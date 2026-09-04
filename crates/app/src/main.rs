@@ -146,12 +146,26 @@ fn init_tracing() {
 /// reports as a real change. Either the whole thing lands, or nothing does and
 /// the exit code says so.
 fn emit(rendered: Result<String, String>) {
-    match rendered {
-        Ok(markdown) => print!("{markdown}"),
+    use std::io::Write as _;
+
+    let markdown = match rendered {
+        Ok(markdown) => markdown,
         Err(error) => {
             eprintln!("quantick-app: cannot render the dump: {error}");
             std::process::exit(1);
         }
+    };
+    // `print!` swallows the write error and panics on a broken pipe, which
+    // would leave a truncated committed index behind an exit code of 0 — the
+    // opposite of what this function promises.
+    let mut stdout = std::io::stdout();
+    if let Err(error) = stdout.write_all(markdown.as_bytes()) {
+        eprintln!("quantick-app: cannot write the dump: {error}");
+        std::process::exit(1);
+    }
+    if let Err(error) = stdout.flush() {
+        eprintln!("quantick-app: cannot flush the dump: {error}");
+        std::process::exit(1);
     }
 }
 

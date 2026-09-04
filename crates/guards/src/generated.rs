@@ -306,16 +306,26 @@ fn production_lines(source: &str) -> Vec<(usize, &str)> {
     let mut out = Vec::new();
     let mut depth: i32 = 0;
     let mut skipping = false;
+    let mut opened = false;
     for (index, line) in source.lines().enumerate() {
         if !skipping && line.trim_start().starts_with("#[cfg(test)]") {
             skipping = true;
+            opened = false;
             depth = 0;
             continue;
         }
         if skipping {
             depth += line.matches('{').count() as i32;
             depth -= line.matches('}').count() as i32;
-            if depth <= 0 && line.contains('}') {
+            if line.contains('{') {
+                opened = true;
+            }
+            // A braced item ends when its braces balance. A brace-less one --
+            // `#[cfg(test)] mod tests;`, `#[cfg(test)] use ...;` -- ends at its
+            // own semicolon, and treating it as if it opened a block would
+            // swallow the whole rest of the file, which is how a read below it
+            // would escape the scan entirely.
+            if (opened && depth <= 0) || (!opened && line.trim_end().ends_with(';')) {
                 skipping = false;
             }
             continue;
@@ -409,6 +419,12 @@ fn declared_hooks(root: &Path) -> BTreeMap<String, String> {
         // file and attributes each name to the line its literal sits on.
         let mut inside = false;
         for (index, line) in source.lines().enumerate() {
+            // `hooks.rs` documents the macro with a worked example. A name in a
+            // doc comment is an illustration, not a declaration, and counting
+            // it would let a prose row for a hook nothing declares pass.
+            if line.trim_start().starts_with("///") || line.trim_start().starts_with("//!") {
+                continue;
+            }
             if line.contains("declare_hooks![") || line.contains("const MAIN_HOOKS") {
                 inside = true;
             }
@@ -649,6 +665,55 @@ mod tests {
             .collect();
         assert!(lines.iter().any(|l| l.contains("fn real")));
         assert!(!lines.iter().any(|l| l.contains("QUANTICK_FIXTURE")));
+    }
+
+    /// A brace-less `#[cfg(test)]` item ends at its own semicolon.
+    ///
+    /// `crates/app/src/app.rs` ends with a bare `#[cfg(test)] mod tests;`.
+    /// Treating that as the opening of a block left the skip latched on for
+    /// the rest of the file, so every read below it escaped the scan — silently,
+    /// which is the only kind of guard failure that matters.
+    #[test]
+    fn a_brace_less_cfg_test_item_does_not_swallow_the_rest_of_the_file() {
+        let source = "#[cfg(test)]
+mod tests;
+
+fn after() -> bool {
+    std::env::var(\"QUANTICK_BELOW_THE_ATTRIBUTE\").is_ok()
+}
+";
+        let seen: Vec<&str> = production_lines(source)
+            .into_iter()
+            .map(|(_, l)| l)
+            .collect();
+        assert!(
+            seen.iter()
+                .any(|l| l.contains("QUANTICK_BELOW_THE_ATTRIBUTE")),
+            "a read below a brace-less #[cfg(test)] item must still be scanned"
+        );
+        assert!(!seen.iter().any(|l| l.contains("mod tests;")));
+    }
+
+    /// A braced test module is still skipped whole.
+    #[test]
+    fn a_braced_cfg_test_module_is_still_skipped() {
+        let source = "fn real() {}
+
+#[cfg(test)]
+mod tests {
+    const X: &str = \"QUANTICK_FIXTURE\";
+}
+
+fn also_real() -> bool {
+    std::env::var(\"QUANTICK_AFTER_THE_MODULE\").is_ok()
+}
+";
+        let seen: Vec<&str> = production_lines(source)
+            .into_iter()
+            .map(|(_, l)| l)
+            .collect();
+        assert!(!seen.iter().any(|l| l.contains("QUANTICK_FIXTURE")));
+        assert!(seen.iter().any(|l| l.contains("QUANTICK_AFTER_THE_MODULE")));
     }
 
     /// The two directories `crates/app` keeps whole test modules in.
