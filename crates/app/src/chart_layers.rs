@@ -631,10 +631,14 @@ crate::hooks::declare_hooks!["QUANTICK_CHART_LAYERS"];
 mod tests {
     use super::*;
 
-    fn temp_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join("quantick-chart-layers-test");
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    /// A directory of this test's own thread. It used to be one fixed folder
+    /// shared by every test in this module *and* by every concurrent run on
+    /// the machine — two worktrees running the suite at once wrote each
+    /// other's fixtures. `thread_dir` rather than a `ScratchDir` because
+    /// every caller spells `scratch().join(..)` in a single statement, where
+    /// a value would be dropped before the file it names is written.
+    fn scratch() -> PathBuf {
+        crate::scratch::thread_dir("chart-layers")
     }
 
     /// The words a trader actually reads, checked as words.
@@ -678,7 +682,7 @@ mod tests {
 
     #[test]
     fn a_missing_file_opens_on_the_shipped_default() {
-        let fresh = load(&temp_dir().join("missing.toml"));
+        let fresh = load(&scratch().join("missing.toml"));
         assert_eq!(
             fresh,
             shipped_default(),
@@ -694,7 +698,7 @@ mod tests {
     /// worse than the bare chart this whole change is about.
     #[test]
     fn the_traders_own_choice_outranks_the_shipped_default() {
-        let path = temp_dir().join("trader-choice.toml");
+        let path = scratch().join("trader-choice.toml");
         assert_eq!(
             shipped_default().get(&ChartLayer::Heatmap),
             Some(&true),
@@ -738,7 +742,7 @@ mod tests {
     /// reporter's machine turned out to hold.
     #[test]
     fn a_file_from_before_the_defaults_still_opens_the_flow_layers() {
-        let path = temp_dir().join("pre-defaults.toml");
+        let path = scratch().join("pre-defaults.toml");
         std::fs::write(
             &path,
             "version = 1
@@ -837,7 +841,7 @@ mod tests {
 
     #[test]
     fn visibility_round_trips_through_disk() {
-        let path = temp_dir().join("round-trip.toml");
+        let path = scratch().join("round-trip.toml");
         let states = BTreeMap::from([
             (ChartLayer::Crosshair, false),
             (ChartLayer::Grid, false),
@@ -858,7 +862,7 @@ mod tests {
 
     #[test]
     fn preset_owned_layers_are_never_written_here() {
-        let path = temp_dir().join("preset-owned.toml");
+        let path = scratch().join("preset-owned.toml");
         save(
             &path,
             &BTreeMap::from([(ChartLayer::LaneMarks, false), (ChartLayer::Grid, false)]),
@@ -882,7 +886,7 @@ mod tests {
 
     #[test]
     fn unknown_versions_ids_and_garbage_degrade_instead_of_failing() {
-        let path = temp_dir().join("bad-layers.toml");
+        let path = scratch().join("bad-layers.toml");
         // A file this build cannot read means "we do not know what they
         // chose" — the same question a first launch asks, so it gets the same
         // answer rather than a second one.

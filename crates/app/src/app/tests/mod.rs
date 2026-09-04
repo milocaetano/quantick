@@ -1202,12 +1202,14 @@ fn price_y(app: &QuantickApp, side: PaneSide, price: f64) -> f32 {
 }
 
 /// A scratch workspace path, so a test never writes the real cockpit.
+///
+/// `thread_dir` rather than a `ScratchDir`, because the path is handed to the
+/// app and the caller keeps nothing it could drop: every call site here reads
+/// `set_ui_state_path(scratch_ui_state(..))`, and a value dropped at the end
+/// of that statement would take the folder with it before the app ever wrote
+/// to it. The directory goes when the test's thread ends instead.
 fn scratch_ui_state(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "quantick-app-ui-state-{name}-{}-{:?}.toml",
-        std::process::id(),
-        std::thread::current().id()
-    ))
+    crate::scratch::thread_dir("app-ui-state").join(format!("{name}.toml"))
 }
 
 /// A frame carrying the window's close request, which is the only signal
@@ -1584,13 +1586,11 @@ fn drain_load_older(commands: &mut mpsc::Receiver<FeedCommand>) -> Vec<usize> {
 
 // ---- adding a symbol from the picker (§11) ----
 
-/// A scratch sidecar path, so a test never touches the real one.
+/// A scratch sidecar path, so a test never touches the real one. Handed to
+/// the app, so it takes `thread_dir` for the reason [`scratch_ui_state`]
+/// gives.
 fn symbols_scratch(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "quantick-symbols-app-{}-{}.toml",
-        name,
-        std::process::id()
-    ))
+    crate::scratch::thread_dir("symbols-app").join(format!("{name}.toml"))
 }
 
 /// A config with two MetaTrader feeds, one of them mapping a port — the
@@ -1772,12 +1772,16 @@ fn indicator_kinds(app: &QuantickApp) -> Vec<String> {
         .collect()
 }
 
+/// A gateway directory of this test's own, **not created**: the gateway makes
+/// its own instances directory, and handing it one that already exists is a
+/// different starting state than every one of these tests was written
+/// against. It sits inside this thread's scratch folder, which is removed
+/// when the test's thread ends.
 fn gateway_test_directory(name: &str) -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
-    std::env::temp_dir().join(format!(
-        "quantick-gateway-test-{}-{name}-{}",
-        std::process::id(),
+    crate::scratch::thread_dir("gateway-test").join(format!(
+        "{name}-{}",
         NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
     ))
 }

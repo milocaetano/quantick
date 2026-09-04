@@ -4499,10 +4499,11 @@ mod shared_routing_tests {
             // Its own directory, never the shared temp root: a tab opens a
             // paper-trading ledger, and pointing every test tab at one folder
             // makes them read each other's trades.
-            std::env::temp_dir().join(format!(
-                "quantick-tab-test-{context}-{}",
-                NEXT_TEST_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            )),
+            crate::scratch::thread_dir("tab-test").join(
+                NEXT_TEST_DIR
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    .to_string(),
+            ),
         );
         for slot in 0..context {
             tab.time_panes.push(ChartPane::time(
@@ -4694,10 +4695,11 @@ mod move_pane_tests {
                 commands: cmd_tx,
                 replay: None,
             },
-            std::env::temp_dir().join(format!(
-                "quantick-opening-test-{}",
-                NEXT_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            )),
+            crate::scratch::thread_dir("opening-test").join(
+                NEXT_DIR
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    .to_string(),
+            ),
         );
         (tab, evt_tx)
     }
@@ -4787,10 +4789,11 @@ mod move_pane_tests {
                 commands: cmd_tx,
                 replay: None,
             },
-            std::env::temp_dir().join(format!(
-                "quantick-move-test-{}",
-                NEXT_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            )),
+            crate::scratch::thread_dir("move-test").join(
+                NEXT_DIR
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    .to_string(),
+            ),
         );
         for slot in 0..context {
             tab.time_panes.push(ChartPane::time(
@@ -4921,10 +4924,11 @@ mod collapse_path_tests {
                 commands: cmd_tx,
                 replay: None,
             },
-            std::env::temp_dir().join(format!(
-                "quantick-collapse-test-{}",
-                NEXT_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            )),
+            crate::scratch::thread_dir("collapse-test").join(
+                NEXT_DIR
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    .to_string(),
+            ),
         )
     }
 

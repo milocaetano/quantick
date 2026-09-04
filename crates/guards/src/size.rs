@@ -612,12 +612,10 @@ mod tests {
     }
 
     /// A throwaway workspace: a baseline naming one source file, and that
-    /// file. Named after its test rather than after the process id, because
-    /// a reused pid leaves a populated directory behind and the test then
-    /// fails on the previous run's contents.
-    fn scratch(test: &str, ceiling: usize, lines: usize) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!("quantick-guards-{test}"));
-        let _ = fs::remove_dir_all(&root);
+    /// file. See [`crate::scratch_dir`] for why the name carries a run token
+    /// rather than the test's own name.
+    fn scratch(test: &str, ceiling: usize, lines: usize) -> crate::scratch_dir::ScratchDir {
+        let root = crate::scratch_dir::ScratchDir::new(test);
         fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join("crates/probe/src")).expect("scratch dirs are creatable");
         fs::write(
@@ -780,8 +778,7 @@ mod tests {
     /// its own instructions.
     #[test]
     fn a_file_that_does_not_decode_is_not_reported_as_a_stale_entry() {
-        let root = std::env::temp_dir().join("quantick-guards-undecodable");
-        let _ = fs::remove_dir_all(&root);
+        let root = crate::scratch_dir::ScratchDir::new("undecodable");
         fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join("crates/probe/src")).expect("scratch dirs are creatable");
         fs::write(
@@ -815,8 +812,7 @@ mod tests {
     /// delete the entries — would switch the ratchet off repo-wide.
     #[test]
     fn a_missing_sources_directory_is_named_rather_than_read_as_stale_entries() {
-        let root = std::env::temp_dir().join("quantick-guards-missing-sources");
-        let _ = fs::remove_dir_all(&root);
+        let root = crate::scratch_dir::ScratchDir::new("missing-sources");
         fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
         fs::write(
             root.join(BASELINE_FILE),
@@ -838,9 +834,13 @@ mod tests {
     /// on one can be paid for — or not — by the other. The single-entry
     /// [`scratch`] cannot express pay-as-you-go at all: with one ceiling, the
     /// total and the ceiling are the same number and every raise is a raise.
-    fn scratch_pair(test: &str, first: usize, second: usize, budget: usize) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!("quantick-guards-{test}"));
-        let _ = fs::remove_dir_all(&root);
+    fn scratch_pair(
+        test: &str,
+        first: usize,
+        second: usize,
+        budget: usize,
+    ) -> crate::scratch_dir::ScratchDir {
+        let root = crate::scratch_dir::ScratchDir::new(test);
         fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join("crates/probe/src")).expect("scratch dirs are creatable");
         fs::write(

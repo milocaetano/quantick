@@ -446,44 +446,10 @@ mod tests {
     };
 
     /// A scratch workspace holding one baseline file.
-    fn workspace(baseline: &str) -> tempdir::TempDir {
-        let dir = tempdir::TempDir::new();
+    fn workspace(baseline: &str) -> crate::scratch_dir::ScratchDir {
+        let dir = crate::scratch_dir::ScratchDir::new("ratchet");
         fs::write(dir.path().join("baseline.txt"), baseline).expect("baseline is writable");
         dir
-    }
-
-    /// The smallest temporary directory that removes itself, so these tests
-    /// stay inside the no-dependency rule the whole crate is built on.
-    mod tempdir {
-        use std::path::{Path, PathBuf};
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use std::{fs, process};
-
-        pub struct TempDir(PathBuf);
-
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-
-        impl TempDir {
-            pub fn new() -> Self {
-                let path = std::env::temp_dir().join(format!(
-                    "quantick-ratchet-{}-{}",
-                    process::id(),
-                    NEXT.fetch_add(1, Ordering::Relaxed)
-                ));
-                fs::create_dir_all(&path).expect("temp dir is creatable");
-                Self(path)
-            }
-
-            pub fn path(&self) -> &Path {
-                &self.0
-            }
-        }
-
-        impl Drop for TempDir {
-            fn drop(&mut self) {
-                let _ = fs::remove_dir_all(&self.0);
-            }
-        }
     }
 
     #[test]

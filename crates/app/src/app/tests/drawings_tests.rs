@@ -457,12 +457,10 @@ fn a_rebuilt_timeline_does_not_stack_old_marks_on_its_edge() {
     let ctx = egui::Context::default();
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
     let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
-    let dir = std::env::temp_dir().join(format!(
-        "quantick-trade-paint-rebuild-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    app.active_tab_mut().paper.redirect_history_dir(dir.clone());
+    let dir = crate::scratch::ScratchDir::new("trade-paint-rebuild");
+    app.active_tab_mut()
+        .paper
+        .redirect_history_dir(dir.path().to_path_buf());
     // A round trip: bought on print 4, closed on print 6.
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
@@ -1253,9 +1251,8 @@ fn the_coordinates_tab_offers_sharing_across_charts() {
 fn a_saved_default_style_reaches_the_next_drawing_and_only_that() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
-    app.drawing_presets = drawings::presets::PresetStore::load_from(std::env::temp_dir().join(
-        format!("quantick-default-style-{}.toml", std::process::id()),
-    ));
+    let presets = crate::scratch::ScratchFile::new("default-style", "presets.toml");
+    app.drawing_presets = drawings::presets::PresetStore::load_from(presets.path().to_path_buf());
     run_frame(&mut app, &ctx);
 
     arm_drawing_from_toolbox(&mut app, &ctx, "horizontal-line");
@@ -4171,11 +4168,7 @@ fn the_same_handler_places_the_traders_object_and_the_agents() {
 #[test]
 fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
     let ctx = egui::Context::default();
-    let dir = std::env::temp_dir().join(format!(
-        "quantick-control-trace-replay-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::scratch::ScratchDir::new("control-trace-replay");
     let session = recording_at(&dir);
     let trace_path = dir.join("20260316.csv.control-trace.jsonl");
 

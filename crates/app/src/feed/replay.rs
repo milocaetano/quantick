@@ -994,21 +994,13 @@ mod tests {
         );
     }
 
-    /// A scratch directory of this test's own, emptied before it is used.
+    /// A scratch directory of this test's own, which removes itself.
     ///
-    /// Cleared up front rather than only at the end: an assertion that fails
-    /// leaves the old one behind, Windows recycles pids freely, and a later
-    /// run inheriting a populated directory is the stale-temp-dir flake this
-    /// repo has already been bitten by elsewhere.
-    fn scratch_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "quantick-replay-{name}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
-        dir
+    /// The caller holds the value for as long as the files matter; see
+    /// [`crate::scratch`] for why the folder can no longer be inherited by a
+    /// later run that happens to draw the same process id.
+    fn scratch_dir(name: &str) -> crate::scratch::ScratchDir {
+        crate::scratch::ScratchDir::new(name)
     }
 
     /// `minutes` of broker candles in the hour before a tape starts — where a

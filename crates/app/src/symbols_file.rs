@@ -214,11 +214,7 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "quantick-symbols-{}-{}.toml",
-            name,
-            std::process::id()
-        ))
+        crate::scratch::thread_dir("symbols").join(format!("{name}.toml"))
     }
 
     #[test]

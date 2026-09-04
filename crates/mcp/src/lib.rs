@@ -30,6 +30,8 @@ pub mod fake;
 pub mod jsonrpc;
 pub mod link;
 pub mod protocol;
+#[cfg(test)]
+mod scratch;
 pub mod server;
 pub mod setup;
 pub mod tools;

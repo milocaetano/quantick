@@ -253,8 +253,7 @@ fn the_tape_window_hook_reads_durations_and_refuses_nonsense() {
 /// only for the tape would take order entry and the drawing tools with it.
 #[test]
 fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
-    let dir = std::env::temp_dir().join(format!("quantick-tape-menu-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let dir = crate::scratch::ScratchDir::new("tape-menu");
     let path = dir.join("chart-layers.toml");
     let _ = std::fs::remove_file(&path);
 

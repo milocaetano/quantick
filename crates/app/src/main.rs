@@ -69,6 +69,7 @@ mod replay_home;
 mod replay_view;
 mod resample;
 mod risk_sizing;
+mod scratch;
 mod state;
 mod statusbar;
 mod store_home;
